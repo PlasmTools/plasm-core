@@ -13,8 +13,8 @@ use super::capability_delta::render_mutator_recap_lines_for_caps;
 /// MCP unified discovery TSV preamble (language flow + decision semantics).
 pub const DISCOVER_TSV_LANGUAGE_PREAMBLE: &str = "\
 # Plasm is a source language. These rows are NOT a program.\n\
-# Next: pass selected api/entity rows to plasm_context.seeds, then write plasm.program using returned e#/m#/p#/r# symbols.\n\
-# Catalogs with Get but no Search teach identity get (e#(p#=…)) after plasm_context — not e#~\"text\" search syntax.";
+# Next: pass selected api/entity rows to plasm_context.seeds, then write plasm.program using returned e#/m#/r# symbols and catalog wire names.\n\
+# Catalogs with Get but no Search teach identity get (e#(id_field=…)) after plasm_context — not e#~\"text\" search syntax.";
 
 /// Discovery decision values embedded as `# decision: …` TSV comment lines.
 pub const DISCOVER_DECISION_MATCH: &str = "match";

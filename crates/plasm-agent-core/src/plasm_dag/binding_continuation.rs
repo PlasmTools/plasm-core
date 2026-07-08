@@ -249,7 +249,7 @@ fn lower_method_invoke_continuation(
         return Err(plp::plp4_program(
             id,
             format!(
-                "side-effect invoke `{label}.{tail}` requires a singleton binding — use `rows => e#.m#(p#=_.…)` or `.limit(1)` / `.singleton()` first"
+                "side-effect invoke `{label}.{tail}` requires a singleton binding — use `rows => e#.m#(param=_.…)` or `.limit(1)` / `.singleton()` first"
             ),
         ));
     }
@@ -318,7 +318,7 @@ pub(in crate::plasm_dag) fn lower_relation_continuation(
         return Err(plp::plp4_program(
             id,
             format!(
-                "`{segment}` is not a field or relation on `{source_label}` — use `p#` / `r#` from the teaching table"
+                "`{segment}` is not a field or relation on `{source_label}` — use wire field names or `r#` relation hops from the teaching TSV"
             ),
         ));
     };
@@ -419,7 +419,7 @@ fn unknown_row_transform_error(id: &str, tail: &str) -> String {
         agent_program_error(
             format!("Unknown row transform `{tail}` on `{id}`."),
             Some(
-                "Use postfix on a binding: `.limit(N)`, `.filter{p#=…}`, `.sort(p#)`, `.group_by(p#)`, `[p#,…]`, etc.",
+                "Use postfix on a binding: `.limit(N)`, `.filter{field=…}`, `.sort(field)`, `.group_by(field)`, `[field,…]`, etc.",
             ),
         ),
     )

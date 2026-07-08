@@ -154,13 +154,13 @@ pub(in crate::plasm_dag) fn row_contract_field_error(
         if inputs.contains(wire) {
             return agent_program_error(
                 format!("`{wire}` is a query/capability input on this fetch, not a row field."),
-                Some("Use `p#` from teaching `rows:` for row postfix (`.filter`, `[p#,…]`)."),
+                Some("Use wire field names from the teaching TSV for row postfix (`.filter`, `[field,…]`)."),
             );
         }
     }
     agent_program_error(
         format!("`{wire}` is not a row field on this binding's rows."),
-        Some("Use `p#` symbols from the teaching `rows:` column for this binding."),
+        Some("Use wire field names from the teaching TSV left column for this binding."),
     )
 }
 pub(in crate::plasm_dag) fn resolve_compute_field_path(

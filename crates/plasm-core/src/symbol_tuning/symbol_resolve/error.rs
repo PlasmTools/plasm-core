@@ -69,16 +69,16 @@ impl SymbolResolveError {
             Self::UnknownEntityPSym { .. }
             | Self::NotARowField { .. }
             | Self::AmbiguousEntityRowFieldPSym { .. } => Some(
-                "Use `p#` symbols from the teaching `rows:` column for this binding.",
+                "Use catalog wire field names from the teaching TSV left column for this binding (e.g. `.sort(height)`, `[title,…]`).",
             ),
             Self::UnknownQueryFilterPSym { .. } | Self::AmbiguousQueryFilterPSym { .. } => Some(
-                "Use `p#` from the teaching `rows:` column or the query/search input signature for this entity.",
+                "Use wire names from the teaching TSV for query/search filters on this entity (e.g. `{team_key=\"…\"}`).",
             ),
             Self::UnknownCapParam { .. } => Some(
-                "Use `p#` symbols from the teaching table input signature for this capability.",
+                "Use wire parameter names from the teaching TSV invoke/create row for this capability.",
             ),
             Self::UnknownCompoundKey { .. } => Some(
-                "Supply every compound identity key using wire names or the taught `p#` symbols.",
+                "Supply every compound identity key using wire names from the teaching table.",
             ),
             Self::UnknownMethodSym { .. } | Self::MethodAnchorMismatch { .. } => Some(
                 "Use `m#` symbols from the teaching table for this session. If the capability exists but was not taught, pass its wire name in `ranked_capabilities` and call plasm_context with session_mode: \"extend\".",
@@ -87,7 +87,7 @@ impl SymbolResolveError {
                 "Use `e#` symbols from the teaching table for this session.",
             ),
             Self::UnknownSessionPSym { .. } | Self::WrongSlotKind { .. } => Some(
-                "Use `p#` symbols from the teaching table for this session.",
+                "Use wire field names from the teaching TSV left column for fields, filters, and params.",
             ),
         }
     }

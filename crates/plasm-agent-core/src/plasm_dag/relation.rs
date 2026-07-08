@@ -348,7 +348,7 @@ pub(in crate::plasm_dag) fn lookup_relation_chain_meta(
             })
             .unwrap_or_default();
         format!(
-            "entity `{source_entity}` has no relation `{}` — use a declared catalog relation wire name or the `.p#` navigation slot from the active TSV teaching rows for `{source_entity}`.{sym_note}",
+            "entity `{source_entity}` has no relation `{}` — use a declared catalog relation wire name or `.r#` from the teaching TSV for `{source_entity}`.{sym_note}",
             chain.selector
         )
     })?;

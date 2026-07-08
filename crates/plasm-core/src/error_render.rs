@@ -188,7 +188,7 @@ pub fn render_query_resolve_error_for_feedback(
                         ""
                     };
                     format!(
-                        "{msg}. See the query example lines in the prompt for `{es}` for which `p#` scopes and filters apply.{scope_hint}"
+                        "{msg}. See the query example lines in the prompt for `{es}` for which scope and filter wire names apply.{scope_hint}"
                     )
                 }
             };
@@ -529,7 +529,7 @@ pub fn render_parse_error_with_feedback(
                         .to_string()
                 }
                 FeedbackStyle::SymbolicLlm { map: _ } => {
-                    "Fix spelling so `e#` / `m#` / `p#`, `=`, `{{}}`, `.`, and parentheses match the example lines in the prompt."
+                    "Fix spelling so `e#` / `m#` / `r#`, wire field names, `=`, `{{}}`, `.`, and parentheses match the example lines in the prompt."
                         .to_string()
                 }
             };
@@ -1169,7 +1169,7 @@ fn correction_unknown_entity_symbolic_llm(
         );
         if scalar_predicate_context {
             msg.push_str(&format!(
-                " For scalar predicate values use a quoted string (e.g. `p#=\"{bad}\"`)."
+                " For scalar predicate values use a quoted string (e.g. `{{team_key=\"{bad}\"}}` with a wire name from the TSV)."
             ));
         }
         msg
@@ -1239,7 +1239,7 @@ fn correction_predicate_field(
             let es = entity_label_for_feedback(entity, style);
             let bad = ident_label_for_feedback(field, style);
             return format!(
-                "`{bad}` is not a filter on `{es}` — use `p#` from the teaching table query/filter columns."
+                "`{bad}` is not a filter on `{es}` — use wire names from the teaching TSV query/filter columns."
             );
         }
     }
@@ -1281,7 +1281,7 @@ fn correction_navigation_name(
             let es = entity_label_for_feedback(entity, style);
             let bad = ident_label_for_feedback(field, style);
             return format!(
-                "`{bad}` is not a field or relation on `{es}` — use `p#` / `r#` from the teaching table."
+                "`{bad}` is not a field or relation on `{es}` — use wire field names or `r#` relation hops from the teaching TSV."
             );
         }
     }
@@ -1336,11 +1336,11 @@ fn correction_not_navigable(
             let bad = ident_label_for_feedback(field, style);
             if field_is_declared_scalar(cgs, entity, field) {
                 return format!(
-                    "`{bad}` is a field on `{es}` — use `[p#,…]` projection, not `{es}.{bad}`."
+                    "`{bad}` is a field on `{es}` — use `[field,…]` projection with wire names from the TSV, not `{es}.{bad}`."
                 );
             }
             return format!(
-                "`{bad}` is not navigable on `{es}` — use `.r#` relation hops or `[p#,…]` for fields."
+                "`{bad}` is not navigable on `{es}` — use `.r#` relation hops or `[field,…]` projection with wire names."
             );
         }
     }
@@ -2108,7 +2108,7 @@ For example: `{te}(<id>)` when you already know the id, instead of relying on `{
             );
             if value_type == "object" && matches!(field_type.as_str(), "String" | "Blob") {
                 correction.push_str(
-                    "\n\nIf you passed a **program binding** created by a row-to-text template (`label = rows[p#,…] <<TAG … TAG`), that binding is a row object with a **`content`** field. Use **`binding.content`** for plain string / body parameters—not the bare binding name.",
+                    "\n\nIf you passed a **program binding** created by a row-to-text template (`label = rows[field,…] <<TAG … TAG`), that binding is a row object with a **`content`** field. Use **`binding.content`** for plain string / body parameters—not the bare binding name.",
                 );
             }
             StepError::type_correction(correction, error)
@@ -2282,7 +2282,7 @@ mod tests {
         );
         let s = step.correction;
         assert!(s.contains("not a filter"), "{s}");
-        assert!(s.contains("p#"), "{s}");
+        assert!(s.contains("wire") || s.contains("teaching"), "{s}");
         assert!(s.len() < 200, "correction should stay short: {s}");
         assert!(!s.contains("Valid entity symbols"), "{s}");
         assert!(!s.contains("catalog entry"), "{s}");

@@ -2,7 +2,7 @@
 source: crates/plasm-core/src/prompt_render/tests.rs
 expression: "super::PLASM_TOOL_DESCRIPTION"
 ---
-**Plan Plasm** (dry-run): **`logical_session_ref`** + **`program`**. Returns reviewable plan topology and executable **`run_ref`** (`pcN`). Pass that token to **`plasm_run`**; do **not** echo the program. **Program shape:** one `plasm_expr`, or bindings then one comma-separated return line.
+**Run Plasm** (dry-run): **`logical_session_ref`** + **`program`**. Returns reviewable plan topology and executable **`run_ref`** (`pcN`, valid **10 minutes** — re-call **`plasm`** if **`plasm_run`** says expired). Pass **`run_ref`** to **`plasm_run`**; do **not** echo the program. **Program shape:** one `plasm_expr`, or bindings then one comma-separated return line (comma between roots on the **final line only**, not between `label = …` bindings).
 
 **`program` is Plasm source text, not JSON data.** Write one raw expression or multiline bindings with final roots. If a plan merely echoes an object/array/string literal, that is a literal no-op; rewrite as Plasm source. Grammar below; symbols from `plasm_context` TSV. Reply with one valid plasm_program:
 
@@ -47,7 +47,7 @@ Composition rules:
 - Row text: `label = source[field,…] <<TAG` … `TAG` (Minijinja); cross-bindings: `label = a,b <<TAG` (comma-separated in-scope labels); **`binding.content`** for string params (not bare `label`).
 - String binding (no template): `label = <<TAG` … `TAG` — pass **`param=label`**, not `label.content`.
 - RT: after `repo = e#(…)`, prefer **`repo.m#(…)`** / **`repo.r#`** over repeating the get head.
-- Compose with `${report.content}` in later heredocs/strings (`$$` escapes `$`). Do not use `report.content` as a final root or relation receiver.
+- Compose with `${report.content}` in later heredocs/strings when wiring into mutator params (`$$` escapes `$`). `${label.field}` resolves at plan instantiate for I/O templates — not when returning a bare `data` heredoc row as the program root. Do not use `report.content` as a final root or relation receiver.
 - Action/create roots: return the action row or follow with `e#(id=…)` get — not `created.field` as a program root.
 - Bare create: `e#.m#(param=…)` without `source =>` unless scoping a binding.
 - Heredoc: `<<TAG` + newline; first trimmed `TAG` line closes; pick a tag absent from the body. `markdown`/`html`/`document`/`json_text`/`blob` values use `<<TAG` … `TAG` only.
@@ -56,7 +56,7 @@ Symbol and fill rules:
 - **Symbolic only:** `e#` entity; `m#` method; `r#` relation nav; `v#` value-domain metadata (never in code).
 - **Wire names** for fields, capability params, query/search filters, projection/postfix keys — copy from the TSV left column under the scoped `e#`/`m#`.
 - Within-site homographs (same wire as filter vs relation vs param): resolved by **syntax position** — `{wire=…}` filter, `.r#`/`.wire` nav, `m#(wire=…)` invoke args.
-- Never write `v#` in code; use wire keys and read `v#` rows for allowed values. Legacy `p#` tokens are rejected at parse.
+- Never write `v#` in code; use wire field/param names from the TSV left column and read `v#` gloss rows for allowed values.
 - **Session handles** (`logical_session_ref`, `run_ref` / `pcN`): MCP tokens only — copy verbatim; not program syntax.
 - Replace teaching placeholders (`$`, `<id>`, `<val>`) and exemplar ids (`pikachu`, `example-name`, …) with real values before output. Never emit `$` from a teaching row.
 - Get-head: **parens = identity** (`e_type(electric)`; bare word = string identity when the slot is a name/string field), **braces = query/filter** (`e#{field=…}`). Keyed `e#(id=<id>)` only when `id` is the identity field.

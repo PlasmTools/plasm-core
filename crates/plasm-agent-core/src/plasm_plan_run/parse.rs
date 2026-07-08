@@ -73,7 +73,7 @@ pub fn resolve_wire_field_token(
     if plasm_core::symbol_tuning::SymbolMap::is_opaque_p_sym(t) {
         return Err(agent_program_error(
             format!("`{t}` requires a row binding context for field resolution"),
-            Some("Use `p#` on a bound entity row or postfix chain with a known receiver."),
+            Some("Use wire field names from the teaching TSV on a bound row or postfix chain with a known receiver."),
         ));
     }
     Ok(t.to_string())

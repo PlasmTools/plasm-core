@@ -675,7 +675,7 @@ the same renderer MCP hosts use at initialize time. For the standalone grammar f
 
 ## When to use `plasm`
 
-- **`plasm`** — remote HTTP terminal: discovery, client-owned `e#` / `m#` / `p#` symbols, plan/run
+- **`plasm`** — remote HTTP terminal: discovery, client-owned `e#` / `m#` / `r#` symbols plus catalog wire names, plan/run
   against `plasm-mcp` or `plasm-server`.
 - **`plasm-repl --schema …`** — local schema REPL (not the remote terminal).
 - **`plasm-cgs`** (`plasm-cli` crate) — dev/schema tooling (not the remote terminal).
@@ -696,7 +696,7 @@ Always **`plasm run --mode plan` before live `plasm run`** when side effects are
 
 - **Active session pointer:** `.plasm/hosts/<slug>/current` (one line: client session id).
 - **Teaching table (symbols):** `.plasm/s/<session>/teaching.tsv` — cumulative `plasm_expr` / `Meaning`
-  rows; monotonic `e#` / `m#` / `p#` for that session.
+  rows; monotonic `e#` / `m#` / `r#` for that session; wire field/param names from the left column.
 - **Session metadata:** `.plasm/s/<session>/meta.txt` — intent, catalog digests, capabilities.
 - **Latest op mirror:** `.plasm/s/<session>/latest` → newest `out/NNNN-*` directory.
 

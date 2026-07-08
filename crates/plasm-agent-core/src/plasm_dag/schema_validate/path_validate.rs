@@ -48,7 +48,7 @@ pub(in crate::plasm_dag) fn validate_compute_paths_for_schema(
         }
         return Err(agent_program_error(
             format!("`{wire}` is not a row field on this binding's compute output."),
-            Some("Use `p#` symbols from the teaching `rows:` column (e.g. `.sort(p#)`, `[p#,…]`)."),
+            Some("Use wire field names from the teaching TSV (e.g. `.sort(height)`, `[title,…]`)."),
         ));
     }
     Ok(())
@@ -233,7 +233,7 @@ pub(in crate::plasm_dag) fn validate_compute_paths_for_entity(
         }
         let hint = single_segment_teaching_field_hint(session, symbol_map_cross_cache, qe, path);
         return Err(format!(
-            "Plasm program {op_label}: field path `{}` is not a row field of entity `{}` (catalog entry `{}`). Use `p#` (and taught `r#`) from the active TSV teaching table for this entity — mixing another entity's symbols yields null columns.{hint}",
+            "Plasm program {op_label}: field path `{}` is not a row field of entity `{}` (catalog entry `{}`). Use wire field names (and taught `r#` for relations) from the active TSV for this entity — mixing another entity's symbols yields null columns.{hint}",
             path.dotted(),
             qe.entity,
             qe.entry_id
