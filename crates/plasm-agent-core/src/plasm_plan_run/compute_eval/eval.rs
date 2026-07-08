@@ -349,6 +349,33 @@ pub(crate) fn plan_value_to_rows(value: &PlanValue) -> Result<Vec<serde_json::Va
     })
 }
 
+/// Pure `derive` (map) row production: evaluate `value` once per source row under the item binding
+/// scope plus singleton `inputs`. **PEC:** this is the *single* derive kernel — both live execute
+/// ([`materialize_executable_plan_step`]) and dry preflight materialize derive rows through here, so
+/// the only planned/live difference is the source of `source_rows` (I/O), never the derivation.
+pub(crate) fn derive_node_rows(
+    item_binding: &BindingName,
+    value: &PlanValue,
+    source_rows: &[serde_json::Value],
+    input_rows: &BTreeMap<InputAlias, MaterializedInputRow>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let mut rows = Vec::with_capacity(source_rows.len());
+    for row in source_rows {
+        let scope = EvalScope::Bound {
+            row,
+            binding: item_binding,
+        };
+        let inputs = InputEnv { rows: input_rows };
+        let env = PlanEvalEnv {
+            scope,
+            inputs,
+            wire_coercion: None,
+        };
+        rows.push(eval_plan_value(value, &env)?);
+    }
+    Ok(rows)
+}
+
 pub(crate) enum EvalScope<'a> {
     Root {
         row: &'a serde_json::Value,

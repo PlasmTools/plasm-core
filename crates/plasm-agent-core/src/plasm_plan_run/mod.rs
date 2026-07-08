@@ -51,6 +51,7 @@ use std::collections::{BTreeMap, BTreeSet};
 mod compute_eval;
 mod dry;
 pub mod evidence_plan;
+mod executable_plan;
 mod materialize;
 mod materialize_prefer;
 mod orchestrator;
@@ -70,6 +71,7 @@ mod alloc_bench_test;
 
 pub(crate) use compute_eval::NodeInputHoleIndex;
 pub(crate) use compute_eval::*;
+pub(crate) use executable_plan::*;
 pub(crate) use materialize::*;
 pub(crate) use relation_hydrate::finalize_typed_relation_materialized_node;
 pub(crate) use render_columns::RenderColumns;

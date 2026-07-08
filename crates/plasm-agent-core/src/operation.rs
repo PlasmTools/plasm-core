@@ -321,6 +321,13 @@ pub struct PlanCommitDryCache {
     pub execution_unsupported: Vec<String>,
     #[serde(default)]
     pub lowered_ir_digest: String,
+    /// PEC seal: hex [`ScheduleDigest`](crate::plasm_plan_run::ScheduleDigest) over the executable
+    /// schedule (`ExecStep` pure/io classification per node, in topological order). Pins the
+    /// *lowering logic* — not just the input comp — so `plasm_run` refuses to replay a plan whose
+    /// classification would differ from the reviewed `plasm` dry-run (e.g. after a mid-flight deploy
+    /// that changed how nodes lower to pure/io steps).
+    #[serde(default)]
+    pub schedule_digest: String,
 }
 
 impl PlanCommitDryCache {
@@ -329,6 +336,11 @@ impl PlanCommitDryCache {
             crate::plasm_plan_run::lowered_ir_digest_from_validated_plan(dry.validated_plan())
                 .as_str()
                 .to_string();
+        let schedule_digest = crate::plasm_plan_run::ScheduleDigest::from_validated_plan(
+            dry.validated_plan(),
+            &dry.topological_order,
+        )
+        .to_hex();
         Self {
             version: dry.version.clone(),
             name: dry.name.clone(),
@@ -339,6 +351,7 @@ impl PlanCommitDryCache {
             staged_nodes: dry.staged_nodes.clone(),
             execution_unsupported: dry.execution_unsupported.clone(),
             lowered_ir_digest,
+            schedule_digest,
         }
     }
 

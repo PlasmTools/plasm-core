@@ -713,6 +713,55 @@ rows"#;
     }
 }
 
+/// PEC (Plan Executability Closure): a staged surface whose input is a literal `data` binding
+/// must dry-run cleanly. The dry preflight materializes the pure `data` node identically to live
+/// execution (same `plan_value_to_rows`), so `uses_result` resolves. This is the minimal shape of
+/// the heredoc-body `=>` mutator failure ("input node `body` … has not been materialized"): a
+/// surface consuming a prior pure binding.
+#[test]
+fn evaluate_plasm_plan_dry_materializes_data_binding_for_staged_surface() {
+    let s = duplicate_product_create_session();
+    let plan = serde_json::json!({
+        "version": 1,
+        "kind": "program",
+        "name": "staged-create-from-data-body",
+        "nodes": [
+            {
+                "id": "body",
+                "kind": "data",
+                "effect_class": "artifact_read",
+                "result_shape": "single",
+                "data": { "kind": "literal", "value": { "name": "Bolt" } }
+            },
+            {
+                "id": "make",
+                "kind": "create",
+                "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                "expr_template": "Product.create(name=${body.name})",
+                "ir_template": {
+                    "expr": {
+                        "op": "create",
+                        "capability": "product_create",
+                        "entity": "Product",
+                        "input": {
+                            "name": "${body.name}"
+                        }
+                    },
+                    "input_bindings": []
+                },
+                "effect_class": "write",
+                "result_shape": "single",
+                "depends_on": ["body"],
+                "uses_result": [{ "node": "body", "as": "body" }]
+            }
+        ],
+        "return": { "kind": "node", "node": "make" }
+    });
+    let dry = evaluate_plasm_plan_dry(&s, &plan)
+        .expect("dry-run must materialize the `data` body feeding the staged create");
+    assert_eq!(dry.node_results.len(), 2);
+}
+
 #[test]
 fn evaluate_plasm_plan_dry_typechecks_ir_not_display_text() {
     let s = test_session();

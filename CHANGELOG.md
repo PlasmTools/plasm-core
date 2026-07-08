@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-07-08
+
+### Added
+
+- **Plan Executability Closure (PEC) type-phase:** `ExecStep` totally classifies every `ValidatedPlanNode` into a mode-invariant `PureStep` (`Data`/`Derive`/`Compute`, one shared `PureStep::materialize` kernel) or an `IoStep` executed through the `IoPort` trait (`LiveIoPort` / `DryIoPort`) — the sole locus where dry preflight and live execute may differ. The classification has no wildcard, so a new node kind is a compile error until it is classified.
+- **Executable schedule digest in the commit seal:** `ScheduleDigest` (derived over the `ExecStep` classification per node, in topological order) is recorded at `plasm` dry-run and re-verified on every `plasm_run` replay, pinning the *lowering logic* itself — a mid-flight change to pure/io classification now fails loudly instead of silently replaying an unreviewed schedule.
+
+### Fixed
+
+- **Dry/live materialization divergence:** dry preflight no longer no-ops `Data`/`Derive`/`ForEach` nodes; a literal (heredoc) body feeding a staged mutator via `uses_result` now materializes in dry exactly as it does live, eliminating the spurious `input node "…" has not been materialized` rejection of valid plans.
+
+### Changed
+
+- **Single pure kernel + canonical node constructor:** live and dry share `plan_value_to_rows` / `derive_node_rows` / `eval_compute_from_rows`; `MaterializedNode::inline_cache` centralizes cache-sourced node construction, removing duplicated `ExecutionResult` boilerplate.
+
 ## [0.4.5] - 2026-07-08
 
 ### Added

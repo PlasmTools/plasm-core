@@ -215,6 +215,11 @@ impl CommittedPlan {
     pub fn lowered_ir_digest(&self) -> &str {
         self.dry_cache.lowered_ir_digest.as_str()
     }
+
+    #[must_use]
+    pub fn schedule_digest(&self) -> &str {
+        self.dry_cache.schedule_digest.as_str()
+    }
 }
 
 /// Prove live bundle matches the reviewed [`CommittedPlan`] (semantic commit id + lowered IR digest).
@@ -231,7 +236,7 @@ pub fn verify_committed_plan_bundle(
             commit_ref: committed.commit_ref.clone(),
         });
     }
-    if !committed.lowered_ir_digest().is_empty() {
+    if !committed.lowered_ir_digest().is_empty() || !committed.schedule_digest().is_empty() {
         let prepared = crate::plan_prepare::build_prepared_validated_plan(
             &bundle.artifact().comp,
             bundle.executable(),
@@ -240,13 +245,33 @@ pub fn verify_committed_plan_bundle(
             commit_ref: committed.commit_ref.clone(),
             detail: e,
         })?;
-        let live =
-            crate::plasm_plan_run::lowered_ir_digest_from_validated_plan(prepared.artifact());
-        if live.as_str() != committed.lowered_ir_digest() {
-            return Err(PlanCommitVerifyError::Evidence {
-                commit_ref: committed.commit_ref.clone(),
-                detail: "lowered GET IR digest mismatch — call `plasm` dry-run again".into(),
-            });
+        if !committed.lowered_ir_digest().is_empty() {
+            let live =
+                crate::plasm_plan_run::lowered_ir_digest_from_validated_plan(prepared.artifact());
+            if live.as_str() != committed.lowered_ir_digest() {
+                return Err(PlanCommitVerifyError::Evidence {
+                    commit_ref: committed.commit_ref.clone(),
+                    detail: "lowered GET IR digest mismatch — call `plasm` dry-run again".into(),
+                });
+            }
+        }
+        if !committed.schedule_digest().is_empty() {
+            // PEC seal: reclassify the rehydrated plan into `ExecStep`s over the *stored* topological
+            // order and confirm the executable schedule is byte-identical to the reviewed dry-run.
+            // A mismatch means the pure/io lowering itself drifted (e.g. redeploy) — refuse to run a
+            // schedule the operator never reviewed rather than silently diverge.
+            let live_schedule = crate::plasm_plan_run::ScheduleDigest::from_validated_plan(
+                prepared.artifact(),
+                &committed.dry_cache.topological_order,
+            )
+            .to_hex();
+            if live_schedule != committed.schedule_digest() {
+                return Err(PlanCommitVerifyError::Evidence {
+                    commit_ref: committed.commit_ref.clone(),
+                    detail: "executable schedule digest mismatch — call `plasm` dry-run again"
+                        .into(),
+                });
+            }
         }
     }
     Ok(())
@@ -671,5 +696,55 @@ mod tests {
         assert_eq!(dry.topological_order, cache.topological_order);
         assert_eq!(dry.node_results.len(), 1);
         verify_committed_plan_bundle(&bundle, &committed).expect("bundle matches");
+    }
+
+    #[test]
+    fn verify_seals_executable_schedule_digest() {
+        let es = minimal_session();
+        let artifact = minimal_artifact();
+        let bundle = PlasmCompBundle::new(artifact.clone()).expect("bundle");
+        let order = vec!["items".to_string()];
+
+        // The digest the reviewed dry-run would seal: classify the rehydrated plan over the stored
+        // topological order.
+        let prepared = crate::plan_prepare::build_prepared_validated_plan(
+            &bundle.artifact().comp,
+            bundle.executable(),
+        )
+        .expect("prepared");
+        let good_digest =
+            crate::plasm_plan_run::ScheduleDigest::from_validated_plan(prepared.artifact(), &order)
+                .to_hex();
+        assert!(!good_digest.is_empty(), "schedule digest must be non-empty");
+
+        let committed = |schedule_digest: String| CommittedPlan {
+            commit_ref: es.mint_plan_commit_ref(),
+            artifact: artifact.clone(),
+            program: "e1".into(),
+            dry_review: Default::default(),
+            verdict: PlanDryVerdict::Ok,
+            dry_cache: PlanCommitDryCache {
+                topological_order: order.clone(),
+                schedule_digest,
+                ..PlanCommitDryCache::default()
+            },
+        };
+
+        // Matching schedule digest verifies.
+        verify_committed_plan_bundle(&bundle, &committed(good_digest.clone()))
+            .expect("matching schedule digest passes the seal");
+
+        // A drifted lowering (tampered digest) is refused rather than silently executed.
+        let err = verify_committed_plan_bundle(&bundle, &committed("00".repeat(32)))
+            .expect_err("drifted schedule digest must fail the seal");
+        match err {
+            PlanCommitVerifyError::Evidence { detail, .. } => {
+                assert!(
+                    detail.contains("executable schedule digest mismatch"),
+                    "unexpected detail: {detail}"
+                );
+            }
+            other => panic!("expected Evidence mismatch, got {other:?}"),
+        }
     }
 }

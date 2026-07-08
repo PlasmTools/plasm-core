@@ -103,6 +103,39 @@ pub(crate) struct MaterializedNode {
 }
 
 impl MaterializedNode {
+    /// Canonical constructor for a node materialized from already-known inline rows (dry stubs, the
+    /// pure kernel's output, folded results): a `Cache`-sourced result with no fingerprints and no
+    /// artifact. Centralizes the `ExecutionResult` boilerplate that would otherwise be copy-pasted
+    /// at every synthetic materialization site.
+    pub(crate) fn inline_cache(
+        entry_id: String,
+        entity: String,
+        rows: Vec<serde_json::Value>,
+        row_identities: Vec<Option<plasm_core::RowIdentity>>,
+        display: String,
+        projection: Option<Vec<String>>,
+    ) -> Self {
+        MaterializedNode {
+            entry_id,
+            entity,
+            result: Arc::new(ExecutionResult {
+                count: rows.len(),
+                entities: Vec::new(),
+                has_more: false,
+                pagination_resume: None,
+                paging_handle: None,
+                source: ExecutionSource::Cache,
+                stats: ExecutionStats::default(),
+                request_fingerprints: vec![],
+            }),
+            row_source: inline_row_source_owned(rows),
+            row_identities,
+            artifact: None,
+            display,
+            projection,
+        }
+    }
+
     pub(crate) fn inline_row_count(&self) -> usize {
         self.row_source.inline_rows().map_or(0, |rows| rows.len())
     }
@@ -198,6 +231,22 @@ pub(crate) async fn run_executable_plan_phased(
         .map(|(id, payload)| (id.clone(), payload.clone()))
         .collect();
     let layers = super::plan_schedule::bind_topo_execution_layers(&executable.bind)?;
+    // PEC witness: the executable schedule is a total function of the semantic DAG (`steps` + `bind`)
+    // that the durable commit id already seals, so this digest is identical at `plasm` (dry) and
+    // `plasm_run` (replay). Emitting it makes the plan-vs-run schedule identity observable.
+    let schedule_order: Vec<String> = executable
+        .steps_topo
+        .iter()
+        .map(|(id, _)| id.as_str().to_string())
+        .collect();
+    let schedule_digest =
+        super::ScheduleDigest::from_validated_plan(dry.validated_plan(), &schedule_order);
+    tracing::debug!(
+        target: "plasm.pec",
+        schedule_digest = %schedule_digest.to_hex(),
+        steps = step_total,
+        "executable schedule lowered (pure/io classified)"
+    );
     let rows_progress = execution_scope.and_then(|s| s.rows_progress_fn());
     let mat_ctx = PlanStepMaterializeCtx {
         es,
