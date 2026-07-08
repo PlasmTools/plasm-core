@@ -145,6 +145,29 @@ pub(crate) async fn materialize_validated_relation_traversal(
         crate::graph_rehydrate::GraphSurfaceRehydrator::new(es, st, session_id, source_cgs)
             .resolve_row_source_rows(&source_mat.row_source, read_cap)
             .await?;
+    if source_rows.is_empty() {
+        if matches!(
+            relation.relation.source_cardinality,
+            RelationSourceCardinality::RuntimeCheckedSingleton
+        ) {
+            return Err(singleton_input_row_count_error(
+                relation.relation.source.as_str(),
+                "source",
+                0,
+                "relation traversal",
+            ));
+        }
+        return super::compute_eval::finalize_empty_relation_materialized_node(
+            st,
+            es,
+            session_id,
+            node,
+            relation,
+            trace,
+            read_cap,
+        )
+        .await;
+    }
     match &relation.relation.materialize {
         RelationMaterialization::FromParentGet { .. } => try_materialize_from_parent_get_relation(
             st,
@@ -159,7 +182,9 @@ pub(crate) async fn materialize_validated_relation_traversal(
         .await?
         .ok_or_else(|| {
             format!(
-                "relation `{}` FromParentGet materialize failed",
+                "relation `{}` could not resolve parent rows on `{}` — ensure the source binding returned at least one row before navigating `.{}`",
+                relation.relation.relation,
+                source_mat.entity,
                 relation.relation.relation
             )
         }),
@@ -469,7 +494,6 @@ pub(crate) fn compute_needs_full_materialize(op: &ComputeOp) -> bool {
             | ComputeOp::GroupBy { .. }
             | ComputeOp::Aggregate { .. }
             | ComputeOp::DedupeBy { .. }
-            | ComputeOp::Render { .. }
     )
 }
 

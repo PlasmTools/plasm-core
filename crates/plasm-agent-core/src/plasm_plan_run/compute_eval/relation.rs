@@ -21,6 +21,18 @@ pub(crate) async fn materialize_relation_singleton_chain(
     sink: Option<&McpPlasmTraceSink>,
     plan_shared: Option<Arc<crate::plan_execute_shared::PlanLineExecuteShared>>,
 ) -> Result<MaterializedNode, String> {
+    if relation_parent_row_missing(materialized, relation, es)? {
+        return finalize_empty_relation_materialized_node(
+            st,
+            es,
+            session_id,
+            &ValidatedPlanNode::RelationTraversal(relation.clone()),
+            relation,
+            trace,
+            crate::plan_read_bounds::effective_relation_read_cap(relation),
+        )
+        .await;
+    }
     let pe = ParsedExpr {
         expr: relation.relation.ir.expr.clone(),
         projection: relation.relation.ir.projection.clone(),
@@ -73,6 +85,88 @@ pub(crate) async fn materialize_relation_singleton_chain(
         trace,
         read_cap,
         plan_shared.clone(),
+    )
+    .await
+}
+
+/// True when the relation source produced no rows or a row without a usable identity (avoid null-id GET).
+fn relation_parent_row_missing(
+    materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
+    relation: &ValidatedRelationTraversalNode,
+    es: &ExecuteSession,
+) -> Result<bool, String> {
+    let Some(source_mat) = materialized.get(&relation.relation.source) else {
+        return Ok(false);
+    };
+    if source_mat.result.count == 0 {
+        return Ok(true);
+    }
+    let Some(rows) = source_mat.row_source.inline_rows() else {
+        return Ok(false);
+    };
+    if rows.is_empty() {
+        return Ok(true);
+    }
+    let cgs = crate::catalog_ownership::resolve_cgs_for_entry_entity(
+        es,
+        source_mat.entry_id.as_str(),
+        source_mat.entity.as_str(),
+    )
+    .map_err(|e| format!("relation parent row check: {e}"))?;
+    let Some(ent) = cgs.get_entity(source_mat.entity.as_str()) else {
+        return Ok(false);
+    };
+    let id_field = ent.id_field.as_str();
+    Ok(rows.iter().all(|row| {
+        row.get(id_field)
+            .map(|v| v.is_null() || v.as_str().is_some_and(str::is_empty))
+            .unwrap_or(true)
+    }))
+}
+
+/// Zero-row relation result when the parent binding is empty (no HTTP).
+pub(crate) async fn finalize_empty_relation_materialized_node(
+    st: &PlasmHostState,
+    es: &ExecuteSession,
+    session_id: &str,
+    node: &ValidatedPlanNode,
+    relation: &ValidatedRelationTraversalNode,
+    trace: Option<&PlasmTraceContext>,
+    read_cap: Option<usize>,
+) -> Result<MaterializedNode, String> {
+    let display = relation
+        .relation
+        .ir
+        .display_expr
+        .clone()
+        .unwrap_or_else(|| format!("plan.relation({})", node.id().as_str()));
+    finalize_typed_relation_materialized_node(
+        st,
+        es,
+        session_id,
+        &relation.relation.target,
+        MaterializedNode {
+            entry_id: relation.relation.target.entry_id.clone(),
+            entity: relation.relation.target.entity.clone(),
+            display,
+            projection: relation.relation.ir.projection.clone(),
+            row_source: inline_row_source(&[]),
+            row_identities: vec![],
+            result: Arc::new(ExecutionResult {
+                count: 0,
+                entities: vec![],
+                has_more: false,
+                pagination_resume: None,
+                paging_handle: None,
+                source: ExecutionSource::Cache,
+                stats: ExecutionStats::default(),
+                request_fingerprints: vec![compute_fingerprint(node, &[])],
+            }),
+            artifact: None,
+        },
+        trace,
+        read_cap,
+        None,
     )
     .await
 }

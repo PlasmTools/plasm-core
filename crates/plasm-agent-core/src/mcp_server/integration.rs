@@ -644,6 +644,83 @@ async fn matrix_query_limit_on_injected_live_plan_pool() {
     );
 }
 
+#[tokio::test]
+async fn matrix_render_only_live_await_finishes_within_wall_time() {
+    let mut st = matrix_federated_host();
+    st.oss.live_plan_pool = Arc::new(crate::live_plan_run_worker::LivePlanRunPool::new());
+    let st = Arc::new(st);
+    let seeds = vec![CapabilitySeed {
+        entry_id: "github".into(),
+        entity: "LangItem".into(),
+    }];
+    let out = apply_capability_seeds(
+        st.as_ref(),
+        None,
+        None,
+        seeds,
+        None,
+        None,
+        None,
+        "render-only await",
+        RankedCapabilitiesArg::Unspecified,
+    )
+    .await
+    .expect("apply_capability_seeds");
+    let es = st
+        .get_execute_session(&out.prompt_hash, &out.session_id)
+        .await
+        .expect("execute session");
+    let pipeline = st.engine.prompt_pipeline();
+    let cross = st.sessions.symbol_map_cross_cache();
+    let program = r#"hdr = LangItem("i1")[id,title] <<MD
+# {{ rows | length }} row(s)
+MD
+hdr"#;
+    let bundle = compile_plasm_expression(pipeline, Some(cross), &es, program, program)
+        .expect("render-only compile");
+    let dry = evaluate_plasm_comp_dry(&es, &bundle).expect("dry");
+    let accept_payload = build_run_explorer_accept_payload(&dry, Some(&es));
+    let compact = crate::plan_dry_display::build_plan_dry_compact_view(
+        dry.validated_plan(),
+        &dry.topological_order,
+        &dry.review,
+        &dry.graph_summary,
+        Some(&es),
+        None,
+    );
+    let delivered = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        deliver_live_run_await(
+            LiveRunAwaitContext::for_mcp_plasm_run(
+                Arc::clone(&es),
+                Arc::clone(&st),
+                out.prompt_hash.clone(),
+                out.session_id.clone(),
+                "l_AAAAAAAAQACAAAAAAAAAAQ".to_string(),
+                "mcp".to_string(),
+                bundle,
+                accept_payload,
+                compact.verdict,
+                None,
+                PlasmTraceContext {
+                    trace_id: Uuid::nil(),
+                    call_index: None,
+                    mcp_session_id: None,
+                    logical_session_id: None,
+                    logical_session_ref: Some("l_AAAAAAAAQACAAAAAAAAAAQ".into()),
+                },
+                dry,
+            ),
+            LiveRunSpawnOpts::default(),
+        ),
+    )
+    .await;
+    assert!(
+        delivered.is_ok(),
+        "render-only matrix live must finish within 30s on MCP await path"
+    );
+}
+
 #[cfg(not(debug_assertions))]
 #[tokio::test]
 async fn matrix_query_limit_on_release_stack_budget() {

@@ -259,3 +259,25 @@ fn render_compute_cross_binding_binds_singleton_labels_for_dot_access() {
         vec![serde_json::json!({ "content": "Pokemon: pika\nOwner: ash" })]
     );
 }
+
+#[test]
+fn render_compute_matrix_sized_rows_within_wall_time_guard() {
+    let started = std::time::Instant::now();
+    let rows: Vec<_> = (0..100)
+        .map(|i| serde_json::json!({ "id": format!("i{i}"), "title": format!("t{i}") }))
+        .collect();
+    let cols = empty_cols(&["id", "title"]);
+    let out = render(
+        &rows,
+        &cols,
+        "{% for r in rows %}{{ r.id }} {% endfor %}",
+        None,
+    )
+    .expect("render");
+    assert_eq!(out.len(), 1);
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed.as_millis() < 500,
+        "render_compute on 100 rows should stay sub-second, took {elapsed:?}"
+    );
+}

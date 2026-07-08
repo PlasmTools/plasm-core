@@ -24,6 +24,17 @@ pub(crate) async fn eval_compute_with_row_source(
             logical_count,
             hot_snapshot,
         } => {
+            if matches!(&compute.op, ComputeOp::Render { .. }) {
+                let rows = crate::graph_rehydrate::GraphSurfaceRehydrator::new(
+                    es, st, session_id, cgs,
+                )
+                .resolve_row_source_rows(
+                    row_source,
+                    Some(crate::plasm_plan::PLAN_RENDER_MAX_ROWS),
+                )
+                .await?;
+                return eval_compute_from_rows(compute, &rows, cross_binding_rows);
+            }
             if compute_needs_full_materialize(&compute.op) {
                 let rows =
                     crate::graph_rehydrate::GraphSurfaceRehydrator::new(es, st, session_id, cgs)
