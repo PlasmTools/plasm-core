@@ -1153,7 +1153,7 @@ mod tests {
             preflight: None,
             discovery: None,
             sanitizes: vec![],
-        
+
             deterministic: None,
 };
         cgs.add_capability(get_order).unwrap();

@@ -5,7 +5,7 @@
 //! - **Local directory** (OSS/self-host): set **`PLASM_RUN_ARTIFACTS_DIR`**; stores blobs and short-URI
 //!   index files under a stable layout (see `FsRunArtifactBackend`).
 //! - **Object store** (hosted/SaaS): set **`PLASM_RUN_ARTIFACTS_URL`** to an [`object_store`] URL (e.g.
-//!   `s3://bucket/prefix`, `file:///path/to/dir` as advanced use).  
+//!   `s3://bucket/prefix`, `file:///path/to/dir` as advanced use).
 //!   **Precedence:** if **`PLASM_RUN_ARTIFACTS_URL`** is set, the object store backend is used and
 //!   `PLASM_RUN_ARTIFACTS_DIR` is **ignored** for selection. If only `PLASM_RUN_ARTIFACTS_DIR` is set, the
 //!   local filesystem backend is used. If neither is set, in-memory.

@@ -29,7 +29,7 @@ pub struct QueryResponse {
     pub count: usize,
 }
 
-/// Response format for single resource operations  
+/// Response format for single resource operations
 #[derive(Debug, Serialize)]
 pub struct ResourceResponse {
     pub resource: Value,

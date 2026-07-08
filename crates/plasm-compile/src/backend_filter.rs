@@ -10,7 +10,7 @@ pub enum BackendFilter {
     #[serde(rename = "true")]
     True,
 
-    /// Never matches  
+    /// Never matches
     #[serde(rename = "false")]
     False,
 

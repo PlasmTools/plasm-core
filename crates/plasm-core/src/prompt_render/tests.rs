@@ -2792,7 +2792,7 @@ fn github_rendered_examples_parse() {
 }
 
 /// Writes `apis/<name>/eval/prompt_symbol_tuning.txt` for inspection (eval/REPL bundle).
-/// Does not run in normal `cargo test`; use:  
+/// Does not run in normal `cargo test`; use:
 /// `cargo test -p plasm-core write_clickup_prompt_fixture -- --ignored --exact --nocapture`
 #[test]
 #[ignore = "manual: dumps prompt bundle to apis/.../eval/prompt_symbol_tuning.txt"]

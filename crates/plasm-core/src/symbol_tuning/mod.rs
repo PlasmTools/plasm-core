@@ -4697,7 +4697,7 @@ mod tests {
             preflight: None,
             discovery: None,
             sanitizes: vec![],
-        
+
             deterministic: None,
 })
         .unwrap();
