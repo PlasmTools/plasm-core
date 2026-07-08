@@ -214,9 +214,7 @@ impl FlowPolicy {
             if !rule.pattern.matches(event) {
                 continue;
             }
-            return rule
-                .enforcement
-                .to_node_disposition(event, author_label);
+            return rule.enforcement.to_node_disposition(event, author_label);
         }
         self.default_posture
             .to_node_disposition(event, author_label)

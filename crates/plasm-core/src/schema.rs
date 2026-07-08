@@ -1086,7 +1086,9 @@ fn collect_flow_control_param_names(t: &InputType, out: &mut Vec<String>) {
                 }
             }
         }
-        InputType::Array { element_type, .. } => collect_flow_control_param_names(element_type, out),
+        InputType::Array { element_type, .. } => {
+            collect_flow_control_param_names(element_type, out)
+        }
         InputType::Union { variants } => {
             for v in variants {
                 for f in &v.fields {

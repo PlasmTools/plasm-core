@@ -3271,7 +3271,9 @@ mod tests {
             preflight: None,
             discovery: None,
             sanitizes: vec![],
-        };
+        
+            deterministic: None,
+};
 
         cgs.add_capability(query_capability).unwrap();
 
@@ -3299,6 +3301,8 @@ mod tests {
             preflight: None,
             discovery: None,
             sanitizes: vec![],
+
+            deterministic: None,
         };
 
         cgs.add_capability(get_capability).unwrap();
@@ -3403,6 +3407,8 @@ mod tests {
             preflight: None,
             discovery: None,
             sanitizes: vec![],
+
+            deterministic: None,
         };
         (cgs, cap)
     }

@@ -73,7 +73,7 @@ pub fn flow_policy_from_env_or_default() -> FlowPolicySnapshot {
 mod tests {
     use super::*;
     use crate::plan_flow_policy::{
-        CapabilityGatePattern, CapabilityGateRule, OperatorDisposition, ForbiddenFlowRule,
+        CapabilityGatePattern, CapabilityGateRule, ForbiddenFlowRule, OperatorDisposition,
     };
     use plasm_core::{DataClassName, SinkClassName};
     use std::io::Write;
@@ -99,12 +99,7 @@ mod tests {
             ..FlowPolicy::default()
         };
         let mut file = NamedTempFile::new().expect("temp");
-        write!(
-            file,
-            "{}",
-            serde_json::to_string(&policy).expect("json")
-        )
-        .expect("write");
+        write!(file, "{}", serde_json::to_string(&policy).expect("json")).expect("write");
         let snapshot = snapshot_from_path(file.path()).expect("load");
         assert!(matches!(snapshot, FlowPolicySnapshot::Active { .. }));
         if let FlowPolicySnapshot::Active { policy, .. } = snapshot {

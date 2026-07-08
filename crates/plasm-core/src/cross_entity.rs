@@ -349,7 +349,9 @@ mod tests {
             preflight: None,
             discovery: None,
             sanitizes: vec![],
-        }).unwrap();
+        
+            deterministic: None,
+}).unwrap();
 
         cgs.add_capability(CapabilitySchema {
             name: "order_query".into(),
@@ -379,7 +381,9 @@ mod tests {
             preflight: None,
             discovery: None,
             sanitizes: vec![],
-        }).unwrap();
+        
+            deterministic: None,
+}).unwrap();
 
         cgs.validate()
             .expect("petstore_cgs fixture must satisfy CGS::validate");

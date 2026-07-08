@@ -91,7 +91,9 @@ impl NodeFlowFacts {
 #[serde(rename_all = "snake_case")]
 pub enum SinkProof {
     StaticClean,
-    Deferred { check: String },
+    Deferred {
+        check: String,
+    },
     Sanitized {
         by: String,
         cleared: BTreeSet<DataClassName>,
@@ -337,10 +339,8 @@ impl<'a, C: FlowCatalog + ?Sized, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, 
                     .cloned()
                     .unwrap_or_default();
                 self.facts.insert(id.clone(), source_facts);
-                let cap_name =
-                    capability_name_from_expr(&n.effect_template.ir_template.expr).unwrap_or_else(
-                        || operation_name_for_kind(n.effect_template.kind).to_string(),
-                    );
+                let cap_name = capability_name_from_expr(&n.effect_template.ir_template.expr)
+                    .unwrap_or_else(|| operation_name_for_kind(n.effect_template.kind).to_string());
                 self.transfer_mutation_template(MutationFlowCtx {
                     node_id: id.clone(),
                     qualified: &n.effect_template.qualified_entity,
@@ -645,7 +645,7 @@ fn is_remote_mutation(kind: PlanNodeKind, effect_class: EffectClass) -> bool {
 mod tests {
     use super::*;
     use crate::flow_catalog::FlowCatalogView;
-    use crate::plan_flow_policy::{OperatorDisposition, FlowPolicy, ForbiddenFlowRule};
+    use crate::plan_flow_policy::{FlowPolicy, ForbiddenFlowRule, OperatorDisposition};
     use crate::plasm_plan::parse_and_validate_plan_json;
 
     #[test]
@@ -898,7 +898,10 @@ mod tests {
             &FlowPolicySnapshot::Inactive,
         );
         assert!(
-            checked_inactive.analysis.approval_gate_for_node("c1").is_none(),
+            checked_inactive
+                .analysis
+                .approval_gate_for_node("c1")
+                .is_none(),
             "inactive policy must not produce approval gate"
         );
 

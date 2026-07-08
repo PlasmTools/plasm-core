@@ -4697,7 +4697,9 @@ mod tests {
             preflight: None,
             discovery: None,
             sanitizes: vec![],
-        })
+        
+            deterministic: None,
+})
         .unwrap();
         cgs.validate().expect("fixture CGS");
         let map = TeachingExposureSession::new(&cgs, "fixture_entry", &["Widget"]).to_symbol_map();

@@ -5,7 +5,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use serde::Serialize;
 
 use crate::flow_policy_vocabulary::{CapabilityVocabEntry, ProjectFlowVocabulary};
-use crate::plan_flow_policy::{OperatorDisposition, FlowPolicy};
+use crate::plan_flow_policy::{FlowPolicy, OperatorDisposition};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct FlowPolicyDiagnostic {
@@ -320,7 +320,8 @@ fn sink_dimensions(vocab: &ProjectFlowVocabulary) -> HashMap<&str, &str> {
     let mut out = HashMap::new();
     for cat in &vocab.catalogs {
         for sink in &cat.sink_classes {
-            out.entry(sink.id.as_str()).or_insert(sink.dimension.as_str());
+            out.entry(sink.id.as_str())
+                .or_insert(sink.dimension.as_str());
         }
     }
     out

@@ -122,8 +122,8 @@ mod plan_flow_ports;
 mod plan_flow_sanitizer;
 mod plan_gate;
 mod run_progress_resolve;
-pub use flow_policy_env::flow_policy_from_env_or_default;
 pub use flow_catalog::FlowCatalogView;
+pub use flow_policy_env::flow_policy_from_env_or_default;
 pub use plan_execute_shared::PlanLineExecuteShared;
 pub use plan_flow::{
     verify_plan_flow, ApprovalRequirement, FlowAdmission, FlowCheckedPlan, FlowDenial, FlowFacts,

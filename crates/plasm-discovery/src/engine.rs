@@ -957,6 +957,8 @@ mod relation_intent_rank_tests {
             preflight: None,
             discovery: None,
             sanitizes: vec![],
+
+            deterministic: None,
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
@@ -975,6 +977,8 @@ mod relation_intent_rank_tests {
                 target_terms: vec!["comment".into()],
             }),
             sanitizes: vec![],
+
+            deterministic: None,
         })
         .unwrap();
         cgs

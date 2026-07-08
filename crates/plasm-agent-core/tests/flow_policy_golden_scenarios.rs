@@ -13,18 +13,17 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use plasm_agent_core::plasm_plan::parse_and_validate_plan_json;
 use plasm_agent_core::{
     verify_plan_flow, CapabilityGatePattern, CapabilityGateRule, EffectEvent, FlowCatalogView,
     FlowPolicy, FlowPolicySnapshot, FlowVerdict, ForbiddenFlowRule, NodeDisposition,
     OperatorDisposition, PolicyRevision, QualifiedCapabilityKey, SinkParamRef,
 };
-use plasm_agent_core::plasm_plan::parse_and_validate_plan_json;
 use plasm_core::{load_schema_dir_unvalidated, CapabilityParamName, DataClassName, SinkClassName};
 
 /// Workspace-root-relative path to the flow_matrix fixture.
 fn flow_matrix_dir() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/schemas/flow_matrix")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/flow_matrix")
 }
 
 /// Build a minimal `FlowCatalogView` from the flow_matrix fixture CGS.
@@ -119,7 +118,10 @@ fn g_p0_inactive_snapshot_always_allows() {
     };
     let policy = FlowPolicySnapshot::Inactive.effective_policy();
     assert!(
-        matches!(policy.disposition_for_event(&event, None), NodeDisposition::Allow),
+        matches!(
+            policy.disposition_for_event(&event, None),
+            NodeDisposition::Allow
+        ),
         "G-P0: Inactive snapshot must Allow any mutation"
     );
 }
@@ -144,7 +146,10 @@ fn g_p1_allow_posture_no_gates_always_allows() {
     };
     let effective = snapshot.effective_policy();
     assert!(
-        matches!(effective.disposition_for_event(&event, None), NodeDisposition::Allow),
+        matches!(
+            effective.disposition_for_event(&event, None),
+            NodeDisposition::Allow
+        ),
         "G-P1: Active allow-posture with no gates must Allow"
     );
 }
@@ -169,7 +174,10 @@ fn g_p2_deny_posture_no_gates_always_blocks() {
     };
     let effective = snapshot.effective_policy();
     assert!(
-        matches!(effective.disposition_for_event(&event, None), NodeDisposition::Deny),
+        matches!(
+            effective.disposition_for_event(&event, None),
+            NodeDisposition::Deny
+        ),
         "G-P2: Active deny-posture with no gates must Deny"
     );
 }
@@ -239,11 +247,17 @@ fn g_p3_deny_posture_gate_allow_carves_out() {
     };
 
     assert!(
-        matches!(effective.disposition_for_event(&allowed_event, None), NodeDisposition::Allow),
+        matches!(
+            effective.disposition_for_event(&allowed_event, None),
+            NodeDisposition::Allow
+        ),
         "G-P3: deny-posture Allow gate must Allow the gated capability"
     );
     assert!(
-        matches!(effective.disposition_for_event(&blocked_event, None), NodeDisposition::Deny),
+        matches!(
+            effective.disposition_for_event(&blocked_event, None),
+            NodeDisposition::Deny
+        ),
         "G-P3: deny-posture must Deny ungated capabilities"
     );
 }
@@ -285,11 +299,17 @@ fn g_p4_allow_posture_gate_block_hard_stops() {
     };
 
     assert!(
-        matches!(effective.disposition_for_event(&blocked_event, None), NodeDisposition::Deny),
+        matches!(
+            effective.disposition_for_event(&blocked_event, None),
+            NodeDisposition::Deny
+        ),
         "G-P4: Allow-posture Deny gate must Deny the gated capability"
     );
     assert!(
-        matches!(effective.disposition_for_event(&allowed_event, None), NodeDisposition::Allow),
+        matches!(
+            effective.disposition_for_event(&allowed_event, None),
+            NodeDisposition::Allow
+        ),
         "G-P4: Allow-posture must Allow ungated capabilities"
     );
 }
@@ -530,7 +550,10 @@ fn g_b4_same_entity_different_capability_dispositions() {
     };
 
     assert!(
-        matches!(effective.disposition_for_event(&catastrophic, None), NodeDisposition::Deny),
+        matches!(
+            effective.disposition_for_event(&catastrophic, None),
+            NodeDisposition::Deny
+        ),
         "G-B4: delete_with_linked_resources must Deny (catastrophic)"
     );
     assert!(
@@ -609,18 +632,17 @@ fn flow_matrix_fixture_has_expected_labels_and_sink() {
     let send_key = QualifiedCapabilityKey::from_parts("flow", "Message", "send");
     let sink_params = view.sink_params_for(&send_key);
     assert!(
-        sink_params
-            .iter()
-            .any(|p| p.sink_class.as_ref().is_some_and(|s| s.as_str() == "outbound_body")),
+        sink_params.iter().any(|p| p
+            .sink_class
+            .as_ref()
+            .is_some_and(|s| s.as_str() == "outbound_body")),
         "flow_matrix: send capability must expose outbound_body sink param"
     );
 
     let read_key = QualifiedCapabilityKey::from_parts("flow", "Message", "message_query");
     let labels = view.output_labels_for(&read_key);
     assert!(
-        labels
-            .iter()
-            .any(|l| l.as_str() == "untrusted"),
+        labels.iter().any(|l| l.as_str() == "untrusted"),
         "flow_matrix: message_query must carry untrusted label from Message.body; got {labels:?}"
     );
 }
@@ -632,9 +654,7 @@ fn flow_matrix_redact_sanitizes_credentials() {
     let redact_key = QualifiedCapabilityKey::from_parts("flow", "Redactor", "redact");
     let sanitizers = view.sanitizers_for(&redact_key);
     assert!(
-        sanitizers
-            .iter()
-            .any(|s| s.as_str() == "credentials"),
+        sanitizers.iter().any(|s| s.as_str() == "credentials"),
         "flow_matrix: redact capability must sanitize credentials; got {sanitizers:?}"
     );
 }
@@ -646,9 +666,7 @@ fn flow_matrix_sanitize_body_clears_untrusted() {
     let key = QualifiedCapabilityKey::from_parts("flow", "Message", "sanitize_body");
     let sanitizers = view.sanitizers_for(&key);
     assert!(
-        sanitizers
-            .iter()
-            .any(|s| s.as_str() == "untrusted"),
+        sanitizers.iter().any(|s| s.as_str() == "untrusted"),
         "flow_matrix: sanitize_body capability must sanitize untrusted; got {sanitizers:?}"
     );
 }

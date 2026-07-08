@@ -64,6 +64,8 @@ fn ticket_query_fixture_cgs() -> CGS {
         preflight: None,
         discovery: None,
         sanitizes: vec![],
+
+        deterministic: None,
     })
     .unwrap();
     cgs.validate().unwrap();

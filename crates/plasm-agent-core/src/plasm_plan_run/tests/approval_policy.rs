@@ -1,7 +1,7 @@
 use super::super::*;
 use super::support::*;
 use crate::plan_flow_policy::{
-    CapabilityGatePattern, CapabilityGateRule, OperatorDisposition, FlowPolicy, FlowPolicySnapshot,
+    CapabilityGatePattern, CapabilityGateRule, FlowPolicy, FlowPolicySnapshot, OperatorDisposition,
     PolicyRevision,
 };
 
@@ -179,7 +179,10 @@ fn mutating_surface_gate_with_approve_policy() {
         &FlowPolicySnapshot::Inactive,
     );
     assert!(
-        checked_inactive.analysis.approval_gate_for_node("c1").is_none(),
+        checked_inactive
+            .analysis
+            .approval_gate_for_node("c1")
+            .is_none(),
         "inactive policy must not emit approval gate"
     );
 
@@ -200,7 +203,12 @@ fn mutating_surface_gate_with_approve_policy() {
         revision: PolicyRevision(1),
         policy: active_policy,
     };
-    let checked = verify_plan_flow(validated.artifact(), &["c1".to_string()], &FlowCatalogView::default(), &snapshot);
+    let checked = verify_plan_flow(
+        validated.artifact(),
+        &["c1".to_string()],
+        &FlowCatalogView::default(),
+        &snapshot,
+    );
     let gate = checked
         .analysis
         .approval_gate_for_node("c1")

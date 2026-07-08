@@ -2512,6 +2512,8 @@ fn prompt_stats_fixture_cgs() -> CGS {
             preflight: None,
             discovery: None,
             sanitizes: vec![],
+
+            deterministic: None,
         })
         .unwrap();
     }
@@ -2637,6 +2639,8 @@ fn p_slot_redefinition_fixture_cgs(id_desc_a: &str, id_desc_b: &str) -> CGS {
             preflight: None,
             discovery: None,
             sanitizes: vec![],
+
+            deterministic: None,
         })
         .unwrap();
     }

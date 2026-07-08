@@ -9,6 +9,8 @@ use crate::plasm_plan::PlanResultUse;
 use plasm_core::DataClassName;
 
 pub struct LabelClearance {
+    /// Labels removed by catalog/policy sanitizers (retained for inspection / future UI).
+    #[allow(dead_code)]
     pub cleared: BTreeSet<DataClassName>,
     pub outgoing_labels: BTreeSet<DataClassName>,
     pub proof: SinkProof,
@@ -29,6 +31,7 @@ pub fn union_sanitizer_clears<C: FlowCatalog + ?Sized, P: FlowPolicyEvaluator + 
 ///
 /// When `check_control_taint` is true, untrusted taint on behavior-controlling parameters
 /// voids clearance (robust declassification); payload taint alone clears soundly.
+#[allow(clippy::too_many_arguments)]
 pub fn apply_label_clearance<C: FlowCatalog + ?Sized, P: FlowPolicyEvaluator + ?Sized>(
     catalog: &C,
     policy: &P,
@@ -52,9 +55,7 @@ pub fn apply_label_clearance<C: FlowCatalog + ?Sized, P: FlowPolicyEvaluator + ?
     if check_control_taint {
         let control_params = catalog.control_params(key);
         let control_tainted = template_expr
-            .map(|expr| {
-                control_param_untrusted_voided(expr, &control_params, uses_result, facts)
-            })
+            .map(|expr| control_param_untrusted_voided(expr, &control_params, uses_result, facts))
             .unwrap_or(false);
         if control_tainted {
             return LabelClearance {

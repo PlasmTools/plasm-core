@@ -4068,6 +4068,8 @@ mod tests {
             preflight: None,
             discovery: None,
             sanitizes: vec![],
+
+            deterministic: None,
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
@@ -4128,6 +4130,8 @@ mod tests {
             preflight: None,
             discovery: None,
             sanitizes: vec![],
+
+            deterministic: None,
         })
         .unwrap();
         cgs
@@ -5004,7 +5008,9 @@ mod tests {
             preflight: None,
             discovery: None,
             sanitizes: vec![],
-        })
+        
+            deterministic: None,
+})
         .unwrap();
         cgs.validate().unwrap();
         cgs
@@ -5111,6 +5117,8 @@ mod tests {
             preflight: None,
             discovery: None,
             sanitizes: vec![],
+
+            deterministic: None,
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
@@ -5136,6 +5144,8 @@ mod tests {
             preflight: None,
             discovery: None,
             sanitizes: vec![],
+
+            deterministic: None,
         })
         .unwrap();
         cgs.validate().unwrap();
@@ -5324,6 +5334,8 @@ mod tests {
             preflight: None,
             discovery: None,
             sanitizes: vec![],
+
+            deterministic: None,
         })
         .unwrap();
         cgs.validate().unwrap();
@@ -5458,6 +5470,8 @@ mod tests {
             preflight: None,
             discovery: None,
             sanitizes: vec![],
+
+            deterministic: None,
         })
         .unwrap();
         cgs.validate().unwrap();
@@ -5549,6 +5563,8 @@ mod tests {
             preflight: None,
             discovery: None,
             sanitizes: vec![],
+
+            deterministic: None,
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
@@ -5569,6 +5585,8 @@ mod tests {
             preflight: None,
             discovery: None,
             sanitizes: vec![],
+
+            deterministic: None,
         })
         .unwrap();
         cgs.validate().unwrap();
@@ -5976,6 +5994,8 @@ mod tests {
             preflight: None,
             discovery: None,
             sanitizes: vec![],
+
+            deterministic: None,
         })
         .unwrap();
         cgs.validate().unwrap();
