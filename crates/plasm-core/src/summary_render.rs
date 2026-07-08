@@ -423,7 +423,7 @@ fn value_short(v: &Value) -> String {
     match v {
         Value::UnionCtor { ctor_label, .. } => format!("<union_ctor {ctor_label}>"),
         Value::PlasmInputRef(_) => "<plasm_input_ref>".to_string(),
-        Value::String(s) => format!("{s:?}"),
+        Value::String(s) | Value::PhraseIdent(s) => format!("{s:?}"),
         Value::Integer(i) => i.to_string(),
         Value::Float(f) => f.to_string(),
         Value::Bool(b) => b.to_string(),

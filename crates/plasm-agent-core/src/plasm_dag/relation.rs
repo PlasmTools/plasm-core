@@ -185,13 +185,14 @@ pub(in crate::plasm_dag) fn try_split_single_hop_surface_chain(
     expr: &str,
 ) -> Option<(String, String)> {
     let refs = state.program_node_id_set();
-    let parsed = parse_plasm_surface_line_program(
+    let parsed = parse_plasm_program_surface_for_dag(
         session,
         state.cross_cache,
         state.pipeline,
         expr,
-        Some(&refs),
+        &refs,
         false,
+        None,
     )
     .ok()?;
     let Expr::Chain(chain) = parsed.expr else {
@@ -215,13 +216,14 @@ pub(in crate::plasm_dag) fn try_split_single_hop_surface_chain(
     if base_expr.is_empty() {
         return None;
     }
-    let base_parsed = parse_plasm_surface_line_program(
+    let base_parsed = parse_plasm_program_surface_for_dag(
         session,
         state.cross_cache,
         state.pipeline,
         &base_expr,
-        Some(&refs),
+        &refs,
         false,
+        None,
     )
     .ok()?;
     if base_parsed.expr == *chain.source {

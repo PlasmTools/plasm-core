@@ -2261,7 +2261,8 @@ paged"#;
         )
         .expect_err("unknown sort field");
         assert!(
-            err.contains("p#")
+            err.contains("wire")
+                || err.contains("teaching")
                 || err.contains("rows:")
                 || err.contains("Intermediate step must be a binding"),
             "expected sort guidance, got: {err}"
@@ -3042,4 +3043,53 @@ report"#;
         }
         let rewritten = rewrite_binding_field_projection_root("pick(id, title)", &state);
         assert_eq!(rewritten.as_deref(), Some("pick[id, title]"));
+    }
+
+    #[test]
+    fn invoke_rejects_unbound_phrase_ident_on_string_param() {
+        let session = test_session();
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "invoke-unknown-binding",
+            r#"item = LangItem("i1")
+bad = item.update(title=body)
+bad"#,
+        )
+        .expect_err("unbound `body` must not plan as literal string");
+        assert!(err.contains("body"), "{err}");
+        assert!(
+            err.contains("unknown program binding") || err.contains("program binding"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn invoke_accepts_bound_label_as_node_input_ref() {
+        let session = test_session();
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "invoke-bound-label",
+            r#"body = <<B
+patch
+B
+item = LangItem("i1")
+updated = item.update(title=body)
+updated"#,
+        )
+        .expect("bound label lowers to node_input");
+        let updated = plan["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .find(|n| n["id"] == "updated")
+            .expect("updated node");
+        let uses = updated["uses_result"].as_array().expect("uses_result");
+        assert!(
+            uses.iter().any(|u| u["node"] == "body"),
+            "title=body must reference binding: {uses:?}"
+        );
     }

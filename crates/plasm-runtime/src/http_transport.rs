@@ -480,7 +480,7 @@ fn add_multipart_part(
                 ),
             });
         }
-        Value::String(s) => s.clone(),
+        Value::String(s) | Value::PhraseIdent(s) => s.clone(),
         Value::Bool(b) => b.to_string(),
         Value::Integer(i) => i.to_string(),
         Value::Float(f) => f.to_string(),
@@ -586,7 +586,7 @@ fn plasm_value_to_form_urlencoded(body: &Value) -> Result<String, RuntimeError> 
             continue;
         }
         let s = match v {
-            Value::String(s) => s.clone(),
+            Value::String(s) | Value::PhraseIdent(s) => s.clone(),
             Value::Bool(b) => b.to_string(),
             Value::Integer(i) => i.to_string(),
             Value::Float(f) => f.to_string(),
@@ -1024,7 +1024,7 @@ fn plasm_value_to_json(value: &Value) -> serde_json::Value {
         Value::Float(f) => serde_json::Number::from_f64(*f)
             .map(serde_json::Value::Number)
             .unwrap_or(serde_json::Value::Null),
-        Value::String(s) => serde_json::Value::String(s.clone()),
+        Value::String(s) | Value::PhraseIdent(s) => serde_json::Value::String(s.clone()),
         Value::Array(arr) => {
             serde_json::Value::Array(arr.iter().map(plasm_value_to_json).collect())
         }

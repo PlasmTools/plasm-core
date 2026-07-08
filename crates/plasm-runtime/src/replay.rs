@@ -331,7 +331,7 @@ fn value_to_json_value(value: &Value) -> serde_json::Value {
         Value::Float(n) => serde_json::Number::from_f64(*n)
             .map(serde_json::Value::Number)
             .unwrap_or(serde_json::Value::Null),
-        Value::String(s) => serde_json::Value::String(s.clone()),
+        Value::String(s) | Value::PhraseIdent(s) => serde_json::Value::String(s.clone()),
         Value::Array(arr) => {
             serde_json::Value::Array(arr.iter().map(value_to_json_value).collect())
         }

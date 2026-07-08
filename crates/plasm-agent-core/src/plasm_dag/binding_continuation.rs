@@ -132,13 +132,14 @@ fn parse_relation_continuation_expr(
     }
     let refs = state.program_node_id_set();
     let try_expanded_chain = |expanded: &str| -> Option<plasm_core::expr_parser::ParsedExpr> {
-        let parsed = parse_plasm_surface_line_program(
+        let parsed = parse_plasm_program_surface_for_dag(
             session,
             state.cross_cache,
             state.pipeline,
             expanded,
-            Some(&refs),
+            &refs,
             false,
+            None,
         )
         .ok()?;
         matches!(parsed.expr, Expr::Chain(_)).then_some(parsed)
@@ -486,23 +487,15 @@ fn lower_multi_segment_relation_continuation(
             )
         })?;
     let refs = state.program_node_id_set();
-    let parsed = parse_plasm_surface_line_program(
+    let parsed = parse_plasm_program_surface_for_dag(
         session,
         state.cross_cache,
         state.pipeline,
         &expanded,
-        Some(&refs),
+        &refs,
         false,
-    )
-    .map_err(|e| {
-        format_session_symbolic_parse_error(
-            session,
-            state.cross_cache,
-            state.pipeline,
-            &expanded,
-            &e,
-        )
-    })?;
+        Some(id),
+    )?;
     if let Expr::Chain(ref chain) = parsed.expr {
         let (target_qe, rel_cardinality) = lookup_relation_chain_meta(
             session,

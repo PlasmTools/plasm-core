@@ -376,6 +376,9 @@ pub fn json_value_to_plasm_value(v: &serde_json::Value) -> Value {
 }
 
 pub fn plasm_value_to_json(v: &Value) -> serde_json::Value {
+    if let Some(s) = v.as_string_or_phrase() {
+        return serde_json::Value::String(s.to_string());
+    }
     match v {
         Value::Null => serde_json::Value::Null,
         Value::Bool(b) => serde_json::Value::Bool(*b),
@@ -383,7 +386,6 @@ pub fn plasm_value_to_json(v: &Value) -> serde_json::Value {
         Value::Float(f) => serde_json::Number::from_f64(*f)
             .map(serde_json::Value::Number)
             .unwrap_or(serde_json::Value::Null),
-        Value::String(s) => serde_json::Value::String(s.clone()),
         Value::Array(items) => {
             serde_json::Value::Array(items.iter().map(plasm_value_to_json).collect())
         }
@@ -392,7 +394,9 @@ pub fn plasm_value_to_json(v: &Value) -> serde_json::Value {
                 .map(|(k, v)| (k.clone(), plasm_value_to_json(v)))
                 .collect(),
         ),
-        Value::PlasmInputRef(_) | Value::UnionCtor { .. } => serde_json::Value::Null,
+        Value::PlasmInputRef(_) | Value::UnionCtor { .. } | Value::String(_) | Value::PhraseIdent(_) => {
+            serde_json::Value::Null
+        }
     }
 }
 

@@ -256,7 +256,7 @@ pub fn coerce_dyn_value(value: &Value, ty: &DynSolType) -> Result<DynSolValue, C
                 "Plasm compile-time input references cannot be coerced to solidity type '{ty}'"
             ),
         }),
-        Value::String(s) => ty.coerce_str(s).map_err(|e| CmlError::EvaluationError {
+        Value::String(s) | Value::PhraseIdent(s) => ty.coerce_str(s).map_err(|e| CmlError::EvaluationError {
             message: format!("failed to coerce '{s}' to solidity type '{ty}': {e}"),
         }),
         Value::Integer(i) => ty

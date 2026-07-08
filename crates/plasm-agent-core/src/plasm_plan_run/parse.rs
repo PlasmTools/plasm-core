@@ -168,6 +168,67 @@ pub fn parse_plasm_surface_line_program(
     Ok(parsed)
 }
 
+/// Parse a program-context surface line and lower phrase idents (validate + normalize).
+///
+/// All DAG paths that pass `program_nodes` must use this instead of
+/// [`parse_plasm_surface_line_program`] alone so binding-shadow / unknown-binding rules apply
+/// consistently before plan emission.
+pub fn parse_plasm_program_surface_for_dag(
+    session: &ExecuteSession,
+    symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
+    pipeline: &PromptPipelineConfig,
+    line: &str,
+    program_labels: &BTreeSet<String>,
+    for_each_row_context: bool,
+    node_id: Option<&str>,
+) -> Result<ParsedExpr, String> {
+    let mut parsed = parse_plasm_surface_line_program(
+        session,
+        symbol_map_cross_cache,
+        pipeline,
+        line,
+        Some(program_labels),
+        for_each_row_context,
+    )
+    .map_err(|e| format_session_symbolic_parse_error(
+        session,
+        symbol_map_cross_cache,
+        pipeline,
+        line,
+        &e,
+    ))?;
+    lower_program_phrase_idents_in_parsed(
+        session,
+        &mut parsed,
+        program_labels,
+        node_id,
+    )?;
+    Ok(parsed)
+}
+
+pub(crate) fn lower_program_phrase_idents_in_parsed(
+    session: &ExecuteSession,
+    parsed: &mut ParsedExpr,
+    program_labels: &BTreeSet<String>,
+    node_id: Option<&str>,
+) -> Result<(), String> {
+    plasm_core::lower_program_phrase_idents_in_expr(
+        &mut parsed.expr,
+        program_labels,
+        session.cgs.as_ref(),
+    )
+    .map_err(|e| {
+        if let Some(id) = node_id {
+            agent_program_error(
+                format!("Plasm program `{id}`: {e}"),
+                Some("Use a binding reference for program labels (`label` or `label.field`), or quote literal strings (`\"…\"`)."),
+            )
+        } else {
+            agent_program_error(e, None::<&str>)
+        }
+    })
+}
+
 /// Program surface fragment for DAG lowering — **no** textual symbol expansion.
 ///
 /// Opaque `e#` / `m#` / `p#` / `r#` resolve in the parser and per-token field helpers

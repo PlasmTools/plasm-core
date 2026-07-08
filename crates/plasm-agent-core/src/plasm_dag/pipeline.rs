@@ -178,23 +178,15 @@ pub(in crate::plasm_dag) fn compile_node_expr(
         require_node(state, source)?;
         if looks_like_plasm_effect_template(right) {
             let refs = state.program_node_id_set();
-            let parsed = parse_plasm_surface_line_program(
+            let parsed = parse_plasm_program_surface_for_dag(
                 session,
                 state.cross_cache,
                 state.pipeline,
                 right.trim(),
-                Some(&refs),
+                &refs,
                 true,
-            )
-            .map_err(|e| {
-                format_session_symbolic_parse_error(
-                    session,
-                    state.cross_cache,
-                    state.pipeline,
-                    right.trim(),
-                    &e,
-                )
-            })?;
+                Some(id),
+            )?;
             let uses = collect_template_uses_from_expr(&parsed.expr);
             let (kind, qualified, _effect, _shape) = infer_surface_contract(session, &parsed.expr)?;
             if !matches!(
@@ -345,17 +337,15 @@ pub(in crate::plasm_dag) fn compile_surface_node(
         ));
     }
     let refs = state.program_node_id_set();
-    let parsed = parse_plasm_surface_line_program(
+    let parsed = parse_plasm_program_surface_for_dag(
         session,
         state.cross_cache,
         state.pipeline,
         expr,
-        Some(&refs),
+        &refs,
         false,
-    )
-    .map_err(|e| {
-        format_session_symbolic_parse_error(session, state.cross_cache, state.pipeline, expr, &e)
-    })?;
+        Some(id),
+    )?;
     let uses = collect_template_uses_from_expr(&parsed.expr);
     let (kind, qualified_entity, effect_class, result_shape) =
         infer_surface_contract(session, &parsed.expr)?;

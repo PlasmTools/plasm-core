@@ -3034,7 +3034,7 @@ fn collect_predicate_vars(
 fn value_to_ambient_string(v: &Value) -> Option<String> {
     match v {
         Value::PlasmInputRef(_) => None,
-        Value::String(s) => Some(s.clone()),
+        Value::String(s) | Value::PhraseIdent(s) => Some(s.clone()),
         Value::Integer(i) => Some(i.to_string()),
         Value::Float(f) => Some(f.to_string()),
         Value::Bool(b) => Some(b.to_string()),

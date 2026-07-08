@@ -771,7 +771,7 @@ pub fn eval_cml(expr: &CmlExpr, env: &CmlEnv) -> Result<Value, CmlError> {
 fn value_to_string(value: &Value) -> String {
     match value {
         Value::PlasmInputRef(_) => format!("{value:?}"),
-        Value::String(s) => s.clone(),
+        Value::String(s) | Value::PhraseIdent(s) => s.clone(),
         Value::Integer(i) => i.to_string(),
         Value::Float(f) => f.to_string(),
         Value::Bool(b) => b.to_string(),

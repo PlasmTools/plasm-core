@@ -84,7 +84,8 @@ pub use orchestrator::run_plasm_comp;
 pub use parse::{
     dry_run_simulation_for_session, expand_program_surface_for_session_lower,
     format_session_symbolic_parse_error, parse_parsed_expr_for_session,
-    parse_plasm_line_for_session, parse_plasm_surface_line, parse_plasm_surface_line_program,
+    parse_plasm_line_for_session, parse_plasm_program_surface_for_dag, parse_plasm_surface_line,
+    parse_plasm_surface_line_program,
     resolve_wire_field_list, resolve_wire_field_token, session_cgs_layer_stack, session_cgs_layers,
     symbol_map_for_plasm_surface_parse, typecheck_parsed_for_session,
 };

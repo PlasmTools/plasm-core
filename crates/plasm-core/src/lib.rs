@@ -107,6 +107,7 @@ pub mod identity;
 pub mod loader;
 pub mod normalizer;
 pub mod paging_handle;
+pub mod phrase_ident;
 pub mod plasm_monad;
 pub mod plp;
 pub mod predicate;
@@ -225,6 +226,9 @@ pub use plasm_monad::{
     PlasmStep, PlasmStepKind, PlasmStepPayload, PurePayload, RelationCardinality,
     RelationSourceCardinality, ResultShape, RewritePolicy, StepId, SurfaceKind,
     SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind, PLASM_COMP_WIRE_VERSION,
+};
+pub use phrase_ident::{
+    is_identifier_phrase, lower_program_phrase_idents_in_expr, PhraseIdentFieldContext,
 };
 pub use predicate::Predicate;
 pub use preflight::{

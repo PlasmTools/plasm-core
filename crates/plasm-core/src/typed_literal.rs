@@ -28,6 +28,8 @@ pub enum TypedLiteralError {
     UnsupportedPlasmHoleInCollection,
     /// Surface union constructors (`v101{…}`) are not predicate literals.
     UnionConstructor,
+    /// Unquoted program phrase token — not a typed literal until lowered.
+    PhraseIdent,
     EntityRef(EntityRefValueError),
 }
 
@@ -56,6 +58,7 @@ impl TypedLiteral {
             Value::Integer(i) => Ok(TypedLiteral::Integer(*i)),
             Value::Float(f) => Ok(TypedLiteral::Float(*f)),
             Value::String(s) => Ok(TypedLiteral::String(s.clone())),
+            Value::PhraseIdent(_) => Err(TypedLiteralError::PhraseIdent),
             Value::Array(arr) => {
                 let mut out = Vec::with_capacity(arr.len());
                 for item in arr {

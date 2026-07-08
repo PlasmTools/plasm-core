@@ -136,7 +136,7 @@ fn encode_utc_datetime(dt: chrono::DateTime<chrono::Utc>, fmt: TemporalWireForma
 /// Render an encoded temporal [`Value`] as a wire string (for URL query params).
 pub fn temporal_encoded_as_wire_string(encoded: &Value) -> String {
     match encoded {
-        Value::String(s) => s.clone(),
+        Value::String(s) | Value::PhraseIdent(s) => s.clone(),
         Value::Integer(i) => i.to_string(),
         Value::Float(f) => {
             if f.fract() == 0.0 && f.is_finite() {
@@ -160,7 +160,7 @@ fn plasm_value_to_json_temporal(v: &Value) -> serde_json::Value {
         Value::Bool(b) => serde_json::json!(b),
         Value::Integer(i) => serde_json::json!(i),
         Value::Float(f) => serde_json::json!(f),
-        Value::String(s) => serde_json::json!(s),
+        Value::String(s) | Value::PhraseIdent(s) => serde_json::json!(s),
         Value::Array(arr) => {
             serde_json::Value::Array(arr.iter().map(plasm_value_to_json_temporal).collect())
         }

@@ -135,6 +135,8 @@ pub enum Value {
     /// Floating-point number (maps to `FieldType::Number` and JSON fractional literals).
     Float(f64),
     String(String),
+    /// Unquoted phrase token from program predicate / invoke RHS (lowered to [`Value::String`] after validation).
+    PhraseIdent(String),
     Array(Vec<Value>),
     /// Union variant constructor from teaching table `v101{field=$,…}`; HTTP lowering injects `wire` discriminator.
     UnionCtor {
@@ -201,11 +203,55 @@ impl Value {
         matches!(self, Value::String(s) if s == "$")
     }
 
+    /// Recursively lower [`Value::PhraseIdent`] leaves to [`Value::String`].
+    pub fn normalize_phrase_idents_in_tree(&mut self) {
+        match self {
+            Value::PhraseIdent(s) => *self = Value::String(s.clone()),
+            Value::Array(items) => {
+                for item in items {
+                    item.normalize_phrase_idents_in_tree();
+                }
+            }
+            Value::Object(map) => {
+                for v in map.values_mut() {
+                    v.normalize_phrase_idents_in_tree();
+                }
+            }
+            Value::UnionCtor { ctor_fields, .. } => {
+                for v in ctor_fields.values_mut() {
+                    v.normalize_phrase_idents_in_tree();
+                }
+            }
+            Value::PlasmInputRef(_)
+            | Value::Null
+            | Value::Bool(_)
+            | Value::Integer(_)
+            | Value::Float(_)
+            | Value::String(_) => {}
+        }
+    }
+
+    /// String payload for [`Value::String`] and pre-lowering [`Value::PhraseIdent`].
+    #[inline]
+    pub fn as_string_or_phrase(&self) -> Option<&str> {
+        match self {
+            Value::String(s) | Value::PhraseIdent(s) => Some(s.as_str()),
+            _ => None,
+        }
+    }
+
+    /// True when this value carries a string-like payload ([`Value::String`] or pre-lower [`Value::PhraseIdent`]).
+    #[inline]
+    #[must_use]
+    pub fn is_string_like(&self) -> bool {
+        self.as_string_or_phrase().is_some()
+    }
+
     /// True if this value or any nested object/array contains the teaching table `$` placeholder.
     pub fn contains_domain_placeholder_deep(&self) -> bool {
         match self {
             Value::String(s) if s == "$" => true,
-            Value::String(_) => false,
+            Value::String(_) | Value::PhraseIdent(_) => false,
             Value::UnionCtor { ctor_fields, .. } => ctor_fields
                 .values()
                 .any(Self::contains_domain_placeholder_deep),
@@ -227,7 +273,7 @@ impl Value {
             Value::Bool(_) => "boolean",
             Value::Integer(_) => "integer",
             Value::Float(_) => "float",
-            Value::String(_) => "string",
+            Value::String(_) | Value::PhraseIdent(_) => "string",
             Value::Array(_) => "array",
             Value::UnionCtor { .. } => "union_ctor",
             Value::Object(_) => "object",
@@ -246,7 +292,7 @@ impl Value {
             // Float is compatible with Number fields (and Integer as a relaxed fallback)
             (Value::Float(_), FieldType::Number | FieldType::Integer) => true,
             (
-                Value::String(_),
+                Value::String(_) | Value::PhraseIdent(_),
                 FieldType::String
                 | FieldType::Blob
                 | FieldType::Uuid
@@ -261,7 +307,7 @@ impl Value {
             // Normalized Date values are string (RFC3339 / date) or integer (Unix ms/s) per
             // [`ValueWireFormat::Temporal`] / [`TemporalWireFormat`].
             (Value::Integer(_) | Value::Float(_), FieldType::Date) => true,
-            (Value::String(_), FieldType::EntityRef { .. }) => true,
+            (Value::String(_) | Value::PhraseIdent(_), FieldType::EntityRef { .. }) => true,
             (v, FieldType::Blob) if v.is_plasm_attachment_object() => true,
             // Numeric IDs may arrive as integers for entity refs
             (Value::Integer(_) | Value::Float(_), FieldType::EntityRef { .. }) => true,
@@ -272,7 +318,9 @@ impl Value {
             }
             (Value::Array(_), FieldType::Array | FieldType::MultiSelect) => true,
             (Value::Object(_) | Value::Array(_), FieldType::Json) => true,
-            (Value::String(s), FieldType::Json) => parse_json_subtree_str(s).is_some(),
+            (Value::String(s) | Value::PhraseIdent(s), FieldType::Json) => {
+                parse_json_subtree_str(s).is_some()
+            }
             _ => false,
         }
     }
@@ -321,10 +369,7 @@ impl Value {
 
     /// Convert to a string if possible.
     pub fn as_str(&self) -> Option<&str> {
-        match self {
-            Value::String(s) => Some(s),
-            _ => None,
-        }
+        self.as_string_or_phrase()
     }
 
     /// Convert to an array if possible.
@@ -347,7 +392,8 @@ impl Value {
     pub fn contains(&self, other: &Value) -> bool {
         match (self, other) {
             (Value::Array(arr), val) => arr.contains(val),
-            (Value::String(s), Value::String(sub)) => s.contains(sub),
+            (Value::String(s), Value::String(sub) | Value::PhraseIdent(sub)) => s.contains(sub),
+            (Value::PhraseIdent(s), Value::String(sub) | Value::PhraseIdent(sub)) => s.contains(sub),
             (Value::Object(obj), Value::String(key)) => obj.contains_key(key),
             _ => false,
         }
@@ -394,10 +440,12 @@ impl Value {
                     format!("{f}")
                 }
             }
-            Value::String(s) => crate::utf8_trunc::truncate_utf8_bytes_with_ellipsis(
-                s.as_str(),
-                budget.max_total_len,
-            ),
+            Value::String(s) | Value::PhraseIdent(s) => {
+                crate::utf8_trunc::truncate_utf8_bytes_with_ellipsis(
+                    s.as_str(),
+                    budget.max_total_len,
+                )
+            }
             Value::Array(a) => {
                 if depth >= budget.max_depth {
                     return format!("[{} items]", a.len());

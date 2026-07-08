@@ -15,7 +15,7 @@ fn plasm_value_to_json(v: &Value) -> serde_json::Value {
         Value::Bool(b) => json!(b),
         Value::Integer(i) => json!(i),
         Value::Float(f) => json!(f),
-        Value::String(s) => json!(s),
+        Value::String(s) | Value::PhraseIdent(s) => json!(s),
         Value::Array(arr) => {
             serde_json::Value::Array(arr.iter().map(plasm_value_to_json).collect())
         }
@@ -128,7 +128,7 @@ fn register_view_template_filters(env: &mut Environment<'_>) {
             let out = wire_temporal_value(plasm, fmt)
                 .map_err(|e| minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, e))?;
             Ok(match out {
-                Value::String(s) => s,
+                Value::String(s) | Value::PhraseIdent(s) => s,
                 Value::Integer(i) => i.to_string(),
                 Value::Float(f) => f.to_string(),
                 Value::Bool(b) => b.to_string(),
