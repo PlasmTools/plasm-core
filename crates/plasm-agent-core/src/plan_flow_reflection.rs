@@ -62,7 +62,7 @@ pub struct PlanUxFlowViolation {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PlanUxFlowApproval {
-    pub operation: String,
+    pub capability: String,
     pub policy_key: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
@@ -128,7 +128,7 @@ fn disposition_and_approval(
         Some(NodeDisposition::Approve { requirement }) => (
             PlanUxFlowDisposition::Approve,
             Some(PlanUxFlowApproval {
-                operation: requirement.operation.clone(),
+                capability: requirement.capability.clone(),
                 policy_key: requirement.policy_key.clone(),
                 reason: requirement.reason.clone(),
             }),

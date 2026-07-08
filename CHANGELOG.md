@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-07-08
+
+### Added
+
+- **Plan Security engine (wire v2):** shared `OperatorDisposition` (`allow` | `approve` | `deny`) for capability gates and default posture; capability-keyed gates; AC/IFC tiering; golden scenario fixtures.
+- **Trace × Plan Security:** UTF-8-safe Base64 decode for DAG hook payloads; HEEx policy chrome (`TraceCodePlan` / `PlanSecurity` projection / `FlowVerdict`); flow DAG paint with `omitChrome` for Trace hosts.
+
+### Changed
+
+- **Trace UI modularization:** `TraceDetail` shell + `TraceDetailSegments`; SaaS LiveView aliases `PlasmUiCore.Web.*` directly (identity façades removed); Trace SSE extracted to external LiveView hook.
+
+### Fixed
+
+- **Multi-byte plan/reflection labels** (e.g. “Pokémon”) no longer corrupt under browser `atob`-only decode.
+
 ## [0.4.4] - 2026-07-07
 
 ### Added

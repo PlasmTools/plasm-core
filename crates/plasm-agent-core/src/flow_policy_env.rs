@@ -72,7 +72,9 @@ pub fn flow_policy_from_env_or_default() -> FlowPolicySnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plan_flow_policy::{EffectRule, FlowEnforcement, ForbiddenFlowRule};
+    use crate::plan_flow_policy::{
+        CapabilityGatePattern, CapabilityGateRule, OperatorDisposition, ForbiddenFlowRule,
+    };
     use plasm_core::{DataClassName, SinkClassName};
     use std::io::Write;
     use tempfile::NamedTempFile;
@@ -85,16 +87,16 @@ mod tests {
                 to_sink: Some(SinkClassName::new("external_publish").expect("sink")),
                 reason: Some("demo".into()),
             }],
-            effect_rules: vec![EffectRule {
-                pattern: crate::plan_flow_policy::EffectEventPattern {
+            capability_gates: vec![CapabilityGateRule {
+                pattern: CapabilityGatePattern {
                     entry_id: Some("vultr".into()),
                     entity: Some("KubernetesCluster".into()),
-                    operation: Some(crate::plasm_plan::PlanNodeKind::Delete),
-                    effect_class: None,
+                    capability: "delete".into(),
                 },
-                enforcement: FlowEnforcement::Deny,
+                enforcement: OperatorDisposition::Deny,
             }],
             sanitizers: Vec::new(),
+            ..FlowPolicy::default()
         };
         let mut file = NamedTempFile::new().expect("temp");
         write!(
@@ -107,7 +109,7 @@ mod tests {
         assert!(matches!(snapshot, FlowPolicySnapshot::Active { .. }));
         if let FlowPolicySnapshot::Active { policy, .. } = snapshot {
             assert_eq!(policy.forbidden.len(), 1);
-            assert_eq!(policy.effect_rules.len(), 1);
+            assert_eq!(policy.capability_gates.len(), 1);
         }
     }
 
@@ -122,6 +124,6 @@ mod tests {
             panic!("expected active snapshot");
         };
         assert_eq!(policy.forbidden.len(), 3);
-        assert!(policy.effect_rules.len() >= 5);
+        assert!(policy.capability_gates.len() >= 5);
     }
 }

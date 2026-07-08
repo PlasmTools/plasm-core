@@ -108,6 +108,7 @@ pub(crate) mod tool_model_service;
 pub use plan_dry_display::PlanDryVerdict;
 mod approval_gate;
 mod flow_catalog;
+mod flow_policy_env;
 pub mod flow_policy_repository;
 mod flow_policy_session;
 mod flow_policy_simulate;
@@ -115,10 +116,13 @@ mod flow_policy_validate;
 mod flow_policy_vocabulary;
 mod plan_execute_shared;
 mod plan_flow;
+mod plan_flow_capability;
 mod plan_flow_policy;
 mod plan_flow_ports;
+mod plan_flow_sanitizer;
 mod plan_gate;
 mod run_progress_resolve;
+pub use flow_policy_env::flow_policy_from_env_or_default;
 pub use flow_catalog::FlowCatalogView;
 pub use plan_execute_shared::PlanLineExecuteShared;
 pub use plan_flow::{
@@ -127,8 +131,9 @@ pub use plan_flow::{
     SinkParamRef, SinkProof,
 };
 pub use plan_flow_policy::{
-    ApprovalHostPolicy, EffectEvent, EffectEventPattern, EffectRule, FlowEnforcement, FlowPolicy,
-    FlowPolicySnapshot, ForbiddenFlowRule, PolicyRevision, SanitizerRecognition,
+    ApprovalHostPolicy, CapabilityGatePattern, CapabilityGateRule, EffectEvent, FlowPolicy,
+    FlowPolicySnapshot, ForbiddenFlowRule, OperatorDisposition, PolicyRevision,
+    SanitizerRecognition,
 };
 pub use plan_gate::{
     evaluate_plan_gate, merged_gate_verdict, plan_dry_verdict_from_flow, plan_gate,

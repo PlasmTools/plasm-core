@@ -676,6 +676,7 @@ mod tests {
                 scope_aggregate_key_policy: Default::default(),
                 preflight: None,
                 discovery: None,
+                deterministic: None,
             })
             .expect("capability");
         cgs.validate().expect("validate");
@@ -776,6 +777,7 @@ mod tests {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            deterministic: None,
         })
         .expect("capability");
         cgs.validate().expect("validate");
@@ -948,6 +950,7 @@ mod tests {
                 scope_aggregate_key_policy: Default::default(),
                 preflight: None,
                 discovery: None,
+                deterministic: None,
             })
             .expect("capability");
         cgs.validate().expect("validate");

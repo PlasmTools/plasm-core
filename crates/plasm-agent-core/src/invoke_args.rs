@@ -147,6 +147,7 @@ mod tests {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            deterministic: None,
         }
     }
 

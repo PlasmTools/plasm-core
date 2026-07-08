@@ -914,6 +914,7 @@ mod tests {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            deterministic: None,
         }).unwrap();
 
         // query_contacts: role filter parameter (enables contacts relation filter)
@@ -960,6 +961,7 @@ mod tests {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            deterministic: None,
         }).unwrap();
 
         cgs
@@ -1185,6 +1187,7 @@ mod tests {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            deterministic: None,
         })
         .unwrap();
 
@@ -1309,6 +1312,7 @@ mod tests {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            deterministic: None,
         }).unwrap();
 
         cgs.add_capability(CapabilitySchema {
@@ -1330,6 +1334,7 @@ mod tests {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            deterministic: None,
         })
         .unwrap();
 
@@ -1392,6 +1397,7 @@ mod tests {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            deterministic: None,
         }).unwrap();
 
         cgs

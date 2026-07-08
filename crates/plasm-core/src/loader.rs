@@ -284,6 +284,9 @@ pub struct DomainCapability {
     /// Data classes this capability declares to sanitize before producing output.
     #[serde(default)]
     pub sanitizes: Vec<crate::DataClassName>,
+    /// When false, capability must not be used as a policy sanitizer.
+    #[serde(default)]
+    pub deterministic: Option<bool>,
     /// Declared response shape for validation (required for `action` unless `provides` is set).
     #[serde(default)]
     pub output: Option<crate::OutputSchema>,
@@ -887,6 +890,7 @@ fn assemble_cgs_core(
             output_schema: cap.output.clone(),
             provides: cap.provides.clone(),
             sanitizes: cap.sanitizes.clone(),
+            deterministic: cap.deterministic,
             scope_aggregate_key_policy: cap.scope_aggregate_key_policy.unwrap_or_default(),
             preflight: cap.preflight.clone(),
             discovery: cap.discovery.clone(),

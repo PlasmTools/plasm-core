@@ -1,16 +1,21 @@
 //! Typed information-flow pass over validated plans.
 
 use crate::approval_gate::{approval_gate_from_disposition, operation_name_for_kind};
+use crate::plan_flow_capability::{
+    capability_name_from_expr, resolve_alias_node, resolved_mutation_capability_name,
+    surface_capability_key,
+};
 use crate::plan_flow_policy::{EffectEvent, FlowPolicySnapshot, PolicyRevision};
 use crate::plan_flow_ports::{FlowCatalog, FlowPolicyEvaluator, FlowPolicyPass};
+use crate::plan_flow_sanitizer::apply_label_clearance;
 use crate::plasm_plan::{
     EffectClass, Plan, PlanNodeKind, PlanResultUse, QualifiedEntityKey, ValidatedPlanNode,
     ValidatedPlanState, ValidatedSurfaceNode,
 };
 use crate::plasm_plan_run::NodeInputHoleIndex;
 use plasm_core::{
-    CapabilityName, CapabilityParamName, ComputeOp, DataClassName, EntityName, Expr,
-    RegistryEntryId, SinkClassName,
+    CapabilityName, CapabilityParamName, ComputeOp, DataClassName, EntityName, RegistryEntryId,
+    SinkClassName,
 };
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -87,6 +92,10 @@ impl NodeFlowFacts {
 pub enum SinkProof {
     StaticClean,
     Deferred { check: String },
+    Sanitized {
+        by: String,
+        cleared: BTreeSet<DataClassName>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -94,7 +103,7 @@ pub struct ApprovalRequirement {
     pub policy: crate::plan_flow_policy::ApprovalHostPolicy,
     pub entry_id: String,
     pub entity: String,
-    pub operation: String,
+    pub capability: String,
     pub policy_key: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub author_label: Option<String>,
@@ -328,8 +337,10 @@ impl<'a, C: FlowCatalog + ?Sized, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, 
                     .cloned()
                     .unwrap_or_default();
                 self.facts.insert(id.clone(), source_facts);
-                let cap_name = capability_name_from_expr(&n.effect_template.ir_template.expr)
-                    .unwrap_or_else(|| operation_name_for_kind(n.effect_template.kind).to_string());
+                let cap_name =
+                    capability_name_from_expr(&n.effect_template.ir_template.expr).unwrap_or_else(
+                        || operation_name_for_kind(n.effect_template.kind).to_string(),
+                    );
                 self.transfer_mutation_template(MutationFlowCtx {
                     node_id: id.clone(),
                     qualified: &n.effect_template.qualified_entity,
@@ -366,16 +377,23 @@ impl<'a, C: FlowCatalog + ?Sized, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, 
             return;
         };
         let mut labels = self.catalog.output_labels(&key);
-        // Capability-key miss (e.g. legacy PascalCase `{Entity}_query` fallback) — recover
-        // labels from any capability on the same entity so flow analysis stays sound.
         if labels.is_empty() {
             labels = self
                 .catalog
                 .output_labels_for_entity(key.entry_id.as_str(), key.entity.as_str());
         }
-        for cleared in self.catalog.sanitizers(&key) {
-            labels.remove(&cleared);
-        }
+        let cap_name = key.capability.as_str();
+        let clearance = apply_label_clearance(
+            self.catalog,
+            self.policy,
+            &key,
+            cap_name,
+            labels,
+            None,
+            &[],
+            &self.facts,
+            false,
+        );
         let provenance_key = format!(
             "{}.{}.{}",
             key.entry_id.as_str(),
@@ -384,7 +402,7 @@ impl<'a, C: FlowCatalog + ?Sized, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, 
         );
         let facts = NodeFlowFacts {
             residual: FlowFacts {
-                labels,
+                labels: clearance.outgoing_labels,
                 provenance: std::iter::once(provenance_key).collect(),
             },
             ..Default::default()
@@ -392,7 +410,7 @@ impl<'a, C: FlowCatalog + ?Sized, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, 
         self.facts.insert(id.clone(), facts);
         self.node_dispositions
             .insert(id.clone(), NodeDisposition::Allow);
-        self.sink_proofs.insert(id, SinkProof::StaticClean);
+        self.sink_proofs.insert(id, clearance.proof);
     }
 
     fn transfer_mutation_surface(
@@ -408,9 +426,7 @@ impl<'a, C: FlowCatalog + ?Sized, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, 
             self.sink_proofs.insert(id, SinkProof::StaticClean);
             return;
         };
-        let cap_name = template_expr
-            .and_then(capability_name_from_expr)
-            .unwrap_or_else(|| operation_name_for_kind(surface.kind).to_string());
+        let cap_name = resolved_mutation_capability_name(template_expr, surface.kind);
         self.transfer_mutation_template(MutationFlowCtx {
             node_id: id,
             qualified: q,
@@ -474,7 +490,29 @@ impl<'a, C: FlowCatalog + ?Sized, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, 
         }
         self.node_dispositions
             .insert(ctx.node_id.clone(), disposition);
-        self.sink_proofs.insert(ctx.node_id, SinkProof::StaticClean);
+
+        let clearance = apply_label_clearance(
+            self.catalog,
+            self.policy,
+            &key,
+            ctx.capability_name,
+            incoming.labels.clone(),
+            ctx.template_expr,
+            ctx.uses_result,
+            &self.facts,
+            true,
+        );
+        self.facts.insert(
+            ctx.node_id.clone(),
+            NodeFlowFacts {
+                residual: FlowFacts {
+                    labels: clearance.outgoing_labels,
+                    provenance: incoming.provenance.clone(),
+                },
+                ..Default::default()
+            },
+        );
+        self.sink_proofs.insert(ctx.node_id, clearance.proof);
     }
 
     fn incoming_facts_from_template(
@@ -560,7 +598,7 @@ fn policy_disposition_for_node<P: FlowPolicyEvaluator + ?Sized>(
             let cap_name = n
                 .ir_template
                 .as_ref()
-                .and_then(|t| capability_name_from_expr(&t.expr))
+                .map(|t| resolved_mutation_capability_name(Some(&t.expr), n.kind))
                 .unwrap_or_else(|| operation_name_for_kind(n.kind).to_string());
             let event = EffectEvent::from_mutation(
                 q,
@@ -589,83 +627,6 @@ fn policy_disposition_for_node<P: FlowPolicyEvaluator + ?Sized>(
     }
 }
 
-fn resolve_alias_node(uses_result: &[PlanResultUse], alias: &str) -> Option<String> {
-    uses_result
-        .iter()
-        .find(|u| u.r#as == alias)
-        .map(|u| u.node.clone())
-}
-
-fn capability_name_from_expr(expr: &serde_json::Value) -> Option<String> {
-    expr.get("capability")
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
-        .or_else(|| expr.get("op").and_then(|v| v.as_str()).map(str::to_string))
-}
-
-fn surface_capability_key(surface: &ValidatedSurfaceNode) -> Option<QualifiedCapabilityKey> {
-    let q = surface.qualified_entity.as_ref()?;
-    let cap_name = surface
-        .ir
-        .as_ref()
-        .and_then(|ir| capability_from_plasm_expr(&ir.expr))
-        .or_else(|| {
-            surface
-                .ir_template
-                .as_ref()
-                .and_then(|t| capability_name_from_expr(&t.expr))
-        })
-        .unwrap_or_else(|| operation_name_for_kind(surface.kind).to_string());
-    Some(QualifiedCapabilityKey::from_parts(
-        q.entry_id.as_str(),
-        q.entity.as_str(),
-        cap_name.as_str(),
-    ))
-}
-
-/// PascalCase / camelCase entity wire names → snake_case capability prefixes
-/// (`Issue` → `issue`, `PullRequest` → `pull_request`).
-fn pascal_to_snake(name: &str) -> String {
-    let mut out = String::with_capacity(name.len() + 4);
-    for (i, c) in name.chars().enumerate() {
-        if c.is_uppercase() {
-            if i > 0 {
-                out.push('_');
-            }
-            for lower in c.to_lowercase() {
-                out.push(lower);
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
-
-fn capability_from_plasm_expr(expr: &Expr) -> Option<String> {
-    match expr {
-        Expr::Query(q) => q
-            .capability_name
-            .as_ref()
-            .map(|c| c.as_str().to_string())
-            .or_else(|| Some(format!("{}_query", pascal_to_snake(q.entity.as_str())))),
-        Expr::Get(g) => g
-            .capability_name
-            .as_ref()
-            .map(|c| c.as_str().to_string())
-            .or_else(|| {
-                Some(format!(
-                    "{}_get",
-                    pascal_to_snake(g.reference.entity_type.as_str())
-                ))
-            }),
-        Expr::Invoke(i) => Some(i.capability.as_str().to_string()),
-        Expr::Create(c) => Some(c.capability.as_str().to_string()),
-        Expr::Delete(d) => Some(d.capability.as_str().to_string()),
-        _ => None,
-    }
-}
-
 fn is_read_kind(kind: PlanNodeKind) -> bool {
     matches!(
         kind,
@@ -684,7 +645,7 @@ fn is_remote_mutation(kind: PlanNodeKind, effect_class: EffectClass) -> bool {
 mod tests {
     use super::*;
     use crate::flow_catalog::FlowCatalogView;
-    use crate::plan_flow_policy::{FlowPolicy, ForbiddenFlowRule};
+    use crate::plan_flow_policy::{OperatorDisposition, FlowPolicy, ForbiddenFlowRule};
     use crate::plasm_plan::parse_and_validate_plan_json;
 
     #[test]
@@ -816,13 +777,6 @@ mod tests {
     }
 
     #[test]
-    fn pascal_to_snake_matches_catalog_capability_prefixes() {
-        assert_eq!(pascal_to_snake("Issue"), "issue");
-        assert_eq!(pascal_to_snake("PullRequest"), "pull_request");
-        assert_eq!(pascal_to_snake("IssueComment"), "issue_comment");
-    }
-
-    #[test]
     fn bare_query_without_capability_name_uses_snake_case_fallback() {
         let mut catalog = FlowCatalogView::default();
         let read_key = QualifiedCapabilityKey::from_parts("github", "Issue", "issue_query");
@@ -917,7 +871,7 @@ mod tests {
     }
 
     #[test]
-    fn approval_gate_json_matches_legacy_shape_for_auto_approve() {
+    fn approval_gate_json_shape_for_approve_enforcement() {
         let catalog = FlowCatalogView::default();
         let plan = serde_json::json!({
             "version": 1,
@@ -935,21 +889,47 @@ mod tests {
         });
         let validated = parse_and_validate_plan_json(&plan).expect("validate");
         let topo = vec!["c1".to_string()];
-        let checked = verify_plan_flow(
+
+        // Inactive policy: create → Allow disposition → no approval gate.
+        let checked_inactive = verify_plan_flow(
             validated.artifact(),
             &topo,
             &catalog,
             &FlowPolicySnapshot::Inactive,
         );
+        assert!(
+            checked_inactive.analysis.approval_gate_for_node("c1").is_none(),
+            "inactive policy must not produce approval gate"
+        );
+
+        // Active policy with Approve enforcement: create → Approve → gate emitted.
+        let policy = FlowPolicy {
+            default_posture: crate::plan_flow_policy::OperatorDisposition::Allow,
+            capability_gates: vec![crate::plan_flow_policy::CapabilityGateRule {
+                pattern: crate::plan_flow_policy::CapabilityGatePattern {
+                    entry_id: Some("acme".into()),
+                    entity: Some("Product".into()),
+                    // Mutations without ir_template use operation_name_for_kind fallback.
+                    capability: "create".into(),
+                },
+                enforcement: OperatorDisposition::Approve,
+            }],
+            ..FlowPolicy::default()
+        };
+        let snapshot = FlowPolicySnapshot::Active {
+            revision: PolicyRevision(1),
+            policy,
+        };
+        let checked = verify_plan_flow(validated.artifact(), &topo, &catalog, &snapshot);
         let gate = checked
             .analysis
             .approval_gate_for_node("c1")
-            .expect("approval gate");
+            .expect("approval gate for Approve enforcement");
         assert_eq!(gate["policy_key"], "acme.Product.create");
-        assert_eq!(gate["host_policy"], "host.auto_approve");
+        assert_eq!(gate["host_policy"], "host.review");
         assert_eq!(gate["default_decision"], "approved");
         assert_eq!(gate["entry_id"], "acme");
         assert_eq!(gate["entity"], "Product");
-        assert_eq!(gate["operation"], "create");
+        assert_eq!(gate["capability"], "create");
     }
 }

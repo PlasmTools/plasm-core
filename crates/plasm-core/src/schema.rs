@@ -284,12 +284,43 @@ pub enum DataClassSeverity {
     Critical,
 }
 
+/// Lattice axis for information-flow labels (Denning dual lattices).
+///
+/// - `Confidentiality` — secrecy; declassification clears it.
+/// - `Integrity` — trustworthiness; endorsement clears it (`untrusted`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DataClassDimension {
+    Confidentiality,
+    Integrity,
+}
+
+impl DataClassDimension {
+    /// Derive from severity when catalog omits an explicit dimension.
+    pub fn from_severity(severity: DataClassSeverity) -> Self {
+        match severity {
+            DataClassSeverity::Untrusted => Self::Integrity,
+            _ => Self::Confidentiality,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DataClassSchema {
     #[serde(default)]
     pub description: String,
     #[serde(default)]
     pub severity: DataClassSeverity,
+    /// Optional; when omitted, derived from `severity` (`untrusted` → integrity).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dimension: Option<DataClassDimension>,
+}
+
+impl DataClassSchema {
+    pub fn dimension_or_default(&self) -> DataClassDimension {
+        self.dimension
+            .unwrap_or_else(|| DataClassDimension::from_severity(self.severity))
+    }
 }
 
 fn index_map_is_empty_data_classes(m: &IndexMap<DataClassName, DataClassSchema>) -> bool {
@@ -747,6 +778,10 @@ pub struct CapabilitySchema {
     /// Data classes this capability is declared to sanitize before producing output.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sanitizes: Vec<DataClassName>,
+    /// When false, the capability must not be used as a policy sanitizer (non-deterministic transforms).
+    /// Absent or `None` means deterministic (default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deterministic: Option<bool>,
     /// Policy for the aggregate scope param after compound `entity_ref` scope splat runs.
     #[serde(default)]
     pub scope_aggregate_key_policy: ScopeAggregateKeyPolicy,
@@ -1017,6 +1052,52 @@ pub fn capability_is_zero_arity_invoke(cap: &CapabilitySchema) -> bool {
 #[inline]
 pub fn capability_is_zero_arity_action(cap: &CapabilitySchema) -> bool {
     capability_is_zero_arity_invoke(cap)
+}
+
+pub fn is_flow_control_param_name(name: &str) -> bool {
+    matches!(
+        name,
+        "mode"
+            | "keep_patterns"
+            | "pattern"
+            | "patterns"
+            | "filter"
+            | "regex"
+            | "options"
+            | "flags"
+    )
+}
+
+/// Collect behavior-controlling parameter names from an input schema tree.
+pub fn flow_control_param_names(schema: &InputSchema) -> Vec<String> {
+    let mut out = Vec::new();
+    collect_flow_control_param_names(&schema.input_type, &mut out);
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn collect_flow_control_param_names(t: &InputType, out: &mut Vec<String>) {
+    match t {
+        InputType::Object { fields, .. } => {
+            for f in fields {
+                if is_flow_control_param_name(f.name.as_str()) {
+                    out.push(f.name.clone());
+                }
+            }
+        }
+        InputType::Array { element_type, .. } => collect_flow_control_param_names(element_type, out),
+        InputType::Union { variants } => {
+            for v in variants {
+                for f in &v.fields {
+                    if is_flow_control_param_name(f.name.as_str()) {
+                        out.push(f.name.clone());
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Input schema for invoke capabilities - defines expected input structure and validation
@@ -5096,6 +5177,11 @@ impl CGS {
 }
 
 impl CapabilitySchema {
+    /// Whether this capability is a deterministic transform (default true when unset).
+    pub fn is_deterministic(&self) -> bool {
+        self.deterministic.unwrap_or(true)
+    }
+
     /// Object-typed input parameters for this capability, if any.
     ///
     /// Returns `None` when there is no input schema or the input is not `InputType::Object`.

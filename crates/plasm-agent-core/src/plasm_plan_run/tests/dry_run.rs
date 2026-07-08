@@ -1073,7 +1073,22 @@ fn validation_rejects_ambiguous_auto_cross_node_input() {
 
 #[test]
 fn evaluate_plasm_plan_dry_reports_for_each_stage() {
-    let s = test_session();
+    let mut s = test_session();
+    // Active policy: require review for product_label so the approval_gate is emitted.
+    s.flow_policy = crate::FlowPolicySnapshot::Active {
+        revision: crate::PolicyRevision(1),
+        policy: crate::FlowPolicy {
+            capability_gates: vec![crate::plan_flow_policy::CapabilityGateRule {
+                pattern: crate::plan_flow_policy::CapabilityGatePattern {
+                    entry_id: Some("acme".into()),
+                    entity: Some("Product".into()),
+                    capability: "product_label".into(),
+                },
+                enforcement: crate::plan_flow_policy::OperatorDisposition::Approve,
+            }],
+            ..crate::FlowPolicy::default()
+        },
+    };
     let plan = serde_json::json!({
         "version": 1,
         "kind": "program",
@@ -1124,7 +1139,7 @@ fn evaluate_plasm_plan_dry_reports_for_each_stage() {
     assert_eq!(dry.node_results[1]["simulation"]["kind"], "template_stage");
     assert_eq!(
         dry.node_results[1]["approval_gate"]["policy_key"],
-        "acme.Product.label"
+        "acme.Product.product_label"
     );
 }
 

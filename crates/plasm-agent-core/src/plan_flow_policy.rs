@@ -1,4 +1,8 @@
 //! Typed, host-owned plan flow policy snapshot.
+//!
+//! Clean cutover: one operator disposition vocabulary (`allow` | `approve` | `deny`)
+//! for both `default_posture` and `capability_gates[].enforcement`.
+//! `FlowPolicySnapshot::Inactive` = system Allow.
 
 use crate::approval_gate::{effect_operation_label, policy_key_for};
 use crate::plan_flow::{ApprovalRequirement, NodeDisposition};
@@ -11,48 +15,56 @@ use std::collections::BTreeSet;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Default)]
 pub struct PolicyRevision(pub u64);
 
-/// Host policy used when a node requires approval.
+/// Host policy used when a node requires human approval (HITL).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalHostPolicy {
-    AutoApprove,
     RequireReview,
 }
 
-/// Node-level flow enforcement selected by policy evaluation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Authorable operator disposition — shared by posture and capability gates.
+///
+/// Wire: `"allow"` | `"approve"` | `"deny"`.
+/// Structural plan review (boundedness) is engine-only — never an authorable rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum FlowEnforcement {
+pub enum OperatorDisposition {
+    /// Mutation proceeds without HITL.
+    #[default]
     Allow,
-    Approve(ApprovalHostPolicy),
-    Review,
+    /// Mutation requires human approval (HITL).
+    Approve,
+    /// Mutation is blocked; no commit token.
     Deny,
 }
 
-impl FlowEnforcement {
-    pub fn to_disposition(&self, requirement: ApprovalRequirement) -> NodeDisposition {
+impl OperatorDisposition {
+    /// Map to a flow-pass node disposition. HITL requirement is minted only for Approve.
+    pub fn to_node_disposition(
+        self,
+        event: &EffectEvent,
+        author_label: Option<&str>,
+    ) -> NodeDisposition {
         match self {
             Self::Allow => NodeDisposition::Allow,
-            Self::Approve(policy) => NodeDisposition::Approve {
-                requirement: ApprovalRequirement {
-                    policy: *policy,
-                    ..requirement
-                },
-            },
-            Self::Review => NodeDisposition::Review,
             Self::Deny => NodeDisposition::Deny,
+            Self::Approve => NodeDisposition::Approve {
+                requirement: event
+                    .approval_requirement(ApprovalHostPolicy::RequireReview, author_label),
+            },
         }
     }
 }
 
-/// Concrete effect event for policy rule matching.
+/// Concrete capability event for policy gate matching.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectEvent {
     pub entry_id: String,
     pub entity: String,
     pub kind: PlanNodeKind,
     pub effect_class: EffectClass,
-    pub operation: String,
+    /// Capability name (from IR / display) — primary match key for gates.
+    pub capability: String,
 }
 
 impl EffectEvent {
@@ -63,13 +75,17 @@ impl EffectEvent {
         capability_name: &str,
         expr_template: Option<&str>,
     ) -> Self {
-        let operation = effect_operation_label(kind, capability_name, expr_template);
+        let capability = if !capability_name.is_empty() && capability_name != "action" {
+            capability_name.to_string()
+        } else {
+            effect_operation_label(kind, capability_name, expr_template)
+        };
         Self {
             entry_id: q.entry_id.as_str().to_string(),
             entity: q.entity.as_str().to_string(),
             kind,
             effect_class,
-            operation,
+            capability,
         }
     }
 
@@ -82,13 +98,13 @@ impl EffectEvent {
             policy,
             entry_id: self.entry_id.clone(),
             entity: self.entity.clone(),
-            operation: self.operation.clone(),
+            capability: self.capability.clone(),
             policy_key: policy_key_for(
                 &QualifiedEntityKey {
                     entry_id: self.entry_id.clone(),
                     entity: self.entity.clone(),
                 },
-                &self.operation,
+                &self.capability,
             ),
             author_label: author_label.map(str::to_string),
             reason: Some(format!(
@@ -99,48 +115,25 @@ impl EffectEvent {
     }
 }
 
-/// Pattern matched against effect events (surface or for_each effect template).
+/// Pattern matched against capability events (surface or for_each effect template).
+///
+/// Struct (not tuple) so a future optional `authority` / `acts_for` field can be
+/// added without a wire break (delegated-identity axis).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EffectEventPattern {
+pub struct CapabilityGatePattern {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entity: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub operation: Option<PlanNodeKind>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub effect_class: Option<EffectClass>,
+    /// Required: capability name matching `EffectEvent.capability`.
+    pub capability: String,
 }
 
-impl EffectEventPattern {
-    pub fn remote_mutation_defaults() -> Vec<Self> {
-        [
-            PlanNodeKind::Create,
-            PlanNodeKind::Update,
-            PlanNodeKind::Delete,
-            PlanNodeKind::Action,
-        ]
-        .into_iter()
-        .map(|operation| Self {
-            entry_id: None,
-            entity: None,
-            operation: Some(operation),
-            effect_class: None,
-        })
-        .chain(
-            [EffectClass::Write, EffectClass::SideEffect]
-                .into_iter()
-                .map(|effect_class| Self {
-                    entry_id: None,
-                    entity: None,
-                    operation: None,
-                    effect_class: Some(effect_class),
-                }),
-        )
-        .collect()
-    }
-
+impl CapabilityGatePattern {
     pub fn matches(&self, event: &EffectEvent) -> bool {
+        if self.capability != event.capability {
+            return false;
+        }
         if self
             .entry_id
             .as_ref()
@@ -155,23 +148,11 @@ impl EffectEventPattern {
         {
             return false;
         }
-        if self
-            .operation
-            .is_some_and(|operation| operation != event.kind)
-        {
-            return false;
-        }
-        if self
-            .effect_class
-            .is_some_and(|effect_class| effect_class != event.effect_class)
-        {
-            return false;
-        }
         true
     }
 }
 
-/// Explicit policy deny-list for label -> sink flow.
+/// Explicit policy deny-list for label -> sink flow (IFC).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ForbiddenFlowRule {
     pub from_label: DataClassName,
@@ -181,14 +162,17 @@ pub struct ForbiddenFlowRule {
     pub reason: Option<String>,
 }
 
-/// Effect-matching rule that sets default disposition.
+/// Capability gate: access-control disposition when pattern matches.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EffectRule {
-    pub pattern: EffectEventPattern,
-    pub enforcement: FlowEnforcement,
+pub struct CapabilityGateRule {
+    pub pattern: CapabilityGatePattern,
+    pub enforcement: OperatorDisposition,
 }
 
-/// Capabilities recognized as sanitizers for selected labels.
+/// Capabilities recognized as sanitizers (declassification / endorsement).
+///
+/// Struct retained so a future optional `authority` field slots in without
+/// breaking wire (delegated-identity axis).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SanitizerRecognition {
     pub capability: String,
@@ -196,28 +180,27 @@ pub struct SanitizerRecognition {
     pub clears: BTreeSet<DataClassName>,
 }
 
-/// Policy payload pinned to an execute session.
+/// Policy payload pinned to an execute session (Active ruleset).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FlowPolicy {
+    /// Required on published rulesets; serde-default for draft convenience.
+    #[serde(default)]
+    pub default_posture: OperatorDisposition,
     #[serde(default)]
     pub forbidden: Vec<ForbiddenFlowRule>,
     #[serde(default)]
-    pub effect_rules: Vec<EffectRule>,
+    pub capability_gates: Vec<CapabilityGateRule>,
     #[serde(default)]
     pub sanitizers: Vec<SanitizerRecognition>,
 }
 
 impl FlowPolicy {
-    pub fn default_remote_mutation_auto_approve() -> Self {
+    /// Empty ruleset with Allow posture (no gates, no forbidden).
+    pub fn empty_allow() -> Self {
         Self {
+            default_posture: OperatorDisposition::Allow,
             forbidden: Vec::new(),
-            effect_rules: EffectEventPattern::remote_mutation_defaults()
-                .into_iter()
-                .map(|pattern| EffectRule {
-                    pattern,
-                    enforcement: FlowEnforcement::Approve(ApprovalHostPolicy::AutoApprove),
-                })
-                .collect(),
+            capability_gates: Vec::new(),
             sanitizers: Vec::new(),
         }
     }
@@ -227,33 +210,31 @@ impl FlowPolicy {
         event: &EffectEvent,
         author_label: Option<&str>,
     ) -> NodeDisposition {
-        for rule in &self.effect_rules {
+        for rule in &self.capability_gates {
             if !rule.pattern.matches(event) {
                 continue;
             }
-            let requirement = match rule.enforcement {
-                FlowEnforcement::Allow => {
-                    return NodeDisposition::Allow;
-                }
-                FlowEnforcement::Approve(policy) => {
-                    event.approval_requirement(policy, author_label)
-                }
-                FlowEnforcement::Review => {
-                    return NodeDisposition::Review;
-                }
-                FlowEnforcement::Deny => {
-                    return NodeDisposition::Deny;
-                }
-            };
-            return rule.enforcement.to_disposition(requirement);
+            return rule
+                .enforcement
+                .to_node_disposition(event, author_label);
         }
-        NodeDisposition::Allow
+        self.default_posture
+            .to_node_disposition(event, author_label)
+    }
+
+    /// Labels this policy recognizes as cleared by the given capability name.
+    pub fn policy_sanitizer_clears(&self, capability: &str) -> BTreeSet<DataClassName> {
+        self.sanitizers
+            .iter()
+            .filter(|s| s.capability == capability)
+            .flat_map(|s| s.clears.iter().cloned())
+            .collect()
     }
 }
 
 impl Default for FlowPolicy {
     fn default() -> Self {
-        Self::default_remote_mutation_auto_approve()
+        Self::empty_allow()
     }
 }
 
@@ -261,8 +242,8 @@ impl Default for FlowPolicy {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum FlowPolicySnapshot {
-    /// Compatibility mode: still advertises default host auto-approve policy for
-    /// mutating effects, but does not yet enforce stricter deny/review behavior.
+    /// No published ruleset: system default = Allow all mutations.
+    /// IFC `forbidden[]` is not enforced until a policy is Active.
     #[default]
     Inactive,
     Active {
@@ -278,9 +259,14 @@ impl FlowPolicySnapshot {
 
     pub fn effective_policy(&self) -> FlowPolicy {
         match self {
-            Self::Inactive => FlowPolicy::default_remote_mutation_auto_approve(),
+            Self::Inactive => FlowPolicy::empty_allow(),
             Self::Active { policy, .. } => policy.clone(),
         }
+    }
+
+    /// Whether IFC forbidden rules apply (only Active rulesets).
+    pub fn enforces_forbidden(&self) -> bool {
+        matches!(self, Self::Active { .. })
     }
 
     pub fn revision_or_default(&self) -> PolicyRevision {
@@ -296,16 +282,141 @@ mod tests {
     use super::*;
 
     #[test]
-    fn effect_rules_match_remote_mutations() {
-        let policy = FlowPolicy::default();
+    fn inactive_and_empty_allow_unmatched_mutations() {
         let event = EffectEvent {
             entry_id: "acme".into(),
             entity: "Product".into(),
             kind: PlanNodeKind::Create,
             effect_class: EffectClass::Write,
-            operation: "create".into(),
+            capability: "create".into(),
         };
-        let disposition = policy.disposition_for_event(&event, None);
-        assert!(matches!(disposition, NodeDisposition::Approve { .. }));
+        let inactive = FlowPolicySnapshot::Inactive.effective_policy();
+        assert!(matches!(
+            inactive.disposition_for_event(&event, None),
+            NodeDisposition::Allow
+        ));
+        let empty = FlowPolicy::empty_allow();
+        assert!(matches!(
+            empty.disposition_for_event(&event, None),
+            NodeDisposition::Allow
+        ));
+    }
+
+    #[test]
+    fn default_posture_deny_blocks_unmatched() {
+        let policy = FlowPolicy {
+            default_posture: OperatorDisposition::Deny,
+            ..FlowPolicy::empty_allow()
+        };
+        let event = EffectEvent {
+            entry_id: "vultr".into(),
+            entity: "Instance".into(),
+            kind: PlanNodeKind::Delete,
+            effect_class: EffectClass::Write,
+            capability: "delete".into(),
+        };
+        assert!(matches!(
+            policy.disposition_for_event(&event, None),
+            NodeDisposition::Deny
+        ));
+    }
+
+    #[test]
+    fn default_posture_approve_requires_hitl_for_unmatched() {
+        let policy = FlowPolicy {
+            default_posture: OperatorDisposition::Approve,
+            ..FlowPolicy::empty_allow()
+        };
+        let event = EffectEvent {
+            entry_id: "vultr".into(),
+            entity: "Instance".into(),
+            kind: PlanNodeKind::Delete,
+            effect_class: EffectClass::Write,
+            capability: "delete".into(),
+        };
+        assert!(matches!(
+            policy.disposition_for_event(&event, None),
+            NodeDisposition::Approve { .. }
+        ));
+    }
+
+    #[test]
+    fn capability_gate_matches_by_name() {
+        let policy = FlowPolicy {
+            default_posture: OperatorDisposition::Allow,
+            capability_gates: vec![
+                CapabilityGateRule {
+                    pattern: CapabilityGatePattern {
+                        entry_id: Some("vultr".into()),
+                        entity: Some("KubernetesCluster".into()),
+                        capability: "delete_with_linked_resources".into(),
+                    },
+                    enforcement: OperatorDisposition::Deny,
+                },
+                CapabilityGateRule {
+                    pattern: CapabilityGatePattern {
+                        entry_id: Some("vultr".into()),
+                        entity: Some("KubernetesCluster".into()),
+                        capability: "delete".into(),
+                    },
+                    enforcement: OperatorDisposition::Approve,
+                },
+            ],
+            ..FlowPolicy::empty_allow()
+        };
+        let catastrophic = EffectEvent {
+            entry_id: "vultr".into(),
+            entity: "KubernetesCluster".into(),
+            kind: PlanNodeKind::Delete,
+            effect_class: EffectClass::Write,
+            capability: "delete_with_linked_resources".into(),
+        };
+        let plain = EffectEvent {
+            capability: "delete".into(),
+            ..catastrophic.clone()
+        };
+        assert!(matches!(
+            policy.disposition_for_event(&catastrophic, None),
+            NodeDisposition::Deny
+        ));
+        assert!(matches!(
+            policy.disposition_for_event(&plain, None),
+            NodeDisposition::Approve { .. }
+        ));
+    }
+
+    #[test]
+    fn default_deny_gate_allow_whitelists() {
+        let policy = FlowPolicy {
+            default_posture: OperatorDisposition::Deny,
+            capability_gates: vec![CapabilityGateRule {
+                pattern: CapabilityGatePattern {
+                    entry_id: None,
+                    entity: None,
+                    capability: "comment_create".into(),
+                },
+                enforcement: OperatorDisposition::Allow,
+            }],
+            ..FlowPolicy::empty_allow()
+        };
+        let allowed = EffectEvent {
+            entry_id: "linear".into(),
+            entity: "Comment".into(),
+            kind: PlanNodeKind::Create,
+            effect_class: EffectClass::Write,
+            capability: "comment_create".into(),
+        };
+        let blocked = EffectEvent {
+            capability: "delete".into(),
+            ..allowed.clone()
+        };
+        assert!(matches!(
+            policy.disposition_for_event(&allowed, None),
+            NodeDisposition::Allow
+        ));
+        assert!(matches!(
+            policy.disposition_for_event(&blocked, None),
+            NodeDisposition::Deny
+        ));
     }
 }

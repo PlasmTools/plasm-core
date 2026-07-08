@@ -4,8 +4,8 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use serde::Serialize;
 
-use crate::flow_policy_vocabulary::ProjectFlowVocabulary;
-use crate::plan_flow_policy::FlowPolicy;
+use crate::flow_policy_vocabulary::{CapabilityVocabEntry, ProjectFlowVocabulary};
+use crate::plan_flow_policy::{OperatorDisposition, FlowPolicy};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct FlowPolicyDiagnostic {
@@ -38,8 +38,10 @@ pub fn validate_flow_policy(
 
     let label_catalogs = label_to_catalogs(vocab);
     let all_labels: HashSet<&str> = label_catalogs.keys().copied().collect();
+    let label_dims = label_dimensions(vocab);
     let sink_catalogs = sink_to_catalogs(vocab);
     let all_sinks: HashSet<&str> = sink_catalogs.keys().copied().collect();
+    let sink_dims = sink_dimensions(vocab);
     let enabled_entries: HashSet<&str> =
         vocab.catalogs.iter().map(|c| c.entry_id.as_str()).collect();
     let entities_by_entry: HashMap<&str, HashSet<&str>> = vocab
@@ -52,6 +54,9 @@ pub fn validate_flow_policy(
             )
         })
         .collect();
+    let capabilities = capability_index(vocab);
+
+    let _ = policy.default_posture; // presence via serde Default; publish-time required elsewhere
 
     for (idx, rule) in policy.forbidden.iter().enumerate() {
         let label = rule.from_label.as_str();
@@ -82,6 +87,20 @@ pub fn validate_flow_policy(
                     token: Some(sink_s.to_string()),
                     json_pointer: Some(format!("/forbidden/{idx}/to_sink")),
                 });
+            } else if let (Some(ld), Some(sd)) = (label_dims.get(label), sink_dims.get(sink_s)) {
+                if ld != sd {
+                    warnings.push(FlowPolicyDiagnostic {
+                        severity: "warning".into(),
+                        code: "dimension_mismatch".into(),
+                        message: format!(
+                            "Label `{label}` is {ld} but sink `{sink_s}` drains {sd} — confidentiality and integrity lattices should not mix."
+                        ),
+                        rule_index: Some(idx),
+                        field: Some("to_sink".into()),
+                        token: Some(sink_s.to_string()),
+                        json_pointer: Some(format!("/forbidden/{idx}")),
+                    });
+                }
             }
         }
         if rule.reason.as_ref().is_none_or(|r| r.trim().is_empty()) {
@@ -97,19 +116,43 @@ pub fn validate_flow_policy(
         }
     }
 
-    for (idx, rule) in policy.effect_rules.iter().enumerate() {
+    for (idx, rule) in policy.capability_gates.iter().enumerate() {
+        let cap = rule.pattern.capability.trim();
+        if cap.is_empty() {
+            errors.push(FlowPolicyDiagnostic {
+                severity: "error".into(),
+                code: "missing_capability".into(),
+                message: "Capability gates require a non-empty pattern.capability.".into(),
+                rule_index: Some(idx),
+                field: Some("pattern.capability".into()),
+                token: None,
+                json_pointer: Some(format!("/capability_gates/{idx}/pattern/capability")),
+            });
+        } else if !capabilities.is_empty() && !capability_known(&capabilities, &rule.pattern) {
+            errors.push(FlowPolicyDiagnostic {
+                severity: "error".into(),
+                code: "unknown_capability".into(),
+                message: format!(
+                    "Capability `{cap}` is not present in enabled catalog vocabulary."
+                ),
+                rule_index: Some(idx),
+                field: Some("pattern.capability".into()),
+                token: Some(cap.to_string()),
+                json_pointer: Some(format!("/capability_gates/{idx}/pattern/capability")),
+            });
+        }
         if let Some(entry_id) = rule.pattern.entry_id.as_ref() {
             if !enabled_entries.contains(entry_id.as_str()) {
                 errors.push(FlowPolicyDiagnostic {
                     severity: "error".into(),
                     code: "unknown_entry_id".into(),
                     message: format!(
-                        "Effect rule references catalog `{entry_id}` which is not enabled on any MCP bundle."
+                        "Capability gate references catalog `{entry_id}` which is not enabled on any MCP bundle."
                     ),
                     rule_index: Some(idx),
                     field: Some("pattern.entry_id".into()),
                     token: Some(entry_id.clone()),
-                    json_pointer: Some(format!("/effect_rules/{idx}/pattern/entry_id")),
+                    json_pointer: Some(format!("/capability_gates/{idx}/pattern/entry_id")),
                 });
             }
         }
@@ -125,14 +168,57 @@ pub fn validate_flow_policy(
                         rule_index: Some(idx),
                         field: Some("pattern.entity".into()),
                         token: Some(entity.clone()),
-                        json_pointer: Some(format!("/effect_rules/{idx}/pattern/entity")),
+                        json_pointer: Some(format!("/capability_gates/{idx}/pattern/entity")),
                     });
                 }
             }
         }
+        if rule.pattern.entry_id.is_none()
+            && rule.pattern.entity.is_none()
+            && matches!(
+                rule.enforcement,
+                OperatorDisposition::Deny | OperatorDisposition::Approve
+            )
+        {
+            warnings.push(FlowPolicyDiagnostic {
+                severity: "warning".into(),
+                code: "broad_capability_gate".into(),
+                message: "Broad capability gate matches all catalogs — narrower rules below may never apply (first match wins).".into(),
+                rule_index: Some(idx),
+                field: None,
+                token: None,
+                json_pointer: Some(format!("/capability_gates/{idx}")),
+            });
+        }
     }
 
-    for san in &policy.sanitizers {
+    for (idx, san) in policy.sanitizers.iter().enumerate() {
+        let cap = san.capability.trim();
+        if cap.is_empty() {
+            errors.push(FlowPolicyDiagnostic {
+                severity: "error".into(),
+                code: "missing_capability".into(),
+                message: "Sanitizer recognition requires a capability name.".into(),
+                rule_index: Some(idx),
+                field: Some("capability".into()),
+                token: None,
+                json_pointer: Some(format!("/sanitizers/{idx}/capability")),
+            });
+        } else if let Some(entry) = find_capability(&capabilities, None, None, cap) {
+            if !entry.deterministic {
+                errors.push(FlowPolicyDiagnostic {
+                    severity: "error".into(),
+                    code: "non_deterministic_sanitizer".into(),
+                    message: format!(
+                        "Capability `{cap}` is not a deterministic transform — only deterministic sanitizers may clear labels."
+                    ),
+                    rule_index: Some(idx),
+                    field: Some("capability".into()),
+                    token: Some(cap.to_string()),
+                    json_pointer: Some(format!("/sanitizers/{idx}/capability")),
+                });
+            }
+        }
         for label in &san.clears {
             let l = label.as_str();
             if !all_labels.contains(l) {
@@ -140,17 +226,54 @@ pub fn validate_flow_policy(
                     severity: "error".into(),
                     code: "unknown_sanitizer_label".into(),
                     message: format!("Sanitizer clears unknown label `{l}`."),
-                    rule_index: None,
+                    rule_index: Some(idx),
                     field: Some("clears".into()),
                     token: Some(l.to_string()),
-                    json_pointer: None,
+                    json_pointer: Some(format!("/sanitizers/{idx}/clears")),
                 });
             }
         }
     }
 
     detect_duplicate_forbidden(policy, &mut warnings);
-    detect_broad_effect_rules(policy, &mut warnings);
+
+    // Warn if default_deny with zero allow/approve gates (likely lockout).
+    if matches!(policy.default_posture, OperatorDisposition::Deny)
+        && !policy.capability_gates.iter().any(|g| {
+            matches!(
+                g.enforcement,
+                OperatorDisposition::Allow | OperatorDisposition::Approve
+            )
+        })
+    {
+        warnings.push(FlowPolicyDiagnostic {
+            severity: "warning".into(),
+            code: "deny_posture_no_allow_gates".into(),
+            message: "default_posture is deny but no capability_gates allow or approve — all mutations will be blocked.".into(),
+            rule_index: None,
+            field: Some("default_posture".into()),
+            token: None,
+            json_pointer: Some("/default_posture".into()),
+        });
+    }
+
+    // Warn if default_approve with zero allow gates — every unmatched mutation needs HITL.
+    if matches!(policy.default_posture, OperatorDisposition::Approve)
+        && !policy
+            .capability_gates
+            .iter()
+            .any(|g| matches!(g.enforcement, OperatorDisposition::Allow))
+    {
+        warnings.push(FlowPolicyDiagnostic {
+            severity: "warning".into(),
+            code: "approve_posture_no_allow_gates".into(),
+            message: "default_posture is approve but no capability_gates allow — every unmatched mutation will require HITL.".into(),
+            rule_index: None,
+            field: Some("default_posture".into()),
+            token: None,
+            json_pointer: Some("/default_posture".into()),
+        });
+    }
 
     FlowPolicyValidateResult {
         ok: errors.is_empty(),
@@ -171,16 +294,74 @@ fn label_to_catalogs(vocab: &ProjectFlowVocabulary) -> HashMap<&str, Vec<&str>> 
     out
 }
 
+fn label_dimensions(vocab: &ProjectFlowVocabulary) -> HashMap<&str, &str> {
+    let mut out = HashMap::new();
+    for cat in &vocab.catalogs {
+        for dc in &cat.data_classes {
+            out.entry(dc.id.as_str()).or_insert(dc.dimension.as_str());
+        }
+    }
+    out
+}
+
 fn sink_to_catalogs(vocab: &ProjectFlowVocabulary) -> HashMap<&str, Vec<&str>> {
     let mut out: HashMap<&str, Vec<&str>> = HashMap::new();
     for cat in &vocab.catalogs {
         for sink in &cat.sink_classes {
-            out.entry(sink.as_str())
+            out.entry(sink.id.as_str())
                 .or_default()
                 .push(cat.entry_id.as_str());
         }
     }
     out
+}
+
+fn sink_dimensions(vocab: &ProjectFlowVocabulary) -> HashMap<&str, &str> {
+    let mut out = HashMap::new();
+    for cat in &vocab.catalogs {
+        for sink in &cat.sink_classes {
+            out.entry(sink.id.as_str()).or_insert(sink.dimension.as_str());
+        }
+    }
+    out
+}
+
+fn capability_index(vocab: &ProjectFlowVocabulary) -> Vec<(String, CapabilityVocabEntry)> {
+    let mut out = Vec::new();
+    for cat in &vocab.catalogs {
+        for cap in &cat.capabilities {
+            out.push((cat.entry_id.clone(), cap.clone()));
+        }
+    }
+    out
+}
+
+fn capability_known(
+    caps: &[(String, CapabilityVocabEntry)],
+    pattern: &crate::plan_flow_policy::CapabilityGatePattern,
+) -> bool {
+    find_capability(
+        caps,
+        pattern.entry_id.as_deref(),
+        pattern.entity.as_deref(),
+        pattern.capability.as_str(),
+    )
+    .is_some()
+}
+
+fn find_capability<'a>(
+    caps: &'a [(String, CapabilityVocabEntry)],
+    entry_id: Option<&str>,
+    entity: Option<&str>,
+    name: &str,
+) -> Option<&'a CapabilityVocabEntry> {
+    caps.iter()
+        .find(|(eid, cap)| {
+            entry_id.is_none_or(|want| want == eid.as_str())
+                && entity.is_none_or(|want| want == cap.entity.as_str())
+                && cap.name == name
+        })
+        .map(|(_, cap)| cap)
 }
 
 fn detect_duplicate_forbidden(policy: &FlowPolicy, warnings: &mut Vec<FlowPolicyDiagnostic>) {
@@ -211,35 +392,12 @@ fn detect_duplicate_forbidden(policy: &FlowPolicy, warnings: &mut Vec<FlowPolicy
     }
 }
 
-fn detect_broad_effect_rules(policy: &FlowPolicy, warnings: &mut Vec<FlowPolicyDiagnostic>) {
-    for (idx, rule) in policy.effect_rules.iter().enumerate() {
-        let p = &rule.pattern;
-        let is_broad = p.entry_id.is_none()
-            && p.entity.is_none()
-            && p.operation.is_some()
-            && matches!(
-                rule.enforcement,
-                crate::plan_flow_policy::FlowEnforcement::Deny
-                    | crate::plan_flow_policy::FlowEnforcement::Review
-            );
-        if is_broad {
-            warnings.push(FlowPolicyDiagnostic {
-                severity: "warning".into(),
-                code: "broad_effect_rule".into(),
-                message: "Broad effect rule matches all catalogs — narrower rules below may never apply (first match wins).".into(),
-                rule_index: Some(idx),
-                field: None,
-                token: None,
-                json_pointer: Some(format!("/effect_rules/{idx}")),
-            });
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::flow_policy_vocabulary::CatalogVocabulary;
+    use crate::flow_policy_vocabulary::{
+        CapabilityVocabEntry, CatalogVocabulary, DataClassVocabEntry, SinkClassVocabEntry,
+    };
     use crate::plan_flow_policy::{FlowPolicy, ForbiddenFlowRule};
     use plasm_core::{DataClassName, SinkClassName};
 
@@ -248,13 +406,41 @@ mod tests {
             catalogs: vec![CatalogVocabulary {
                 entry_id: "vultr".into(),
                 catalog_has_labels: true,
-                data_classes: vec![crate::flow_policy_vocabulary::DataClassVocabEntry {
-                    id: "credentials".into(),
-                    severity: "critical".into(),
-                    description: None,
-                }],
-                sink_classes: vec!["external_publish".into()],
+                data_classes: vec![
+                    DataClassVocabEntry {
+                        id: "credentials".into(),
+                        severity: "critical".into(),
+                        dimension: "confidentiality".into(),
+                        description: None,
+                    },
+                    DataClassVocabEntry {
+                        id: "untrusted".into(),
+                        severity: "untrusted".into(),
+                        dimension: "integrity".into(),
+                        description: None,
+                    },
+                ],
+                sink_classes: vec![
+                    SinkClassVocabEntry {
+                        id: "external_publish".into(),
+                        dimension: "confidentiality".into(),
+                    },
+                    SinkClassVocabEntry {
+                        id: "permission_grant".into(),
+                        dimension: "integrity".into(),
+                    },
+                ],
                 entities: vec!["Instance".into()],
+                capabilities: vec![CapabilityVocabEntry {
+                    entity: "Instance".into(),
+                    name: "delete".into(),
+                    kind: "delete".into(),
+                    effect_class: "write".into(),
+                    deterministic: true,
+                    output_labels: vec![],
+                    sink_classes: vec![],
+                    control_params: vec![],
+                }],
             }],
         }
     }
@@ -267,8 +453,7 @@ mod tests {
                 to_sink: Some(SinkClassName::new("external_publish").unwrap()),
                 reason: Some("test".into()),
             }],
-            effect_rules: vec![],
-            sanitizers: vec![],
+            ..FlowPolicy::empty_allow()
         };
         let r = validate_flow_policy(&policy, &sample_vocab());
         assert!(!r.ok);
@@ -283,10 +468,40 @@ mod tests {
                 to_sink: Some(SinkClassName::new("external_publish").unwrap()),
                 reason: Some("no secrets in tickets".into()),
             }],
-            effect_rules: vec![],
-            sanitizers: vec![],
+            ..FlowPolicy::empty_allow()
         };
         let r = validate_flow_policy(&policy, &sample_vocab());
         assert!(r.ok, "{r:?}");
+    }
+
+    #[test]
+    fn warns_approve_posture_with_no_allow_gates() {
+        let policy = FlowPolicy {
+            default_posture: OperatorDisposition::Approve,
+            ..FlowPolicy::empty_allow()
+        };
+        let r = validate_flow_policy(&policy, &sample_vocab());
+        assert!(r.ok, "{r:?}");
+        assert!(
+            r.warnings
+                .iter()
+                .any(|w| w.code == "approve_posture_no_allow_gates"),
+            "{r:?}"
+        );
+    }
+
+    #[test]
+    fn warns_dimension_mismatch() {
+        let policy = FlowPolicy {
+            forbidden: vec![ForbiddenFlowRule {
+                from_label: DataClassName::new("credentials").unwrap(),
+                to_sink: Some(SinkClassName::new("permission_grant").unwrap()),
+                reason: Some("cross lattice".into()),
+            }],
+            ..FlowPolicy::empty_allow()
+        };
+        let r = validate_flow_policy(&policy, &sample_vocab());
+        assert!(r.ok);
+        assert!(r.warnings.iter().any(|e| e.code == "dimension_mismatch"));
     }
 }

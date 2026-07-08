@@ -9,14 +9,13 @@ pub fn approval_gate_json(requirement: &ApprovalRequirement, node_id: &str) -> s
         "node": node_id,
         "required": true,
         "host_policy": match requirement.policy {
-            crate::plan_flow_policy::ApprovalHostPolicy::AutoApprove => "host.auto_approve",
             crate::plan_flow_policy::ApprovalHostPolicy::RequireReview => "host.review",
         },
         "default_decision": "approved",
         "policy_key": requirement.policy_key,
         "entry_id": requirement.entry_id,
         "entity": requirement.entity,
-        "operation": requirement.operation,
+        "capability": requirement.capability,
         "author_label": requirement.author_label,
         "reason": requirement.reason,
     })
@@ -61,12 +60,12 @@ pub fn effect_operation_label(
     operation_name_for_kind(kind).to_string()
 }
 
-pub fn policy_key_for(q: &QualifiedEntityKey, operation: &str) -> String {
+pub fn policy_key_for(q: &QualifiedEntityKey, capability: &str) -> String {
     format!(
         "{}.{}.{}",
         q.entry_id.as_str(),
         q.entity.as_str(),
-        operation
+        capability
     )
 }
 

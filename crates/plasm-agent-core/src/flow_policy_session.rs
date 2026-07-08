@@ -1,5 +1,6 @@
 //! Resolve published project flow policy for execute session pinning.
 
+use crate::flow_policy_env::flow_policy_from_env_or_default;
 use crate::plan_flow_policy::FlowPolicySnapshot;
 use crate::server_state::PlasmHostState;
 
@@ -10,7 +11,7 @@ pub async fn resolve_project_flow_policy(
     project_slug: &str,
 ) -> FlowPolicySnapshot {
     let Some(repo) = st.flow_policy_repository() else {
-        return FlowPolicySnapshot::inactive_default();
+        return flow_policy_from_env_or_default();
     };
     match repo
         .get_or_default(tenant_id, workspace_slug, project_slug)
@@ -36,7 +37,7 @@ pub async fn resolve_flow_policy_for_principal(
     subject: &str,
 ) -> FlowPolicySnapshot {
     let Some(binding) = st.tenant_binding() else {
-        return FlowPolicySnapshot::inactive_default();
+        return flow_policy_from_env_or_default();
     };
     match binding.get_by_subject(subject).await {
         Ok(Some(row)) => {

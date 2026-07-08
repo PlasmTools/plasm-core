@@ -1,7 +1,7 @@
 //! Typed CGS → flow-catalog projection (no JSON round-trip).
 
 use crate::plan_flow::{QualifiedCapabilityKey, SinkParamRef};
-use plasm_core::{CapabilitySchema, DataClassName, CGS};
+use plasm_core::{flow_control_param_names, CapabilitySchema, DataClassName, CGS};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -16,6 +16,8 @@ pub struct FlowCatalogView {
     pub capability_output_labels: BTreeMap<QualifiedCapabilityKey, BTreeSet<DataClassName>>,
     pub capability_sink_params: BTreeMap<QualifiedCapabilityKey, Vec<SinkParamRef>>,
     pub capability_sanitizers: BTreeMap<QualifiedCapabilityKey, BTreeSet<DataClassName>>,
+    /// Behavior-controlling parameter names per capability (robust-declass: taint here voids clearance).
+    pub capability_control_params: BTreeMap<QualifiedCapabilityKey, BTreeSet<String>>,
 }
 
 impl FlowCatalogView {
@@ -50,6 +52,13 @@ impl FlowCatalogView {
 
     pub fn sanitizers_for(&self, key: &QualifiedCapabilityKey) -> BTreeSet<DataClassName> {
         self.capability_sanitizers
+            .get(key)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn control_params_for(&self, key: &QualifiedCapabilityKey) -> BTreeSet<String> {
+        self.capability_control_params
             .get(key)
             .cloned()
             .unwrap_or_default()
@@ -114,7 +123,18 @@ fn ingest_capability(
 
     let sanitizers: BTreeSet<DataClassName> = cap.sanitizes.iter().cloned().collect();
     if !sanitizers.is_empty() {
-        view.capability_sanitizers.insert(key, sanitizers);
+        view.capability_sanitizers.insert(key.clone(), sanitizers);
+    }
+
+    let control_params: BTreeSet<String> = cap
+        .input_schema
+        .as_ref()
+        .map(flow_control_param_names)
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    if !control_params.is_empty() {
+        view.capability_control_params.insert(key, control_params);
     }
 }
 
@@ -136,6 +156,19 @@ mod tests {
                 .as_ref()
                 .is_some_and(|s| s.as_str() == "outbound_body")),
             "send capability should expose outbound_body sink param"
+        );
+    }
+
+    #[test]
+    fn redact_exposes_keep_patterns_control_param() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/flow_matrix");
+        let cgs = load_schema_dir_unvalidated(&dir).expect("load flow_matrix fixture");
+        let view = FlowCatalogView::from_cgs("flow", &cgs);
+        let key = QualifiedCapabilityKey::from_parts("flow", "Redactor", "redact");
+        assert!(
+            view.control_params_for(&key).contains("keep_patterns"),
+            "redact must expose keep_patterns as control param"
         );
     }
 

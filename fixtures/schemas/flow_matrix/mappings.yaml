@@ -1,23 +1,45 @@
 message_query:
   method: GET
   path:
-    - type: literal
-      value: messages
-
-sanitize_body:
-  method: POST
-  path:
-    - type: literal
-      value: sanitize
-  body:
-    type: var
-    name: input
+    - { type: literal, value: messages }
+  response:
+    items:
+      id: id
+      body: body
+      subject: subject
 
 send:
   method: POST
   path:
-    - type: literal
-      value: send
+    - { type: literal, value: messages }
+    - { type: var, name: id }
+    - { type: literal, value: send }
+  body:
+    type: var
+    name: input
+
+sanitize_body:
+  method: POST
+  path:
+    - { type: literal, value: messages }
+    - { type: var, name: id }
+    - { type: literal, value: sanitize }
+  body:
+    type: var
+    name: input
+
+redact:
+  method: POST
+  path:
+    - { type: literal, value: redact }
+  body:
+    type: var
+    name: input
+
+grant_permission:
+  method: POST
+  path:
+    - { type: literal, value: permissions }
   body:
     type: var
     name: input

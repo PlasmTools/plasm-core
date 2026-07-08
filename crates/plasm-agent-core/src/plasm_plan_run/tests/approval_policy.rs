@@ -1,9 +1,28 @@
 use super::super::*;
 use super::support::*;
+use crate::plan_flow_policy::{
+    CapabilityGatePattern, CapabilityGateRule, OperatorDisposition, FlowPolicy, FlowPolicySnapshot,
+    PolicyRevision,
+};
 
 #[test]
 fn create_template_approval_uses_create_operation_not_description_text() {
-    let s = test_session();
+    let mut s = test_session();
+    // Active policy: require review for issue_create so the gate is emitted.
+    s.flow_policy = FlowPolicySnapshot::Active {
+        revision: PolicyRevision(1),
+        policy: FlowPolicy {
+            capability_gates: vec![CapabilityGateRule {
+                pattern: CapabilityGatePattern {
+                    entry_id: Some("linear".into()),
+                    entity: Some("Issue".into()),
+                    capability: "issue_create".into(),
+                },
+                enforcement: OperatorDisposition::Approve,
+            }],
+            ..FlowPolicy::default()
+        },
+    };
     let plan = serde_json::json!({
         "version": 1,
         "kind": "program",
@@ -53,7 +72,7 @@ fn create_template_approval_uses_create_operation_not_description_text() {
     let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
     assert_eq!(
         dry.graph_summary["approval_gates"][0]["policy_key"],
-        "linear.Issue.create"
+        "linear.Issue.issue_create"
     );
     let text = render_plasm_plan_dry_text(&dry, None);
     assert!(
@@ -64,7 +83,22 @@ fn create_template_approval_uses_create_operation_not_description_text() {
 
 #[test]
 fn mutating_for_each_infers_approval_without_agent_label() {
-    let s = test_session();
+    let mut s = test_session();
+    // Active policy: require review for product_label so the gate is emitted.
+    s.flow_policy = FlowPolicySnapshot::Active {
+        revision: PolicyRevision(1),
+        policy: FlowPolicy {
+            capability_gates: vec![CapabilityGateRule {
+                pattern: CapabilityGatePattern {
+                    entry_id: Some("acme".into()),
+                    entity: Some("Product".into()),
+                    capability: "product_label".into(),
+                },
+                enforcement: OperatorDisposition::Approve,
+            }],
+            ..FlowPolicy::default()
+        },
+    };
     let plan = serde_json::json!({
         "version": 1,
         "kind": "program",
@@ -111,16 +145,15 @@ fn mutating_for_each_infers_approval_without_agent_label() {
     let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
     assert_eq!(
         dry.graph_summary["approval_gates"][0]["policy_key"],
-        "acme.Product.label"
+        "acme.Product.product_label"
     );
 }
 
 #[test]
-fn mutating_surface_gate_declares_default_auto_approval() {
+fn mutating_surface_gate_with_approve_policy() {
     use crate::flow_catalog::FlowCatalogView;
     use crate::plan_flow::verify_plan_flow;
     use crate::plasm_plan::parse_and_validate_plan_json;
-    use crate::FlowPolicySnapshot;
 
     let plan = serde_json::json!({
         "version": 1,
@@ -137,19 +170,43 @@ fn mutating_surface_gate_declares_default_auto_approval() {
         "return": { "kind": "node", "node": "c1" }
     });
     let validated = parse_and_validate_plan_json(&plan).expect("validate");
-    let checked = verify_plan_flow(
+
+    // Inactive policy: Allow disposition → no approval gate.
+    let checked_inactive = verify_plan_flow(
         validated.artifact(),
         &["c1".to_string()],
         &FlowCatalogView::default(),
         &FlowPolicySnapshot::Inactive,
     );
+    assert!(
+        checked_inactive.analysis.approval_gate_for_node("c1").is_none(),
+        "inactive policy must not emit approval gate"
+    );
+
+    // Active policy with Approve enforcement for "create" operations.
+    let active_policy = FlowPolicy {
+        capability_gates: vec![CapabilityGateRule {
+            pattern: CapabilityGatePattern {
+                entry_id: Some("acme".into()),
+                entity: Some("Product".into()),
+                // non-template Surface create: cap_name falls back to operation_name_for_kind → "create"
+                capability: "create".into(),
+            },
+            enforcement: OperatorDisposition::Approve,
+        }],
+        ..FlowPolicy::default()
+    };
+    let snapshot = FlowPolicySnapshot::Active {
+        revision: PolicyRevision(1),
+        policy: active_policy,
+    };
+    let checked = verify_plan_flow(validated.artifact(), &["c1".to_string()], &FlowCatalogView::default(), &snapshot);
     let gate = checked
         .analysis
         .approval_gate_for_node("c1")
         .expect("approval gate");
-
     assert_eq!(gate["policy_key"], "acme.Product.create");
-    assert_eq!(gate["host_policy"], "host.auto_approve");
+    assert_eq!(gate["host_policy"], "host.review");
     assert_eq!(gate["default_decision"], "approved");
 }
 
