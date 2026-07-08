@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.7] - 2026-07-08
+
+### Added
+
+- **PhraseIdent invoke lowering:** bare phrase tokens in invoke payloads parse as `Value::PhraseIdent` and are validated at DAG compile time against in-scope program labels and capability param types — unbound identifiers like `title=body` fail instead of silently coercing to the string `"body"`. Centralized `parse_plasm_program_surface_for_dag` applies the lower hook across pipeline and continuation paths.
+
+### Fixed
+
+- **Render-only compute:** skip full graph rehydration for `ComputeOp::Render` so MCP live await on template-only programs finishes within wall time.
+- **Empty relation parent:** short-circuit relation traversal when the source binding is empty or lacks a usable id (no null-id GET).
+- **GraphQL null entity:** surface JSON null at the end of a GET response path as `RequestError` instead of leaking `items_path` configuration internals.
+- **Bare search tilde:** reject `Issue~` without a predicate body at parse time.
+
+### Changed
+
+- **Agent-facing copy:** remove opaque `p#` param symbol references from errors, prompts, and snapshots; prefer wire field names and teaching TSV `r#` relation hops.
+
 ## [0.4.6] - 2026-07-08
 
 ### Added
