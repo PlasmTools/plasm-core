@@ -2659,7 +2659,7 @@ fn extract_single_entity_payload_from_response(
             let mut cur: &serde_json::Value = &response;
             if let Some(ref path) = r.items_path {
                 if !path.is_empty() {
-                    for key in path {
+                    for (i, key) in path.iter().enumerate() {
                         cur = match response_path_step(cur, key) {
                             Some(v) => v,
                             None => {
@@ -2681,6 +2681,19 @@ fn extract_single_entity_payload_from_response(
                                 return Err(RuntimeError::ConfigurationError { message: msg });
                             }
                         };
+                        if cur.is_null() && i + 1 == path.len() {
+                            let mut msg = format!(
+                                "Entity not found (`{key}` is null in the API response)"
+                            );
+                            if let Some(gs) = graphql_errors_summary(&response) {
+                                msg.push_str(" — GraphQL: ");
+                                msg.push_str(&gs);
+                            }
+                            return Err(RuntimeError::RequestError {
+                                message: msg,
+                                attempts: 1,
+                            });
+                        }
                     }
                 }
             } else if let Some(key) = r.items.as_deref().filter(|k| !k.is_empty()) {
@@ -4711,6 +4724,36 @@ mod tests {
         let msg = format!("{err}");
         assert!(msg.contains("no rows"), "{msg}");
         assert!(msg.contains("$my-id"), "{msg}");
+    }
+
+    #[test]
+    fn graphql_get_null_entity_surfaces_request_error_not_config() {
+        use plasm_core::loader::load_schema_dir;
+
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/linear");
+        if !dir.is_dir() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).expect("load linear catalog");
+        let cap = cgs.get_capability("issue_get").expect("issue_get");
+        let capability_template =
+            parse_capability_template(&cap.mapping.template).expect("parse template");
+        let body = serde_json::json!({
+            "data": { "issue": null },
+            "errors": [{ "message": "Entity not found: Issue" }]
+        });
+        let err = narrow_http_graphql_response_for_entity_decode(&capability_template, body)
+            .expect_err("null issue must fail before items_path config error");
+        let msg = format!("{err}");
+        assert!(
+            matches!(err, RuntimeError::RequestError { .. }),
+            "expected RequestError, got {err:?}"
+        );
+        assert!(msg.contains("null"), "{msg}");
+        assert!(
+            !msg.contains("missing path segment"),
+            "must not leak items_path internals: {msg}"
+        );
     }
 
     #[test]
