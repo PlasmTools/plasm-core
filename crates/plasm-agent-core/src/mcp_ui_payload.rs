@@ -400,8 +400,13 @@ mod tests {
     #[test]
     fn finalize_dry_run_structured_content_is_slim_agent_tokens_only() {
         let res = CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)]);
-        let out =
-            finalize_mcp_tool_result(res, sample_dry_tool_meta(), Some(SAMPLE_PLAN_TEXT), None, true);
+        let out = finalize_mcp_tool_result(
+            res,
+            sample_dry_tool_meta(),
+            Some(SAMPLE_PLAN_TEXT),
+            None,
+            true,
+        );
         let wire = serde_json::to_value(&out).expect("serialize CallToolResult");
         assert_eq!(
             wire.pointer("/structuredContent/plasm/run_ref")

@@ -15,7 +15,10 @@ fn plasm_tools_omit_ui_metadata_when_apps_disabled() {
         false,
     );
     let plasm = tools.iter().find(|t| t.name == "plasm").expect("plasm");
-    let plasm_run = tools.iter().find(|t| t.name == "plasm_run").expect("plasm_run");
+    let plasm_run = tools
+        .iter()
+        .find(|t| t.name == "plasm_run")
+        .expect("plasm_run");
     assert!(plasm.meta.is_none());
     assert!(plasm_run.meta.is_none());
     assert!(!tools.iter().any(|t| t.name == "plasm_ui_read_plan"));

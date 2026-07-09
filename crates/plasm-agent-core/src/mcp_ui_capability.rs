@@ -112,7 +112,9 @@ mod tests {
     use super::*;
     use rust_mcp_sdk::schema::{Implementation, LATEST_PROTOCOL_VERSION};
 
-    fn client_with_extensions(extensions: BTreeMap<String, Map<String, Value>>) -> InitializeRequestParams {
+    fn client_with_extensions(
+        extensions: BTreeMap<String, Map<String, Value>>,
+    ) -> InitializeRequestParams {
         InitializeRequestParams {
             capabilities: ClientCapabilities {
                 extensions: Some(extensions),

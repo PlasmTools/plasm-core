@@ -60,9 +60,9 @@ use rust_mcp_sdk::schema::schema_utils::{CallToolError, CustomNotification};
 use rust_mcp_sdk::schema::SdkError;
 use rust_mcp_sdk::schema::{
     BlobResourceContents, CallToolRequestParams, CallToolResult, ContentBlock, Implementation,
-    InitializeRequestParams, InitializeResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
-    PaginatedRequestParams, ProtocolVersion, ReadResourceContent, ReadResourceRequestParams,
-    ReadResourceResult, ResourceTemplate, RpcError, ServerCapabilities,
+    InitializeRequestParams, InitializeResult, ListResourceTemplatesResult, ListResourcesResult,
+    ListToolsResult, PaginatedRequestParams, ProtocolVersion, ReadResourceContent,
+    ReadResourceRequestParams, ReadResourceResult, ResourceTemplate, RpcError, ServerCapabilities,
     ServerCapabilitiesResources, ServerCapabilitiesTools, TextContent, TextResourceContents,
 };
 use rust_mcp_sdk::session_store::SessionStore;
@@ -105,7 +105,6 @@ mod committed_plasm_run;
 mod discover;
 mod mcp_http_dns_rebinding;
 mod mcp_http_user_agent;
-mod stateless;
 mod mcp_plasm_invoke;
 mod plasm_tool_dry_meta;
 mod plasm_tool_dry_run;
@@ -113,6 +112,7 @@ mod read_run_artifact;
 mod resource_read;
 mod resource_read_trace;
 mod schema;
+mod stateless;
 mod tool_parse;
 mod tools;
 mod trace;
@@ -487,7 +487,10 @@ impl PlasmMcpHandler {
             .await
     }
 
-    pub(crate) async fn mcp_ui_apps_enabled_for_runtime(&self, runtime: &Arc<dyn McpServer>) -> bool {
+    pub(crate) async fn mcp_ui_apps_enabled_for_runtime(
+        &self,
+        runtime: &Arc<dyn McpServer>,
+    ) -> bool {
         if let Some(key) = runtime.session_id() {
             return self.resolved_mcp_ui_apps_supported(&key, runtime).await;
         }
@@ -504,8 +507,7 @@ impl PlasmMcpHandler {
             runtime.wait_for_initialization().await;
         }
         let client_info = runtime.client_info();
-        let enabled =
-            crate::mcp_ui_capability::client_supports_mcp_ui_apps(client_info.as_ref());
+        let enabled = crate::mcp_ui_capability::client_supports_mcp_ui_apps(client_info.as_ref());
         if let Some(params) = client_info.as_ref() {
             tracing::info!(
                 client_info.name = %params.client_info.name,

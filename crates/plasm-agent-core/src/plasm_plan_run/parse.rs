@@ -274,7 +274,7 @@ fn enrich_phrase_ident_program_error(session: &ExecuteSession, raw: &str) -> Str
         let mut owners: Vec<String> = session
             .contexts_by_entry
             .iter()
-            .filter(|(eid, ctx)| ctx.cgs.get_capability(cap).is_some())
+            .filter(|(_eid, ctx)| ctx.cgs.get_capability(cap).is_some())
             .map(|(eid, _)| eid.clone())
             .collect();
         owners.sort();

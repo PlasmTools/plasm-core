@@ -114,7 +114,7 @@ async fn handle_post(
         Err(e) => {
             return json_error(
                 StatusCode::BAD_REQUEST,
-                RpcError::parse_error().with_message(&e.to_string()),
+                RpcError::parse_error().with_message(e.to_string()),
                 None,
             );
         }
@@ -136,7 +136,7 @@ async fn handle_post(
     };
 
     if let Err(resp) = validate_sep_headers(&headers, &method, params.as_ref()) {
-        return resp;
+        return *resp;
     }
 
     let header_version = header_value(&headers, MCP_PROTOCOL_VERSION_HEADER);
@@ -148,7 +148,7 @@ async fn handle_post(
     if REMOVED_METHODS.contains(&method.as_str()) {
         return json_error(
             StatusCode::NOT_FOUND,
-            RpcError::method_not_found().with_message(&format!("Method not found: {method}")),
+            RpcError::method_not_found().with_message(format!("Method not found: {method}")),
             id,
         );
     }
@@ -156,7 +156,7 @@ async fn handle_post(
     if !is_implemented_method(&method) {
         return json_error(
             StatusCode::NOT_FOUND,
-            RpcError::method_not_found().with_message(&format!("Method not found: {method}")),
+            RpcError::method_not_found().with_message(format!("Method not found: {method}")),
             id,
         );
     }
@@ -221,7 +221,7 @@ async fn handle_post(
     if let Err(e) = runtime.set_client_details(client_init).await {
         return json_error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            RpcError::internal_error().with_message(&e.to_string()),
+            RpcError::internal_error().with_message(e.to_string()),
             id,
         );
     }
@@ -249,7 +249,7 @@ async fn handle_discover(
     }
 
     let result = build_discover_result(state.server_details.as_ref());
-    let rid = id.unwrap_or_else(|| RequestId::Integer(0));
+    let rid = id.unwrap_or(RequestId::Integer(0));
     let body = json!({
         "jsonrpc": "2.0",
         "id": request_id_to_json(&rid),
@@ -276,15 +276,15 @@ fn validate_sep_headers(
     headers: &HeaderMap,
     method: &str,
     params: Option<&Value>,
-) -> Result<(), Response> {
+) -> Result<(), Box<Response>> {
     if let Some(header_method) = header_value(headers, MCP_METHOD_HEADER) {
         if header_method != method {
-            return Err(json_error(
+            return Err(Box::new(json_error(
                 StatusCode::BAD_REQUEST,
                 RpcError::invalid_request()
                     .with_message("Mcp-Method header does not match body method"),
                 None,
-            ));
+            )));
         }
     }
     if method == "tools/call" {
@@ -294,12 +294,12 @@ fn validate_sep_headers(
                 .and_then(Value::as_str)
                 .unwrap_or_default();
             if header_name != body_name {
-                return Err(json_error(
+                return Err(Box::new(json_error(
                     StatusCode::BAD_REQUEST,
                     RpcError::invalid_request()
                         .with_message("Mcp-Name header does not match tools/call name"),
                     None,
-                ));
+                )));
             }
         }
     }

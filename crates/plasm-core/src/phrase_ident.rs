@@ -18,11 +18,7 @@ enum PhraseIdentCgsScope<'a> {
 }
 
 impl<'a> PhraseIdentCgsScope<'a> {
-    fn resolve(
-        &self,
-        catalog_entry_id: Option<&str>,
-        entity: &str,
-    ) -> Result<&'a CGS, String> {
+    fn resolve(&self, catalog_entry_id: Option<&str>, entity: &str) -> Result<&'a CGS, String> {
         match self {
             Self::Single(cgs) => {
                 if cgs.entities.contains_key(entity) {
@@ -479,12 +475,7 @@ pub fn lower_program_phrase_idents_in_expr(
     program_labels: &BTreeSet<String>,
     cgs: &CGS,
 ) -> Result<(), String> {
-    lower_expr_phrase_idents(
-        expr,
-        program_labels,
-        PhraseIdentCgsScope::Single(cgs),
-        true,
-    )
+    lower_expr_phrase_idents(expr, program_labels, PhraseIdentCgsScope::Single(cgs), true)
 }
 
 /// Federated variant: resolve owning [`CGS`] per stamped `catalog_entry_id` (mirrors
@@ -506,12 +497,7 @@ pub fn lower_program_phrase_idents_in_expr_federated(
 /// Lower validated [`Value::PhraseIdent`] nodes to [`Value::String`] across an expression tree.
 pub fn normalize_program_phrase_idents_in_expr(expr: &mut Expr, cgs: &CGS) {
     let labels = BTreeSet::new();
-    let _ = lower_expr_phrase_idents(
-        expr,
-        &labels,
-        PhraseIdentCgsScope::Single(cgs),
-        false,
-    );
+    let _ = lower_expr_phrase_idents(expr, &labels, PhraseIdentCgsScope::Single(cgs), false);
 }
 
 #[cfg(test)]
@@ -604,20 +590,11 @@ mod tests {
         q.catalog_entry_id = CatalogEntryStamp::some("pokeapi".into());
         let mut expr = Expr::Query(q);
         let labels = BTreeSet::new();
-        lower_program_phrase_idents_in_expr_federated(
-            &mut expr,
-            &labels,
-            &fed,
-            matrix.as_ref(),
-        )
-        .expect("pokeapi-stamped query must validate against pokeapi graph");
+        lower_program_phrase_idents_in_expr_federated(&mut expr, &labels, &fed, matrix.as_ref())
+            .expect("pokeapi-stamped query must validate against pokeapi graph");
         let mut primary_only = expr.clone();
-        let err = lower_program_phrase_idents_in_expr(
-            &mut primary_only,
-            &labels,
-            matrix.as_ref(),
-        )
-        .expect_err("primary github graph lacks Pokemon entity");
+        let err = lower_program_phrase_idents_in_expr(&mut primary_only, &labels, matrix.as_ref())
+            .expect_err("primary github graph lacks Pokemon entity");
         assert!(err.contains("unknown entity"), "{err}");
     }
 }
