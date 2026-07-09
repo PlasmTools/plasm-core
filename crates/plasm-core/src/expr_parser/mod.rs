@@ -492,6 +492,36 @@ pub fn parse_with_cgs_layers_program(
     program_nodes: Option<&BTreeSet<String>>,
     for_each_row_context: bool,
 ) -> Result<ParsedExpr, ParseError> {
+    parse_with_cgs_layers_program_opts(
+        input,
+        layers,
+        sym_map,
+        program_nodes,
+        for_each_row_context,
+        true,
+    )
+}
+
+/// Parse a **row-local filter body** (`Entity{field=…}` synthesized by `.filter{…}`) without the
+/// `id_field → Get` sugar. That rewrite is correct for surface queries, but inside a row predicate
+/// it would fold `{id_field=value}` into an `Expr::Get` and trip the row-predicate contract with a
+/// misleading "no list to filter" diagnostic. Row filters are always predicate `Expr::Query`.
+pub fn parse_row_filter_body(
+    input: &str,
+    layers: &[CgsLayer<'_>],
+    sym_map: Arc<dyn SymbolSession>,
+) -> Result<ParsedExpr, ParseError> {
+    parse_with_cgs_layers_program_opts(input, layers, sym_map, None, false, false)
+}
+
+fn parse_with_cgs_layers_program_opts(
+    input: &str,
+    layers: &[CgsLayer<'_>],
+    sym_map: Arc<dyn SymbolSession>,
+    program_nodes: Option<&BTreeSet<String>>,
+    for_each_row_context: bool,
+    apply_id_field_get_rewrite: bool,
+) -> Result<ParsedExpr, ParseError> {
     if layers.is_empty() {
         return Err(ParseError {
             kind: ParseErrorKind::Other {
@@ -504,8 +534,10 @@ pub fn parse_with_cgs_layers_program(
     p.program_nodes = program_nodes;
     p.for_each_row_context = for_each_row_context;
     let mut parsed = p.parse_expr()?;
-    parsed.expr =
-        crate::expr_sugar::rewrite_id_field_brace_query_to_get(parsed.expr, layers[0].cgs());
+    if apply_id_field_get_rewrite {
+        parsed.expr =
+            crate::expr_sugar::rewrite_id_field_brace_query_to_get(parsed.expr, layers[0].cgs());
+    }
     let remainder = p.classify_remainder();
     if !remainder.acceptable_for_program_line() {
         return Err(ParseError {

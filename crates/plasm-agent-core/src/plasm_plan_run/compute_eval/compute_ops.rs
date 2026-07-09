@@ -1,4 +1,7 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use minijinja::value::{Enumerator, Object, ObjectRepr};
 
 use crate::plasm_plan::OutputName;
 use crate::plasm_render_compile::render_context_hint;
@@ -384,12 +387,48 @@ pub(crate) fn render_compute(
     Ok(vec![serde_json::json!({ "content": rendered })])
 }
 
-fn template_binding_value(rows: &[serde_json::Value]) -> minijinja::Value {
-    if rows.len() == 1 {
-        minijinja::Value::from_serialize(&rows[0])
-    } else {
-        minijinja::Value::from_serialize(rows)
+/// A render-binding value bound into the Minijinja context (collection alias / cross-binding source).
+///
+/// It is BOTH an iterable sequence — so `{% for r in items %}` always works, even for a single-row
+/// binding — AND an object whose attribute access delegates to the first row, so the single-object
+/// convenience `{{ items.title }}` still resolves. This resolves the prior collapse where a 1-row
+/// binding bound as a scalar object and `{% for r in items %}` iterated an object (undefined value).
+#[derive(Debug)]
+struct RenderBindingValue {
+    rows: Vec<minijinja::Value>,
+}
+
+impl Object for RenderBindingValue {
+    fn repr(self: &Arc<Self>) -> ObjectRepr {
+        ObjectRepr::Seq
     }
+
+    fn get_value(self: &Arc<Self>, key: &minijinja::Value) -> Option<minijinja::Value> {
+        // Attribute access (`items.title`) delegates to the first row.
+        if let Some(name) = key.as_str() {
+            return self
+                .rows
+                .first()
+                .and_then(|row| row.get_attr(name).ok())
+                .filter(|value| !value.is_undefined());
+        }
+        // Sequence index access (`items[0]`) and `{% for … %}` iteration.
+        usize::try_from(key.clone())
+            .ok()
+            .and_then(|idx| self.rows.get(idx).cloned())
+    }
+
+    fn enumerate(self: &Arc<Self>) -> Enumerator {
+        Enumerator::Seq(self.rows.len())
+    }
+}
+
+fn template_binding_value(rows: &[serde_json::Value]) -> minijinja::Value {
+    let rows: Vec<minijinja::Value> = rows
+        .iter()
+        .map(|row| minijinja::Value::from_serialize(row))
+        .collect();
+    minijinja::Value::from_object(RenderBindingValue { rows })
 }
 
 pub(crate) fn binding_rows_for_render(

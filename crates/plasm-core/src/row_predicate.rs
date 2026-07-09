@@ -38,7 +38,7 @@ pub fn parse_row_predicate_list(
     sym_map: Arc<dyn SymbolSession>,
 ) -> Result<RowPredicate, String> {
     let input = format!("{entity}{{{}}}", body.trim());
-    let parsed = crate::expr_parser::parse_with_cgs_layers(&input, layers, sym_map)
+    let parsed = crate::expr_parser::parse_row_filter_body(&input, layers, sym_map)
         .map_err(|e| format!("row filter parse: {e}"))?;
     row_predicate_from_expr(&parsed.expr)
 }
@@ -141,6 +141,23 @@ mod tests {
         assert_eq!(pred.0.len(), 2);
         assert_eq!(pred.0[0].field, "owner");
         assert_eq!(pred.0[1].field, "score");
+    }
+
+    #[test]
+    fn parse_row_filter_on_id_field_is_predicate_not_get() {
+        // Regression (WS2): `CompoundBranch` has `id_field: name`. Filtering `.filter{name="main"}`
+        // on a materialized list must parse as a row predicate. Previously the `id_field → Get`
+        // sugar folded `{name="main"}` into an `Expr::Get`, tripping the row-predicate contract with
+        // the misleading "no list to filter" diagnostic.
+        let (cgs, _layers_arc) = matrix_layers();
+        let stack = vec![CgsLayer::unset(cgs.as_ref())];
+        let (full, _) = entity_slices_for_render(cgs.as_ref(), FocusSpec::All);
+        let sym_map = Arc::new(SymbolMap::build(cgs.as_ref(), &full));
+        let pred = parse_row_predicate_list("CompoundBranch", r#"name="main""#, &stack, sym_map)
+            .expect("row filter on id_field must parse as a predicate");
+        assert_eq!(pred.0.len(), 1);
+        assert_eq!(pred.0[0].field, "name");
+        assert_eq!(pred.0[0].op, CompOp::Eq);
     }
 
     #[test]
