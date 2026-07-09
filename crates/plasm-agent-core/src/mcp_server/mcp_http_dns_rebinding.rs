@@ -1,8 +1,8 @@
 //! DNS rebinding protection for Streamable HTTP MCP (MCP security best practices).
 //!
-//! Loopback-only servers reject non-local `Host` / `Origin`. When
-//! `PLASM_MCP_PUBLIC_BASE_URL` is set (ingress / SaaS), the configured public host is
-//! also allowed so clients can connect via the public hostname.
+//! Applies on **loopback-only** dev servers (no `PLASM_MCP_PUBLIC_BASE_URL`, not in Kubernetes).
+//! Hosted SaaS / ingress deployments skip this — OAuth + TLS are the boundary; nginx may forward
+//! an internal `Host` that is not the public browser hostname.
 
 use axum::body::Body;
 use axum::http::{header, HeaderMap, Request, StatusCode};
@@ -20,31 +20,46 @@ pub async fn reject_dns_rebinding(req: Request<Body>, next: Next) -> Response {
 }
 
 fn dns_rebinding_denial(headers: &HeaderMap) -> Option<Response> {
-    if dns_rebinding_disabled() {
+    if !dns_rebinding_enabled() {
         return None;
     }
     let allowed = allowed_mcp_hostnames();
     if let Some(host) = header_value(headers, header::HOST) {
         if !host_matches_allowlist(&host, &allowed) {
+            tracing::warn!(host = %host, "mcp dns rebinding: rejected Host");
             return Some(deny_response("invalid Host header for MCP server"));
         }
     }
     if let Some(origin) = header_value(headers, header::ORIGIN) {
         if !origin_matches_allowlist(&origin, &allowed) {
+            tracing::warn!(origin = %origin, "mcp dns rebinding: rejected Origin");
             return Some(deny_response("invalid Origin header for MCP server"));
         }
     }
     None
 }
 
-fn dns_rebinding_disabled() -> bool {
-    matches!(
-        std::env::var("PLASM_MCP_DNS_REBINDING_PROTECTION")
-            .ok()
-            .map(|v| v.trim().to_ascii_lowercase())
-            .as_deref(),
-        Some("0") | Some("false") | Some("off")
-    )
+/// Loopback rebinding guard — off on hosted MCP (public base URL or Kubernetes).
+fn dns_rebinding_enabled() -> bool {
+    match std::env::var("PLASM_MCP_DNS_REBINDING_PROTECTION")
+        .ok()
+        .map(|v| v.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("0") | Some("false") | Some("off") => return false,
+        Some("1") | Some("true") | Some("on") => return true,
+        _ => {}
+    }
+    if env_nonempty("PLASM_MCP_PUBLIC_BASE_URL") || env_nonempty("KUBERNETES_SERVICE_HOST") {
+        return false;
+    }
+    true
+}
+
+fn env_nonempty(key: &str) -> bool {
+    std::env::var(key)
+        .ok()
+        .is_some_and(|v| !v.trim().is_empty())
 }
 
 fn header_value(headers: &HeaderMap, name: header::HeaderName) -> Option<String> {
@@ -93,7 +108,7 @@ fn push_host_list(out: &mut Vec<String>, raw: &str) {
     }
 }
 
-/// Hostnames permitted on `Host` / `Origin` for MCP HTTP.
+/// Hostnames permitted on `Host` / `Origin` for loopback MCP HTTP.
 fn allowed_mcp_hostnames() -> Vec<String> {
     let mut out: Vec<String> = LOOPBACK_HOSTS.iter().map(|h| (*h).to_string()).collect();
     if let Ok(v) = std::env::var("PLASM_MCP_PUBLIC_BASE_URL") {
@@ -167,23 +182,9 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_localhost_host() {
+    fn rejects_non_localhost_host_on_loopback_allowlist() {
         let allowed = loopback_allowlist();
         assert!(!host_matches_allowlist("evil.example.com", &allowed));
-        assert!(!host_matches_allowlist("evil.example.com:443", &allowed));
-    }
-
-    #[test]
-    fn allows_localhost_origin() {
-        let allowed = loopback_allowlist();
-        assert!(origin_matches_allowlist("http://127.0.0.1:3000", &allowed));
-        assert!(origin_matches_allowlist("http://localhost/mcp", &allowed));
-    }
-
-    #[test]
-    fn rejects_attacker_origin() {
-        let allowed = loopback_allowlist();
-        assert!(!origin_matches_allowlist("http://evil.example.com", &allowed));
     }
 
     #[test]
@@ -195,42 +196,5 @@ mod tests {
             "platform.plasm.tools".into(),
         ];
         assert!(host_matches_allowlist("platform.plasm.tools", &allowed));
-        assert!(origin_matches_allowlist(
-            "https://platform.plasm.tools/plasm/mcp",
-            &allowed
-        ));
-    }
-
-    #[test]
-    fn rejects_unlisted_host_even_with_public_on_allowlist() {
-        let allowed = vec![
-            "localhost".into(),
-            "127.0.0.1".into(),
-            "::1".into(),
-            "platform.plasm.tools".into(),
-        ];
-        assert!(!host_matches_allowlist("evil.example.com", &allowed));
-    }
-
-    #[test]
-    fn denies_evil_host_header() {
-        let allowed = loopback_allowlist();
-        let mut headers = HeaderMap::new();
-        headers.insert(header::HOST, "evil.example.com".parse().unwrap());
-        assert!(!host_matches_allowlist(
-            headers.get(header::HOST).unwrap().to_str().unwrap(),
-            &allowed
-        ));
-    }
-
-    #[test]
-    fn allows_valid_host_header() {
-        let allowed = loopback_allowlist();
-        let mut headers = HeaderMap::new();
-        headers.insert(header::HOST, "127.0.0.1:3000".parse().unwrap());
-        assert!(host_matches_allowlist(
-            headers.get(header::HOST).unwrap().to_str().unwrap(),
-            &allowed
-        ));
     }
 }

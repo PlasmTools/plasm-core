@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.11] - 2026-07-09
+
+### Fixed
+
+- **MCP DNS rebinding (SaaS / Cursor OAuth):** skip loopback Host guard when `PLASM_MCP_PUBLIC_BASE_URL` or `KUBERNETES_SERVICE_HOST` is set — ingress upstream Host names are not loopback.
+
 ## [0.4.10] - 2026-07-09
 
 ### Fixed
