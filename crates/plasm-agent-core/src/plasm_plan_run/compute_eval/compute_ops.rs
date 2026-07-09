@@ -424,10 +424,7 @@ impl Object for RenderBindingValue {
 }
 
 fn template_binding_value(rows: &[serde_json::Value]) -> minijinja::Value {
-    let rows: Vec<minijinja::Value> = rows
-        .iter()
-        .map(|row| minijinja::Value::from_serialize(row))
-        .collect();
+    let rows: Vec<minijinja::Value> = rows.iter().map(minijinja::Value::from_serialize).collect();
     minijinja::Value::from_object(RenderBindingValue { rows })
 }
 

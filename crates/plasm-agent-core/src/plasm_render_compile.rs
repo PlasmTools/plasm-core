@@ -163,9 +163,11 @@ fn push_unique(cols: &mut Vec<String>, field: &str) {
 /// **not** a cross-binding reference to a binding named `label`.
 pub(crate) fn infer_template_field_refs(template: &str) -> TemplateFieldRefs {
     let locals = infer_template_locals(template);
-    let mut out = TemplateFieldRefs::default();
-    out.locals = locals.names.clone();
-    out.loop_iterable_roots = locals.loop_iterable_roots.clone();
+    let mut out = TemplateFieldRefs {
+        locals: locals.names.clone(),
+        loop_iterable_roots: locals.loop_iterable_roots.clone(),
+        ..TemplateFieldRefs::default()
+    };
     let mut rest = template;
     while let Some(start) = rest.find("{{") {
         let after = &rest[start + 2..];
