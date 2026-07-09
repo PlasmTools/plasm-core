@@ -28,8 +28,10 @@ data_classes:
 values:
   nv_id:
     type: string
+    string_semantics: short
   nv_str:
     type: string
+    string_semantics: short
   nv_pattern_list:
     type: array
     items:

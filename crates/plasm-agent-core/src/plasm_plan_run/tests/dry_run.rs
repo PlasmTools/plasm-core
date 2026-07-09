@@ -387,7 +387,7 @@ fn federated_pokeapi_linear_write_plan_is_coherent() {
         map.ident_sym_cap_param_for("linear", "Issue", "issue_create", "description");
 
     let program = format!(
-        "pika = {e_mon}(pikachu)\nticket = pika => {e_issue}.{m_create}({p_team}={e_team}(EVA), {p_title}=\"Pokedex #025 Pikachu\", {p_description}=<<MD\n# Pikachu\n\nElectric-type Pokémon #025.\nMD\n)\nticket"
+        "pika = {e_mon}(\"pikachu\")\nticket = pika => {e_issue}.{m_create}({p_team}={e_team}(\"EVA\"), {p_title}=\"Pokedex #025 Pikachu\", {p_description}=<<MD\n# Pikachu\n\nElectric-type Pokémon #025.\nMD\n)\nticket"
     );
     let plan = crate::plasm_dag::compile_plasm_dag_to_plan(
         &PromptPipelineConfig::default(),

@@ -5412,7 +5412,7 @@ mod tests {
         let mut refs = BTreeSet::new();
         refs.insert("zone".into());
         let r = parse_with_cgs_layers_program(
-            "Ticket(owner=zone,repo=r,n=9)",
+            "Ticket(owner=zone,repo=\"r\",n=9)",
             &stack,
             sym_map,
             Some(&refs),
@@ -5742,7 +5742,12 @@ mod tests {
     }
 
     #[test]
-    fn program_parse_unknown_ident_stays_string_in_predicate() {
+    fn program_parse_unknown_ident_becomes_phrase_ident_in_predicate() {
+        // A bare unquoted word in a predicate that is not a known program binding parses as a
+        // deferred `Value::PhraseIdent` (not a `PlasmInputRef`). Downstream
+        // `lower_program_phrase_idents_in_expr` then either lowers it to `Value::String` or
+        // rejects it ("quote the value if you meant a literal string"). This asserts the
+        // raw-parse shape only.
         let dir = std::path::Path::new("../../apis/github");
         if !dir.exists() {
             return;
@@ -5770,7 +5775,7 @@ mod tests {
         let Predicate::Comparison { value, .. } = pred else {
             panic!("expected comparison");
         };
-        assert_eq!(value.to_value(), Value::String("report".into()));
+        assert_eq!(value.to_value(), Value::PhraseIdent("report".into()));
     }
 
     #[test]

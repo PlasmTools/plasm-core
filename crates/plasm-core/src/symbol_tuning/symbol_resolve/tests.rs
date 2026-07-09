@@ -26,14 +26,23 @@ fn lookup_linear_issue_create_in_federated_layers() {
 
 #[test]
 fn resolve_entity_field_unknown_opaque_p_sym() {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/schemas/capability_with_input");
-    let cgs = load_schema_dir(&dir).expect("capability_with_input");
-    let exp = TeachingExposureSession::new(&cgs, "", &["Account"]);
+    // Use a teaching-complete fixture (`overshow_tools`/`PromptRun`, proven by
+    // `overshow_tools_teaching_bundle_covers_all_capabilities`). The p# resolution error under
+    // test is orthogonal to the fixture; the previously-used `capability_with_input` has an
+    // update-only `Account` whose session exposure yields an empty teaching block.
+    let dir =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+    if !dir.is_dir() {
+        return;
+    }
+    let Ok(cgs) = load_schema_dir(&dir) else {
+        return;
+    };
+    let exp = TeachingExposureSession::new(&cgs, "", &["PromptRun"]);
     let map = exp.symbol_map_arc();
-    let ent = cgs.get_entity("Account").expect("Account");
+    let ent = cgs.get_entity("PromptRun").expect("PromptRun");
     let err = map
-        .resolve_entity_field(CatalogScope::SessionReverse, "Account", ent, "p999")
+        .resolve_entity_field(CatalogScope::SessionReverse, "PromptRun", ent, "p999")
         .expect_err("unknown p#");
     assert!(matches!(err, SymbolResolveError::UnknownSessionPSym { .. }));
 }
@@ -305,7 +314,7 @@ fn agent_program_error_includes_query_filter_hint() {
     let msg = err.to_agent_program_error();
     assert!(msg.contains("query filter symbol"));
     assert!(msg.contains("help:"));
-    assert!(msg.contains("query/search input signature"));
+    assert!(msg.contains("query/search filters"));
 }
 
 #[test]

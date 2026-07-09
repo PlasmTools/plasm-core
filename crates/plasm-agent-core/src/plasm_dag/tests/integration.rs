@@ -1134,7 +1134,7 @@ author"#;
             None,
             &session,
             "t",
-            "Issue{team_key=ENG, state_name=Todo}",
+            "Issue{team_key=\"ENG\", state_name=\"Todo\"}",
         )
         .expect("compile");
         assert_eq!(plan["nodes"][0]["kind"].as_str(), Some("search"), "{plan}");
