@@ -52,20 +52,20 @@ v10	union · v210 | v211 | v212
 v11	union · v101 | v102 | v103 | v104 | v105 | v106 | v107
 e1(slug).slug[slug,markdown,title,links,agent_auth]	→ e1 · projection · Read or edit a shared Proof document
 e1(slug)	→ e1
-e1(slug).m16()	→ e1 · Bind this session to a share URL (preferred: full URL with embedded `?token=`…
-e1(slug).m1(agent_id=$, by=$, quote=$, text=$, base_token=$, share_token=$)	→ e1 · optional: base_token,share_token · Start a comment thread on quoted text from the document
-e1(slug).m2(agent_id=$, by=$, share_token=$, base_token=$, operations=[$])	→ e1 · optional: base_token,share_token · Apply several comment updates in one request
-e1(slug).m3(agent_id=$, by=$, mark_id=$, text=$, resolve=$, base_token=$, share_token=$)	→ e1 · optional: base_token,resolve,share_token · Reply in a thread; optionally mark it resolved in the same step
-e1(slug).m4(agent_id=$, by=$, mark_id=$, base_token=$, share_token=$)	→ e1 · optional: base_token,share_token · Mark a thread resolved; history stays visible
-e1(slug).m5(agent_id=$, by=$, mark_id=$, base_token=$, share_token=$)	→ e1 · optional: base_token,share_token · Open a resolved thread for more discussion
-e1(slug).m6(agent_id=$, by=$, mark_id=$, base_token=$, share_token=$)	→ e1 · optional: base_token,share_token · Accept a pending suggestion and apply it to the document
-e1(slug).m7(agent_id=$, by=$, quote=$, base_token=$, idempotency_key=$, share_token=$, status=$)	→ e1 · optional: base_token,idempotency_key,share_token,status · Propose deleting a quoted passage for a human to accept or reject
-e1(slug).m8(agent_id=$, by=$, quote=$, content=$, base_token=$, idempotency_key=$, share_token=$, status=$)	→ e1 · optional: base_token,idempotency_key,share_token,status · Propose inserting text after a quoted passage for a human to accept or reject
-e1(slug).m9(agent_id=$, by=$, mark_id=$, base_token=$, share_token=$)	→ e1 · optional: base_token,share_token · Reject a pending suggestion without changing the document body
-e1(slug).m10(agent_id=$, by=$, quote=$, content=$, base_token=$, idempotency_key=$, share_token=$, status=$)	→ e1 · optional: base_token,idempotency_key,share_token,status · Propose replacing a quoted passage with new content for a human to accept or …
-e1(slug).m11(agent_id=$, up_to_id=$, by=$, share_token=$)	→ e1 · optional: share_token · Tell the server how far you read the collaboration event stream
-e1(slug).m12(report=$)	→ e1 · Report a bug and include this document as context
-e1(slug).m13(agent_id=$, idempotency_key=$, share_token=$, by=$, base_revision=$, operations=[v101{ref=$,markdown=$},v103{ref=$,blocks=$}])	→ e1 · optional: idempotency_key,share_token · Apply one batch of block edits. Use base_revision from your latest snapshot (…
-e1(slug).m17(agent_id=$, presence_status=$)	→ e1 · optional: presence_status · You MUST announce presence before you edit or comment—call this once per do…
-e1(slug).r1	relation e1 → [Block]
-e1(slug).r2	relation e1 → [CollaborationEvent]
+e1(slug).m16()	↠ e1 · chain: e1(id=…).m# · Bind this session to a share URL (preferred: full URL with embedded `?token=`…
+e1(slug).m1(agent_id=$, by=$, quote=$, text=$, base_token=$, share_token=$)	↠ e1 · chain: e1(id=…).m# · optional: base_token,share_token · Start a comment thread on quoted text from the document
+e1(slug).m2(agent_id=$, by=$, share_token=$, base_token=$, operations=[$])	↠ e1 · chain: e1(id=…).m# · optional: base_token,share_token · Apply several comment updates in one request
+e1(slug).m3(agent_id=$, by=$, mark_id=$, text=$, resolve=$, base_token=$, share_token=$)	↠ e1 · chain: e1(id=…).m# · optional: base_token,resolve,share_token · Reply in a thread; optionally mark it resolved in the same step
+e1(slug).m4(agent_id=$, by=$, mark_id=$, base_token=$, share_token=$)	↠ e1 · chain: e1(id=…).m# · optional: base_token,share_token · Mark a thread resolved; history stays visible
+e1(slug).m5(agent_id=$, by=$, mark_id=$, base_token=$, share_token=$)	↠ e1 · chain: e1(id=…).m# · optional: base_token,share_token · Open a resolved thread for more discussion
+e1(slug).m6(agent_id=$, by=$, mark_id=$, base_token=$, share_token=$)	↠ e1 · chain: e1(id=…).m# · optional: base_token,share_token · Accept a pending suggestion and apply it to the document
+e1(slug).m7(agent_id=$, by=$, quote=$, base_token=$, idempotency_key=$, share_token=$, status=$)	↠ e1 · chain: e1(id=…).m# · optional: base_token,idempotency_key,share_token,status · Propose deleting a quoted passage for a human to accept or reject
+e1(slug).m8(agent_id=$, by=$, quote=$, content=$, base_token=$, idempotency_key=$, share_token=$, status=$)	↠ e1 · chain: e1(id=…).m# · optional: base_token,idempotency_key,share_token,status · Propose inserting text after a quoted passage for a human to accept or reject
+e1(slug).m9(agent_id=$, by=$, mark_id=$, base_token=$, share_token=$)	↠ e1 · chain: e1(id=…).m# · optional: base_token,share_token · Reject a pending suggestion without changing the document body
+e1(slug).m10(agent_id=$, by=$, quote=$, content=$, base_token=$, idempotency_key=$, share_token=$, status=$)	↠ e1 · chain: e1(id=…).m# · optional: base_token,idempotency_key,share_token,status · Propose replacing a quoted passage with new content for a human to accept or …
+e1(slug).m11(agent_id=$, up_to_id=$, by=$, share_token=$)	↠ e1 · chain: e1(id=…).m# · optional: share_token · Tell the server how far you read the collaboration event stream
+e1(slug).m12(report=$)	↠ e1 · chain: e1(id=…).m# · Report a bug and include this document as context
+e1(slug).m13(agent_id=$, idempotency_key=$, share_token=$, by=$, base_revision=$, operations=[v101{ref=$,markdown=$},v103{ref=$,blocks=$}])	↠ e1 · chain: e1(id=…).m# · optional: idempotency_key,share_token · Apply one batch of block edits. Use base_revision from your latest snapshot (…
+e1(slug).m17(agent_id=$, presence_status=$)	↠ e1 · chain: e1(id=…).m# · optional: presence_status · You MUST announce presence before you edit or comment—call this once per do…
+e1(slug).r1	relation e1 ↣ [Block]
+e1(slug).r2	relation e1 ↣ [CollaborationEvent]

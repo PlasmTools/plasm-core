@@ -330,8 +330,8 @@ fn prompt_matrix_tsv_teaching_surface_invariants() {
         "capability legends omit inline `args:`; ruleset row was: {ruleset_query:?}"
     );
     assert!(
-        ruleset_query.contains('→'),
-        "ruleset query Meaning should carry returns legend: {ruleset_query:?}"
+        ruleset_query.contains('↣'),
+        "ruleset query Meaning should carry the list-return arrow (↣): {ruleset_query:?}"
     );
     assert!(
         tsv.lines().any(|l| {

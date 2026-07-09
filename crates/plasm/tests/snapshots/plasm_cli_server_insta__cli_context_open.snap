@@ -5,40 +5,37 @@ expression: h.norm(&combined_output(&ctx))
 status: exit status: 0
 stdout:
 plasm_expr	Meaning
-v1	int
-v3	select · person, organisation, project
-p2	v1 · limit
-p3	v3 · profile_type
-p1	v1 · id
+v2	int
+v5	select · person, organisation, project
+limit	v2
+profile_type	v5
+id	v2
 r1	recorded_matches · Content scoped to this profile
-e1[p1]	→ e1 · projection · A person, organisation, or project profile
-e1{p3=$, p2=$}[p1]	→ [e1] · inputs: p3,p2 · rows: p1 · optional
-e1(p1)	→ e1
-e1{p3=$, p2=$}.r1	relation e1 → [e2]
+e1[id]	↣ e1 · projection · A person, organisation, or project profile
+e1{profile_type=$, limit=$}	↣ [e1] · optional: limit,profile_type
+e1(id)	→ e1
+e1{profile_type=$, limit=$}.r1	relation e1 ↣ [e2]
+v4	select · auto, keyword, natural
+v6	str
 v7	ref:Profile · int
-v8	str
-v6	select · auto, keyword, natural
-v10	select · all, ocr, audio, ui
-v17	date
-p5	v1 · limit
-p6	v6 · mode
-p7	v7 · profile_id
-p8	v8 · query
-p9	v8 · app_name
-p10	v10 · content_type
-p11	v17 · end_time
-p12	v1 · limit
-p13	v1 · max_length
-p14	v1 · min_length
-p15	v1 · offset
-p17	v17 · start_time
-p18	v8 · window_name
-p4	v8 · id
-e2{p7=e1(p1), p8=$, p5=$, p6=$}[p4]	→ [e2] · projection · A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text
-e2{p7=e1(p1), p8=$, p5=$, p6=$}[p4]	→ [e2] · inputs: p7,p8,p5,p6 · rows: p4 · optional
-e2~"text"[p4]	→ [e2] · rows: p4 · optional
-e2~"text"{p10=$, p12=$, p15=$, p17=$, p11=$, p9=$, p18=$, p14=$, p13=$}[p4]	→ [e2] · inputs: p10,p12,p15,p17,p11,p9,p18,p14,p13 · rows: p4 · optional
+v3	select · all, ocr, audio, ui
+v1	date
+app_name	v6
+end_time	v1
+max_length	v2
+min_length	v2
+mode	v4
+offset	v2
+profile_id	v7
+query	v6
+start_time	v1
+window_name	v6
+id	v6
+e2{profile_id=e1(id), query=$, limit=$, mode=$}[id]	↣ [e2] · projection · A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text
+e2{profile_id=e1(id), query=$, limit=$, mode=$}	↣ [e2] · optional: limit,mode,query
+e2~"text"	↣ [e2]
+e2~"text"{content_type=$, limit=$, offset=$, start_time=$, end_time=$, app_name=$, window_name=$, min_length=$, max_length=$}	↣ [e2] · optional: app_name,content_type,end_time,limit,max_length,min_length,offset,start_time…
 
 stderr:
 Active context: overshow:Profile, overshow:RecordedContent
-mirror: .plasm/s/SESSION8/out/NNNN-context/wave.tsv (+33 rows)
+mirror: .plasm/s/SESSION8/out/NNNN-context/wave.tsv (+30 rows)

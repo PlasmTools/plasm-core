@@ -37,7 +37,7 @@
 //! (`ParentRecv…[p#,…]`) require the parent entity on the surface plus the same slot checks as outgoing nav;
 //! field gloss rows and `ref:*` typing are unchanged.
 //! Meaning uses
-//! `relation e#_src → [e#_tgt]` (many) or `relation e#_src → e#_tgt` (one) in **Meaning** only; executable nav is `<receiver>.r#` or wire in `plasm_expr`.
+//! `relation e#_src ↣ [e#_tgt]` (many) or `relation e#_src → e#_tgt` (one) in **Meaning** only; executable nav is `<receiver>.r#` or wire in `plasm_expr`. Result arrows mirror [`ReturnArrow`]: `→` single, `↣` list, `↠` terminal write.
 //! For terminal relation chains, the example line already carries a **result gloss** (`relation …`);
 //! relation hops use the **`r#` pool** in exemplars (`.r#` in `plasm_expr`) with standalone **`r#` gloss rows**
 //! mapping alias → wire name (parallel to `p#` / `v# · wire`).
@@ -97,7 +97,7 @@ pub use bundle_render::{
     render_teaching_prompt_bundle_for_exposure_federated, render_teaching_tsv,
 };
 pub use input_legend::{
-    CapabilityInputLegend, RowContractLegend, RowProjectionContract, TeachingExprLine,
+    CapabilityInputLegend, ReturnArrow, RowContractLegend, RowProjectionContract, TeachingExprLine,
 };
 pub use types::{
     CrossEntityPlanMeta, CrossEntityStrategyKind, DomainLineKind, EntityTeachingBlock,

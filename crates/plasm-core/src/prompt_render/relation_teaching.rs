@@ -378,7 +378,15 @@ pub(crate) fn relation_nav_meaning_result_gloss(
     target_gloss: String,
 ) -> String {
     match relation_receiver_teaching_hint(expr, map) {
-        Some(h) => format!("relation {h} → {target_gloss}"),
+        Some(h) => {
+            // Glyph mirrors [`ReturnArrow`]: `↣` for a collection hop (`[e#]`), `→` for a single hop.
+            let glyph = if target_gloss.trim_start().starts_with('[') {
+                super::ReturnArrow::List.glyph()
+            } else {
+                super::ReturnArrow::Single.glyph()
+            };
+            format!("relation {h} {glyph} {target_gloss}")
+        }
         None => target_gloss,
     }
 }
@@ -502,12 +510,18 @@ fn append_relation_nav_edge_delta_row(
     let result_type =
         relation_nav_meaning_result_gloss(plasm_expr, map_arc.map(|m| m.as_ref()), target_gloss);
     let line = TeachingExprLine::empty_legend(plasm_expr.to_string());
+    let arrow = if cardinality_many {
+        super::ReturnArrow::List
+    } else {
+        super::ReturnArrow::Single
+    };
     let line = TeachingExprLine {
         expression: line.expression,
         result_type,
         legend: line.legend,
         is_projection_teaching: false,
         row_contract: RowContractLegend::default(),
+        arrow,
     };
     write_teaching_tsv_row(
         out,

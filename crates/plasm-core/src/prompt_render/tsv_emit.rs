@@ -10,7 +10,7 @@ use super::gloss_dedup::{
     FieldGlossMeaningAtom, GlossDescription, GlossTsvDedupe,
 };
 use super::{
-    EntityTeachingExprRow, TeachingExprLine, TeachingFieldGloss, TeachingHeading,
+    EntityTeachingExprRow, ReturnArrow, TeachingExprLine, TeachingFieldGloss, TeachingHeading,
     TeachingPromptBundle, TEACHING_OPTIONAL_LEGEND_MARK, TSV_TEACHING_TABLE_HEADER,
 };
 
@@ -328,8 +328,17 @@ fn sanitize_tsv_cell(s: &str) -> String {
 /// Typed fragment of a teaching-row `Meaning` cell (joined with [`TSV_MEANING_JOIN`], then sanitized as a whole).
 #[derive(Clone, Debug)]
 enum TeachingMeaningAtom {
-    Returns { gloss: String },
-    RelationNav { line: String },
+    Returns {
+        arrow: ReturnArrow,
+        gloss: String,
+    },
+    RelationNav {
+        line: String,
+    },
+    /// Terminal write (`↠ e#`) reconstruction hint: re-read the entity by id to keep chaining.
+    TerminalChainHint {
+        entity: String,
+    },
     EntityHeadingDescription(String),
     LegendScope(String),
     LegendOptionalParams(Vec<String>),
@@ -355,8 +364,11 @@ pub(crate) fn relation_sym_shown_in_query_teaching_rows(
 impl TeachingMeaningAtom {
     fn encoded_fragment(&self) -> String {
         let raw = match self {
-            TeachingMeaningAtom::Returns { gloss } => format!("→ {gloss}"),
+            TeachingMeaningAtom::Returns { arrow, gloss } => format!("{} {gloss}", arrow.glyph()),
             TeachingMeaningAtom::RelationNav { line } => line.clone(),
+            TeachingMeaningAtom::TerminalChainHint { entity } => {
+                format!("chain: {entity}(id=…).m#")
+            }
             TeachingMeaningAtom::EntityHeadingDescription(s) => s.clone(),
             TeachingMeaningAtom::LegendScope(s) => s.clone(),
             TeachingMeaningAtom::LegendOptionalParams(wires) => {
@@ -492,18 +504,26 @@ fn push_teaching_meaning_result_atom(
     if row.result_type.is_empty() {
         return;
     }
-    if identity_row {
-        atoms.push(TeachingMeaningAtom::Returns {
-            gloss: row.result_type.clone(),
-        });
-    } else if row.result_type.starts_with("relation ") {
+    if !identity_row && row.result_type.starts_with("relation ") {
+        // Relation-nav rows carry their own `relation … ↣/→ e#` line (glyph already embedded).
         atoms.push(TeachingMeaningAtom::RelationNav {
             line: row.result_type.clone(),
         });
-    } else {
-        atoms.push(TeachingMeaningAtom::Returns {
-            gloss: row.result_type.clone(),
-        });
+        return;
+    }
+    atoms.push(TeachingMeaningAtom::Returns {
+        arrow: row.arrow,
+        gloss: row.result_type.clone(),
+    });
+    // Terminal write that yields an entity slice (`↠ e#`, not `()` / list): teach the
+    // entity-reconstruction form so an agent knows how to keep chaining after a mutation.
+    if !identity_row && row.arrow == ReturnArrow::Terminal {
+        let gloss = row.result_type.trim();
+        if gloss != "()" && !gloss.starts_with('[') {
+            atoms.push(TeachingMeaningAtom::TerminalChainHint {
+                entity: gloss.to_string(),
+            });
+        }
     }
 }
 

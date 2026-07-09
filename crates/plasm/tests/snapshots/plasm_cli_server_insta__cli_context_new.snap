@@ -5,31 +5,29 @@ expression: h.norm(&combined_output(&new_ctx))
 status: exit status: 0
 stdout:
 plasm_expr	Meaning
-v4	ref:Profile · int
-v5	str
 v2	int
-v3	select · auto, keyword, natural
-v7	select · all, ocr, audio, ui
-v14	date
-p2	v2 · limit
-p3	v3 · mode
-p4	v4 · profile_id
-p5	v5 · query
-p6	v5 · app_name
-p7	v7 · content_type
-p8	v14 · end_time
-p9	v2 · limit
-p10	v2 · max_length
-p11	v2 · min_length
-p12	v2 · offset
-p14	v14 · start_time
-p15	v5 · window_name
-p1	v5 · id
-e1{p4=Profile($), p5=$, p2=$, p3=$}[p1]	→ [e1] · projection · A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text
-e1{p4=Profile($), p5=$, p2=$, p3=$}[p1]	→ [e1] · inputs: p4,p5,p2,p3 · rows: p1 · optional
-e1~"text"[p1]	→ [e1] · rows: p1 · optional
-e1~"text"{p7=$, p9=$, p12=$, p14=$, p8=$, p6=$, p15=$, p11=$, p10=$}[p1]	→ [e1] · inputs: p7,p9,p12,p14,p8,p6,p15,p11,p10 · rows: p1 · optional
+v4	select · auto, keyword, natural
+v5	str
+v6	ref:Profile · int
+v3	select · all, ocr, audio, ui
+v1	date
+app_name	v5
+end_time	v1
+limit	v2
+max_length	v2
+min_length	v2
+mode	v4
+offset	v2
+profile_id	v6
+query	v5
+start_time	v1
+window_name	v5
+id	v5
+e1{profile_id=$, query=$, limit=$, mode=$}[id]	↣ [e1] · projection · A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text
+e1{profile_id=$, query=$, limit=$, mode=$}	↣ [e1] · optional: limit,mode,query
+e1~"text"	↣ [e1]
+e1~"text"{content_type=$, limit=$, offset=$, start_time=$, end_time=$, app_name=$, window_name=$, min_length=$, max_length=$}	↣ [e1] · optional: app_name,content_type,end_time,limit,max_length,min_length,offset,start_time…
 
 stderr:
 Active context: overshow:RecordedContent
-mirror: .plasm/s/SESSION8/out/NNNN-context/wave.tsv (+24 rows)
+mirror: .plasm/s/SESSION8/out/NNNN-context/wave.tsv (+22 rows)

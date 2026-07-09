@@ -397,6 +397,101 @@ fn proof_bug_report_capabilities_require_report_parameter() {
     }
 }
 
+/// Classifier-agreement regression: every teaching row's stored return arrow (`→` / `↣` / `↠`)
+/// must equal what [`super::ReturnArrow::classify`] derives from that row's validated
+/// [`super::DomainLineKind`] + result gloss. Locks the glyph to the kind so mutations always read
+/// as terminal (`↠`), queries/searches as lists (`↣`), and gets/single-hops as single (`→`).
+#[test]
+fn return_arrow_classifier_agrees_with_domain_line_kind_on_language_matrix() {
+    use super::{DomainLineKind, ReturnArrow};
+    let dir = fixtures_schemas_dir("plasm_language_matrix");
+    if !dir.exists() {
+        return;
+    }
+    let cgs = load_schema_dir(&dir).unwrap();
+    let bundle = render_teaching_prompt_bundle(
+        &cgs,
+        RenderConfig {
+            focus: FocusSpec::All,
+            render_mode: PromptRenderMode::Canonical,
+            include_domain_execution_model: true,
+            symbol_map_cross_cache: None,
+        },
+    );
+    let mut seen_terminal = false;
+    let mut seen_list = false;
+    let mut seen_single = false;
+    for block in &bundle.teaching_blocks {
+        for row in &block.teaching_rows {
+            let expected = ReturnArrow::classify(row.meta.kind, &row.teaching_expr.result_type);
+            assert_eq!(
+                row.teaching_expr.arrow, expected,
+                "arrow drifted from kind {:?} for `{}` (gloss {:?})",
+                row.meta.kind, row.teaching_expr.expression, row.teaching_expr.result_type
+            );
+            match row.teaching_expr.arrow {
+                ReturnArrow::Terminal => seen_terminal = true,
+                ReturnArrow::List => seen_list = true,
+                ReturnArrow::Single => seen_single = true,
+            }
+            // A write is always terminal regardless of whether it provides an entity slice or `()`.
+            if row.meta.kind == DomainLineKind::Method {
+                assert_eq!(
+                    row.teaching_expr.arrow,
+                    ReturnArrow::Terminal,
+                    "write `{}` must be terminal (↠)",
+                    row.teaching_expr.expression
+                );
+            }
+        }
+    }
+    assert!(
+        seen_terminal && seen_list && seen_single,
+        "language matrix must exercise all three return shapes (terminal={seen_terminal}, list={seen_list}, single={seen_single})"
+    );
+}
+
+/// Rendered-glyph regression: the language matrix TSV must show `↠` + a `chain:` reconstruction hint
+/// on an entity-providing write, `↠ ()` **without** a chain hint on a void write, `↣ [` on a query,
+/// and `→` on a get.
+#[test]
+fn teaching_tsv_return_glyphs_and_terminal_chain_hint_language_matrix() {
+    let dir = fixtures_schemas_dir("plasm_language_matrix");
+    if !dir.exists() {
+        return;
+    }
+    let cgs = load_schema_dir(&dir).unwrap();
+    let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
+    let meanings: Vec<&str> = tsv
+        .lines()
+        .filter_map(|l| l.split_once('\t').map(|(_, m)| m))
+        .collect();
+    assert!(
+        meanings
+            .iter()
+            .any(|m| m.contains('↠') && m.contains("chain:") && m.contains("(id=…).m#")),
+        "expected a provides-write row with terminal glyph + reconstruction hint; meanings:\n{}",
+        meanings.join("\n")
+    );
+    assert!(
+        meanings
+            .iter()
+            .any(|m| m.contains("↠ ()") && !m.contains("chain:")),
+        "expected a void write row `↠ ()` with no chain hint; meanings:\n{}",
+        meanings.join("\n")
+    );
+    assert!(
+        meanings.iter().any(|m| m.contains("↣ [")),
+        "expected a list-return query row (↣ […]); meanings:\n{}",
+        meanings.join("\n")
+    );
+    assert!(
+        meanings.iter().any(|m| m.trim_start().starts_with("→ ")),
+        "expected a single-return get row (→ …); meanings:\n{}",
+        meanings.join("\n")
+    );
+}
+
 #[test]
 fn proof_document_tsv_topo_p_gloss_before_union_ctor_and_summary_after() {
     let dir = apis_dir("proof");
@@ -2370,7 +2465,9 @@ fn clickup_domain_gloss_and_symbol_map_queries() {
         domain_block.lines().any(|line| {
             line.split_once('\t').is_some_and(|(expr, meaning)| {
                 expr.starts_with(team_sym.as_str())
-                    && (meaning.contains('→') || meaning.contains("returns"))
+                    && (meaning.contains('↣')
+                        || meaning.contains('→')
+                        || meaning.contains("returns"))
                     && meaning.contains(&format!("[{team_sym}]"))
             })
         }),

@@ -171,6 +171,10 @@ pub(crate) fn try_push_teaching_example(
             relation_materialization: None,
         }
     };
+    // Classify the return-shape glyph from the validated domain-line kind (Method → terminal `↠`,
+    // query/search → list `↣`, else gloss shape). Relation-nav rows render their own `relation … →`
+    // atom verbatim, so the arrow only surfaces on plain `Returns` atoms.
+    teaching_line.arrow = super::ReturnArrow::classify(meta.kind, &teaching_line.result_type);
     teaching_rows.push(EntityTeachingExprRow {
         teaching_expr: teaching_line,
         meta,

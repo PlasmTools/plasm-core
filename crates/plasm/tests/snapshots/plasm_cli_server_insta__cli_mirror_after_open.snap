@@ -15,17 +15,17 @@ capability overshow RecordedContent
 symbols.json: present
 teaching.tsv: present
 plasm_expr	Meaning
-v1	int
-v3	select · person, organisation, project
-p2	v1 · limit
-p3	v3 · profile_type
-p1	v1 · id
+v2	int
+v5	select · person, organisation, project
+limit	v2
+profile_type	v5
+id	v2
 r1	recorded_matches · Content scoped to this profile
-e1[p1]	→ e1 · projection · A person, organisation, or project profile
-e1{p3=$, p2=$}[p1]	→ [e1] · inputs: p3,p2 · rows: p1 · optional
-e1(p1)	→ e1
-e1{p3=$, p2=$}.r1	relation e1 → [e2]
-v7	ref:Profile · int
+e1[id]	↣ e1 · projection · A person, organisation, or project profile
+e1{profile_type=$, limit=$}	↣ [e1] · optional: limit,profile_type
+e1(id)	→ e1
+e1{profile_type=$, limit=$}.r1	relation e1 ↣ [e2]
+v4	select · auto, keyword, natural
 latest: present
 out/NNNN-context
 out/: 0001-context

@@ -49,6 +49,7 @@ pub(crate) fn teaching_expr_line_from_layers(
             ..TeachingExprLine::empty_legend(String::new())
         };
     }
+    // Arrow is assigned by the push pipeline from the validated domain-line kind; default here.
     let is_projection_teaching = gloss.is_some_and(|g| g.contains(PROJECTION_WITNESS_LEGEND_MARK))
         && parse_trailing_projection_bracket(expr.trim()).is_some();
     let mut row = TeachingExprLine {
@@ -57,6 +58,7 @@ pub(crate) fn teaching_expr_line_from_layers(
         legend: CapabilityInputLegend::default(),
         is_projection_teaching,
         row_contract,
+        arrow: super::ReturnArrow::Single,
     };
     apply_compact_legend_remainder(&mut row, cap.unwrap_or(""));
     row
