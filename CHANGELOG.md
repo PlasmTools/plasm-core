@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.10] - 2026-07-09
+
+### Fixed
+
+- **SaaS MCP (Cursor):** disable `statelessMcp` on dev deploy — Cursor uses 2025-11-25 `initialize` + GET SSE; SEP-2575 stateless (POST-only) returns 405 on SSE fallback.
+
 ## [0.4.9] - 2026-07-09
 
 ### Fixed
