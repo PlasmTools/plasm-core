@@ -1,7 +1,5 @@
 //! SEP-2575 stateless HTTP integration tests.
 
-use std::sync::Arc;
-
 use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -30,7 +28,7 @@ async fn post_mcp(app: Router, method: &str, params: Value, id: i64) -> (StatusC
         "params": params,
     });
     let auth = format!("Bearer {}", PLASM_MCP_ANONYMOUS_BEARER_TOKEN);
-    let mut req = Request::builder()
+    let req = Request::builder()
         .method("POST")
         .uri("/mcp")
         .header("content-type", "application/json")
@@ -50,13 +48,8 @@ async fn post_mcp(app: Router, method: &str, params: Value, id: i64) -> (StatusC
 #[tokio::test]
 async fn stateless_discover_returns_capabilities() {
     let app = super::router(minimal_host()).await;
-    let (status, data) = post_mcp(
-        app,
-        "server/discover",
-        json!({ "_meta": valid_meta() }),
-        1,
-    )
-    .await;
+    let (status, data) =
+        post_mcp(app, "server/discover", json!({ "_meta": valid_meta() }), 1).await;
     assert_eq!(status, StatusCode::OK);
     assert!(data["result"]["supportedVersions"]
         .as_array()
@@ -76,13 +69,7 @@ async fn stateless_rejects_missing_meta_with_400() {
 #[tokio::test]
 async fn stateless_initialize_returns_404() {
     let app = super::router(minimal_host()).await;
-    let (status, data) = post_mcp(
-        app,
-        "initialize",
-        json!({ "_meta": valid_meta() }),
-        500,
-    )
-    .await;
+    let (status, data) = post_mcp(app, "initialize", json!({ "_meta": valid_meta() }), 500).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(data["error"]["code"], -32601);
 }
@@ -90,13 +77,7 @@ async fn stateless_initialize_returns_404() {
 #[tokio::test]
 async fn stateless_tools_list_with_valid_meta() {
     let app = super::router(minimal_host()).await;
-    let (status, data) = post_mcp(
-        app,
-        "tools/list",
-        json!({ "_meta": valid_meta() }),
-        202,
-    )
-    .await;
+    let (status, data) = post_mcp(app, "tools/list", json!({ "_meta": valid_meta() }), 202).await;
     assert_eq!(status, StatusCode::OK);
     assert!(data["result"]["tools"].as_array().is_some());
 }

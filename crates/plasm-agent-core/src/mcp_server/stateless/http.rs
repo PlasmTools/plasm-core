@@ -61,7 +61,9 @@ pub(crate) async fn router(plasm: Arc<PlasmHostState>) -> axum::Router {
     let server_details = Arc::new(super::super::mcp_stateless_server_details());
 
     let auth = if plasm.mcp_config_repository().is_some() || plasm.incoming_auth.is_some() {
-        Some(Arc::new(PlasmMcpApiKeyAuthProvider::new(Arc::clone(&plasm))))
+        Some(Arc::new(PlasmMcpApiKeyAuthProvider::new(Arc::clone(
+            &plasm,
+        ))))
     } else {
         None
     };

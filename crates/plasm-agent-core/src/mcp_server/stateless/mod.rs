@@ -9,12 +9,8 @@ mod meta;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use discover::build_discover_result;
 pub(crate) use http::router;
-pub(crate) use meta::{
-    strip_transport_meta_from_params, validate_request_meta, RequestMetaError,
-    STATELESS_PROTOCOL_VERSION, SUPPORTED_STATELESS_VERSIONS,
-};
+pub(crate) use meta::STATELESS_PROTOCOL_VERSION;
 
 /// True when `PLASM_MCP_STATELESS` is `1`, `true`, or `yes` (case-insensitive).
 pub fn plasm_mcp_stateless_enabled() -> bool {

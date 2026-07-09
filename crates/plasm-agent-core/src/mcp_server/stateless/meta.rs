@@ -1,8 +1,6 @@
 //! Per-request `_meta` validation (SEP-2575).
 
-use rust_mcp_sdk::schema::{
-    ClientCapabilities, Implementation, InitializeRequestParams, RpcError,
-};
+use rust_mcp_sdk::schema::{ClientCapabilities, Implementation, InitializeRequestParams, RpcError};
 use serde_json::{json, Value};
 
 pub(crate) const META_PROTOCOL_VERSION: &str = "io.modelcontextprotocol/protocolVersion";
@@ -28,7 +26,9 @@ pub(crate) enum RequestMetaError {
 impl RequestMetaError {
     pub(crate) fn into_rpc_error(self) -> RpcError {
         match self {
-            Self::InvalidParams(e) | Self::HeaderMismatch(e) | Self::UnsupportedVersion { error: e, .. } => e,
+            Self::InvalidParams(e)
+            | Self::HeaderMismatch(e)
+            | Self::UnsupportedVersion { error: e, .. } => e,
         }
     }
 
@@ -56,23 +56,27 @@ pub(crate) fn validate_request_meta(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .ok_or_else(|| {
-            invalid_params(&format!("missing required _meta field `{META_PROTOCOL_VERSION}`"))
+            invalid_params(&format!(
+                "missing required _meta field `{META_PROTOCOL_VERSION}`"
+            ))
         })?
         .to_string();
 
-    if let Some(header_version) = header_protocol_version.map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(header_version) = header_protocol_version
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         if header_version != protocol_version {
-            return Err(RequestMetaError::HeaderMismatch(
-                RpcError {
-                    code: -32020,
-                    message: "Header mismatch: MCP-Protocol-Version does not match _meta protocol version"
+            return Err(RequestMetaError::HeaderMismatch(RpcError {
+                code: -32020,
+                message:
+                    "Header mismatch: MCP-Protocol-Version does not match _meta protocol version"
                         .to_string(),
-                    data: Some(json!({
-                        "header": header_version,
-                        "meta": protocol_version,
-                    })),
-                },
-            ));
+                data: Some(json!({
+                    "header": header_version,
+                    "meta": protocol_version,
+                })),
+            }));
         }
     }
 
@@ -90,21 +94,19 @@ pub(crate) fn validate_request_meta(
         });
     }
 
-    let client_info_value = meta
-        .get(META_CLIENT_INFO)
-        .ok_or_else(|| {
-            invalid_params(&format!("missing required _meta field `{META_CLIENT_INFO}`"))
-        })?;
+    let client_info_value = meta.get(META_CLIENT_INFO).ok_or_else(|| {
+        invalid_params(&format!(
+            "missing required _meta field `{META_CLIENT_INFO}`"
+        ))
+    })?;
     let client_info: Implementation = serde_json::from_value(client_info_value.clone())
         .map_err(|_| invalid_params(&format!("invalid _meta field `{META_CLIENT_INFO}`")))?;
 
-    let client_caps_value = meta
-        .get(META_CLIENT_CAPABILITIES)
-        .ok_or_else(|| {
-            invalid_params(&format!(
-                "missing required _meta field `{META_CLIENT_CAPABILITIES}`"
-            ))
-        })?;
+    let client_caps_value = meta.get(META_CLIENT_CAPABILITIES).ok_or_else(|| {
+        invalid_params(&format!(
+            "missing required _meta field `{META_CLIENT_CAPABILITIES}`"
+        ))
+    })?;
     let capabilities: ClientCapabilities = serde_json::from_value(client_caps_value.clone())
         .map_err(|_| {
             invalid_params(&format!("invalid _meta field `{META_CLIENT_CAPABILITIES}`"))
