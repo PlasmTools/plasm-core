@@ -182,10 +182,10 @@ crossbeam-channel = "0.5"
 scopeguard = "1.2"
 
 # Data / Iceberg (JanKaul iceberg-rust stack)
-datafusion = "53"
-datafusion_iceberg = { git = "https://github.com/JanKaul/iceberg-rust", package = "datafusion_iceberg" }
-iceberg-rust = { git = "https://github.com/JanKaul/iceberg-rust", package = "iceberg-rust" }
-iceberg-sql-catalog = { git = "https://github.com/JanKaul/iceberg-rust", package = "iceberg-sql-catalog", default-features = false, features = [
+datafusion = "54"
+datafusion_iceberg = { git = "https://github.com/JanKaul/iceberg-rust", rev = "8c393932", package = "datafusion_iceberg" }
+iceberg-rust = { git = "https://github.com/JanKaul/iceberg-rust", rev = "8c393932", package = "iceberg-rust" }
+iceberg-sql-catalog = { git = "https://github.com/JanKaul/iceberg-rust", rev = "8c393932", package = "iceberg-sql-catalog", default-features = false, features = [
     "runtime-tokio",
 ] }
 object_store = { version = "0.13", features = ["aws", "gcp", "azure", "fs"] }
