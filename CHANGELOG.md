@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.9] - 2026-07-09
+
+### Fixed
+
+- **MCP DNS rebinding (SaaS):** allow `Host` / `Origin` for `PLASM_MCP_PUBLIC_BASE_URL` (e.g. `platform.plasm.tools`) so ingress clients are not rejected with HTTP 403.
+- **Docker / CI:** regenerate `Cargo.lock` in image build so vendored `rust-mcp-schema` patch applies; pin `datafusion` 54 + iceberg-rust `8c393932`; registry manifest verify retries and semver-only required tags on release push.
+
 ## [0.4.8] - 2026-07-09
 
 ### Added
