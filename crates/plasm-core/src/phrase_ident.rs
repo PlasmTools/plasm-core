@@ -1,10 +1,56 @@
 //! Program-context unquoted phrase tokens ([`Value::PhraseIdent`]) — validate and lower to strings.
 
-use crate::schema::{EntityDef, FieldSchema, InputFieldSchema, CapabilitySchema, CGS};
+use crate::cgs_federation::FederationDispatch;
+use crate::schema::{CapabilitySchema, EntityDef, FieldSchema, InputFieldSchema, CGS};
 use crate::typed_invoke::{InvokeInputPayload, TypedInvokeInput};
 use crate::typed_literal::TypedComparisonValue;
 use crate::{Expr, FieldType, Predicate, Value};
 use std::collections::BTreeSet;
+
+/// Single-catalog or federated CGS resolution for phrase-ident validation.
+#[derive(Clone, Copy)]
+enum PhraseIdentCgsScope<'a> {
+    Single(&'a CGS),
+    Federated {
+        fed: &'a FederationDispatch,
+        fallback: &'a CGS,
+    },
+}
+
+impl<'a> PhraseIdentCgsScope<'a> {
+    fn resolve(
+        &self,
+        catalog_entry_id: Option<&str>,
+        entity: &str,
+    ) -> Result<&'a CGS, String> {
+        match self {
+            Self::Single(cgs) => {
+                if cgs.entities.contains_key(entity) {
+                    Ok(*cgs)
+                } else {
+                    Err(format!("unknown entity `{entity}`"))
+                }
+            }
+            Self::Federated { fed, fallback } => {
+                crate::catalog_ownership::resolve_cgs_for_stamped_catalog(
+                    catalog_entry_id,
+                    entity,
+                    fed,
+                    fallback,
+                )
+                .map_err(|e| e.to_string())
+            }
+        }
+    }
+
+    fn resolve_capability_cgs(
+        &self,
+        catalog_entry_id: Option<&str>,
+        entity: &str,
+    ) -> Result<&'a CGS, String> {
+        self.resolve(catalog_entry_id, entity)
+    }
+}
 
 /// True when `s` is a single ASCII identifier token (no spaces or punctuation).
 #[must_use]
@@ -15,8 +61,7 @@ pub fn is_identifier_phrase(s: &str) -> bool {
     if !(first.is_ascii_alphabetic() || first == '_') {
         return false;
     }
-    s.chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// Schema context for one invoke/predicate slot.
@@ -62,8 +107,9 @@ fn phrase_ident_allowed_as_typed_literal(
     allowed_values: Option<&[String]>,
 ) -> bool {
     match field_type {
-        FieldType::Select | FieldType::MultiSelect => allowed_values
-            .is_some_and(|vals| vals.iter().any(|v| v == ident)),
+        FieldType::Select | FieldType::MultiSelect => {
+            allowed_values.is_some_and(|vals| vals.iter().any(|v| v == ident))
+        }
         FieldType::Boolean => matches!(ident, "true" | "false"),
         FieldType::Integer | FieldType::Number => ident.parse::<f64>().is_ok(),
         _ => false,
@@ -105,7 +151,10 @@ fn validate_value_phrase_idents(
             }
             Ok(())
         }
-        Value::Object(map) | Value::UnionCtor { ctor_fields: map, .. } => {
+        Value::Object(map)
+        | Value::UnionCtor {
+            ctor_fields: map, ..
+        } => {
             for v in map.values() {
                 validate_value_phrase_idents(v, program_labels, None)?;
             }
@@ -210,13 +259,9 @@ fn validate_predicate_phrase_idents(
             }
             Ok(())
         }
-        Predicate::Not { predicate } => validate_predicate_phrase_idents(
-            predicate,
-            program_labels,
-            entity,
-            cap_params,
-            cgs,
-        ),
+        Predicate::Not { predicate } => {
+            validate_predicate_phrase_idents(predicate, program_labels, entity, cap_params, cgs)
+        }
         Predicate::ExistsRelation { predicate, .. } => {
             if let Some(inner) = predicate {
                 validate_predicate_phrase_idents(inner, program_labels, entity, cap_params, cgs)?;
@@ -307,18 +352,27 @@ fn normalize_invoke_payload(payload: &mut InvokeInputPayload) {
 fn lower_expr_phrase_idents(
     expr: &mut Expr,
     program_labels: &BTreeSet<String>,
-    cgs: &CGS,
+    scope: PhraseIdentCgsScope<'_>,
     validate: bool,
 ) -> Result<(), String> {
     match expr {
         Expr::Invoke(inv) => {
+            let cgs = scope.resolve_capability_cgs(
+                inv.catalog_entry_id.as_deref(),
+                inv.target.entity_type.as_str(),
+            )?;
             if validate {
                 let cap = cgs
                     .get_capability(inv.capability.as_str())
                     .ok_or_else(|| format!("unknown capability `{}`", inv.capability))?;
                 let cap_params = cap_params_for_capability(cap);
                 if let Some(input) = &inv.input {
-                    validate_invoke_input_object(&input.to_value(), program_labels, &cap_params, cgs)?;
+                    validate_invoke_input_object(
+                        &input.to_value(),
+                        program_labels,
+                        &cap_params,
+                        cgs,
+                    )?;
                 }
                 if let Some(pv) = &inv.path_vars {
                     validate_path_vars(pv, program_labels, &cap_params, cgs)?;
@@ -335,6 +389,10 @@ fn lower_expr_phrase_idents(
             Ok(())
         }
         Expr::Create(create) => {
+            let cgs = scope.resolve_capability_cgs(
+                create.catalog_entry_id.as_deref(),
+                create.entity.as_str(),
+            )?;
             if validate {
                 let cap = cgs
                     .get_capability(create.capability.as_str())
@@ -351,6 +409,10 @@ fn lower_expr_phrase_idents(
             Ok(())
         }
         Expr::Delete(del) => {
+            let cgs = scope.resolve_capability_cgs(
+                del.catalog_entry_id.as_deref(),
+                del.target.entity_type.as_str(),
+            )?;
             if validate {
                 let cap = cgs
                     .get_capability(del.capability.as_str())
@@ -368,6 +430,10 @@ fn lower_expr_phrase_idents(
             Ok(())
         }
         Expr::Get(get) => {
+            let cgs = scope.resolve(
+                get.catalog_entry_id.as_deref(),
+                get.reference.entity_type.as_str(),
+            )?;
             if validate {
                 if let Some(pv) = &get.path_vars {
                     validate_path_vars(pv, program_labels, &[], cgs)?;
@@ -381,6 +447,7 @@ fn lower_expr_phrase_idents(
             Ok(())
         }
         Expr::Query(q) => {
+            let cgs = scope.resolve(q.catalog_entry_id.as_deref(), q.entity.as_str())?;
             if validate {
                 let ent = cgs
                     .get_entity(q.entity.as_str())
@@ -396,16 +463,13 @@ fn lower_expr_phrase_idents(
             Ok(())
         }
         Expr::Chain(c) => {
-            lower_expr_phrase_idents(&mut c.source, program_labels, cgs, validate)?;
+            lower_expr_phrase_idents(&mut c.source, program_labels, scope, validate)?;
             if let crate::ChainStep::Explicit { expr } = &mut c.step {
-                lower_expr_phrase_idents(expr, program_labels, cgs, validate)?;
+                lower_expr_phrase_idents(expr, program_labels, scope, validate)?;
             }
             Ok(())
         }
-        Expr::TeachingValue { .. }
-        | Expr::Page(_)
-        | Expr::Wait(_)
-        | Expr::Cancel(_) => Ok(()),
+        Expr::TeachingValue { .. } | Expr::Page(_) | Expr::Wait(_) | Expr::Cancel(_) => Ok(()),
     }
 }
 
@@ -415,13 +479,39 @@ pub fn lower_program_phrase_idents_in_expr(
     program_labels: &BTreeSet<String>,
     cgs: &CGS,
 ) -> Result<(), String> {
-    lower_expr_phrase_idents(expr, program_labels, cgs, true)
+    lower_expr_phrase_idents(
+        expr,
+        program_labels,
+        PhraseIdentCgsScope::Single(cgs),
+        true,
+    )
+}
+
+/// Federated variant: resolve owning [`CGS`] per stamped `catalog_entry_id` (mirrors
+/// [`crate::type_checker::type_check_expr_federated`]).
+pub fn lower_program_phrase_idents_in_expr_federated(
+    expr: &mut Expr,
+    program_labels: &BTreeSet<String>,
+    fed: &FederationDispatch,
+    fallback: &CGS,
+) -> Result<(), String> {
+    lower_expr_phrase_idents(
+        expr,
+        program_labels,
+        PhraseIdentCgsScope::Federated { fed, fallback },
+        true,
+    )
 }
 
 /// Lower validated [`Value::PhraseIdent`] nodes to [`Value::String`] across an expression tree.
 pub fn normalize_program_phrase_idents_in_expr(expr: &mut Expr, cgs: &CGS) {
     let labels = BTreeSet::new();
-    let _ = lower_expr_phrase_idents(expr, &labels, cgs, false);
+    let _ = lower_expr_phrase_idents(
+        expr,
+        &labels,
+        PhraseIdentCgsScope::Single(cgs),
+        false,
+    );
 }
 
 #[cfg(test)]
@@ -472,5 +562,62 @@ mod tests {
             }),
         )
         .expect("hyphenated literal");
+    }
+
+    /// Stamped `catalog_entry_id` must route phrase-ident validation to the owning catalog graph.
+    #[test]
+    fn federated_query_phrase_ident_resolves_stamped_catalog() {
+        use crate::cgs_federation::FederationDispatch;
+        use crate::CatalogEntryStamp;
+        use crate::CgsContext;
+        use crate::QueryExpr;
+        use indexmap::IndexMap;
+        use std::path::Path;
+        use std::sync::Arc;
+
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let pokeapi_dir = root.join("../../apis/pokeapi");
+        let matrix_dir = root.join("../../fixtures/schemas/plasm_language_matrix");
+        if !pokeapi_dir.is_dir() {
+            return;
+        }
+        let pokeapi = Arc::new(crate::loader::load_schema_dir(&pokeapi_dir).expect("pokeapi"));
+        let matrix = Arc::new(crate::loader::load_schema_dir(&matrix_dir).expect("matrix"));
+        let mut by_entry = IndexMap::new();
+        by_entry.insert(
+            "github".into(),
+            Arc::new(CgsContext::entry("github", matrix.clone())),
+        );
+        by_entry.insert(
+            "pokeapi".into(),
+            Arc::new(CgsContext::entry("pokeapi", pokeapi.clone())),
+        );
+        let layers: Vec<&CGS> = vec![matrix.as_ref(), pokeapi.as_ref()];
+        let mut exp = crate::symbol_tuning::TeachingExposureSession::new(
+            matrix.as_ref(),
+            "github",
+            &["LangItem"],
+        );
+        exp.expose_entities(&layers, pokeapi.clone(), "pokeapi", &["Pokemon"]);
+        let fed = FederationDispatch::from_contexts_and_exposure(by_entry, &exp);
+        let mut q = QueryExpr::all("Pokemon");
+        q.catalog_entry_id = CatalogEntryStamp::some("pokeapi".into());
+        let mut expr = Expr::Query(q);
+        let labels = BTreeSet::new();
+        lower_program_phrase_idents_in_expr_federated(
+            &mut expr,
+            &labels,
+            &fed,
+            matrix.as_ref(),
+        )
+        .expect("pokeapi-stamped query must validate against pokeapi graph");
+        let mut primary_only = expr.clone();
+        let err = lower_program_phrase_idents_in_expr(
+            &mut primary_only,
+            &labels,
+            matrix.as_ref(),
+        )
+        .expect_err("primary github graph lacks Pokemon entity");
+        assert!(err.contains("unknown entity"), "{err}");
     }
 }

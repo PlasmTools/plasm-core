@@ -394,9 +394,10 @@ pub fn plasm_value_to_json(v: &Value) -> serde_json::Value {
                 .map(|(k, v)| (k.clone(), plasm_value_to_json(v)))
                 .collect(),
         ),
-        Value::PlasmInputRef(_) | Value::UnionCtor { .. } | Value::String(_) | Value::PhraseIdent(_) => {
-            serde_json::Value::Null
-        }
+        Value::PlasmInputRef(_)
+        | Value::UnionCtor { .. }
+        | Value::String(_)
+        | Value::PhraseIdent(_) => serde_json::Value::Null,
     }
 }
 

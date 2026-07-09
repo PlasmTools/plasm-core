@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.8] - 2026-07-09
+
+### Added
+
+- **SEP-2575 stateless MCP transport** (`PLASM_MCP_STATELESS=1`): POST-only `/mcp`, `server/discover`, per-request `_meta` (`io.modelcontextprotocol/*`), removed legacy `initialize` / `ping` / `logging/setLevel` handlers (HTTP 404 / `-32601`).
+- **MCP DNS rebinding guard:** reject non-loopback `Host` / `Origin` on Streamable HTTP `/mcp` (HTTP 403).
+
+### Changed
+
+- **MCP router merge:** `build_mcp_router_for_merge` selects stateless axum handler or stateful `rust-mcp-sdk` Hyper server from env.
+
 ## [0.4.7] - 2026-07-08
 
 ### Added

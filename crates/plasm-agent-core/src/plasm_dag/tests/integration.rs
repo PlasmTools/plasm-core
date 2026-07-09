@@ -715,6 +715,114 @@ kids"#
         evaluate_plasm_plan_dry(&session, &plan).expect("dry-run");
     }
 
+    /// Federated phrase_ident: secondary-catalog bare query + create invoke (issue #23).
+    #[test]
+    fn federated_secondary_catalog_query_and_create_phrase_ident() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = Arc::new(
+            plasm_core::loader::load_schema_dir(
+                &root.join("../../fixtures/schemas/plasm_language_matrix"),
+            )
+            .expect("load plasm_language_matrix"),
+        );
+        let mut ctxs = indexmap::IndexMap::new();
+        ctxs.insert(
+            "github".into(),
+            Arc::new(CgsContext::entry("github", cgs.clone())),
+        );
+        ctxs.insert(
+            "linear".into(),
+            Arc::new(CgsContext::entry("linear", cgs.clone())),
+        );
+        let layers: Vec<&CGS> = vec![cgs.as_ref(), cgs.as_ref()];
+        let mut exp = TeachingExposureSession::new(cgs.as_ref(), "github", &["LangItem"]);
+        exp.expose_entities(&layers, cgs.clone(), "linear", &["LangItem"]);
+        let session = ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            cgs.clone(),
+            ctxs,
+            "github".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["LangItem".into()],
+            Some(exp),
+            None,
+            cgs.catalog_cgs_hash_hex(),
+            None,
+            None,
+        );
+        let map = session
+            .teaching_exposure
+            .as_ref()
+            .expect("exposure")
+            .symbol_map_arc();
+        let e2 = map.entity_sym_for("linear", "LangItem");
+
+        let query_plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "fed-secondary-query",
+            e2.as_str(),
+        )
+        .expect("secondary bare query must compile");
+        let query_node = query_plan["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .find(|n| n["id"] == "return_1")
+            .expect("return_1 query node");
+        assert_eq!(query_node["kind"], "query");
+        assert_eq!(query_node["qualified_entity"]["entry_id"], "linear", "{query_node}");
+
+        let create_m = map.method_sym_for("linear", "LangItem", "langitem_create");
+        let unbound = format!(
+            r#"bad = {e2}.{create_m}(title=hello)
+bad"#
+        );
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "fed-secondary-create-unbound",
+            &unbound,
+        )
+        .expect_err("unbound phrase on create param");
+        assert!(
+            err.contains("unknown program binding") || err.contains("program binding"),
+            "{err}"
+        );
+        assert!(
+            !err.contains("unknown capability"),
+            "must not false-reject capability on wrong catalog: {err}"
+        );
+
+        let bound = format!(
+            r#"title = "hello"
+created = {e2}.{create_m}(title=title)
+created"#
+        );
+        let create_plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "fed-secondary-create-bound",
+            &bound,
+        )
+        .expect("bound create on secondary catalog");
+        let created = create_plan["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .find(|n| n["id"] == "created")
+            .expect("created node");
+        assert_eq!(created["kind"], "create");
+        assert_eq!(created["qualified_entity"]["entry_id"], "linear", "{created}");
+        evaluate_plasm_plan_dry(&session, &create_plan).expect("dry-run");
+    }
+
     /// Real github+linear catalogs: linear `Issue.children` hop from `e2` binding (not github `sub_issues`).
     #[test]
     fn federated_github_linear_issue_children_relation_dry_run() {

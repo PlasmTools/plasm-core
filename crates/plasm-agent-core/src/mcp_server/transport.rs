@@ -41,6 +41,8 @@ pub(crate) struct McpTransportState {
     pub(crate) logical_by_id: HashMap<String, Arc<Mutex<McpLogicalSessionState>>>,
     /// Cached artifact retrieval mode for this MCP transport (see [`crate::mcp_run_markdown::ArtifactAccessMode`]).
     pub(crate) artifact_access_mode: Option<crate::mcp_run_markdown::ArtifactAccessMode>,
+    /// Cached MCP Apps (`io.modelcontextprotocol/ui`) negotiation for this transport.
+    pub(crate) mcp_ui_apps_supported: Option<bool>,
 }
 
 impl McpTransportState {
@@ -73,6 +75,7 @@ impl McpTransportState {
         Self {
             logical_by_id: HashMap::new(),
             artifact_access_mode: None,
+            mcp_ui_apps_supported: None,
         }
         .with_persisted_bindings(p.logical_bindings)
     }

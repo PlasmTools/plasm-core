@@ -50,7 +50,9 @@ impl EntityRefPayload {
             Value::Bool(b) => Ok(Self::Atom(EntityRefAtom::Bool(*b))),
             Value::Integer(i) => Ok(Self::Atom(EntityRefAtom::Integer(*i))),
             Value::Float(f) => Ok(Self::Atom(EntityRefAtom::Float(*f))),
-            Value::String(s) | Value::PhraseIdent(s) => Ok(Self::Atom(EntityRefAtom::String(s.clone()))),
+            Value::String(s) | Value::PhraseIdent(s) => {
+                Ok(Self::Atom(EntityRefAtom::String(s.clone())))
+            }
             Value::Array(_) => Err(EntityRefValueError::Array),
             Value::Object(m) => {
                 if m.is_empty() {

@@ -158,13 +158,7 @@ pub(crate) async fn materialize_validated_relation_traversal(
             ));
         }
         return super::compute_eval::finalize_empty_relation_materialized_node(
-            st,
-            es,
-            session_id,
-            node,
-            relation,
-            trace,
-            read_cap,
+            st, es, session_id, node, relation, trace, read_cap,
         )
         .await;
     }

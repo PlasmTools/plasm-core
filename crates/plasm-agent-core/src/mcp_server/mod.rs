@@ -60,7 +60,7 @@ use rust_mcp_sdk::schema::schema_utils::{CallToolError, CustomNotification};
 use rust_mcp_sdk::schema::SdkError;
 use rust_mcp_sdk::schema::{
     BlobResourceContents, CallToolRequestParams, CallToolResult, ContentBlock, Implementation,
-    InitializeResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
+    InitializeRequestParams, InitializeResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
     PaginatedRequestParams, ProtocolVersion, ReadResourceContent, ReadResourceRequestParams,
     ReadResourceResult, ResourceTemplate, RpcError, ServerCapabilities,
     ServerCapabilitiesResources, ServerCapabilitiesTools, TextContent, TextResourceContents,
@@ -103,7 +103,9 @@ mod artifact_access;
 mod artifact_resolve;
 mod committed_plasm_run;
 mod discover;
+mod mcp_http_dns_rebinding;
 mod mcp_http_user_agent;
+mod stateless;
 mod mcp_plasm_invoke;
 mod plasm_tool_dry_meta;
 mod plasm_tool_dry_run;
@@ -469,6 +471,59 @@ impl PlasmMcpHandler {
         mode
     }
 
+    pub(crate) async fn resolved_mcp_ui_apps_supported(
+        &self,
+        transport_key: &str,
+        runtime: &Arc<dyn McpServer>,
+    ) -> bool {
+        let transport = self.session_state(transport_key).await;
+        {
+            let g = transport.lock().await;
+            if let Some(enabled) = g.mcp_ui_apps_supported {
+                return enabled;
+            }
+        }
+        self.detect_and_cache_mcp_ui_apps_supported(transport_key, runtime)
+            .await
+    }
+
+    pub(crate) async fn mcp_ui_apps_enabled_for_runtime(&self, runtime: &Arc<dyn McpServer>) -> bool {
+        if let Some(key) = runtime.session_id() {
+            return self.resolved_mcp_ui_apps_supported(&key, runtime).await;
+        }
+        runtime.wait_for_initialization().await;
+        crate::mcp_ui_capability::client_supports_mcp_ui_apps(runtime.client_info().as_ref())
+    }
+
+    async fn detect_and_cache_mcp_ui_apps_supported(
+        &self,
+        transport_key: &str,
+        runtime: &Arc<dyn McpServer>,
+    ) -> bool {
+        if runtime.client_info().is_none() {
+            runtime.wait_for_initialization().await;
+        }
+        let client_info = runtime.client_info();
+        let enabled =
+            crate::mcp_ui_capability::client_supports_mcp_ui_apps(client_info.as_ref());
+        if let Some(params) = client_info.as_ref() {
+            tracing::info!(
+                client_info.name = %params.client_info.name,
+                client_info.version = %params.client_info.version,
+                mcp_ui_apps_supported = enabled,
+                "resolved MCP UI Apps capability"
+            );
+        } else {
+            tracing::info!(
+                mcp_ui_apps_supported = enabled,
+                "resolved MCP UI Apps capability (no client_info)"
+            );
+        }
+        let transport = self.session_state(transport_key).await;
+        transport.lock().await.mcp_ui_apps_supported = Some(enabled);
+        enabled
+    }
+
     async fn trace_session_meta(
         &self,
         _mcp_key: &str,
@@ -813,11 +868,13 @@ impl PlasmMcpHandler {
                 ))];
                 let mut res = CallToolResult::from_content(blocks);
                 if let Some(m) = out.result.run_plasm_meta {
+                    let ui_enabled = self.mcp_ui_apps_enabled_for_runtime(runtime).await;
                     res = crate::mcp_ui_payload::finalize_mcp_tool_result(
                         res,
                         m,
                         out.result.agent_structured_plan_text.as_deref(),
                         out.inline_plan_ui,
+                        ui_enabled,
                     );
                 }
                 self.schedule_persist_transport_state(key);
@@ -1244,14 +1301,67 @@ impl PlasmMcpHandler {
 
 #[async_trait]
 impl ServerHandler for PlasmMcpHandler {
+    async fn handle_initialize_request(
+        &self,
+        params: InitializeRequestParams,
+        runtime: Arc<dyn McpServer>,
+    ) -> Result<InitializeResult, RpcError> {
+        let ui_supported = crate::mcp_ui_capability::client_supports_mcp_ui_apps(Some(&params));
+        if let Some(key) = runtime.session_id() {
+            self.session_state(&key)
+                .await
+                .lock()
+                .await
+                .mcp_ui_apps_supported = Some(ui_supported);
+        }
+
+        let mut server_info = runtime.server_info().to_owned();
+        if let Some(updated_protocol_version) =
+            rust_mcp_sdk::mcp_server::enforce_compatible_protocol_version(
+                &params.protocol_version,
+                &server_info.protocol_version,
+            )
+            .map_err(|err| {
+                tracing::error!(
+                    "Incompatible protocol version: client: {} server: {}",
+                    &params.protocol_version,
+                    &server_info.protocol_version
+                );
+                RpcError::internal_error().with_message(err.to_string())
+            })?
+        {
+            server_info.protocol_version = updated_protocol_version;
+        }
+
+        runtime
+            .set_client_details(params.clone())
+            .await
+            .map_err(|err| RpcError::internal_error().with_message(format!("{err}")))?;
+
+        crate::mcp_ui_capability::apply_server_ui_extensions(
+            &mut server_info.capabilities,
+            ui_supported,
+        );
+
+        tracing::info!(
+            client_info.name = %params.client_info.name,
+            client_info.version = %params.client_info.version,
+            mcp_ui_apps_supported = ui_supported,
+            "MCP initialize: UI Apps capability negotiated"
+        );
+
+        Ok(server_info)
+    }
+
     async fn handle_list_tools_request(
         &self,
         _request: Option<PaginatedRequestParams>,
         runtime: Arc<dyn McpServer>,
     ) -> Result<ListToolsResult, RpcError> {
         let mode = self.artifact_access_mode_for_runtime(&runtime).await;
+        let ui_enabled = self.mcp_ui_apps_enabled_for_runtime(&runtime).await;
         Ok(ListToolsResult {
-            tools: tools::plasm_tools(mode),
+            tools: tools::plasm_tools(mode, ui_enabled),
             meta: None,
             next_cursor: None,
         })
@@ -1272,46 +1382,14 @@ impl ServerHandler for PlasmMcpHandler {
     async fn handle_list_resource_templates_request(
         &self,
         _params: Option<PaginatedRequestParams>,
-        _runtime: Arc<dyn McpServer>,
+        runtime: Arc<dyn McpServer>,
     ) -> Result<ListResourceTemplatesResult, RpcError> {
-        Ok(ListResourceTemplatesResult {
-            resource_templates: vec![
-                ResourceTemplate {
-                    annotations: None,
-                    description: Some(
-                        "Plasm cross-catalog workflow MCP App (parameter form + plan canvas).".into(),
-                    ),
-                    icons: vec![],
-                    meta: None,
-                    mime_type: Some(crate::workflow_mcp::WORKFLOW_UI_MIME.into()),
-                    name: "plasm_workflow_app".into(),
-                    title: Some("Plasm workflow MCP App".into()),
-                    uri_template: crate::workflow_mcp::WORKFLOW_UI_URI.into(),
-                },
-                ResourceTemplate {
-                    annotations: None,
-                    description: Some(
-                        "Plasm plan review MCP App (program editor + plan canvas for `plasm` dry-run).".into(),
-                    ),
-                    icons: vec![],
-                    meta: None,
-                    mime_type: Some(crate::plan_ui_mcp::PLAN_REVIEW_UI_MIME.into()),
-                    name: "plasm_plan_review_app".into(),
-                    title: Some("Plasm plan review MCP App".into()),
-                    uri_template: crate::plan_ui_mcp::PLAN_REVIEW_UI_URI.into(),
-                },
-                ResourceTemplate {
-                    annotations: None,
-                    description: Some(
-                        "Plasm run explorer MCP App (step list + entity table for live `plasm_run` / `run_workflow`).".into(),
-                    ),
-                    icons: vec![],
-                    meta: None,
-                    mime_type: Some(crate::run_explorer_ui_mcp::RUN_EXPLORER_UI_MIME.into()),
-                    name: "plasm_run_explorer_app".into(),
-                    title: Some("Plasm run explorer MCP App".into()),
-                    uri_template: crate::run_explorer_ui_mcp::RUN_EXPLORER_UI_URI.into(),
-                },
+        let ui_enabled = self.mcp_ui_apps_enabled_for_runtime(&runtime).await;
+        let mut resource_templates = Vec::new();
+        if ui_enabled {
+            resource_templates.extend(crate::mcp_app::mcp_app_resource_templates());
+        }
+        resource_templates.extend([
                 ResourceTemplate {
                     annotations: None,
                     description: Some(
@@ -1338,7 +1416,9 @@ impl ServerHandler for PlasmMcpHandler {
                     title: Some("Plasm execute run artifact (short index)".into()),
                     uri_template: "plasm://session/{logical_session_ref}/r/{n}".into(),
                 },
-            ],
+        ]);
+        Ok(ListResourceTemplatesResult {
+            resource_templates,
             meta: None,
             next_cursor: None,
         })
@@ -1697,6 +1777,13 @@ fn mcp_trace_idle_finish_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// Server metadata for stateless MCP (`server/discover`, per-request `_meta`).
+fn mcp_stateless_server_details() -> InitializeResult {
+    let mut init = mcp_initialize_result();
+    init.protocol_version = stateless::STATELESS_PROTOCOL_VERSION.into();
+    init
+}
+
 fn mcp_initialize_result() -> InitializeResult {
     InitializeResult {
         server_info: Implementation {
@@ -1724,20 +1811,47 @@ fn mcp_initialize_result() -> InitializeResult {
     }
 }
 
+/// Whether stateless SEP-2575 transport is active (`PLASM_MCP_STATELESS=1`).
+pub fn plasm_mcp_stateless_enabled() -> bool {
+    stateless::plasm_mcp_stateless_enabled()
+}
+
+/// MCP routes for merging with discovery/execute on one port (stateful SDK or stateless axum).
+pub async fn build_mcp_router_for_merge(plasm: Arc<PlasmHostState>) -> SdkResult<axum::Router> {
+    if plasm_mcp_stateless_enabled() {
+        tracing::info!("MCP transport: stateless (SEP-2575, PLASM_MCP_STATELESS)");
+        return Ok(stateless::router(plasm).await);
+    }
+    let server = build_mcp_hyper_server(Arc::clone(&plasm), "0.0.0.0", 0).await?;
+    Ok(mcp_hyper_router(server, plasm))
+}
+
 /// Build MCP Streamable HTTP server (not started) for merging with discovery routes on one port.
 pub async fn build_mcp_hyper_server_for_merge(
     plasm: Arc<PlasmHostState>,
 ) -> SdkResult<HyperServer> {
+    if plasm_mcp_stateless_enabled() {
+        return Err(rust_mcp_sdk::error::McpSdkError::SdkError(
+            SdkError::invalid_request().with_message(
+                "PLASM_MCP_STATELESS=1: use build_mcp_router_for_merge instead of build_mcp_hyper_server_for_merge",
+            ),
+        ));
+    }
     build_mcp_hyper_server(plasm, "0.0.0.0", 0).await
 }
 
 /// MCP HTTP routes with User-Agent capture for artifact-access detection.
 pub fn mcp_hyper_router(server: HyperServer, plasm: Arc<PlasmHostState>) -> axum::Router<()> {
     use axum::middleware;
-    server.into_router().layer(middleware::from_fn_with_state(
-        plasm,
-        mcp_http_user_agent::capture_mcp_http_user_agent,
-    ))
+    server
+        .into_router()
+        .layer(middleware::from_fn(
+            mcp_http_dns_rebinding::reject_dns_rebinding,
+        ))
+        .layer(middleware::from_fn_with_state(
+            plasm,
+            mcp_http_user_agent::capture_mcp_http_user_agent,
+        ))
 }
 
 async fn build_mcp_hyper_server(
@@ -1807,6 +1921,18 @@ async fn build_mcp_hyper_server(
 
 /// Run Streamable HTTP MCP on `host`:`port` (default MCP path `/mcp` from the SDK).
 pub async fn run_mcp_server(host: &str, port: u16, plasm: Arc<PlasmHostState>) -> SdkResult<()> {
+    if plasm_mcp_stateless_enabled() {
+        let router = stateless::router(plasm).await;
+        let addr = format!("{host}:{port}");
+        let listener = tokio::net::TcpListener::bind(&addr)
+            .await
+            .map_err(|e| SdkError::internal_error().with_message(&format!("bind {addr}: {e}")))?;
+        tracing::info!("MCP stateless HTTP listening on http://{addr}");
+        axum::serve(listener, router)
+            .await
+            .map_err(|e| SdkError::internal_error().with_message(&e.to_string()))?;
+        return Ok(());
+    }
     let server = build_mcp_hyper_server(plasm, host, port).await?;
     server.start().await
 }

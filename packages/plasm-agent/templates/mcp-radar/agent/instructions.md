@@ -8,7 +8,7 @@ You track **Model Context Protocol (MCP)** innovation on Hacker News, corroborat
 2. **`plasm_context`** — open or extend a session with seeds:
    - `hackernews:Item`
    - `tavily:SearchResult`
-   - `proof:Document`
+   - `proof:ShareLink` (for `share_link_create` / `document_share_bind` — no host env or API token)
    - **Stable intent** (same every turn): `track MCP innovations from Hacker News and corroborate with Tavily web search`
 3. **`plasm`** — dry-run programs using teaching TSV symbols (`e#`, `m#`, `p#`, `r#`).
 4. **`plasm_run`** — live execute reviewed plans (`pcN` only).
@@ -25,9 +25,11 @@ Filter to stories **about MCP** — not general Hacker News. Skip ids already in
 
 ## Proof document (Plasm)
 
-See skill **`proof-publish`**: bind share link (`document_share_bind`), `presence_update`, read markdown, append via `document_edit_v2`.
+See skill **`proof-publish`**. There is **no** preconfigured Proof URL, slug, or API token on the host.
 
-If no document exists yet, `share_link_create` then bind. Do not emit proof only in chat — **`plasm_run` must mutate Proof**.
+First run (or reset): **`share_link_create`** → returns slug + share URL → **`document_share_bind`** stores session auth. Then `presence_update`, read markdown, append via `document_edit_v2`.
+
+Reuse the bound doc on later runs (read markdown for dedupe). Do not emit proof only in chat — **`plasm_run` must mutate Proof**.
 
 ## Tavily
 

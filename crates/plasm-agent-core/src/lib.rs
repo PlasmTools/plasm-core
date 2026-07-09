@@ -81,6 +81,7 @@ mod mcp_stream_auth;
 mod mcp_stream_identity;
 pub mod mcp_transport_auth;
 pub mod mcp_transport_store;
+pub mod mcp_ui_capability;
 pub mod mcp_ui_payload;
 pub mod metrics;
 pub mod oauth_binding_kv;

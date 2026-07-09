@@ -91,8 +91,6 @@ const env = resolveMonorepoEnv();
 console.log("Syncing env from monorepo .env → Vercel project…");
 syncEnvVar("TAVILY_API_TOKEN", env.get("TAVILY_API_TOKEN"));
 syncEnvVar("PLASM_TENANT_SCOPE", env.get("PLASM_TENANT_SCOPE") ?? "mcp-radar");
-syncEnvVar("PROOF_API_TOKEN", env.get("PROOF_API_TOKEN"));
-syncEnvVar("PROOF_SHARE_URL", env.get("PROOF_SHARE_URL"));
-syncEnvVar("PROOF_DOCUMENT_SLUG", env.get("PROOF_DOCUMENT_SLUG"));
+// Proof: no host env. Agent creates the doc via share_link_create; slug + share URL come from that response.
 
 console.log("Done. Redeploy production so env bindings take effect.");

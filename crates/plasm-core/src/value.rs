@@ -393,7 +393,9 @@ impl Value {
         match (self, other) {
             (Value::Array(arr), val) => arr.contains(val),
             (Value::String(s), Value::String(sub) | Value::PhraseIdent(sub)) => s.contains(sub),
-            (Value::PhraseIdent(s), Value::String(sub) | Value::PhraseIdent(sub)) => s.contains(sub),
+            (Value::PhraseIdent(s), Value::String(sub) | Value::PhraseIdent(sub)) => {
+                s.contains(sub)
+            }
             (Value::Object(obj), Value::String(key)) => obj.contains_key(key),
             _ => false,
         }

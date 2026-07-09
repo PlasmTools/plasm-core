@@ -26,7 +26,7 @@ resolver = "2"
 
 # Single SemVer for the OSS workspace (see monorepo RELEASING.md on PlasmTools/plasm).
 [workspace.package]
-version = "0.4.7"
+version = "0.4.8"
 edition = "2021"
 
 [workspace.dependencies]
@@ -208,4 +208,5 @@ testcontainers-modules = "0.15.0"
 
 # Vendored fork: `HyperServer::into_router`, `Router<()>` merge with Plasm Axum apps. Parent monorepo also patches this path.
 [patch.crates-io]
+rust-mcp-schema = { path = "third_party/rust-mcp-schema" }
 rust-mcp-sdk = { path = "third_party/rust-mcp-sdk" }

@@ -213,6 +213,10 @@ pub use operation_handle::{OperationHandle, OperationHandleParseError};
 pub use paging_handle::{
     is_valid_logical_session_ref_segment, PagingHandle, PagingHandleParseError,
 };
+pub use phrase_ident::{
+    is_identifier_phrase, lower_program_phrase_idents_in_expr,
+    lower_program_phrase_idents_in_expr_federated, PhraseIdentFieldContext,
+};
 pub use plan_commit::{PlanCommitId, PlanCommitRef};
 pub use plasm_monad::{
     comp_equivalent, comp_semantic_eq, empty_comp, invoke_step_payload, map_step_payload,
@@ -226,9 +230,6 @@ pub use plasm_monad::{
     PlasmStep, PlasmStepKind, PlasmStepPayload, PurePayload, RelationCardinality,
     RelationSourceCardinality, ResultShape, RewritePolicy, StepId, SurfaceKind,
     SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind, PLASM_COMP_WIRE_VERSION,
-};
-pub use phrase_ident::{
-    is_identifier_phrase, lower_program_phrase_idents_in_expr, PhraseIdentFieldContext,
 };
 pub use predicate::Predicate;
 pub use preflight::{

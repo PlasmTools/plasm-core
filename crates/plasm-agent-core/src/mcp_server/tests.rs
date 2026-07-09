@@ -2,7 +2,42 @@ use super::mcp_plasm_invoke::McpPlasmRunTarget;
 use super::*;
 
 fn default_plasm_tools() -> Vec<rust_mcp_sdk::schema::Tool> {
-    super::tools::plasm_tools(crate::mcp_run_markdown::ArtifactAccessMode::ResourcesRead)
+    super::tools::plasm_tools(
+        crate::mcp_run_markdown::ArtifactAccessMode::ResourcesRead,
+        true,
+    )
+}
+
+#[test]
+fn plasm_tools_omit_ui_metadata_when_apps_disabled() {
+    let tools = super::tools::plasm_tools(
+        crate::mcp_run_markdown::ArtifactAccessMode::ResourcesRead,
+        false,
+    );
+    let plasm = tools.iter().find(|t| t.name == "plasm").expect("plasm");
+    let plasm_run = tools.iter().find(|t| t.name == "plasm_run").expect("plasm_run");
+    assert!(plasm.meta.is_none());
+    assert!(plasm_run.meta.is_none());
+    assert!(!tools.iter().any(|t| t.name == "plasm_ui_read_plan"));
+}
+
+#[test]
+fn plasm_tools_include_ui_metadata_when_apps_enabled() {
+    let tools = super::tools::plasm_tools(
+        crate::mcp_run_markdown::ArtifactAccessMode::ResourcesRead,
+        true,
+    );
+    let plasm = tools.iter().find(|t| t.name == "plasm").expect("plasm");
+    assert_eq!(
+        plasm
+            .meta
+            .as_ref()
+            .and_then(|m| m.get("ui"))
+            .and_then(|u| u.get("resourceUri"))
+            .and_then(|v| v.as_str()),
+        Some(crate::plan_ui_mcp::PLAN_REVIEW_UI_URI)
+    );
+    assert!(tools.iter().any(|t| t.name == "plasm_ui_read_plan"));
 }
 
 #[test]
@@ -112,14 +147,14 @@ fn mcp_plasm_run_tool_description_snapshot() {
 #[test]
 fn plasm_read_run_artifact_gated_on_tool_fallback_mode() {
     use crate::mcp_run_markdown::ArtifactAccessMode;
-    let resources = super::tools::plasm_tools(ArtifactAccessMode::ResourcesRead);
+    let resources = super::tools::plasm_tools(ArtifactAccessMode::ResourcesRead, true);
     assert!(
         !resources
             .iter()
             .any(|t| t.name == "plasm_read_run_artifact"),
         "default tool list must not expose read tool"
     );
-    let tool_only = super::tools::plasm_tools(ArtifactAccessMode::ToolFallback);
+    let tool_only = super::tools::plasm_tools(ArtifactAccessMode::ToolFallback, true);
     assert!(
         tool_only
             .iter()

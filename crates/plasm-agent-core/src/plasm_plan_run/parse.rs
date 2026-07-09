@@ -190,19 +190,10 @@ pub fn parse_plasm_program_surface_for_dag(
         Some(program_labels),
         for_each_row_context,
     )
-    .map_err(|e| format_session_symbolic_parse_error(
-        session,
-        symbol_map_cross_cache,
-        pipeline,
-        line,
-        &e,
-    ))?;
-    lower_program_phrase_idents_in_parsed(
-        session,
-        &mut parsed,
-        program_labels,
-        node_id,
-    )?;
+    .map_err(|e| {
+        format_session_symbolic_parse_error(session, symbol_map_cross_cache, pipeline, line, &e)
+    })?;
+    lower_program_phrase_idents_in_parsed(session, &mut parsed, program_labels, node_id)?;
     Ok(parsed)
 }
 
@@ -212,21 +203,99 @@ pub(crate) fn lower_program_phrase_idents_in_parsed(
     program_labels: &BTreeSet<String>,
     node_id: Option<&str>,
 ) -> Result<(), String> {
-    plasm_core::lower_program_phrase_idents_in_expr(
-        &mut parsed.expr,
-        program_labels,
-        session.cgs.as_ref(),
-    )
-    .map_err(|e| {
+    let phrase_result = if session.contexts_by_entry.len() <= 1 {
+        plasm_core::lower_program_phrase_idents_in_expr(
+            &mut parsed.expr,
+            program_labels,
+            session.cgs.as_ref(),
+        )
+    } else if let Some(exposure) = session.teaching_exposure.as_ref() {
+        let fed = FederationDispatch::from_contexts_and_exposure(
+            session.contexts_by_entry.clone(),
+            exposure,
+        );
+        plasm_core::lower_program_phrase_idents_in_expr_federated(
+            &mut parsed.expr,
+            program_labels,
+            &fed,
+            session.cgs.as_ref(),
+        )
+    } else {
+        let fed = FederationDispatch::from_contexts_only(session.contexts_by_entry.clone());
+        plasm_core::lower_program_phrase_idents_in_expr_federated(
+            &mut parsed.expr,
+            program_labels,
+            &fed,
+            session.cgs.as_ref(),
+        )
+    };
+    phrase_result.map_err(|e| {
+        let enriched = enrich_phrase_ident_program_error(session, &e);
         if let Some(id) = node_id {
             agent_program_error(
-                format!("Plasm program `{id}`: {e}"),
+                format!("Plasm program `{id}`: {enriched}"),
                 Some("Use a binding reference for program labels (`label` or `label.field`), or quote literal strings (`\"…\"`)."),
             )
         } else {
-            agent_program_error(e, None::<&str>)
+            agent_program_error(enriched, None::<&str>)
         }
     })
+}
+
+/// Add session `e#` / catalog context when phrase-ident validation fails on federated surfaces.
+fn enrich_phrase_ident_program_error(session: &ExecuteSession, raw: &str) -> String {
+    let Some(exposure) = session.teaching_exposure.as_ref() else {
+        return raw.to_string();
+    };
+    let map = exposure.symbol_map_arc();
+
+    if let Some(entity) = raw
+        .strip_prefix("unknown entity `")
+        .and_then(|tail| tail.strip_suffix('`'))
+    {
+        for (i, ent) in exposure.entities.iter().enumerate() {
+            if ent.as_str() != entity {
+                continue;
+            }
+            let Some(eid) = exposure.entity_catalog_entry_ids.get(i) else {
+                continue;
+            };
+            let sym = map.entity_sym_for(eid.as_str(), entity);
+            return format!(
+                "unknown entity `{sym}` ({entity}) in catalog `{eid}` — use the session `e#` from the teaching table"
+            );
+        }
+    }
+
+    if let Some(cap) = raw
+        .strip_prefix("unknown capability `")
+        .and_then(|tail| tail.strip_suffix('`'))
+    {
+        let mut owners: Vec<String> = session
+            .contexts_by_entry
+            .iter()
+            .filter(|(eid, ctx)| ctx.cgs.get_capability(cap).is_some())
+            .map(|(eid, _)| eid.clone())
+            .collect();
+        owners.sort();
+        owners.dedup();
+        if owners.is_empty() {
+            return format!(
+                "unknown capability `{cap}` — check ranked_capabilities or session seeds"
+            );
+        }
+        if owners.len() == 1 {
+            return format!(
+                "unknown capability `{cap}` in catalog `{}` — use the session `e#` / `m#` from the teaching table for that catalog",
+                owners[0]
+            );
+        }
+        return format!(
+            "unknown capability `{cap}` — loaded in catalogs {owners:?}; disambiguate with session `e#` / `m#` stamps"
+        );
+    }
+
+    raw.to_string()
 }
 
 /// Program surface fragment for DAG lowering — **no** textual symbol expansion.

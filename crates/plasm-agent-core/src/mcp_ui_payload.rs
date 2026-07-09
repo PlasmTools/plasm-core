@@ -42,10 +42,13 @@ pub fn finalize_mcp_tool_result(
     mut tool_meta: Map<String, Value>,
     agent_plan_text: Option<&str>,
     inline_plan_ui: Option<UiInlinePlanPayload>,
+    ui_apps_enabled: bool,
 ) -> CallToolResult {
-    crate::mcp_app::attach_mcp_app_ui_on_tool_meta(&mut tool_meta);
+    if ui_apps_enabled {
+        crate::mcp_app::attach_mcp_app_ui_on_tool_meta(&mut tool_meta);
+    }
     let res = res.with_meta(Some(tool_meta));
-    let res = mirror_plasm_structured_content(res, inline_plan_ui.as_ref());
+    let res = mirror_plasm_structured_content(res, inline_plan_ui.as_ref(), ui_apps_enabled);
     inject_structured_agent_plan_text(res, agent_plan_text)
 }
 
@@ -67,10 +70,11 @@ pub fn inject_structured_agent_plan_text(
     res
 }
 
-/// Copy slim agent `_meta.plasm` into `structuredContent.plasm` and build `structuredContent.ui`.
+/// Copy slim agent `_meta.plasm` into `structuredContent.plasm` and optionally `structuredContent.ui`.
 pub fn mirror_plasm_structured_content(
     res: CallToolResult,
     inline_plan_ui: Option<&UiInlinePlanPayload>,
+    include_ui_lane: bool,
 ) -> CallToolResult {
     let Some(meta) = res.meta.as_ref() else {
         return res;
@@ -81,8 +85,10 @@ pub fn mirror_plasm_structured_content(
     let structured_plasm = agent_structured_plasm_mirror(plasm);
     let mut structured = Map::new();
     structured.insert("plasm".to_string(), structured_plasm);
-    if let Some(ui) = structured_ui_payload_from_meta(plasm, inline_plan_ui) {
-        structured.insert("ui".to_string(), ui);
+    if include_ui_lane {
+        if let Some(ui) = structured_ui_payload_from_meta(plasm, inline_plan_ui) {
+            structured.insert("ui".to_string(), ui);
+        }
     }
     res.with_structured_content(structured)
 }
@@ -395,7 +401,7 @@ mod tests {
     fn finalize_dry_run_structured_content_is_slim_agent_tokens_only() {
         let res = CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)]);
         let out =
-            finalize_mcp_tool_result(res, sample_dry_tool_meta(), Some(SAMPLE_PLAN_TEXT), None);
+            finalize_mcp_tool_result(res, sample_dry_tool_meta(), Some(SAMPLE_PLAN_TEXT), None, true);
         let wire = serde_json::to_value(&out).expect("serialize CallToolResult");
         assert_eq!(
             wire.pointer("/structuredContent/plasm/run_ref")
@@ -443,6 +449,7 @@ mod tests {
                 comp: comp.clone(),
                 plan_ux_reflection: ux.clone(),
             }),
+            true,
         );
         let wire = serde_json::to_value(&out).expect("serialize");
         assert!(wire.pointer("/structuredContent/plasm/comp").is_none());
@@ -457,7 +464,7 @@ mod tests {
     #[test]
     fn finalize_attaches_plan_review_for_dry_run() {
         let res = CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)]);
-        let out = finalize_mcp_tool_result(res, sample_dry_tool_meta(), None, None);
+        let out = finalize_mcp_tool_result(res, sample_dry_tool_meta(), None, None, true);
         assert_eq!(
             out.meta
                 .as_ref()
@@ -478,7 +485,7 @@ mod tests {
             }),
         );
         let res = CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)]);
-        let out = finalize_mcp_tool_result(res, tool_meta, None, None);
+        let out = finalize_mcp_tool_result(res, tool_meta, None, None, true);
         assert_eq!(
             out.meta
                 .as_ref()
@@ -517,7 +524,7 @@ mod tests {
         );
         let res = CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)])
             .with_meta(Some(meta));
-        let out = mirror_plasm_structured_content(res, None);
+        let out = mirror_plasm_structured_content(res, None, true);
         assert!(out
             .structured_content
             .as_ref()
@@ -556,7 +563,7 @@ mod tests {
         );
         let res = CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)])
             .with_meta(Some(meta));
-        let out = mirror_plasm_structured_content(res, None);
+        let out = mirror_plasm_structured_content(res, None, true);
         let plasm = out
             .structured_content
             .as_ref()
@@ -571,6 +578,15 @@ mod tests {
                 .and_then(|v| v.as_str()),
             Some("inline")
         );
+    }
+
+    #[test]
+    fn finalize_skips_ui_lane_when_apps_disabled() {
+        let res = CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)]);
+        let out = finalize_mcp_tool_result(res, sample_dry_tool_meta(), None, None, false);
+        let wire = serde_json::to_value(&out).expect("serialize");
+        assert!(wire.pointer("/_meta/ui").is_none());
+        assert!(wire.pointer("/structuredContent/ui").is_none());
     }
 
     #[test]

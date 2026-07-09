@@ -163,6 +163,50 @@ pub fn mount_bundle(bundle: &'static McpAppBundle) -> Router {
     mount_bundle_routes(Router::new(), bundle)
 }
 
+/// MCP App `resources/templates/list` entries (omitted when client lacks UI extension).
+pub fn mcp_app_resource_templates() -> Vec<rust_mcp_sdk::schema::ResourceTemplate> {
+    use rust_mcp_sdk::schema::ResourceTemplate;
+    vec![
+        ResourceTemplate {
+            annotations: None,
+            description: Some(
+                "Plasm cross-catalog workflow MCP App (parameter form + plan canvas).".into(),
+            ),
+            icons: vec![],
+            meta: None,
+            mime_type: Some(WORKFLOW.mime.into()),
+            name: "plasm_workflow_app".into(),
+            title: Some("Plasm workflow MCP App".into()),
+            uri_template: WORKFLOW.uri.into(),
+        },
+        ResourceTemplate {
+            annotations: None,
+            description: Some(
+                "Plasm plan review MCP App (program editor + plan canvas for `plasm` dry-run).".into(),
+            ),
+            icons: vec![],
+            meta: None,
+            mime_type: Some(PLAN_REVIEW.mime.into()),
+            name: "plasm_plan_review_app".into(),
+            title: Some("Plasm plan review MCP App".into()),
+            uri_template: PLAN_REVIEW.uri.into(),
+        },
+        ResourceTemplate {
+            annotations: None,
+            description: Some(
+                "Plasm run explorer MCP App (step list + entity table for live `plasm_run` / `run_workflow`)."
+                    .into(),
+            ),
+            icons: vec![],
+            meta: None,
+            mime_type: Some(RUN_EXPLORER.mime.into()),
+            name: "plasm_run_explorer_app".into(),
+            title: Some("Plasm run explorer MCP App".into()),
+            uri_template: RUN_EXPLORER.uri.into(),
+        },
+    ]
+}
+
 const MCP_SHELL_CONFIG_MARKER: &str = "<!-- plasm-mcp-config -->";
 
 /// HTTP API origin for MCP App iframes (Cursor in-chat is not same-origin with `plasm-mcp`).

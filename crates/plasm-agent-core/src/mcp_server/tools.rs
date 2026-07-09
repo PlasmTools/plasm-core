@@ -32,7 +32,7 @@ fn workflow_mcp_tools_enabled() -> bool {
         .unwrap_or(false)
 }
 
-pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode) -> Vec<Tool> {
+pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: bool) -> Vec<Tool> {
     let mut context_props = BTreeMap::new();
     context_props.insert(
         "session_mode".into(),
@@ -159,8 +159,16 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode) -> Vec<Tool> {
             task_support: Some(ToolExecutionTaskSupport::Forbidden),
         }),
         icons: vec![],
-        meta: Some(crate::plan_ui_mcp::plan_review_ui_tool_meta()),
-        output_schema: Some(crate::mcp_ui_payload::plasm_tool_output_schema()),
+        meta: if ui_apps_enabled {
+            Some(crate::plan_ui_mcp::plan_review_ui_tool_meta())
+        } else {
+            None
+        },
+        output_schema: if ui_apps_enabled {
+            Some(crate::mcp_ui_payload::plasm_tool_output_schema())
+        } else {
+            None
+        },
     });
     tools.push(Tool {
         name: "plasm_run".into(),
@@ -180,11 +188,20 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode) -> Vec<Tool> {
             task_support: Some(ToolExecutionTaskSupport::Forbidden),
         }),
         icons: vec![],
-        meta: Some(crate::run_explorer_ui_mcp::run_explorer_ui_tool_meta()),
-        output_schema: Some(crate::mcp_ui_payload::plasm_run_tool_output_schema()),
+        meta: if ui_apps_enabled {
+            Some(crate::run_explorer_ui_mcp::run_explorer_ui_tool_meta())
+        } else {
+            None
+        },
+        output_schema: if ui_apps_enabled {
+            Some(crate::mcp_ui_payload::plasm_run_tool_output_schema())
+        } else {
+            None
+        },
     });
-    tools.push(Tool {
-        name: "plasm_ui_list_catalogs".into(),
+    if ui_apps_enabled {
+        tools.push(Tool {
+            name: "plasm_ui_list_catalogs".into(),
         title: Some("List tenant-enabled catalogs (MCP App)".into()),
         description: Some(
             "Returns registry `entry_id`s allowed by tenant MCP policy for MCP App bootstrap UIs."
@@ -210,8 +227,9 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode) -> Vec<Tool> {
         ),
         output_schema: None,
     });
-    tools.push(ui_read_plan_tool());
-    tools.push(ui_read_run_tool());
+        tools.push(ui_read_plan_tool());
+        tools.push(ui_read_run_tool());
+    }
     if artifact_access.exposes_read_tool() {
         let mut read_props = BTreeMap::new();
         read_props.insert(
@@ -258,7 +276,7 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode) -> Vec<Tool> {
             output_schema: None,
         });
     }
-    if workflow_mcp_tools_enabled() {
+    if workflow_mcp_tools_enabled() && ui_apps_enabled {
         tools.extend(crate::workflow_mcp::workflow_mcp_tools());
     }
     tools

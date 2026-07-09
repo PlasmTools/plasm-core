@@ -2,7 +2,6 @@
 /**
  * Eve-aligned Vercel bootstrap for mcp-radar:
  * - Sync secrets from monorepo `.env` → Vercel project env
- * - Link Blob store (OIDC at runtime)
  */
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -92,20 +91,6 @@ const env = resolveMonorepoEnv();
 console.log("Syncing env from monorepo .env → Vercel project…");
 syncEnvVar("TAVILY_API_TOKEN", env.get("TAVILY_API_TOKEN"));
 syncEnvVar("PLASM_TENANT_SCOPE", env.get("PLASM_TENANT_SCOPE") ?? "mcp-radar");
+// Proof: no host env. Agent creates the doc via share_link_create; slug + share URL come from that response.
 
-console.log("Linking Vercel Blob store (OIDC, public)…");
-const blobResult = spawnSync(
-  "vercel",
-  ["blob", "create-store", "mcp-radar-proof", "--access", "public", "--yes"],
-  { encoding: "utf8", stdio: ["inherit", "pipe", "inherit"] },
-);
-if (blobResult.status !== 0) {
-  const err = blobResult.stderr ?? blobResult.stdout ?? "";
-  if (err.includes("already exists") || err.includes("(409)")) {
-    console.log("[provision] Blob store mcp-radar-proof already linked — skipping");
-  } else {
-    process.exit(blobResult.status ?? 1);
-  }
-}
-
-console.log("Done. Redeploy production so env + Blob bindings take effect.");
+console.log("Done. Redeploy production so env bindings take effect.");

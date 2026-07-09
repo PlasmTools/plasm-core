@@ -2682,9 +2682,8 @@ fn extract_single_entity_payload_from_response(
                             }
                         };
                         if cur.is_null() && i + 1 == path.len() {
-                            let mut msg = format!(
-                                "Entity not found (`{key}` is null in the API response)"
-                            );
+                            let mut msg =
+                                format!("Entity not found (`{key}` is null in the API response)");
                             if let Some(gs) = graphql_errors_summary(&response) {
                                 msg.push_str(" — GraphQL: ");
                                 msg.push_str(&gs);

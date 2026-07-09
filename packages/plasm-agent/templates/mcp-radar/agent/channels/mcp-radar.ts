@@ -76,7 +76,7 @@ export default defineChannel({
       path: "/channel/mcp-radar/proof",
       handler: async (_req, res, _ctx) => {
         sendJson(res, 200, {
-          note: "Proof document lives in the proof catalog; read/write via agent Plasm session.",
+          note: "Proof document lives in the proof catalog. The agent creates slug + share URL via share_link_create; no host PROOF_* env.",
           sessions: "/operator/sessions",
           runs: "/operator/runs",
         });
