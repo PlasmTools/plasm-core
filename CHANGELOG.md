@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.12] - 2026-07-10
+
+### Added
+
+- **Teaching table return-shape glyphs:** Meaning column uses `→` (single), `↣` (list), and `↠` (terminal); terminal mutations document the `Entity(id).method(…)` reconstruction form.
+
+### Fixed
+
+- **Row-to-text templates:** `{% for %}` loop-local variables no longer fail compile-time field-ref validation; single-row collection aliases iterate as lists while keeping attribute access.
+- **Relation row filters:** `.filter{}` bodies no longer apply the query `id_field`→GET rewrite (fixes “no list to filter” on relation postfix filters).
+- **Teaching validation:** CGS validation rejects empty teaching blocks gracefully (no debug panic); `EntityExpressionIncomplete` carries authoring-grade obtainability guidance.
+- **Validated inputs on teaching surface:** `input_schema.validation` predicates skip `$` placeholders and absent optional fields; cross-field `at_least_one` / `exactly_one` rules prevent misclassified zero-arity teaching lines.
+
 ## [0.4.11] - 2026-07-09
 
 ### Fixed
