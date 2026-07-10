@@ -326,6 +326,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Query,
             domain: "Pet".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "pet"}]}).into(),
             },
@@ -358,6 +359,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Query,
             domain: "Order".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "store"}, {"type": "literal", "value": "order"}]}).into(),
             },

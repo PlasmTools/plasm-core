@@ -1718,6 +1718,17 @@ repo_branch_create:
             } }]
       - [sha, { type: var, name: sha }]
   response: single
+  conflict_rules:
+    - when:
+        status: 422
+        body_json_path: message
+        contains: Reference already exists
+      kind: resource_exists
+      extract:
+        entity: Repository
+        fields:
+          name: $.ref
+      hint: Branch ref already exists
 
 repo_content_delete:
   method: DELETE

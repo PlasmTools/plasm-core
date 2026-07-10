@@ -56,8 +56,8 @@ Symbol and fill rules:
 - Never write `v#` in code; use wire field/param names from the TSV left column and read `v#` gloss rows for allowed values.
 - **Session handles** (`logical_session_ref`, `run_ref` / `pcN`): MCP tokens only — copy verbatim; not program syntax.
 - Replace teaching placeholders (`$`, `<id>`, `<val>`) and exemplar ids (`pikachu`, `example-name`, …) with real values before output. Never emit `$` from a teaching row.
-- Get-head: **parens = identity** (`e_type(electric)`; bare word = string identity when the slot is a name/string field), **braces = query/filter** (`e#{field=…}`). Keyed `e#(id=<id>)` only when `id` is the identity field.
-- **Quote scalars only in `{…}` predicates** (`e#{state="EVA"}`); identity ids in `e#(…)` need no quotes. EntityRef slots use `e#(id)`, not bare scalars.
+- Get-head: **parens = identity** (`e4(pikachu)` or `e4("pikachu")`; bare word = literal id when not an in-scope binding), **braces = query/filter** (`e#{field=…}`). Keyed `e#(id=<id>)` only when `id` is the identity field.
+- **Quote scalars only in `{…}` predicates and string invoke params** (`e#{state="EVA"}`, `title="x"`); identity ids in `e#(…)` need no quotes. EntityRef constructor slots accept the same unquoted identity forms as get heads.
 - Remove `..` ellipses; when Meaning includes `optional` (a legend token, not program syntax), add optional slots as keyed wire assignments with real values. Exemplars with `,..` in the expr column imply optional slots.
 - Projection `[field,…]` suffixes: reuse only on expressions returning the same entity/list type.
 

@@ -970,6 +970,69 @@ For `action`, if you rely on the default empty `provides`, you **must** add `out
 
 **Recognition**: path `/resource/{id}` + `/resource/{id}/suffix`; both return same `id`; disjoint fields.
 
+### Workflow identity (PLT)
+
+Opt in per catalog with top-level `workflow_identity: true` in `domain.yaml`. When enabled, every non-idempotent mutator (`create` / `action` / `update` / `delete`) must declare `identity_key` — the natural-key parameter names that define “same resource”:
+
+```yaml
+workflow_identity: true
+
+repo_branch_create:
+  kind: action
+  entity: Branch
+  identity_key: [owner, repo, name]
+```
+
+**Idempotent reconcile** wires the existing `output.idempotent` field:
+
+```yaml
+output:
+  type: entity
+  entity_type: Branch
+  idempotent: true
+  reconcile:
+    on: resource_exists          # WorkflowConflictKind from conflict_rules
+    via: branch_get              # get capability to fetch existing row
+    bind_identity_from: params   # params | scope
+```
+
+Live execute stamps `outcome: created | reused` on entity projections. Content divergence after key match surfaces `WorkflowConflict::IdentityMismatch` — never silent reuse.
+
+**Conflict taxonomy** — catalog-local HTTP rules in `mappings.yaml`:
+
+```yaml
+conflict_rules:
+  - when: { status: 422, body_json_path: message, contains: Reference already exists }
+    kind: resource_exists
+    extract:
+      entity: Branch
+      fields: { name: $.ref }
+```
+
+**Conditional write views** extend `views:` with mutator nodes and `when:` guards:
+
+```yaml
+when:
+  kind: skip_if
+  condition:
+    kind: node_row_count_positive
+    node: check_query
+```
+
+Use `write_created` / `write_reused` / `write_skipped` output bindings for `outcome`. PLT `verify_existence_flow` expands view DAGs at dry-run: non-idempotent inner creates without a dominating read or `when:` guard → `NeedsReview` (`unguarded mutation`).
+
+**Preflight** — `existence_check` for atomic mutators:
+
+```yaml
+preflight:
+  - kind: existence_check
+    query: branch_query
+    identity_from: params
+    on_exists: fail   # fail | skip_write
+```
+
+Matrix conformance: `fixtures/schemas/workflow_matrix` (not production `apis/`).
+
 ---
 
 ## CML (Capability Mapping Language) — mappings.yaml

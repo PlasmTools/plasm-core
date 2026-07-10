@@ -170,6 +170,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Query,
             domain: "Thing".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({}).into(),
             },
@@ -198,6 +199,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Query,
             domain: "Thing".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({}).into(),
             },

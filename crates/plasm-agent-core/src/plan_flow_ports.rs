@@ -13,13 +13,10 @@ use std::collections::BTreeSet;
 /// Catalog projection consumed by the flow pass (mockable in tests).
 pub trait FlowCatalog {
     fn output_labels(&self, key: &QualifiedCapabilityKey) -> BTreeSet<DataClassName>;
-    /// Union of output labels across all capabilities for `(entry_id, entity)`.
     fn output_labels_for_entity(&self, entry_id: &str, entity: &str) -> BTreeSet<DataClassName>;
     fn sink_params(&self, key: &QualifiedCapabilityKey) -> &[SinkParamRef];
     fn sanitizers(&self, key: &QualifiedCapabilityKey) -> BTreeSet<DataClassName>;
-    /// True when any capability in the pinned catalogs produces labeled output.
     fn has_any_output_labels(&self) -> bool;
-    /// Behavior-controlling parameter names for robust declassification.
     fn control_params(&self, key: &QualifiedCapabilityKey) -> BTreeSet<String>;
 }
 
@@ -52,7 +49,6 @@ impl FlowCatalog for FlowCatalogView {
 /// Policy evaluation consumed by the flow pass.
 pub trait FlowPolicyEvaluator {
     fn policy_revision(&self) -> Option<PolicyRevision>;
-    /// IFC forbidden rules — empty when snapshot is Inactive.
     fn forbidden_rules(&self) -> &[ForbiddenFlowRule];
     fn disposition_for_event(
         &self,
@@ -61,7 +57,6 @@ pub trait FlowPolicyEvaluator {
     ) -> NodeDisposition;
     #[allow(dead_code)]
     fn policy_sanitizers(&self) -> &[SanitizerRecognition];
-    /// Labels the policy recognizes as cleared by `capability` (union over all matching sanitizer rules).
     fn policy_sanitizer_clears(&self, capability: &str) -> BTreeSet<DataClassName>;
     fn enforces_forbidden(&self) -> bool;
 }

@@ -218,7 +218,7 @@ fn finalize_retryable_failure(
             message,
         }
     } else {
-        RuntimeError::RequestError { message, attempts }
+        RuntimeError::RequestError { message, attempts, status: None, body: None }
     }
 }
 

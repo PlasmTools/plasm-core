@@ -121,7 +121,10 @@ impl<'a> Parser<'a> {
             for k in &ent.key_vars {
                 let wire = k.as_str();
                 let v = parts.get(wire).expect("keys validated").clone();
-                obj.insert(wire.to_string(), v);
+                obj.insert(
+                    wire.to_string(),
+                    self.normalize_identity_constructor_value(v)?,
+                );
             }
             return Ok(Value::Object(obj));
         }
@@ -129,7 +132,7 @@ impl<'a> Parser<'a> {
             if let Some(id_val) =
                 self.try_parse_simple_id_field_constructor_sugar(entity_canon, &ent)?
             {
-                return Ok(id_val);
+                return self.normalize_identity_constructor_value(id_val);
             }
             return Err(self.err(ParseErrorKind::Other {
                 message: format!(
@@ -139,9 +142,13 @@ impl<'a> Parser<'a> {
             }));
         }
         self.pos = after_paren;
-        let id_val = self.parse_value()?;
+        let id_val = if self.program_nodes.is_some() {
+            self.parse_compound_key_value_rhs()?
+        } else {
+            self.parse_value()?
+        };
         self.expect_char(')')?;
-        Ok(id_val)
+        self.normalize_identity_constructor_value(id_val)
     }
 
     /// Map compound-constructor key token to wire `key_vars` name (accepts `p#` without pre-expand).

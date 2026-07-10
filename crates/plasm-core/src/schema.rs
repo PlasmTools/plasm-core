@@ -791,6 +791,9 @@ pub struct CapabilitySchema {
     /// Typed-discovery hints for this capability (optional).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discovery: Option<DiscoveryCapabilityHints>,
+    /// Natural-key parameter names defining workflow identity for PLT / reconcile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_key: Option<Vec<String>>,
 }
 
 /// The type of operation this capability performs.
@@ -1591,6 +1594,9 @@ pub struct OutputSchema {
     /// Whether the output is expected to be idempotent
     #[serde(default)]
     pub idempotent: bool,
+    /// When idempotent, fetch existing row on mapped conflict instead of failing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reconcile: Option<crate::workflow_identity::ReconcileSpec>,
 }
 
 /// Types of output that capabilities can produce
@@ -2079,6 +2085,9 @@ pub struct ViewNodeSpec {
     pub capability: String,
     #[serde(default)]
     pub bind: IndexMap<String, ViewParamBinding>,
+    /// Skip or run this node based on prior read node results.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<crate::workflow_identity::ViewNodeWhen>,
 }
 
 /// Maps a field on the view's output [`EntityName`] to scope data or a prior node's rows.
@@ -2108,6 +2117,18 @@ pub enum ViewOutputBinding {
     },
     /// True when `node`'s row count is strictly positive.
     NodeRowCountPositive {
+        node: String,
+    },
+    /// True when write node `node` executed and created a new row.
+    WriteCreated {
+        node: String,
+    },
+    /// True when write node `node` reconciled to an existing row.
+    WriteReused {
+        node: String,
+    },
+    /// True when write node `node` was skipped by `when:` guard.
+    WriteSkipped {
         node: String,
     },
     /// Minijinja template evaluated after scope/node bindings (see `plasm-runtime` view_template).
@@ -2171,7 +2192,7 @@ pub struct ViewScopeParam {
     pub inject: Option<ViewScopeInject>,
 }
 
-/// Declarative read-only composition plan (`views:` in `domain.yaml`).
+/// Declarative composition plan (`views:` in `domain.yaml`) — read aggregation and conditional writes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ViewDefinition {
     pub description: String,
@@ -2231,6 +2252,9 @@ pub struct CGS {
     /// Scope key → overlay entity name (session-local; populated by [`CGS::with_overlay`]).
     #[serde(skip, default)]
     pub schema_overlay_scope_index: IndexMap<String, EntityName>,
+    /// When true, PLT workflow identity validation is enforced on mutators.
+    #[serde(default)]
+    pub workflow_identity: bool,
     /// Lazily built index for [`Self::find_capabilities`] / [`Self::find_capability`].
     #[serde(skip, default = "new_capability_index_lock")]
     capability_index: OnceLock<Arc<CgsCapabilityIndex>>,
@@ -2290,6 +2314,7 @@ impl Clone for CGS {
             schema_overlay: self.schema_overlay.clone(),
             schema_overlay_hash: self.schema_overlay_hash.clone(),
             schema_overlay_scope_index: self.schema_overlay_scope_index.clone(),
+            workflow_identity: self.workflow_identity,
             capability_index: OnceLock::new(),
             capability_manifest_by_entity: OnceLock::new(),
             incoming_nav_index: OnceLock::new(),
@@ -2452,6 +2477,7 @@ impl CGS {
             schema_overlay: None,
             schema_overlay_hash: None,
             schema_overlay_scope_index: IndexMap::new(),
+            workflow_identity: false,
             capability_index: new_capability_index_lock(),
             capability_manifest_by_entity: new_capability_manifest_by_entity_lock(),
             incoming_nav_index: new_incoming_nav_index_lock(),
@@ -2709,6 +2735,10 @@ impl CGS {
                 if nc.kind != CapabilityKind::Query
                     && nc.kind != CapabilityKind::Get
                     && nc.kind != CapabilityKind::Search
+                    && nc.kind != CapabilityKind::Create
+                    && nc.kind != CapabilityKind::Update
+                    && nc.kind != CapabilityKind::Delete
+                    && nc.kind != CapabilityKind::Action
                 {
                     return Err(SchemaError::ViewUnsupportedNodeCapabilityKind {
                         view: view_key.clone(),
@@ -2716,6 +2746,29 @@ impl CGS {
                         capability: node.capability.clone(),
                         kind: format!("{:?}", nc.kind),
                     });
+                }
+
+                if let Some(when) = &node.when {
+                    let ref_node = match when {
+                        crate::workflow_identity::ViewNodeWhen::SkipIf { condition }
+                        | crate::workflow_identity::ViewNodeWhen::RunIf { condition } => {
+                            match condition {
+                                crate::workflow_identity::ViewNodeCondition::NodeRowCountPositive {
+                                    node: ref_n,
+                                }
+                                | crate::workflow_identity::ViewNodeCondition::NodeRowCountZero {
+                                    node: ref_n,
+                                } => ref_n.as_str(),
+                            }
+                        }
+                    };
+                    if !seen_ids.contains(ref_node) {
+                        return Err(SchemaError::ViewNodeWhenUnknownNode {
+                            view: view_key.clone(),
+                            node: node.id.clone(),
+                            ref_node: ref_node.to_string(),
+                        });
+                    }
                 }
 
                 let mut allowed_params: HashSet<String> = HashSet::new();
@@ -2795,7 +2848,10 @@ impl CGS {
                     ViewOutputBinding::NodeField { node, .. }
                     | ViewOutputBinding::NodeFieldHistogramJson { node, .. }
                     | ViewOutputBinding::NodeAnyRowFieldEquals { node, .. }
-                    | ViewOutputBinding::NodeRowCountPositive { node } => {
+                    | ViewOutputBinding::NodeRowCountPositive { node }
+                    | ViewOutputBinding::WriteCreated { node }
+                    | ViewOutputBinding::WriteReused { node }
+                    | ViewOutputBinding::WriteSkipped { node } => {
                         if !view.nodes.iter().any(|n| n.id == *node) {
                             return Err(SchemaError::ViewOutputUnknownNode {
                                 view: view_key.clone(),
@@ -2890,6 +2946,61 @@ impl CGS {
                         cap.domain, view_def.entity
                     ),
                 });
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_workflow_identity(&self) -> Result<(), SchemaError> {
+        if !self.workflow_identity {
+            return Ok(());
+        }
+        use CapabilityKind::{Action, Create, Delete, Update};
+        for (cap_name, cap) in &self.capabilities {
+            let is_mutator = matches!(cap.kind, Create | Update | Delete | Action);
+            if !is_mutator {
+                continue;
+            }
+            let idempotent = cap
+                .output_schema
+                .as_ref()
+                .is_some_and(|o| o.idempotent);
+            if !idempotent && cap.identity_key.as_ref().is_none_or(|k| k.is_empty()) {
+                return Err(SchemaError::IdentityKeyRequired {
+                    capability: cap_name.to_string(),
+                    entity: cap.domain.to_string(),
+                });
+            }
+            if let Some(keys) = &cap.identity_key {
+                let params: std::collections::HashSet<String> = cap
+                    .object_params()
+                    .into_iter()
+                    .flatten()
+                    .map(|f| f.name.clone())
+                    .collect();
+                for key in keys {
+                    if !params.contains(key.as_str()) {
+                        return Err(SchemaError::IdentityKeyUnknownParam {
+                            capability: cap_name.to_string(),
+                            param: key.clone(),
+                        });
+                    }
+                }
+            }
+            if let Some(os) = &cap.output_schema {
+                if os.idempotent {
+                    let reconcile = os.reconcile.as_ref().ok_or_else(|| {
+                        SchemaError::ReconcileRequiredWhenIdempotent {
+                            capability: cap_name.to_string(),
+                        }
+                    })?;
+                    if self.get_capability(reconcile.via.as_str()).is_none() {
+                        return Err(SchemaError::ReconcileUnknownCapability {
+                            capability: cap_name.to_string(),
+                            via: reconcile.via.clone(),
+                        });
+                    }
+                }
             }
         }
         Ok(())
@@ -3217,6 +3328,8 @@ impl CGS {
         for (_, cap) in &self.capabilities {
             crate::preflight::validate_capability_preflight(self, cap)?;
         }
+
+        self.validate_workflow_identity()?;
 
         self.validate_expression_aliases()?;
         self.validate_temporal_value_formats()?;
@@ -5238,6 +5351,29 @@ impl CapabilitySchema {
     #[inline]
     pub fn invoke_requires_explicit_anchor_id(&self) -> bool {
         template_invoke_requires_explicit_anchor_id(&self.mapping.template.0)
+    }
+
+    /// Minimal capability shell for unit tests in downstream crates.
+    #[doc(hidden)]
+    pub fn minimal_test() -> Self {
+        Self {
+            name: CapabilityName::from("test_cap"),
+            description: String::new(),
+            kind: CapabilityKind::Action,
+            domain: EntityName::from("TestEntity"),
+            mapping: CapabilityMapping {
+                template: CapabilityTemplateJson(serde_json::json!({ "method": "POST" })),
+            },
+            input_schema: None,
+            output_schema: None,
+            provides: vec![],
+            sanitizes: vec![],
+            deterministic: None,
+            scope_aggregate_key_policy: Default::default(),
+            preflight: None,
+            discovery: None,
+            identity_key: None,
+        }
     }
 }
 

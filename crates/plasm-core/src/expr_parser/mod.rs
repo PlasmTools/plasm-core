@@ -1575,7 +1575,7 @@ impl<'a> Parser<'a> {
                 Some(IndexMap::from([(path_key, id_val)])),
             ))));
         }
-        let id_str = self.compound_get_slot_string_from_value(&id_val)?;
+        let id_str = self.identity_literal_from_value(&id_val)?;
         Ok(Some(Expr::Get(GetExpr::new(entity, id_str))))
     }
 
@@ -1636,7 +1636,7 @@ impl<'a> Parser<'a> {
                 Some(IndexMap::from([(path_key, id_val)])),
             ))));
         }
-        let id_str = self.compound_get_slot_string_from_value(&id_val)?;
+        let id_str = self.identity_literal_from_value(&id_val)?;
         Ok(Some(Expr::Get(GetExpr::new(entity, id_str))))
     }
 
@@ -1708,6 +1708,60 @@ impl<'a> Parser<'a> {
                 })
             }),
             _ => Err(self.err(ParseErrorKind::IdMustBeStringOrNumber)),
+        }
+    }
+
+    /// Identity GET / entity-ref constructor slot: accept program-mode [`Value::PhraseIdent`]
+    /// as a literal id unless it shadows an in-scope program binding.
+    fn identity_literal_from_value(&self, v: &Value) -> Result<String, ParseError> {
+        if let Value::PhraseIdent(ident) = v {
+            if let Some(labels) = self.program_nodes {
+                if labels.contains(ident.as_str()) {
+                    return Err(self.err(ParseErrorKind::Other {
+                        message: format!(
+                            "`{ident}` names a program binding in this plan — use `{ident}` or `{ident}.<field>` as a binding reference, not an unquoted literal"
+                        ),
+                    }));
+                }
+            }
+            return Ok(ident.clone());
+        }
+        self.compound_get_slot_string_from_value(v)
+    }
+
+    /// Lower [`Value::PhraseIdent`] leaves to [`Value::String`] for nested entity-ref constructors.
+    pub(super) fn normalize_identity_constructor_value(
+        &self,
+        v: Value,
+    ) -> Result<Value, ParseError> {
+        match v {
+            Value::PhraseIdent(ident) => {
+                if let Some(labels) = self.program_nodes {
+                    if labels.contains(ident.as_str()) {
+                        return Err(self.err(ParseErrorKind::Other {
+                            message: format!(
+                                "`{ident}` names a program binding in this plan — use `{ident}` or `{ident}.<field>` as a binding reference, not an unquoted literal"
+                            ),
+                        }));
+                    }
+                }
+                Ok(Value::String(ident))
+            }
+            Value::Object(map) => {
+                let mut out = indexmap::IndexMap::new();
+                for (k, val) in map {
+                    out.insert(k, self.normalize_identity_constructor_value(val)?);
+                }
+                Ok(Value::Object(out))
+            }
+            Value::Array(items) => {
+                let mut out = Vec::with_capacity(items.len());
+                for item in items {
+                    out.push(self.normalize_identity_constructor_value(item)?);
+                }
+                Ok(Value::Array(out))
+            }
+            other => Ok(other),
         }
     }
 
@@ -3058,7 +3112,7 @@ impl<'a> Parser<'a> {
                             ctor_path_vars.insert(k.to_string(), v.clone());
                             continue;
                         }
-                        let s = self.compound_get_slot_string_from_value(v)?;
+                        let s = self.identity_literal_from_value(v)?;
                         ordered.insert(k.to_string(), s);
                     }
                     let get = GetExpr::from_ref_with_path_vars(
@@ -3101,7 +3155,7 @@ impl<'a> Parser<'a> {
                             Some(IndexMap::from([(path_key, id_val)])),
                         )))
                     } else {
-                        let id_str = self.compound_get_slot_string_from_value(&id_val)?;
+                        let id_str = self.identity_literal_from_value(&id_val)?;
                         Ok(Expr::Get(GetExpr::new(entity, id_str)))
                     }
                 }
@@ -4086,6 +4140,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Get,
             domain: "Document".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
@@ -4112,6 +4167,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Action,
             domain: "Document".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method": "POST",
@@ -4159,6 +4215,7 @@ mod tests {
                 },
                 decoder: serde_json::json!({}),
                 idempotent: false,
+                reconcile: None,
             }),
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
@@ -5033,6 +5090,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Query,
             domain: "Widget".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "widget"}]}).into(),
             },
@@ -5140,6 +5198,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Query,
             domain: "Book".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template:
                     serde_json::json!({"method":"GET","path":[{"type":"literal","value":"books"}]})
@@ -5161,6 +5220,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Get,
             domain: "Library".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method":"GET",
@@ -5351,6 +5411,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Get,
             domain: "Ticket".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
@@ -5487,6 +5548,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Get,
             domain: "Library".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method":"GET",
@@ -5583,6 +5645,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Get,
             domain: "Parent".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({"method":"GET","path":[
                     {"type":"literal","value":"parent"},
@@ -5607,6 +5670,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Query,
             domain: "Child".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({"method":"GET","path":[
                     {"type":"literal","value":"children"}
@@ -6065,6 +6129,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Get,
             domain: "Pet".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
@@ -6123,6 +6188,63 @@ mod tests {
             panic!("expected Get, got {:?}", r.expr);
         };
         assert_eq!(g.reference.primary_slot_str(), "pikachu");
+    }
+
+    #[test]
+    fn program_parse_positional_get_accepts_unquoted_phrase_ident() {
+        use std::sync::Arc;
+
+        let cgs = simple_name_id_get_fixture_cgs();
+        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
+        let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
+        let stack = test_layer(&cgs);
+        let r = parse_with_cgs_layers_program("Pet(pikachu)", &stack, sym_map, None, false)
+            .expect("parse");
+        let Expr::Get(g) = r.expr else {
+            panic!("expected Get, got {:?}", r.expr);
+        };
+        assert_eq!(g.reference.primary_slot_str(), "pikachu");
+    }
+
+    #[test]
+    fn program_parse_positional_get_with_binding_uses_node_input() {
+        use std::collections::BTreeSet;
+        use std::sync::Arc;
+
+        let cgs = simple_name_id_get_fixture_cgs();
+        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
+        let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
+        let stack = test_layer(&cgs);
+        let mut labels = BTreeSet::new();
+        labels.insert("pikachu".into());
+        let r =
+            parse_with_cgs_layers_program("Pet(pikachu)", &stack, sym_map, Some(&labels), false)
+                .expect("binding ref");
+        let Expr::Get(g) = r.expr else {
+            panic!("expected Get, got {:?}", r.expr);
+        };
+        let pv = g.path_vars.as_ref().expect("path_vars");
+        assert!(matches!(
+            pv.get("pet_id"),
+            Some(Value::PlasmInputRef(PlasmInputRef::NodeInput { node, path }))
+                if node == "pikachu" && path.is_empty()
+        ));
+    }
+
+    #[test]
+    fn program_parse_hyphenated_identity_phrase_ident() {
+        use std::sync::Arc;
+
+        let cgs = simple_name_id_get_fixture_cgs();
+        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
+        let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
+        let stack = test_layer(&cgs);
+        let r = parse_with_cgs_layers_program("Pet(name=PLA-1)", &stack, sym_map, None, false)
+            .expect("parse");
+        let Expr::Get(g) = r.expr else {
+            panic!("expected Get, got {:?}", r.expr);
+        };
+        assert_eq!(g.reference.primary_slot_str(), "PLA-1");
     }
 }
 

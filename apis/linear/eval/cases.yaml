@@ -214,3 +214,13 @@
   reference_expr: Issue(ENG-42).labels
   expect:
     entities_any: [Issue, Label]
+
+- id: lin-wf-01
+  schema: linear
+  goal: "Create issue titled 'WF identity demo' in team ENG (identity_key team+title)"
+  tags: [workflow_identity, create]
+  covers: [invoke]
+  reference_expr: Issue.issue-create(team="ENG", title="WF identity demo")
+  expect:
+    entities_any: [Issue]
+  notes: "Reference eval for issue_create identity_key + conflict_rules."

@@ -765,6 +765,8 @@ pub async fn read_http_response(
         .map_err(|e| RuntimeError::RequestError {
             message: format!("{method} {url} — failed to read response body: {e}"),
             attempts: 1,
+            status: None,
+            body: None,
         })?
         .to_vec();
 
@@ -809,6 +811,8 @@ pub fn evaluate_parsed_response(parsed: HttpParsedResponse) -> HttpAttemptResult
             HttpAttemptResult::Failed(RuntimeError::RequestError {
                 message: format!("{method} {url} — HTTP {status_code} with empty body"),
                 attempts: 1,
+                status: Some(status_code),
+                body: None,
             })
         };
     }
@@ -852,6 +856,8 @@ pub fn evaluate_parsed_response(parsed: HttpParsedResponse) -> HttpAttemptResult
                         content_type.as_deref().unwrap_or("(none)")
                     ),
                     attempts: 1,
+                    status: Some(status_code),
+                    body: None,
                 })
             }
         }
@@ -873,6 +879,8 @@ pub fn evaluate_parsed_response(parsed: HttpParsedResponse) -> HttpAttemptResult
                 HttpAttemptResult::Failed(RuntimeError::RequestError {
                     message,
                     attempts: 1,
+                    status: Some(status_code),
+                    body: Some(json),
                 })
             }
         }
@@ -906,6 +914,8 @@ pub fn evaluate_parsed_response(parsed: HttpParsedResponse) -> HttpAttemptResult
                 HttpAttemptResult::Failed(RuntimeError::RequestError {
                     message,
                     attempts: 1,
+                    status: Some(status_code),
+                    body: None,
                 })
             }
         }
@@ -933,7 +943,7 @@ pub fn attempt_result_into_result(
                     message,
                 })
             } else {
-                Err(RuntimeError::RequestError { message, attempts })
+                Err(RuntimeError::RequestError { message, attempts, status: None, body: None })
             }
         }
         HttpAttemptResult::Failed(mut e) => {

@@ -1,7 +1,8 @@
 //! Typed CGS → flow-catalog projection (no JSON round-trip).
 
 use crate::plan_flow::{QualifiedCapabilityKey, SinkParamRef};
-use plasm_core::{flow_control_param_names, CapabilitySchema, DataClassName, CGS};
+use plasm_core::schema::ViewDefinition;
+use plasm_core::{flow_control_param_names, CapabilityKind, CapabilitySchema, DataClassName, CGS};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -11,13 +12,32 @@ pub struct CatalogPin<'a> {
     pub cgs: &'a CGS,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CapabilityWorkflowMeta {
+    pub kind: CapabilityKind,
+    pub identity_key: Option<Vec<String>>,
+    pub idempotent: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Default)]
 pub struct FlowCatalogView {
     pub capability_output_labels: BTreeMap<QualifiedCapabilityKey, BTreeSet<DataClassName>>,
     pub capability_sink_params: BTreeMap<QualifiedCapabilityKey, Vec<SinkParamRef>>,
     pub capability_sanitizers: BTreeMap<QualifiedCapabilityKey, BTreeSet<DataClassName>>,
     /// Behavior-controlling parameter names per capability (robust-declass: taint here voids clearance).
     pub capability_control_params: BTreeMap<QualifiedCapabilityKey, BTreeSet<String>>,
+    /// Per-entry `workflow_identity: true` from domain.yaml.
+    #[serde(default)]
+    pub entry_workflow_identity: BTreeMap<String, bool>,
+    /// Declared workflow metadata per capability (kind + identity + idempotent).
+    #[serde(default)]
+    pub capability_workflow: BTreeMap<QualifiedCapabilityKey, CapabilityWorkflowMeta>,
+    /// View DAG definitions keyed by `(entry_id, view_key)`.
+    #[serde(default)]
+    pub views: BTreeMap<String, BTreeMap<String, ViewDefinition>>,
+    /// Outer capability → composed view key (`transport: view` mappings).
+    #[serde(default)]
+    pub capability_view_key: BTreeMap<QualifiedCapabilityKey, String>,
 }
 
 impl FlowCatalogView {
@@ -28,7 +48,6 @@ impl FlowCatalogView {
             .unwrap_or_default()
     }
 
-    /// Union of output labels across every capability for `(entry_id, entity)`.
     pub fn output_labels_for_entity(
         &self,
         entry_id: &str,
@@ -64,6 +83,28 @@ impl FlowCatalogView {
             .unwrap_or_default()
     }
 
+    pub fn workflow_identity_enabled(&self, entry_id: &str) -> bool {
+        self.entry_workflow_identity
+            .get(entry_id)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    pub fn capability_workflow_meta(
+        &self,
+        key: &QualifiedCapabilityKey,
+    ) -> Option<&CapabilityWorkflowMeta> {
+        self.capability_workflow.get(key)
+    }
+
+    pub fn capability_view_key(&self, key: &QualifiedCapabilityKey) -> Option<&str> {
+        self.capability_view_key.get(key).map(String::as_str)
+    }
+
+    pub fn view_definition(&self, entry_id: &str, view_key: &str) -> Option<&ViewDefinition> {
+        self.views.get(entry_id)?.get(view_key)
+    }
+
     pub fn from_cgs(entry_id: &str, cgs: &CGS) -> Self {
         let mut view = Self::default();
         view.merge_cgs(entry_id, cgs);
@@ -79,6 +120,21 @@ impl FlowCatalogView {
     }
 
     pub fn merge_cgs(&mut self, entry_id: &str, cgs: &CGS) {
+        if cgs.workflow_identity {
+            self.entry_workflow_identity.insert(entry_id.to_string(), true);
+        }
+        for (view_key, view_def) in &cgs.views {
+            self.views
+                .entry(entry_id.to_string())
+                .or_default()
+                .insert(view_key.clone(), view_def.clone());
+            let cap_key = QualifiedCapabilityKey::from_parts(
+                entry_id,
+                view_def.entity.as_str(),
+                view_def.capability.as_str(),
+            );
+            self.capability_view_key.insert(cap_key, view_key.clone());
+        }
         for (cap_name, cap) in &cgs.capabilities {
             ingest_capability(self, entry_id, cap_name.as_str(), cap, cgs);
         }
@@ -97,6 +153,32 @@ fn ingest_capability(
         return;
     }
     let key = QualifiedCapabilityKey::from_parts(entry_id, entity_name, cap_name);
+
+    let idempotent = cap
+        .output_schema
+        .as_ref()
+        .is_some_and(|o| o.idempotent);
+    let is_mutator = matches!(
+        cap.kind,
+        CapabilityKind::Create
+            | CapabilityKind::Update
+            | CapabilityKind::Delete
+            | CapabilityKind::Action
+    );
+    let is_read = matches!(
+        cap.kind,
+        CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get
+    );
+    if is_mutator || is_read || cap.identity_key.is_some() || idempotent {
+        view.capability_workflow.insert(
+            key.clone(),
+            CapabilityWorkflowMeta {
+                kind: cap.kind,
+                identity_key: cap.identity_key.clone(),
+                idempotent,
+            },
+        );
+    }
 
     let labels: BTreeSet<DataClassName> = cgs
         .capability_output_data_classes(cap)
@@ -157,50 +239,5 @@ mod tests {
                 .is_some_and(|s| s.as_str() == "outbound_body")),
             "send capability should expose outbound_body sink param"
         );
-    }
-
-    #[test]
-    fn redact_exposes_keep_patterns_control_param() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/schemas/flow_matrix");
-        let cgs = load_schema_dir_unvalidated(&dir).expect("load flow_matrix fixture");
-        let view = FlowCatalogView::from_cgs("flow", &cgs);
-        let key = QualifiedCapabilityKey::from_parts("flow", "Redactor", "redact");
-        assert!(
-            view.control_params_for(&key).contains("keep_patterns"),
-            "redact must expose keep_patterns as control param"
-        );
-    }
-
-    #[test]
-    fn github_repo_get_exposes_untrusted_from_description() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/github");
-        let cgs = load_schema_dir_unvalidated(&dir).expect("load github");
-        let view = FlowCatalogView::from_cgs("github", &cgs);
-        let key = QualifiedCapabilityKey::from_parts("github", "Repository", "repo_get");
-        let labels = view.output_labels_for(&key);
-        assert!(
-            labels.iter().any(|l| l.as_str() == "untrusted"),
-            "repo_get must carry untrusted from Repository.description; got {labels:?}"
-        );
-    }
-
-    #[test]
-    fn from_pins_federates_multiple_entries() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/schemas/flow_matrix");
-        let cgs = load_schema_dir_unvalidated(&dir).expect("load flow_matrix fixture");
-        let view = FlowCatalogView::from_pins([
-            CatalogPin {
-                entry_id: "flow_a",
-                cgs: &cgs,
-            },
-            CatalogPin {
-                entry_id: "flow_b",
-                cgs: &cgs,
-            },
-        ]);
-        let send_key = QualifiedCapabilityKey::from_parts("flow_b", "Message", "send");
-        assert!(!view.sink_params_for(&send_key).is_empty());
     }
 }

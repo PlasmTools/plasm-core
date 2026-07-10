@@ -7,7 +7,7 @@ use crate::{CachedEntity, EntityCompleteness, RuntimeError};
 use indexmap::IndexMap;
 use plasm_compile::CmlEnv;
 use plasm_core::preflight::{
-    PickSpec, PreflightFieldPath, PreflightPlan, PreflightStep, ScopeBind,
+    ExistenceOnExists, PickSpec, PreflightFieldPath, PreflightPlan, PreflightStep, ScopeBind,
 };
 use plasm_core::TypedFieldValue;
 use plasm_core::{
@@ -109,6 +109,16 @@ pub(crate) async fn apply_preflight_steps(
                 )
                 .await?;
             }
+            PreflightStep::ExistenceCheck {
+                query,
+                on_exists,
+                ..
+            } => {
+                existence_check_step(
+                    engine, cgs, cache, mode, env, capability, query, *on_exists,
+                )
+                .await?;
+            }
         }
     }
     Ok(())
@@ -156,6 +166,7 @@ pub(crate) fn apply_preflight_compile_stubs(env: &mut CmlEnv, capability: &Capab
                 }
             }
             PreflightStep::HydrateInvokeTarget { .. } => {}
+            PreflightStep::ExistenceCheck { .. } => {}
         }
     }
 }
@@ -581,6 +592,79 @@ async fn resolve_label_id_by_name(
             message: format!("preflight label_ids_delta: {n} labels named '{name}'"),
         }),
     }
+}
+
+async fn existence_check_step(
+    engine: &ExecutionEngine,
+    cgs: &CGS,
+    cache: &mut SessionMaterialization,
+    mode: ExecutionMode,
+    env: &mut CmlEnv,
+    capability: &CapabilitySchema,
+    query_cap: &str,
+    on_exists: ExistenceOnExists,
+) -> Result<(), RuntimeError> {
+    let qcap = cgs.get_capability(query_cap).ok_or_else(|| RuntimeError::ConfigurationError {
+        message: format!("existence_check: unknown capability '{query_cap}'"),
+    })?;
+    let mut pred = Predicate::True;
+    if let Some(keys) = &capability.identity_key {
+        for key in keys {
+            if let Some(v) = env.get(key) {
+                pred = Predicate::And {
+                    args: vec![
+                        pred,
+                        Predicate::Comparison {
+                            field: key.clone(),
+                            op: plasm_core::CompOp::Eq,
+                            value: v.clone().into(),
+                        },
+                    ],
+                };
+            }
+        }
+    }
+    let q = QueryExpr::filtered(qcap.domain.as_str(), pred);
+    let res = engine
+        .execute_query(
+            &q,
+            cgs,
+            cache,
+            mode,
+            StreamConsumeOpts::default(),
+            &ViewAmbientContext::default(),
+        )
+        .await?;
+    if res.count > 0 {
+        match on_exists {
+            ExistenceOnExists::Fail => {
+                return Err(RuntimeError::WorkflowConflict {
+                    conflict: plasm_core::WorkflowConflict {
+                        kind: plasm_core::WorkflowConflictKind::ResourceExists,
+                        entity: capability.domain.to_string(),
+                        key: IndexMap::new(),
+                        hint: format!(
+                            "preflight existence_check: {} already exists",
+                            capability.name
+                        ),
+                        existing: None,
+                    },
+                    message: format!(
+                        "preflight existence_check failed for capability '{}'",
+                        capability.name
+                    ),
+                    attempts: 1,
+                });
+            }
+            ExistenceOnExists::SkipWrite => {
+                env.insert(
+                    plasm_core::preflight::PLASM_EXISTENCE_SKIP_WRITE_ENV.to_string(),
+                    Value::Bool(true),
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -217,7 +217,10 @@ pub fn validate_cgs_views(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
                 | ViewOutputBinding::NodeField { node, .. }
                 | ViewOutputBinding::NodeFieldHistogramJson { node, .. }
                 | ViewOutputBinding::NodeAnyRowFieldEquals { node, .. }
-                | ViewOutputBinding::NodeRowCountPositive { node } => {
+                | ViewOutputBinding::NodeRowCountPositive { node }
+                | ViewOutputBinding::WriteCreated { node }
+                | ViewOutputBinding::WriteReused { node }
+                | ViewOutputBinding::WriteSkipped { node } => {
                     if !all_node_ids.contains(node) {
                         return Err(CmlError::InvalidTemplate {
                             message: format!(

@@ -452,7 +452,7 @@ pub enum SchemaError {
     },
 
     #[error(
-        "View '{view}': node '{node}' capability '{capability}' must be Query or Get (got {kind})"
+        "View '{view}': node '{node}' capability '{capability}' must be Query, Get, Search, or mutator (got {kind})"
     )]
     ViewUnsupportedNodeCapabilityKind {
         view: String,
@@ -460,6 +460,30 @@ pub enum SchemaError {
         capability: String,
         kind: String,
     },
+
+    #[error("View '{view}': node '{node}' when references unknown prior node '{ref_node}'")]
+    ViewNodeWhenUnknownNode {
+        view: String,
+        node: String,
+        ref_node: String,
+    },
+
+    #[error(
+        "Capability '{capability}' on '{entity}' requires identity_key for non-idempotent mutators"
+    )]
+    IdentityKeyRequired {
+        capability: String,
+        entity: String,
+    },
+
+    #[error("Capability '{capability}': identity_key references unknown param '{param}'")]
+    IdentityKeyUnknownParam { capability: String, param: String },
+
+    #[error("Capability '{capability}': idempotent output requires reconcile block")]
+    ReconcileRequiredWhenIdempotent { capability: String },
+
+    #[error("Capability '{capability}': reconcile.via '{via}' is not defined")]
+    ReconcileUnknownCapability { capability: String, via: String },
 
     #[error(
         "View '{view}': relation_outputs references unknown relation '{relation}' on entity '{entity}'"

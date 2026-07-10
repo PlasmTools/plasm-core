@@ -2599,6 +2599,7 @@ fn prompt_stats_fixture_cgs() -> CGS {
             description: String::new(),
             kind: CapabilityKind::Query,
             domain: domain.into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: tmpl.clone().into(),
             },
@@ -2719,6 +2720,7 @@ fn p_slot_redefinition_fixture_cgs(id_desc_a: &str, id_desc_b: &str) -> CGS {
             description: String::new(),
             kind: CapabilityKind::Get,
             domain: name.into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",

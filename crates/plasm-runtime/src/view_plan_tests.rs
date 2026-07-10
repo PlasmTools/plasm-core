@@ -220,4 +220,19 @@ impl ViewNodeRunner for FixtureViewNodeRunner {
                 message: format!("fixture runner missing node `{}`", node.id),
             })
     }
+
+    fn run_create_node(
+        &self,
+        _ctx: &ViewRunContext<'_>,
+        node: &plasm_core::schema::ViewNodeSpec,
+        _cap: &plasm_core::CapabilitySchema,
+        _create: &plasm_core::CreateExpr,
+    ) -> Result<ExecutionResult, crate::RuntimeError> {
+        self.results
+            .get(&node.id)
+            .cloned()
+            .ok_or_else(|| crate::RuntimeError::ConfigurationError {
+                message: format!("fixture runner missing node `{}`", node.id),
+            })
+    }
 }

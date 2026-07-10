@@ -666,6 +666,7 @@ mod tests {
                 description: String::new(),
                 kind: CapabilityKind::Query,
                 domain: "Note".into(),
+                identity_key: None,
                 mapping: CapabilityMapping {
                     template: serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "notes"}]}).into(),
                 },
@@ -767,6 +768,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Query,
             domain: "Spell".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "spells"}]}).into(),
             },
@@ -940,6 +942,7 @@ mod tests {
                 description: String::new(),
                 kind: CapabilityKind::Get,
                 domain: "File".into(),
+                identity_key: None,
                 mapping: CapabilityMapping {
                     template: serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "f"}]}).into(),
                 },

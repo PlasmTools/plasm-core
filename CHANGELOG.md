@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.13] - 2026-07-10
+
+### Added
+
+- **Workflow identity:** catalogs may declare `workflow_identity: true`, per-capability `identity_key`, HTTP `conflict_rules`, and `output.reconcile` for idempotent create/update. Runtime maps conflicts to structured `WorkflowConflict` (`resource_exists`, `identity_mismatch`) and reconciles via declared read capabilities (GET/query/search).
+- **PLT existence flow:** `verify_existence_flow` flags unguarded non-idempotent mutators as `NeedsReview`; view-backed reads expand inner mutators for sink/existence analysis; conditional view `when:` (`skip_if` / `run_if`) satisfies guards.
+- **Preflight `SkipWrite`:** `existence_check` with `on_exists: skip_write` sets a session env flag and short-circuits live mutators with `outcome: skipped`.
+- **Fixtures & catalogs:** `workflow_matrix` schema fixture; GitHub/Linear `identity_key` + conflict rules; authoring reference for workflow identity.
+
+### Fixed
+
+- **JSON pointer conflict rules:** `body_json_path` segments like `errors/0/message` resolve array indices correctly.
+
 ## [0.4.12] - 2026-07-10
 
 ### Added

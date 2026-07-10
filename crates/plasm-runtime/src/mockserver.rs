@@ -87,6 +87,8 @@ impl MockServerClient {
                     response.status()
                 ),
                 attempts: 1,
+                status: None,
+                body: None,
             });
         }
 
@@ -111,6 +113,8 @@ impl MockServerClient {
                     response.status()
                 ),
                 attempts: 1,
+                status: None,
+                body: None,
             });
         }
 
@@ -140,6 +144,8 @@ impl MockServerClient {
             return Err(RuntimeError::RequestError {
                 message: format!("Failed to reset MockServer: {}", response.status()),
                 attempts: 1,
+                status: None,
+                body: None,
             });
         }
 

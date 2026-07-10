@@ -60,6 +60,18 @@ impl ViewNodeRunnerAsync for LiveViewNodeRunner<'_> {
             .execute_get_for_view_dag(get, self.cgs, self.cache, self.mode)
             .await
     }
+
+    async fn run_create_node(
+        &mut self,
+        _ctx: &ViewRunContext<'_>,
+        _node: &ViewNodeSpec,
+        _cap: &CapabilitySchema,
+        create: &plasm_core::CreateExpr,
+    ) -> Result<ExecutionResult, RuntimeError> {
+        self.engine
+            .execute_create(create, self.cgs, self.cache, self.mode)
+            .await
+    }
 }
 
 async fn execute_view_scoped(

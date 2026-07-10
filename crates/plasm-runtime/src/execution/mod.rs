@@ -797,8 +797,10 @@ impl ExecutionEngine {
             .pool_max_idle_per_host(per_host)
             .build()
             .map_err(|e| RuntimeError::RequestError {
-                message: format!("Failed to create HTTP client: {}", e),
+                message: format!("Failed to create HTTP client: {e}"),
                 attempts: 1,
+                status: None,
+                body: None,
             })?;
 
         let inner = ReqwestHttpTransport::new(client);
@@ -2594,6 +2596,8 @@ fn preflight_fibery_command_envelope(response: &serde_json::Value) -> Result<(),
         return Err(RuntimeError::RequestError {
             message: format!("Fibery command failed ({name}): {message}"),
             attempts: 1,
+            status: None,
+            body: None,
         });
     }
     Ok(())
@@ -2615,6 +2619,8 @@ fn preflight_command_envelope_for_single_entity_narrow(
             return Err(RuntimeError::RequestError {
                 message: msg,
                 attempts: 1,
+                status: None,
+                body: None,
             });
         }
     }
@@ -2639,8 +2645,7 @@ fn preflight_command_envelope_for_single_entity_narrow(
                       For `user_get_me`, the API token may not resolve `$my-id` — use a personal \
                       workspace API token from Fibery → API Tokens and reconnect in Plasm."
                 .into(),
-            attempts: 1,
-        });
+            attempts: 1, status: None, body: None });
     }
     Ok(())
 }
@@ -2691,7 +2696,9 @@ fn extract_single_entity_payload_from_response(
                             return Err(RuntimeError::RequestError {
                                 message: msg,
                                 attempts: 1,
-                            });
+                status: None,
+                body: None,
+            });
                         }
                     }
                 }
@@ -3263,6 +3270,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Query,
             domain: "Account".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method": "POST",
@@ -3295,6 +3303,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Get,
             domain: "Account".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
@@ -3381,6 +3390,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Query,
             domain: "ManagedResource".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",

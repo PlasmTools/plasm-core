@@ -117,6 +117,9 @@ pub struct DomainFile {
     /// Alternate registry ids accepted by discovery / MCP seed resolution (e.g. `pokemon` → `pokeapi`).
     #[serde(default)]
     pub registry_aliases: Vec<String>,
+    /// When true, non-idempotent mutators must declare `identity_key` (PLT workflow identity).
+    #[serde(default)]
+    pub workflow_identity: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -310,6 +313,9 @@ pub struct DomainCapability {
     _invoke_preflight_removed: (),
     #[serde(default)]
     pub discovery: Option<crate::DiscoveryCapabilityHints>,
+    /// Natural-key params for PLT workflow identity (required when catalog `workflow_identity: true`).
+    #[serde(default)]
+    pub identity_key: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -795,6 +801,7 @@ fn assemble_cgs_core(
     cgs.version = domain.version;
     cgs.schema_overlay = domain.schema_overlay;
     cgs.registry_aliases = domain.registry_aliases;
+    cgs.workflow_identity = domain.workflow_identity;
     cgs.data_classes = domain.data_classes;
     cgs.values = compile_domain_named_values(&domain.values)?;
 
@@ -894,6 +901,7 @@ fn assemble_cgs_core(
             scope_aggregate_key_policy: cap.scope_aggregate_key_policy.unwrap_or_default(),
             preflight: cap.preflight.clone(),
             discovery: cap.discovery.clone(),
+            identity_key: cap.identity_key.clone(),
         };
 
         cgs.add_capability(capability)

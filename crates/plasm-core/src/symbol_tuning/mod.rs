@@ -4687,6 +4687,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Get,
             domain: "Widget".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({"method":"GET","path":[{"type":"literal","value":"w"},{"type":"var","name":"id"}]}).into(),
             },

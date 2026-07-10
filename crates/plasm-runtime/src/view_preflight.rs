@@ -95,4 +95,19 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
         preflight_compile_expr(&plasm_core::Expr::Get(get.clone()), self.cgs, self.ambient)?;
         stub_get_result(cap, self.cgs, bound)
     }
+
+    fn run_create_node(
+        &self,
+        _ctx: &ViewRunContext<'_>,
+        _node: &plasm_core::schema::ViewNodeSpec,
+        cap: &plasm_core::CapabilitySchema,
+        create: &plasm_core::CreateExpr,
+    ) -> Result<ExecutionResult, RuntimeError> {
+        preflight_compile_expr(
+            &plasm_core::Expr::Create(create.clone()),
+            self.cgs,
+            self.ambient,
+        )?;
+        stub_query_result(cap, self.cgs, &IndexMap::new())
+    }
 }

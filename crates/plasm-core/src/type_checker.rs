@@ -1115,6 +1115,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Get,
             domain: "Pet".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
@@ -1139,6 +1140,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Get,
             domain: "Order".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",

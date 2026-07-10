@@ -27,7 +27,19 @@ pub enum RuntimeError {
     },
 
     #[error("HTTP request failed: {message}")]
-    RequestError { message: String, attempts: u32 },
+    RequestError {
+        message: String,
+        attempts: u32,
+        status: Option<u16>,
+        body: Option<serde_json::Value>,
+    },
+
+    #[error("Workflow conflict: {message}")]
+    WorkflowConflict {
+        conflict: plasm_core::WorkflowConflict,
+        message: String,
+        attempts: u32,
+    },
 
     #[error("Upstream rate limited (HTTP {status}): {message}")]
     RateLimited {
@@ -73,8 +85,18 @@ impl RuntimeError {
     pub fn set_attempts(&mut self, attempts: u32) {
         match self {
             RuntimeError::RequestError { attempts: a, .. }
+            | RuntimeError::WorkflowConflict { attempts: a, .. }
             | RuntimeError::RateLimited { attempts: a, .. } => *a = attempts,
             _ => {}
+        }
+    }
+
+    pub fn request_failure(message: impl Into<String>, attempts: u32) -> Self {
+        Self::RequestError {
+            message: message.into(),
+            attempts,
+            status: None,
+            body: None,
         }
     }
 }
@@ -88,6 +110,8 @@ impl From<reqwest::Error> for RuntimeError {
         RuntimeError::RequestError {
             message,
             attempts: 1,
+            status: None,
+            body: None,
         }
     }
 }

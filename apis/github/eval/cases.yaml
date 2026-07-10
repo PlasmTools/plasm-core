@@ -684,3 +684,15 @@
   expect:
     entities_any: [Repository, Label, Issue, IssueComment]
     projection_contains: [name, color, number, title]
+
+- id: gh-wf-01
+  schema: github
+  goal: "Create branch feature/wf-identity on owner/repo from main SHA (declare identity_key before create)"
+  tags: [workflow_identity, branch]
+  covers: [invoke]
+  reference_expr: |-
+    repo = Repository(owner="owner", repo="repo")
+    Repository(owner="owner", repo="repo").repo-branch-create(repository=repo.full_name, name="feature/wf-identity", sha="abc123")
+  expect:
+    entities_any: [Repository]
+  notes: "Reference eval for identity_key + conflict_rules on repo_branch_create."

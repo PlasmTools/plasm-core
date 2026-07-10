@@ -63,6 +63,12 @@ impl ExecutionEngine {
 
         apply_preflight_steps(self, capability, cgs, mat, mode, &mut env, None, true).await?;
 
+        if crate::workflow_reconcile::should_skip_write_after_preflight(&env) {
+            return Ok(crate::workflow_reconcile::skipped_write_result(
+                create.entity.as_str(),
+            ));
+        }
+
         merge_plasm_execute_session_env(&mut env);
 
         let compiled = compile_operation_dispatch(&capability_template, &env)?;
@@ -70,11 +76,27 @@ impl ExecutionEngine {
         match mode {
             ExecutionMode::Live => {
                 ensure_http_operation(&compiled, "create")?;
-                let (response, _) = with_dispatch_entity(
+                let http_res = with_dispatch_entity(
                     Some(create.entity.as_str()),
                     self.execute_operation_full(&compiled),
                 )
-                .await?;
+                .await;
+                let (response, _) = match http_res {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return self
+                            .try_reconcile_mutator_error(
+                                e,
+                                capability,
+                                cgs,
+                                mat,
+                                mode,
+                                &input,
+                                create.entity.as_str(),
+                            )
+                            .await;
+                    }
+                };
                 let response =
                     narrow_http_graphql_response_for_entity_decode(&capability_template, response)?;
                 let identity_ambient = cml_env_to_identity_strings(&env);
@@ -288,6 +310,12 @@ impl ExecutionEngine {
         )
         .await?;
 
+        if crate::workflow_reconcile::should_skip_write_after_preflight(&env) {
+            return Ok(crate::workflow_reconcile::skipped_write_result(
+                invoke.target.entity_type.as_str(),
+            ));
+        }
+
         merge_plasm_execute_session_env(&mut env);
 
         let compiled = compile_operation_dispatch(&capability_template, &env)?;
@@ -295,11 +323,28 @@ impl ExecutionEngine {
         match mode {
             ExecutionMode::Live => {
                 ensure_http_operation(&compiled, "invoke")?;
-                let (response, _) = with_dispatch_entity(
+                let http_res = with_dispatch_entity(
                     Some(invoke.target.entity_type.as_str()),
                     self.execute_operation_full(&compiled),
                 )
-                .await?;
+                .await;
+                let (response, _) = match http_res {
+                    Ok(v) => v,
+                    Err(e) => {
+                        let input_val = input_for_env.clone().unwrap_or(Value::Object(indexmap::IndexMap::new()));
+                        return self
+                            .try_reconcile_mutator_error(
+                                e,
+                                capability,
+                                cgs,
+                                mat,
+                                mode,
+                                &input_val,
+                                invoke.target.entity_type.as_str(),
+                            )
+                            .await;
+                    }
+                };
                 let response =
                     narrow_http_graphql_response_for_entity_decode(&capability_template, response)?;
 

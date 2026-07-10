@@ -668,6 +668,7 @@ capabilities:
     kind: create
     entity: Issue
     description: Create an issue.
+    identity_key: [team, title]
     provides:
     - identifier
     - title

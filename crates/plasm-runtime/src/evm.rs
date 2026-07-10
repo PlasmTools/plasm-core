@@ -313,12 +313,10 @@ fn extract_log_meta(key: EvmLogMetaKey, log: &Log) -> Result<JsonValue, RuntimeE
                 .ok_or_else(|| RuntimeError::RequestError {
                     message: "EVM log is missing transaction_hash required for event_id"
                         .to_string(),
-                    attempts: 1,
-                })?;
+                    attempts: 1, status: None, body: None })?;
             let log_index = log.log_index.ok_or_else(|| RuntimeError::RequestError {
                 message: "EVM log is missing log_index required for event_id".to_string(),
-                attempts: 1,
-            })?;
+                attempts: 1, status: None, body: None })?;
             JsonValue::String(format!("{tx_hash}:{log_index}"))
         }
         EvmLogMetaKey::TransactionHash => log
@@ -379,5 +377,7 @@ fn request_error(message: String) -> RuntimeError {
     RuntimeError::RequestError {
         message,
         attempts: 1,
+        status: None,
+        body: None,
     }
 }

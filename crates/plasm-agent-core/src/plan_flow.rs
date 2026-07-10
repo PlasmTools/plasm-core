@@ -1,6 +1,7 @@
 //! Typed information-flow pass over validated plans.
 
 use crate::approval_gate::{approval_gate_from_disposition, operation_name_for_kind};
+use crate::flow_catalog::FlowCatalogView;
 use crate::plan_flow_capability::{
     capability_name_from_expr, resolve_alias_node, resolved_mutation_capability_name,
     surface_capability_key,
@@ -130,9 +131,18 @@ pub enum FlowVerdict {
     Denied,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FlowViolationKind {
+    ForbiddenFlow,
+    UnguardedMutation,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FlowViolation {
     pub node: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<FlowViolationKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sink_param: Option<SinkParamRef>,
     pub labels: BTreeSet<DataClassName>,
@@ -217,7 +227,7 @@ pub struct FlowDenial {
 pub fn verify_plan_flow(
     plan: &Plan<ValidatedPlanState>,
     topological_order: &[String],
-    catalog: &impl FlowCatalog,
+    catalog: &FlowCatalogView,
     snapshot: &FlowPolicySnapshot,
 ) -> FlowCheckedPlan {
     let policy = FlowPolicyPass::new(snapshot);
@@ -226,6 +236,11 @@ pub fn verify_plan_flow(
         topological_order,
         catalog,
         policy: &policy,
+        topo_index: topological_order
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (id.clone(), i))
+            .collect(),
         facts: BTreeMap::new(),
         node_dispositions: BTreeMap::new(),
         sink_proofs: BTreeMap::new(),
@@ -246,18 +261,19 @@ struct MutationFlowCtx<'a> {
     author_label: Option<&'a str>,
 }
 
-struct FlowPass<'a, C: FlowCatalog + ?Sized, P: FlowPolicyEvaluator + ?Sized> {
+struct FlowPass<'a, P: FlowPolicyEvaluator + ?Sized> {
     plan: &'a Plan<ValidatedPlanState>,
     topological_order: &'a [String],
-    catalog: &'a C,
+    catalog: &'a FlowCatalogView,
     policy: &'a P,
+    topo_index: BTreeMap<String, usize>,
     facts: BTreeMap<String, NodeFlowFacts>,
     node_dispositions: BTreeMap<String, NodeDisposition>,
     sink_proofs: BTreeMap<String, SinkProof>,
     violations: Vec<FlowViolation>,
 }
 
-impl<'a, C: FlowCatalog + ?Sized, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, C, P> {
+impl<'a, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, P> {
     fn run(mut self) -> FlowCheckedPlan {
         for node_id in self.topological_order {
             let Some(node) = self.plan.nodes.iter().find(|n| n.id().as_str() == node_id) else {
@@ -410,7 +426,37 @@ impl<'a, C: FlowCatalog + ?Sized, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, 
         self.facts.insert(id.clone(), facts);
         self.node_dispositions
             .insert(id.clone(), NodeDisposition::Allow);
-        self.sink_proofs.insert(id, clearance.proof);
+        self.sink_proofs.insert(id.clone(), clearance.proof);
+
+        if let Some(view_key) = self.catalog.capability_view_key(&key) {
+            if let Some(view) = self
+                .catalog
+                .view_definition(key.entry_id.as_str(), view_key)
+            {
+                let parent_incoming = FlowFacts {
+                    labels: self
+                        .facts
+                        .get(id.as_str())
+                        .map(|f| f.row_join().labels)
+                        .unwrap_or_default(),
+                    provenance: BTreeSet::new(),
+                };
+                let expanded = crate::plan_flow_view_expand::expand_view_inner_mutations(
+                    self.catalog,
+                    self.policy,
+                    self.facts.get(id.as_str()).unwrap_or(&NodeFlowFacts::default()),
+                    key.entry_id.as_str(),
+                    view,
+                    id.as_str(),
+                    &surface.uses_result,
+                    parent_incoming,
+                );
+                self.violations.extend(expanded.violations);
+                self.node_dispositions.extend(expanded.dispositions);
+                self.sink_proofs.extend(expanded.sink_proofs);
+                self.facts.extend(expanded.facts);
+            }
+        }
     }
 
     fn transfer_mutation_surface(
@@ -479,6 +525,7 @@ impl<'a, C: FlowCatalog + ?Sized, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, 
                 disposition = NodeDisposition::Deny;
                 self.violations.push(FlowViolation {
                     node: ctx.node_id.clone(),
+                    kind: Some(FlowViolationKind::ForbiddenFlow),
                     sink_param: sink_params.first().cloned(),
                     labels: incoming.labels.clone(),
                     reason: forbidden
@@ -488,8 +535,27 @@ impl<'a, C: FlowCatalog + ?Sized, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, 
                 });
             }
         }
+        let existence = crate::plan_flow_existence::check_plan_mutation_existence(
+            self.catalog,
+            self.plan,
+            &self.topo_index,
+            &ctx.node_id,
+            ctx.qualified.entry_id.as_str(),
+            ctx.qualified.entity.as_str(),
+            ctx.capability_name,
+            ctx.template_expr,
+            ctx.uses_result,
+        );
+        let mut disposition = disposition;
+        crate::plan_flow_existence::apply_unguarded_mutation_review(
+            &mut disposition,
+            &mut self.violations,
+            &ctx.node_id,
+            existence,
+        );
+
         self.node_dispositions
-            .insert(ctx.node_id.clone(), disposition);
+            .insert(ctx.node_id.clone(), disposition.clone());
 
         let clearance = apply_label_clearance(
             self.catalog,
@@ -642,297 +708,5 @@ fn is_remote_mutation(kind: PlanNodeKind, effect_class: EffectClass) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::flow_catalog::FlowCatalogView;
-    use crate::plan_flow_policy::{FlowPolicy, ForbiddenFlowRule, OperatorDisposition};
-    use crate::plasm_plan::parse_and_validate_plan_json;
-
-    #[test]
-    fn flow_catalog_view_defaults_to_empty_sets() {
-        let view = FlowCatalogView::default();
-        let key = QualifiedCapabilityKey::from_parts("entry", "Entity", "action");
-        assert!(view.output_labels_for(&key).is_empty());
-        assert!(view.sink_params_for(&key).is_empty());
-        assert!(view.sanitizers_for(&key).is_empty());
-    }
-
-    #[test]
-    fn render_compute_row_joins_all_input_labels() {
-        let source = NodeFlowFacts {
-            columns: BTreeMap::from([(
-                vec!["body".into()],
-                FlowFacts {
-                    labels: BTreeSet::from([DataClassName::new("untrusted").expect("label")]),
-                    provenance: BTreeSet::new(),
-                },
-            )]),
-            residual: FlowFacts::default(),
-        };
-        assert!(source
-            .row_join()
-            .labels
-            .contains(&DataClassName::new("untrusted").expect("label")));
-    }
-
-    #[test]
-    fn forbidden_untrusted_to_outbound_sink_denies_mutation() {
-        let mut catalog = FlowCatalogView::default();
-        let read_key = QualifiedCapabilityKey::from_parts("flow", "Message", "Message_query");
-        let send_key = QualifiedCapabilityKey::from_parts("flow", "Message", "send");
-        catalog.capability_output_labels.insert(
-            read_key,
-            BTreeSet::from([DataClassName::new("untrusted").expect("untrusted")]),
-        );
-        catalog.capability_sink_params.insert(
-            send_key,
-            vec![SinkParamRef {
-                param: CapabilityParamName::from("body"),
-                sink_class: Some(SinkClassName::new("outbound_body").expect("sink")),
-            }],
-        );
-
-        let plan = serde_json::json!({
-            "version": 1,
-            "kind": "program",
-            "nodes": [
-                {
-                    "id": "messages",
-                    "kind": "query",
-                    "qualified_entity": { "entry_id": "flow", "entity": "Message" },
-                    "expr": "Message",
-                    "ir": { "expr": { "op": "query", "entity": "Message", "capability": "message_query" } },
-                    "effect_class": "read",
-                    "result_shape": "list"
-                },
-                {
-                    "id": "send",
-                    "kind": "action",
-                    "qualified_entity": { "entry_id": "flow", "entity": "Message" },
-                    "depends_on": ["messages"],
-                    "uses_result": [{ "node": "messages", "as": "messages" }],
-                    "effect_class": "side_effect",
-                    "result_shape": "side_effect_ack",
-                    "ir_template": {
-                        "expr": {
-                            "op": "invoke",
-                            "capability": "send",
-                            "target": { "entity_type": "Message", "key": { "id": "1" } },
-                            "input": {
-                                "body": { "__plasm_hole": { "kind": "node_input", "alias": "messages", "path": ["body"] } }
-                            }
-                        }
-                    }
-                }
-            ],
-            "return": { "kind": "node", "node": "send" }
-        });
-        let validated = parse_and_validate_plan_json(&plan).expect("validate");
-        let topo = vec!["messages".to_string(), "send".to_string()];
-        let policy = FlowPolicy {
-            forbidden: vec![ForbiddenFlowRule {
-                from_label: DataClassName::new("untrusted").expect("untrusted"),
-                to_sink: Some(SinkClassName::new("outbound_body").expect("sink")),
-                reason: Some("untrusted cannot reach outbound body".into()),
-            }],
-            ..FlowPolicy::default()
-        };
-        let snapshot = FlowPolicySnapshot::Active {
-            revision: PolicyRevision(1),
-            policy,
-        };
-        let checked = verify_plan_flow(validated.artifact(), &topo, &catalog, &snapshot);
-        assert!(matches!(checked.analysis.verdict, FlowVerdict::Denied));
-        assert_eq!(checked.analysis.violations.len(), 1);
-        assert!(checked.admit().is_err());
-    }
-
-    #[test]
-    fn inactive_policy_allows_unlabeled_flow() {
-        let catalog = FlowCatalogView::default();
-        let plan = serde_json::json!({
-            "version": 1,
-            "kind": "program",
-            "nodes": [{
-                "id": "q",
-                "kind": "query",
-                "qualified_entity": { "entry_id": "flow", "entity": "Message" },
-                "expr": "Message",
-                "ir": { "expr": { "op": "query", "entity": "Message" } },
-                "effect_class": "read",
-                "result_shape": "list"
-            }],
-            "return": { "kind": "node", "node": "q" }
-        });
-        let validated = parse_and_validate_plan_json(&plan).expect("validate");
-        let topo = vec!["q".to_string()];
-        let checked = verify_plan_flow(
-            validated.artifact(),
-            &topo,
-            &catalog,
-            &FlowPolicySnapshot::Inactive,
-        );
-        assert!(matches!(checked.analysis.verdict, FlowVerdict::Clean));
-        assert!(checked.admit().is_ok());
-    }
-
-    #[test]
-    fn bare_query_without_capability_name_uses_snake_case_fallback() {
-        let mut catalog = FlowCatalogView::default();
-        let read_key = QualifiedCapabilityKey::from_parts("github", "Issue", "issue_query");
-        catalog.capability_output_labels.insert(
-            read_key,
-            BTreeSet::from([DataClassName::new("untrusted").expect("untrusted")]),
-        );
-
-        // IR omits capability_name — legacy plans hit the name fallback.
-        let plan = serde_json::json!({
-            "version": 1,
-            "kind": "program",
-            "nodes": [{
-                "id": "issues",
-                "kind": "query",
-                "qualified_entity": { "entry_id": "github", "entity": "Issue" },
-                "expr": "Issue",
-                "ir": { "expr": { "op": "query", "entity": "Issue" } },
-                "effect_class": "read",
-                "result_shape": "list"
-            }],
-            "return": { "kind": "node", "node": "issues" }
-        });
-        let validated = parse_and_validate_plan_json(&plan).expect("validate");
-        let topo = vec!["issues".to_string()];
-        let checked = verify_plan_flow(
-            validated.artifact(),
-            &topo,
-            &catalog,
-            &FlowPolicySnapshot::Inactive,
-        );
-        let facts = checked
-            .analysis
-            .node_facts
-            .get("issues")
-            .expect("issues facts");
-        assert!(
-            facts
-                .row_join()
-                .labels
-                .contains(&DataClassName::new("untrusted").expect("untrusted")),
-            "snake_case fallback must resolve issue_query labels, got {:?}",
-            facts.row_join().labels
-        );
-    }
-
-    #[test]
-    fn entity_label_fallback_recovers_when_capability_key_misses() {
-        let mut catalog = FlowCatalogView::default();
-        // Catalog keyed under the real capability; plan uses a wrong capability name.
-        let read_key = QualifiedCapabilityKey::from_parts("github", "Issue", "issue_query");
-        catalog.capability_output_labels.insert(
-            read_key,
-            BTreeSet::from([DataClassName::new("untrusted").expect("untrusted")]),
-        );
-
-        let plan = serde_json::json!({
-            "version": 1,
-            "kind": "program",
-            "nodes": [{
-                "id": "issues",
-                "kind": "query",
-                "qualified_entity": { "entry_id": "github", "entity": "Issue" },
-                "expr": "Issue",
-                "ir": { "expr": { "op": "query", "entity": "Issue", "capability_name": "not_a_real_cap" } },
-                "effect_class": "read",
-                "result_shape": "list"
-            }],
-            "return": { "kind": "node", "node": "issues" }
-        });
-        let validated = parse_and_validate_plan_json(&plan).expect("validate");
-        let topo = vec!["issues".to_string()];
-        let checked = verify_plan_flow(
-            validated.artifact(),
-            &topo,
-            &catalog,
-            &FlowPolicySnapshot::Inactive,
-        );
-        let facts = checked
-            .analysis
-            .node_facts
-            .get("issues")
-            .expect("issues facts");
-        assert!(
-            facts
-                .row_join()
-                .labels
-                .contains(&DataClassName::new("untrusted").expect("untrusted")),
-            "entity-level fallback must recover labels, got {:?}",
-            facts.row_join().labels
-        );
-    }
-
-    #[test]
-    fn approval_gate_json_shape_for_approve_enforcement() {
-        let catalog = FlowCatalogView::default();
-        let plan = serde_json::json!({
-            "version": 1,
-            "kind": "program",
-            "nodes": [{
-                "id": "c1",
-                "kind": "create",
-                "qualified_entity": { "entry_id": "acme", "entity": "Product" },
-                "expr": "Product.create(name=\"servo\")",
-                "ir": { "expr": { "op": "create", "capability": "product_create", "entity": "Product", "input": { "name": "servo" } } },
-                "effect_class": "write",
-                "result_shape": "single"
-            }],
-            "return": { "kind": "node", "node": "c1" }
-        });
-        let validated = parse_and_validate_plan_json(&plan).expect("validate");
-        let topo = vec!["c1".to_string()];
-
-        // Inactive policy: create → Allow disposition → no approval gate.
-        let checked_inactive = verify_plan_flow(
-            validated.artifact(),
-            &topo,
-            &catalog,
-            &FlowPolicySnapshot::Inactive,
-        );
-        assert!(
-            checked_inactive
-                .analysis
-                .approval_gate_for_node("c1")
-                .is_none(),
-            "inactive policy must not produce approval gate"
-        );
-
-        // Active policy with Approve enforcement: create → Approve → gate emitted.
-        let policy = FlowPolicy {
-            default_posture: crate::plan_flow_policy::OperatorDisposition::Allow,
-            capability_gates: vec![crate::plan_flow_policy::CapabilityGateRule {
-                pattern: crate::plan_flow_policy::CapabilityGatePattern {
-                    entry_id: Some("acme".into()),
-                    entity: Some("Product".into()),
-                    // Mutations without ir_template use operation_name_for_kind fallback.
-                    capability: "create".into(),
-                },
-                enforcement: OperatorDisposition::Approve,
-            }],
-            ..FlowPolicy::default()
-        };
-        let snapshot = FlowPolicySnapshot::Active {
-            revision: PolicyRevision(1),
-            policy,
-        };
-        let checked = verify_plan_flow(validated.artifact(), &topo, &catalog, &snapshot);
-        let gate = checked
-            .analysis
-            .approval_gate_for_node("c1")
-            .expect("approval gate for Approve enforcement");
-        assert_eq!(gate["policy_key"], "acme.Product.create");
-        assert_eq!(gate["host_policy"], "host.review");
-        assert_eq!(gate["default_decision"], "approved");
-        assert_eq!(gate["entry_id"], "acme");
-        assert_eq!(gate["entity"], "Product");
-        assert_eq!(gate["capability"], "create");
-    }
-}
+#[path = "plan_flow_tests.rs"]
+mod tests;

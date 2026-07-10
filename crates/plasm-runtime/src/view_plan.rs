@@ -10,8 +10,8 @@ use plasm_core::schema::{
     ViewRelationBinding, ViewScopeInject,
 };
 use plasm_core::{
-    CapabilityKind, CapabilitySchema, GetExpr, Predicate, QueryExpr, Ref, TypedFieldValue, Value,
-    CGS,
+    CapabilityKind, CapabilitySchema, CreateExpr, GetExpr, Predicate, QueryExpr, Ref,
+    TypedFieldValue, Value, ViewNodeCondition, ViewNodeWhen, WriteOutcome, CGS,
 };
 
 use crate::cache::CachedEntity;
@@ -99,6 +99,14 @@ pub(crate) trait ViewNodeRunner {
         get: &GetExpr,
         bound: &BTreeMap<String, String>,
     ) -> Result<ExecutionResult, RuntimeError>;
+
+    fn run_create_node(
+        &self,
+        ctx: &ViewRunContext<'_>,
+        node: &ViewNodeSpec,
+        cap: &CapabilitySchema,
+        create: &CreateExpr,
+    ) -> Result<ExecutionResult, RuntimeError>;
 }
 
 /// Executes one view DAG node asynchronously (live HTTP).
@@ -120,6 +128,14 @@ pub(crate) trait ViewNodeRunnerAsync {
         cap: &CapabilitySchema,
         get: &GetExpr,
         bound: &BTreeMap<String, String>,
+    ) -> Result<ExecutionResult, RuntimeError>;
+
+    async fn run_create_node(
+        &mut self,
+        ctx: &ViewRunContext<'_>,
+        node: &ViewNodeSpec,
+        cap: &CapabilitySchema,
+        create: &CreateExpr,
     ) -> Result<ExecutionResult, RuntimeError>;
 }
 
@@ -151,6 +167,33 @@ pub(crate) fn json_to_plasm_value(json: &serde_json::Value) -> Value {
             }
             Value::Object(map)
         }
+    }
+}
+
+pub fn view_node_should_run(
+    when: Option<&ViewNodeWhen>,
+    node_results: &IndexMap<String, ExecutionResult>,
+) -> bool {
+    let Some(when) = when else {
+        return true;
+    };
+    match when {
+        ViewNodeWhen::SkipIf { condition } => !eval_view_condition(condition, node_results),
+        ViewNodeWhen::RunIf { condition } => eval_view_condition(condition, node_results),
+    }
+}
+
+fn eval_view_condition(
+    condition: &ViewNodeCondition,
+    node_results: &IndexMap<String, ExecutionResult>,
+) -> bool {
+    match condition {
+        ViewNodeCondition::NodeRowCountPositive { node } => node_results
+            .get(node)
+            .is_some_and(|r| r.count > 0),
+        ViewNodeCondition::NodeRowCountZero { node } => node_results
+            .get(node)
+            .is_none_or(|r| r.count == 0),
     }
 }
 
@@ -352,6 +395,7 @@ pub fn resolve_output_binding(
     binding: &ViewOutputBinding,
     scope: &IndexMap<String, Value>,
     node_results: &IndexMap<String, ExecutionResult>,
+    write_outcomes: &IndexMap<String, WriteOutcome>,
 ) -> Result<Value, RuntimeError> {
     match binding {
         ViewOutputBinding::Scope { param } => Ok(scope.get(param).cloned().unwrap_or(Value::Null)),
@@ -414,6 +458,15 @@ pub fn resolve_output_binding(
                 })?;
             Ok(Value::Bool(r.count > 0))
         }
+        ViewOutputBinding::WriteCreated { node } => Ok(Value::Bool(
+            matches!(write_outcomes.get(node), Some(WriteOutcome::Created)),
+        )),
+        ViewOutputBinding::WriteReused { node } => Ok(Value::Bool(
+            matches!(write_outcomes.get(node), Some(WriteOutcome::Reused)),
+        )),
+        ViewOutputBinding::WriteSkipped { node } => Ok(Value::Bool(
+            matches!(write_outcomes.get(node), Some(WriteOutcome::Skipped)),
+        )),
         ViewOutputBinding::Computed { .. } => Err(RuntimeError::ConfigurationError {
             message: "computed output bindings are resolved in a separate phase".into(),
         }),
@@ -770,6 +823,10 @@ pub(crate) enum PreparedViewNode<'a> {
         get: GetExpr,
         bound: BTreeMap<String, String>,
     },
+    Create {
+        cap: &'a CapabilitySchema,
+        create: CreateExpr,
+    },
 }
 
 pub(crate) fn prepare_view_node<'a>(
@@ -810,6 +867,21 @@ pub(crate) fn prepare_view_node<'a>(
                 get: GetExpr::from_ref(reference),
                 bound,
             })
+        }
+        CapabilityKind::Create | CapabilityKind::Action => {
+            let mut input_map = IndexMap::new();
+            for (param, bspec) in &node.bind {
+                let v = resolve_binding(bspec, scope, node_fields)?;
+                input_map.insert(param.clone(), v);
+            }
+            let create = CreateExpr {
+                capability: cap.name.clone(),
+                entity: cap.domain.clone(),
+                input: Value::Object(input_map).into(),
+                catalog_entry_id: Default::default(),
+                dotted_receiver: None,
+            };
+            Ok(PreparedViewNode::Create { cap, create })
         }
         other => Err(RuntimeError::ConfigurationError {
             message: format!(

@@ -881,6 +881,13 @@ issue_create:
   response:
     single: true
     items_path: [data, issueCreate, issue]
+  conflict_rules:
+    - when:
+        status: 200
+        body_json_path: errors/0/message
+        contains: duplicate
+      kind: resource_exists
+      hint: Issue with same title may already exist in team
 
 issue_update:
   transport: graphql

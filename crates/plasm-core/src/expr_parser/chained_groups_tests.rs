@@ -46,6 +46,7 @@ fn ticket_query_fixture_cgs() -> CGS {
         description: String::new(),
         kind: CapabilityKind::Get,
         domain: "Ticket".into(),
+        identity_key: None,
         mapping: CapabilityMapping {
             template: serde_json::json!({
                 "method": "GET",

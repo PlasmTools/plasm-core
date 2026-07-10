@@ -85,6 +85,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Update,
             domain: "Account".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({}).into(),
             },

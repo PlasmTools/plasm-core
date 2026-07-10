@@ -250,6 +250,16 @@ pub fn summarize_text_error_body(bytes: &[u8], _content_type: Option<&str>) -> S
     cap_detail(&collapsed, MAX_API_ERROR_DETAIL_CHARS)
 }
 
+/// Map catalog `conflict_rules` from a capability mapping template to a portable conflict.
+pub fn workflow_conflict_from_http(
+    mapping_template: &serde_json::Value,
+    status: u16,
+    body: &serde_json::Value,
+) -> Option<plasm_core::WorkflowConflict> {
+    let rules = plasm_core::conflict_rules_from_mapping_template(mapping_template);
+    plasm_core::match_conflict_rule(&rules, status, body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

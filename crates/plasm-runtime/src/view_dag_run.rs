@@ -3,14 +3,15 @@
 use indexmap::IndexMap;
 use plasm_compile::DecodedRelation;
 use plasm_core::schema::{EntityDef, ViewDefinition, ViewNodeSpec, ViewOutputBinding};
-use plasm_core::{Ref, CGS};
+use plasm_core::{Ref, WriteOutcome, CGS};
 
 use crate::cache::{CachedEntity, EntityCompleteness};
 use crate::execution::{current_timestamp, ExecutionResult, ExecutionSource, ExecutionStats};
 use crate::view_plan::{
     build_view_row_reference, load_view_dag, node_fields_for_row, prepare_view_node,
-    resolve_output_binding, resolve_view_relation_maps, PreparedViewNode, ViewAmbientContext,
-    ViewNodeFieldMap, ViewNodeRunner, ViewNodeRunnerAsync, ViewRunContext, ViewRunProof,
+    resolve_output_binding, resolve_view_relation_maps, view_node_should_run, PreparedViewNode,
+    ViewAmbientContext, ViewNodeFieldMap, ViewNodeRunner, ViewNodeRunnerAsync, ViewRunContext,
+    ViewRunProof,
 };
 use crate::RuntimeError;
 
@@ -18,6 +19,7 @@ use crate::RuntimeError;
 pub(crate) struct ViewDagWalkOutcome {
     pub scope: IndexMap<String, plasm_core::Value>,
     pub node_results: IndexMap<String, ExecutionResult>,
+    pub write_outcomes: IndexMap<String, WriteOutcome>,
     pub stats: ExecutionStats,
     pub fingerprints: Vec<String>,
     pub any_live: bool,
@@ -34,6 +36,7 @@ fn materialize_view_row(
     view_entity: &EntityDef,
     scope: &IndexMap<String, plasm_core::Value>,
     node_results: &IndexMap<String, ExecutionResult>,
+    write_outcomes: &IndexMap<String, WriteOutcome>,
     cgs: &CGS,
 ) -> Result<MaterializedViewOutputs, RuntimeError> {
     let mut fields_plain: IndexMap<String, plasm_core::Value> = IndexMap::new();
@@ -41,7 +44,7 @@ fn materialize_view_row(
         if matches!(binding, ViewOutputBinding::Computed { .. }) {
             continue;
         }
-        let v = resolve_output_binding(binding, scope, node_results)?;
+        let v = resolve_output_binding(binding, scope, node_results, write_outcomes)?;
         fields_plain.insert(fname.clone(), v);
     }
     for (fname, binding) in &view.output {
@@ -98,12 +101,19 @@ fn finalize_view_dag_execution(
     let ViewDagWalkOutcome {
         scope,
         node_results,
+        write_outcomes,
         stats,
         fingerprints,
         any_live,
     } = walk;
-    let (output_fields, row_ref, relation_refs) =
-        materialize_view_row(view, view_entity, &scope, &node_results, cgs)?;
+    let (output_fields, row_ref, relation_refs) = materialize_view_row(
+        view,
+        view_entity,
+        &scope,
+        &node_results,
+        &write_outcomes,
+        cgs,
+    )?;
     Ok(execution_result_from_view_row(
         output_fields,
         row_ref,
@@ -129,12 +139,19 @@ fn finalize_view_dag_with_proof(
     let ViewDagWalkOutcome {
         scope,
         node_results,
+        write_outcomes,
         stats,
         fingerprints,
         any_live,
     } = walk;
-    let (output_fields, row_ref, relation_refs) =
-        materialize_view_row(view, view_entity, &scope, &node_results, cgs)?;
+    let (output_fields, row_ref, relation_refs) = materialize_view_row(
+        view,
+        view_entity,
+        &scope,
+        &node_results,
+        &write_outcomes,
+        cgs,
+    )?;
     let execution = execution_result_from_view_row(
         output_fields,
         row_ref.clone(),
@@ -214,6 +231,7 @@ impl<'a> LoadedViewDag<'a> {
 
 struct ViewDagWalkState {
     node_results: IndexMap<String, ExecutionResult>,
+    write_outcomes: IndexMap<String, WriteOutcome>,
     node_fields: ViewNodeFieldMap,
     stats: ExecutionStats,
     fingerprints: Vec<String>,
@@ -224,6 +242,7 @@ impl ViewDagWalkState {
     fn new() -> Self {
         Self {
             node_results: IndexMap::new(),
+            write_outcomes: IndexMap::new(),
             node_fields: ViewNodeFieldMap::new(),
             stats: ExecutionStats::default(),
             fingerprints: Vec::new(),
@@ -231,7 +250,7 @@ impl ViewDagWalkState {
         }
     }
 
-    fn record(&mut self, node_id: String, res: ExecutionResult) {
+    fn record(&mut self, node_id: String, res: ExecutionResult, outcome: Option<WriteOutcome>) {
         crate::view_plan::absorb_node_stats(
             &mut self.stats,
             &mut self.fingerprints,
@@ -240,13 +259,35 @@ impl ViewDagWalkState {
         );
         self.node_fields
             .insert(node_id.clone(), node_fields_for_row(res.entities.first()));
-        self.node_results.insert(node_id, res);
+        self.node_results.insert(node_id.clone(), res);
+        if let Some(o) = outcome {
+            self.write_outcomes.insert(node_id, o);
+        }
+    }
+
+    fn record_skipped(&mut self, node_id: String) {
+        self.write_outcomes
+            .insert(node_id.clone(), WriteOutcome::Skipped);
+        self.node_results.insert(
+            node_id,
+            ExecutionResult {
+                entities: vec![],
+                count: 0,
+                has_more: false,
+                pagination_resume: None,
+                paging_handle: None,
+                source: ExecutionSource::Cache,
+                stats: ExecutionStats::default(),
+                request_fingerprints: Vec::new(),
+            },
+        );
     }
 
     fn into_outcome(self, scope: IndexMap<String, plasm_core::Value>) -> ViewDagWalkOutcome {
         ViewDagWalkOutcome {
             scope,
             node_results: self.node_results,
+            write_outcomes: self.write_outcomes,
             stats: self.stats,
             fingerprints: self.fingerprints,
             any_live: self.any_live,
@@ -268,6 +309,9 @@ fn dispatch_prepared_sync<R: ViewNodeRunner>(
         PreparedViewNode::Get { cap, get, bound } => {
             runner.run_get_node(run_ctx, node, cap, &get, &bound)
         }
+        PreparedViewNode::Create { cap, create } => {
+            runner.run_create_node(run_ctx, node, cap, &create)
+        }
     }
 }
 
@@ -287,7 +331,64 @@ async fn dispatch_prepared_async<R: ViewNodeRunnerAsync + ?Sized>(
         PreparedViewNode::Get { cap, get, bound } => {
             runner.run_get_node(run_ctx, node, cap, &get, &bound).await
         }
+        PreparedViewNode::Create { cap, create } => {
+            runner.run_create_node(run_ctx, node, cap, &create).await
+        }
     }
+}
+
+fn write_outcome_from_result(res: &ExecutionResult) -> WriteOutcome {
+    res.entities
+        .first()
+        .and_then(|e| e.fields.get("outcome"))
+        .and_then(|v| v.to_value().as_str().map(str::to_string))
+        .and_then(|s| match s.as_str() {
+            "reused" => Some(WriteOutcome::Reused),
+            "skipped" => Some(WriteOutcome::Skipped),
+            _ => Some(WriteOutcome::Created),
+        })
+        .unwrap_or(WriteOutcome::Created)
+}
+
+fn walk_view_nodes_sync<R: ViewNodeRunner>(
+    runner: &R,
+    loaded: &LoadedViewDag<'_>,
+    walk: &mut ViewDagWalkState,
+) -> Result<(), RuntimeError> {
+    let run_ctx = loaded.run_ctx();
+    for node in &loaded.view.nodes {
+        if !view_node_should_run(node.when.as_ref(), &walk.node_results) {
+            walk.record_skipped(node.id.clone());
+            continue;
+        }
+        let prepared = loaded.prepare_node(node, &walk.node_fields)?;
+        let is_write = matches!(prepared, PreparedViewNode::Create { .. });
+        let res = dispatch_prepared_sync(runner, &run_ctx, node, prepared, &walk.node_fields)?;
+        let outcome = is_write.then(|| write_outcome_from_result(&res));
+        walk.record(node.id.clone(), res, outcome);
+    }
+    Ok(())
+}
+
+async fn walk_view_nodes_async<R: ViewNodeRunnerAsync + ?Sized>(
+    runner: &mut R,
+    loaded: &LoadedViewDag<'_>,
+    walk: &mut ViewDagWalkState,
+) -> Result<(), RuntimeError> {
+    let run_ctx = loaded.run_ctx();
+    for node in &loaded.view.nodes {
+        if !view_node_should_run(node.when.as_ref(), &walk.node_results) {
+            walk.record_skipped(node.id.clone());
+            continue;
+        }
+        let prepared = loaded.prepare_node(node, &walk.node_fields)?;
+        let is_write = matches!(prepared, PreparedViewNode::Create { .. });
+        let res =
+            dispatch_prepared_async(runner, &run_ctx, node, prepared, &walk.node_fields).await?;
+        let outcome = is_write.then(|| write_outcome_from_result(&res));
+        walk.record(node.id.clone(), res, outcome);
+    }
+    Ok(())
 }
 
 /// Walk view nodes via sync `runner`, then materialize output / relations / row ref.
@@ -300,13 +401,7 @@ pub(crate) fn run_view_dag_sync<R: ViewNodeRunner>(
 ) -> Result<(ViewRunProof, ExecutionResult), RuntimeError> {
     let loaded = LoadedViewDag::load(view_name, scope, cgs, ambient)?;
     let mut walk = ViewDagWalkState::new();
-    let run_ctx = loaded.run_ctx();
-
-    for node in &loaded.view.nodes {
-        let prepared = loaded.prepare_node(node, &walk.node_fields)?;
-        let res = dispatch_prepared_sync(runner, &run_ctx, node, prepared, &walk.node_fields)?;
-        walk.record(node.id.clone(), res);
-    }
+    walk_view_nodes_sync(runner, &loaded, &mut walk)?;
 
     finalize_view_dag_with_proof(
         loaded.view,
@@ -326,14 +421,7 @@ pub(crate) async fn run_view_dag_async<R: ViewNodeRunnerAsync + ?Sized>(
 ) -> Result<ExecutionResult, RuntimeError> {
     let loaded = LoadedViewDag::load(view_name, scope, cgs, ambient)?;
     let mut walk = ViewDagWalkState::new();
-    let run_ctx = loaded.run_ctx();
-
-    for node in &loaded.view.nodes {
-        let prepared = loaded.prepare_node(node, &walk.node_fields)?;
-        let res =
-            dispatch_prepared_async(runner, &run_ctx, node, prepared, &walk.node_fields).await?;
-        walk.record(node.id.clone(), res);
-    }
+    walk_view_nodes_async(runner, &loaded, &mut walk).await?;
 
     let outcome = walk.into_outcome(loaded.scope);
     finalize_view_dag_execution(loaded.view, loaded.view_entity, outcome, loaded.cgs)

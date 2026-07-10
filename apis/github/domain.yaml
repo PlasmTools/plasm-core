@@ -3467,6 +3467,7 @@ capabilities:
     kind: action
     entity: Repository
     description: Create a branch ref in a repository from an existing commit SHA.
+    identity_key: [repository, name]
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository

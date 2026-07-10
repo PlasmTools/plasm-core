@@ -118,6 +118,8 @@ mod flow_policy_vocabulary;
 mod plan_execute_shared;
 mod plan_flow;
 mod plan_flow_capability;
+pub mod plan_flow_existence;
+mod plan_flow_view_expand;
 mod plan_flow_policy;
 mod plan_flow_ports;
 mod plan_flow_sanitizer;

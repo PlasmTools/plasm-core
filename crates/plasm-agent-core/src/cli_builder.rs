@@ -868,6 +868,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Query,
             domain: "Account".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
@@ -923,6 +924,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Query,
             domain: "Contact".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
@@ -1169,6 +1171,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Get,
             domain: "Balance".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "transport": "evm_call",
@@ -1298,6 +1301,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Get,
             domain: "Order".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
@@ -1320,6 +1324,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Get,
             domain: "Pet".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
@@ -1365,6 +1370,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Query,
             domain: "Order".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",

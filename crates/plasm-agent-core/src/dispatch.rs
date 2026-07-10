@@ -856,6 +856,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Get,
             domain: "Balance".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "transport": "evm_call",
@@ -953,6 +954,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Query,
             domain: "Transfer".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "transport": "evm_logs",
@@ -1080,6 +1082,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Get,
             domain: "Issue".into(),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",

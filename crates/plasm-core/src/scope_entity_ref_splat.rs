@@ -239,6 +239,7 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Query,
             domain: EntityName::from("Repository"),
+            identity_key: None,
             mapping: CapabilityMapping {
                 template: CapabilityTemplateJson(serde_json::json!({})),
             },

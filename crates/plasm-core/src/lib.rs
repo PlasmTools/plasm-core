@@ -127,6 +127,7 @@ pub mod scope_entity_ref_infer;
 pub mod scope_entity_ref_splat;
 pub mod step_semantics;
 pub mod string_unescape;
+pub mod workflow_identity;
 pub mod summary_render;
 pub mod symbol_tuning;
 pub mod teaching_term;
@@ -312,6 +313,11 @@ pub use schema::{
     ValueDomainSlot, ViewDefinition, ViewNodeSpec, ViewOutputBinding, ViewParamBinding,
     ViewRelationBinding, ViewRelationOutputSpec, ViewScopeInject, ViewScopeParam,
     WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
+};
+pub use workflow_identity::{
+    conflict_rules_from_mapping_template, match_conflict_rule, ConflictRule, ConflictRuleExtract,
+    ConflictRuleWhen, ReconcileBindSource, ReconcileSpec, ViewNodeCondition, ViewNodeWhen,
+    WorkflowConflict, WorkflowConflictKind, WriteOutcome,
 };
 pub use schema_overlay::{
     build_decode_scope_key, build_schema_overlay, overlay_bind_cache_suffix, overlay_collect_rows,

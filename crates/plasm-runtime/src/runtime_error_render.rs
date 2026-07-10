@@ -50,6 +50,14 @@ pub fn step_error_from_runtime(err: &RuntimeError, cgs: &CGS) -> StepError {
             ),
             None,
         ),
+        RuntimeError::WorkflowConflict { conflict, message, .. } => StepError::new(
+            StepErrorCategory::Network,
+            append_correction_lines(
+                format!("{message}\n\n{}", conflict.markdown_block()),
+                vec!["Resolve the workflow conflict before retrying the mutator.".into()],
+            ),
+            None,
+        ),
         RuntimeError::RateLimited {
             message,
             retry_after,
