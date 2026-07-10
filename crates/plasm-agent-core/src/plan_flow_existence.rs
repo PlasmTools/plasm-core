@@ -1,6 +1,6 @@
 //! `verify_existence_flow` — PLT guard for non-idempotent mutators with declared `identity_key`.
 
-use crate::flow_catalog::{CapabilityWorkflowMeta, FlowCatalogView};
+use crate::flow_catalog::FlowCatalogView;
 use crate::plan_flow::{FlowViolation, FlowViolationKind, NodeDisposition, QualifiedCapabilityKey};
 use crate::plan_flow_capability::resolve_alias_node;
 use crate::plasm_plan::{
@@ -55,9 +55,9 @@ pub fn check_plan_mutation_existence(
     let ancestors = ancestor_nodes(plan, topo_index, node_id, uses_result);
     let guarded = identity_key.iter().all(|param| {
         let expected = bindings.get(param.as_str());
-        ancestors.iter().any(|anc| {
-            read_node_covers_param(plan, entry_id, entity, anc, param, expected)
-        })
+        ancestors
+            .iter()
+            .any(|anc| read_node_covers_param(plan, entry_id, entity, anc, param, expected))
     });
     if guarded {
         guarded_ok()
@@ -105,9 +105,9 @@ pub fn check_view_existence_flow(
             .as_deref()
             .filter(|k| !k.is_empty())
             .unwrap_or(identity_key);
-        let inner_guarded = keys.iter().all(|param| {
-            view_read_covers_param(view, &prior_read_nodes, param, &node.bind)
-        });
+        let inner_guarded = keys
+            .iter()
+            .all(|param| view_read_covers_param(view, &prior_read_nodes, param, &node.bind));
         if !inner_guarded {
             return ExistenceCheckOutcome {
                 guarded: false,
@@ -202,18 +202,15 @@ fn read_node_covers_param(
     match expected {
         Some(IdentityBinding::Literal(val)) => constraints.get(param) == Some(val),
         Some(IdentityBinding::FromAlias { alias, .. }) => {
-            resolve_alias_node(&surface.uses_result, alias)
-                .is_some_and(|src| read_node_covers_param(plan, entry_id, entity, &src, param, None))
+            resolve_alias_node(&surface.uses_result, alias).is_some_and(|src| {
+                read_node_covers_param(plan, entry_id, entity, &src, param, None)
+            })
         }
         None | Some(IdentityBinding::Unknown) => constraints.contains_key(param),
     }
 }
 
-fn read_node_covers_entity(
-    surface: &ValidatedSurfaceNode,
-    entry_id: &str,
-    entity: &str,
-) -> bool {
+fn read_node_covers_entity(surface: &ValidatedSurfaceNode, entry_id: &str, entity: &str) -> bool {
     if !matches!(
         surface.kind,
         PlanNodeKind::Query | PlanNodeKind::Search | PlanNodeKind::Get
@@ -583,10 +580,10 @@ mod tests {
             &FlowPolicySnapshot::Inactive,
         );
         assert!(matches!(checked.analysis.verdict, FlowVerdict::NeedsReview));
-        assert!(
-            checked.analysis.violations.iter().any(|v| {
-                v.kind == Some(FlowViolationKind::UnguardedMutation)
-            })
-        );
+        assert!(checked
+            .analysis
+            .violations
+            .iter()
+            .any(|v| { v.kind == Some(FlowViolationKind::UnguardedMutation) }));
     }
 }

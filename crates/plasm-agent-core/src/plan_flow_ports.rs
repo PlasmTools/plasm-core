@@ -13,6 +13,7 @@ use std::collections::BTreeSet;
 /// Catalog projection consumed by the flow pass (mockable in tests).
 pub trait FlowCatalog {
     fn output_labels(&self, key: &QualifiedCapabilityKey) -> BTreeSet<DataClassName>;
+    #[allow(dead_code)]
     fn output_labels_for_entity(&self, entry_id: &str, entity: &str) -> BTreeSet<DataClassName>;
     fn sink_params(&self, key: &QualifiedCapabilityKey) -> &[SinkParamRef];
     fn sanitizers(&self, key: &QualifiedCapabilityKey) -> BTreeSet<DataClassName>;
