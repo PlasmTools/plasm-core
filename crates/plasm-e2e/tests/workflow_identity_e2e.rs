@@ -146,7 +146,7 @@ fn workflow_matrix_identity_mismatch_detected_on_extra_field() {
         stats: Default::default(),
         request_fingerprints: Vec::new(),
     };
-    let conflict = detect_identity_mismatch(&cap, &input, &fetched).expect("mismatch");
+    let conflict = detect_identity_mismatch(cap, &input, &fetched).expect("mismatch");
     assert_eq!(conflict.kind, WorkflowConflictKind::IdentityMismatch);
     assert!(conflict.existing.is_some());
 }
