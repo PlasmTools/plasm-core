@@ -1037,15 +1037,28 @@ pub fn capability_method_label_kebab(cap: &CapabilitySchema) -> String {
 
 /// True when this capability has no required invoke inputs — valid for `Entity(id).method()` / `method()`
 /// when combined with an invoke-on-ref kind (`Action`, `Update`, `Delete`), regardless of HTTP verb.
+///
+/// A cross-field rule that mandates presence (`AtLeastOne` / `ExactlyOne`) makes an empty body
+/// invalid, so such a capability is **not** zero-arity even when every individual field is optional —
+/// the teaching surface must synthesize `method(field=…)`, never a bare `method()`.
 pub fn capability_is_zero_arity_invoke(cap: &CapabilitySchema) -> bool {
-    match &cap.input_schema {
-        None => true,
-        Some(is) => match &is.input_type {
-            InputType::Object { fields, .. } => !fields.iter().any(|f| f.required),
-            InputType::None => true,
-            _ => false,
-        },
+    let Some(is) = &cap.input_schema else {
+        return true;
+    };
+    let no_required_field = match &is.input_type {
+        InputType::Object { fields, .. } => !fields.iter().any(|f| f.required),
+        InputType::None => true,
+        _ => false,
+    };
+    if !no_required_field {
+        return false;
     }
+    !is.validation.cross_field_rules.iter().any(|rule| {
+        matches!(
+            rule.rule_type,
+            CrossFieldRuleType::AtLeastOne | CrossFieldRuleType::ExactlyOne
+        )
+    })
 }
 
 /// Deprecated alias for [`capability_is_zero_arity_invoke`].

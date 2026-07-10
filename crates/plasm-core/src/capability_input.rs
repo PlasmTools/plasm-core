@@ -572,7 +572,18 @@ fn validate_input_predicate(
     input: &Value,
     predicate: &crate::ValidationPredicate,
 ) -> Result<(), TypeError> {
-    let value = extract_field_by_path(input, &predicate.field_path)?;
+    // A predicate on a field that was not supplied is vacuously satisfied — a constraint cannot bind
+    // a value that is absent (real omitted optional fields, and every field the teaching surface
+    // simply did not list). The concrete value, if any, is validated at real execute time.
+    let Some(value) = lookup_field_by_path(input, &predicate.field_path) else {
+        return Ok(());
+    };
+    // Teaching-surface `$` fill-ins are prompt placeholders, not real API values (see
+    // `Value::is_domain_example_placeholder`); enforce constraints against them only at execute time.
+    if value.is_domain_example_placeholder() {
+        return Ok(());
+    }
+    let value = value.clone();
 
     let valid = match predicate.operator {
         crate::ValidationOp::MinLength => {
@@ -639,30 +650,18 @@ fn validate_input_predicate(
     Ok(())
 }
 
-/// Extract field value by dot-notation path
-fn extract_field_by_path(value: &Value, path: &str) -> Result<Value, TypeError> {
-    let parts: Vec<&str> = path.split('.').collect();
+/// Resolve a dot-notation field path, returning `None` when any segment is missing (or a non-object
+/// is traversed). Absence is a *skip* signal for [`validate_input_predicate`], not a hard error: a
+/// constraint on an omitted field is vacuously satisfied.
+fn lookup_field_by_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
     let mut current = value;
-
-    for part in parts {
+    for part in path.split('.') {
         match current {
-            Value::Object(obj) => {
-                current = obj.get(part).ok_or_else(|| TypeError::FieldNotFound {
-                    field: path.to_string(),
-                    entity: "input object".to_string(),
-                })?;
-            }
-            _ => {
-                return Err(TypeError::IncompatibleValue {
-                    field: path.to_string(),
-                    value_type: current.type_name().to_string(),
-                    field_type: "object (for field access)".to_string(),
-                });
-            }
+            Value::Object(obj) => current = obj.get(part)?,
+            _ => return None,
         }
     }
-
-    Ok(current.clone())
+    Some(current)
 }
 
 /// Validate cross-field rules
@@ -706,4 +705,54 @@ fn validate_cross_field_rule(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ValidationOp, ValidationPredicate, Value};
+    use indexmap::IndexMap;
+
+    fn min_value_revenue() -> ValidationPredicate {
+        ValidationPredicate {
+            field_path: "revenue".to_string(),
+            operator: ValidationOp::MinValue,
+            value: Value::Integer(0),
+            error_message: "Revenue must be non-negative".to_string(),
+        }
+    }
+
+    fn obj(entries: &[(&str, Value)]) -> Value {
+        let mut m = IndexMap::new();
+        for (k, v) in entries {
+            m.insert((*k).to_string(), v.clone());
+        }
+        Value::Object(m)
+    }
+
+    /// WS-R3′: a predicate on an **omitted** field is vacuously satisfied (constraint cannot bind an
+    /// absent value); its real value, if supplied, is validated at execute time.
+    #[test]
+    fn predicate_on_absent_field_is_vacuously_satisfied() {
+        let input = obj(&[("name", Value::String("Ada".to_string()))]);
+        validate_input_predicate(&input, &min_value_revenue())
+            .expect("absent optional field must skip the predicate");
+    }
+
+    /// WS-R3′: the teaching-surface `$` fill-in is not a real API value; predicate enforcement is
+    /// deferred to execute time rather than rejecting the teaching line.
+    #[test]
+    fn predicate_on_domain_placeholder_is_deferred() {
+        let input = obj(&[("revenue", Value::String("$".to_string()))]);
+        validate_input_predicate(&input, &min_value_revenue())
+            .expect("`$` placeholder must skip the predicate");
+    }
+
+    /// A concrete violating value is still rejected (the fix must not blanket-disable predicates).
+    #[test]
+    fn predicate_on_concrete_violation_still_fails() {
+        let input = obj(&[("revenue", Value::Integer(-5))]);
+        validate_input_predicate(&input, &min_value_revenue())
+            .expect_err("a real negative revenue must still fail min_value");
+    }
 }

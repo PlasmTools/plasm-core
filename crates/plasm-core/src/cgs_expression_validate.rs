@@ -104,11 +104,46 @@ fn validate_expression_witnesses_from_model(
         if n == 0 {
             return Err(SchemaError::EntityExpressionIncomplete {
                 entity: entity_name.to_string(),
-                detail: "no type-checked teaching lines could be synthesized for the teaching bundle (see collect_entity_teaching_block / domain_line_valid)".to_string(),
+                detail: entity_expression_incomplete_detail(cgs, entity_name),
             });
         }
     }
     Ok(())
+}
+
+/// Authoring-grade diagnostic for an entity that synthesized **zero** teaching lines.
+///
+/// The dominant real cause is an entity declaring only *terminal* mutators (`update`/`delete`) with
+/// no way to **obtain** a receiver: Plasm does not fabricate an implicit get-by-id from `id_field`
+/// alone, so such an entity is genuinely untappable on the expression surface. The message
+/// enumerates the entity's declared capability kinds and points the author at the fix rather than
+/// leaving them with an opaque renderer reference.
+fn entity_expression_incomplete_detail(cgs: &CGS, entity_name: &str) -> String {
+    let mut kinds: Vec<String> = cgs
+        .capabilities
+        .values()
+        .filter(|c| c.domain.as_str() == entity_name)
+        .map(|c| format!("{:?}", c.kind).to_ascii_lowercase())
+        .collect();
+    kinds.sort();
+    kinds.dedup();
+    let declared = if kinds.is_empty() {
+        "none".to_string()
+    } else {
+        kinds.join(", ")
+    };
+    format!(
+        "no type-checked teaching line could be synthesized. Entity '{entity_name}' declares only \
+         non-anchoring capabilities [{declared}] and therefore cannot be obtained on the typed \
+         expression surface. An entity is teachable only if an instance can be *produced* — through a \
+         `get` / `query` / `search` / `create` / `action` / singleton capability, or by being the \
+         target of a relation on some other teachable entity. Plasm does NOT synthesize an implicit \
+         get-by-id from `id_field` alone; obtainability must be declared. Remedy: add a `get` \
+         (GET-by-id) or a `query` / `search` capability so a receiver exists before any \
+         `update` / `delete` terminal applies. If '{entity_name}' is only an ephemeral value produced \
+         by another capability, model it as that capability's `output.type` instead of a standalone \
+         entity."
+    )
 }
 
 /// Collect capability ids taught by teaching lines, using renderer metadata (`source_capability`).
@@ -434,6 +469,29 @@ mod tests {
         assert!(
             missing.is_empty(),
             "Teaching bundle should witness every capability: {missing:?}"
+        );
+    }
+
+    /// WS-R3′ end-to-end: a capability whose `input_schema` carries validation predicates
+    /// (`min_value` / `min_length` / `at_least_one`) must remain **teachable** — the teaching-surface
+    /// `$` placeholders and unlisted optional fields no longer trip predicate enforcement — so the
+    /// fixture validates and `account_update` is witnessed. This locks the reconciliation: the
+    /// empty-teaching-block panic was rooted in placeholder-blind predicate enforcement, not
+    /// unobtainability.
+    #[test]
+    fn validated_input_update_is_teachable_and_covered() {
+        let p = Path::new("../../fixtures/schemas/capability_with_input");
+        if !p.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(p).expect("capability_with_input validates end-to-end");
+        // `load_schema_dir` runs `CGS::validate` (expression-surface + coverage); reaching here
+        // proves the validated-input update synthesized at least one teaching line.
+        validate_cgs_expression_surface(&cgs).expect("expression surface");
+        let missing = uncovered_capabilities(&cgs);
+        assert!(
+            missing.is_empty(),
+            "validated-input `account_update` must be witnessed; uncovered: {missing:?}"
         );
     }
 

@@ -410,6 +410,21 @@ capabilities:
 | `delete` | Remove entity | Delete by id | Yes |
 | `action` | Any other operation | Method / side-effect call | Usually yes |
 
+#### Obtainability rule (every entity must be teachable)
+
+`CGS::validate` rejects any non-abstract entity that synthesizes **zero** teaching lines with `EntityExpressionIncomplete`. An entity is teachable only if an instance can be **produced** on the expression surface — through at least one of:
+
+- a `get` / `query` / `search` capability (fetch/list it directly), **or**
+- a `create` / `action` capability (construct it, or invoke it via `Entity(id).method(…)`), **or**
+- a singleton `get` (zero-arity, no key), **or**
+- being the **target of a relation** on some other teachable entity.
+
+Plasm does **not** synthesize an implicit get-by-id from `id_field` alone — obtainability must be declared. A capability graph whose only capabilities on an entity are terminal writers (`update` / `delete`) is still teachable **iff** the receiver `Entity(id).update(…)` type-checks (the writer supplies the path transport); if it cannot, add a `get` / `query` so a receiver exists first. Do not model a create-token or other ephemeral mutation output as a standalone entity — make it that capability's `output.type` instead.
+
+#### Validated inputs stay teachable (`$` placeholder is not a real value)
+
+`input_schema.validation` predicates (`min_value`, `min_length`, `pattern`, …) and cross-field rules (`at_least_one`, `exactly_one`) are enforced against **concrete** values at execute time only. During teaching-surface synthesis the fields carry the `$` prompt placeholder, and predicates on **absent** (unlisted optional) fields are vacuously satisfied — so a capability with heavy input validation is still witnessed. Note that an `at_least_one` / `exactly_one` rule makes the capability **non-zero-arity** even when every individual field is optional: its teaching line is `method(field=…)`, never a bare `method()`.
+
 ### Composed read views
 
 **Purpose:** Model a first-class read projection that corresponds to no single upstream REST/GraphQL operation, but does map cleanly onto several existing `query` / `get` capabilities. This belongs in `domain.yaml` as **`views:`** — the same layer as entities and capabilities — not as an undocumented runtime shortcut.

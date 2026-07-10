@@ -17,6 +17,14 @@ entities:
         required: false
         value_ref: nv_account_revenue
 capabilities:
+  account_get:
+    description: Get account by id
+    kind: get
+    entity: Account
+    provides:
+    - id
+    - name
+    - revenue
   account_update:
     description: Update account fields
     kind: update
@@ -27,6 +35,11 @@ capabilities:
         type: object
         additional_fields: false
         fields:
+          - name: id
+            value_ref: nv_account_id
+            required: false
+            role: scope
+            description: Account id (path-bound; injected from the receiver, not a body field)
           - name: name
             value_ref: nv_update_name
             required: false

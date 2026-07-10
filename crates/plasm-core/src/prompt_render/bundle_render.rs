@@ -102,7 +102,16 @@ pub fn render_teaching_tsv(
 ///
 /// Centralizes the config [`crate::cgs_expression_validate::validate_cgs_expression_surface`] must stay aligned with.
 pub(crate) fn render_teaching_prompt_bundle_for_validation(cgs: &CGS) -> TeachingPromptBundle {
-    render_teaching_prompt_bundle(cgs, RenderConfig::for_expression_surface_validation())
+    let config = RenderConfig::for_expression_surface_validation();
+    debug_assert!(
+        config.uses_symbols(),
+        "validation config must use the symbolic exposure path"
+    );
+    // Validation-probe render: an entity that synthesizes zero teaching rows is an authoring fault
+    // (surfaced by `validate_cgs_expression_surface` as `EntityExpressionIncomplete`), not a
+    // post-validation invariant violation — so tolerate empty blocks instead of asserting.
+    let exposure = crate::symbol_tuning::teaching_exposure_session_from_focus(cgs, config.focus);
+    render_teaching_prompt_bundle_for_exposure_inner(cgs, config, &exposure, None, true)
 }
 
 /// Render teaching table (many-shot examples) and structured execution metadata.
@@ -263,6 +272,7 @@ pub fn render_teaching_prompt_bundle_for_exposure_federated<'b>(
         emit_set.as_ref(),
         Some(&federated_blocks),
         Some(by_entry),
+        false,
     );
 
     let model = if fill_model {
@@ -286,6 +296,27 @@ pub fn render_teaching_prompt_bundle_for_exposure(
     config: RenderConfig<'_>,
     exposure: &crate::symbol_tuning::TeachingExposureSession,
     emit_entity_blocks: Option<&[&str]>,
+) -> TeachingPromptBundle {
+    render_teaching_prompt_bundle_for_exposure_inner(
+        cgs,
+        config,
+        exposure,
+        emit_entity_blocks,
+        false,
+    )
+}
+
+/// Backing implementation for [`render_teaching_prompt_bundle_for_exposure`].
+///
+/// `validation_probe` is `true` only for [`render_teaching_prompt_bundle_for_validation`]: it lets an
+/// entity with zero teaching rows render an empty block *without* tripping the post-validation
+/// non-empty-block invariant assert. All post-validation callers pass `false`.
+fn render_teaching_prompt_bundle_for_exposure_inner(
+    cgs: &CGS,
+    config: RenderConfig<'_>,
+    exposure: &crate::symbol_tuning::TeachingExposureSession,
+    emit_entity_blocks: Option<&[&str]>,
+    validation_probe: bool,
 ) -> TeachingPromptBundle {
     let span = crate::spans::prompt_domain_bundle_exposure(
         emit_entity_blocks.is_some(),
@@ -326,6 +357,7 @@ pub fn render_teaching_prompt_bundle_for_exposure(
         None,
         None,
         None::<&IndexMap<String, &CGS>>,
+        validation_probe,
     );
     let model = if fill_model {
         TeachingPromptModel {
