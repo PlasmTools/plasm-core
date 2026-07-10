@@ -647,7 +647,7 @@ async fn existence_check_step(
                             capability.name
                         ),
                         existing: None,
-                    },
+                    }),
                     message: format!(
                         "preflight existence_check failed for capability '{}'",
                         capability.name
