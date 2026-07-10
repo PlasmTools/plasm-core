@@ -158,6 +158,7 @@ fn live_run_tool_meta_finalizes_run_explorer_ui() {
         None,
         None,
         true,
+        true,
     );
     assert_eq!(
         res.meta

@@ -22,6 +22,10 @@
 //!
 //! App-only hydration when hosts strip lanes: `plasm_ui_read_plan`, `plasm_ui_read_run`
 //! (`_meta.ui.visibility: ["app"]` — host-enforced; server still registers on `tools/list`).
+//!
+//! **Tool-only hosts** ([`ArtifactAccessMode::ToolFallback`]): Claude connectors surface
+//! `structuredContent` to the model and must not receive inline `comp` / run `steps` under
+//! `structuredContent.ui` — only slim `structuredContent.plasm` plus tool `content`.
 
 use rust_mcp_sdk::schema::{CallToolResult, ToolOutputSchema};
 use serde_json::{Map, Value};
@@ -37,18 +41,24 @@ pub struct UiInlinePlanPayload {
 }
 
 /// Sole MCP tool-result exit: merge `_meta`, attach MCP App UI, mirror agent payload.
+///
+/// `ui_apps_enabled` attaches `_meta.ui.resourceUri` for MCP App iframes.
+/// `structured_ui_lane` mirrors `structuredContent.ui` (plan DAG / run steps) — disabled on
+/// [`crate::mcp_run_markdown::ArtifactAccessMode::ToolFallback`] hosts that feed
+/// `structuredContent` to the agent.
 pub fn finalize_mcp_tool_result(
     res: CallToolResult,
     mut tool_meta: Map<String, Value>,
     agent_plan_text: Option<&str>,
     inline_plan_ui: Option<UiInlinePlanPayload>,
     ui_apps_enabled: bool,
+    structured_ui_lane: bool,
 ) -> CallToolResult {
     if ui_apps_enabled {
         crate::mcp_app::attach_mcp_app_ui_on_tool_meta(&mut tool_meta);
     }
     let res = res.with_meta(Some(tool_meta));
-    let res = mirror_plasm_structured_content(res, inline_plan_ui.as_ref(), ui_apps_enabled);
+    let res = mirror_plasm_structured_content(res, inline_plan_ui.as_ref(), structured_ui_lane);
     inject_structured_agent_plan_text(res, agent_plan_text)
 }
 
@@ -406,6 +416,7 @@ mod tests {
             Some(SAMPLE_PLAN_TEXT),
             None,
             true,
+            true,
         );
         let wire = serde_json::to_value(&out).expect("serialize CallToolResult");
         assert_eq!(
@@ -455,6 +466,7 @@ mod tests {
                 plan_ux_reflection: ux.clone(),
             }),
             true,
+            true,
         );
         let wire = serde_json::to_value(&out).expect("serialize");
         assert!(wire.pointer("/structuredContent/plasm/comp").is_none());
@@ -469,7 +481,7 @@ mod tests {
     #[test]
     fn finalize_attaches_plan_review_for_dry_run() {
         let res = CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)]);
-        let out = finalize_mcp_tool_result(res, sample_dry_tool_meta(), None, None, true);
+        let out = finalize_mcp_tool_result(res, sample_dry_tool_meta(), None, None, true, true);
         assert_eq!(
             out.meta
                 .as_ref()
@@ -490,7 +502,7 @@ mod tests {
             }),
         );
         let res = CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)]);
-        let out = finalize_mcp_tool_result(res, tool_meta, None, None, true);
+        let out = finalize_mcp_tool_result(res, tool_meta, None, None, true, true);
         assert_eq!(
             out.meta
                 .as_ref()
@@ -586,9 +598,49 @@ mod tests {
     }
 
     #[test]
+    fn finalize_tool_fallback_omits_structured_ui_lane() {
+        let meta = sample_dry_tool_meta();
+        let comp = json!({ "version": 1, "steps": { "n1": { "kind": "invoke" } } });
+        let ux = json!({ "schema_version": 3, "steps": [{ "operation": "query" }] });
+        let res = CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)]);
+        let out = finalize_mcp_tool_result(
+            res,
+            meta,
+            Some(SAMPLE_PLAN_TEXT),
+            Some(UiInlinePlanPayload {
+                comp,
+                plan_ux_reflection: ux,
+            }),
+            true,
+            false,
+        );
+        let wire = serde_json::to_value(&out).expect("serialize");
+        assert_eq!(
+            wire.pointer("/structuredContent/plasm/run_ref")
+                .and_then(|v| v.as_str()),
+            Some("pc0")
+        );
+        assert!(
+            wire.pointer("/structuredContent/plasm/plan_text")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| s.contains("plan ok"))
+        );
+        assert!(wire.pointer("/structuredContent/ui").is_none());
+        assert!(wire.pointer("/structuredContent/plasm/comp").is_none());
+        assert_eq!(
+            out.meta
+                .as_ref()
+                .and_then(|m| m.get("ui"))
+                .and_then(|u| u.get("resourceUri"))
+                .and_then(|v| v.as_str()),
+            Some(crate::plan_ui_mcp::PLAN_REVIEW_UI_URI)
+        );
+    }
+
+    #[test]
     fn finalize_skips_ui_lane_when_apps_disabled() {
         let res = CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)]);
-        let out = finalize_mcp_tool_result(res, sample_dry_tool_meta(), None, None, false);
+        let out = finalize_mcp_tool_result(res, sample_dry_tool_meta(), None, None, false, false);
         let wire = serde_json::to_value(&out).expect("serialize");
         assert!(wire.pointer("/_meta/ui").is_none());
         assert!(wire.pointer("/structuredContent/ui").is_none());

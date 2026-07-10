@@ -870,13 +870,24 @@ impl PlasmMcpHandler {
                 ))];
                 let mut res = CallToolResult::from_content(blocks);
                 if let Some(m) = out.result.run_plasm_meta {
-                    let ui_enabled = self.mcp_ui_apps_enabled_for_runtime(runtime).await;
+                    let ui_apps_enabled = self.mcp_ui_apps_enabled_for_runtime(runtime).await;
+                    let artifact_access = self.artifact_access_mode_for_runtime(runtime).await;
+                    let structured_ui_lane =
+                        ui_apps_enabled && !artifact_access.omits_structured_ui_lane();
+                    if ui_apps_enabled && !structured_ui_lane {
+                        tracing::debug!(
+                            target: "plasm_agent::mcp",
+                            ?artifact_access,
+                            "omit structuredContent.ui for tool-only MCP host"
+                        );
+                    }
                     res = crate::mcp_ui_payload::finalize_mcp_tool_result(
                         res,
                         m,
                         out.result.agent_structured_plan_text.as_deref(),
                         out.inline_plan_ui,
-                        ui_enabled,
+                        ui_apps_enabled,
+                        structured_ui_lane,
                     );
                 }
                 self.schedule_persist_transport_state(key);
