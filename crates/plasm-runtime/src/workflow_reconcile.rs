@@ -53,6 +53,7 @@ pub fn extract_http_error_parts(err: &RuntimeError) -> Option<(u16, serde_json::
 }
 
 impl ExecutionEngine {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn try_reconcile_mutator_error(
         &self,
         err: RuntimeError,
