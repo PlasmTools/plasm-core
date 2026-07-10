@@ -1,13 +1,13 @@
 //! Expand view DAG inner mutators into the PLT flow pass (sink params + existence).
 
 use crate::flow_catalog::FlowCatalogView;
+use crate::plan_flow::{
+    FlowFacts, FlowViolation, FlowViolationKind, NodeDisposition, NodeFlowFacts,
+    QualifiedCapabilityKey, SinkProof,
+};
 use crate::plan_flow_existence::{apply_unguarded_mutation_review, check_view_existence_flow};
 use crate::plan_flow_ports::FlowPolicyEvaluator;
 use crate::plan_flow_sanitizer::apply_label_clearance;
-use crate::plan_flow::{
-    FlowFacts, FlowViolation, FlowViolationKind, NodeDisposition, NodeFlowFacts, QualifiedCapabilityKey,
-    SinkProof,
-};
 use crate::plasm_plan::PlanResultUse;
 use plasm_core::schema::{CapabilityKind, ViewDefinition};
 use std::collections::{BTreeMap, BTreeSet};

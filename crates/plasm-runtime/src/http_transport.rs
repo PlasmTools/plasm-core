@@ -943,7 +943,12 @@ pub fn attempt_result_into_result(
                     message,
                 })
             } else {
-                Err(RuntimeError::RequestError { message, attempts, status: None, body: None })
+                Err(RuntimeError::RequestError {
+                    message,
+                    attempts,
+                    status: None,
+                    body: None,
+                })
             }
         }
         HttpAttemptResult::Failed(mut e) => {

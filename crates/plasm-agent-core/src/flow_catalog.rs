@@ -121,7 +121,8 @@ impl FlowCatalogView {
 
     pub fn merge_cgs(&mut self, entry_id: &str, cgs: &CGS) {
         if cgs.workflow_identity {
-            self.entry_workflow_identity.insert(entry_id.to_string(), true);
+            self.entry_workflow_identity
+                .insert(entry_id.to_string(), true);
         }
         for (view_key, view_def) in &cgs.views {
             self.views
@@ -154,10 +155,7 @@ fn ingest_capability(
     }
     let key = QualifiedCapabilityKey::from_parts(entry_id, entity_name, cap_name);
 
-    let idempotent = cap
-        .output_schema
-        .as_ref()
-        .is_some_and(|o| o.idempotent);
+    let idempotent = cap.output_schema.as_ref().is_some_and(|o| o.idempotent);
     let is_mutator = matches!(
         cap.kind,
         CapabilityKind::Create

@@ -331,7 +331,9 @@ impl ExecutionEngine {
                 let (response, _) = match http_res {
                     Ok(v) => v,
                     Err(e) => {
-                        let input_val = input_for_env.clone().unwrap_or(Value::Object(indexmap::IndexMap::new()));
+                        let input_val = input_for_env
+                            .clone()
+                            .unwrap_or(Value::Object(indexmap::IndexMap::new()));
                         return self
                             .try_reconcile_mutator_error(
                                 e,

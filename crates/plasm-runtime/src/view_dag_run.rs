@@ -342,7 +342,7 @@ fn write_outcome_from_result(res: &ExecutionResult) -> WriteOutcome {
         .first()
         .and_then(|e| e.fields.get("outcome"))
         .and_then(|v| v.to_value().as_str().map(str::to_string))
-        .and_then(|s| match s.as_str() {
+        .map(|s| match s.as_str() {
             "reused" => Some(WriteOutcome::Reused),
             "skipped" => Some(WriteOutcome::Skipped),
             _ => Some(WriteOutcome::Created),

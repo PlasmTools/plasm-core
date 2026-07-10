@@ -151,7 +151,10 @@ pub fn json_pointer_get<'a>(value: &'a Value, pointer: &str) -> Option<&'a Value
     Some(current)
 }
 
-pub fn extract_conflict_fields(body: &Value, fields: &IndexMap<String, String>) -> IndexMap<String, Value> {
+pub fn extract_conflict_fields(
+    body: &Value,
+    fields: &IndexMap<String, String>,
+) -> IndexMap<String, Value> {
     let mut out = IndexMap::new();
     for (name, ptr) in fields {
         if let Some(v) = json_pointer_get(body, ptr) {
@@ -198,13 +201,10 @@ pub fn match_conflict_rule(
             .as_ref()
             .map(|e| e.entity.clone())
             .unwrap_or_else(|| "Resource".to_string());
-        let hint = rule.hint.clone().unwrap_or_else(|| {
-            format!(
-                "{} on {}",
-                rule.kind.as_str(),
-                entity
-            )
-        });
+        let hint = rule
+            .hint
+            .clone()
+            .unwrap_or_else(|| format!("{} on {}", rule.kind.as_str(), entity));
         return Some(WorkflowConflict {
             kind: rule.kind,
             entity,

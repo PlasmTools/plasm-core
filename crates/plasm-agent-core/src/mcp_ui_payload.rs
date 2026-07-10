@@ -620,11 +620,10 @@ mod tests {
                 .and_then(|v| v.as_str()),
             Some("pc0")
         );
-        assert!(
-            wire.pointer("/structuredContent/plasm/plan_text")
-                .and_then(|v| v.as_str())
-                .is_some_and(|s| s.contains("plan ok"))
-        );
+        assert!(wire
+            .pointer("/structuredContent/plasm/plan_text")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| s.contains("plan ok")));
         assert!(wire.pointer("/structuredContent/ui").is_none());
         assert!(wire.pointer("/structuredContent/plasm/comp").is_none());
         assert_eq!(

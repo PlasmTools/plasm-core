@@ -127,7 +127,6 @@ pub mod scope_entity_ref_infer;
 pub mod scope_entity_ref_splat;
 pub mod step_semantics;
 pub mod string_unescape;
-pub mod workflow_identity;
 pub mod summary_render;
 pub mod symbol_tuning;
 pub mod teaching_term;
@@ -141,6 +140,7 @@ pub mod typed_invoke;
 pub mod typed_literal;
 pub mod typed_row;
 pub mod value;
+pub mod workflow_identity;
 
 mod capability_input;
 pub mod comp_canonical;
@@ -314,11 +314,6 @@ pub use schema::{
     ViewRelationBinding, ViewRelationOutputSpec, ViewScopeInject, ViewScopeParam,
     WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
 };
-pub use workflow_identity::{
-    conflict_rules_from_mapping_template, match_conflict_rule, ConflictRule, ConflictRuleExtract,
-    ConflictRuleWhen, ReconcileBindSource, ReconcileSpec, ViewNodeCondition, ViewNodeWhen,
-    WorkflowConflict, WorkflowConflictKind, WriteOutcome,
-};
 pub use schema_overlay::{
     build_decode_scope_key, build_schema_overlay, overlay_bind_cache_suffix, overlay_collect_rows,
     overlay_entity_for_scope, overlay_merge_step_response, overlay_pipeline_cache_suffix,
@@ -369,4 +364,9 @@ pub use typed_row::TypedFieldValue;
 pub use value::{
     CompOp, FieldType, PlasmInputRef, TemporalWireFormat, Value, ValueTableCellBudget,
     ValueWireFormat, PLASM_ATTACHMENT_KEY,
+};
+pub use workflow_identity::{
+    conflict_rules_from_mapping_template, match_conflict_rule, ConflictRule, ConflictRuleExtract,
+    ConflictRuleWhen, ReconcileBindSource, ReconcileSpec, ViewNodeCondition, ViewNodeWhen,
+    WorkflowConflict, WorkflowConflictKind, WriteOutcome,
 };

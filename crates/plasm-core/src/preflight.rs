@@ -216,19 +216,27 @@ pub fn validate_capability_preflight(cgs: &CGS, cap: &CapabilitySchema) -> Resul
                 on_exists: _,
             } => {
                 require_mutating_kind(cap, &step_label)?;
-                let keys = cap.identity_key.as_ref().filter(|k| !k.is_empty()).ok_or_else(|| {
-                    preflight_err(
-                        cap,
-                        format!("{step_label} existence_check requires capability identity_key"),
-                    )
-                })?;
+                let keys = cap
+                    .identity_key
+                    .as_ref()
+                    .filter(|k| !k.is_empty())
+                    .ok_or_else(|| {
+                        preflight_err(
+                            cap,
+                            format!(
+                                "{step_label} existence_check requires capability identity_key"
+                            ),
+                        )
+                    })?;
                 for key in keys {
                     validate_param_exists(cap, key, &step_label)?;
                 }
                 let lookup = cgs.get_capability(query).ok_or_else(|| {
                     preflight_err(
                         cap,
-                        format!("{step_label} existence_check references unknown capability '{query}'"),
+                        format!(
+                            "{step_label} existence_check references unknown capability '{query}'"
+                        ),
                     )
                 })?;
                 match lookup.kind {

@@ -122,13 +122,13 @@ pub mod oauth_client;
 pub mod oauth_token_debug;
 pub mod paginated_collect;
 pub mod preflight;
-pub mod workflow_reconcile;
 pub mod query_index;
 pub mod replay;
 pub mod row_predicate;
 pub mod runtime_error_render;
 pub mod session_graph_cache;
 pub mod top_k;
+pub mod workflow_reconcile;
 
 mod view_dag_run;
 mod view_execution;

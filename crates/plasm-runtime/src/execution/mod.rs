@@ -2645,7 +2645,10 @@ fn preflight_command_envelope_for_single_entity_narrow(
                       For `user_get_me`, the API token may not resolve `$my-id` — use a personal \
                       workspace API token from Fibery → API Tokens and reconnect in Plasm."
                 .into(),
-            attempts: 1, status: None, body: None });
+            attempts: 1,
+            status: None,
+            body: None,
+        });
     }
     Ok(())
 }
@@ -2696,9 +2699,9 @@ fn extract_single_entity_payload_from_response(
                             return Err(RuntimeError::RequestError {
                                 message: msg,
                                 attempts: 1,
-                status: None,
-                body: None,
-            });
+                                status: None,
+                                body: None,
+                            });
                         }
                     }
                 }

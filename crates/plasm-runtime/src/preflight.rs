@@ -110,14 +110,10 @@ pub(crate) async fn apply_preflight_steps(
                 .await?;
             }
             PreflightStep::ExistenceCheck {
-                query,
-                on_exists,
-                ..
+                query, on_exists, ..
             } => {
-                existence_check_step(
-                    engine, cgs, cache, mode, env, capability, query, *on_exists,
-                )
-                .await?;
+                existence_check_step(engine, cgs, cache, mode, env, capability, query, *on_exists)
+                    .await?;
             }
         }
     }
@@ -594,6 +590,7 @@ async fn resolve_label_id_by_name(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn existence_check_step(
     engine: &ExecutionEngine,
     cgs: &CGS,
@@ -604,9 +601,11 @@ async fn existence_check_step(
     query_cap: &str,
     on_exists: ExistenceOnExists,
 ) -> Result<(), RuntimeError> {
-    let qcap = cgs.get_capability(query_cap).ok_or_else(|| RuntimeError::ConfigurationError {
-        message: format!("existence_check: unknown capability '{query_cap}'"),
-    })?;
+    let qcap = cgs
+        .get_capability(query_cap)
+        .ok_or_else(|| RuntimeError::ConfigurationError {
+            message: format!("existence_check: unknown capability '{query_cap}'"),
+        })?;
     let mut pred = Predicate::True;
     if let Some(keys) = &capability.identity_key {
         for key in keys {
@@ -639,7 +638,7 @@ async fn existence_check_step(
         match on_exists {
             ExistenceOnExists::Fail => {
                 return Err(RuntimeError::WorkflowConflict {
-                    conflict: plasm_core::WorkflowConflict {
+                    conflict: Box::new(plasm_core::WorkflowConflict {
                         kind: plasm_core::WorkflowConflictKind::ResourceExists,
                         entity: capability.domain.to_string(),
                         key: IndexMap::new(),

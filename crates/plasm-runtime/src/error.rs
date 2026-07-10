@@ -36,7 +36,7 @@ pub enum RuntimeError {
 
     #[error("Workflow conflict: {message}")]
     WorkflowConflict {
-        conflict: plasm_core::WorkflowConflict,
+        conflict: Box<plasm_core::WorkflowConflict>,
         message: String,
         attempts: u32,
     },

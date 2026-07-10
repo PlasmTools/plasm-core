@@ -471,10 +471,7 @@ pub enum SchemaError {
     #[error(
         "Capability '{capability}' on '{entity}' requires identity_key for non-idempotent mutators"
     )]
-    IdentityKeyRequired {
-        capability: String,
-        entity: String,
-    },
+    IdentityKeyRequired { capability: String, entity: String },
 
     #[error("Capability '{capability}': identity_key references unknown param '{param}'")]
     IdentityKeyUnknownParam { capability: String, param: String },

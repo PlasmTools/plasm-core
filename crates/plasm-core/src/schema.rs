@@ -2961,10 +2961,7 @@ impl CGS {
             if !is_mutator {
                 continue;
             }
-            let idempotent = cap
-                .output_schema
-                .as_ref()
-                .is_some_and(|o| o.idempotent);
+            let idempotent = cap.output_schema.as_ref().is_some_and(|o| o.idempotent);
             if !idempotent && cap.identity_key.as_ref().is_none_or(|k| k.is_empty()) {
                 return Err(SchemaError::IdentityKeyRequired {
                     capability: cap_name.to_string(),

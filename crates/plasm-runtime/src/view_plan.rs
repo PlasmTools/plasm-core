@@ -188,12 +188,12 @@ fn eval_view_condition(
     node_results: &IndexMap<String, ExecutionResult>,
 ) -> bool {
     match condition {
-        ViewNodeCondition::NodeRowCountPositive { node } => node_results
-            .get(node)
-            .is_some_and(|r| r.count > 0),
-        ViewNodeCondition::NodeRowCountZero { node } => node_results
-            .get(node)
-            .is_none_or(|r| r.count == 0),
+        ViewNodeCondition::NodeRowCountPositive { node } => {
+            node_results.get(node).is_some_and(|r| r.count > 0)
+        }
+        ViewNodeCondition::NodeRowCountZero { node } => {
+            node_results.get(node).is_none_or(|r| r.count == 0)
+        }
     }
 }
 
@@ -458,15 +458,18 @@ pub fn resolve_output_binding(
                 })?;
             Ok(Value::Bool(r.count > 0))
         }
-        ViewOutputBinding::WriteCreated { node } => Ok(Value::Bool(
-            matches!(write_outcomes.get(node), Some(WriteOutcome::Created)),
-        )),
-        ViewOutputBinding::WriteReused { node } => Ok(Value::Bool(
-            matches!(write_outcomes.get(node), Some(WriteOutcome::Reused)),
-        )),
-        ViewOutputBinding::WriteSkipped { node } => Ok(Value::Bool(
-            matches!(write_outcomes.get(node), Some(WriteOutcome::Skipped)),
-        )),
+        ViewOutputBinding::WriteCreated { node } => Ok(Value::Bool(matches!(
+            write_outcomes.get(node),
+            Some(WriteOutcome::Created)
+        ))),
+        ViewOutputBinding::WriteReused { node } => Ok(Value::Bool(matches!(
+            write_outcomes.get(node),
+            Some(WriteOutcome::Reused)
+        ))),
+        ViewOutputBinding::WriteSkipped { node } => Ok(Value::Bool(matches!(
+            write_outcomes.get(node),
+            Some(WriteOutcome::Skipped)
+        ))),
         ViewOutputBinding::Computed { .. } => Err(RuntimeError::ConfigurationError {
             message: "computed output bindings are resolved in a separate phase".into(),
         }),

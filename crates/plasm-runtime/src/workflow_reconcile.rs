@@ -1,14 +1,14 @@
 //! Idempotent reconcile and conflict mapping for mutating capabilities.
 
 use indexmap::IndexMap;
+use plasm_core::plasm_value_to_json;
 use plasm_core::preflight::PLASM_EXISTENCE_SKIP_WRITE_ENV;
 use plasm_core::schema::{CapabilityKind, CapabilitySchema};
-use plasm_core::{
-    conflict_rules_from_mapping_template, GetExpr, QueryExpr, ReconcileBindSource, Value,
-    WorkflowConflict, WorkflowConflictKind, WriteOutcome, CGS, CompOp, Predicate,
-};
 use plasm_core::TypedFieldValue;
-use plasm_core::plasm_value_to_json;
+use plasm_core::{
+    conflict_rules_from_mapping_template, CompOp, GetExpr, Predicate, QueryExpr,
+    ReconcileBindSource, Value, WorkflowConflict, WorkflowConflictKind, WriteOutcome, CGS,
+};
 use serde_json::Value as JsonValue;
 
 use crate::api_error_detail::workflow_conflict_from_http;
@@ -27,7 +27,7 @@ pub fn map_capability_http_error(
     {
         let md = conflict.markdown_block();
         return RuntimeError::WorkflowConflict {
-            conflict,
+            conflict: Box::new(conflict),
             message: format!("{fallback_message}\n\n{md}"),
             attempts: 1,
         };
@@ -83,7 +83,7 @@ impl ExecutionEngine {
         if conflict.kind != reconcile.on {
             let md = conflict.markdown_block();
             return Err(RuntimeError::WorkflowConflict {
-                conflict,
+                conflict: Box::new(conflict),
                 message: format!("{message}\n\n{md}"),
                 attempts: 1,
             });
@@ -96,14 +96,15 @@ impl ExecutionEngine {
                 ),
             }
         })?;
-        let identity = identity_values_from_env(capability, env_input, reconcile.bind_identity_from);
+        let identity =
+            identity_values_from_env(capability, env_input, reconcile.bind_identity_from);
         let res = self
             .fetch_reconcile_row(via_cap, cgs, mat, mode, &identity, entity)
             .await?;
         if let Some(mismatch) = detect_identity_mismatch(capability, env_input, &res) {
             let md = mismatch.markdown_block();
             return Err(RuntimeError::WorkflowConflict {
-                conflict: mismatch,
+                conflict: Box::new(mismatch),
                 message: format!("{message}\n\n{md}"),
                 attempts: 1,
             });
@@ -128,7 +129,7 @@ fn map_request_to_conflict_or_return(
         {
             let md = conflict.markdown_block();
             return Err(RuntimeError::WorkflowConflict {
-                conflict: conflict.clone(),
+                conflict: Box::new(conflict.clone()),
                 message: format!("{message}\n\n{md}"),
                 attempts: 1,
             });
@@ -242,11 +243,12 @@ impl ExecutionEngine {
                         bound.insert(k.clone(), s.clone());
                     }
                 }
-                let target_ent = cgs.get_entity(entity).ok_or_else(|| RuntimeError::ConfigurationError {
-                    message: format!("unknown entity {entity}"),
-                })?;
-                let bound: std::collections::BTreeMap<String, String> =
-                    bound.into_iter().collect();
+                let target_ent =
+                    cgs.get_entity(entity)
+                        .ok_or_else(|| RuntimeError::ConfigurationError {
+                            message: format!("unknown entity {entity}"),
+                        })?;
+                let bound: std::collections::BTreeMap<String, String> = bound.into_iter().collect();
                 let reference =
                     crate::view_plan::ref_from_view_get_node(target_ent, via_cap, &bound)?;
                 let get = GetExpr::from_ref(reference);
@@ -297,7 +299,10 @@ fn identity_predicate(identity: &IndexMap<String, Value>) -> Predicate {
     pred
 }
 
-pub fn stamp_outcome_on_result(mut result: ExecutionResult, outcome: WriteOutcome) -> ExecutionResult {
+pub fn stamp_outcome_on_result(
+    mut result: ExecutionResult,
+    outcome: WriteOutcome,
+) -> ExecutionResult {
     if let Some(row) = result.entities.first_mut() {
         row.fields.insert(
             "outcome".to_string(),
@@ -311,10 +316,7 @@ pub fn skipped_write_result(entity: &str) -> ExecutionResult {
     ExecutionResult {
         entities: vec![crate::cache::CachedEntity::from_decoded(
             plasm_core::Ref::new(entity, ""),
-            IndexMap::from([(
-                "outcome".to_string(),
-                Value::String("skipped".into()),
-            )]),
+            IndexMap::from([("outcome".to_string(), Value::String("skipped".into()))]),
             IndexMap::new(),
             crate::execution::current_timestamp(),
             crate::cache::EntityCompleteness::Complete,

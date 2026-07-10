@@ -444,7 +444,9 @@ impl<'a, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, P> {
                 let expanded = crate::plan_flow_view_expand::expand_view_inner_mutations(
                     self.catalog,
                     self.policy,
-                    self.facts.get(id.as_str()).unwrap_or(&NodeFlowFacts::default()),
+                    self.facts
+                        .get(id.as_str())
+                        .unwrap_or(&NodeFlowFacts::default()),
                     key.entry_id.as_str(),
                     view,
                     id.as_str(),

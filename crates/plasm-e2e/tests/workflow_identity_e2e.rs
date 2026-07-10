@@ -1,6 +1,6 @@
 //! Workflow identity matrix: schema validation, PLT existence flow, reconcile semantics.
 
-use plasm_agent::{FlowCatalogView, verify_plan_flow, FlowPolicySnapshot, FlowVerdict};
+use plasm_agent::{verify_plan_flow, FlowCatalogView, FlowPolicySnapshot, FlowVerdict};
 use plasm_compile::CmlEnv;
 use plasm_core::load_schema_dir_unvalidated;
 use plasm_core::preflight::PLASM_EXISTENCE_SKIP_WRITE_ENV;
@@ -31,7 +31,10 @@ fn workflow_matrix_schema_loads_with_workflow_identity() {
     let cgs = load_schema_dir_unvalidated(&workflow_matrix_dir()).expect("load");
     assert!(cgs.workflow_identity);
     let cap = cgs.get_capability("workitem_create").expect("create");
-    assert_eq!(cap.identity_key.as_deref(), Some(&["title".to_string()][..]));
+    assert_eq!(
+        cap.identity_key.as_deref(),
+        Some(&["title".to_string()][..])
+    );
     assert!(cgs.views.contains_key("workitem_ensure"));
 }
 
@@ -105,7 +108,9 @@ fn workflow_matrix_idempotent_cap_declares_reconcile_via_query() {
 #[test]
 fn workflow_matrix_conflict_rule_matches_resource_exists() {
     let cgs = load_schema_dir_unvalidated(&workflow_matrix_dir()).expect("load");
-    let cap = cgs.get_capability("workitem_create_idempotent").expect("cap");
+    let cap = cgs
+        .get_capability("workitem_create_idempotent")
+        .expect("cap");
     let rules = conflict_rules_from_mapping_template(&cap.mapping.template.0);
     let body = serde_json::json!({ "message": "title already exists", "title": "alpha" });
     let conflict = match_conflict_rule(&rules, 422, &body).expect("match");
