@@ -89,10 +89,14 @@ impl JsCallbackHttpTransport {
                 .map_err(|e| RuntimeError::RequestError {
                     message: format!("host transport callback failed: {e}"),
                     attempts: 1,
+                    status: None,
+                    body: None,
                 })?;
         js_promise.await.map_err(|e| RuntimeError::RequestError {
             message: format!("host transport promise rejected: {e}"),
             attempts: 1,
+            status: None,
+            body: None,
         })
     }
 
@@ -131,6 +135,8 @@ impl JsCallbackHttpTransport {
             return Err(RuntimeError::RequestError {
                 message: format!("HTTP {}: {}", resp.status, summarize_error_body(&resp.body)),
                 attempts: 1,
+                status: Some(resp.status),
+                body: serde_json::from_str(&resp.body).ok(),
             });
         }
         let json = serde_json::from_str(&resp.body)
