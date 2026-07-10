@@ -343,9 +343,9 @@ fn write_outcome_from_result(res: &ExecutionResult) -> WriteOutcome {
         .and_then(|e| e.fields.get("outcome"))
         .and_then(|v| v.to_value().as_str().map(str::to_string))
         .map(|s| match s.as_str() {
-            "reused" => Some(WriteOutcome::Reused),
-            "skipped" => Some(WriteOutcome::Skipped),
-            _ => Some(WriteOutcome::Created),
+            "reused" => WriteOutcome::Reused,
+            "skipped" => WriteOutcome::Skipped,
+            _ => WriteOutcome::Created,
         })
         .unwrap_or(WriteOutcome::Created)
 }
