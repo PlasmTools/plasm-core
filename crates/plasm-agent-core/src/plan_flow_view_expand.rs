@@ -19,6 +19,7 @@ pub(crate) struct ViewExpandOutcome {
     pub facts: BTreeMap<String, NodeFlowFacts>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn expand_view_inner_mutations<P: FlowPolicyEvaluator + ?Sized>(
     catalog: &FlowCatalogView,
     policy: &P,

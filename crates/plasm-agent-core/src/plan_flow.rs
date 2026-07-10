@@ -548,7 +548,6 @@ impl<'a, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, P> {
             ctx.template_expr,
             ctx.uses_result,
         );
-        let mut disposition = disposition;
         crate::plan_flow_existence::apply_unguarded_mutation_review(
             &mut disposition,
             &mut self.violations,

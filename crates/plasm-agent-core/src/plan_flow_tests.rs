@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use super::*;
 use crate::flow_catalog::FlowCatalogView;
 use crate::plan_flow_policy::{FlowPolicy, ForbiddenFlowRule, OperatorDisposition};

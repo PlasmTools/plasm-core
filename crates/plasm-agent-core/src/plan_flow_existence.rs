@@ -20,6 +20,7 @@ pub struct ExistenceCheckOutcome {
     pub reason: Option<String>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn check_plan_mutation_existence(
     catalog: &FlowCatalogView,
     plan: &Plan<ValidatedPlanState>,
