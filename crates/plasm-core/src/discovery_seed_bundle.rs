@@ -41,7 +41,10 @@ impl CandidateSeedBundle {
     }
 }
 
-pub fn explicitly_named_catalogs(intent: &str, bundles: &[EntityCandidateBundle]) -> HashSet<String> {
+pub fn explicitly_named_catalogs(
+    intent: &str,
+    bundles: &[EntityCandidateBundle],
+) -> HashSet<String> {
     let intent_tokens: HashSet<String> = domain_lexicon::tokens(intent).into_iter().collect();
     bundles
         .iter()
@@ -130,8 +133,8 @@ fn retain_top_bundle(
     bundles.truncate(limit);
 }
 
-fn enumerate_combinations<'a>(
-    candidates: &[&'a EntityCandidateBundle],
+fn enumerate_combinations(
+    candidates: &[&EntityCandidateBundle],
     max_roots: usize,
     limit: usize,
 ) -> Vec<CandidateSeedBundle> {

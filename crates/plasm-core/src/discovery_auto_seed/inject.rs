@@ -1,4 +1,4 @@
-use std::collections::{HashSet};
+use std::collections::HashSet;
 
 use indexmap::IndexMap;
 
@@ -10,8 +10,8 @@ use crate::discovery_seed_bundle::intent_requests_cross_catalog_composition;
 use crate::domain_lexicon;
 use crate::schema::{RelationSchema, CGS};
 
-use super::helpers::{capability_id, candidate_id, entity_description_for, ArcCgs};
-use super::types::{EntityCapabilityEvidence, EntityCandidateBundle};
+use super::helpers::{candidate_id, capability_id, entity_description_for, ArcCgs};
+use super::types::{EntityCandidateBundle, EntityCapabilityEvidence};
 
 fn relation_intent_score(intent_tokens: &HashSet<String>, rel: &RelationSchema) -> u32 {
     let Some(h) = &rel.discovery else {
@@ -87,7 +87,7 @@ fn inject_relation_targets(
         };
         for rel in ent.relations.values() {
             let target = rel.target_resource.as_str();
-            if !cgs.get_entity(target).is_some() {
+            if cgs.get_entity(target).is_none() {
                 continue;
             }
             if relation_intent_score(&intent_tokens, rel) == 0 {

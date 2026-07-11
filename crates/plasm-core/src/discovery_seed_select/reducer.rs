@@ -45,8 +45,7 @@ fn build_ready_selection(
     selected_ids.sort_unstable();
     selected_ids.dedup();
     selected_ids = rewrite_selected_candidate_ids(selected_ids, requirement_texts, intent, tables);
-    supporting_capability_ids =
-        supporting_capabilities_for_candidate_ids(&selected_ids, tables);
+    supporting_capability_ids = supporting_capabilities_for_candidate_ids(&selected_ids, tables);
     Ok(SeedSelectionRaw {
         decision: SeedSelectionDecision::Ready,
         requirements: requirement_texts.to_vec(),
@@ -180,12 +179,9 @@ fn clarify_alternative_sets_from_bundle_indexes(
         let provider_index = tables.provider_index_for_bundle(*bundle_index).ok_or(
             SeedSelectionValidationError::UnknownBundleIndex(*bundle_index as i64),
         )?;
-        let catalogs = tables
-            .catalogs_by_provider
-            .get(provider_index)
-            .ok_or(SeedSelectionValidationError::UnknownProviderIndex(
-                provider_index,
-            ))?;
+        let catalogs = tables.catalogs_by_provider.get(provider_index).ok_or(
+            SeedSelectionValidationError::UnknownProviderIndex(provider_index),
+        )?;
         alternatives.push(SeedAlternativeSetRaw {
             candidate_ids,
             label: catalogs.join(" + "),
@@ -261,11 +257,7 @@ fn try_partial_empty_mutation_ready(
         .iter()
         .min_by_key(|&&index| tables.bundle_root_count(index).unwrap_or(usize::MAX))
         .expect("non-empty support");
-    let bundle_index = prefer_mutation_capable_singleton(
-        seed_bundle,
-        &requirement_texts,
-        tables,
-    );
+    let bundle_index = prefer_mutation_capable_singleton(seed_bundle, requirement_texts, tables);
     if bundle_mutation_score(tables, bundle_index) == 0 {
         return Ok(None);
     }
@@ -285,7 +277,9 @@ fn try_over_split_read_only_fallback(
     reasoning: String,
 ) -> Result<Option<SeedSelectionRaw>, SeedSelectionValidationError> {
     if support_by_requirement.len() < 2
-        || !support_by_requirement.iter().any(|support| support.is_empty())
+        || !support_by_requirement
+            .iter()
+            .any(|support| support.is_empty())
     {
         return Ok(None);
     }
@@ -444,7 +438,9 @@ fn try_cross_provider_federated_ready(
     reasoning: String,
 ) -> Result<Option<SeedSelectionRaw>, SeedSelectionValidationError> {
     if support_by_requirement.len() < 2
-        || support_by_requirement.iter().any(|support| support.is_empty())
+        || support_by_requirement
+            .iter()
+            .any(|support| support.is_empty())
     {
         return Ok(None);
     }
