@@ -161,7 +161,7 @@ fn prepare_cgs_for_catalog(api_dir: &Path, entry_id: &str) -> Result<CGS> {
         );
     }
 
-    finalize_cgs_load(&cgs).map_err(|e| anyhow::anyhow!("CGS validate {entry_id}: {e}"))?;
+    finalize_cgs_load(&mut cgs).map_err(|e| anyhow::anyhow!("CGS validate {entry_id}: {e}"))?;
 
     Ok(cgs)
 }

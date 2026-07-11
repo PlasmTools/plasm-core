@@ -5,7 +5,7 @@ use crate::schema::{Cardinality, RelationMaterialization, RelationSchema, CGS};
 /// Whether a declared relation supports `AutoGet` chain nav without requiring target Get.
 ///
 /// Must stay aligned with [`crate::expr_parser`] many-relation AutoGet allowance
-/// (`FromParentGet`, `PreferFromParentGet`, `QueryScoped`, `QueryScopedBindings`).
+/// (`FromParentGet`, `PreferFromParentGet`, `ViewEmbed`, `QueryScoped`, `QueryScopedBindings`).
 /// `GetScopedBindings` is excluded (parse rejects bare relation nav on that materialization).
 pub(crate) fn relation_chain_nav_admissible(
     rel: &RelationSchema,
@@ -25,6 +25,7 @@ pub(crate) fn relation_chain_nav_admissible(
         rel.materialize.as_ref(),
         Some(RelationMaterialization::FromParentGet { .. })
             | Some(RelationMaterialization::PreferFromParentGet { .. })
+            | Some(RelationMaterialization::ViewEmbed { .. })
             | Some(RelationMaterialization::QueryScoped { .. })
             | Some(RelationMaterialization::QueryScopedBindings { .. })
     )

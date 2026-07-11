@@ -74,6 +74,9 @@ pub fn resolve_relation_row_resolution(
         RelationMaterialization::QueryScoped { .. }
         | RelationMaterialization::QueryScopedBindings { .. } => RelationRowResolution::ScopedQuery,
         RelationMaterialization::GetScopedBindings { .. } => RelationRowResolution::ScopedQuery,
+        RelationMaterialization::ViewEmbed { .. } => RelationRowResolution::EmbeddedRefs(
+            relation_refs.map(|s| s.to_vec()).unwrap_or_default(),
+        ),
         RelationMaterialization::PreferFromParentGet {
             path,
             on_embed_miss,

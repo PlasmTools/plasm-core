@@ -61,16 +61,21 @@ pub fn seed_bundle_presentation_order(
 ) -> Vec<usize> {
     let mut indexes: Vec<usize> = (0..seed_bundles.len()).collect();
     indexes.sort_by(|left, right| {
-        seed_bundles[*left].candidate_ids.len().cmp(
-            &seed_bundles[*right].candidate_ids.len(),
-        )
-        .then_with(|| {
-            tables
-                .provider_index_for_bundle(*left)
-                .unwrap_or(usize::MAX)
-                .cmp(&tables.provider_index_for_bundle(*right).unwrap_or(usize::MAX))
-        })
-        .then_with(|| left.cmp(right))
+        seed_bundles[*left]
+            .candidate_ids
+            .len()
+            .cmp(&seed_bundles[*right].candidate_ids.len())
+            .then_with(|| {
+                tables
+                    .provider_index_for_bundle(*left)
+                    .unwrap_or(usize::MAX)
+                    .cmp(
+                        &tables
+                            .provider_index_for_bundle(*right)
+                            .unwrap_or(usize::MAX),
+                    )
+            })
+            .then_with(|| left.cmp(right))
     });
     indexes
 }
@@ -199,10 +204,8 @@ pub fn build_seed_bundle_index_tables(
             bundle.candidate_id.clone(),
             (bundle.entry_id.clone(), bundle.entity.clone()),
         );
-        relation_hints_by_candidate_id.insert(
-            bundle.candidate_id.clone(),
-            bundle.relation_hints.clone(),
-        );
+        relation_hints_by_candidate_id
+            .insert(bundle.candidate_id.clone(), bundle.relation_hints.clone());
     }
     let mut catalogs_by_provider: Vec<Vec<String>> = Vec::new();
     let provider_index_by_bundle = seed_bundles

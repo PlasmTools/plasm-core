@@ -103,10 +103,11 @@ pub fn select_discovery_seeds(
     temperature: f64,
     seed: u64,
 ) -> anyhow::Result<SeedSelectionRaw> {
-    let presentation = match build_seed_selection_presentation(intent, bundles, SeedBundleConfig::default())? {
-        Some(presentation) => presentation,
-        None => return Ok(empty_seed_selection_raw()),
-    };
+    let presentation =
+        match build_seed_selection_presentation(intent, bundles, SeedBundleConfig::default())? {
+            Some(presentation) => presentation,
+            None => return Ok(empty_seed_selection_raw()),
+        };
 
     crate::baml_client::init();
     let baml_bundles = to_baml_bundles(&presentation.bundles);
@@ -121,11 +122,11 @@ pub fn select_discovery_seeds(
 
     let mut last_err = None;
     for attempt in 0..3u32 {
-        match B
-            .SelectDiscoverySeeds
-            .with_client_registry(&registry)
-            .call(intent, baml_provider_groups.as_slice(), baml_bundles.as_slice())
-        {
+        match B.SelectDiscoverySeeds.with_client_registry(&registry).call(
+            intent,
+            baml_provider_groups.as_slice(),
+            baml_bundles.as_slice(),
+        ) {
             Ok(assessment) => {
                 return from_baml(&assessment, &presentation, intent)
                     .context("resolve seed coverage assessment");

@@ -126,7 +126,8 @@ impl ExecutionEngine {
                                 )
                                 .await;
                         }
-                        RelationMaterialization::FromParentGet { .. } => {
+                        RelationMaterialization::FromParentGet { .. }
+                        | RelationMaterialization::ViewEmbed { .. } => {
                             return self
                                 .execute_chain_from_embedded_relations(
                                     &source_result,
@@ -215,10 +216,11 @@ impl ExecutionEngine {
                                 ),
                             });
                         }
-                        Some(RelationMaterialization::PreferFromParentGet { .. }) => {
+                        Some(RelationMaterialization::PreferFromParentGet { .. })
+                        | Some(RelationMaterialization::ViewEmbed { .. }) => {
                             return Err(RuntimeError::ConfigurationError {
                                 message: format!(
-                                    "Relation '{}.{}': prefer_from_parent_get requires cardinality many",
+                                    "Relation '{}.{}': prefer_from_parent_get/view_embed requires cardinality many",
                                     source_entity_name, chain.selector
                                 ),
                             });

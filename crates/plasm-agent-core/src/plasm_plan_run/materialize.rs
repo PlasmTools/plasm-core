@@ -295,6 +295,30 @@ pub(crate) async fn materialize_validated_relation_traversal(
             )
             .await
         }
+        RelationMaterialization::ViewEmbed { .. } => {
+            if let Some(mat) = try_materialize_from_cached_relation_refs(
+                st, es, session_id, node, relation, source_mat, trace,
+            )
+            .await?
+            {
+                finalize_typed_relation_materialized_node(
+                    st,
+                    es,
+                    session_id,
+                    &relation.relation.target,
+                    mat,
+                    trace,
+                    read_cap,
+                    plan_shared.clone(),
+                )
+                .await
+            } else {
+                Err(format!(
+                    "relation `{}` on `{}` requires view-produced parent rows (view_embed); execute the view root before navigating `.{}`",
+                    relation.relation.relation, source_mat.entity, relation.relation.relation
+                ))
+            }
+        }
         RelationMaterialization::Unavailable => {
             if let Some(mat) = try_materialize_from_cached_relation_refs(
                 st, es, session_id, node, relation, source_mat, trace,

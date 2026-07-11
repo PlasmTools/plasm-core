@@ -49,7 +49,20 @@ fn linear_issue_search_and_views_parse() {
     parse_with_cgs_layers("IssueContext(ENG-42)", &stack, sym_map.clone())
         .expect("IssueContext get");
     parse_with_cgs_layers("MyWorkSnapshot", &stack, sym_map.clone()).expect("MyWorkSnapshot view");
+    parse_with_cgs_layers("MyWorkSnapshot.issues", &stack, sym_map.clone())
+        .expect("MyWorkSnapshot.issues view_embed relation");
     parse_with_cgs_layers("Team(ENG)", &stack, sym_map).expect("Team get");
+}
+
+#[test]
+fn linear_view_embed_materialize_declared() {
+    let cgs = linear_cgs();
+    let snap = cgs.get_entity("MyWorkSnapshot").expect("MyWorkSnapshot");
+    let issues = snap.relations.get("issues").expect("issues");
+    assert!(matches!(
+        issues.materialize,
+        Some(plasm_core::RelationMaterialization::ViewEmbed { .. })
+    ));
 }
 
 #[test]

@@ -1,4 +1,4 @@
-version: 3
+version: 4
 auth:
   scheme: none
 http_backend: https://graphqlzero.almansi.network
@@ -40,19 +40,7 @@ entities:
       website:
         required: false
         value_ref: nv_wire_str_short
-    relations:
-      posts:
-        target: Post
-        cardinality: many
-        description: Posts authored by this user.
-      albums:
-        target: Album
-        cardinality: many
-        description: Albums owned by this user.
-      todos:
-        target: Todo
-        cardinality: many
-        description: Todos for this user.
+    relations: {}
   Post:
     id_field: id
     description: A blog post.
@@ -72,10 +60,6 @@ entities:
         target: User
         cardinality: one
         description: Author of the post.
-      comments:
-        target: Comment
-        cardinality: many
-        description: Comments on this post.
   Comment:
     id_field: id
     description: A comment on a post.
@@ -133,10 +117,6 @@ entities:
         target: User
         cardinality: one
         description: Owner of the album.
-      photos:
-        target: Photo
-        cardinality: many
-        description: Photos in this album.
   Photo:
     id_field: id
     description: A photo in an album.

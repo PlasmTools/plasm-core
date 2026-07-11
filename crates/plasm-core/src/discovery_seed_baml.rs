@@ -163,11 +163,5 @@ pub fn resolve_from_llm_coverage(
     tables: &SeedBundleIndexTables,
     intent: &str,
 ) -> Result<SeedSelectionRaw, SeedSelectionValidationError> {
-    resolve_seed_coverage_assessment(
-        requirements,
-        coverage_rows,
-        reasoning,
-        tables,
-        intent,
-    )
+    resolve_seed_coverage_assessment(requirements, coverage_rows, reasoning, tables, intent)
 }

@@ -4,9 +4,7 @@ use indexmap::IndexMap;
 
 use crate::discovery::{outgoing_relation_hints_for_entity, DiscoveryResult, RankedCandidate};
 
-use super::helpers::{
-    candidate_id, entity_description_for, push_capability_evidence, ArcCgs,
-};
+use super::helpers::{candidate_id, entity_description_for, push_capability_evidence, ArcCgs};
 use super::types::{EntityCandidateBundle, EntityCandidateConfig};
 
 pub(crate) fn group_candidates_by_entity(
@@ -52,12 +50,7 @@ pub(crate) fn group_candidates_by_entity(
             }
         });
         entry.max_lexical_score = entry.max_lexical_score.max(cand.score);
-        push_capability_evidence(
-            entry,
-            cand,
-            catalogs,
-            config.max_capabilities_per_entity,
-        );
+        push_capability_evidence(entry, cand, catalogs, config.max_capabilities_per_entity);
     }
     groups
 }

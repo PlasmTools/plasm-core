@@ -1,4 +1,4 @@
-version: 2
+version: 3
 auth:
   scheme: none
 http_backend: https://rickandmortyapi.com
@@ -70,6 +70,11 @@ entities:
         description: Characters currently residing at this location.
         target: Character
         cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: residents
+          - wildcard: true
   Episode:
     id_field: id
     description: A TV episode identified by a code like S01E01.
@@ -97,6 +102,11 @@ entities:
         description: Characters appearing in this episode.
         target: Character
         cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: characters
+          - wildcard: true
 capabilities:
   character_query:
     description: Filter characters by name, status, species, type, or gender.

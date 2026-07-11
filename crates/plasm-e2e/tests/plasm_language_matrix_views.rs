@@ -268,3 +268,67 @@ async fn matrix_views_row_to_text_named_loop_cursor() {
         "named loop cursor `entry` should render item id: {md}"
     );
 }
+
+/// View-backed many-relations must execute via `view_embed` (not Unavailable cached-embed side door).
+#[tokio::test]
+async fn matrix_views_view_embed_relation_traversal() {
+    let base = hermit_lang_matrix::language_matrix_hermit_base_url()
+        .await
+        .clone();
+    let cgs = load_language_matrix_views_cgs();
+    plasm_compile::validate_cgs_capability_templates(&cgs).expect("templates");
+    let triage = cgs
+        .get_entity("LangTriageContext")
+        .expect("LangTriageContext");
+    let tags_rel = triage.relations.get("tags").expect("tags relation");
+    assert!(matches!(
+        tags_rel.materialize,
+        Some(plasm_core::RelationMaterialization::ViewEmbed { .. })
+    ));
+    let es = Arc::new(views_execute_session(cgs.clone()));
+    let program = "LangTriageContext(\"i1\").tags";
+    let bundle = compile_plasm_program(
+        &PromptPipelineConfig::default(),
+        None,
+        es.as_ref(),
+        "matrix_views_view_embed_tags",
+        program,
+    )
+    .expect("compile view_embed relation traversal");
+    evaluate_plasm_comp_dry(es.as_ref(), &bundle).expect("dry view_embed relation traversal");
+    let st = Arc::new(views_matrix_host_state(
+        ExecutionEngine::new(ExecutionConfig {
+            base_url: Some(base),
+            ..Default::default()
+        })
+        .expect("ExecutionEngine"),
+        cgs,
+    ));
+    let live = run_plasm_comp(
+        es.as_ref(),
+        st.as_ref(),
+        es.prompt_hash.as_str(),
+        "matrix_views_view_embed_sess",
+        &bundle,
+        true,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("live view_embed relation traversal");
+    let md = live
+        .run_markdown
+        .as_deref()
+        .unwrap_or("");
+    assert!(
+        live.node_results.len() >= 2,
+        "expected view get + relation nodes, got {}",
+        live.node_results.len()
+    );
+    assert!(
+        md.contains("label") || md.contains("tag") || md.contains("i1"),
+        "expected LangTag rows in markdown from view_embed hop: {md}"
+    );
+}

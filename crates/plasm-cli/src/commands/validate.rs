@@ -238,7 +238,7 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
                     "{}.{} → {} traversal",
                     entity_name, rel_name, rel.target_resource
                 );
-                let relation_expr = if rel.cardinality == Cardinality::Many {
+                let relation_expr: Option<Expr> = if rel.cardinality == Cardinality::Many {
                     match rel
                         .materialize
                         .as_ref()
@@ -250,7 +250,7 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
                                 Predicate::eq(param.as_str(), Value::String("1".into())),
                             );
                             q.capability_name = Some(capability.clone());
-                            Some(q)
+                            Some(Expr::Query(q))
                         }
                         RelationMaterialization::QueryScopedBindings {
                             capability,
@@ -269,7 +269,7 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
                             };
                             let mut q = QueryExpr::filtered(rel.target_resource.clone(), pred);
                             q.capability_name = Some(capability.clone());
-                            Some(q)
+                            Some(Expr::Query(q))
                         }
                         RelationMaterialization::PreferFromParentGet { fallback, .. } => {
                             match fallback {
@@ -282,7 +282,7 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
                                         Predicate::eq(param.as_str(), Value::String("1".into())),
                                     );
                                     q.capability_name = Some(capability.clone());
-                                    Some(q)
+                                    Some(Expr::Query(q))
                                 }
                                 plasm_core::RelationScopedFallback::QueryScopedBindings {
                                     capability,
@@ -305,7 +305,7 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
                                     let mut q =
                                         QueryExpr::filtered(rel.target_resource.clone(), pred);
                                     q.capability_name = Some(capability.clone());
-                                    Some(q)
+                                    Some(Expr::Query(q))
                                 }
                                 plasm_core::RelationScopedFallback::HydrateFromEmbedPath {
                                     ..
@@ -315,45 +315,89 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
                         RelationMaterialization::FromParentGet { .. }
                         | RelationMaterialization::GetScopedBindings { .. }
                         | RelationMaterialization::Unavailable => None,
+                        RelationMaterialization::ViewEmbed { view, .. } => {
+                            cgs.views.get(view.as_str()).map(|view_def| {
+                                let scope_pred = view_def.scope.first().map(|s| {
+                                    Predicate::eq(s.name.as_str(), Value::String("test-1".into()))
+                                });
+                                let mut root_query = match scope_pred {
+                                    Some(p) => QueryExpr::filtered(entity_name.clone(), p),
+                                    None => QueryExpr::all(entity_name.clone()),
+                                };
+                                root_query.capability_name = Some(
+                                    plasm_core::CapabilityName::from(view_def.capability.as_str()),
+                                );
+                                Expr::Chain(plasm_core::ChainExpr {
+                                    source: Box::new(Expr::Query(root_query)),
+                                    selector: rel_name.to_string(),
+                                    catalog_entry_id: plasm_core::CatalogEntryStamp::none(),
+                                    step: plasm_core::ChainStep::Explicit {
+                                        expr: Box::new(Expr::Query(QueryExpr::all(
+                                            rel.target_resource.clone(),
+                                        ))),
+                                    },
+                                })
+                            })
+                        }
                     }
                 } else {
                     None
                 };
 
-                if let Some(mut rel_query) = relation_expr {
-                    let target_q = rel_query
-                        .capability_name
-                        .as_ref()
-                        .and_then(|name| cgs.capabilities.get(name.as_str()))
-                        .or_else(|| {
-                            cgs.find_capability(rel.target_resource.as_str(), CapabilityKind::Query)
-                        });
-                    let paginated = target_q.is_some_and(query_mapping_has_pagination);
-                    if paginated {
-                        rel_query = rel_query.with_pagination(QueryPagination::default());
-                    }
-                    let consume = if paginated {
-                        StreamConsumeOpts {
-                            fetch_all: false,
-                            max_items: Some(VALIDATION_PAGINATION_MAX_ITEMS),
-                            one_page: false,
-                            graph_backed_result: false,
-                            ..Default::default()
+                if let Some(rel_expr) = relation_expr {
+                    match rel_expr {
+                        Expr::Query(mut rel_query) => {
+                            let target_q = rel_query
+                                .capability_name
+                                .as_ref()
+                                .and_then(|name| cgs.capabilities.get(name.as_str()))
+                                .or_else(|| {
+                                    cgs.find_capability(
+                                        rel.target_resource.as_str(),
+                                        CapabilityKind::Query,
+                                    )
+                                });
+                            let paginated = target_q.is_some_and(query_mapping_has_pagination);
+                            if paginated {
+                                rel_query = rel_query.with_pagination(QueryPagination::default());
+                            }
+                            let consume = if paginated {
+                                StreamConsumeOpts {
+                                    fetch_all: false,
+                                    max_items: Some(VALIDATION_PAGINATION_MAX_ITEMS),
+                                    one_page: false,
+                                    graph_backed_result: false,
+                                    ..Default::default()
+                                }
+                            } else {
+                                StreamConsumeOpts::default()
+                            };
+                            results.push(
+                                check_execution(
+                                    &label,
+                                    Expr::Query(rel_query),
+                                    &cgs,
+                                    &engine,
+                                    &mut mat,
+                                    consume,
+                                )
+                                .await,
+                            );
                         }
-                    } else {
-                        StreamConsumeOpts::default()
-                    };
-                    results.push(
-                        check_execution(
-                            &label,
-                            Expr::Query(rel_query),
-                            &cgs,
-                            &engine,
-                            &mut mat,
-                            consume,
-                        )
-                        .await,
-                    );
+                        other => {
+                            results.push(
+                                check_execution(
+                                    &label,
+                                    other,
+                                    &cgs,
+                                    &engine,
+                                    &mut mat,
+                                    StreamConsumeOpts::default(),
+                                )
+                                .await,
+                            );
+                        }
+                    }
                 } else {
                     results.push(CheckResult::Skip(format!(
                         "{} (requires parent-context materialization not executable in standalone validate)",

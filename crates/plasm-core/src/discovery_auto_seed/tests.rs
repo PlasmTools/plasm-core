@@ -12,8 +12,9 @@ use super::helpers::ArcCgs;
 use super::inject::{inject_workflow_mutation_targets, mutation_capabilities_for_entity};
 use super::pool::{group_candidates_by_entity, merge_required_entity_bundles};
 use super::{
-    capability_query_from_intent_phrase, diversify_entity_bundles, retrieve_entity_candidate_bundles,
-    EntityCandidateBundle, EntityCandidateConfig, EntityCapabilityEvidence,
+    capability_query_from_intent_phrase, diversify_entity_bundles,
+    retrieve_entity_candidate_bundles, EntityCandidateBundle, EntityCandidateConfig,
+    EntityCapabilityEvidence,
 };
 
 fn matrix_registry() -> InMemoryCgsRegistry {
@@ -135,7 +136,8 @@ fn merge_required_adds_injected_issue_from_pool() {
         },
     );
     let required = vec![pool[&("jira".into(), "Issue".into())].clone()];
-    let merged = merge_required_entity_bundles(diversified, &required, EntityCandidateConfig::default());
+    let merged =
+        merge_required_entity_bundles(diversified, &required, EntityCandidateConfig::default());
     assert!(
         merged.iter().any(|b| b.entity == "Issue"),
         "merged: {:?}",
@@ -150,12 +152,8 @@ fn inject_workflow_adds_jira_issue_to_pool() {
         return;
     }
     let cgs = Arc::new(load_schema_dir(&dir).expect("load jira"));
-    let reg = InMemoryCgsRegistry::from_pairs(vec![(
-        "jira".into(),
-        "Jira".into(),
-        vec![],
-        cgs.clone(),
-    )]);
+    let reg =
+        InMemoryCgsRegistry::from_pairs(vec![("jira".into(), "Jira".into(), vec![], cgs.clone())]);
     let intent = "Move the blocker Jira ticket to Done in the current sprint.";
     let query = capability_query_from_intent_phrase(intent);
     let discovery = reg.discover(&query).expect("discover");
@@ -205,12 +203,7 @@ fn workflow_mutation_inject_survives_diversification_for_jira_transition() {
         return;
     }
     let cgs = Arc::new(load_schema_dir(&dir).expect("load jira"));
-    let reg = InMemoryCgsRegistry::from_pairs(vec![(
-        "jira".into(),
-        "Jira".into(),
-        vec![],
-        cgs,
-    )]);
+    let reg = InMemoryCgsRegistry::from_pairs(vec![("jira".into(), "Jira".into(), vec![], cgs)]);
     let intent = "Move the blocker Jira ticket to Done in the current sprint.";
     let config = EntityCandidateConfig::default();
     let query = capability_query_from_intent_phrase(intent);
@@ -321,10 +314,7 @@ fn merge_required_entity_bundles_evicts_low_score_same_catalog() {
         },
     );
     assert!(merged.iter().any(|b| b.entity == "Issue"));
-    assert_eq!(
-        merged.iter().filter(|b| b.entry_id == "jira").count(),
-        2
-    );
+    assert_eq!(merged.iter().filter(|b| b.entry_id == "jira").count(), 2);
 }
 
 #[test]

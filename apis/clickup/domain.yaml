@@ -1,4 +1,4 @@
-version: 5
+version: 6
 http_backend: https://api.clickup.com/api
 data_classes:
   untrusted:
@@ -13,26 +13,25 @@ data_classes:
   external_publish:
     description: Public-visible task or comment content change within the workspace.
     severity: critical
-
 schema_overlay:
   source:
     steps:
-      - capability: team_query
-        collect: teams
-        items_path:
-          - teams
-      - capability: custom_field_query
-        for_each: teams
-        bind:
-          team_id: "{{ row.id }}"
-        merge:
-          kind: append_array
-          path:
-            - fields
+    - capability: team_query
+      collect: teams
+      items_path:
+      - teams
+    - capability: custom_field_query
+      for_each: teams
+      bind:
+        team_id: '{{ row.id }}'
+      merge:
+        kind: append_array
+        path:
+        - fields
   projection:
     mode: augment_base
     items_path:
-      - fields
+    - fields
   entity:
     from_template: Task
     name:
@@ -44,11 +43,11 @@ schema_overlay:
         kind: array
         path: []
       wire_name_path:
-        - name
+      - name
       wire_type_path:
-        - type
+      - type
       name:
-        template: "{{ field.name | sanitize_identifier }}"
+        template: '{{ field.name | sanitize_identifier }}'
       type_map:
         checkbox: nv_wire_bool
         currency: nv_wire_int
@@ -70,10 +69,10 @@ schema_overlay:
       extract:
         kind: name_value_array
         array_path:
-          - custom_fields
+        - custom_fields
         match_key_field: name
         match_equals:
-          template: "{{ field.name }}"
+          template: '{{ field.name }}'
         value_field: value
   decode:
     scope:
@@ -81,10 +80,9 @@ schema_overlay:
       key:
         template: global
     capabilities:
-      - task_get
-      - task_query
-      - list_task_query
-
+    - task_get
+    - task_query
+    - list_task_query
 entities:
   Team:
     id_field: id
@@ -376,11 +374,7 @@ entities:
       color:
         required: false
         value_ref: nv_wire_str_short
-    relations:
-      key_results:
-        description: Measurable key results for this goal.
-        target: KeyResult
-        cardinality: many
+    relations: {}
   KeyResult:
     id_field: id
     description: A measurable outcome tied to a goal.
@@ -1675,13 +1669,11 @@ values:
   nv_task_due_date:
     type: date
     value_format: unix_ms
-    description: Due date/time as Unix ms on the wire. For updates, this is not for status labels or progress notes—use the.
-      `status` and `description` fields instead.
+    description: Due date/time as Unix ms on the wire. For updates, this is not for status labels or progress notes—use the. `status` and `description` fields instead.
   nv_task_id:
     type: string
     string_semantics: short
-    description: ClickUp task id (string). Use the exact value from the API, task URL, or list response—alphanumeric custom.
-      ids (e.g. 86abc1234). Do not invent or paraphrase ids; a mistyped id yields 404 or failed requests.
+    description: ClickUp task id (string). Use the exact value from the API, task URL, or list response—alphanumeric custom. ids (e.g. 86abc1234). Do not invent or paraphrase ids; a mistyped id yields 404 or failed requests.
   nv_task_intervals_task_id:
     type: entity_ref
     target: Task
@@ -1751,8 +1743,7 @@ values:
   nv_task_update_description:
     type: string
     string_semantics: markdown
-    description: Longer notes, checklists, bracketed context, and commentary. Use this instead of stuffing prose into `due_date`.
-      or `archived`.
+    description: Longer notes, checklists, bracketed context, and commentary. Use this instead of stuffing prose into `due_date`. or `archived`.
   nv_task_update_due_date:
     type: date
     value_format: unix_ms
@@ -1775,8 +1766,7 @@ values:
   nv_task_update_status:
     type: string
     string_semantics: short
-    description: Workflow status name as defined in the list/space (e.g. "To do", "In progress", "Done"). Use this for state.
-      labels—not the `due_date` or `archived` fields.
+    description: Workflow status name as defined in the list/space (e.g. "To do", "In progress", "Done"). Use this for state. labels—not the `due_date` or `archived` fields.
   nv_task_update_time_estimate:
     type: integer
     description: Estimate in milliseconds (ClickUp `time_estimate`).

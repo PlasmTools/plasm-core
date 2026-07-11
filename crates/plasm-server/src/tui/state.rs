@@ -325,7 +325,10 @@ impl RunState {
                 | (RunScreen::OAuth, InputMode::ConfirmOAuthDisable { .. })
                 | (RunScreen::Keys, InputMode::AddKeyLabel { .. })
                 | (RunScreen::Keys, InputMode::ConfirmKeyRevoke { .. })
-                | (RunScreen::Discovery, InputMode::DiscoveryOpenRouterKey { .. })
+                | (
+                    RunScreen::Discovery,
+                    InputMode::DiscoveryOpenRouterKey { .. }
+                )
         );
         if !reset && !matches!(self.mode, InputMode::Normal) {
             self.mode = InputMode::Normal;

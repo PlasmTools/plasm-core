@@ -29,9 +29,10 @@ pub(crate) fn render(
             Span::styled("OpenRouter key: ", dim_style()),
             Span::raw("*".repeat(display.len().min(48))),
         ]));
-        lines.push(Line::from(vec![
-            Span::styled("Enter to save · Esc cancel", dim_style()),
-        ]));
+        lines.push(Line::from(vec![Span::styled(
+            "Enter to save · Esc cancel",
+            dim_style(),
+        )]));
     } else {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![

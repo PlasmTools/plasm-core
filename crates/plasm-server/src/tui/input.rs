@@ -245,8 +245,7 @@ pub(crate) fn update_modal_key(state: &mut RunState, key: KeyEvent, deps: &Updat
                         )
                         .with_sticky(false),
                     );
-                } else if let Err(e) = crate::discovery_bootstrap::set_openrouter_api_key(&secret)
-                {
+                } else if let Err(e) = crate::discovery_bootstrap::set_openrouter_api_key(&secret) {
                     set_notice(
                         state,
                         RunNotice::new(NoticeSeverity::Error, "Save failed", e),
@@ -950,7 +949,8 @@ The control station stores secrets in auth-framework KV, so there is nowhere to 
         }
         KeyCode::Char('e') if state.screen == RunScreen::Discovery => {
             if matches!(state.mode, InputMode::Normal) {
-                let enabled = !crate::discovery_bootstrap::current_state().semantic_auto_seed_enabled;
+                let enabled =
+                    !crate::discovery_bootstrap::current_state().semantic_auto_seed_enabled;
                 match crate::discovery_bootstrap::set_semantic_auto_seed_enabled(enabled) {
                     Ok(()) => {
                         set_notice(
@@ -986,9 +986,7 @@ The control station stores secrets in auth-framework KV, so there is nowhere to 
         }
         KeyCode::Char('k') if state.screen == RunScreen::Discovery => {
             if matches!(state.mode, InputMode::Normal) {
-                state.mode = InputMode::DiscoveryOpenRouterKey {
-                    buf: String::new(),
-                };
+                state.mode = InputMode::DiscoveryOpenRouterKey { buf: String::new() };
             }
         }
         KeyCode::Down | KeyCode::Char('j') if state.screen == RunScreen::Keys => {

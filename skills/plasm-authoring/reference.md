@@ -459,7 +459,25 @@ Expose **next hops as relations** (`relation_outputs:` → decoded `Ref` edges o
     - `kind: node_all_rows`
     - `kind: node_single_row`
 
-Inner nodes may be `query` or `get` capabilities that already have normal CML mappings; the runtime issues HTTP for those only. **`kind: action` is not supported** as a view node today — model explorer-style calls as **`kind: action`** on the target entity (e.g. datasource explorers) or as a standalone capability when a single HTTP op is enough.
+**Executable many-relations (required):** Every `entities.*.relations` edge with `cardinality: many` that agents can traverse (teaching `.r#`, discovery hints, semantic auto-seed) **must** declare `materialize:`. For view-backed hops that mirror `relation_outputs:`, use **`view_embed`** — do not rely on omitting `materialize` and hoping runtime cached embed works.
+
+```yaml
+relations:
+  issues:
+    target: Issue
+    cardinality: many
+    materialize:
+      kind: view_embed
+      view: my_work          # views: key
+      relation: issues       # must match relation_outputs.relation
+```
+
+- **`view_embed`** chains after a row produced by that view's query/get (`transport: view`); targets resolve via the view DAG's `relation_outputs` binding.
+- **`query_scoped` / `from_parent_get`** remain valid when the hop is not view-backed (scoped list APIs, GET embed arrays).
+- **Anti-pattern:** `cardinality: many` relation + `relation_outputs:` with **no** `materialize:` — load may auto-synthesize `view_embed` during migration, but new catalogs must declare it explicitly. Unavailable many-relations are rejected at `CGS::validate`.
+
+Historical incident: Linear `MyWorkSnapshot.issues` advertised without executable materialize — see `docs/linear-plasm-mcp-failures-triage.md`.
+
 
 #### View computed templates (filters and time)
 

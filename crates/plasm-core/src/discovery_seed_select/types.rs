@@ -36,4 +36,3 @@ pub struct SeedAlternativeSetRaw {
     #[serde(default)]
     pub label: String,
 }
-

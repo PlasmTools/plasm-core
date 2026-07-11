@@ -1,4 +1,4 @@
-version: 13
+version: 14
 http_backend: https://gmail.googleapis.com
 data_classes:
   untrusted:
@@ -13,9 +13,7 @@ data_classes:
 entities:
   Message:
     id_field: id
-    description: A Gmail message (email). messages.list returns only id+threadId; messages.get returns full content including.
-      RFC 5322 headers flattened from payload.headers (headerFrom, headerSubject, …). Mailbox-wide text search uses the q
-      parameter or Message~"…" (not the snippet field — snippet is a preview string returned on each row).
+    description: A Gmail message (email). messages.list returns only id+threadId; messages.get returns full content including. RFC 5322 headers flattened from payload.headers (headerFrom, headerSubject, …). Mailbox-wide text search uses the q parameter or Message~"…" (not the snippet field — snippet is a preview string returned on each row).
     fields:
       id:
         required: true
@@ -142,11 +140,7 @@ entities:
         - payload
         - headers
         value_ref: nv_message_header_in_reply_to
-    relations:
-      attachments:
-        description: Attachments on this message.
-        target: Attachment
-        cardinality: many
+    relations: {}
   Thread:
     id_field: id
     primary_read: thread_get
@@ -336,8 +330,7 @@ capabilities:
       required: false
       role: filter
   message_search:
-    description: Gmail full-text search (same endpoint as message list). Use Message~"text" or message search --q; combine.
-      with labelIds/includeSpamTrash as needed.
+    description: Gmail full-text search (same endpoint as message list). Use Message~"text" or message search --q; combine. with labelIds/includeSpamTrash as needed.
     kind: search
     entity: Message
     provides:
@@ -423,8 +416,7 @@ capabilities:
       value_ref: nv_message_send_simple_references
       required: false
   message_reply:
-    description: Reply to the invoke target message (plain text). Runtime preflight runs message_get on the target id to fill.
-      threading; same POST users.messages.send as message_send_simple.
+    description: Reply to the invoke target message (plain text). Runtime preflight runs message_get on the target id to fill. threading; same POST users.messages.send as message_send_simple.
     kind: action
     entity: Message
     preflight:
@@ -482,8 +474,7 @@ capabilities:
       value_ref: nv_message_modify_remove_label_ids
       required: false
   thread_list:
-    description: Find email conversation threads in the mailbox — where people agreed on plans, rollout dates, or open follow-ups.
-      Returns {id, historyId} per thread; default hydration loads snippet and nested messages via thread_get.
+    description: Find email conversation threads in the mailbox — where people agreed on plans, rollout dates, or open follow-ups. Returns {id, historyId} per thread; default hydration loads snippet and nested messages via thread_get.
     kind: query
     entity: Thread
     discovery:
@@ -537,8 +528,7 @@ capabilities:
       required: false
       role: filter
   thread_get:
-    description: Fetch a thread with nested messages (threads.get). Used by default after thread_list/thread_search to upgrade.
-      summary rows; each row costs one HTTP GET.
+    description: Fetch a thread with nested messages (threads.get). Used by default after thread_list/thread_search to upgrade. summary rows; each row costs one HTTP GET.
     kind: get
     entity: Thread
     provides:
@@ -842,13 +832,11 @@ oauth:
   scopes:
     https://mail.google.com/:
       label: Full Gmail (including permanent delete)
-      notes: Broadest scope; subsumes narrower Gmail scopes. Use when this CGS must satisfy message_delete/thread_delete and
-        other full-mailbox operations.
+      notes: Broadest scope; subsumes narrower Gmail scopes. Use when this CGS must satisfy message_delete/thread_delete and other full-mailbox operations.
       docs_url: https://developers.google.com/gmail/api/auth/scopes
     https://www.googleapis.com/auth/gmail.readonly:
       label: Read mail and settings
-      notes: List/search messages and threads, read bodies and attachments, labels, drafts, profile — the default functional
-        read-only grant for this schema (including default query hydration).
+      notes: List/search messages and threads, read bodies and attachments, labels, drafts, profile — the default functional read-only grant for this schema (including default query hydration).
       docs_url: https://developers.google.com/gmail/api/auth/scopes
     https://www.googleapis.com/auth/gmail.modify:
       label: Read, compose, send (not permanent delete bypassing trash)
@@ -901,18 +889,15 @@ oauth:
       notes: Not required for Gmail REST capabilities in this CGS.
   default_scope_sets:
     plasm_gmail_readonly_mailbox:
-      description: Functional read-only mailbox — list, search (q / Message~ / Thread~), get bodies, attachments, drafts read.
-        labels read, profile; matches default Plasm hydration.
+      description: Functional read-only mailbox — list, search (q / Message~ / Thread~), get bodies, attachments, drafts read. labels read, profile; matches default Plasm hydration.
       scopes:
       - https://www.googleapis.com/auth/gmail.readonly
     plasm_gmail_modify_mailbox:
-      description: Triage and mailbox edits — readonly-class reads plus trash, label changes on messages/threads, and related.
-        modify operations in this CGS.
+      description: Triage and mailbox edits — readonly-class reads plus trash, label changes on messages/threads, and related. modify operations in this CGS.
       scopes:
       - https://www.googleapis.com/auth/gmail.modify
     plasm_gmail_compose_and_drafts:
-      description: Drafts and composition — create/update/send drafts and message_send; combine with gmail.readonly or gmail.modify.
-        for read paths as needed.
+      description: Drafts and composition — create/update/send drafts and message_send; combine with gmail.readonly or gmail.modify. for read paths as needed.
       scopes:
       - https://www.googleapis.com/auth/gmail.compose
     plasm_gmail_send_only:
@@ -924,9 +909,7 @@ oauth:
       scopes:
       - https://mail.google.com/
     plasm_gmail_integrator_bundle:
-      description: Broad integration bundle (OpenID userinfo + Google Contacts/People read scopes + full mail.google.com).
-        Includes mail.google.com but omits explicit gmail.readonly; prefer plasm_gmail_readonly_mailbox for read automation
-        unless an integrator requires this wide grant.
+      description: Broad integration bundle (OpenID userinfo + Google Contacts/People read scopes + full mail.google.com). Includes mail.google.com but omits explicit gmail.readonly; prefer plasm_gmail_readonly_mailbox for read automation unless an integrator requires this wide grant.
       scopes:
       - https://www.googleapis.com/auth/userinfo.profile
       - https://www.googleapis.com/auth/userinfo.email
@@ -1118,12 +1101,6 @@ oauth:
         - https://www.googleapis.com/auth/gmail.modify
         - https://mail.google.com/
     relations:
-      Message.attachments:
-        any_of:
-        - https://www.googleapis.com/auth/gmail.readonly
-        - https://www.googleapis.com/auth/gmail.modify
-        - https://www.googleapis.com/auth/gmail.compose
-        - https://mail.google.com/
       ReplyContext.message:
         any_of:
         - https://www.googleapis.com/auth/gmail.readonly
@@ -1228,9 +1205,7 @@ values:
     - metadata
     - minimal
     - raw
-    description: full (default) returns body; metadata returns headers only; minimal returns id+labels; raw is the full RFC.
-      2822. Narrow OAuth grants may only allow format metadata or minimal — use list queries with --summary if you must avoid
-      default hydration that calls get with full.
+    description: full (default) returns body; metadata returns headers only; minimal returns id+labels; raw is the full RFC. 2822. Narrow OAuth grants may only allow format metadata or minimal — use list queries with --summary if you must avoid default hydration that calls get with full.
   nv_message_header_bcc:
     type: string
     string_semantics: short
@@ -1308,8 +1283,7 @@ values:
     description: Override To (default is Reply-To or From of the message being replied to).
   nv_message_search_include_spam_trash:
     type: boolean
-    description: Google boolean only — true or false. When true, the list includes messages in Spam and Trash. Never pass.
-      a label name here (e.g. INBOX); use labelIds for that.
+    description: Google boolean only — true or false. When true, the list includes messages in Spam and Trash. Never pass. a label name here (e.g. INBOX); use labelIds for that.
   nv_message_search_q:
     type: string
     string_semantics: short
@@ -1376,9 +1350,7 @@ values:
     - full
     - metadata
     - minimal
-    description: full returns all messages with bodies; metadata omits bodies; minimal is ids and labels only. Narrow OAuth.
-      grants may only allow format metadata or minimal — use thread list with --summary if you must avoid default hydration
-      that calls get with full.
+    description: full returns all messages with bodies; metadata omits bodies; minimal is ids and labels only. Narrow OAuth. grants may only allow format metadata or minimal — use thread list with --summary if you must avoid default hydration that calls get with full.
   nv_thread_history_id:
     type: string
     string_semantics: short
@@ -1389,16 +1361,14 @@ values:
     description: Immutable thread ID (matches the first message's ID).
   nv_thread_list_include_spam_trash:
     type: boolean
-    description: Google boolean only — true or false. When true, the list includes threads in Spam and Trash. Never pass a.
-      label name here (e.g. INBOX); use labelIds for that.
+    description: Google boolean only — true or false. When true, the list includes threads in Spam and Trash. Never pass a. label name here (e.g. INBOX); use labelIds for that.
   nv_thread_list_q:
     type: string
     string_semantics: short
     description: Gmail search query (same syntax as message_list).
   nv_thread_search_include_spam_trash:
     type: boolean
-    description: Google boolean only — true or false. When true, the list includes threads in Spam and Trash. Never pass a.
-      label name here (e.g. INBOX); use labelIds for that.
+    description: Google boolean only — true or false. When true, the list includes threads in Spam and Trash. Never pass a. label name here (e.g. INBOX); use labelIds for that.
   nv_thread_search_q:
     type: string
     string_semantics: short
@@ -1430,8 +1400,7 @@ values:
     type: array
     items:
       value_ref: nv_wire_str_short
-    description: Return only messages that have ALL of these label IDs (repeat query param per id). Use system labels such.
-      as INBOX, SENT, or user labels — this is mailbox/label filtering
+    description: Return only messages that have ALL of these label IDs (repeat query param per id). Use system labels such. as INBOX, SENT, or user labels — this is mailbox/label filtering
   nv_message_modify_add_label_ids:
     type: array
     items:
@@ -1446,14 +1415,12 @@ values:
     type: array
     items:
       value_ref: nv_wire_str_short
-    description: Return only messages that have ALL of these label IDs (repeat query param per id). Use system labels such.
-      as INBOX, SENT, or user labels — this is mailbox/label filtering; it is not the same as includeSpamTrash.
+    description: Return only messages that have ALL of these label IDs (repeat query param per id). Use system labels such. as INBOX, SENT, or user labels — this is mailbox/label filtering; it is not the same as includeSpamTrash.
   nv_thread_list_label_ids:
     type: array
     items:
       value_ref: nv_wire_str_short
-    description: Return only threads that have ALL of these label IDs (repeat query param per id). Use system labels such.
-      as INBOX, SENT, or user labels — this is mailbox/label filtering; it is not the same as includeSpamTrash.
+    description: Return only threads that have ALL of these label IDs (repeat query param per id). Use system labels such. as INBOX, SENT, or user labels — this is mailbox/label filtering; it is not the same as includeSpamTrash.
   nv_thread_modify_add_label_ids:
     type: array
     items:
@@ -1468,5 +1435,4 @@ values:
     type: array
     items:
       value_ref: nv_wire_str_short
-    description: Return only threads that have ALL of these label IDs (repeat query param per id). Use system labels such.
-      as INBOX, SENT, or user labels — this is mailbox/label filtering; it is not the same as includeSpamTrash.
+    description: Return only threads that have ALL of these label IDs (repeat query param per id). Use system labels such. as INBOX, SENT, or user labels — this is mailbox/label filtering; it is not the same as includeSpamTrash.

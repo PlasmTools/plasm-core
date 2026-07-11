@@ -7,7 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.4.14] - 2026-07-11
+## [0.4.16] - 2026-07-11
+
+### Added
+
+- **CGS `view_embed` materialization:** view-backed many-relations declare executable hops via `materialize.kind: view_embed` (links entity `relations:` to `views.relation_outputs:`).
+- **Load-time normalization (`cgs_normalize`):** auto-synthesizes `view_embed` from view DAG outputs and migrates legacy `via_param:` → `query_scoped`.
+- **Executability gate:** `CGS::validate` rejects `cardinality: many` relations without executable materialize (`RelationNotExecutable`).
+- **`plasm-cli validate`:** exercises view-root → relation chain for each `view_embed` edge.
+- **E2E:** `LangTriageContext.tags` view_embed traversal in `plasm_language_matrix_views`; Linear smoke asserts `MyWorkSnapshot.issues` materialize.
+
+### Changed
+
+- **Linear catalog (`version: 12`):** explicit `view_embed` on `MyWorkSnapshot`, `ProjectContext`, and `CycleBoardSnapshot` issue/update hops.
+- **Catalog sweep:** removed or materialized non-executable many-relations across pokeapi, graphqlzero, gmail, clickup; rickandmorty embed paths; GitLab `via_param` now honored at load.
+- **Authoring:** `plasm-authoring/reference.md` documents `view_embed` requirement and anti-pattern for view-only relations.
+
+### Fixed
+
+- **View relation execution:** `ViewEmbed` uses explicit cached-embed materialize (no silent `Unavailable` + best-effort side door); clear error when view root was not executed first.
+- **Semantic auto-seed / discovery seed select:** refinements to bundle selection and rewriter tests.
+
 
 ### Added
 

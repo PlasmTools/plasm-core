@@ -5,7 +5,7 @@
 //! [`assemble_cgs`], [`CGS::validate`].
 //! For CML template parsing after load: `plasm_compile::transport=trace`.
 
-use crate::identity::{CapabilityName, EntityFieldName, EntityName, RelationName};
+use crate::identity::{CapabilityName, CapabilityParamName, EntityFieldName, EntityName, RelationName};
 use crate::schema::{FieldValueKind, NamedValueSchema, ValueDomainKey, ViewDefinition};
 use crate::{
     capability_template_all_var_names, AgentPresentation, ArrayItemsSchema, AttachmentMediaKind,
@@ -262,6 +262,9 @@ pub struct DomainRelation {
     /// How chain traversal resolves this edge (`query_scoped`, `from_parent_get`, …).
     #[serde(default)]
     pub materialize: Option<crate::RelationMaterialization>,
+    /// Legacy authoring key; normalized to `materialize.query_scoped` at load.
+    #[serde(default)]
+    pub via_param: Option<String>,
     #[serde(default)]
     pub discovery: Option<crate::DiscoveryRelationHints>,
 }
@@ -396,9 +399,9 @@ fn load_split_schema_internal(
     debug!(keys = mappings.len(), "phase: mappings YAML parsed");
 
     debug!("phase: assemble_cgs");
-    let cgs = assemble_cgs_core(domain, mappings)?;
+    let mut cgs = assemble_cgs_core(domain, mappings)?;
     if validate {
-        finalize_cgs_load(&cgs)?;
+        finalize_cgs_load(&mut cgs)?;
     }
 
     info!(
@@ -421,8 +424,9 @@ pub fn load_schema_dir_unvalidated(dir: &Path) -> Result<CGS, String> {
     )
 }
 
-/// Run post-assemble validation and string-semantics checks (after optional mutation such as pinning `entry_id`).
-pub fn finalize_cgs_load(cgs: &CGS) -> Result<(), String> {
+/// Run post-assemble normalization, validation, and string-semantics checks.
+pub fn finalize_cgs_load(cgs: &mut CGS) -> Result<(), String> {
+    cgs.normalize_relation_materialization();
     debug!(
         entities = cgs.entities.len(),
         capabilities = cgs.capabilities.len(),
@@ -827,6 +831,10 @@ fn assemble_cgs_core(
                     Cardinality::One
                 },
                 materialize: r.materialize.clone(),
+                legacy_via_param: r
+                    .via_param
+                    .as_ref()
+                    .map(|p| CapabilityParamName::from(p.as_str())),
                 discovery: r.discovery.clone(),
             })
             .collect();
@@ -917,8 +925,8 @@ fn assemble_cgs(
     domain: DomainFile,
     mappings: IndexMap<String, serde_json::Value>,
 ) -> Result<CGS, String> {
-    let cgs = assemble_cgs_core(domain, mappings)?;
-    finalize_cgs_load(&cgs)?;
+    let mut cgs = assemble_cgs_core(domain, mappings)?;
+    finalize_cgs_load(&mut cgs)?;
     Ok(cgs)
 }
 

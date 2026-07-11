@@ -1,4 +1,4 @@
-version: 1
+version: 2
 auth:
   scheme: none
 http_backend: https://pokeapi.co
@@ -98,11 +98,7 @@ entities:
       url:
         required: false
         value_ref: nv_berry_firmness_url
-    relations:
-      berries:
-        description: Berries with this firmness.
-        target: Berry
-        cardinality: many
+    relations: {}
   BerryFlavor:
     id_field: name
     description: A flavor profile for berries.
@@ -189,11 +185,7 @@ entities:
       url:
         required: false
         value_ref: nv_egg_group_url
-    relations:
-      pokemon_species:
-        description: Species in this egg group.
-        target: PokemonSpecies
-        cardinality: many
+    relations: {}
   EncounterMethod:
     id_field: name
     description: Method of encountering wild Pokémon.
@@ -223,11 +215,7 @@ entities:
       url:
         required: false
         value_ref: nv_encounter_condition_url
-    relations:
-      values:
-        description: Possible values for this condition.
-        target: EncounterConditionValue
-        cardinality: many
+    relations: {}
   EncounterConditionValue:
     id_field: name
     description: A specific value for an encounter condition.
@@ -274,11 +262,7 @@ entities:
       url:
         required: false
         value_ref: nv_evolution_trigger_url
-    relations:
-      pokemon_species:
-        description: Species that evolve via this trigger.
-        target: PokemonSpecies
-        cardinality: many
+    relations: {}
   Generation:
     id_field: name
     description: A game generation (e.g. Gen I, Gen II).
@@ -310,15 +294,7 @@ entities:
       url:
         required: false
         value_ref: nv_gender_url
-    relations:
-      pokemon_species_details:
-        description: Species with gender-specific details.
-        target: PokemonSpecies
-        cardinality: many
-      required_for_evolution:
-        description: Species requiring this gender to evolve.
-        target: PokemonSpecies
-        cardinality: many
+    relations: {}
   GrowthRate:
     id_field: name
     description: An experience growth rate curve.
@@ -335,11 +311,7 @@ entities:
       formula:
         required: false
         value_ref: nv_growth_rate_formula
-    relations:
-      pokemon_species:
-        description: Species that use this growth rate.
-        target: PokemonSpecies
-        cardinality: many
+    relations: {}
   Item:
     id_field: name
     description: A collectible item in the Pokémon world.
@@ -390,10 +362,6 @@ entities:
         description: Bag pocket this category belongs to.
         target: ItemPocket
         cardinality: one
-      items:
-        description: Items in this category.
-        target: Item
-        cardinality: many
   ItemAttribute:
     id_field: name
     description: A trait or property of items.
@@ -407,11 +375,7 @@ entities:
       url:
         required: false
         value_ref: nv_item_attribute_url
-    relations:
-      items:
-        description: Items with this attribute.
-        target: Item
-        cardinality: many
+    relations: {}
   ItemFlingEffect:
     id_field: name
     description: Effect when an item is flung in battle.
@@ -425,11 +389,7 @@ entities:
       url:
         required: false
         value_ref: nv_item_fling_effect_url
-    relations:
-      items:
-        description: Items with this fling effect.
-        target: Item
-        cardinality: many
+    relations: {}
   ItemPocket:
     id_field: name
     description: A pocket in the player's bag.
@@ -443,11 +403,7 @@ entities:
       url:
         required: false
         value_ref: nv_item_pocket_url
-    relations:
-      categories:
-        description: Item categories in this pocket.
-        target: ItemCategory
-        cardinality: many
+    relations: {}
   Language:
     id_field: name
     description: A language for localized game text.
@@ -488,10 +444,6 @@ entities:
         description: Region this location belongs to.
         target: Region
         cardinality: one
-      areas:
-        description: Sub-areas within this location.
-        target: LocationArea
-        cardinality: many
   LocationArea:
     id_field: name
     description: A sub-area within a location.
@@ -615,11 +567,7 @@ entities:
       url:
         required: false
         value_ref: nv_move_ailment_url
-    relations:
-      moves:
-        description: Moves that cause this ailment.
-        target: Move
-        cardinality: many
+    relations: {}
   MoveBattleStyle:
     id_field: name
     description: A battle style for move preferences.
@@ -646,11 +594,7 @@ entities:
       url:
         required: false
         value_ref: nv_move_category_url
-    relations:
-      moves:
-        description: Moves in this category.
-        target: Move
-        cardinality: many
+    relations: {}
   MoveDamageClass:
     id_field: name
     description: Physical, special, or status classification.
@@ -664,11 +608,7 @@ entities:
       url:
         required: false
         value_ref: nv_move_damage_class_url
-    relations:
-      moves:
-        description: Moves with this damage class.
-        target: Move
-        cardinality: many
+    relations: {}
   MoveLearnMethod:
     id_field: name
     description: How a Pokémon can learn a move.
@@ -682,11 +622,7 @@ entities:
       url:
         required: false
         value_ref: nv_move_learn_method_url
-    relations:
-      version_groups:
-        description: Version groups using this learn method.
-        target: VersionGroup
-        cardinality: many
+    relations: {}
   MoveTarget:
     id_field: name
     description: What a move can target in battle.
@@ -700,11 +636,7 @@ entities:
       url:
         required: false
         value_ref: nv_move_target_url
-    relations:
-      moves:
-        description: Moves with this target type.
-        target: Move
-        cardinality: many
+    relations: {}
   Nature:
     id_field: name
     description: A nature affecting stat growth.
@@ -735,10 +667,6 @@ entities:
         description: Flavor disliked by this nature.
         target: BerryFlavor
         cardinality: one
-      berries:
-        description: Berries associated with this nature.
-        target: Berry
-        cardinality: many
   PalParkArea:
     id_field: name
     description: An area in Pal Park for migration.
@@ -752,11 +680,7 @@ entities:
       url:
         required: false
         value_ref: nv_pal_park_area_url
-    relations:
-      pokemon_species:
-        description: Species found in this area.
-        target: PokemonSpecies
-        cardinality: many
+    relations: {}
   Pokedex:
     id_field: name
     description: A regional Pokédex catalog.
@@ -867,11 +791,7 @@ entities:
       url:
         required: false
         value_ref: nv_pokemon_color_url
-    relations:
-      pokemon_species:
-        description: Species with this body color.
-        target: PokemonSpecies
-        cardinality: many
+    relations: {}
   PokemonEncounter:
     id_field: url
     description: Where a specific Pokémon can be found.
@@ -938,11 +858,7 @@ entities:
       url:
         required: false
         value_ref: nv_pokemon_habitat_url
-    relations:
-      pokemon_species:
-        description: Species found in this habitat.
-        target: PokemonSpecies
-        cardinality: many
+    relations: {}
   PokemonShape:
     id_field: name
     description: A body shape classification for Pokémon.
@@ -956,11 +872,7 @@ entities:
       url:
         required: false
         value_ref: nv_pokemon_shape_url
-    relations:
-      pokemon_species:
-        description: Species with this body shape.
-        target: PokemonSpecies
-        cardinality: many
+    relations: {}
   PokemonSpecies:
     id_field: name
     description: A Pokémon species with lore and breeding data.
@@ -1033,18 +945,6 @@ entities:
         description: Body shape classification.
         target: PokemonShape
         cardinality: one
-      egg_groups:
-        description: Breeding compatibility groups.
-        target: EggGroup
-        cardinality: many
-      varieties:
-        description: Pokémon variants of this species.
-        target: Pokemon
-        cardinality: many
-      pal_park_areas:
-        description: Pal Park areas for migration.
-        target: PalParkArea
-        cardinality: many
   PokeathlonStat:
     id_field: name
     description: A stat used in Pokéathlon events.
@@ -1072,22 +972,10 @@ entities:
         required: false
         value_ref: nv_region_url
     relations:
-      locations:
-        description: Locations within this region.
-        target: Location
-        cardinality: many
       main_generation:
         description: Primary generation for this region.
         target: Generation
         cardinality: one
-      pokedexes:
-        description: Pokédex catalogs for this region.
-        target: Pokedex
-        cardinality: many
-      version_groups:
-        description: Version groups set in this region.
-        target: VersionGroup
-        cardinality: many
   Stat:
     id_field: name
     description: A base stat (HP, Attack, etc.).
@@ -1125,11 +1013,7 @@ entities:
       appeal:
         required: false
         value_ref: nv_super_contest_effect_appeal
-    relations:
-      moves:
-        description: Moves with this super contest effect.
-        target: Move
-        cardinality: many
+    relations: {}
   Type:
     id_field: name
     description: An elemental type (Fire, Water, etc.).

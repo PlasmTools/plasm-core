@@ -5,7 +5,7 @@ use indexmap::IndexMap;
 use crate::discovery::{EntitySummary, RankedCandidate};
 use crate::schema::CGS;
 
-use super::types::{EntityCapabilityEvidence, EntityCandidateBundle};
+use super::types::{EntityCandidateBundle, EntityCapabilityEvidence};
 
 pub(crate) type ArcCgs = Arc<CGS>;
 

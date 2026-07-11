@@ -261,6 +261,7 @@ pub enum RelationMaterializationSummary {
     QueryScoped,
     QueryScopedBindings,
     GetScopedBindings,
+    ViewEmbed,
 }
 
 impl From<&RelationMaterialization> for RelationMaterializationSummary {
@@ -272,6 +273,7 @@ impl From<&RelationMaterialization> for RelationMaterializationSummary {
             RelationMaterialization::QueryScoped { .. } => Self::QueryScoped,
             RelationMaterialization::QueryScopedBindings { .. } => Self::QueryScopedBindings,
             RelationMaterialization::GetScopedBindings { .. } => Self::GetScopedBindings,
+            RelationMaterialization::ViewEmbed { .. } => Self::ViewEmbed,
         }
     }
 }

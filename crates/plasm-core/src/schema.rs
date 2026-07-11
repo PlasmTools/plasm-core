@@ -707,6 +707,11 @@ pub enum RelationMaterialization {
         capability: CapabilityName,
         bindings: IndexMap<CapabilityParamName, EntityFieldName>,
     },
+    /// Resolve targets from a composed view's `relation_outputs` after the view root row exists.
+    ViewEmbed {
+        view: String,
+        relation: RelationName,
+    },
 }
 
 /// Definition of a relation (graph edge) between resources.
@@ -721,6 +726,9 @@ pub struct RelationSchema {
     /// When set, defines how chain traversal materializes targets (`cardinality: many` required).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub materialize: Option<RelationMaterialization>,
+    /// Legacy authoring `via_param:` captured at load for normalize → `query_scoped`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legacy_via_param: Option<CapabilityParamName>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discovery: Option<DiscoveryRelationHints>,
 }
@@ -3055,7 +3063,13 @@ impl CGS {
                             .as_ref()
                             .unwrap_or(&RelationMaterialization::Unavailable);
                         match mat {
-                            RelationMaterialization::Unavailable => {}
+                            RelationMaterialization::Unavailable => {
+                                return Err(SchemaError::RelationNotExecutable {
+                                    entity: entity_name.to_string(),
+                                    relation: relation_name.to_string(),
+                                    target: relation.target_resource.to_string(),
+                                });
+                            }
                             RelationMaterialization::FromParentGet { path } => {
                                 Self::validate_from_parent_get_path(
                                     entity_name.as_str(),
@@ -3139,6 +3153,48 @@ impl CGS {
                                         relation: relation_name.to_string(),
                                     },
                                 );
+                            }
+                            RelationMaterialization::ViewEmbed {
+                                view,
+                                relation: embed_relation,
+                            } => {
+                                let view_def = self.views.get(view).ok_or_else(|| {
+                                    SchemaError::RelationViewEmbedUnknownView {
+                                        entity: entity_name.to_string(),
+                                        relation: relation_name.to_string(),
+                                        view: view.clone(),
+                                    }
+                                })?;
+                                if view_def.entity != *entity_name {
+                                    return Err(SchemaError::RelationViewEmbedEntityMismatch {
+                                        entity: entity_name.to_string(),
+                                        relation: relation_name.to_string(),
+                                        view: view.clone(),
+                                        view_entity: view_def.entity.to_string(),
+                                    });
+                                }
+                                if embed_relation.as_str() != relation_name.as_str() {
+                                    return Err(
+                                        SchemaError::RelationViewEmbedRelationNameMismatch {
+                                            entity: entity_name.to_string(),
+                                            relation: relation_name.to_string(),
+                                            expected: relation_name.to_string(),
+                                            got: embed_relation.to_string(),
+                                        },
+                                    );
+                                }
+                                let ro_ok = view_def.relation_outputs.iter().any(|ro| {
+                                    ro.relation.as_str() == relation_name.as_str()
+                                        && ro.target == relation.target_resource
+                                        && ro.cardinality == Cardinality::Many
+                                });
+                                if !ro_ok {
+                                    return Err(SchemaError::RelationNotExecutable {
+                                        entity: entity_name.to_string(),
+                                        relation: relation_name.to_string(),
+                                        target: relation.target_resource.to_string(),
+                                    });
+                                }
                             }
                         }
                     }

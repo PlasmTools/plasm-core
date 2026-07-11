@@ -17,8 +17,8 @@ use plasm_core::discovery_seed_baml::{
     SeedPresentationBundle, SeedPresentationProviderGroup,
 };
 use plasm_core::discovery_seed_select::{
-    validate_seed_selection, SeedSelectionDecision, SeedSelectionRaw,
-    SeedSelectionValidationError, ValidatedSeedSelection,
+    validate_seed_selection, SeedSelectionDecision, SeedSelectionRaw, SeedSelectionValidationError,
+    ValidatedSeedSelection,
 };
 use tracing::info;
 
@@ -31,7 +31,8 @@ pub fn semantic_auto_seed_enabled() -> bool {
 }
 
 fn openrouter_model() -> String {
-    std::env::var("PLASM_DISCOVERY_AUTO_SEED_MODEL").unwrap_or_else(|_| "openai/gpt-4.1-mini".into())
+    std::env::var("PLASM_DISCOVERY_AUTO_SEED_MODEL")
+        .unwrap_or_else(|_| "openai/gpt-4.1-mini".into())
 }
 
 fn openrouter_api_key() -> anyhow::Result<String> {
@@ -242,11 +243,11 @@ fn call_selector(
 
     let mut last_err = None;
     for attempt in 0..3u32 {
-        match B
-            .SelectDiscoverySeeds
-            .with_client_registry(&registry)
-            .call(intent, baml_provider_groups.as_slice(), baml_bundles.as_slice())
-        {
+        match B.SelectDiscoverySeeds.with_client_registry(&registry).call(
+            intent,
+            baml_provider_groups.as_slice(),
+            baml_bundles.as_slice(),
+        ) {
             Ok(assessment) => {
                 return from_baml(&assessment, &presentation, intent)
                     .context("resolve seed coverage assessment");

@@ -54,13 +54,8 @@ where
         .cloned()
         .collect();
 
-    let catalogs = load_catalog_contexts(
-        catalog,
-        &candidates,
-        &discovery,
-        intent,
-        allowed_entry_ids,
-    )?;
+    let catalogs =
+        load_catalog_contexts(catalog, &candidates, &discovery, intent, allowed_entry_ids)?;
 
     let mut grouped = group_candidates_by_entity(&candidates, &discovery, &catalogs, config);
     inject_retrieval_targets(&mut grouped, &catalogs, &candidates, intent, &discovery);
@@ -106,9 +101,9 @@ where
             if catalogs.contains_key(entry_id) {
                 continue;
             }
-            if allowed_entry_ids.is_some_and(|ids| {
-                !ids.is_empty() && !ids.iter().any(|id| id == entry_id)
-            }) {
+            if allowed_entry_ids
+                .is_some_and(|ids| !ids.is_empty() && !ids.iter().any(|id| id == entry_id))
+            {
                 continue;
             }
             if let Ok(ctx) = catalog.load_context(entry_id) {
@@ -120,9 +115,9 @@ where
         if catalogs.contains_key(entry_id) {
             continue;
         }
-        if allowed_entry_ids.is_some_and(|ids| {
-            !ids.is_empty() && !ids.iter().any(|id| id == entry_id)
-        }) {
+        if allowed_entry_ids
+            .is_some_and(|ids| !ids.is_empty() && !ids.iter().any(|id| id == entry_id))
+        {
             continue;
         }
         if let Ok(ctx) = catalog.load_context(entry_id) {

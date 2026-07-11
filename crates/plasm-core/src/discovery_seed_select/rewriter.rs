@@ -26,9 +26,7 @@ fn prefer_minimal_subset_bundle(
         .iter()
         .collect();
     let mut best = bundle_index;
-    let mut best_roots = tables
-        .bundle_root_count(bundle_index)
-        .unwrap_or(usize::MAX);
+    let mut best_roots = tables.bundle_root_count(bundle_index).unwrap_or(usize::MAX);
     for other in 0..tables.bundle_count() {
         if other == bundle_index || tables.provider_index_for_bundle(other) != Some(provider) {
             continue;
@@ -55,7 +53,8 @@ fn prefer_relation_nav_root(
     tables: &SeedBundleIndexTables,
 ) -> usize {
     if requirement_texts.iter().any(|text| {
-        signals::requirement_implies_mutation(text) || signals::requirement_implies_create_on_related(text)
+        signals::requirement_implies_mutation(text)
+            || signals::requirement_implies_create_on_related(text)
     }) {
         return bundle_index;
     }
@@ -113,7 +112,10 @@ pub(crate) fn prefer_mutation_capable_singleton(
     requirement_texts: &[String],
     tables: &SeedBundleIndexTables,
 ) -> usize {
-    if !requirement_texts.iter().any(|text| signals::requirement_implies_mutation(text)) {
+    if !requirement_texts
+        .iter()
+        .any(|text| signals::requirement_implies_mutation(text))
+    {
         return bundle_index;
     }
     let Some(provider) = tables.provider_index_for_bundle(bundle_index) else {
@@ -195,8 +197,7 @@ fn replace_auxiliary_candidate_ids(
                     if entity == preferred {
                         return id;
                     }
-                    if let Some(replacement) =
-                        candidate_id_for_entity(entry_id, preferred, tables)
+                    if let Some(replacement) = candidate_id_for_entity(entry_id, preferred, tables)
                     {
                         return replacement;
                     }
@@ -215,8 +216,7 @@ fn replace_auxiliary_candidate_ids(
                     "PullRequest",
                     "MergeRequest",
                 ] {
-                    if let Some(replacement) =
-                        candidate_id_for_entity(entry_id, preferred, tables)
+                    if let Some(replacement) = candidate_id_for_entity(entry_id, preferred, tables)
                     {
                         return replacement;
                     }
@@ -458,9 +458,10 @@ pub(crate) fn supporting_capabilities_for_candidate_ids(
             .into_iter()
             .flatten()
         {
-            if candidate_ids.iter().any(|candidate_id| {
-                capability_id.starts_with(&format!("{candidate_id}:"))
-            }) {
+            if candidate_ids
+                .iter()
+                .any(|candidate_id| capability_id.starts_with(&format!("{candidate_id}:")))
+            {
                 capabilities.push(capability_id.clone());
             }
         }
@@ -555,7 +556,10 @@ pub(crate) fn finalize_ready_bundle_index(
     let bundle_index = prefer_share_publish_target(bundle_index, requirement_texts, intent, tables);
     prefer_mutation_capable_singleton(bundle_index, requirement_texts, tables)
 }
-pub(crate) fn bundle_is_read_only_search(tables: &SeedBundleIndexTables, bundle_index: usize) -> bool {
+pub(crate) fn bundle_is_read_only_search(
+    tables: &SeedBundleIndexTables,
+    bundle_index: usize,
+) -> bool {
     let Some(kinds) = tables.capability_kinds_by_bundle.get(bundle_index) else {
         return false;
     };
@@ -588,12 +592,9 @@ pub(crate) fn candidate_ids_for_federated_bundle(
     requirement_text: &str,
     tables: &SeedBundleIndexTables,
 ) -> Result<Vec<String>, SeedSelectionValidationError> {
-    let ids = tables
-        .candidate_ids_by_bundle
-        .get(bundle_index)
-        .ok_or(SeedSelectionValidationError::UnknownBundleIndex(
-            bundle_index as i64,
-        ))?;
+    let ids = tables.candidate_ids_by_bundle.get(bundle_index).ok_or(
+        SeedSelectionValidationError::UnknownBundleIndex(bundle_index as i64),
+    )?;
     if ids.len() <= 1 {
         return Ok(ids.clone());
     }
@@ -625,7 +626,6 @@ pub(crate) fn candidate_ids_for_federated_bundle(
     Ok(by_entry.into_values().map(|(id, _)| id).collect())
 }
 
-
 /// Single candidate-id correction pass (context traps, auxiliary swaps, share targets).
 pub fn rewrite_selected_candidate_ids(
     selected_ids: Vec<String>,
@@ -633,7 +633,7 @@ pub fn rewrite_selected_candidate_ids(
     intent: &str,
     tables: &SeedBundleIndexTables,
 ) -> Vec<String> {
-    let context_fixed = replace_context_trap_candidate_ids(&selected_ids, requirement_texts, tables);
+    let context_fixed =
+        replace_context_trap_candidate_ids(&selected_ids, requirement_texts, tables);
     replace_auxiliary_candidate_ids(context_fixed, requirement_texts, intent, tables)
 }
-

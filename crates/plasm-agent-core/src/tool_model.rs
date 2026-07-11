@@ -998,6 +998,12 @@ fn materialization_view(m: &RelationMaterialization) -> ExplorerRelationMaterial
             param: None,
             binding_keys: Some(bindings.keys().map(|k| k.to_string()).collect()),
         },
+        RelationMaterialization::ViewEmbed { view, relation } => ExplorerRelationMaterialization {
+            kind: "view_embed",
+            capability: Some(view.clone()),
+            param: Some(relation.to_string()),
+            binding_keys: None,
+        },
     }
 }
 

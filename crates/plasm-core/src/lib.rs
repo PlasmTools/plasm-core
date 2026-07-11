@@ -88,6 +88,7 @@ pub mod catalog_ownership;
 pub mod cgs_context;
 pub mod cgs_expression_validate;
 pub mod cgs_federation;
+pub mod cgs_normalize;
 pub mod connect_profile;
 pub mod cross_entity;
 pub mod discovery;

@@ -327,6 +327,44 @@ pub enum SchemaError {
     RelationFromParentGetInvalidWildcard { entity: String, relation: String },
 
     #[error(
+        "Entity '{entity}' relation '{relation}' → '{target}': cardinality `many` requires executable `materialize` (add view_embed, query_scoped, or from_parent_get)"
+    )]
+    RelationNotExecutable {
+        entity: String,
+        relation: String,
+        target: String,
+    },
+
+    #[error(
+        "Entity '{entity}' relation '{relation}': view_embed view '{view}' is not defined"
+    )]
+    RelationViewEmbedUnknownView {
+        entity: String,
+        relation: String,
+        view: String,
+    },
+
+    #[error(
+        "Entity '{entity}' relation '{relation}': view_embed view '{view}' is declared on entity '{view_entity}', not '{entity}'"
+    )]
+    RelationViewEmbedEntityMismatch {
+        entity: String,
+        relation: String,
+        view: String,
+        view_entity: String,
+    },
+
+    #[error(
+        "Entity '{entity}' relation '{relation}': view_embed relation name '{got}' must match entity relation '{expected}'"
+    )]
+    RelationViewEmbedRelationNameMismatch {
+        entity: String,
+        relation: String,
+        expected: String,
+        got: String,
+    },
+
+    #[error(
         "Entity '{entity}' relation '{relation}': no query/search capability on '{target}' declares parameters {params:?}"
     )]
     RelationMaterializeNoMatchingCapability {
