@@ -10,6 +10,16 @@ pub mod appliance_services;
 pub mod auth_framework_host;
 mod auth_framework_postgres_schema;
 pub mod backend_normalize;
+#[cfg(feature = "semantic-auto-seed")]
+#[allow(
+    clippy::empty_line_after_doc_comments,
+    clippy::new_without_default,
+    clippy::map_clone,
+    clippy::unwrap_or_default,
+    clippy::derivable_impls
+)]
+#[path = "semantic_auto_seed_baml/baml_client/mod.rs"]
+pub(crate) mod baml_client;
 pub mod binding_slots;
 pub mod binding_store;
 pub mod blocking_compute;
@@ -22,11 +32,11 @@ pub mod catalog_reload;
 pub mod catalog_runtime;
 pub mod cli_builder;
 pub mod control_plane_http;
-mod discovery_embedding_chunks;
-#[cfg(feature = "local-embeddings")]
-pub mod discovery_embedding_reconcile;
-pub mod discovery_embedding_repository;
+pub mod discovery_auto_seed;
 pub mod discovery_human_format;
+pub mod discovery_routing;
+#[cfg(feature = "semantic-auto-seed")]
+pub mod discovery_seed_select;
 pub mod dispatch;
 pub mod domain_revision;
 pub mod dotenv_safe;

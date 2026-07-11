@@ -1,0 +1,10 @@
+[package]
+name = "plasm-eval-common"
+version.workspace = true
+edition.workspace = true
+description = "Shared OpenRouter helpers for plasm-eval and plasm-discovery-eval"
+readme = "README.md"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

@@ -33,6 +33,7 @@ proptest = { workspace = true }
 tempfile = { workspace = true }
 criterion = { workspace = true }
 plasm-discovery = { path = "../plasm-discovery" }
+plasm-discovery-eval = { path = "../plasm-discovery-eval" }
 
 [[bench]]
 name = "schema_load"

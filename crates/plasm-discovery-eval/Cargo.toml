@@ -1,0 +1,24 @@
+[package]
+name = "plasm-discovery-eval"
+version.workspace = true
+edition.workspace = true
+description = "YAML-backed eval for MCP lexicon discovery (baseline + optional LLM rerank)"
+readme = "README.md"
+
+[[bin]]
+name = "plasm-discovery-eval"
+path = "src/main.rs"
+
+[features]
+default = []
+llm-rerank = ["dep:baml"]
+
+[dependencies]
+plasm-core = { path = "../plasm-core" }
+plasm-eval-common = { path = "../plasm-eval-common" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+baml = { workspace = true, optional = true }

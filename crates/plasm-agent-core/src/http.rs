@@ -12,8 +12,6 @@ use axum::extract::Extension;
 use axum::routing::get;
 use axum::Router;
 use dashmap::DashMap;
-#[cfg(feature = "local-embeddings")]
-use fastembed;
 use plasm_core::discovery::InMemoryCgsRegistry;
 use plasm_discovery::CatalogIndexCache;
 use plasm_runtime::{ExecutionEngine, ExecutionMode};
@@ -146,13 +144,7 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
             auth_storage: None,
             oauth_link_catalog: None,
             outbound_secret_provider: None,
-            discovery_embedding: None,
             discovery_index_cache: Arc::new(CatalogIndexCache::new()),
-            #[cfg(feature = "local-embeddings")]
-            discovery_embedder: Arc::new(plasm_discovery::BlockingEmbedder::new(
-                fastembed::EmbeddingModel::AllMiniLML6V2,
-                plasm_discovery::embedder::discovery_embed_concurrency(),
-            )),
             workflows,
             redis_backend: None,
             live_plan_pool,

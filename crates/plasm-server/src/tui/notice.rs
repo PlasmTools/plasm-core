@@ -181,6 +181,16 @@ pub(crate) fn screen_footer_items(model: &RunState) -> Vec<chrome::FooterItem> {
             }
             v
         }
+        RunScreen::Discovery => match &model.mode {
+            InputMode::DiscoveryOpenRouterKey { .. } => vec![
+                FooterItem::new("Enter", "save"),
+                FooterItem::new("Esc", "cancel"),
+            ],
+            _ => vec![
+                FooterItem::new("e", "toggle"),
+                FooterItem::new("k", "OpenRouter key"),
+            ],
+        },
         RunScreen::Logs => vec![
             FooterItem::new("↑↓", "move"),
             FooterItem::new("PgUp/Dn", "page"),

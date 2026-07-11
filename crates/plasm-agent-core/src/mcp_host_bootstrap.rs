@@ -478,24 +478,6 @@ async fn attach_flow_policy_repo(
     }
 }
 
-/// Background reconcile for typed-discovery embeddings when Postgres store is configured.
-pub async fn attach_discovery_embedding_background(mut state: PlasmHostState) {
-    if let Some(repo) =
-        crate::discovery_embedding_repository::maybe_connect_discovery_embedding_store().await
-    {
-        state.oss.discovery_embedding = Some(repo.clone());
-        #[cfg(feature = "local-embeddings")]
-        crate::discovery_embedding_reconcile::spawn_discovery_embedding_reconcile_background(
-            state, repo,
-        );
-        #[cfg(not(feature = "local-embeddings"))]
-        tracing::info!(
-            "discovery embedding store configured but `local-embeddings` feature disabled; \
-             skipping background reconcile (lexical-only discovery)"
-        );
-    }
-}
-
 /// Full OSS `plasm-mcp` host assembly after CLI matches + catalog outcome (no listeners).
 pub async fn bootstrap_plasm_host_state_oss(
     matches: &ArgMatches,
@@ -529,7 +511,6 @@ pub async fn bootstrap_plasm_host_state_oss(
             "OSS host bootstrap: auth-framework init failed; /v1/auth/status will return 503"
         );
     }
-    attach_discovery_embedding_background(app_state.clone()).await;
     Ok(OssHostBootstrap {
         state: app_state,
         mcp_policy_attach,

@@ -3,11 +3,10 @@ name = "plasm-discovery"
 version.workspace = true
 edition.workspace = true
 readme = "README.md"
-description = "Typed, graph-aware discovery with optional local fastembed recall"
+description = "Typed, graph-aware discovery over CGS catalogs"
 
 [features]
 default = []
-local-embeddings = ["dep:fastembed"]
 
 [dependencies]
 plasm-core = { path = "../plasm-core" }
@@ -18,7 +17,6 @@ tokio = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }
 opentelemetry = { workspace = true }
-fastembed = { workspace = true, optional = true }
 indexmap = { workspace = true }
 inflection = { workspace = true }
 rayon = { workspace = true }
@@ -27,6 +25,7 @@ aho-corasick = { workspace = true }
 [dev-dependencies]
 criterion = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros"] }
+plasm-discovery-eval = { path = "../plasm-discovery-eval" }
 
 [[bench]]
 name = "index_build"

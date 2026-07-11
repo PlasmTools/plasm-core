@@ -44,5 +44,6 @@ pub(crate) fn input_mode_label(mode: &InputMode) -> Option<&'static str> {
         InputMode::OAuthWizard(_) => Some("OAuth wizard"),
         InputMode::OAuthDeviceScopePick(_) => Some("OAuth scopes"),
         InputMode::ConfirmOAuthDisable { .. } => Some("Confirm disable"),
+        InputMode::DiscoveryOpenRouterKey { .. } => Some("OpenRouter key"),
     }
 }

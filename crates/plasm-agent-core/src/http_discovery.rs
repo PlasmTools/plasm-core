@@ -231,21 +231,10 @@ async fn post_discover_typed(
         utterance_len = query.utterance.len(),
         allowed = query.allowed_entry_ids.len(),
         max_options = query.max_options,
-        enable_embeddings = query.enable_embeddings,
         "plasm typed discovery request"
     );
     let reg = st.catalog.snapshot();
-    let emb = st.discovery_embedding_store();
-    match run_typed_catalog_discovery(
-        &reg,
-        query,
-        emb,
-        Some(st.discovery_index_cache()),
-        #[cfg(feature = "local-embeddings")]
-        Some(st.discovery_embedder()),
-    )
-    .await
-    {
+    match run_typed_catalog_discovery(&reg, query, Some(st.discovery_index_cache())).await {
         Ok(out) => Json(out).into_response(),
         Err(e) => {
             tracing::debug!(error = %e, "typed discovery failed");

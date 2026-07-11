@@ -29,16 +29,6 @@ fn clarifications_total() -> &'static Counter<u64> {
     })
 }
 
-#[cfg(feature = "local-embeddings")]
-fn embed_cache_total() -> &'static Counter<u64> {
-    static C: OnceLock<Counter<u64>> = OnceLock::new();
-    C.get_or_init(|| {
-        meter()
-            .u64_counter("plasm.discovery.embed.cache_total")
-            .build()
-    })
-}
-
 fn index_builds_total() -> &'static Counter<u64> {
     static C: OnceLock<Counter<u64>> = OnceLock::new();
     C.get_or_init(|| {
@@ -62,16 +52,6 @@ fn index_build_duration() -> &'static Histogram<f64> {
     H.get_or_init(|| {
         meter()
             .f64_histogram("plasm.discovery.index_build.duration_ms")
-            .build()
-    })
-}
-
-#[cfg(feature = "local-embeddings")]
-fn embed_batch_duration() -> &'static Histogram<f64> {
-    static H: OnceLock<Histogram<f64>> = OnceLock::new();
-    H.get_or_init(|| {
-        meter()
-            .f64_histogram("plasm.discovery.embed.batch_duration_ms")
             .build()
     })
 }
@@ -143,11 +123,6 @@ pub fn record_clarification(dimension: &'static str) {
     clarifications_total().add(1, &[KeyValue::new("dimension", dimension.to_string())]);
 }
 
-#[cfg(feature = "local-embeddings")]
-pub fn record_embed_cache(outcome: &'static str) {
-    embed_cache_total().add(1, &[KeyValue::new("outcome", outcome.to_string())]);
-}
-
 pub fn record_index_build(outcome: &'static str, duration: Duration) {
     index_builds_total().add(1, &[KeyValue::new("outcome", outcome.to_string())]);
     index_build_duration().record(duration.as_secs_f64() * 1000.0, &[]);
@@ -160,11 +135,6 @@ pub fn record_index_cache(outcome: &'static str) {
 pub fn record_index_sizes(entities: i64, capabilities: i64) {
     index_entities_gauge().record(entities, &[]);
     index_capabilities_gauge().record(capabilities, &[]);
-}
-
-#[cfg(feature = "local-embeddings")]
-pub fn record_embed_batch_duration(duration: Duration) {
-    embed_batch_duration().record(duration.as_secs_f64() * 1000.0, &[]);
 }
 
 pub fn record_intent_decompose_duration(duration: Duration) {
@@ -196,8 +166,8 @@ mod tests {
             "plasm.discovery.requests_total"
         );
         assert_eq!(
-            "plasm.discovery.embed.batch_duration_ms",
-            "plasm.discovery.embed.batch_duration_ms"
+            "plasm.discovery.index_build.duration_ms",
+            "plasm.discovery.index_build.duration_ms"
         );
     }
 }

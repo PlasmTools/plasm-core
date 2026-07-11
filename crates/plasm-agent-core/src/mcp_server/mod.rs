@@ -136,7 +136,7 @@ pub(crate) use schema::{args_value, json_schema_non_empty_string_type, json_sche
 pub(crate) use tool_parse::{
     comp_content_sha256_hex, parse_logical_session_ref_arg, parse_optional_principal,
     parse_plasm_context_ranked_capabilities, parse_plasm_context_session_mode, parse_tool_seeds,
-    plan_display_name_from_comp, plan_node_count_from_comp,
+    parse_tool_seeds_optional, plan_display_name_from_comp, plan_node_count_from_comp,
 };
 pub(crate) use trace::CodePlanTraceInput;
 pub(crate) use transport::{
@@ -935,7 +935,110 @@ impl PlasmMcpHandler {
             CallToolError::invalid_arguments(tname, Some("missing `intent`".into()))
         })?;
         let (session_mode, extend_ref) = parse_plasm_context_session_mode(tname, v)?;
+        let ranked_capabilities_arg = parse_plasm_context_ranked_capabilities(tname, v)?;
+        let principal = parse_optional_principal(v);
+        let tcfg = self.tenant_mcp_cfg(runtime).await?;
+        let allowed_ids: Option<Vec<String>> = tcfg.as_ref().map(|cfg| {
+            let mut ids: Vec<String> = cfg.allowed_entry_ids.iter().cloned().collect();
+            ids.sort();
+            ids
+        });
         let scope = tenant_scope(principal_incoming.as_ref());
+
+        let optional_seeds_on_new = if session_mode == PlasmContextSessionMode::New {
+            parse_tool_seeds_optional(tname, v)?
+        } else {
+            None
+        };
+
+        #[allow(unused_mut)]
+        let mut auto_ranked_from_selector: Option<Vec<String>> = None;
+        let seeds = match session_mode {
+            PlasmContextSessionMode::Extend => parse_tool_seeds(tname, v)?,
+            PlasmContextSessionMode::New => {
+                if let Some(explicit) = optional_seeds_on_new {
+                    explicit
+                } else {
+                    #[cfg(feature = "semantic-auto-seed")]
+                    {
+                        if crate::discovery_seed_select::semantic_auto_seed_enabled() {
+                            let outcome = crate::discovery_seed_select::route_intent_to_seeds(
+                                self.plasm.catalog.snapshot().as_ref(),
+                                intent,
+                                allowed_ids.clone(),
+                            )
+                            .await;
+                            match outcome {
+                                crate::discovery_routing::AutoSeedRouteOutcome::Ready {
+                                    seeds: pairs,
+                                    supporting_capability_ids,
+                                    ..
+                                } => {
+                                    auto_ranked_from_selector = Some(supporting_capability_ids);
+                                    pairs
+                                        .into_iter()
+                                        .map(|(entry_id, entity)| CapabilitySeed {
+                                            entry_id,
+                                            entity,
+                                        })
+                                        .collect()
+                                }
+                                abstain => {
+                                    let text =
+                                        crate::discovery_routing::build_auto_seed_breakout_markdown(
+                                            &abstain,
+                                        );
+                                    let routing = crate::discovery_routing::build_routing_meta(
+                                        &abstain, "semantic",
+                                    );
+                                    let mut meta = serde_json::Map::new();
+                                    meta.insert(
+                                        "plasm".to_string(),
+                                        serde_json::json!({ "routing": routing }),
+                                    );
+                                    let mut res =
+                                        CallToolResult::text_content(vec![TextContent::new(
+                                            text, None, None,
+                                        )]);
+                                    res = res.with_meta(Some(meta));
+                                    return Ok(res);
+                                }
+                            }
+                        } else {
+                            return Err(CallToolError::invalid_arguments(
+                                    tname,
+                                    Some(
+                                        "missing capability picks: pass non-empty `seeds` or enable semantic auto-seed (`PLASM_DISCOVERY_SEMANTIC_AUTO_SEED=1` with `semantic-auto-seed` build)"
+                                            .into(),
+                                    ),
+                                ));
+                        }
+                    }
+                    #[cfg(not(feature = "semantic-auto-seed"))]
+                    {
+                        return Err(CallToolError::invalid_arguments(
+                                tname,
+                                Some(
+                                    "missing capability picks: `plasm_context` with `session_mode: \"new\"` requires non-empty `seeds` unless the host is built with `semantic-auto-seed`"
+                                        .into(),
+                                ),
+                            ));
+                    }
+                }
+            }
+        };
+        let ranked_capabilities = match (ranked_capabilities_arg, auto_ranked_from_selector) {
+            (RankedCapabilitiesArg::Set(Some(names)), _) => RankedCapabilitiesArg::Set(Some(names)),
+            (RankedCapabilitiesArg::Set(None), Some(auto)) => {
+                RankedCapabilitiesArg::Set(Some(auto))
+            }
+            (other, Some(auto)) => match other {
+                RankedCapabilitiesArg::Unspecified => RankedCapabilitiesArg::Set(Some(auto)),
+                x => x,
+            },
+            (x, None) => x,
+        };
+
         let rec = match session_mode {
             PlasmContextSessionMode::New => {
                 self.plasm
@@ -976,15 +1079,6 @@ impl PlasmMcpHandler {
         let logical_uuid = rec.logical_session_id.as_uuid();
         let ls_key = logical_uuid.to_string();
         let accumulated_intent = rec.accumulated_intent.as_str();
-        let seeds = parse_tool_seeds(tname, v)?;
-        let ranked_capabilities = parse_plasm_context_ranked_capabilities(tname, v)?;
-        let principal = parse_optional_principal(v);
-        let tcfg = self.tenant_mcp_cfg(runtime).await?;
-        let allowed_ids: Option<Vec<String>> = tcfg.as_ref().map(|cfg| {
-            let mut ids: Vec<String> = cfg.allowed_entry_ids.iter().cloned().collect();
-            ids.sort();
-            ids
-        });
         let seeds = crate::http_execute::resolve_capability_seeds(
             seeds,
             self.plasm.catalog.snapshot().as_ref(),

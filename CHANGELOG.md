@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.14] - 2026-07-11
+
+### Added
+
+- **Semantic auto-seed:** intent-only `plasm_context` (`session_mode: "new"` without `seeds`) routes via lexical pool + OpenRouter BAML selector (`SelectDiscoverySeeds`) → `ready` / `clarify` / `hard_miss` / `routing_error` (no silent fallback).
+- **`plasm-server` Discovery:** TUI tab + `plasm-server discovery …` CLI; bootstrap files under `{PLASM_LOCAL_STATE_DIR}/bootstrap-secrets/` for `OPENROUTER_API_KEY` and `PLASM_DISCOVERY_SEMANTIC_AUTO_SEED`.
+- **Bootstrap secret:** optional `OPENROUTER_API_KEY` in `plasm-mcp-credentials` (hosted k8s).
+- **`plasm-discovery-eval`:** seed-set eval harness + fixtures for selector regression.
+
+### Changed
+
+- **Product binaries:** `semantic-auto-seed` enabled by default on `plasm-mcp-app` and `plasm-server`; BAML codegen required in CI/Docker release builds.
+- **Discovery:** removed embedding-index path; typed discovery remains lexical.
+
 ## [0.4.13] - 2026-07-10
 
 ### Added

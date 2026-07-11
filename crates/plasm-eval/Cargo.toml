@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 plasm-core = { path = "../plasm-core" }
+plasm-eval-common = { path = "../plasm-eval-common" }
 plasm-compile = { path = "../plasm-compile", features = ["evm"] }
 serde = { workspace = true }
 serde_json = { workspace = true }

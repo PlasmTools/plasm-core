@@ -2,6 +2,7 @@
 
 pub(crate) mod apis;
 pub(crate) mod clients;
+pub(crate) mod discovery;
 pub(crate) mod keys;
 pub(crate) mod logs;
 pub(crate) mod oauth;

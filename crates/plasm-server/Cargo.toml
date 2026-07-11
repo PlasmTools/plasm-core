@@ -8,8 +8,9 @@ publish = false
 [features]
 # Links pg-embed into this binary (large). Slim CI/tooling builds:
 #   cargo build -p plasm-server --no-default-features
-default = ["embedded_postgres"]
+default = ["embedded_postgres", "semantic-auto-seed"]
 embedded_postgres = ["plasm/embedded_postgres"]
+semantic-auto-seed = ["plasm-agent-core/semantic-auto-seed"]
 [[bin]]
 name = "plasm-server"
 path = "src/main.rs"

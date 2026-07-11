@@ -91,8 +91,12 @@ pub mod cgs_federation;
 pub mod connect_profile;
 pub mod cross_entity;
 pub mod discovery;
-pub mod discovery_adversarial_intents;
+pub mod discovery_auto_seed;
+pub mod discovery_intent_signals;
 pub mod discovery_presentation;
+pub mod discovery_seed_baml;
+pub mod discovery_seed_bundle;
+pub mod discovery_seed_select;
 pub mod domain_lexicon;
 pub mod entity_ref_value;
 pub mod error;
@@ -184,10 +188,6 @@ pub use discovery::{
     CapabilityQuery, CatalogEntryMeta, CgsCatalog, CgsDiscovery, ClosureStats,
     DiscoveryContextJson, DiscoveryError, DiscoveryResult, DiscoverySchemaNeighborhood,
     EntitySummary, ExposureSurfaceOptions, InMemoryCgsRegistry, RankedCandidate, RegistryEntryPair,
-};
-pub use discovery_adversarial_intents::{
-    adversarial_case_count, iter_all_cases, DiscoveryAdversarialCase,
-    DiscoveryAdversarialFailureKind, CROSS_CUTTING, PER_CATALOG_SELECTION,
 };
 pub use discovery_presentation::{CatalogRoute, DiscoveryDecision};
 pub use entity_ref_value::{

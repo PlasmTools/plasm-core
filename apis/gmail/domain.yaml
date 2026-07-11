@@ -150,8 +150,12 @@ entities:
   Thread:
     id_field: id
     primary_read: thread_get
-    description: A conversation thread — a collection of related messages. Full-text search uses q or Thread~"…"; snippet.
-      is a preview of the thread (filled by threads.get), not the Gmail search box parameter.
+    description: An email conversation thread — related messages where participants discuss decisions, rollout dates, and follow-ups.
+    discovery:
+      names:
+      - conversation thread
+      - email thread
+      - mail thread
     fields:
       id:
         required: true
@@ -478,14 +482,17 @@ capabilities:
       value_ref: nv_message_modify_remove_label_ids
       required: false
   thread_list:
-    description: 'List threads in the mailbox. Returns only {id, historyId} per thread in this CGS; default auto-hydration
-      issues threads.get for each row in the page (one threads.list per page plus N threads.get for N rows) to fill snippet
-      and nested messages. Use query --summary to skip get and keep id+historyId only. To restrict to a mailbox or label (e.g.
-      INBOX), use labelIds — not includeSpamTrash (that flag is only true/false for whether Spam and Trash folders are included).
-
-      '
+    description: Find email conversation threads in the mailbox — where people agreed on plans, rollout dates, or open follow-ups.
+      Returns {id, historyId} per thread; default hydration loads snippet and nested messages via thread_get.
     kind: query
     entity: Thread
+    discovery:
+      target_terms:
+      - conversation thread
+      - thread
+      - discussion
+      - agreement
+      - rollout
     provides:
     - id
     - historyId
@@ -503,10 +510,16 @@ capabilities:
       required: false
       role: filter
   thread_search:
-    description: Gmail full-text search over threads.
-      hydration as thread_list. Use Thread~"text" or thread search --q; combine with labelIds/includeSpamTrash as needed.
+    description: Search email conversation threads by topic — find threads discussing rollout dates, agreements, or missing follow-ups.
     kind: search
     entity: Thread
+    discovery:
+      target_terms:
+      - conversation thread
+      - thread
+      - discussion
+      - agreement
+      - rollout
     provides:
     - id
     - historyId

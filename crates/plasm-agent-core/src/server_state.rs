@@ -9,7 +9,6 @@
 //! [`PlasmOssHostState`] so OSS HTTP can expose the same routes without pulling in Phoenix.
 
 use crate::catalog_runtime::CatalogRuntime;
-use crate::discovery_embedding_repository::DiscoveryEmbeddingRepository;
 use crate::execute_path_ids::{ExecuteSessionId, PromptHashHex};
 use crate::execute_session::{ExecuteSession, ExecuteSessionStore, SessionReuseKey};
 use crate::incoming_auth::IncomingAuthVerifier;
@@ -33,7 +32,6 @@ use crate::trace_sink_emit::TraceIngestClient;
 use auth_framework::storage::AuthStorage;
 use auth_framework::AuthFramework;
 use dashmap::DashMap;
-use plasm_discovery::embedding_store::CatalogEmbeddingStore;
 use plasm_discovery::CatalogIndexCache;
 use plasm_runtime::{EnvSecretProvider, ExecutionEngine, ExecutionMode, SecretProvider};
 use std::ops::Deref;
@@ -92,13 +90,8 @@ pub struct PlasmOssHostState {
     pub oauth_link_catalog: Option<Arc<OauthLinkCatalog>>,
     /// Hosted KV + catalog outbound resolver for `hosted_kv` in CGS.
     pub outbound_secret_provider: Option<Arc<dyn SecretProvider>>,
-    /// Optional Postgres-backed typed-discovery embeddings (CGS `catalog_cgs_hash` rows).
-    pub discovery_embedding: Option<Arc<DiscoveryEmbeddingRepository>>,
     /// Memoized [`CatalogIndex`](plasm_discovery::index::CatalogIndex) per `(entry_id, catalog_cgs_hash)`.
     pub discovery_index_cache: Arc<CatalogIndexCache>,
-    /// Shared ONNX embedder for typed discovery + background reconcile (`local-embeddings` only).
-    #[cfg(feature = "local-embeddings")]
-    pub discovery_embedder: Arc<plasm_discovery::BlockingEmbedder>,
     /// Tenant workflow manifests for MCP Apps (`GET /v1/workflows/:id/view-model`).
     pub workflows: Arc<crate::workflow_registry::WorkflowRegistry>,
     /// Shared Redis backend for MCP transport + execute session externalization (when configured).
@@ -196,21 +189,8 @@ impl PlasmHostState {
         self.oss.outbound_secret_provider.as_ref()
     }
 
-    /// Typed-discovery embedding lookup when [`PlasmOssHostState::discovery_embedding`] is wired.
-    pub fn discovery_embedding_store(&self) -> Option<Arc<dyn CatalogEmbeddingStore>> {
-        self.oss
-            .discovery_embedding
-            .clone()
-            .map(|r| r as Arc<dyn CatalogEmbeddingStore>)
-    }
-
     pub fn discovery_index_cache(&self) -> &CatalogIndexCache {
         &self.oss.discovery_index_cache
-    }
-
-    #[cfg(feature = "local-embeddings")]
-    pub fn discovery_embedder(&self) -> Arc<plasm_discovery::BlockingEmbedder> {
-        self.oss.discovery_embedder.clone()
     }
 
     pub fn workflows(&self) -> &crate::workflow_registry::WorkflowRegistry {

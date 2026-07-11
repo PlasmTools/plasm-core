@@ -1,12 +1,14 @@
 ---
-source: plasm-oss/crates/plasm-agent-core/src/mcp_server/tests.rs
+source: crates/plasm-agent-core/src/mcp_server/tests.rs
 expression: context
 ---
 **Call before `plasm` / `plasm_run`.** Session identity is **`logical_session_ref`** only — not `intent`.
 
+**Intent-only open (semantic auto-seed hosts):** `session_mode: "new"` + **`intent`** only — the host retrieves entity candidates, runs seed-set selection, and opens a minimal teaching table when decision is **`ready`**. On **`clarify`**, **`hard_miss`**, or **`routing_error`** no session is minted; follow breakout guidance (ask user, call `discover_capabilities`, or pass explicit **`seeds`**).
+
 **Session lifecycle (explicit):**
-- **`session_mode: "new"`** — mint `logical_session_ref` + fresh symbol table. Use **once** per workflow.
-- **`session_mode: "extend"`** — same `logical_session_ref`; append this turn's `intent`; add `seeds` / fix `ranked_capabilities`. Symbols **never** reset.
+- **`session_mode: "new"`** — mint `logical_session_ref` + fresh symbol table. Use **once** per workflow. **`seeds`** optional when semantic auto-seed is enabled; otherwise required.
+- **`session_mode: "extend"`** — same `logical_session_ref`; append this turn's `intent`; add non-empty **`seeds`** / fix `ranked_capabilities`. Symbols **never** reset.
 - **`intent` does NOT select the session.** Rewording `intent` on `extend` is normal. Only **`session_mode: "new"`** discards symbols.
 
 **One workflow:** one `logical_session_ref`, many **`extend`** calls, evolving `intent` each turn.
@@ -14,12 +16,12 @@ expression: context
 
 **Programs = this table:** copy **`e#`/`m#`/`r#`** and catalog **wire names** from the left column into `plasm.program`. Catalog type names and API ids are not program syntax.
 
-**Open or extend:** **`session_mode`** + **`intent`** + **`seeds`** (`{api, entity}`). Returns **`logical_session_ref`** + fenced teaching TSV (active symbol table). Logical-session ledger: symbols append in **arrival order** — existing **`e#`** assignments never shift. **SYMBOL SPACE RESET** banner = pinned catalog digest changed; discard cached symbols.
+**Open or extend:** **`session_mode`** + **`intent`** + optional/required **`seeds`** (`{api, entity}`). Returns **`logical_session_ref`** + fenced teaching TSV when ready. Logical-session ledger: symbols append in **arrival order** — existing **`e#`** assignments never shift. **SYMBOL SPACE RESET** banner = pinned catalog digest changed; discard cached symbols.
 
 **Extend picks:** **`session_mode: "extend"`** + same **`logical_session_ref`**, expanded **`seeds`** — delta TSV or reuse cheat sheet when already exposed.
 
-**Discover before id (writes):** resolve human ids from live list/search, not catalog/eval samples.
+**Discover before id (writes):** resolve human ids from live list/search, not catalog/eval samples. **`discover_capabilities`** is browse/recovery — not the primary open path when semantic auto-seed is enabled.
 
 **Relation seeds:** seed program roots only; `.r#` targets need not be seeded — `unused_seeds` is advisory.
 
-**`_meta.plasm`:** `logical_session_ref`, `session_mode`, `intent_turns`, `accumulated_intent`, `continuity`, `domain_revision`, optional **`relations`**.
+**`_meta.plasm`:** `logical_session_ref`, `session_mode`, `intent_turns`, `accumulated_intent`, `continuity`, `domain_revision`, optional **`relations`**, and on intent-only routing **`routing`** (`decision`, previews, alternatives).

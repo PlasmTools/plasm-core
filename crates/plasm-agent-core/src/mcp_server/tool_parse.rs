@@ -6,6 +6,16 @@ use crate::session_identity::PlasmContextSessionMode;
 
 use super::*;
 
+pub(crate) fn parse_tool_seeds_optional(
+    tool: &str,
+    v: &serde_json::Value,
+) -> Result<Option<Vec<CapabilitySeed>>, CallToolError> {
+    match v.get("seeds") {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(_) => parse_tool_seeds(tool, v).map(Some),
+    }
+}
+
 pub(crate) fn parse_tool_seeds(
     tool: &str,
     v: &serde_json::Value,

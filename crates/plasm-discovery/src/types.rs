@@ -25,10 +25,6 @@ pub enum DiscoveryError {
     EmptyUtterance,
     #[error("unknown catalog entry: {0}")]
     UnknownEntry(String),
-    #[error("embedding failed: {0}")]
-    Embed(String),
-    #[error("embedding store failed: {0}")]
-    EmbeddingStore(String),
     #[error("index build failed: {0}")]
     IndexBuild(String),
     #[error("invalid clarification answer")]
@@ -55,8 +51,6 @@ pub struct DiscoveryQuery {
     pub prior_state: Option<ClarificationState>,
     #[serde(default = "default_max_options")]
     pub max_options: usize,
-    #[serde(default = "default_enable_embeddings")]
-    pub enable_embeddings: bool,
     /// Narrow to one catalog after a clarification step (`answer_clarification`).
     #[serde(default)]
     pub force_entry_id: Option<String>,
@@ -69,10 +63,6 @@ fn default_max_options() -> usize {
     8
 }
 
-fn default_enable_embeddings() -> bool {
-    false
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClarificationState {
     pub dimension: ClarificationDimension,
@@ -83,8 +73,6 @@ pub struct ClarificationState {
     pub allowed_entry_ids: Vec<String>,
     #[serde(default = "default_max_options")]
     pub max_options: usize,
-    #[serde(default = "default_enable_embeddings")]
-    pub enable_embeddings: bool,
     #[serde(default)]
     pub options: Vec<ClarificationOption>,
 }
@@ -175,7 +163,6 @@ impl ClarificationPrompt {
         utterance: String,
         allowed_entry_ids: Vec<String>,
         max_options: usize,
-        enable_embeddings: bool,
     ) -> ClarificationState {
         ClarificationState {
             dimension: self.dimension,
@@ -183,7 +170,6 @@ impl ClarificationPrompt {
             utterance,
             allowed_entry_ids,
             max_options,
-            enable_embeddings,
             options: self.options.clone(),
         }
     }

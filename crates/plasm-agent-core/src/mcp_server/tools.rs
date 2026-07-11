@@ -14,9 +14,7 @@ use plasm_core::prompt_render::{
     PLASM_RUN_TOOL_ARTIFACT_TOOL, PLASM_RUN_TOOL_DESCRIPTION_BASE, PLASM_TOOL_DESCRIPTION,
 };
 
-use super::schema::{
-    json_schema_non_empty_object_array, json_schema_non_empty_string_type, json_schema_string_type,
-};
+use super::schema::{json_schema_non_empty_string_type, json_schema_string_type};
 
 pub(crate) fn plasm_run_tool_description(mode: ArtifactAccessMode) -> String {
     let suffix = match mode {
@@ -56,10 +54,24 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
     );
     context_props.insert(
             "seeds".into(),
-            json_schema_non_empty_object_array(
-                "Non-empty array of `{api, entity}` capability picks (or `{entry_id, entity}`). The `plasm_context` response returns the active symbols for `plasm` programs.",
-                vec!["api", "entity"],
-            ),
+            serde_json::from_value(serde_json::json!({
+                "type": ["array", "null"],
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "api": { "type": "string" },
+                        "entry_id": { "type": "string" },
+                        "entity": { "type": "string" }
+                    },
+                    "required": ["entity"],
+                    "anyOf": [
+                        { "required": ["api"] },
+                        { "required": ["entry_id"] }
+                    ]
+                },
+                "description": "Optional on session_mode \"new\" when semantic auto-seed is enabled (intent-only open). Required non-empty array on \"extend\". Each object is `{api, entity}` (or `{entry_id, entity}`)."
+            }))
+            .expect("seeds schema"),
         );
     context_props.insert(
             "ranked_capabilities".into(),
@@ -107,7 +119,7 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
             title: Some("Open or extend Plasm context".into()),
             description: Some(PLASM_CONTEXT_TOOL_DESCRIPTION.into()),
             input_schema: ToolInputSchema::new(
-                vec!["session_mode".into(), "intent".into(), "seeds".into()],
+                vec!["session_mode".into(), "intent".into()],
                 Some(context_props),
                 None,
             ),

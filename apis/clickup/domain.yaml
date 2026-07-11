@@ -227,7 +227,16 @@ entities:
           param: list_id
   Task:
     id_field: id
-    description: A unit of work or action item.
+    description: A ClickUp project-tracker work item in a list or sprint — not an email or chat conversation thread.
+    discovery:
+      names:
+      - project task
+      - tracker task
+      - sprint task
+      qualifier_names:
+      - sprint
+      - list
+      - workspace
     fields:
       id:
         required: true
@@ -872,9 +881,14 @@ capabilities:
       required: true
       role: scope
   task_query:
-    description: Query tasks across a workspace (workspace-scoped, all lists).
+    description: Query ClickUp project-tracker tasks across a workspace — sprint/list work items, not mail or chat threads.
     kind: query
     entity: Task
+    discovery:
+      target_terms:
+      - project task
+      - tracker task
+      - sprint task
     parameters:
     - name: team_id
       value_ref: nv_task_query_team_id
@@ -929,9 +943,14 @@ capabilities:
       required: false
       role: response_control
   list_task_query:
-    description: Query tasks within a specific list (list-scoped, preferred for List.tasks traversal).
+    description: List ClickUp project-tracker tasks in a list — work items for sprints and backlogs, not conversation threads.
     kind: query
     entity: Task
+    discovery:
+      target_terms:
+      - project task
+      - tracker task
+      - sprint task
     parameters:
     - name: list_id
       value_ref: nv_list_task_query_list_id
@@ -1009,9 +1028,16 @@ capabilities:
       value_ref: nv_task_update_parent
       required: false
   list_create_task:
-    description: Create a task in a list.
+    description: Create a ClickUp project-tracker task in a list — a sprint/backlog work item, not an email or chat follow-up thread.
     kind: create
     entity: Task
+    discovery:
+      operation_terms:
+      - create project task
+      - create tracker task
+      target_terms:
+      - project task
+      - tracker task
     parameters:
     - name: name
       value_ref: nv_wire_str_short

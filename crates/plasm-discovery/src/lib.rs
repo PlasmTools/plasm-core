@@ -1,24 +1,16 @@
-//! Typed, graph-aware discovery over CGS catalogs with optional `fastembed` recall (`local-embeddings`).
+//! Typed, graph-aware discovery over CGS catalogs (lexical + graph gating).
 //!
 //! See [`AgentDiscovery`] and [`TypedDiscovery`].
 
 use async_trait::async_trait;
 
 mod decompose;
-#[cfg(feature = "local-embeddings")]
-pub mod embedder;
-pub mod embedding_store;
 mod engine;
 pub mod index;
 pub mod index_cache;
 mod metrics;
 mod types;
 
-#[cfg(feature = "local-embeddings")]
-pub use embedder::BlockingEmbedder;
-pub use embedding_store::{
-    CatalogEmbeddingLineKey, DEFAULT_EMBEDDING_MODEL_ID, DEFAULT_EMBEDDING_VECTOR_DIM,
-};
 pub use engine::TypedDiscovery;
 pub use index_cache::CatalogIndexCache;
 pub use types::*;

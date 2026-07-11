@@ -231,6 +231,45 @@ pub(crate) fn update_modal_key(state: &mut RunState, key: KeyEvent, deps: &Updat
             KeyCode::Char(c) => buf.push(c),
             _ => {}
         },
+        InputMode::DiscoveryOpenRouterKey { buf } => match key.code {
+            KeyCode::Enter => {
+                let secret = buf.trim().to_string();
+                state.mode = InputMode::Normal;
+                if secret.is_empty() {
+                    set_notice(
+                        state,
+                        RunNotice::new(
+                            NoticeSeverity::Warning,
+                            "Empty key",
+                            "OpenRouter API key must not be empty.",
+                        )
+                        .with_sticky(false),
+                    );
+                } else if let Err(e) = crate::discovery_bootstrap::set_openrouter_api_key(&secret)
+                {
+                    set_notice(
+                        state,
+                        RunNotice::new(NoticeSeverity::Error, "Save failed", e),
+                    );
+                } else {
+                    set_notice(
+                        state,
+                        RunNotice::new(
+                            NoticeSeverity::Info,
+                            "OpenRouter key saved",
+                            "Semantic auto-seed can call OpenRouter when enabled.",
+                        )
+                        .with_sticky(false),
+                    );
+                }
+            }
+            KeyCode::Esc => state.mode = InputMode::Normal,
+            KeyCode::Backspace => {
+                buf.pop();
+            }
+            KeyCode::Char(c) => buf.push(c),
+            _ => {}
+        },
         InputMode::OAuthWizard(wiz) => {
             let rows = &state.resources.snapshot.catalog_rows;
             match key.code {
@@ -909,6 +948,49 @@ The control station stores secrets in auth-framework KV, so there is nowhere to 
                 }
             }
         }
+        KeyCode::Char('e') if state.screen == RunScreen::Discovery => {
+            if matches!(state.mode, InputMode::Normal) {
+                let enabled = !crate::discovery_bootstrap::current_state().semantic_auto_seed_enabled;
+                match crate::discovery_bootstrap::set_semantic_auto_seed_enabled(enabled) {
+                    Ok(()) => {
+                        set_notice(
+                            state,
+                            RunNotice::new(
+                                if enabled {
+                                    NoticeSeverity::Info
+                                } else {
+                                    NoticeSeverity::Warning
+                                },
+                                if enabled {
+                                    "Semantic auto-seed enabled"
+                                } else {
+                                    "Semantic auto-seed disabled"
+                                },
+                                if enabled {
+                                    "Intent-only plasm_context new sessions will route via OpenRouter."
+                                } else {
+                                    "Pass explicit seeds on plasm_context session_mode new."
+                                },
+                            )
+                            .with_sticky(false),
+                        );
+                    }
+                    Err(e) => {
+                        set_notice(
+                            state,
+                            RunNotice::new(NoticeSeverity::Error, "Toggle failed", e),
+                        );
+                    }
+                }
+            }
+        }
+        KeyCode::Char('k') if state.screen == RunScreen::Discovery => {
+            if matches!(state.mode, InputMode::Normal) {
+                state.mode = InputMode::DiscoveryOpenRouterKey {
+                    buf: String::new(),
+                };
+            }
+        }
         KeyCode::Down | KeyCode::Char('j') if state.screen == RunScreen::Keys => {
             if state.keys.selected + 1 < snap.keys.len() {
                 state.keys.selected += 1;
@@ -1163,6 +1245,7 @@ pub(crate) fn update(state: &mut RunState, msg: UiMsg, deps: &UpdateDeps<'_>) ->
             | InputMode::ApiSecretEdit { .. }
             | InputMode::CatalogConnect { .. }
             | InputMode::AddKeyLabel { .. }
+            | InputMode::DiscoveryOpenRouterKey { .. }
             | InputMode::OAuthWizard(_)
             | InputMode::OAuthDeviceScopePick(_) => update_modal_key(state, key, deps),
             InputMode::Normal

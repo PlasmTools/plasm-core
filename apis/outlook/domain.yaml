@@ -61,7 +61,12 @@ entities:
             mailFolderId: id
   Message:
     id_field: id
-    description: A message in the signed-in mailbox.
+    description: A message in a mail conversation thread — grouped with related replies via conversationId.
+    discovery:
+      names:
+      - conversation thread
+      - mail thread
+      - email thread
     fields:
       id:
         required: true
@@ -314,7 +319,13 @@ capabilities:
   message_query:
     kind: query
     entity: Message
-    description: List messages across the mailbox.
+    description: Find mail conversation threads and messages — where participants discussed rollout dates, agreements, or open follow-ups.
+    discovery:
+      target_terms:
+      - conversation thread
+      - thread
+      - discussion
+      - agreement
     provides:
     - id
     - subject

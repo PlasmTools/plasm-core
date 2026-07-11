@@ -21,18 +21,20 @@ pub(crate) enum RunScreen {
     Apis,
     OAuth,
     Keys,
+    Discovery,
     Runs,
     Storage,
     Logs,
 }
 
 impl RunScreen {
-    pub(crate) const ALL: [Self; 8] = [
+    pub(crate) const ALL: [Self; 9] = [
         Self::Status,
         Self::Clients,
         Self::Apis,
         Self::OAuth,
         Self::Keys,
+        Self::Discovery,
         Self::Runs,
         Self::Storage,
         Self::Logs,
@@ -45,6 +47,7 @@ impl RunScreen {
             Self::Apis => "APIs",
             Self::OAuth => "OAuth",
             Self::Keys => "Keys",
+            Self::Discovery => "Discovery",
             Self::Runs => "Runs",
             Self::Storage => "Storage",
             Self::Logs => "Logs",
@@ -66,9 +69,10 @@ impl RunScreen {
             Self::Apis => 2,
             Self::OAuth => 3,
             Self::Keys => 4,
-            Self::Runs => 5,
-            Self::Storage => 6,
-            Self::Logs => 7,
+            Self::Discovery => 5,
+            Self::Runs => 6,
+            Self::Storage => 7,
+            Self::Logs => 8,
         }
     }
 }
@@ -100,6 +104,9 @@ pub(crate) enum InputMode {
     },
     ConfirmKeyRevoke {
         key_id: Uuid,
+    },
+    DiscoveryOpenRouterKey {
+        buf: String,
     },
 }
 
@@ -318,6 +325,7 @@ impl RunState {
                 | (RunScreen::OAuth, InputMode::ConfirmOAuthDisable { .. })
                 | (RunScreen::Keys, InputMode::AddKeyLabel { .. })
                 | (RunScreen::Keys, InputMode::ConfirmKeyRevoke { .. })
+                | (RunScreen::Discovery, InputMode::DiscoveryOpenRouterKey { .. })
         );
         if !reset && !matches!(self.mode, InputMode::Normal) {
             self.mode = InputMode::Normal;

@@ -9,10 +9,12 @@ data_classes:
 entities:
   Item:
     id_field: id
-    description: A Hacker News item (story, comment, job, poll, or poll option). Use item_search (Algolia) to discover ids.
-      from text, then item_get for full rows from Firebase. Feed endpoints return only numeric ids; use item_get to load title,
-      text, score, and comment trees. Direct replies are listed under kids as further item ids. Poll posts expose poll option
-      ids under parts; each option is another Item row.
+    description: A Hacker News story or comment — trending tech discussion, front-page stories, and comment threads.
+    discovery:
+      names:
+      - trending discussion
+      - front page
+      - hacker news story
     fields:
       id:
         required: true
@@ -134,10 +136,18 @@ entities:
         value_ref: nv_recent_updated_user_id
 capabilities:
   item_search:
-    description: Full-text search over HN via the public Algolia index (https://hn.algolia.com/api). Returns story Item rows.
-      with id from objectID and title/url from the hit; use item_get to hydrate the full Firebase record, kids, and score.
+    description: Search Hacker News for trending discussion and stories about regulation, policy, or tech debate.
     kind: search
     entity: Item
+    discovery:
+      operation_terms:
+      - search discussion
+      - trending
+      target_terms:
+      - trending discussion
+      - discussion
+      - regulation
+      - front page
     provides:
     - id
     - title
@@ -186,10 +196,19 @@ capabilities:
       required: false
       role: response_control
   item_feed_query:
-    description: Ordered list of item ids for a public feed (top, new, best, ask, show, or job). Each entry is an Item id only.
-      hydrate with item_get for full records and kids.
+    description: Browse Hacker News front-page feeds — top, new, best, ask, or show stories for trending discussion.
     kind: query
     entity: Item
+    discovery:
+      operation_terms:
+      - trending
+      - front page
+      - hot feed
+      target_terms:
+      - trending discussion
+      - discussion
+      - hot
+      - rising
     provides:
     - id
     parameters:
@@ -204,9 +223,14 @@ capabilities:
     provides:
     - id
   recent_updated_item_query:
-    description: Item ids from the live updates snapshot (updates.json items array).
+    description: Recently active Hacker News items — trending discussion with recent updates.
     kind: query
     entity: RecentUpdatedItem
+    discovery:
+      target_terms:
+      - trending discussion
+      - trending
+      - hot
     provides:
     - id
   recent_updated_user_query:

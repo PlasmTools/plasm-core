@@ -2,11 +2,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use plasm_core::discovery_adversarial_intents::iter_all_cases;
 use plasm_core::loader::load_schema_dir;
 use plasm_core::schema::CGS;
 use plasm_discovery::index::CatalogIndex;
 use plasm_discovery::{AgentDiscovery, CatalogIndexCache, DiscoveryQuery, TypedDiscovery};
+use plasm_discovery_eval::{case_intents, default_cases_path, load_cases};
 use tokio::runtime::Runtime;
 
 fn repo_root() -> PathBuf {
@@ -15,6 +15,15 @@ fn repo_root() -> PathBuf {
 
 fn github_cgs() -> Arc<CGS> {
     Arc::new(load_schema_dir(&repo_root().join("apis/github")).expect("github schema"))
+}
+
+fn eval_intents() -> Vec<String> {
+    let path = default_cases_path();
+    if path.is_file() {
+        case_intents(&load_cases(&path).expect("cases"))
+    } else {
+        Vec::new()
+    }
 }
 
 fn bench_index_build(c: &mut Criterion) {
@@ -26,8 +35,11 @@ fn bench_index_build(c: &mut Criterion) {
 
 fn bench_scan_utterance(c: &mut Criterion) {
     let idx = CatalogIndex::build("github".into(), github_cgs());
-    let cases: Vec<_> = iter_all_cases().map(|c| c.intent.to_string()).collect();
-    c.bench_function("scan_utterance/adversarial", |b| {
+    let cases = eval_intents();
+    if cases.is_empty() {
+        return;
+    }
+    c.bench_function("scan_utterance/eval_cases", |b| {
         b.iter(|| {
             for intent in &cases {
                 black_box(idx.scan_utterance(intent));
@@ -39,19 +51,18 @@ fn bench_scan_utterance(c: &mut Criterion) {
 fn bench_typed_discover(c: &mut Criterion) {
     let cgs = github_cgs();
     let rt = Runtime::new().unwrap();
-    let cases: Vec<_> = iter_all_cases().collect();
-    c.bench_function("typed_discover/adversarial", |b| {
+    let intents = eval_intents();
+    if intents.is_empty() {
+        return;
+    }
+    c.bench_function("typed_discover/eval_cases", |b| {
         b.iter(|| {
             rt.block_on(async {
-                let disc = TypedDiscovery::from_cgs_entries(
-                    vec![("github".into(), cgs.clone())],
-                    false,
-                    None,
-                    None,
-                );
-                for case in &cases {
+                let disc =
+                    TypedDiscovery::from_cgs_entries(vec![("github".into(), cgs.clone())], None);
+                for intent in &intents {
                     let q = DiscoveryQuery {
-                        utterance: case.intent.to_string(),
+                        utterance: intent.clone(),
                         allowed_entry_ids: vec!["github".into()],
                         ..Default::default()
                     };

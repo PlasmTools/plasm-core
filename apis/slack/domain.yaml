@@ -109,7 +109,12 @@ entities:
           param: channel
   Message:
     id_field: ts
-    description: A Slack message, identified by its timestamp within a channel.
+    description: A Slack channel or thread message — discussions, agreements, and rollout decisions in team conversations.
+    discovery:
+      names:
+      - conversation thread
+      - channel discussion
+      - message thread
     fields:
       ts:
         required: true
@@ -450,9 +455,15 @@ capabilities:
     - channel
     - user
   channel_replies:
-    description: Get replies in a message thread.
+    description: Read replies in a Slack message thread — follow a discussion where people agreed on plans or rollout dates.
     kind: query
     entity: Message
+    discovery:
+      target_terms:
+      - thread
+      - channel discussion
+      - agreement
+      - rollout
     parameters:
     - name: channel
       value_ref: nv_channel_replies_channel
@@ -585,9 +596,15 @@ capabilities:
       type: side_effect
       description: Mark the read position in a channel.
   message_search:
-    description: Search messages across all accessible channels.
+    description: Search Slack messages and threads for discussions about rollout dates, agreements, or follow-ups.
     kind: search
     entity: Message
+    discovery:
+      target_terms:
+      - thread
+      - channel discussion
+      - agreement
+      - rollout
     parameters:
     - name: query
       value_ref: nv_message_search_query

@@ -43,7 +43,12 @@ entities:
   Subreddit:
     id_field: display_name
     primary_read: subreddit_get
-    description: A Reddit community identified by its display name (without the r/ prefix).
+    description: A Reddit community for public discussion — trending topics, hot posts, and moderated conversation.
+    discovery:
+      names:
+      - trending discussion
+      - subreddit
+      - community discussion
     fields:
       display_name:
         required: true
@@ -86,7 +91,12 @@ entities:
   Post:
     id_field: name
     primary_read: post_get
-    description: A link or self post on Reddit, identified by its fullname (t3_…).
+    description: A Reddit post in trending, hot, or rising feeds — public discussion threads and comment debates.
+    discovery:
+      names:
+      - trending discussion
+      - hot post
+      - discussion thread
     fields:
       name:
         required: true
@@ -239,8 +249,21 @@ capabilities:
     - over18
     - url
   post_feed_query:
+    description: Browse trending Reddit posts — hot, new, top, rising, or controversial feeds for public discussion.
     kind: query
     entity: Post
+    discovery:
+      operation_terms:
+      - trending
+      - hot feed
+      - rising
+      target_terms:
+      - trending discussion
+      - discussion
+      - hot
+      - rising
+      - spam
+      - moderation
     parameters:
     - name: subreddit
       value_ref: nv_post_feed_query_subreddit
@@ -279,8 +302,19 @@ capabilities:
     - spoiler
     - domain
   post_search_query:
+    description: Search Reddit posts and discussions by topic — find trending conversation about regulation, policy, or moderation.
     kind: search
     entity: Post
+    discovery:
+      operation_terms:
+      - search discussion
+      - trending
+      target_terms:
+      - trending discussion
+      - discussion
+      - regulation
+      - spam
+      - moderation
     parameters:
     - name: q
       value_ref: nv_wire_str_short

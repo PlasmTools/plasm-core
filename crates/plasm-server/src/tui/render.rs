@@ -159,6 +159,9 @@ pub(crate) fn render_running_frame(
         RunScreen::Apis => screens::apis::render(frame, layout.body, model, host_state, listen),
         RunScreen::OAuth => screens::oauth::render(frame, layout.body, model, host_state, listen),
         RunScreen::Keys => screens::keys::render(frame, layout.body, model, host_state, listen),
+        RunScreen::Discovery => {
+            screens::discovery::render(frame, layout.body, model, host_state, listen)
+        }
         RunScreen::Runs => screens::runs::render(frame, layout.body, model, host_state, listen),
         RunScreen::Storage => {
             screens::storage::render(frame, layout.body, model, host_state, listen)

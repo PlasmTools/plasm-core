@@ -25,6 +25,9 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
+/// Optional bootstrap env keys (mounted when present; omit for local dev without LLM).
+pub const MCP_OPTIONAL_BOOTSTRAP_ENV_KEYS: &[&str] = &["OPENROUTER_API_KEY"];
+
 /// Canonical env keys for MCP bootstrap material (aligned with `scripts/k8s/ensure-plasm-secrets.sh`
 /// and Helm projected Secret keys).
 pub const MCP_BOOTSTRAP_ENV_KEYS: &[&str] = &[
@@ -69,6 +72,7 @@ pub struct McpBootstrapMaterial {
     pub plasm_auth_jwt_secret: String,
     pub auth_storage_encryption_key: String,
     pub plasm_mcp_control_plane_secret: String,
+    pub openrouter_api_key: Option<String>,
 }
 
 /// Heuristic policy gate: set in Kubernetes pods; **not** a security boundary.
@@ -93,6 +97,17 @@ fn read_secret_file(dir: &Path, key: &'static str) -> Result<String, BootstrapSe
     Ok(t)
 }
 
+fn read_optional_secret_file(
+    dir: &Path,
+    key: &'static str,
+) -> Result<Option<String>, BootstrapSecretsError> {
+    let path = dir.join(key);
+    if !path.exists() {
+        return Ok(None);
+    }
+    Ok(Some(read_secret_file(dir, key)?))
+}
+
 /// Load bootstrap material from a directory whose files are named exactly like `MCP_BOOTSTRAP_ENV_KEYS`.
 ///
 /// Injected `dir` keeps unit tests free of global `PLASM_SECRETS_DIR` mutation.
@@ -105,6 +120,7 @@ pub fn load_mcp_bootstrap_material_from_dir(
         plasm_auth_jwt_secret: read_secret_file(dir, "PLASM_AUTH_JWT_SECRET")?,
         auth_storage_encryption_key: read_secret_file(dir, "AUTH_STORAGE_ENCRYPTION_KEY")?,
         plasm_mcp_control_plane_secret: read_secret_file(dir, "PLASM_MCP_CONTROL_PLANE_SECRET")?,
+        openrouter_api_key: read_optional_secret_file(dir, "OPENROUTER_API_KEY")?,
     })
 }
 
@@ -150,6 +166,9 @@ pub fn install_mcp_bootstrap_process_env(m: &McpBootstrapMaterial) {
         "PLASM_MCP_CONTROL_PLANE_SECRET",
         &m.plasm_mcp_control_plane_secret,
     );
+    if let Some(key) = &m.openrouter_api_key {
+        std::env::set_var("OPENROUTER_API_KEY", key);
+    }
 }
 
 /// MCP process bootstrap: load then install. Used by [`DefaultMcpBootstrapSecrets`].

@@ -7,6 +7,8 @@ mod appliance_mcp_admin;
 mod appliance_mode;
 mod appliance_oauth_admin;
 mod boot;
+mod discovery_bootstrap;
+mod discovery_cli;
 mod mcp_cli;
 mod oauth_cli;
 mod oauth_upsert_wizard;
@@ -53,6 +55,8 @@ enum TopCommand {
     Mcp(mcp_cli::McpCliRoot),
     /// Outbound OAuth providers (`oauth_provider_apps`) + device authorization helpers.
     Oauth(oauth_cli::OauthCliRoot),
+    /// Semantic auto-seed / OpenRouter configuration (appliance bootstrap files).
+    Discovery(discovery_cli::DiscoveryCliRoot),
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -1026,6 +1030,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut root = RootCli::parse();
     apply_serve_cli_release_defaults(&mut root.serve);
     plasm_agent_core::dotenv_safe::load_from_cwd_parents();
+    if let Err(e) = discovery_bootstrap::ensure_discovery_bootstrap_at_boot() {
+        eprintln!("plasm-server: discovery bootstrap: {e}");
+    }
     if let Err(e) = apply_appliance_layout_env_defaults(&root.serve) {
         eprintln!("plasm-server: appliance data directory: {e}");
         std::process::exit(1);
@@ -1075,6 +1082,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Err(e) = oauth_cli::run_oauth(oauth).await {
                 eprintln_exit_error(&*e);
                 return Err(Box::new(std::io::Error::other(format!("{e}"))));
+            }
+            return Ok(());
+        }
+        Some(TopCommand::Discovery(discovery)) => {
+            if let Err(e) = discovery_cli::run(discovery.command) {
+                eprintln!("plasm-server discovery: {e}");
+                std::process::exit(1);
             }
             return Ok(());
         }

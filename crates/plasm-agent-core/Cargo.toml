@@ -13,8 +13,8 @@ alloc-bench = []
 local_env_bootstrap_secrets = []
 # Forward to plasm-compile for EVM-backed schemas (e.g. apis/evm-erc20).
 evm = ["plasm-compile/evm"]
-# CPU fastembed + ONNX for typed-discovery rerank and Postgres embedding reconcile (not in OSS release binaries).
-local-embeddings = ["dep:fastembed", "plasm-discovery/local-embeddings"]
+# Intent-only plasm_context: semantic seed-set selector (requires OPENROUTER_API_KEY).
+semantic-auto-seed = ["dep:baml", "dep:plasm-eval-common"]
 
 [lib]
 name = "plasm_agent_core"
@@ -29,7 +29,8 @@ plasm-runtime = { path = "../plasm-runtime" }
 plasm-trace = { path = "../plasm-trace" }
 plasm-observability-contracts = { path = "../plasm-observability-contracts" }
 plasm-otel = { path = "../plasm-otel" }
-fastembed = { workspace = true, optional = true }
+plasm-eval-common = { path = "../plasm-eval-common", optional = true }
+baml = { workspace = true, optional = true }
 arc-swap = { workspace = true }
 anyhow = { workspace = true }
 dotenvy = { workspace = true }

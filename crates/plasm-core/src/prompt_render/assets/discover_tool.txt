@@ -1,2 +1,4 @@
 Plasm is a source language. Pick catalogs/entities for one user goal — this tool does **not** produce program symbols.
-**Next:** copy TSV `api`/`entity` rows into one **`plasm_context`** **`seeds`** array with **`session_mode: "new"`** or **`"extend"`**, then write **`plasm.program`** from teaching TSV (get `e#(id)` vs search `e#~"…"` when exposed). Skip when you already know every `api`/`entity`. No alternate JSON discovery mode.
+**Primary open path (semantic auto-seed):** `plasm_context` with `session_mode: "new"` and **`intent` only** — use this when the host has semantic routing enabled.
+**Browse / recovery:** call this tool when auto-seed returns **`hard_miss`** or you need to inspect capabilities before choosing explicit **`seeds`**.
+**Next (explicit seeds):** copy TSV `api`/`entity` rows into one **`plasm_context`** **`seeds`** array with **`session_mode: "new"`** or **`"extend"`**, then write **`plasm.program`** from teaching TSV. Skip when you already know every `api`/`entity`.

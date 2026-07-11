@@ -39,21 +39,12 @@ use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-/// OpenRouter’s OpenAI-compatible HTTP API (`/v1/chat/completions` and related).
-///
-/// All Plasm `openai-generic` BAML clients and all runtime [`baml::ClientRegistry`] builds use this
-/// base URL — traffic is always routed through OpenRouter; the `--model` id is the OpenRouter model slug.
-pub const OPENROUTER_OPENAI_COMPAT_BASE_URL: &str = "https://openrouter.ai/api/v1";
-
-/// Default `temperature` for OpenRouter-backed eval / REPL (`TranslatePlan`) — comparable runs.
-pub const DEFAULT_OPENROUTER_EVAL_TEMPERATURE: f64 = 0.0;
-/// Default `seed` on the OpenRouter request (best-effort reproducibility where the upstream honors it).
-pub const DEFAULT_OPENROUTER_EVAL_SEED: u64 = 42;
-
-/// Build options for [`baml::ClientRegistry::add_llm_client`] with provider `openai-generic` → OpenRouter.
+pub use plasm_eval_common::{
+    model_slug, openrouter_eval_llm_options, DEFAULT_OPENROUTER_EVAL_SEED,
+    DEFAULT_OPENROUTER_EVAL_TEMPERATURE, OPENROUTER_OPENAI_COMPAT_BASE_URL,
+};
 ///
 /// `plasm-eval` and the REPL register the primary client dynamically at runtime (model + key + sampling).
-/// Static `baml_src/clients.baml` entries use the same pattern for named clients.
 /// Build one `TranslatePlan` user turn: on the **first** turn of a session, embed the full schema
 /// bundle plus goal and correction JSON; later turns carry only goal + correction (schema stays in
 /// earlier turns). The eval harness appends only goal-shaped user turns and backtick Plasm `text` as
@@ -69,26 +60,6 @@ pub fn nl_translate_user_bundle(
     } else {
         format!("--- GOAL ---\n{goal}\n--- CORRECTION FEEDBACK ---\n{correction}")
     }
-}
-
-pub fn openrouter_eval_llm_options(
-    model: &str,
-    api_key: &str,
-    temperature: f64,
-    seed: u64,
-) -> HashMap<String, serde_json::Value> {
-    [
-        (
-            "base_url".to_string(),
-            serde_json::json!(OPENROUTER_OPENAI_COMPAT_BASE_URL),
-        ),
-        ("model".to_string(), serde_json::json!(model)),
-        ("api_key".to_string(), serde_json::json!(api_key)),
-        ("temperature".to_string(), serde_json::json!(temperature)),
-        ("seed".to_string(), serde_json::json!(seed)),
-    ]
-    .into_iter()
-    .collect()
 }
 
 /// One eval case (YAML).

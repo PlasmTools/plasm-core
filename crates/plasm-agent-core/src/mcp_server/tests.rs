@@ -420,7 +420,7 @@ fn discover_capabilities_input_schema() {
 }
 
 #[test]
-fn plasm_context_input_schema_requires_intent_and_seeds() {
+fn plasm_context_input_schema_requires_intent_not_seeds_on_new() {
     let tools = default_plasm_tools();
     let ctx = tools
         .iter()
@@ -433,7 +433,7 @@ fn plasm_context_input_schema_requires_intent_and_seeds() {
         .expect("required array");
     assert!(required.iter().any(|x| x.as_str() == Some("session_mode")));
     assert!(required.iter().any(|x| x.as_str() == Some("intent")));
-    assert!(required.iter().any(|x| x.as_str() == Some("seeds")));
+    assert!(!required.iter().any(|x| x.as_str() == Some("seeds")));
     assert!(!required
         .iter()
         .any(|x| x.as_str() == Some("client_session_key")));
@@ -719,6 +719,27 @@ fn parse_plasm_context_session_mode_new_and_extend() {
         crate::session_identity::PlasmContextSessionMode::Extend
     );
     assert_eq!(r.as_deref(), Some("l_AAAAAAAAQACAAAAAAAAAAQ"));
+}
+
+#[test]
+fn plasm_context_optional_seeds_on_new() {
+    use super::tool_parse::parse_tool_seeds_optional;
+    let none = parse_tool_seeds_optional(
+        "plasm_context",
+        &serde_json::json!({ "session_mode": "new", "intent": "find threads" }),
+    )
+    .expect("optional");
+    assert!(none.is_none());
+    let some = parse_tool_seeds_optional(
+        "plasm_context",
+        &serde_json::json!({
+            "session_mode": "new",
+            "intent": "x",
+            "seeds": [{ "api": "gmail", "entity": "Thread" }]
+        }),
+    )
+    .expect("some");
+    assert_eq!(some.as_ref().map(|v| v.len()), Some(1));
 }
 
 #[test]

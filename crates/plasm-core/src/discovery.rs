@@ -29,6 +29,43 @@ fn truncate_discovery_description(s: &str) -> String {
     out
 }
 
+fn collect_discovery_hint_phrases(cgs: &CGS, cap: &CapabilitySchema) -> Vec<String> {
+    let mut phrases = Vec::new();
+    if let Some(ent) = cgs.entities.get(cap.domain.as_str()) {
+        if let Some(h) = &ent.discovery {
+            phrases.extend(h.names.iter().cloned());
+            phrases.extend(h.qualifier_names.iter().cloned());
+        }
+    }
+    if let Some(h) = &cap.discovery {
+        phrases.extend(h.operation_terms.iter().cloned());
+        phrases.extend(h.target_terms.iter().cloned());
+    }
+    let mut seen = HashSet::new();
+    phrases.retain(|p| {
+        let key = p.trim().to_ascii_lowercase();
+        if key.is_empty() {
+            return false;
+        }
+        seen.insert(key)
+    });
+    phrases
+}
+
+fn capability_description_for_discovery(cgs: &CGS, cap: &CapabilitySchema) -> String {
+    let base = cap.description.trim();
+    let hints = collect_discovery_hint_phrases(cgs, cap);
+    if hints.is_empty() {
+        return truncate_discovery_description(base);
+    }
+    let hints_joined = hints.join(", ");
+    if base.is_empty() {
+        truncate_discovery_description(&format!("hints: {hints_joined}"))
+    } else {
+        truncate_discovery_description(&format!("{base} · hints: {hints_joined}"))
+    }
+}
+
 /// Resolve a user/model string to the canonical CGS entity key (case-insensitive).
 fn resolve_canonical_entity_name(cgs: &CGS, raw: &str) -> Option<String> {
     let raw = raw.trim();
@@ -839,7 +876,7 @@ impl CgsDiscovery for InMemoryCgsRegistry {
                         capability_name: cap.name.to_string(),
                         score,
                         reason_codes: reasons,
-                        capability_description: truncate_discovery_description(&cap.description),
+                        capability_description: capability_description_for_discovery(&row.cgs, cap),
                     })
                 })
                 .collect();
@@ -2184,6 +2221,78 @@ mod tests {
             eids.contains("pokeapi") && eids.contains("proof"),
             "expected candidates from both catalogs; got {:?}",
             eids
+        );
+    }
+
+    #[test]
+    fn discovery_hints_score_and_surface_in_capability_description() {
+        use crate::schema::{
+            CapabilityMapping, CapabilityTemplateJson, DiscoveryCapabilityHints,
+            DiscoveryEntityHints, EntityDef,
+        };
+        use crate::{CapabilityName, EntityName};
+
+        let mut cgs = CGS::new();
+        cgs.entities.insert(
+            "Thread".into(),
+            EntityDef {
+                name: EntityName::from("Thread"),
+                description: "Email conversation thread.".into(),
+                id_field: EntityFieldName::from("id"),
+                id_format: None,
+                id_from: None,
+                fields: IndexMap::new(),
+                relations: IndexMap::new(),
+                expression_aliases: vec![],
+                implicit_request_identity: false,
+                key_vars: vec![],
+                abstract_entity: false,
+                domain_projection_examples: true,
+                primary_read: None,
+                discovery: Some(DiscoveryEntityHints {
+                    names: vec!["conversation thread".into(), "email thread".into()],
+                    qualifier_names: vec![],
+                }),
+            },
+        );
+        let cap = CapabilitySchema {
+            name: CapabilityName::from("thread_list"),
+            description: "List mailbox threads.".into(),
+            kind: CapabilityKind::Query,
+            domain: EntityName::from("Thread"),
+            mapping: CapabilityMapping {
+                template: CapabilityTemplateJson(serde_json::json!({ "method": "GET" })),
+            },
+            input_schema: None,
+            output_schema: None,
+            provides: vec![],
+            sanitizes: vec![],
+            deterministic: None,
+            scope_aggregate_key_policy: Default::default(),
+            preflight: None,
+            discovery: Some(DiscoveryCapabilityHints {
+                operation_terms: vec![],
+                target_terms: vec!["conversation thread".into(), "discussion".into()],
+            }),
+            identity_key: None,
+        };
+        cgs.capabilities
+            .insert(CapabilityName::from("thread_list"), cap.clone());
+
+        let mut query_tokens = HashSet::new();
+        for tok in domain_lexicon::tokens("find conversation thread discussion") {
+            query_tokens.insert(tok);
+        }
+        let (score, _) = score_capability(&query_tokens, &cgs, &cap);
+        assert!(
+            score > 0,
+            "discovery target_terms should contribute to lexicon score"
+        );
+
+        let desc = capability_description_for_discovery(&cgs, &cap);
+        assert!(
+            desc.contains("conversation thread"),
+            "assembled description should surface discovery hints; got {desc}"
         );
     }
 }
