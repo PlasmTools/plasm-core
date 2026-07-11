@@ -710,6 +710,7 @@ mod relation_intent_rank_tests {
                 target_resource: EntityName::from("Child"),
                 cardinality: Cardinality::Many,
                 materialize: None,
+                legacy_via_param: None,
                 discovery: None,
             }],
             expression_aliases: vec![],
