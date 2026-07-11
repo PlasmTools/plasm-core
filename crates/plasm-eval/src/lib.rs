@@ -36,7 +36,7 @@ use plasm_core::predicate::Predicate;
 use plasm_core::type_checker::type_check_expr;
 use plasm_core::CGS;
 use serde::Deserialize;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::Path;
 
 pub use plasm_eval_common::{

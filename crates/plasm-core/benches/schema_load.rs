@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use plasm_core::discovery::{CgsDiscovery, InMemoryCgsRegistry};
+use plasm_core::discovery::InMemoryCgsRegistry;
 use plasm_core::loader::load_schema_dir;
 use plasm_core::schema::CGS;
 use plasm_discovery_eval::{baseline_discover, case_intents, default_cases_path, load_cases};
