@@ -30,7 +30,9 @@ __pycache__/
 .cursor/plasm.log
 .cursor/plasm.pid
 .cursor/plasm-goal.md
-baml_client
+# Eval BAML clients: regenerate via `baml-cli generate` from monorepo root (see scripts/ci/ensure-baml-codegen.sh).
+/crates/plasm-eval/baml_client
+/crates/plasm-discovery-eval/baml_client
 eval-reports/
 # plasm-eval last-run artifacts next to cases.yaml ({model-slug}.latest.*)
 apis/**/eval/*.latest.human.txt
