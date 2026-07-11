@@ -318,10 +318,7 @@ async fn matrix_views_view_embed_relation_traversal() {
     )
     .await
     .expect("live view_embed relation traversal");
-    let md = live
-        .run_markdown
-        .as_deref()
-        .unwrap_or("");
+    let md = live.run_markdown.as_deref().unwrap_or("");
     assert!(
         live.node_results.len() >= 2,
         "expected view get + relation nodes, got {}",

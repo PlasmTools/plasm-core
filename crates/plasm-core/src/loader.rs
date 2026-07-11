@@ -5,7 +5,9 @@
 //! [`assemble_cgs`], [`CGS::validate`].
 //! For CML template parsing after load: `plasm_compile::transport=trace`.
 
-use crate::identity::{CapabilityName, CapabilityParamName, EntityFieldName, EntityName, RelationName};
+use crate::identity::{
+    CapabilityName, CapabilityParamName, EntityFieldName, EntityName, RelationName,
+};
 use crate::schema::{FieldValueKind, NamedValueSchema, ValueDomainKey, ViewDefinition};
 use crate::{
     capability_template_all_var_names, AgentPresentation, ArrayItemsSchema, AttachmentMediaKind,

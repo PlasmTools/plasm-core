@@ -2,7 +2,7 @@
 
 use indexmap::IndexMap;
 
-use crate::schema::{CapabilityKind, CGS, RelationMaterialization, RelationSchema};
+use crate::schema::{CapabilityKind, RelationMaterialization, RelationSchema, CGS};
 use crate::{CapabilityParamName, EntityName, RelationName};
 
 struct RelationMaterializePatch {
@@ -76,7 +76,10 @@ impl CGS {
                     continue;
                 }
                 out.insert(
-                    (view.entity.clone(), RelationName::from(ro.relation.as_str())),
+                    (
+                        view.entity.clone(),
+                        RelationName::from(ro.relation.as_str()),
+                    ),
                     view_key.clone(),
                 );
             }

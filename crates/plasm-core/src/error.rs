@@ -335,9 +335,7 @@ pub enum SchemaError {
         target: String,
     },
 
-    #[error(
-        "Entity '{entity}' relation '{relation}': view_embed view '{view}' is not defined"
-    )]
+    #[error("Entity '{entity}' relation '{relation}': view_embed view '{view}' is not defined")]
     RelationViewEmbedUnknownView {
         entity: String,
         relation: String,

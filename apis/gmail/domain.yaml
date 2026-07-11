@@ -13,7 +13,7 @@ data_classes:
 entities:
   Message:
     id_field: id
-    description: A Gmail message (email). messages.list returns only id+threadId; messages.get returns full content including. RFC 5322 headers flattened from payload.headers (headerFrom, headerSubject, …). Mailbox-wide text search uses the q parameter or Message~"…" (not the snippet field — snippet is a preview string returned on each row).
+    description: A Gmail message (email). messages.list returns only id+threadId; messages.get returns full content including RFC 5322 headers flattened from payload.headers (headerFrom, headerSubject, …). Mailbox-wide text search uses the q parameter or Message~"…" (not the snippet field — snippet is a preview string returned on each list entry).
     fields:
       id:
         required: true
@@ -528,7 +528,7 @@ capabilities:
       required: false
       role: filter
   thread_get:
-    description: Fetch a thread with nested messages (threads.get). Used by default after thread_list/thread_search to upgrade. summary rows; each row costs one HTTP GET.
+    description: Fetch a thread with nested messages (threads.get). Used by default after thread_list/thread_search to upgrade summary list entries; each message costs one HTTP GET.
     kind: get
     entity: Thread
     provides:
