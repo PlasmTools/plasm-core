@@ -16,7 +16,9 @@ pub mod backend_normalize;
     clippy::new_without_default,
     clippy::map_clone,
     clippy::unwrap_or_default,
-    clippy::derivable_impls
+    clippy::derivable_impls,
+    clippy::upper_case_acronyms,
+    dead_code
 )]
 #[path = "semantic_auto_seed_baml/baml_client/mod.rs"]
 pub(crate) mod baml_client;

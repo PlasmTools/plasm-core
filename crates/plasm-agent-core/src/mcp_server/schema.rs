@@ -22,6 +22,7 @@ pub(crate) fn json_schema_non_empty_string_type(
     m
 }
 
+#[allow(dead_code)]
 pub(crate) fn json_schema_non_empty_object_array(
     description: &str,
     required_fields: Vec<&str>,
