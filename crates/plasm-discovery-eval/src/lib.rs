@@ -50,6 +50,8 @@ pub use seed_score::{
 };
 
 use plasm_core::discovery::InMemoryCgsRegistry;
+
+#[cfg(feature = "llm-rerank")]
 use plasm_core::discovery_auto_seed::{retrieve_entity_candidate_bundles, EntityCandidateConfig};
 
 pub fn case_intents(cases: &[DiscoveryEvalCase]) -> Vec<String> {

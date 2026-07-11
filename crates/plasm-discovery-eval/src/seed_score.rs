@@ -93,6 +93,7 @@ pub fn score_seed_selection(
 }
 
 /// Per-case selector/resolve failure (BAML parse, out-of-range index, …).
+#[cfg(feature = "llm-rerank")]
 pub fn score_seed_selector_failure(case_id: &str, intent: &str, detail: &str) -> SeedSetCaseScore {
     SeedSetCaseScore {
         case_id: case_id.into(),
