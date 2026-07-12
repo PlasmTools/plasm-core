@@ -201,3 +201,41 @@ pub(super) fn language_matrix_session() -> ExecuteSession {
         None,
     )
 }
+
+pub(super) fn matrix_views_session() -> ExecuteSession {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let cgs = Arc::new(
+        load_schema(&root.join("../../fixtures/schemas/plasm_language_matrix_views"))
+            .expect("load plasm_language_matrix_views"),
+    );
+    let mut ctxs = indexmap::IndexMap::new();
+    ctxs.insert(
+        "langmatrix_views".into(),
+        Arc::new(CgsContext::entry("langmatrix_views", cgs.clone())),
+    );
+    let wave: &[&str] = &[
+        "LangItem",
+        "LangTag",
+        "LangTriageContext",
+        "LangDigest",
+        "LangItemLink",
+        "LangOwnerFilterDemo",
+    ];
+    let exp = TeachingExposureSession::new(cgs.as_ref(), "langmatrix_views", wave);
+    ExecuteSession::new(
+        "ph".into(),
+        "p".into(),
+        cgs.clone(),
+        ctxs,
+        "langmatrix_views".into(),
+        String::new(),
+        String::new(),
+        None,
+        wave.iter().map(|s| (*s).to_string()).collect(),
+        Some(exp),
+        None,
+        cgs.catalog_cgs_hash_hex(),
+        None,
+        None,
+    )
+}

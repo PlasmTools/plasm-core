@@ -2,9 +2,8 @@ use crate::commands::common;
 use indexmap::IndexMap;
 use plasm_compile::CmlRequest;
 use plasm_core::{
-    CapabilityKind, Cardinality, CreateExpr, DeleteExpr, Expr, FieldType, GetExpr,
-    InputFieldSchema, InputFieldWire, InputType, InvokeExpr, Predicate, QueryExpr, QueryPagination,
-    RelationMaterialization, Value, CGS,
+    CapabilityKind, CreateExpr, DeleteExpr, Expr, FieldType, GetExpr, InputFieldSchema,
+    InputFieldWire, InputType, InvokeExpr, Predicate, QueryExpr, QueryPagination, Value, CGS,
 };
 use plasm_runtime::{
     ExecuteOptions, ExecutionConfig, ExecutionEngine, ExecutionMode, SessionMaterialization,
@@ -238,111 +237,8 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
                     "{}.{} → {} traversal",
                     entity_name, rel_name, rel.target_resource
                 );
-                let relation_expr: Option<Expr> = if rel.cardinality == Cardinality::Many {
-                    match rel
-                        .materialize
-                        .as_ref()
-                        .unwrap_or(&RelationMaterialization::Unavailable)
-                    {
-                        RelationMaterialization::QueryScoped { capability, param } => {
-                            let mut q = QueryExpr::filtered(
-                                rel.target_resource.clone(),
-                                Predicate::eq(param.as_str(), Value::String("1".into())),
-                            );
-                            q.capability_name = Some(capability.clone());
-                            Some(Expr::Query(q))
-                        }
-                        RelationMaterialization::QueryScopedBindings {
-                            capability,
-                            bindings,
-                        } => {
-                            let preds: Vec<Predicate> = bindings
-                                .keys()
-                                .map(|cap_param| {
-                                    Predicate::eq(cap_param.as_str(), Value::String("1".into()))
-                                })
-                                .collect();
-                            let pred = if preds.len() == 1 {
-                                preds.into_iter().next().unwrap()
-                            } else {
-                                Predicate::and(preds)
-                            };
-                            let mut q = QueryExpr::filtered(rel.target_resource.clone(), pred);
-                            q.capability_name = Some(capability.clone());
-                            Some(Expr::Query(q))
-                        }
-                        RelationMaterialization::PreferFromParentGet { fallback, .. } => {
-                            match fallback {
-                                plasm_core::RelationScopedFallback::QueryScoped {
-                                    capability,
-                                    param,
-                                } => {
-                                    let mut q = QueryExpr::filtered(
-                                        rel.target_resource.clone(),
-                                        Predicate::eq(param.as_str(), Value::String("1".into())),
-                                    );
-                                    q.capability_name = Some(capability.clone());
-                                    Some(Expr::Query(q))
-                                }
-                                plasm_core::RelationScopedFallback::QueryScopedBindings {
-                                    capability,
-                                    bindings,
-                                } => {
-                                    let preds: Vec<Predicate> = bindings
-                                        .keys()
-                                        .map(|cap_param| {
-                                            Predicate::eq(
-                                                cap_param.as_str(),
-                                                Value::String("1".into()),
-                                            )
-                                        })
-                                        .collect();
-                                    let pred = if preds.len() == 1 {
-                                        preds.into_iter().next().unwrap()
-                                    } else {
-                                        Predicate::and(preds)
-                                    };
-                                    let mut q =
-                                        QueryExpr::filtered(rel.target_resource.clone(), pred);
-                                    q.capability_name = Some(capability.clone());
-                                    Some(Expr::Query(q))
-                                }
-                                plasm_core::RelationScopedFallback::HydrateFromEmbedPath {
-                                    ..
-                                } => None,
-                            }
-                        }
-                        RelationMaterialization::FromParentGet { .. }
-                        | RelationMaterialization::GetScopedBindings { .. }
-                        | RelationMaterialization::Unavailable => None,
-                        RelationMaterialization::ViewEmbed { view, .. } => {
-                            cgs.views.get(view.as_str()).map(|view_def| {
-                                let scope_pred = view_def.scope.first().map(|s| {
-                                    Predicate::eq(s.name.as_str(), Value::String("test-1".into()))
-                                });
-                                let mut root_query = match scope_pred {
-                                    Some(p) => QueryExpr::filtered(entity_name.clone(), p),
-                                    None => QueryExpr::all(entity_name.clone()),
-                                };
-                                root_query.capability_name = Some(
-                                    plasm_core::CapabilityName::from(view_def.capability.as_str()),
-                                );
-                                Expr::Chain(plasm_core::ChainExpr {
-                                    source: Box::new(Expr::Query(root_query)),
-                                    selector: rel_name.to_string(),
-                                    catalog_entry_id: plasm_core::CatalogEntryStamp::none(),
-                                    step: plasm_core::ChainStep::Explicit {
-                                        expr: Box::new(Expr::Query(QueryExpr::all(
-                                            rel.target_resource.clone(),
-                                        ))),
-                                    },
-                                })
-                            })
-                        }
-                    }
-                } else {
-                    None
-                };
+                let relation_expr =
+                    plasm_core::relation_validation_expr(&cgs, entity_name, rel_name, rel);
 
                 if let Some(rel_expr) = relation_expr {
                     match rel_expr {

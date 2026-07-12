@@ -23,8 +23,8 @@ use plasm_runtime::{
 use plasm_runtime::{ExecutionConfig, ExecutionEngine};
 
 use language_matrix_views::{
-    load_language_matrix_views_cgs, views_execute_session, views_matrix_host_state,
-    VIEWS_MATRIX_ENTRY_ID,
+    language_matrix_views_schema_dir, load_language_matrix_views_cgs, views_execute_session,
+    views_matrix_host_state, VIEWS_MATRIX_ENTRY_ID,
 };
 
 #[test]
@@ -327,5 +327,38 @@ async fn matrix_views_view_embed_relation_traversal() {
     assert!(
         md.contains("label") || md.contains("tag") || md.contains("i1"),
         "expected LangTag rows in markdown from view_embed hop: {md}"
+    );
+}
+
+#[test]
+fn matrix_views_parse_rejects_unmaterialized_many_relation_before_normalize() {
+    use plasm_core::expr_parser::{parse_with_cgs_layers, ParseErrorKind};
+    use plasm_core::loader::load_schema_dir_unvalidated;
+    use plasm_core::{CgsLayer, SymbolMap};
+    use std::sync::Arc;
+
+    let dir = language_matrix_views_schema_dir();
+    let cgs = load_schema_dir_unvalidated(&dir).expect("load unvalidated matrix views");
+    let tags = cgs
+        .get_entity("LangTriageContext")
+        .expect("LangTriageContext")
+        .relations
+        .get("tags")
+        .expect("tags");
+    assert!(tags.materialize.is_none());
+    assert!(
+        cgs.validate().is_err(),
+        "validate must reject many-relation before normalize"
+    );
+
+    let (full, _) = plasm_core::entity_slices_for_render(&cgs, plasm_core::FocusSpec::All);
+    let sym_map = Arc::new(SymbolMap::build(&cgs, &full));
+    let stack = [CgsLayer::new("langmatrix_views", &cgs)];
+    let err = parse_with_cgs_layers(r#"LangTriageContext("i1").tags"#, &stack, sym_map)
+        .expect_err("parse must reject unmaterialized many-relation");
+    assert!(
+        matches!(err.kind, ParseErrorKind::ManyRelationUnmaterialized { .. }),
+        "expected ManyRelationUnmaterialized, got {:?}",
+        err.kind
     );
 }

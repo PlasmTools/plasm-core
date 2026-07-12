@@ -468,8 +468,7 @@ relations:
     cardinality: many
     materialize:
       kind: view_embed
-      view: my_work          # views: key
-      relation: issues       # must match relation_outputs.relation
+      view: my_work          # views: key — entity relation name must match relation_outputs.relation
 ```
 
 - **`view_embed`** chains after a row produced by that view's query/get (`transport: view`); targets resolve via the view DAG's `relation_outputs` binding.

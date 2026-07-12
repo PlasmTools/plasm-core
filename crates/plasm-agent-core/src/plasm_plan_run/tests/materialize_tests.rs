@@ -266,3 +266,143 @@ fn materialized_result_use_allows_plural_rows_for_column_node_input_holes() {
         instantiate_expr_template_value(&template.expr, &env).expect("instantiate column array");
     assert_eq!(out, serde_json::json!(["bug", "docs"]));
 }
+
+fn comp_bundle_from_plan(plan: &serde_json::Value) -> crate::plasm_comp_bundle::PlasmCompBundle {
+    use crate::plasm_comp_wire::plasm_comp_from_validated;
+    use crate::plasm_plan::parse_and_validate_plan_json;
+    let validated = parse_and_validate_plan_json(plan).expect("validate plan json");
+    let artifact = plasm_comp_from_validated(&validated);
+    crate::plasm_comp_bundle::PlasmCompBundle::new(artifact).expect("comp bundle")
+}
+
+#[tokio::test]
+async fn view_embed_materialize_errors_without_view_produced_relation_refs() {
+    use crate::http::{build_plasm_host_state, PlasmHostBootstrap};
+    use crate::run_artifacts::RunArtifactStore;
+    use crate::server_state::CatalogBootstrap;
+    use plasm_core::discovery::InMemoryCgsRegistry;
+    use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
+    use std::sync::Arc;
+
+    let s = super::support::matrix_views_session();
+    let plan = serde_json::json!({
+        "version": 1,
+        "kind": "program",
+        "name": "orphan-view-embed-parent",
+        "nodes": [
+            {
+                "id": "raw",
+                "kind": "data",
+                "effect_class": "artifact_read",
+                "result_shape": "single",
+                "data": {
+                    "kind": "literal",
+                    "value": {
+                        "item_id": "i1",
+                        "echo_title": "Item",
+                        "tag_count": 0,
+                        "has_tags": false
+                    }
+                }
+            },
+            {
+                "id": "ctx",
+                "kind": "compute",
+                "effect_class": "artifact_read",
+                "result_shape": "single",
+                "compute": {
+                    "source": "raw",
+                    "op": {
+                        "kind": "project",
+                        "fields": {
+                            "item_id": ["item_id"],
+                            "echo_title": ["echo_title"],
+                            "tag_count": ["tag_count"],
+                            "has_tags": ["has_tags"]
+                        }
+                    },
+                    "schema": {
+                        "entity": "LangTriageContext",
+                        "fields": [
+                            { "name": "item_id", "value_kind": "string", "source": ["item_id"] },
+                            { "name": "echo_title", "value_kind": "string", "source": ["echo_title"] },
+                            { "name": "tag_count", "value_kind": "integer", "source": ["tag_count"] },
+                            { "name": "has_tags", "value_kind": "boolean", "source": ["has_tags"] }
+                        ]
+                    }
+                },
+                "depends_on": ["raw"]
+            },
+            {
+                "id": "tags",
+                "kind": "relation",
+                "effect_class": "read",
+                "result_shape": "list",
+                "relation": {
+                    "source": "ctx",
+                    "relation": "tags",
+                    "target": { "entry_id": "langmatrix_views", "entity": "LangTag" },
+                    "cardinality": "many",
+                    "source_cardinality": "single",
+                    "expr": "LangTriageContext(\"i1\").tags",
+                    "materialize": {
+                        "kind": "view_embed",
+                        "view": "lang_triage_context"
+                    },
+                    "ir": {
+                        "expr": {
+                            "op": "chain",
+                            "source": {
+                                "op": "get",
+                                "ref": { "entity_type": "LangTriageContext", "key": "i1" }
+                            },
+                            "selector": "tags",
+                            "step": { "type": "auto_get" }
+                        }
+                    }
+                },
+                "depends_on": ["ctx"],
+                "uses_result": [{ "node": "ctx", "as": "source" }]
+            }
+        ],
+        "return": { "kind": "node", "node": "tags" }
+    });
+    let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry-run plan");
+    let bundle = comp_bundle_from_plan(&plan);
+    let cgs = s.cgs.clone();
+    let reg = Arc::new(InMemoryCgsRegistry::from_pairs(vec![(
+        "langmatrix_views".into(),
+        "LangMatrixViews".into(),
+        vec!["langmatrix_views".into()],
+        cgs.clone(),
+    )]));
+    let engine = ExecutionEngine::new(ExecutionConfig::default()).expect("engine");
+    let st = build_plasm_host_state(PlasmHostBootstrap {
+        engine,
+        mode: ExecutionMode::Live,
+        registry: reg,
+        catalog_bootstrap: CatalogBootstrap::Fixed,
+        incoming_auth: None,
+        run_artifacts: Arc::new(RunArtifactStore::memory()),
+        session_graph_persistence: None,
+        oss_local_filesystem_defaults: false,
+    });
+    let err = run_plasm_comp(
+        &s,
+        &st,
+        "ph",
+        "view_embed_orphan_sess",
+        &bundle,
+        true,
+        None,
+        None,
+        Some(dry),
+        None,
+    )
+    .await
+    .expect_err("view_embed must fail when parent row lacks view relation refs");
+    assert!(
+        err.contains("view_embed") || err.contains("view-produced parent rows"),
+        "expected view_embed provenance error, got: {err}"
+    );
+}

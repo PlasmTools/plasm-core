@@ -122,6 +122,7 @@ pub mod prompt_render;
 pub mod query_resolve;
 pub mod relation_nav;
 pub mod relation_segment;
+pub mod relation_validation_expr;
 pub mod resolved_identity;
 pub mod result_gloss;
 pub mod row_composition;
@@ -296,6 +297,7 @@ pub use relation_segment::{
     relation_segment_wrong_role_message, resolve_relation_segment, ProgramBindingLabel,
     RelationSegmentContext, RelationSegmentOutcome,
 };
+pub use relation_validation_expr::relation_validation_expr;
 pub use schema::{
     capability_is_zero_arity_action, capability_is_zero_arity_invoke,
     capability_method_label_kebab, capability_template_all_var_names, flow_control_param_names,

@@ -481,4 +481,20 @@ mod tests {
         }
         assert!(count > 5, "expected multiple API catalogs under apis/");
     }
+
+    #[test]
+    fn view_embed_row_resolution_uses_cached_embedded_refs() {
+        let mat = RelationMaterialization::ViewEmbed {
+            view: "lang_triage_context".into(),
+        };
+        let res = resolve_relation_row_resolution(
+            &mat,
+            "tags",
+            "LangTag",
+            &serde_json::json!({ "item_id": "i1" }),
+            None,
+            |_| false,
+        );
+        assert_eq!(res, RelationRowResolution::EmbeddedRefs(vec![]));
+    }
 }

@@ -8,7 +8,9 @@
 use crate::identity::{
     CapabilityName, CapabilityParamName, EntityFieldName, EntityName, RelationName,
 };
-use crate::schema::{FieldValueKind, NamedValueSchema, ValueDomainKey, ViewDefinition};
+use crate::schema::{
+    FieldValueKind, LegacyViaParamPatch, NamedValueSchema, ValueDomainKey, ViewDefinition,
+};
 use crate::{
     capability_template_all_var_names, AgentPresentation, ArrayItemsSchema, AttachmentMediaKind,
     AuthScheme, CapabilityKind, CapabilityMapping, CapabilitySchema, CapabilityTemplateJson,
@@ -428,7 +430,8 @@ pub fn load_schema_dir_unvalidated(dir: &Path) -> Result<CGS, String> {
 
 /// Run post-assemble normalization, validation, and string-semantics checks.
 pub fn finalize_cgs_load(cgs: &mut CGS) -> Result<(), String> {
-    cgs.normalize_relation_materialization();
+    let legacy_via_param = std::mem::take(&mut cgs.pending_legacy_via_param_patches);
+    cgs.normalize_relation_materialization(&legacy_via_param);
     debug!(
         entities = cgs.entities.len(),
         capabilities = cgs.capabilities.len(),
@@ -811,6 +814,8 @@ fn assemble_cgs_core(
     cgs.data_classes = domain.data_classes;
     cgs.values = compile_domain_named_values(&domain.values)?;
 
+    let mut legacy_via_param_patches: Vec<LegacyViaParamPatch> = Vec::new();
+
     for (name, entity) in &domain.entities {
         validate_compound_entity_identity(name, entity)?;
 
@@ -820,24 +825,39 @@ fn assemble_cgs_core(
             .map(|(fname, f)| field_schema_from_domain_field(fname, name, f, &cgs.values))
             .collect::<Result<Vec<_>, String>>()?;
 
+        let source_id_field = entity
+            .id_field
+            .clone()
+            .or_else(|| entity.key_vars.first().cloned())
+            .map(EntityFieldName::from)
+            .unwrap_or_else(|| EntityFieldName::from("id"));
+
         let relations: Vec<RelationSchema> = entity
             .relations
             .iter()
-            .map(|(rname, r)| RelationSchema {
-                name: RelationName::from(rname.as_str()),
-                description: r.description.clone(),
-                target_resource: EntityName::from(r.target.clone()),
-                cardinality: if r.cardinality == "many" {
-                    Cardinality::Many
-                } else {
-                    Cardinality::One
-                },
-                materialize: r.materialize.clone(),
-                legacy_via_param: r
-                    .via_param
-                    .as_ref()
-                    .map(|p| CapabilityParamName::from(p.as_str())),
-                discovery: r.discovery.clone(),
+            .map(|(rname, r)| {
+                if r.cardinality == "many" && r.materialize.is_none() {
+                    if let Some(via_param) = r.via_param.as_ref() {
+                        legacy_via_param_patches.push(LegacyViaParamPatch {
+                            entity: EntityName::from(name.as_str()),
+                            relation: RelationName::from(rname.as_str()),
+                            via_param: CapabilityParamName::from(via_param.as_str()),
+                            source_id_field: source_id_field.clone(),
+                        });
+                    }
+                }
+                RelationSchema {
+                    name: RelationName::from(rname.as_str()),
+                    description: r.description.clone(),
+                    target_resource: EntityName::from(r.target.clone()),
+                    cardinality: if r.cardinality == "many" {
+                        Cardinality::Many
+                    } else {
+                        Cardinality::One
+                    },
+                    materialize: r.materialize.clone(),
+                    discovery: r.discovery.clone(),
+                }
             })
             .collect();
 
@@ -919,6 +939,8 @@ fn assemble_cgs_core(
     }
 
     cgs.views = std::mem::take(&mut domain.views);
+
+    cgs.pending_legacy_via_param_patches = legacy_via_param_patches;
 
     Ok(cgs)
 }

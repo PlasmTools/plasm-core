@@ -296,47 +296,27 @@ pub(crate) async fn materialize_validated_relation_traversal(
             .await
         }
         RelationMaterialization::ViewEmbed { .. } => {
-            if let Some(mat) = try_materialize_from_cached_relation_refs(
-                st, es, session_id, node, relation, source_mat, trace,
+            materialize_cached_embed_or_error(
+                st,
+                es,
+                session_id,
+                node,
+                relation,
+                source_mat,
+                trace,
+                read_cap,
+                plan_shared.clone(),
+                || {
+                    format!(
+                        "relation `{}` on `{}` requires view-produced parent rows (view_embed); execute the view root before navigating `.{}`",
+                        relation.relation.relation, source_mat.entity, relation.relation.relation
+                    )
+                },
             )
-            .await?
-            {
-                finalize_typed_relation_materialized_node(
-                    st,
-                    es,
-                    session_id,
-                    &relation.relation.target,
-                    mat,
-                    trace,
-                    read_cap,
-                    plan_shared.clone(),
-                )
-                .await
-            } else {
-                Err(format!(
-                    "relation `{}` on `{}` requires view-produced parent rows (view_embed); execute the view root before navigating `.{}`",
-                    relation.relation.relation, source_mat.entity, relation.relation.relation
-                ))
-            }
+            .await
         }
         RelationMaterialization::Unavailable => {
-            if let Some(mat) = try_materialize_from_cached_relation_refs(
-                st, es, session_id, node, relation, source_mat, trace,
-            )
-            .await?
-            {
-                finalize_typed_relation_materialized_node(
-                    st,
-                    es,
-                    session_id,
-                    &relation.relation.target,
-                    mat,
-                    trace,
-                    read_cap,
-                    plan_shared.clone(),
-                )
-                .await
-            } else if matches!(
+            if matches!(
                 relation.relation.source_cardinality,
                 RelationSourceCardinality::Many
             ) {
@@ -687,6 +667,40 @@ pub(crate) async fn archive_materialize_relation_result_hydrated(
         Some((read_cap, plan_shared)),
     )
     .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn materialize_cached_embed_or_error(
+    st: &PlasmHostState,
+    es: &ExecuteSession,
+    session_id: &str,
+    node: &ValidatedPlanNode,
+    relation: &ValidatedRelationTraversalNode,
+    source_mat: &MaterializedNode,
+    trace: Option<&PlasmTraceContext>,
+    read_cap: Option<usize>,
+    plan_shared: Option<Arc<crate::plan_execute_shared::PlanLineExecuteShared>>,
+    on_miss: impl FnOnce() -> String,
+) -> Result<MaterializedNode, String> {
+    if let Some(mat) = try_materialize_from_cached_relation_refs(
+        st, es, session_id, node, relation, source_mat, trace,
+    )
+    .await?
+    {
+        finalize_typed_relation_materialized_node(
+            st,
+            es,
+            session_id,
+            &relation.relation.target,
+            mat,
+            trace,
+            read_cap,
+            plan_shared,
+        )
+        .await
+    } else {
+        Err(on_miss())
+    }
 }
 
 /// Archive snapshot + build a for_each `MaterializedNode`.

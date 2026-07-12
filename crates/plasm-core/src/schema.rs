@@ -708,10 +708,16 @@ pub enum RelationMaterialization {
         bindings: IndexMap<CapabilityParamName, EntityFieldName>,
     },
     /// Resolve targets from a composed view's `relation_outputs` after the view root row exists.
-    ViewEmbed {
-        view: String,
-        relation: RelationName,
-    },
+    ViewEmbed { view: String },
+}
+
+/// Loader-only legacy domain `via_param:` captured during assemble for normalize → `query_scoped`.
+#[derive(Debug, Clone)]
+pub struct LegacyViaParamPatch {
+    pub entity: EntityName,
+    pub relation: RelationName,
+    pub via_param: CapabilityParamName,
+    pub source_id_field: EntityFieldName,
 }
 
 /// Definition of a relation (graph edge) between resources.
@@ -726,9 +732,6 @@ pub struct RelationSchema {
     /// When set, defines how chain traversal materializes targets (`cardinality: many` required).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub materialize: Option<RelationMaterialization>,
-    /// Legacy authoring `via_param:` captured at load for normalize → `query_scoped`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub legacy_via_param: Option<CapabilityParamName>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discovery: Option<DiscoveryRelationHints>,
 }
@@ -2263,6 +2266,9 @@ pub struct CGS {
     /// When true, PLT workflow identity validation is enforced on mutators.
     #[serde(default)]
     pub workflow_identity: bool,
+    /// Loader-only legacy `via_param:` rows; consumed by [`crate::loader::finalize_cgs_load`].
+    #[serde(skip, default)]
+    pub(crate) pending_legacy_via_param_patches: Vec<LegacyViaParamPatch>,
     /// Lazily built index for [`Self::find_capabilities`] / [`Self::find_capability`].
     #[serde(skip, default = "new_capability_index_lock")]
     capability_index: OnceLock<Arc<CgsCapabilityIndex>>,
@@ -2323,6 +2329,7 @@ impl Clone for CGS {
             schema_overlay_hash: self.schema_overlay_hash.clone(),
             schema_overlay_scope_index: self.schema_overlay_scope_index.clone(),
             workflow_identity: self.workflow_identity,
+            pending_legacy_via_param_patches: Vec::new(),
             capability_index: OnceLock::new(),
             capability_manifest_by_entity: OnceLock::new(),
             incoming_nav_index: OnceLock::new(),
@@ -2486,6 +2493,7 @@ impl CGS {
             schema_overlay_hash: None,
             schema_overlay_scope_index: IndexMap::new(),
             workflow_identity: false,
+            pending_legacy_via_param_patches: Vec::new(),
             capability_index: new_capability_index_lock(),
             capability_manifest_by_entity: new_capability_manifest_by_entity_lock(),
             incoming_nav_index: new_incoming_nav_index_lock(),
@@ -3154,10 +3162,7 @@ impl CGS {
                                     },
                                 );
                             }
-                            RelationMaterialization::ViewEmbed {
-                                view,
-                                relation: embed_relation,
-                            } => {
+                            RelationMaterialization::ViewEmbed { view } => {
                                 let view_def = self.views.get(view).ok_or_else(|| {
                                     SchemaError::RelationViewEmbedUnknownView {
                                         entity: entity_name.to_string(),
@@ -3172,16 +3177,6 @@ impl CGS {
                                         view: view.clone(),
                                         view_entity: view_def.entity.to_string(),
                                     });
-                                }
-                                if embed_relation.as_str() != relation_name.as_str() {
-                                    return Err(
-                                        SchemaError::RelationViewEmbedRelationNameMismatch {
-                                            entity: entity_name.to_string(),
-                                            relation: relation_name.to_string(),
-                                            expected: relation_name.to_string(),
-                                            got: embed_relation.to_string(),
-                                        },
-                                    );
                                 }
                                 let ro_ok = view_def.relation_outputs.iter().any(|ro| {
                                     ro.relation.as_str() == relation_name.as_str()

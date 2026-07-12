@@ -293,7 +293,6 @@ entities:
         materialize:
           kind: view_embed
           view: my_work
-          relation: issues
   ProjectContext:
     abstract: true
     id_field: project_id
@@ -319,7 +318,6 @@ entities:
         materialize:
           kind: view_embed
           view: project_context
-          relation: updates
   IssueNavigationLink:
     abstract: true
     id_field: issue_identifier
@@ -364,7 +362,6 @@ entities:
         materialize:
           kind: view_embed
           view: cycle_board_snapshot
-          relation: issues
 capabilities:
   issue_search:
     kind: search

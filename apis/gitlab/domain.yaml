@@ -1,4 +1,4 @@
-version: 3
+version: 4
 http_backend: https://gitlab.com
 data_classes:
   untrusted:
@@ -61,11 +61,17 @@ entities:
       issues:
         target: Issue
         cardinality: many
-        via_param: project_id
+        materialize:
+          kind: query_scoped
+          capability: issue_for_project_query
+          param: project_id
       merge_requests:
         target: MergeRequest
         cardinality: many
-        via_param: project_id
+        materialize:
+          kind: query_scoped
+          capability: merge_request_for_project_query
+          param: project_id
   Issue:
     id_field: id
     key_vars:

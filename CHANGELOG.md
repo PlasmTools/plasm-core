@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.17] - 2026-07-12
+
+### Changed
+
+- **`ViewEmbed { view }`:** drop redundant `relation:` field from enum and catalog YAML; validate alignment via `views.relation_outputs` only.
+- **CGS normalization:** single `normalize_relation_materialization` entry in `finalize_cgs_load` (legacy `via_param` + view_embed synthesis); `relation_validation_expr` extracted from `plasm-cli validate`.
+- **Plan materialize:** remove cached-embed fallback on `Unavailable` many-relations (closes teachable-but-not-executable side door).
+
+### Added
+
+- **Regression tests:** `cgs_normalize` synthesis + `RelationNotExecutable`, `relation_validation_expr` view-root chains, negative view_embed materialize, matrix parse gate.
+
 ## [0.4.16] - 2026-07-11
 
 ### Added

@@ -789,7 +789,6 @@ mod tests {
                 target_resource: "Contact".into(),
                 cardinality: Cardinality::Many,
                 materialize: None,
-                legacy_via_param: None,
                 discovery: None,
             }],
             expression_aliases: vec![],

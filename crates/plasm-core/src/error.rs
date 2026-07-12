@@ -353,16 +353,6 @@ pub enum SchemaError {
     },
 
     #[error(
-        "Entity '{entity}' relation '{relation}': view_embed relation name '{got}' must match entity relation '{expected}'"
-    )]
-    RelationViewEmbedRelationNameMismatch {
-        entity: String,
-        relation: String,
-        expected: String,
-        got: String,
-    },
-
-    #[error(
         "Entity '{entity}' relation '{relation}': no query/search capability on '{target}' declares parameters {params:?}"
     )]
     RelationMaterializeNoMatchingCapability {
