@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.21] - 2026-07-12
+
+### Fixed
+
+- **`/v1/health` and MCP `initialize` version:** report monorepo / image-tag release semver via `PLASM_RELEASE_VERSION` (Docker tag, workspace `[workspace.package] version`, or explicit env) instead of stale per-crate `CARGO_PKG_VERSION` (`0.0.1` in cached chef builds).
+
 ## [0.4.20] - 2026-07-12
 
 ### Added

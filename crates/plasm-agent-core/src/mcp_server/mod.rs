@@ -1895,7 +1895,7 @@ fn mcp_initialize_result() -> InitializeResult {
     InitializeResult {
         server_info: Implementation {
             name: "plasm".into(),
-            version: env!("CARGO_PKG_VERSION").into(),
+            version: crate::release_version::RELEASE_VERSION.into(),
             title: Some("Plasm agent".into()),
             description: Some(
                 "**`session_mode: \"new\"`** once per workflow, then **`\"extend\"`** + **`logical_session_ref`**. **`plasm`** (plan) and **`plasm_run`** (execute) reuse the same ref. **`intent`** accumulates per turn — it does not select the session."

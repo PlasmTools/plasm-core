@@ -18,6 +18,7 @@ use plasm_core::schema::CGS;
 use plasm_discovery::DiscoveryQuery;
 use serde::{Deserialize, Serialize};
 
+use crate::release_version::RELEASE_VERSION;
 use crate::http_problem_util::problem_response;
 use crate::http_problem_util::problem_types;
 use crate::server_state::{PlasmHostState, ToolModelHostError};
@@ -67,7 +68,7 @@ pub struct AuthStatusResponse {
 pub async fn health_response() -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok",
-        version: env!("CARGO_PKG_VERSION"),
+        version: RELEASE_VERSION,
     })
 }
 
