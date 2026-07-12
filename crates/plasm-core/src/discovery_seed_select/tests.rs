@@ -546,7 +546,8 @@ fn brand_lock_github_repo_workflow_ready_when_selector_over_splits() {
         seed_bundle("github", &["github:PullRequest"]),
     ];
     let tables = build_seed_bundle_index_tables(&seed_bundles, &bundles).expect("build tables");
-    let intent = "GitHub repo ryan-s-roberts/tool-test: create issue, branch, file, PR, labels, comment";
+    let intent =
+        "GitHub repo ryan-s-roberts/tool-test: create issue, branch, file, PR, labels, comment";
     let raw = resolve_seed_coverage_assessment(
         vec![
             (0, "Create an issue in the GitHub repo".into(), vec![]),

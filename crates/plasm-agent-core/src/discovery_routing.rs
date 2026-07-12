@@ -1,9 +1,7 @@
 //! Breakout markdown + `_meta.plasm.routing` for intent-only abstention paths.
 
 use plasm_core::discovery_auto_seed::EntityCandidateBundle;
-use plasm_core::discovery_intent_signals::{
-    intent_mentions_repo_path, intent_names_catalog,
-};
+use plasm_core::discovery_intent_signals::{intent_mentions_repo_path, intent_names_catalog};
 use plasm_core::discovery_seed_select::SeedAlternativeSetRaw;
 
 /// Outcome of auto-seed routing before session mint.
@@ -101,9 +99,7 @@ fn format_hard_miss_breakout(
         lines.push(gap);
     }
     lines.push(String::new());
-    lines.push(
-        "Or call `discover_capabilities` to browse what's available.".into(),
-    );
+    lines.push("Or call `discover_capabilities` to browse what's available.".into());
     lines.join("\n")
 }
 
@@ -302,12 +298,12 @@ pub fn build_routing_meta(
     routing
 }
 
-fn insert_selector_reasoning(routing: &mut serde_json::Map<String, serde_json::Value>, reasoning: &str) {
+fn insert_selector_reasoning(
+    routing: &mut serde_json::Map<String, serde_json::Value>,
+    reasoning: &str,
+) {
     if !reasoning.is_empty() {
-        routing.insert(
-            "selector_reasoning".into(),
-            serde_json::json!(reasoning),
-        );
+        routing.insert("selector_reasoning".into(), serde_json::json!(reasoning));
     }
 }
 

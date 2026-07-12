@@ -3,27 +3,28 @@
 //
 // Learn more at https://docs.boundaryml.com
 
-
 //! Generated union types.
 
-use baml::{BamlEncode, BamlDecode, BamlSerde, __internal::serde::{Serialize, Deserialize}};
 use super::*;
-
+use baml::{
+    BamlDecode, BamlEncode, BamlSerde,
+    __internal::serde::{Deserialize, Serialize},
+};
 
 /// Generated from: ("user" | "assistant")
-#[derive(Debug, Clone, BamlEncode, BamlDecode, BamlSerde, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(
+    Debug, Clone, BamlEncode, BamlDecode, BamlSerde, Serialize, Deserialize, PartialEq, Eq, Hash,
+)]
 #[baml(union)]
 #[serde(crate = "::baml::__internal::serde", untagged)]
 pub enum Union2KassistantOrKuser {
-
-#[baml(name = "string_user", literal_string = "user")]
+    #[baml(name = "string_user", literal_string = "user")]
     #[serde(with = "__baml_serde_union_literal_Union2KassistantOrKuser::Kuser")]
     Kuser,
 
-#[baml(name = "string_assistant", literal_string = "assistant")]
+    #[baml(name = "string_assistant", literal_string = "assistant")]
     #[serde(with = "__baml_serde_union_literal_Union2KassistantOrKuser::Kassistant")]
     Kassistant,
-
 }
 
 impl ::std::convert::AsRef<Union2KassistantOrKuser> for Union2KassistantOrKuser {
@@ -34,10 +35,6 @@ impl ::std::convert::AsRef<Union2KassistantOrKuser> for Union2KassistantOrKuser 
 
 impl ::std::default::Default for Union2KassistantOrKuser {
     fn default() -> Self {
-        
-           
-            Self::Kuser
-        
+        Self::Kuser
     }
 }
-

@@ -209,14 +209,7 @@ pub(crate) fn inject_workflow_mutation_targets(
             if cgs.get_entity(entity).is_none() {
                 continue;
             }
-            inject_mutation_entity_bundle(
-                bundles,
-                cgs,
-                &entry_id,
-                entity,
-                discovery,
-                &route_set,
-            );
+            inject_mutation_entity_bundle(bundles, cgs, &entry_id, entity, discovery, &route_set);
         }
     }
 }
