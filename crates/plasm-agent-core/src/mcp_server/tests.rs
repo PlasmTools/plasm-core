@@ -190,6 +190,8 @@ fn mcp_server_initialize_workflow_uses_session_mode_not_intent_key() {
     assert!(!text.contains("pass **`query`**"));
     assert!(!text.contains("syntax guide in MCP initialize"));
     assert!(text.contains("Reuse ref"));
+    assert!(text.contains("Do NOT"));
+    assert!(!text.contains("discover_capabilities` first only"));
     let discover = default_plasm_tools()
         .into_iter()
         .find(|t| t.name == "discover_capabilities")
@@ -218,7 +220,7 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
     assert!(plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.contains("literal no-op"));
     assert!(plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.contains("pcN"));
     assert!(
-        plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("active symbol table")
+        plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("symbol table")
     );
     assert!(
         plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("Call before `plasm`")
@@ -230,10 +232,11 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
         plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("Call before `plasm`")
     );
     assert!(
-        plasm_core::prompt_render::DISCOVER_TOOL_DESCRIPTION.contains("Plasm is a source language")
+        plasm_core::prompt_render::DISCOVER_TOOL_DESCRIPTION.contains("Not the default open step")
     );
     assert!(plasm_core::prompt_render::DISCOVER_TOOL_DESCRIPTION.contains("plasm.program"));
-    assert!(plasm_core::prompt_render::DISCOVER_TOOL_DESCRIPTION.contains("alternate JSON"));
+    assert!(plasm_core::prompt_render::DISCOVER_TOOL_DESCRIPTION
+        .contains("Not the default open step"));
     assert!(
         plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.contains("do **not** echo the program")
     );

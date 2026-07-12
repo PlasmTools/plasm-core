@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.19] - 2026-07-12
+
+### Changed
+
+- **MCP tool prompting:** semantic auto-seed is now the documented default open path — `plasm_context` with `session_mode: "new"` and intent-only leads server instructions and tool descriptions; `discover_capabilities` is reframed as browse/recovery (title, description, sequencing marker).
+- **`discover_capabilities` tool title:** "Resolve intent to capabilities" → "Browse capabilities (recovery)" so agents stop selecting it as the first workflow step.
+
 ## [0.4.18] - 2026-07-12
 
 ### Fixed

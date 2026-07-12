@@ -137,7 +137,7 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
         },
         Tool {
             name: "discover_capabilities".into(),
-            title: Some("Resolve intent to capabilities".into()),
+            title: Some("Browse capabilities (recovery)".into()),
             description: Some(DISCOVER_TOOL_DESCRIPTION.into()),
             input_schema: ToolInputSchema::new(vec!["intent".into()], Some(discover_props), None),
             annotations: Some(ToolAnnotations {

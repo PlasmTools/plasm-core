@@ -58,7 +58,7 @@ pub const MCP_TOOL_SYNTAX_CONTRACT_MARKER: &str = "`program` is Plasm source tex
 
 /// Marker for tests; tool-order line in MCP tool descriptions.
 pub const MCP_TOOL_SEQUENCING_MARKER: &str =
-    "Tool order: optional `discover_capabilities` → `plasm_context` → `plasm` (dry-run) → `plasm_run` (live).";
+    "Default open: `plasm_context` (intent-only) → `plasm` → `plasm_run`; `discover_capabilities` only on hard_miss/clarify.";
 
 /// Marker for tests; grammar contract opener in [`PLASM_TOOL_DESCRIPTION`].
 pub const TEACHING_VALID_EXPR_MARKER: &str =

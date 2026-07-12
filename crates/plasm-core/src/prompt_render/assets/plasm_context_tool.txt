@@ -1,4 +1,4 @@
-**Call before `plasm` / `plasm_run`.** Session identity is **`logical_session_ref`** only — not `intent`.
+**Default first MCP call for a new workflow.** Call before `plasm` / `plasm_run`. Session identity is **`logical_session_ref`** only — not `intent`.
 
 **Intent-only open (semantic auto-seed hosts):** `session_mode: "new"` + **`intent`** only — the host retrieves entity candidates, runs seed-set selection, and opens a minimal teaching table when decision is **`ready`**. On **`clarify`**, **`hard_miss`**, or **`routing_error`** no session is minted; follow breakout guidance (ask user, call `discover_capabilities`, or pass explicit **`seeds`**).
 

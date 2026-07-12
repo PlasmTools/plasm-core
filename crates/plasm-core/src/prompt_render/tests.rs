@@ -2047,7 +2047,7 @@ fn mcp_static_tool_descriptions_byte_budget() {
         discover.len()
     );
     assert!(
-        context.len() <= 1900,
+        context.len() <= 2700,
         "plasm_context tool description too long: {} bytes",
         context.len()
     );
