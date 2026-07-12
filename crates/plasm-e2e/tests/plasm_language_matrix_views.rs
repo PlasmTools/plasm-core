@@ -233,7 +233,7 @@ async fn matrix_views_row_to_text_named_loop_cursor() {
         None,
         es.as_ref(),
         "matrix_views_named_cursor_render",
-        &program,
+        program,
     )
     .expect("compile row-to-text named loop cursor");
     evaluate_plasm_comp_dry(es.as_ref(), &bundle).expect("dry row-to-text named loop cursor");
@@ -292,7 +292,7 @@ async fn matrix_views_view_embed_relation_traversal() {
         None,
         es.as_ref(),
         "matrix_views_view_embed_tags",
-        &program,
+        program,
     )
     .expect("compile view_embed relation traversal");
     evaluate_plasm_comp_dry(es.as_ref(), &bundle).expect("dry view_embed relation traversal");
@@ -401,11 +401,8 @@ async fn matrix_views_parameterless_dashboard_view_embed_empty() {
         .as_ref()
         .expect("views session exposure")
         .symbol_map_arc();
-    let items_rel = map.ident_sym_relation_for(
-        VIEWS_MATRIX_ENTRY_ID,
-        "LangWorkSnapshotEmpty",
-        "items",
-    );
+    let items_rel =
+        map.ident_sym_relation_for(VIEWS_MATRIX_ENTRY_ID, "LangWorkSnapshotEmpty", "items");
     let program = format!("e10.lang-work-snapshot-empty-get().{items_rel}");
     let bundle = compile_plasm_program(
         &PromptPipelineConfig::default(),
