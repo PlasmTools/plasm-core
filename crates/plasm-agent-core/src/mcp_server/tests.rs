@@ -219,9 +219,7 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
         .contains(plasm_core::prompt_render::MCP_TOOL_SYNTAX_CONTRACT_MARKER));
     assert!(plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.contains("literal no-op"));
     assert!(plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.contains("pcN"));
-    assert!(
-        plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("symbol table")
-    );
+    assert!(plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("symbol table"));
     assert!(
         plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("Call before `plasm`")
     );
@@ -235,8 +233,9 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
         plasm_core::prompt_render::DISCOVER_TOOL_DESCRIPTION.contains("Not the default open step")
     );
     assert!(plasm_core::prompt_render::DISCOVER_TOOL_DESCRIPTION.contains("plasm.program"));
-    assert!(plasm_core::prompt_render::DISCOVER_TOOL_DESCRIPTION
-        .contains("Not the default open step"));
+    assert!(
+        plasm_core::prompt_render::DISCOVER_TOOL_DESCRIPTION.contains("Not the default open step")
+    );
     assert!(
         plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.contains("do **not** echo the program")
     );

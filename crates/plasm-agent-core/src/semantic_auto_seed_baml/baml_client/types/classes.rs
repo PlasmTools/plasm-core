@@ -3,13 +3,14 @@
 //
 // Learn more at https://docs.boundaryml.com
 
+
 //! Generated class types.
 
+use baml::{BamlEncode, BamlDecode, __internal::serde::{Serialize, Deserialize}};
 use super::*;
-use baml::{
-    BamlDecode, BamlEncode,
-    __internal::serde::{Deserialize, Serialize},
-};
+
+
+
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -18,11 +19,16 @@ pub struct BundleCoverageRow {
     pub supporting_bundle_indexes: Vec<i64>,
 }
 
+
+
 impl ::std::convert::AsRef<BundleCoverageRow> for BundleCoverageRow {
     fn as_ref(&self) -> &BundleCoverageRow {
         self
     }
 }
+
+
+
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -32,11 +38,16 @@ pub struct CandidateSeedBundle {
     pub roots: Vec<SeedBundleRoot>,
 }
 
+
+
 impl ::std::convert::AsRef<CandidateSeedBundle> for CandidateSeedBundle {
     fn as_ref(&self) -> &CandidateSeedBundle {
         self
     }
 }
+
+
+
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -48,11 +59,16 @@ pub struct DiscoveryRerankCandidate {
     pub description: String,
 }
 
+
+
 impl ::std::convert::AsRef<DiscoveryRerankCandidate> for DiscoveryRerankCandidate {
     fn as_ref(&self) -> &DiscoveryRerankCandidate {
         self
     }
 }
+
+
+
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -68,11 +84,16 @@ pub struct DomainCapability {
     pub response_is_array: bool,
 }
 
+
+
 impl ::std::convert::AsRef<DomainCapability> for DomainCapability {
     fn as_ref(&self) -> &DomainCapability {
         self
     }
 }
+
+
+
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -87,11 +108,16 @@ pub struct DomainEntity {
     pub capabilities: Vec<DomainCapability>,
 }
 
+
+
 impl ::std::convert::AsRef<DomainEntity> for DomainEntity {
     fn as_ref(&self) -> &DomainEntity {
         self
     }
 }
+
+
+
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -105,11 +131,16 @@ pub struct DomainField {
     pub ref_target_entity: Option<String>,
 }
 
+
+
 impl ::std::convert::AsRef<DomainField> for DomainField {
     fn as_ref(&self) -> &DomainField {
         self
     }
 }
+
+
+
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -118,11 +149,16 @@ pub struct DomainModel {
     pub shared_types: Vec<SharedType>,
 }
 
+
+
 impl ::std::convert::AsRef<DomainModel> for DomainModel {
     fn as_ref(&self) -> &DomainModel {
         self
     }
 }
+
+
+
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -132,11 +168,16 @@ pub struct DomainModelValidation {
     pub suggestions: Vec<String>,
 }
 
+
+
 impl ::std::convert::AsRef<DomainModelValidation> for DomainModelValidation {
     fn as_ref(&self) -> &DomainModelValidation {
         self
     }
 }
+
+
+
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -150,11 +191,16 @@ pub struct DomainParameter {
     pub ref_target_entity: Option<String>,
 }
 
+
+
 impl ::std::convert::AsRef<DomainParameter> for DomainParameter {
     fn as_ref(&self) -> &DomainParameter {
         self
     }
 }
+
+
+
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -166,11 +212,16 @@ pub struct DomainRelation {
     pub evidence: String,
 }
 
+
+
 impl ::std::convert::AsRef<DomainRelation> for DomainRelation {
     fn as_ref(&self) -> &DomainRelation {
         self
     }
 }
+
+
+
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -181,11 +232,16 @@ pub struct EntityCapabilityEvidence {
     pub lexical_score: i64,
 }
 
+
+
 impl ::std::convert::AsRef<EntityCapabilityEvidence> for EntityCapabilityEvidence {
     fn as_ref(&self) -> &EntityCapabilityEvidence {
         self
     }
 }
+
+
+
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -195,11 +251,16 @@ pub struct IntentRequirement {
     pub depends_on_indexes: Vec<i64>,
 }
 
+
+
 impl ::std::convert::AsRef<IntentRequirement> for IntentRequirement {
     fn as_ref(&self) -> &IntentRequirement {
         self
     }
 }
+
+
+
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -208,11 +269,16 @@ pub struct PlanChatTurn {
     pub content: String,
 }
 
+
+
 impl ::std::convert::AsRef<PlanChatTurn> for PlanChatTurn {
     fn as_ref(&self) -> &PlanChatTurn {
         self
     }
 }
+
+
+
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -221,11 +287,16 @@ pub struct PlasmPlan {
     pub reasoning: String,
 }
 
+
+
 impl ::std::convert::AsRef<PlasmPlan> for PlasmPlan {
     fn as_ref(&self) -> &PlasmPlan {
         self
     }
 }
+
+
+
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -234,11 +305,16 @@ pub struct RerankedDiscovery {
     pub reasoning: String,
 }
 
+
+
 impl ::std::convert::AsRef<RerankedDiscovery> for RerankedDiscovery {
     fn as_ref(&self) -> &RerankedDiscovery {
         self
     }
 }
+
+
+
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -249,11 +325,16 @@ pub struct SeedBundleProviderGroup {
     pub capability_sketch: String,
 }
 
+
+
 impl ::std::convert::AsRef<SeedBundleProviderGroup> for SeedBundleProviderGroup {
     fn as_ref(&self) -> &SeedBundleProviderGroup {
         self
     }
 }
+
+
+
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -265,11 +346,16 @@ pub struct SeedBundleRoot {
     pub relation_coverage: String,
 }
 
+
+
 impl ::std::convert::AsRef<SeedBundleRoot> for SeedBundleRoot {
     fn as_ref(&self) -> &SeedBundleRoot {
         self
     }
 }
+
+
+
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -279,11 +365,16 @@ pub struct SeedCoverageAssessment {
     pub reasoning: String,
 }
 
+
+
 impl ::std::convert::AsRef<SeedCoverageAssessment> for SeedCoverageAssessment {
     fn as_ref(&self) -> &SeedCoverageAssessment {
         self
     }
 }
+
+
+
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -294,11 +385,16 @@ pub struct SharedType {
     pub used_by: Vec<String>,
 }
 
+
+
 impl ::std::convert::AsRef<SharedType> for SharedType {
     fn as_ref(&self) -> &SharedType {
         self
     }
 }
+
+
+
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -308,8 +404,11 @@ pub struct ValidationIssue {
     pub description: String,
 }
 
+
+
 impl ::std::convert::AsRef<ValidationIssue> for ValidationIssue {
     fn as_ref(&self) -> &ValidationIssue {
         self
     }
 }
+

@@ -987,6 +987,7 @@ impl PlasmMcpHandler {
                                     let text =
                                         crate::discovery_routing::build_auto_seed_breakout_markdown(
                                             &abstain,
+                                            intent,
                                         );
                                     let routing = crate::discovery_routing::build_routing_meta(
                                         &abstain, "semantic",

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.20] - 2026-07-12
+
+### Added
+
+- **Brand-lock best-effort ready:** when a brand-locked intent (e.g. GitHub repo workflow) over-splits requirements, auto-seed opens a session on the best mutation-capable catalog bundle (prefers `Repository` for repo-scoped intents) instead of `hard_miss`.
+- **GitHub workflow inject:** semantic retrieval injects `Repository`, `Branch`, and `Label` mutation bundles for repo-scoped GitHub intents.
+
+### Changed
+
+- **Auto-seed abstention UX:** `hard_miss` / `clarify` / `routing_error` tool text is brief and actionable — seed hints, no selector monologue or bundle indexes in agent-visible markdown; full reasoning moves to `_meta.plasm.routing.selector_reasoning`.
+- **SelectDiscoverySeeds BAML:** nudge against over-decomposing single-catalog multi-step repo workflows.
+
 ## [0.4.19] - 2026-07-12
 
 ### Changed

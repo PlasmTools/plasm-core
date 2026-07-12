@@ -48,225 +48,227 @@ impl TypeBuilder {
     // Schema Class Accessors (1:1 with schema class names)
     // =========================================================================
 
+
     /// Access the `BundleCoverageRow` class builder.
     pub fn BundleCoverageRow(&self) -> BundleCoverageRowClassBuilder {
         BundleCoverageRowClassBuilder::new(
-            self.inner
-                .get_class("BundleCoverageRow")
-                .expect("class BundleCoverageRow is defined in schema"),
+            self.inner.get_class("BundleCoverageRow")
+                .expect("class BundleCoverageRow is defined in schema")
         )
     }
+
 
     /// Access the `CandidateSeedBundle` class builder.
     pub fn CandidateSeedBundle(&self) -> CandidateSeedBundleClassBuilder {
         CandidateSeedBundleClassBuilder::new(
-            self.inner
-                .get_class("CandidateSeedBundle")
-                .expect("class CandidateSeedBundle is defined in schema"),
+            self.inner.get_class("CandidateSeedBundle")
+                .expect("class CandidateSeedBundle is defined in schema")
         )
     }
+
 
     /// Access the `DiscoveryRerankCandidate` class builder.
     pub fn DiscoveryRerankCandidate(&self) -> DiscoveryRerankCandidateClassBuilder {
         DiscoveryRerankCandidateClassBuilder::new(
-            self.inner
-                .get_class("DiscoveryRerankCandidate")
-                .expect("class DiscoveryRerankCandidate is defined in schema"),
+            self.inner.get_class("DiscoveryRerankCandidate")
+                .expect("class DiscoveryRerankCandidate is defined in schema")
         )
     }
+
 
     /// Access the `DomainCapability` class builder.
     pub fn DomainCapability(&self) -> DomainCapabilityClassBuilder {
         DomainCapabilityClassBuilder::new(
-            self.inner
-                .get_class("DomainCapability")
-                .expect("class DomainCapability is defined in schema"),
+            self.inner.get_class("DomainCapability")
+                .expect("class DomainCapability is defined in schema")
         )
     }
+
 
     /// Access the `DomainEntity` class builder.
     pub fn DomainEntity(&self) -> DomainEntityClassBuilder {
         DomainEntityClassBuilder::new(
-            self.inner
-                .get_class("DomainEntity")
-                .expect("class DomainEntity is defined in schema"),
+            self.inner.get_class("DomainEntity")
+                .expect("class DomainEntity is defined in schema")
         )
     }
+
 
     /// Access the `DomainField` class builder.
     pub fn DomainField(&self) -> DomainFieldClassBuilder {
         DomainFieldClassBuilder::new(
-            self.inner
-                .get_class("DomainField")
-                .expect("class DomainField is defined in schema"),
+            self.inner.get_class("DomainField")
+                .expect("class DomainField is defined in schema")
         )
     }
+
 
     /// Access the `DomainModel` class builder.
     pub fn DomainModel(&self) -> DomainModelClassBuilder {
         DomainModelClassBuilder::new(
-            self.inner
-                .get_class("DomainModel")
-                .expect("class DomainModel is defined in schema"),
+            self.inner.get_class("DomainModel")
+                .expect("class DomainModel is defined in schema")
         )
     }
+
 
     /// Access the `DomainModelValidation` class builder.
     pub fn DomainModelValidation(&self) -> DomainModelValidationClassBuilder {
         DomainModelValidationClassBuilder::new(
-            self.inner
-                .get_class("DomainModelValidation")
-                .expect("class DomainModelValidation is defined in schema"),
+            self.inner.get_class("DomainModelValidation")
+                .expect("class DomainModelValidation is defined in schema")
         )
     }
+
 
     /// Access the `DomainParameter` class builder.
     pub fn DomainParameter(&self) -> DomainParameterClassBuilder {
         DomainParameterClassBuilder::new(
-            self.inner
-                .get_class("DomainParameter")
-                .expect("class DomainParameter is defined in schema"),
+            self.inner.get_class("DomainParameter")
+                .expect("class DomainParameter is defined in schema")
         )
     }
+
 
     /// Access the `DomainRelation` class builder.
     pub fn DomainRelation(&self) -> DomainRelationClassBuilder {
         DomainRelationClassBuilder::new(
-            self.inner
-                .get_class("DomainRelation")
-                .expect("class DomainRelation is defined in schema"),
+            self.inner.get_class("DomainRelation")
+                .expect("class DomainRelation is defined in schema")
         )
     }
+
 
     /// Access the `EntityCapabilityEvidence` class builder.
     pub fn EntityCapabilityEvidence(&self) -> EntityCapabilityEvidenceClassBuilder {
         EntityCapabilityEvidenceClassBuilder::new(
-            self.inner
-                .get_class("EntityCapabilityEvidence")
-                .expect("class EntityCapabilityEvidence is defined in schema"),
+            self.inner.get_class("EntityCapabilityEvidence")
+                .expect("class EntityCapabilityEvidence is defined in schema")
         )
     }
+
 
     /// Access the `IntentRequirement` class builder.
     pub fn IntentRequirement(&self) -> IntentRequirementClassBuilder {
         IntentRequirementClassBuilder::new(
-            self.inner
-                .get_class("IntentRequirement")
-                .expect("class IntentRequirement is defined in schema"),
+            self.inner.get_class("IntentRequirement")
+                .expect("class IntentRequirement is defined in schema")
         )
     }
+
 
     /// Access the `PlanChatTurn` class builder.
     pub fn PlanChatTurn(&self) -> PlanChatTurnClassBuilder {
         PlanChatTurnClassBuilder::new(
-            self.inner
-                .get_class("PlanChatTurn")
-                .expect("class PlanChatTurn is defined in schema"),
+            self.inner.get_class("PlanChatTurn")
+                .expect("class PlanChatTurn is defined in schema")
         )
     }
+
 
     /// Access the `PlasmPlan` class builder.
     pub fn PlasmPlan(&self) -> PlasmPlanClassBuilder {
         PlasmPlanClassBuilder::new(
-            self.inner
-                .get_class("PlasmPlan")
-                .expect("class PlasmPlan is defined in schema"),
+            self.inner.get_class("PlasmPlan")
+                .expect("class PlasmPlan is defined in schema")
         )
     }
+
 
     /// Access the `RerankedDiscovery` class builder.
     pub fn RerankedDiscovery(&self) -> RerankedDiscoveryClassBuilder {
         RerankedDiscoveryClassBuilder::new(
-            self.inner
-                .get_class("RerankedDiscovery")
-                .expect("class RerankedDiscovery is defined in schema"),
+            self.inner.get_class("RerankedDiscovery")
+                .expect("class RerankedDiscovery is defined in schema")
         )
     }
+
 
     /// Access the `SeedBundleProviderGroup` class builder.
     pub fn SeedBundleProviderGroup(&self) -> SeedBundleProviderGroupClassBuilder {
         SeedBundleProviderGroupClassBuilder::new(
-            self.inner
-                .get_class("SeedBundleProviderGroup")
-                .expect("class SeedBundleProviderGroup is defined in schema"),
+            self.inner.get_class("SeedBundleProviderGroup")
+                .expect("class SeedBundleProviderGroup is defined in schema")
         )
     }
+
 
     /// Access the `SeedBundleRoot` class builder.
     pub fn SeedBundleRoot(&self) -> SeedBundleRootClassBuilder {
         SeedBundleRootClassBuilder::new(
-            self.inner
-                .get_class("SeedBundleRoot")
-                .expect("class SeedBundleRoot is defined in schema"),
+            self.inner.get_class("SeedBundleRoot")
+                .expect("class SeedBundleRoot is defined in schema")
         )
     }
+
 
     /// Access the `SeedCoverageAssessment` class builder.
     pub fn SeedCoverageAssessment(&self) -> SeedCoverageAssessmentClassBuilder {
         SeedCoverageAssessmentClassBuilder::new(
-            self.inner
-                .get_class("SeedCoverageAssessment")
-                .expect("class SeedCoverageAssessment is defined in schema"),
+            self.inner.get_class("SeedCoverageAssessment")
+                .expect("class SeedCoverageAssessment is defined in schema")
         )
     }
+
 
     /// Access the `SharedType` class builder.
     pub fn SharedType(&self) -> SharedTypeClassBuilder {
         SharedTypeClassBuilder::new(
-            self.inner
-                .get_class("SharedType")
-                .expect("class SharedType is defined in schema"),
+            self.inner.get_class("SharedType")
+                .expect("class SharedType is defined in schema")
         )
     }
+
 
     /// Access the `ValidationIssue` class builder.
     pub fn ValidationIssue(&self) -> ValidationIssueClassBuilder {
         ValidationIssueClassBuilder::new(
-            self.inner
-                .get_class("ValidationIssue")
-                .expect("class ValidationIssue is defined in schema"),
+            self.inner.get_class("ValidationIssue")
+                .expect("class ValidationIssue is defined in schema")
         )
     }
+
 
     // =========================================================================
     // Schema Enum Accessors (1:1 with schema enum names)
     // =========================================================================
 
+
     /// Access the `CapabilityKind` enum builder.
     pub fn CapabilityKind(&self) -> CapabilityKindEnumBuilder {
         CapabilityKindEnumBuilder::new(
-            self.inner
-                .get_enum("CapabilityKind")
-                .expect("enum CapabilityKind is defined in schema"),
+            self.inner.get_enum("CapabilityKind")
+                .expect("enum CapabilityKind is defined in schema")
         )
     }
+
 
     /// Access the `Cardinality` enum builder.
     pub fn Cardinality(&self) -> CardinalityEnumBuilder {
         CardinalityEnumBuilder::new(
-            self.inner
-                .get_enum("Cardinality")
-                .expect("enum Cardinality is defined in schema"),
+            self.inner.get_enum("Cardinality")
+                .expect("enum Cardinality is defined in schema")
         )
     }
+
 
     /// Access the `FieldType` enum builder.
     pub fn FieldType(&self) -> FieldTypeEnumBuilder {
         FieldTypeEnumBuilder::new(
-            self.inner
-                .get_enum("FieldType")
-                .expect("enum FieldType is defined in schema"),
+            self.inner.get_enum("FieldType")
+                .expect("enum FieldType is defined in schema")
         )
     }
+
 
     /// Access the `ParamLocation` enum builder.
     pub fn ParamLocation(&self) -> ParamLocationEnumBuilder {
         ParamLocationEnumBuilder::new(
-            self.inner
-                .get_enum("ParamLocation")
-                .expect("enum ParamLocation is defined in schema"),
+            self.inner.get_enum("ParamLocation")
+                .expect("enum ParamLocation is defined in schema")
         )
     }
+
 
     // =========================================================================
     // Primitive Types (all infallible)
@@ -359,10 +361,7 @@ impl TypeBuilder {
     // =========================================================================
 
     /// Add a new dynamic enum.
-    pub fn add_enum(
-        &self,
-        name: &str,
-    ) -> ::std::result::Result<::baml::EnumBuilder, ::baml::BamlError> {
+    pub fn add_enum(&self, name: &str) -> ::std::result::Result<::baml::EnumBuilder, ::baml::BamlError> {
         self.inner.add_enum(name)
     }
 
@@ -381,10 +380,7 @@ impl TypeBuilder {
     // =========================================================================
 
     /// Add a new dynamic class.
-    pub fn add_class(
-        &self,
-        name: &str,
-    ) -> ::std::result::Result<::baml::ClassBuilder, ::baml::BamlError> {
+    pub fn add_class(&self, name: &str) -> ::std::result::Result<::baml::ClassBuilder, ::baml::BamlError> {
         self.inner.add_class(name)
     }
 

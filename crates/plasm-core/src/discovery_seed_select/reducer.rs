@@ -269,6 +269,106 @@ fn try_partial_empty_mutation_ready(
         intent,
     )?))
 }
+
+fn locked_single_provider_index(tables: &SeedBundleIndexTables, intent: &str) -> Option<usize> {
+    let mut matched = Vec::new();
+    for (provider_index, catalogs) in tables.catalogs_by_provider().iter().enumerate() {
+        if catalogs
+            .iter()
+            .any(|catalog| signals::intent_names_catalog(catalog, intent))
+        {
+            matched.push(provider_index);
+        }
+    }
+    if matched.len() == 1 {
+        Some(matched[0])
+    } else {
+        None
+    }
+}
+
+fn primary_entity_for_bundle(tables: &SeedBundleIndexTables, bundle_index: usize) -> String {
+    tables
+        .candidate_ids_by_bundle
+        .get(bundle_index)
+        .and_then(|ids| ids.first())
+        .and_then(|id| tables.entry_entity_by_candidate_id.get(id))
+        .map(|(_, entity)| entity.clone())
+        .unwrap_or_default()
+}
+
+fn entity_token_in_intent(entity: &str, intent: &str) -> bool {
+    let lower = intent.to_lowercase();
+    lower.contains(&entity.to_lowercase())
+}
+
+fn brand_lock_entity_rank(entity: &str, intent: &str) -> i32 {
+    let mut rank = 100;
+    if signals::intent_mentions_repo_path(intent) {
+        rank = match entity {
+            "Repository" => 0,
+            "Issue" => 10,
+            "PullRequest" => 20,
+            "Branch" => 30,
+            "Label" => 40,
+            _ => 50,
+        };
+    }
+    if entity_token_in_intent(entity, intent) {
+        rank -= 5;
+    }
+    if signals::WORKFLOW_MUTATION_ENTITIES.contains(&entity) {
+        rank -= 2;
+    }
+    rank
+}
+
+fn try_brand_lock_workflow_ready(
+    tables: &SeedBundleIndexTables,
+    requirement_texts: &[String],
+    uncovered_requirements: &[String],
+    intent: &str,
+    reasoning: String,
+) -> Result<Option<SeedSelectionRaw>, SeedSelectionValidationError> {
+    if intent.is_empty() || uncovered_requirements.is_empty() {
+        return Ok(None);
+    }
+    let Some(provider_index) = locked_single_provider_index(tables, intent) else {
+        return Ok(None);
+    };
+    let mut candidates: Vec<usize> = tables
+        .bundle_indexes_for_provider(provider_index)
+        .into_iter()
+        .filter(|&bundle_index| bundle_mutation_score(tables, bundle_index) > 0)
+        .collect();
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+    candidates.sort_by_key(|&bundle_index| {
+        let entity = primary_entity_for_bundle(tables, bundle_index);
+        let singleton_penalty = if tables.bundle_root_count(bundle_index) == Some(1) {
+            0
+        } else {
+            5
+        };
+        (
+            brand_lock_entity_rank(&entity, intent) + singleton_penalty,
+            tables.bundle_root_count(bundle_index).unwrap_or(usize::MAX),
+            bundle_index,
+        )
+    });
+    let bundle_index = candidates[0];
+    let reasoning_out = format!("brand_lock_best_effort: {reasoning}");
+    build_ready_selection(
+        requirement_texts,
+        &[bundle_index],
+        tables,
+        reasoning_out,
+        intent,
+    )
+    .map(Some)
+}
+
 fn try_over_split_read_only_fallback(
     support_by_requirement: &[HashSet<usize>],
     requirement_texts: &[String],
@@ -633,6 +733,15 @@ pub fn resolve_seed_coverage_assessment(
         {
             return Ok(hard_miss);
         }
+        if let Some(ready) = try_brand_lock_workflow_ready(
+            tables,
+            &requirement_texts,
+            &uncovered_requirements,
+            intent,
+            reasoning.clone(),
+        )? {
+            return Ok(ready);
+        }
         return Ok(SeedSelectionRaw {
             decision: SeedSelectionDecision::HardMiss,
             requirements: requirement_texts,
@@ -669,6 +778,15 @@ pub fn resolve_seed_coverage_assessment(
             reasoning.clone(),
         )? {
             return Ok(clarify);
+        }
+        if let Some(ready) = try_brand_lock_workflow_ready(
+            tables,
+            &requirement_texts,
+            &requirement_texts,
+            intent,
+            reasoning.clone(),
+        )? {
+            return Ok(ready);
         }
         return Ok(SeedSelectionRaw {
             decision: SeedSelectionDecision::HardMiss,

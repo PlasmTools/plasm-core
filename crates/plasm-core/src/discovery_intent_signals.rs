@@ -46,6 +46,30 @@ pub fn intent_names_catalog(entry_id: &str, intent: &str) -> bool {
     lower.contains(&catalog) || lower.contains(&catalog.replace('-', " "))
 }
 
+/// `owner/repo`-style path token in intent (not a URL).
+pub fn intent_mentions_repo_path(intent: &str) -> bool {
+    intent.split_whitespace().any(|token| {
+        let parts: Vec<&str> = token.split('/').collect();
+        parts.len() == 2
+            && !parts[0].is_empty()
+            && !parts[1].is_empty()
+            && !token.starts_with("http")
+    })
+}
+
+pub fn intent_suggests_github_repo_workflow(intent: &str) -> bool {
+    if !intent_names_catalog("github", intent) {
+        return false;
+    }
+    let lower = intent.to_lowercase();
+    intent_mentions_repo_path(intent)
+        || lower.contains("repo")
+        || lower.contains("branch")
+        || lower.contains("pull request")
+        || lower.contains(" pr")
+        || lower.contains("issue")
+}
+
 pub fn catalog_mentioned_in_requirement(catalog: &str, requirement_text: &str) -> bool {
     let lower = requirement_text.to_lowercase();
     let catalog_lower = catalog.to_lowercase();

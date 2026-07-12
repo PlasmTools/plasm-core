@@ -511,3 +511,56 @@ fn mutation_intent_prefers_issue_over_sprint_snapshot() {
     assert_eq!(raw.decision, SeedSelectionDecision::Ready);
     assert_eq!(raw.selected_ids, vec!["jira:Issue"]);
 }
+
+#[test]
+fn brand_lock_github_repo_workflow_ready_when_selector_over_splits() {
+    let bundles = vec![
+        bundle_with_hints(
+            "github:Repository",
+            "github",
+            "Repository",
+            "issue_create",
+            "Create",
+            "",
+        ),
+        bundle_with_hints(
+            "github:Issue",
+            "github",
+            "Issue",
+            "issue_create",
+            "Create",
+            "",
+        ),
+        bundle_with_hints(
+            "github:PullRequest",
+            "github",
+            "PullRequest",
+            "pr_create",
+            "Create",
+            "",
+        ),
+    ];
+    let seed_bundles = [
+        seed_bundle("github", &["github:Repository"]),
+        seed_bundle("github", &["github:Issue"]),
+        seed_bundle("github", &["github:PullRequest"]),
+    ];
+    let tables = build_seed_bundle_index_tables(&seed_bundles, &bundles).expect("build tables");
+    let intent = "GitHub repo ryan-s-roberts/tool-test: create issue, branch, file, PR, labels, comment";
+    let raw = resolve_seed_coverage_assessment(
+        vec![
+            (0, "Create an issue in the GitHub repo".into(), vec![]),
+            (1, "Create a branch in the GitHub repo".into(), vec![]),
+            (2, "Open a pull request in the GitHub repo".into(), vec![]),
+            (3, "Add labels to the issue".into(), vec![]),
+        ],
+        vec![(0, vec![]), (1, vec![]), (2, vec![]), (3, vec![])],
+        "bundle 0 lacks create".into(),
+        &tables,
+        intent,
+    )
+    .expect("resolve coverage");
+    assert_eq!(raw.decision, SeedSelectionDecision::Ready);
+    assert!(raw.reasoning.contains("brand_lock_best_effort"));
+    assert_eq!(raw.selected_ids, vec!["github:Repository"]);
+}
