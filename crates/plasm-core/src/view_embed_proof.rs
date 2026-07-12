@@ -91,11 +91,7 @@ mod tests {
 
     #[test]
     fn require_for_materialize_rejects_orphan_proof() {
-        let proof = ValidatedViewEmbedProof::new(
-            "v".into(),
-            "n0".into(),
-            "items".into(),
-        );
+        let proof = ValidatedViewEmbedProof::new("v".into(), "n0".into(), "items".into());
         let err = ValidatedViewEmbedProof::require_for_materialize(
             None,
             Some(&proof),
@@ -123,11 +119,7 @@ mod tests {
 
     #[test]
     fn ensure_matches_rejects_view_mismatch() {
-        let proof = ValidatedViewEmbedProof::new(
-            "other".into(),
-            "n0".into(),
-            "items".into(),
-        );
+        let proof = ValidatedViewEmbedProof::new("other".into(), "n0".into(), "items".into());
         let err = proof
             .ensure_matches("lang_work_snapshot", "items", "ctx")
             .expect_err("view mismatch");

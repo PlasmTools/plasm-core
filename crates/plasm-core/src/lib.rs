@@ -299,7 +299,6 @@ pub use relation_segment::{
     RelationSegmentContext, RelationSegmentOutcome,
 };
 pub use relation_validation_expr::relation_validation_expr;
-pub use view_embed_proof::ValidatedViewEmbedProof;
 pub use schema::{
     capability_is_zero_arity_action, capability_is_zero_arity_invoke,
     capability_method_label_kebab, capability_template_all_var_names, flow_control_param_names,
@@ -370,6 +369,7 @@ pub use value::{
     CompOp, FieldType, PlasmInputRef, TemporalWireFormat, Value, ValueTableCellBudget,
     ValueWireFormat, PLASM_ATTACHMENT_KEY,
 };
+pub use view_embed_proof::ValidatedViewEmbedProof;
 pub use workflow_identity::{
     conflict_rules_from_mapping_template, match_conflict_rule, ConflictRule, ConflictRuleExtract,
     ConflictRuleWhen, ReconcileBindSource, ReconcileSpec, ViewNodeCondition, ViewNodeWhen,

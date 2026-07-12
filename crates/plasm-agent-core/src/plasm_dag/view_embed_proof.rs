@@ -46,9 +46,9 @@ fn find_view_producer_node(
                 "view_embed source `{cur}` has a cyclic binding chain — cannot resolve view producer"
             ));
         }
-        let node = state.get(cur.as_str()).ok_or_else(|| {
-            format!("view_embed source references unknown binding `{cur}`")
-        })?;
+        let node = state
+            .get(cur.as_str())
+            .ok_or_else(|| format!("view_embed source references unknown binding `{cur}`"))?;
         match &node.source {
             DagNodeSource::Surface {
                 parsed,
@@ -145,9 +145,7 @@ fn qualified_entity_for_chain_root(
 ) -> Result<QualifiedEntityKey, String> {
     let federated = session.contexts_by_entry.len() > 1;
     let row_qe = plasm_core::catalog_ownership::require_relation_source_qualified_entity(
-        root,
-        federated,
-        None,
+        root, federated, None,
     )
     .map_err(|e| e.to_string())?;
     row_qe
@@ -212,20 +210,23 @@ fn view_capability_matches(
     if cap.as_str() == view.capability.as_str() {
         return true;
     }
-    cgs.capabilities
-        .get(cap.as_str())
-        .is_some_and(|schema| {
-            schema.domain.as_str() == view.entity.as_str()
-                && schema.mapping.template.0.get("transport").and_then(|t| t.as_str())
-                    == Some("view")
-                && schema
-                    .mapping
-                    .template
-                    .0
-                    .get("view")
-                    .and_then(|v| v.as_str())
-                    == Some(view_key)
-        })
+    cgs.capabilities.get(cap.as_str()).is_some_and(|schema| {
+        schema.domain.as_str() == view.entity.as_str()
+            && schema
+                .mapping
+                .template
+                .0
+                .get("transport")
+                .and_then(|t| t.as_str())
+                == Some("view")
+            && schema
+                .mapping
+                .template
+                .0
+                .get("view")
+                .and_then(|v| v.as_str())
+                == Some(view_key)
+    })
 }
 
 fn capability_for_surface_expr(

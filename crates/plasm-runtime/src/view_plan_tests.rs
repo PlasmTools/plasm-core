@@ -196,7 +196,10 @@ fn resolve_view_relation_maps_stamps_empty_many_relation_key() {
                 entities: vec![CachedEntity::from_decoded(
                     plasm_core::Ref::new("LangViewer", "viewer-nobody"),
                     indexmap::IndexMap::from([
-                        ("id".into(), plasm_core::Value::String("viewer-nobody".into())),
+                        (
+                            "id".into(),
+                            plasm_core::Value::String("viewer-nobody".into()),
+                        ),
                         (
                             "display_name".into(),
                             plasm_core::Value::String("nobody".into()),

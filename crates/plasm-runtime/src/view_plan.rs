@@ -10,8 +10,8 @@ use plasm_core::schema::{
     ViewRelationBinding, ViewScopeInject,
 };
 use plasm_core::{
-    CapabilityKind, CapabilitySchema, Cardinality, CreateExpr, GetExpr, Predicate, QueryExpr,
-    Ref, TypedFieldValue, Value, ViewNodeCondition, ViewNodeWhen, WriteOutcome, CGS,
+    CapabilityKind, CapabilitySchema, Cardinality, CreateExpr, GetExpr, Predicate, QueryExpr, Ref,
+    TypedFieldValue, Value, ViewNodeCondition, ViewNodeWhen, WriteOutcome, CGS,
 };
 
 use crate::cache::CachedEntity;
