@@ -15,6 +15,8 @@ pub const MATRIX_VIEW_PREFLIGHT_CASES: &[(&str, &str)] = &[
     ("lang_triage_context", "LangTriageContext"),
     ("lang_item_link", "LangItemLink"),
     ("lang_owner_filter_demo", "LangOwnerFilterDemo"),
+    ("lang_work_snapshot", "LangWorkSnapshot"),
+    ("lang_work_snapshot_empty", "LangWorkSnapshotEmpty"),
 ];
 
 pub fn matrix_views_cgs() -> CGS {
@@ -22,6 +24,9 @@ pub fn matrix_views_cgs() -> CGS {
 }
 
 pub fn matrix_view_query(entity: &str) -> QueryExpr {
+    if matches!(entity, "LangWorkSnapshot" | "LangWorkSnapshotEmpty") {
+        return QueryExpr::all(entity);
+    }
     QueryExpr::filtered(
         entity,
         Predicate::eq("item_id", Value::String("item-1".into())),

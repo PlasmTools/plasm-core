@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.18] - 2026-07-12
+
+### Fixed
+
+- **View empty many-relation provenance:** `resolve_view_relation_maps` always stamps many-cardinality `relation_outputs` (including `Specified(vec![])` when zero rows) so parse → plan → materialize preserves empty embed state instead of falling back to wire fetch.
+- **Plan materialize:** present-empty cached relation refs route through `finalize_empty_relation_materialized_node`; `resolve_embed_target_entities` treats `Some(vec![])` as success, not wire fallback.
+
+### Added
+
+- **`ValidatedViewEmbedProof`:** shared plasm-core contract carried on `PlanRelationTraversal.view_embed_proof`; DAG lowering resolves view producer; dry validation rejects orphan/synthetic parents before approval.
+- **Matrix fixture:** parameterless dashboard views (`LangWorkSnapshot` / `LangWorkSnapshotEmpty`) with deterministic nonempty and empty `view_embed` relations.
+- **Regression tests:** empty many-relation key stamping, parameterless view_embed e2e, view_embed_proof unit tests.
+
 ## [0.4.17] - 2026-07-12
 
 ### Changed

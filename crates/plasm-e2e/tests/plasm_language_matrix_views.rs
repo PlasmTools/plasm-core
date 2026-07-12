@@ -233,7 +233,7 @@ async fn matrix_views_row_to_text_named_loop_cursor() {
         None,
         es.as_ref(),
         "matrix_views_named_cursor_render",
-        program,
+        &program,
     )
     .expect("compile row-to-text named loop cursor");
     evaluate_plasm_comp_dry(es.as_ref(), &bundle).expect("dry row-to-text named loop cursor");
@@ -292,7 +292,7 @@ async fn matrix_views_view_embed_relation_traversal() {
         None,
         es.as_ref(),
         "matrix_views_view_embed_tags",
-        program,
+        &program,
     )
     .expect("compile view_embed relation traversal");
     evaluate_plasm_comp_dry(es.as_ref(), &bundle).expect("dry view_embed relation traversal");
@@ -328,6 +328,138 @@ async fn matrix_views_view_embed_relation_traversal() {
         md.contains("label") || md.contains("tag") || md.contains("i1"),
         "expected LangTag rows in markdown from view_embed hop: {md}"
     );
+}
+
+/// Parameterless dashboard view: nonempty assigned items via view_embed.
+#[tokio::test]
+async fn matrix_views_parameterless_dashboard_view_embed_nonempty() {
+    let base = hermit_lang_matrix::language_matrix_hermit_base_url()
+        .await
+        .clone();
+    let cgs = load_language_matrix_views_cgs();
+    let es = Arc::new(views_execute_session(cgs.clone()));
+    let map = es
+        .teaching_exposure
+        .as_ref()
+        .expect("views session exposure")
+        .symbol_map_arc();
+    let items_rel = map.ident_sym_relation_for(VIEWS_MATRIX_ENTRY_ID, "LangWorkSnapshot", "items");
+    let program = format!("e9.lang-work-snapshot-get().{items_rel}");
+    let bundle = compile_plasm_program(
+        &PromptPipelineConfig::default(),
+        None,
+        es.as_ref(),
+        "matrix_views_work_snapshot_items",
+        &program,
+    )
+    .expect("compile parameterless dashboard relation");
+    evaluate_plasm_comp_dry(es.as_ref(), &bundle).expect("dry parameterless dashboard relation");
+    let st = Arc::new(views_matrix_host_state(
+        ExecutionEngine::new(ExecutionConfig {
+            base_url: Some(base),
+            ..Default::default()
+        })
+        .expect("ExecutionEngine"),
+        cgs,
+    ));
+    let live = run_plasm_comp(
+        es.as_ref(),
+        st.as_ref(),
+        es.prompt_hash.as_str(),
+        "matrix_views_work_snapshot_sess",
+        &bundle,
+        true,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("live parameterless dashboard relation");
+    assert!(
+        live.node_results.len() >= 2,
+        "expected view root + relation nodes, got {}",
+        live.node_results.len()
+    );
+    let md = live.run_markdown.as_deref().unwrap_or("");
+    assert!(
+        md.contains("i1") || md.contains("Alpha"),
+        "expected assigned LangItem rows: {md}"
+    );
+}
+
+/// Parameterless dashboard view: zero assigned items still succeeds via present-empty provenance.
+#[tokio::test]
+async fn matrix_views_parameterless_dashboard_view_embed_empty() {
+    let base = hermit_lang_matrix::language_matrix_hermit_base_url()
+        .await
+        .clone();
+    let cgs = load_language_matrix_views_cgs();
+    let es = Arc::new(views_execute_session(cgs.clone()));
+    let map = es
+        .teaching_exposure
+        .as_ref()
+        .expect("views session exposure")
+        .symbol_map_arc();
+    let items_rel = map.ident_sym_relation_for(
+        VIEWS_MATRIX_ENTRY_ID,
+        "LangWorkSnapshotEmpty",
+        "items",
+    );
+    let program = format!("e10.lang-work-snapshot-empty-get().{items_rel}");
+    let bundle = compile_plasm_program(
+        &PromptPipelineConfig::default(),
+        None,
+        es.as_ref(),
+        "matrix_views_work_snapshot_empty_items",
+        &program,
+    )
+    .expect("compile empty dashboard relation");
+    evaluate_plasm_comp_dry(es.as_ref(), &bundle).expect("dry empty dashboard relation");
+    let st = Arc::new(views_matrix_host_state(
+        ExecutionEngine::new(ExecutionConfig {
+            base_url: Some(base),
+            ..Default::default()
+        })
+        .expect("ExecutionEngine"),
+        cgs,
+    ));
+    let live = run_plasm_comp(
+        es.as_ref(),
+        st.as_ref(),
+        es.prompt_hash.as_str(),
+        "matrix_views_work_snapshot_empty_sess",
+        &bundle,
+        true,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("live empty dashboard relation must succeed with zero rows");
+    assert!(
+        live.node_results.len() >= 2,
+        "expected view root + relation nodes, got {}",
+        live.node_results.len()
+    );
+}
+
+/// Scoped view with zero tag children: dry plan accepts present-empty provenance.
+#[tokio::test]
+async fn matrix_views_scoped_view_embed_empty_relation_dry() {
+    let cgs = load_language_matrix_views_cgs();
+    let es = Arc::new(views_execute_session(cgs.clone()));
+    let program = "LangTriageContext(\"i2\").tags";
+    let bundle = compile_plasm_program(
+        &PromptPipelineConfig::default(),
+        None,
+        es.as_ref(),
+        "matrix_views_empty_tags_dry",
+        program,
+    )
+    .expect("compile empty scoped tags relation");
+    evaluate_plasm_comp_dry(es.as_ref(), &bundle).expect("dry empty scoped tags");
 }
 
 #[test]

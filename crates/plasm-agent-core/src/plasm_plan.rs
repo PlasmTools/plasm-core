@@ -432,6 +432,8 @@ pub struct ValidatedPlanRelationTraversal {
     pub(crate) ir: ValidatedPlanExprIr,
     /// Frozen from CGS at plan lower time; plan/runtime must not re-infer from cache shape.
     pub(crate) materialize: plasm_core::RelationMaterialization,
+    /// Validated view producer lineage for `view_embed` hops (required at plan acceptance).
+    pub(crate) view_embed_proof: Option<plasm_core::ValidatedViewEmbedProof>,
     /// Catalog-derived scoped-binding witnesses preserved on comp wire.
     pub(crate) binding_proofs: Vec<plasm_core::RelationBindingProof>,
 }
@@ -653,6 +655,10 @@ pub struct PlanNode {
     pub page_size: Option<usize>,
 }
 
+/// Relation traversal on a validated plan node.
+///
+/// Field layout must stay aligned with `plasm_core::plasm_monad::PlanRelationTraversal`
+/// for wire/serde compatibility across host and monad payloads.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlanRelationTraversal {
     pub source: String,
@@ -667,6 +673,9 @@ pub struct PlanRelationTraversal {
     pub binding_proofs: Vec<plasm_core::RelationBindingProof>,
     #[serde(default, skip_serializing_if = "missing_materialize")]
     pub materialize: Option<plasm_core::RelationMaterialization>,
+    /// Required when `materialize` is `view_embed`: the plan node that executed the view root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view_embed_proof: Option<plasm_core::ValidatedViewEmbedProof>,
 }
 
 fn missing_materialize(m: &Option<plasm_core::RelationMaterialization>) -> bool {
@@ -1237,6 +1246,7 @@ fn validated_node_from_raw(
                             .materialize
                             .clone()
                             .unwrap_or(plasm_core::RelationMaterialization::Unavailable),
+                        view_embed_proof: relation.view_embed_proof.clone(),
                         binding_proofs: relation.binding_proofs.clone(),
                     },
                     depends_on,
@@ -1963,7 +1973,90 @@ fn validate_relation_traversal(
             relation.source
         ));
     }
+    validate_view_embed_relation(plan, relation, node_index, by_id)?;
     Ok(())
+}
+
+fn validate_view_embed_relation(
+    plan: &Plan,
+    relation: &PlanRelationTraversal,
+    node_index: usize,
+    by_id: &HashMap<String, usize>,
+) -> Result<(), String> {
+    let context = format!("plan.nodes[{node_index}]");
+    let Some(proof) = plasm_core::ValidatedViewEmbedProof::require_for_materialize(
+        relation.materialize.as_ref(),
+        relation.view_embed_proof.as_ref(),
+        relation.relation.as_str(),
+        context.as_str(),
+    )?
+    else {
+        return Ok(());
+    };
+    proof.ensure_producer_known(|id| by_id.contains_key(id), context.as_str())?;
+    if !plan_node_reaches_view_producer(
+        plan,
+        by_id,
+        relation.source.as_str(),
+        proof.producer_node.as_str(),
+    )? {
+        return Err(format!(
+            "plan.nodes[{node_index}].relation source {:?} is not view-produced by node {:?} for view `{}`",
+            relation.source, proof.producer_node, proof.view
+        ));
+    }
+    let producer_idx = by_id[proof.producer_node.as_str()];
+    let producer = &plan.nodes[producer_idx];
+    if producer.kind.has_surface_expr() {
+        return Ok(());
+    }
+    Err(format!(
+        "plan.nodes[{node_index}].relation.view_embed_proof.producer_node {:?} must be a surface view root (got {:?})",
+        proof.producer_node, producer.kind
+    ))
+}
+
+fn plan_node_reaches_view_producer(
+    plan: &Plan,
+    by_id: &HashMap<String, usize>,
+    start: &str,
+    producer: &str,
+) -> Result<bool, String> {
+    let mut cur = start.to_string();
+    let mut visited = std::collections::HashSet::new();
+    for _ in 0..64 {
+        if cur == producer {
+            return Ok(true);
+        }
+        if !visited.insert(cur.clone()) {
+            return Ok(false);
+        }
+        let Some(idx) = by_id.get(cur.as_str()) else {
+            return Ok(false);
+        };
+        let node = &plan.nodes[*idx];
+        cur = match node.kind {
+            PlanNodeKind::Relation => node
+                .relation
+                .as_ref()
+                .map(|r| r.source.clone())
+                .unwrap_or_default(),
+            PlanNodeKind::Compute => node
+                .compute
+                .as_ref()
+                .map(|c| c.source.clone())
+                .unwrap_or_default(),
+            PlanNodeKind::Derive => node
+                .derive_template
+                .as_ref()
+                .and_then(|d| d.source.clone())
+                .unwrap_or_default(),
+            PlanNodeKind::ForEach => node.source.clone().unwrap_or_default(),
+            PlanNodeKind::Data => return Ok(false),
+            _ => return Ok(false),
+        };
+    }
+    Ok(false)
 }
 
 fn validate_return_refs(

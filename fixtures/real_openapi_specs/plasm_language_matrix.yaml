@@ -97,6 +97,32 @@ paths:
                   title: "Alpha"
                   score: 10
                   owner: "alice"
+  /language/v1/viewer:
+    get:
+      summary: Current viewer (dashboard seed)
+      responses:
+        "200":
+          description: Viewer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LangViewer"
+              example:
+                id: "viewer-alice"
+                display_name: "alice"
+  /language/v1/viewer/nobody:
+    get:
+      summary: Viewer with no assigned items
+      responses:
+        "200":
+          description: Viewer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LangViewer"
+              example:
+                id: "viewer-nobody"
+                display_name: "nobody"
   /language/v1/items/{id}:
     get:
       summary: Get item by id
@@ -350,6 +376,14 @@ components:
         item_id:
           type: string
         note:
+          type: string
+    LangViewer:
+      type: object
+      required: [id, display_name]
+      properties:
+        id:
+          type: string
+        display_name:
           type: string
     LangItemWithLines:
       allOf:

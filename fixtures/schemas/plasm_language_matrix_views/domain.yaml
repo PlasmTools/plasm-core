@@ -153,6 +153,56 @@ entities:
       item:
         target: LangItem
         cardinality: one
+  LangViewer:
+    id_field: id
+    primary_read: langviewer_get
+    description: Synthetic authenticated viewer row for parameterless dashboard views.
+    fields:
+      id:
+        required: true
+        value_ref: nv_lang_viewer_id
+      display_name:
+        required: true
+        value_ref: nv_lang_viewer_display_name
+    relations: {}
+  LangWorkSnapshot:
+    id_field: viewer_id
+    primary_read: lang_work_snapshot_get
+    description: Parameterless dashboard snapshot (MyWorkSnapshot pattern).
+    fields:
+      viewer_id:
+        required: true
+        value_ref: nv_lang_viewer_id
+      item_count:
+        required: false
+        value_ref: nv_wire_int
+    relations:
+      items:
+        description: LangItems assigned to the viewer (view_embed from composed DAG).
+        target: LangItem
+        cardinality: many
+        materialize:
+          kind: view_embed
+          view: lang_work_snapshot
+  LangWorkSnapshotEmpty:
+    id_field: viewer_id
+    primary_read: lang_work_snapshot_empty_get
+    description: Parameterless dashboard with zero assigned items (empty view_embed).
+    fields:
+      viewer_id:
+        required: true
+        value_ref: nv_lang_viewer_id
+      item_count:
+        required: false
+        value_ref: nv_wire_int
+    relations:
+      items:
+        description: Empty assigned-item relation for zero-row view_embed conformance.
+        target: LangItem
+        cardinality: many
+        materialize:
+          kind: view_embed
+          view: lang_work_snapshot_empty
 capabilities:
   langitem_query:
     description: List LangItem rows (no required HTTP filters)
@@ -394,6 +444,48 @@ capabilities:
     - item_id
     - owner
     - matching_item_count
+  langviewer_get:
+    kind: get
+    entity: LangViewer
+    description: Current viewer row (parameterless dashboard seed).
+    provides:
+    - id
+    - display_name
+  langviewer_nobody_get:
+    kind: get
+    entity: LangViewer
+    description: Viewer row with no assigned items (empty dashboard seed).
+    provides:
+    - id
+    - display_name
+  lang_work_snapshot_query:
+    kind: query
+    entity: LangWorkSnapshot
+    description: Parameterless work dashboard (nonempty assigned items).
+    provides:
+    - viewer_id
+    - item_count
+  lang_work_snapshot_get:
+    kind: get
+    entity: LangWorkSnapshot
+    description: Parameterless work dashboard GET root.
+    provides:
+    - viewer_id
+    - item_count
+  lang_work_snapshot_empty_query:
+    kind: query
+    entity: LangWorkSnapshotEmpty
+    description: Parameterless work dashboard with zero assigned items.
+    provides:
+    - viewer_id
+    - item_count
+  lang_work_snapshot_empty_get:
+    kind: get
+    entity: LangWorkSnapshotEmpty
+    description: Parameterless empty dashboard GET root.
+    provides:
+    - viewer_id
+    - item_count
 values:
   nv_lang_tag_id:
     type: string
@@ -468,6 +560,12 @@ values:
     type: entity_ref
     target: LangItem
   nv_lang_item_link_url:
+    type: string
+    string_semantics: short
+  nv_lang_viewer_id:
+    type: string
+    string_semantics: short
+  nv_lang_viewer_display_name:
     type: string
     string_semantics: short
   nv_wire_bool:
@@ -626,3 +724,63 @@ views:
       binding:
         kind: node_single_row
         node: item_node
+  lang_work_snapshot:
+    description: Parameterless dashboard snapshot with assigned LangItems (MyWorkSnapshot pattern).
+    capability: lang_work_snapshot_query
+    entity: LangWorkSnapshot
+    nodes:
+    - id: viewer_row
+      capability: langviewer_get
+      bind: {}
+    - id: assigned_items
+      capability: langitem_query_owner
+      bind:
+        owner:
+          kind: node_field
+          node: viewer_row
+          field: display_name
+    output:
+      viewer_id:
+        kind: node_field
+        node: viewer_row
+        field: id
+      item_count:
+        kind: node_row_count
+        node: assigned_items
+    relation_outputs:
+    - relation: items
+      target: LangItem
+      cardinality: many
+      binding:
+        kind: node_all_rows
+        node: assigned_items
+  lang_work_snapshot_empty:
+    description: Parameterless dashboard with zero assigned LangItems.
+    capability: lang_work_snapshot_empty_query
+    entity: LangWorkSnapshotEmpty
+    nodes:
+    - id: viewer_row
+      capability: langviewer_nobody_get
+      bind: {}
+    - id: assigned_items
+      capability: langitem_query_owner
+      bind:
+        owner:
+          kind: node_field
+          node: viewer_row
+          field: display_name
+    output:
+      viewer_id:
+        kind: node_field
+        node: viewer_row
+        field: id
+      item_count:
+        kind: node_row_count
+        node: assigned_items
+    relation_outputs:
+    - relation: items
+      target: LangItem
+      cardinality: many
+      binding:
+        kind: node_all_rows
+        node: assigned_items

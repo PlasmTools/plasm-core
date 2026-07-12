@@ -172,6 +172,7 @@ mod tests {
                 },
                 binding_proofs: Vec::new(),
                 materialize: Some(RelationMaterialization::FromParentGet { path: vec![] }),
+                view_embed_proof: None,
             },
             effect_class: EffectClass::Read,
             result_shape: ResultShape::List,

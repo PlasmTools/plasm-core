@@ -10,8 +10,8 @@ use plasm_core::schema::{
     ViewRelationBinding, ViewScopeInject,
 };
 use plasm_core::{
-    CapabilityKind, CapabilitySchema, CreateExpr, GetExpr, Predicate, QueryExpr, Ref,
-    TypedFieldValue, Value, ViewNodeCondition, ViewNodeWhen, WriteOutcome, CGS,
+    CapabilityKind, CapabilitySchema, Cardinality, CreateExpr, GetExpr, Predicate, QueryExpr,
+    Ref, TypedFieldValue, Value, ViewNodeCondition, ViewNodeWhen, WriteOutcome, CGS,
 };
 
 use crate::cache::CachedEntity;
@@ -747,8 +747,15 @@ pub fn resolve_view_relation_maps(
                 vec![cached_row_to_target_ref(target_ent, row)?]
             }
         };
-        if !refs.is_empty() {
-            out.insert(spec.relation.to_string(), DecodedRelation::Specified(refs));
+        match spec.cardinality {
+            Cardinality::Many => {
+                out.insert(spec.relation.to_string(), DecodedRelation::Specified(refs));
+            }
+            Cardinality::One => {
+                if !refs.is_empty() {
+                    out.insert(spec.relation.to_string(), DecodedRelation::Specified(refs));
+                }
+            }
         }
     }
     Ok(out)

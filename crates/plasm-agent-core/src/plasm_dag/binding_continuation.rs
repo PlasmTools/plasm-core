@@ -13,6 +13,7 @@ use super::relation::{
 };
 use super::schema_validate::agent_program_error;
 use super::types::{CompileState, DagNode, DagNodeSource};
+use super::view_embed_proof::resolve_view_embed_proof;
 use plasm_core::plp::{self, PlpId};
 
 pub(in crate::plasm_dag) fn plp4_reject(id: &str, label: &str, tail: &str) -> String {
@@ -349,6 +350,13 @@ pub(in crate::plasm_dag) fn lower_relation_continuation(
         relation_binding_proofs_for_lower(session, &contract.row_entity, wire.as_str())
             .unwrap_or_default();
     let materialize = relation_materialize_for_lower(session, &contract.row_entity, wire.as_str())?;
+    let view_embed_proof = view_embed_proof_for_materialize(
+        session,
+        state,
+        source_label,
+        &materialize,
+        wire.as_str(),
+    )?;
     let plan_relation = PlanRelationTraversal {
         source: source_label.to_string(),
         relation: wire,
@@ -359,6 +367,7 @@ pub(in crate::plasm_dag) fn lower_relation_continuation(
         ir: ir.clone(),
         binding_proofs,
         materialize: Some(materialize),
+        view_embed_proof,
     };
     Ok(DagNode {
         id: id.to_string(),
@@ -518,6 +527,13 @@ fn lower_multi_segment_relation_continuation(
         .unwrap_or_default();
         let materialize =
             relation_materialize_for_lower(session, &contract.row_entity, chain.selector.as_str())?;
+        let view_embed_proof = view_embed_proof_for_materialize(
+            session,
+            state,
+            label,
+            &materialize,
+            chain.selector.as_str(),
+        )?;
         let plan_relation = PlanRelationTraversal {
             source: label.to_string(),
             relation: chain.selector.clone(),
@@ -528,6 +544,7 @@ fn lower_multi_segment_relation_continuation(
             ir: ir.clone(),
             binding_proofs,
             materialize: Some(materialize),
+            view_embed_proof,
         };
         return Ok(DagNode {
             id: id.to_string(),
@@ -582,5 +599,20 @@ pub(in crate::plasm_dag) fn dispatch_binding_continuation(
                 session, state, id, expr, label, tail_trim, contract,
             )
         }
+    }
+}
+
+fn view_embed_proof_for_materialize(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    source_label: &str,
+    materialize: &plasm_core::RelationMaterialization,
+    relation_wire: &str,
+) -> Result<Option<plasm_core::ValidatedViewEmbedProof>, String> {
+    match materialize {
+        plasm_core::RelationMaterialization::ViewEmbed { view } => Ok(Some(
+            resolve_view_embed_proof(session, state, source_label, view.as_str(), relation_wire)?,
+        )),
+        _ => Ok(None),
     }
 }

@@ -181,3 +181,41 @@ lang_owner_filter_demo_query:
 lang_owner_filter_demo_get:
   transport: view
   view: lang_owner_filter_demo
+
+langviewer_get:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: viewer
+
+langviewer_nobody_get:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: viewer
+  - type: literal
+    value: nobody
+
+lang_work_snapshot_query:
+  transport: view
+  view: lang_work_snapshot
+
+lang_work_snapshot_get:
+  transport: view
+  view: lang_work_snapshot
+
+lang_work_snapshot_empty_query:
+  transport: view
+  view: lang_work_snapshot_empty
+
+lang_work_snapshot_empty_get:
+  transport: view
+  view: lang_work_snapshot_empty

@@ -297,6 +297,19 @@ pub(crate) async fn try_materialize_from_cached_relation_refs(
     )
     .await;
     if snapshot.entities.is_empty() {
+        if relations_on_parents {
+            return finalize_empty_relation_materialized_node(
+                st,
+                es,
+                session_id,
+                node,
+                relation,
+                trace,
+                crate::plan_read_bounds::effective_relation_read_cap(relation),
+            )
+            .await
+            .map(Some);
+        }
         return Ok(None);
     }
     let count = snapshot.entities.len();
@@ -553,8 +566,8 @@ pub(crate) fn resolve_embed_target_entities(
         parents,
         mat,
     ) {
-        Some(entities) if !entities.is_empty() => entities,
-        _ => wire_fallback_rows
+        Some(entities) => entities,
+        None => wire_fallback_rows
             .map(|rows| json_rows_to_entities_with_refs(target_entity, rows, Some(cgs)))
             .unwrap_or_default(),
     }

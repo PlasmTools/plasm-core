@@ -12,6 +12,7 @@ mod prelude;
 mod relation;
 mod schema_validate;
 mod types;
+mod view_embed_proof;
 
 #[path = "../plasm_render_dag.rs"]
 mod render_dag;

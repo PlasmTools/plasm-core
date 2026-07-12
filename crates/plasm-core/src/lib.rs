@@ -283,6 +283,7 @@ pub use wire_coercion::{
     RelationBindingProof,
 };
 pub mod relation_materialize;
+pub mod view_embed_proof;
 pub use expr_surface_render::{
     render_expr_surface, render_expr_surface_federated, wire_surface_from_teaching_line,
     wire_surface_from_teaching_session_line,
@@ -298,6 +299,7 @@ pub use relation_segment::{
     RelationSegmentContext, RelationSegmentOutcome,
 };
 pub use relation_validation_expr::relation_validation_expr;
+pub use view_embed_proof::ValidatedViewEmbedProof;
 pub use schema::{
     capability_is_zero_arity_action, capability_is_zero_arity_invoke,
     capability_method_label_kebab, capability_template_all_var_names, flow_control_param_names,

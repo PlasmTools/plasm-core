@@ -267,23 +267,8 @@ fn materialized_result_use_allows_plural_rows_for_column_node_input_holes() {
     assert_eq!(out, serde_json::json!(["bug", "docs"]));
 }
 
-fn comp_bundle_from_plan(plan: &serde_json::Value) -> crate::plasm_comp_bundle::PlasmCompBundle {
-    use crate::plasm_comp_wire::plasm_comp_from_validated;
-    use crate::plasm_plan::parse_and_validate_plan_json;
-    let validated = parse_and_validate_plan_json(plan).expect("validate plan json");
-    let artifact = plasm_comp_from_validated(&validated);
-    crate::plasm_comp_bundle::PlasmCompBundle::new(artifact).expect("comp bundle")
-}
-
 #[tokio::test]
 async fn view_embed_materialize_errors_without_view_produced_relation_refs() {
-    use crate::http::{build_plasm_host_state, PlasmHostBootstrap};
-    use crate::run_artifacts::RunArtifactStore;
-    use crate::server_state::CatalogBootstrap;
-    use plasm_core::discovery::InMemoryCgsRegistry;
-    use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
-    use std::sync::Arc;
-
     let s = super::support::matrix_views_session();
     let plan = serde_json::json!({
         "version": 1,
@@ -367,42 +352,10 @@ async fn view_embed_materialize_errors_without_view_produced_relation_refs() {
         ],
         "return": { "kind": "node", "node": "tags" }
     });
-    let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry-run plan");
-    let bundle = comp_bundle_from_plan(&plan);
-    let cgs = s.cgs.clone();
-    let reg = Arc::new(InMemoryCgsRegistry::from_pairs(vec![(
-        "langmatrix_views".into(),
-        "LangMatrixViews".into(),
-        vec!["langmatrix_views".into()],
-        cgs.clone(),
-    )]));
-    let engine = ExecutionEngine::new(ExecutionConfig::default()).expect("engine");
-    let st = build_plasm_host_state(PlasmHostBootstrap {
-        engine,
-        mode: ExecutionMode::Live,
-        registry: reg,
-        catalog_bootstrap: CatalogBootstrap::Fixed,
-        incoming_auth: None,
-        run_artifacts: Arc::new(RunArtifactStore::memory()),
-        session_graph_persistence: None,
-        oss_local_filesystem_defaults: false,
-    });
-    let err = run_plasm_comp(
-        &s,
-        &st,
-        "ph",
-        "view_embed_orphan_sess",
-        &bundle,
-        true,
-        None,
-        None,
-        Some(dry),
-        None,
-    )
-    .await
-    .expect_err("view_embed must fail when parent row lacks view relation refs");
+    let err = evaluate_plasm_plan_dry(&s, &plan)
+        .expect_err("orphan view_embed must fail before run_ref");
     assert!(
-        err.contains("view_embed") || err.contains("view-produced parent rows"),
-        "expected view_embed provenance error, got: {err}"
+        err.contains("view_embed_proof") || err.contains("view-produced"),
+        "expected view_embed validation error, got: {err}"
     );
 }

@@ -1,3 +1,7 @@
+//! Relation traversal payload on a plan step.
+//!
+//! Field layout must stay aligned with `plasm-agent-core::plasm_plan::PlanRelationTraversal`
+//! for wire/serde compatibility across host and monad payloads.
 use super::atoms::PlanQualifiedEntityKey;
 use super::expr::PlanExprIr;
 use serde::{Deserialize, Serialize};
@@ -16,6 +20,8 @@ pub struct PlanRelationTraversal {
     pub binding_proofs: Vec<crate::RelationBindingProof>,
     #[serde(default, skip_serializing_if = "missing_materialize")]
     pub materialize: Option<crate::RelationMaterialization>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view_embed_proof: Option<crate::ValidatedViewEmbedProof>,
 }
 
 fn missing_materialize(m: &Option<crate::RelationMaterialization>) -> bool {

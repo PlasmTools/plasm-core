@@ -130,6 +130,7 @@ fn relation_traversal_to_plan(
         ir: validated_expr_ir_to_plan(&relation.ir)?,
         binding_proofs: relation.binding_proofs.clone(),
         materialize: Some(relation.materialize.clone()),
+        view_embed_proof: relation.view_embed_proof.clone(),
     })
 }
 
@@ -492,6 +493,7 @@ fn relation_traversal_to_validated(
             .materialize
             .clone()
             .unwrap_or(plasm_core::RelationMaterialization::Unavailable),
+        view_embed_proof: relation.view_embed_proof.clone(),
         binding_proofs: relation.binding_proofs.clone(),
     })
 }

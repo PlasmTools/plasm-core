@@ -61,6 +61,9 @@ pub fn views_execute_session(cgs: Arc<plasm_core::CGS>) -> ExecuteSession {
         "LangTriageContext",
         "LangItemLink",
         "LangOwnerFilterDemo",
+        "LangViewer",
+        "LangWorkSnapshot",
+        "LangWorkSnapshotEmpty",
     ];
     let exp = TeachingExposureSession::new(cgs.as_ref(), VIEWS_MATRIX_ENTRY_ID, wave);
     ExecuteSession::new(

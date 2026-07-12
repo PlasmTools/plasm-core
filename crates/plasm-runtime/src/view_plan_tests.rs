@@ -6,6 +6,7 @@ use crate::cache::{CachedEntity, EntityCompleteness};
 use crate::execution::{current_timestamp, ExecutionResult, ExecutionSource, ExecutionStats};
 use crate::view_dag_run::run_view_dag_sync;
 use crate::view_test_support::{lang_digest_scope, matrix_views_cgs};
+use plasm_compile::DecodedRelation;
 use plasm_core::{QueryExpr, TypedFieldValue, Value, CGS};
 
 fn stub_item_row(id: &str, title: &str) -> CachedEntity {
@@ -182,6 +183,61 @@ fn fixture_runner_node_single_row_cardinality_error() {
     let err =
         run_view_dag_sync(&runner, "lang_digest", scope, &cgs, &ambient).expect_err("cardinality");
     assert!(err.to_string().contains("node_single_row"), "{err}");
+}
+
+#[test]
+fn resolve_view_relation_maps_stamps_empty_many_relation_key() {
+    let cgs = matrix_views_cgs();
+    let view = cgs.views.get("lang_work_snapshot_empty").expect("view");
+    let node_results = indexmap::IndexMap::from([
+        (
+            "viewer_row".into(),
+            ExecutionResult {
+                entities: vec![CachedEntity::from_decoded(
+                    plasm_core::Ref::new("LangViewer", "viewer-nobody"),
+                    indexmap::IndexMap::from([
+                        ("id".into(), plasm_core::Value::String("viewer-nobody".into())),
+                        (
+                            "display_name".into(),
+                            plasm_core::Value::String("nobody".into()),
+                        ),
+                    ]),
+                    indexmap::IndexMap::new(),
+                    current_timestamp(),
+                    EntityCompleteness::Complete,
+                )],
+                count: 1,
+                has_more: false,
+                pagination_resume: None,
+                paging_handle: None,
+                source: ExecutionSource::Cache,
+                stats: ExecutionStats::default(),
+                request_fingerprints: vec![],
+            },
+        ),
+        (
+            "assigned_items".into(),
+            ExecutionResult {
+                entities: vec![],
+                count: 0,
+                has_more: false,
+                pagination_resume: None,
+                paging_handle: None,
+                source: ExecutionSource::Cache,
+                stats: ExecutionStats::default(),
+                request_fingerprints: vec![],
+            },
+        ),
+    ]);
+    let maps = resolve_view_relation_maps(view, &node_results, &cgs).expect("relation maps");
+    assert!(
+        maps.contains_key("items"),
+        "many-valued relation_outputs must retain key even when empty: {maps:?}"
+    );
+    match maps.get("items") {
+        Some(DecodedRelation::Specified(refs)) => assert!(refs.is_empty()),
+        other => panic!("expected Specified([]), got {other:?}"),
+    }
 }
 
 pub struct FixtureViewNodeRunner {
