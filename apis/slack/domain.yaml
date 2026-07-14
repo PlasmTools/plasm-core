@@ -441,7 +441,7 @@ capabilities:
     - purpose
     - created
   channel_history:
-    description: Query Message rows scoped by channel id (materialize for Channel.messages).
+    description: List messages in channel history (materialize for Channel.messages).
     kind: query
     entity: Message
     parameters:

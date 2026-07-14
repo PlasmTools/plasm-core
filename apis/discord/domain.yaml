@@ -1031,7 +1031,7 @@ capabilities:
   message_in_channel:
     kind: query
     entity: Message
-    description: Query Message rows scoped by channel id (materialize for Channel.messages).
+    description: List messages in channel history (materialize for Channel.messages).
     discovery:
       operation_terms:
       - list messages

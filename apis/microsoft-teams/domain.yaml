@@ -341,7 +341,7 @@ capabilities:
       required: true
       role: scope
   channel_message_query:
-    description: Query ChannelMessage rows scoped by channel id (materialize for Channel.messages).
+    description: List channel messages in channel history (materialize for Channel.messages).
     kind: query
     entity: ChannelMessage
     discovery:
