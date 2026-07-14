@@ -954,10 +954,10 @@ impl PlasmMcpHandler {
 
         #[allow(unused_mut)]
         let mut auto_ranked_from_selector: Option<Vec<String>> = None;
-        let seeds = match session_mode {
-            PlasmContextSessionMode::Extend => parse_tool_seeds(tname, v)?,
-            PlasmContextSessionMode::New => {
-                match context_new_seeds::resolve_context_new_seeds(
+        let seeds =
+            match session_mode {
+                PlasmContextSessionMode::Extend => parse_tool_seeds(tname, v)?,
+                PlasmContextSessionMode::New => match context_new_seeds::resolve_context_new_seeds(
                     tname,
                     self.plasm.catalog.snapshot().as_ref(),
                     intent,
@@ -973,10 +973,10 @@ impl PlasmMcpHandler {
                         auto_ranked_from_selector = ranked_capabilities;
                         seeds
                     }
+                    #[cfg(feature = "semantic-auto-seed")]
                     context_new_seeds::ContextNewSeeds::Abstain(res) => return Ok(res),
-                }
-            }
-        };
+                },
+            };
         let ranked_capabilities = match (ranked_capabilities_arg, auto_ranked_from_selector) {
             (RankedCapabilitiesArg::Set(Some(names)), _) => RankedCapabilitiesArg::Set(Some(names)),
             (RankedCapabilitiesArg::Set(None), Some(auto)) => {

@@ -2,6 +2,7 @@
 
 use plasm_core::discovery::{CgsCatalog, CgsDiscovery};
 use rust_mcp_sdk::schema::schema_utils::CallToolError;
+#[cfg(feature = "semantic-auto-seed")]
 use rust_mcp_sdk::schema::{CallToolResult, TextContent};
 
 use crate::http_execute::CapabilitySeed;
@@ -19,6 +20,7 @@ pub(crate) enum ContextNewSeeds {
         ranked_capabilities: Option<Vec<String>>,
     },
     /// Abstain breakout — caller returns this tool result as-is (no session mint).
+    #[cfg(feature = "semantic-auto-seed")]
     Abstain(CallToolResult),
 }
 
@@ -80,12 +82,9 @@ where
     C: CgsDiscovery + CgsCatalog + Send + Sync,
 {
     let allowed_slice = allowed_entry_ids.clone();
-    let outcome = crate::discovery_seed_select::route_intent_to_seeds(
-        catalog,
-        intent,
-        allowed_entry_ids,
-    )
-    .await;
+    let outcome =
+        crate::discovery_seed_select::route_intent_to_seeds(catalog, intent, allowed_entry_ids)
+            .await;
     match outcome {
         crate::discovery_routing::AutoSeedRouteOutcome::Ready {
             seeds: pairs,
