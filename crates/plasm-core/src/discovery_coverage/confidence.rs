@@ -8,9 +8,6 @@ use super::types::{
     CoverageEvaluation, DiscoveryCoveragePlan, ProviderConstraint, RequirementSlot,
 };
 
-#[cfg(test)]
-use super::derive::derive_coverage_plan;
-
 const ENTITY_SCORE_EPS: i32 = 3;
 
 /// Whether heuristic slot derivation is trusted or LLM slot extraction may run.
@@ -127,4 +124,3 @@ fn weak_root_margin(entity_hits: &[(i32, String, String)]) -> bool {
             && top_score.saturating_sub(*score) <= ENTITY_SCORE_EPS
     })
 }
-
