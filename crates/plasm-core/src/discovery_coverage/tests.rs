@@ -63,11 +63,11 @@ fn selection_matches_gold_empty_acceptable_is_false() {
 
 #[test]
 fn format_coverage_reasoning_includes_slots_and_plan() {
+    use crate::discovery_auto_seed::EntityCandidateBundle;
     use crate::discovery_coverage::{
         format_coverage_reasoning, CoverageEvaluation, CoverageRoute, DiscoveryCoveragePlan,
         ProviderAmbiguity, ProviderConstraint, RequirementSlot, SeedPlan, SeedSatisfiability,
     };
-    use crate::discovery_auto_seed::EntityCandidateBundle;
 
     let bundle = EntityCandidateBundle {
         entry_id: "github".into(),
@@ -198,7 +198,9 @@ fn unbranded_multi_provider_pr_does_not_soft_ready() {
     let route = route_coverage(&evaluation);
     match &route {
         CoverageRoute::Clarify { .. } | CoverageRoute::HardMiss { .. } => {}
-        CoverageRoute::Select { provider, selected, .. } => {
+        CoverageRoute::Select {
+            provider, selected, ..
+        } => {
             assert_eq!(
                 provider, "github",
                 "if Select fires under phrase gate, it must be github PR surface, got {route:?}"
@@ -213,7 +215,12 @@ fn unbranded_multi_provider_pr_does_not_soft_ready() {
                 evaluation.bundles.len()
             );
             assert!(
-                evaluation.bundles.iter().filter(|b| b.entry_id == "gitlab").count() <= 8,
+                evaluation
+                    .bundles
+                    .iter()
+                    .filter(|b| b.entry_id == "gitlab")
+                    .count()
+                    <= 8,
                 "must not dump gitlab schema beside github hits; got {}",
                 evaluation.bundles.len()
             );
@@ -387,7 +394,10 @@ fn multi_catalog_lock_without_federation_clarifies() {
         )
     {
         assert!(
-            matches!(route, CoverageRoute::Clarify { .. } | CoverageRoute::HardMiss { .. }),
+            matches!(
+                route,
+                CoverageRoute::Clarify { .. } | CoverageRoute::HardMiss { .. }
+            ),
             "incomplete federation must not soft-ready, got {route:?}"
         );
     }
@@ -475,7 +485,9 @@ fn enumerate_is_phrase_gated_not_federated_schema_dump() {
     };
     let pin_bundles = enumerate_schema_bundles(pin, &slack_gh, &allowed_sg, &["slack".into()]);
     assert!(
-        pin_bundles.iter().any(|b| b.entry_id == "slack" && b.entity == "Pin"),
+        pin_bundles
+            .iter()
+            .any(|b| b.entry_id == "slack" && b.entity == "Pin"),
         "pin intent must retrieve Slack Pin; pool={:?}",
         pin_bundles
             .iter()

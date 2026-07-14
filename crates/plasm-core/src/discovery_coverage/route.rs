@@ -18,10 +18,7 @@ pub fn route_coverage(evaluation: &CoverageEvaluation) -> CoverageRoute {
 }
 
 /// Same as [`route_coverage`] with an explicit abstain margin (eval sweep only).
-pub fn route_coverage_with_margin(
-    evaluation: &CoverageEvaluation,
-    margin: u32,
-) -> CoverageRoute {
+pub fn route_coverage_with_margin(evaluation: &CoverageEvaluation, margin: u32) -> CoverageRoute {
     let plan = &evaluation.plan;
 
     if evaluation.satisfiable_plans_by_provider.is_empty()
@@ -120,8 +117,7 @@ pub fn route_coverage_with_margin(
             return CoverageRoute::Clarify {
                 alternative_sets,
                 reasoning:
-                    "cannot ready: unbranded multi-provider without grounded dominant margin"
-                        .into(),
+                    "cannot ready: unbranded multi-provider without grounded dominant margin".into(),
             };
         }
     }
@@ -196,9 +192,7 @@ fn has_grounded_root_hint(plan: &super::types::DiscoveryCoveragePlan) -> bool {
     })
 }
 
-fn best_provider_plan(
-    evaluation: &CoverageEvaluation,
-) -> Option<(&str, &SeedPlan, &[SeedPlan])> {
+fn best_provider_plan(evaluation: &CoverageEvaluation) -> Option<(&str, &SeedPlan, &[SeedPlan])> {
     let mut ranked: Vec<(&String, &SeedPlan)> = evaluation
         .satisfiable_plans_by_provider
         .iter()
@@ -271,9 +265,7 @@ fn tie_plans(plans: &[SeedPlan]) -> Vec<Vec<SeedSatisfiability>> {
     let same_len = plans[0].seeds.len();
     let tied: Vec<_> = plans
         .iter()
-        .filter(|plan| {
-            plan.seeds.len() == same_len && top.saturating_sub(plan.lexical_score) <= 1
-        })
+        .filter(|plan| plan.seeds.len() == same_len && top.saturating_sub(plan.lexical_score) <= 1)
         .map(|plan| plan.seeds.clone())
         .collect();
     if tied.len() >= 2 {
@@ -289,7 +281,9 @@ pub fn route_to_selection_raw(
 ) -> SeedSelectionRaw {
     let reasoning = format_coverage_reasoning(evaluation, route, None, None);
     match route {
-        CoverageRoute::Clarify { alternative_sets, .. } => SeedSelectionRaw {
+        CoverageRoute::Clarify {
+            alternative_sets, ..
+        } => SeedSelectionRaw {
             decision: SeedSelectionDecision::Clarify,
             requirements: Vec::new(),
             selected_ids: Vec::new(),

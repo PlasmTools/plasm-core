@@ -89,7 +89,10 @@ pub fn missing_named_catalog_coverage(
 }
 
 /// Build ready selection from a single verified plan (no semantic rewriter).
-pub fn selection_from_plan(corpus: &WitnessCorpus, plan: &DeterministicSeedPlan) -> SeedSelectionRaw {
+pub fn selection_from_plan(
+    corpus: &WitnessCorpus,
+    plan: &DeterministicSeedPlan,
+) -> SeedSelectionRaw {
     let selected_ids = plan.candidate_ids.clone();
     let supporting = supporting_capabilities_from_bundles(&selected_ids, &corpus.bundles);
     SeedSelectionRaw {

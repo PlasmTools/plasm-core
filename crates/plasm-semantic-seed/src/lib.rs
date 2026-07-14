@@ -147,11 +147,7 @@ where
                 %error,
                 "multipass witness/plan route failed; fail-closed clarify"
             );
-            selection_clarify_from_plans(
-                &corpus,
-                &[],
-                format!("multipass=resolve_err {error}"),
-            )
+            selection_clarify_from_plans(&corpus, &[], format!("multipass=resolve_err {error}"))
         }
     };
 
@@ -242,10 +238,7 @@ fn route_witness_assessment(
                 Err(PlanConstructError::Uncoverable { missing }) => {
                     return Ok(selection_hard_miss(
                         missing,
-                        format!(
-                            "{} | multipass=uncoverable_witnesses",
-                            assessment.reasoning
-                        ),
+                        format!("{} | multipass=uncoverable_witnesses", assessment.reasoning),
                     ));
                 }
             };
@@ -297,7 +290,10 @@ fn route_witness_assessment(
     }
 }
 
-fn ensure_clarify_alternatives(corpus: &WitnessCorpus, mut raw: SeedSelectionRaw) -> SeedSelectionRaw {
+fn ensure_clarify_alternatives(
+    corpus: &WitnessCorpus,
+    mut raw: SeedSelectionRaw,
+) -> SeedSelectionRaw {
     if raw.decision == SeedSelectionDecision::Clarify && raw.alternative_sets.len() < 2 {
         raw.alternative_sets = synthesize_clarify_alternatives(corpus);
     }
@@ -391,11 +387,7 @@ fn select_requirement_witnesses_llm(
 ) -> anyhow::Result<WitnessSelectionAssessment> {
     baml_client::init();
     let registry = openrouter_registry(config);
-    let rows: Vec<RequirementWitnessRow> = corpus
-        .witnesses
-        .iter()
-        .map(witness_to_row)
-        .collect();
+    let rows: Vec<RequirementWitnessRow> = corpus.witnesses.iter().map(witness_to_row).collect();
 
     B.SelectRequirementWitnesses
         .with_client_registry(&registry)

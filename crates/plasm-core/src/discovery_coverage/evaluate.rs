@@ -185,7 +185,10 @@ fn detect_ambiguity(
 
     viable.sort_by(|left, right| right.1.lexical_score.cmp(&left.1.lexical_score));
     ProviderAmbiguity::Between {
-        providers: viable.iter().map(|(provider, _)| provider.clone()).collect(),
+        providers: viable
+            .iter()
+            .map(|(provider, _)| provider.clone())
+            .collect(),
         equivalent_plans: true,
     }
 }
@@ -276,8 +279,9 @@ pub fn coverage_plan_recall(
             .map(|s| (s.entry_id.as_str(), s.entity.as_str()))
             .collect();
         return acceptable_sets.iter().any(|gold| {
-            gold.iter()
-                .all(|(entry_id, entity)| satisfiable.contains(&(entry_id.as_str(), entity.as_str())))
+            gold.iter().all(|(entry_id, entity)| {
+                satisfiable.contains(&(entry_id.as_str(), entity.as_str()))
+            })
         });
     }
     acceptable_sets.iter().any(|gold| {

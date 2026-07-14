@@ -52,8 +52,7 @@ pub fn derive_coverage_plan(
     let entity_hits = collect_entity_hits(intent, catalogs, allowed_entry_ids);
     let root_hint = select_root_entity_hint(&entity_hits, &provider_constraint);
     let mutate_op = infer_mutation_kind_from_index(intent, catalogs, allowed_entry_ids);
-    let relation_hops =
-        infer_relation_hops(catalogs, allowed_entry_ids, &entity_hits, &root_hint);
+    let relation_hops = infer_relation_hops(catalogs, allowed_entry_ids, &entity_hits, &root_hint);
 
     match mutate_op {
         Some(op) => slots.push(RequirementSlot::MutateAnchor {

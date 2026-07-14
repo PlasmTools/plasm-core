@@ -166,10 +166,7 @@ pub(crate) fn readmit_scored_entity_drops(
     /// Extra per-catalog slots beyond [`EntityCandidateConfig::max_per_catalog`] for scored survivors.
     const EXTRA_SCORED_PER_CATALOG: usize = 4;
 
-    let in_pool: HashSet<String> = diversified
-        .iter()
-        .map(|b| b.candidate_id.clone())
-        .collect();
+    let in_pool: HashSet<String> = diversified.iter().map(|b| b.candidate_id.clone()).collect();
     let mut drops: Vec<EntityCandidateBundle> = pre_diversify
         .iter()
         .filter(|b| b.max_lexical_score > 0 && !in_pool.contains(&b.candidate_id))

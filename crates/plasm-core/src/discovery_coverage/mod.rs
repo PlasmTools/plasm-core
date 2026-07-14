@@ -8,8 +8,8 @@ mod enumerate;
 mod evaluate;
 mod merge_slots;
 mod postselect;
-mod retrieve;
 mod reasoning;
+mod retrieve;
 mod route;
 mod select;
 mod types;
@@ -30,16 +30,18 @@ pub use merge_slots::{
     capability_kind_from_label, ground_slots, merge_llm_slots, sanitize_llm_slots,
 };
 pub use postselect::postprocess_coverage_selection;
+pub use reasoning::format_coverage_reasoning;
 pub use retrieve::{
     coverage_pipeline_for_plan, coverage_route_selection, coverage_route_selection_with_margin,
     retrieve_via_coverage,
 };
-pub use reasoning::format_coverage_reasoning;
 pub use route::{
     can_ready, can_ready_with_margin, route_coverage, route_coverage_with_margin,
     route_to_selection_raw,
 };
-pub use select::{resolve_seeds_from_ids, select_best_plan, select_minimal_seed_set, selection_matches_gold};
+pub use select::{
+    resolve_seeds_from_ids, select_best_plan, select_minimal_seed_set, selection_matches_gold,
+};
 pub use types::{
     CoverageEvaluation, CoveragePipelineResult, CoverageRoute, CoverageShadowMetrics,
     DiscoveryCoveragePlan, DiscoveryRequirement, ProviderAmbiguity, ProviderConstraint,
@@ -130,11 +132,7 @@ pub fn coverage_shadow_metrics(
         CoverageRoute::Select { .. } => "ready",
     }
     .to_string();
-    let plan_select_exact = plan_select_matches_gold(
-        pipeline,
-        acceptable_sets,
-        final_selection,
-    );
+    let plan_select_exact = plan_select_matches_gold(pipeline, acceptable_sets, final_selection);
     CoverageShadowMetrics {
         coverage_ambiguous,
         coverage_satisfiable,

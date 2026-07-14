@@ -4,7 +4,9 @@ use indexmap::IndexMap;
 
 use crate::schema::CGS;
 
-use super::types::{CoverageEvaluation, DiscoveryCoveragePlan, ProviderConstraint, RequirementSlot};
+use super::types::{
+    CoverageEvaluation, DiscoveryCoveragePlan, ProviderConstraint, RequirementSlot,
+};
 
 #[cfg(test)]
 use super::derive::derive_coverage_plan;
@@ -94,7 +96,10 @@ pub fn derive_confidence(
 }
 
 fn pool_covers_any_high_scoring_entity(evaluation: &CoverageEvaluation) -> bool {
-    evaluation.bundles.iter().any(|bundle| bundle.max_lexical_score >= 2)
+    evaluation
+        .bundles
+        .iter()
+        .any(|bundle| bundle.max_lexical_score >= 2)
 }
 
 fn ambiguous_task_root(entity_hits: &[(i32, String, String)]) -> bool {
@@ -117,13 +122,10 @@ fn weak_root_margin(entity_hits: &[(i32, String, String)]) -> bool {
         return false;
     }
     let (top_score, _, top_entity) = &entity_hits[0];
-    entity_hits
-        .iter()
-        .skip(1)
-        .any(|(score, _, entity)| {
-            !entity.eq_ignore_ascii_case(top_entity)
-                && top_score.saturating_sub(*score) <= ENTITY_SCORE_EPS
-        })
+    entity_hits.iter().skip(1).any(|(score, _, entity)| {
+        !entity.eq_ignore_ascii_case(top_entity)
+            && top_score.saturating_sub(*score) <= ENTITY_SCORE_EPS
+    })
 }
 
 /// Re-derive confidence after building plan from intent (test helper).

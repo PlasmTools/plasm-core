@@ -28,7 +28,9 @@ use crate::discovery_seed_catalog::CatalogWorkflowContext;
 use helpers::ArcCgs;
 use inject::inject_retrieval_targets;
 use inject::inject_workflow_mutation_targets;
-use pool::{group_candidates_by_entity, merge_required_entity_bundles, readmit_scored_entity_drops};
+use pool::{
+    group_candidates_by_entity, merge_required_entity_bundles, readmit_scored_entity_drops,
+};
 
 /// Build tenant-scoped entity candidate bundles from lexical discovery (no score thresholds).
 pub fn retrieve_entity_candidate_bundles<C>(
@@ -78,10 +80,8 @@ where
     );
     let pre_diversify: Vec<types::EntityCandidateBundle> = grouped.values().cloned().collect();
     let mut diversified = diversify_entity_bundles(pre_diversify.clone(), config);
-    let graph = crate::discovery_candidate_graph::TypedCandidateGraph::build(
-        &pre_diversify,
-        &catalogs,
-    );
+    let graph =
+        crate::discovery_candidate_graph::TypedCandidateGraph::build(&pre_diversify, &catalogs);
     diversified = graph.closure_aware_merge(diversified, &[]);
     if inject::workflow_inject_active_for(intent_class, &catalog_context) {
         let mut pool: IndexMap<(String, String), types::EntityCandidateBundle> = diversified

@@ -180,13 +180,7 @@ where
     };
     let catalogs = load_catalogs_for_entries(catalog, &allowed);
     let catalog_route = discover_catalog_route(catalog, intent, &allowed);
-    let evaluation = evaluate_plan(
-        &plan,
-        intent,
-        &catalogs,
-        &allowed,
-        &catalog_route,
-    );
+    let evaluation = evaluate_plan(&plan, intent, &catalogs, &allowed, &catalog_route);
     Ok(super::build_coverage_pipeline(evaluation))
 }
 

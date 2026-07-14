@@ -117,10 +117,7 @@ impl SeedPlan {
             .collect();
         covers.sort_unstable();
         covers.dedup();
-        if required_slots
-            .iter()
-            .any(|idx| !covers.contains(idx))
-        {
+        if required_slots.iter().any(|idx| !covers.contains(idx)) {
             return None;
         }
         let lexical_score = seeds.iter().map(|s| s.lexical_score).sum();
@@ -177,7 +174,11 @@ impl DiscoveryCoveragePlan {
     }
 
     pub fn slot_signature(&self) -> String {
-        let mut keys: Vec<_> = self.slots.iter().map(RequirementSlot::signature_key).collect();
+        let mut keys: Vec<_> = self
+            .slots
+            .iter()
+            .map(RequirementSlot::signature_key)
+            .collect();
         keys.sort();
         keys.join("|")
     }

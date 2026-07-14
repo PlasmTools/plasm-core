@@ -160,7 +160,9 @@ fn graph_note_lists_siblings_in_pool() {
         })
         .expect("message");
     assert!(
-        msg.pool.render_graph_note().contains("siblings_in_pool=Thread"),
+        msg.pool
+            .render_graph_note()
+            .contains("siblings_in_pool=Thread"),
         "graph_note={}",
         msg.pool.render_graph_note()
     );
@@ -274,18 +276,12 @@ fn brand_lock_drops_unlocked_catalog_witnesses() {
         "microsoft-teams:ChatMessage",
         "microsoft-teams",
         "ChatMessage",
-        vec![cap(
-            "microsoft-teams:ChatMessage:Get",
-            "Get",
-            "Get",
-            95,
-        )],
+        vec![cap("microsoft-teams:ChatMessage:Get", "Get", "Get", 95)],
         95,
     );
     let bundles = vec![github, teams];
     let graph = empty_graph(&bundles);
-    let corpus =
-        build_witness_corpus(&bundles, &["github".into()], &graph, None).expect("corpus");
+    let corpus = build_witness_corpus(&bundles, &["github".into()], &graph, None).expect("corpus");
     assert!(corpus.witnesses.iter().all(|w| {
         matches!(&w.kind, WitnessKind::DirectCapability { entry_id, .. } if entry_id == "github")
             || matches!(&w.kind, WitnessKind::RelationHop { entry_id, .. } if entry_id == "github")
@@ -327,12 +323,7 @@ fn unbranded_keeps_only_top_catalogs_by_lexical_score() {
             "microsoft-teams:ChatMessage",
             "microsoft-teams",
             "ChatMessage",
-            vec![cap(
-                "microsoft-teams:ChatMessage:Get",
-                "Get",
-                "Get",
-                10,
-            )],
+            vec![cap("microsoft-teams:ChatMessage:Get", "Get", "Get", 10)],
             10,
         ),
         bundle(
@@ -353,11 +344,8 @@ fn unbranded_keeps_only_top_catalogs_by_lexical_score() {
     ));
     let graph = empty_graph(&bundles);
     let corpus = build_witness_corpus(&bundles, &[], &graph, None).expect("corpus");
-    let catalogs: std::collections::BTreeSet<&str> = corpus
-        .witnesses
-        .iter()
-        .map(witness_catalog_of)
-        .collect();
+    let catalogs: std::collections::BTreeSet<&str> =
+        corpus.witnesses.iter().map(witness_catalog_of).collect();
     assert!(
         catalogs.len() <= MAX_WITNESS_CATALOGS_UNBRANDED,
         "catalogs={catalogs:?}"
@@ -396,9 +384,8 @@ fn shortlist_prefers_higher_lexical_score_within_cap() {
         200,
     ));
     let graph = empty_graph(&bundles);
-    let corpus =
-        build_witness_corpus(&bundles, &["github".into(), "gmail".into()], &graph, None)
-            .expect("corpus");
+    let corpus = build_witness_corpus(&bundles, &["github".into(), "gmail".into()], &graph, None)
+        .expect("corpus");
     assert!(corpus.witnesses.len() <= MAX_WITNESSES);
     assert_eq!(corpus.witnesses[0].lexical_score, 200);
     assert!(matches!(
@@ -559,7 +546,8 @@ fn corpus_stamps_attach_on_label_and_prune_drops_label_read() {
     let mut graph_catalogs = IndexMap::new();
     graph_catalogs.insert("fx".to_string(), Arc::clone(&cgs));
     let graph = TypedCandidateGraph::build(&bundles, &graph_catalogs);
-    let corpus = build_witness_corpus(&bundles, &["fx".into()], &graph, Some(&ctx)).expect("corpus");
+    let corpus =
+        build_witness_corpus(&bundles, &["fx".into()], &graph, Some(&ctx)).expect("corpus");
 
     let label = corpus
         .witnesses
@@ -743,7 +731,8 @@ fn corpus_stamps_own_pair_on_both_ends_of_own_edge() {
     let mut graph_catalogs = IndexMap::new();
     graph_catalogs.insert("fx".to_string(), Arc::clone(&cgs));
     let graph = TypedCandidateGraph::build(&bundles, &graph_catalogs);
-    let corpus = build_witness_corpus(&bundles, &["fx".into()], &graph, Some(&ctx)).expect("corpus");
+    let corpus =
+        build_witness_corpus(&bundles, &["fx".into()], &graph, Some(&ctx)).expect("corpus");
 
     let thread = corpus
         .witnesses

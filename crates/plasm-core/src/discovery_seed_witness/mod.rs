@@ -25,9 +25,6 @@ pub use corpus::{
     build_witness_corpus, RequirementWitness, WitnessCorpus, WitnessKind, MAX_WITNESSES,
     MAX_WITNESS_CATALOGS_UNBRANDED,
 };
-pub use roles::{
-    OwnEdge, OwnEnd, OwnPairs, PoolChild, PoolLinks, SeedClassStamp, SeedNavStamp,
-};
 pub use outcome::{
     missing_named_catalog_coverage, selection_clarify_from_plans, selection_from_plan,
     selection_hard_miss, synthesize_clarify_alternatives,
@@ -37,3 +34,4 @@ pub use plans::{
     PlanConstructError, MAX_COMPARE_PLANS,
 };
 pub use prune::prune_witness_selection;
+pub use roles::{OwnEdge, OwnEnd, OwnPairs, PoolChild, PoolLinks, SeedClassStamp, SeedNavStamp};

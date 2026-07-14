@@ -235,11 +235,8 @@ pub fn score_all_seed_sets_with_allowed(
             Err(error) => {
                 trace.record_failure(SeedFailureStage::Select, error.to_string());
                 if let Some(ref pipeline) = coverage_pipeline {
-                    trace.coverage = Some(coverage_shadow_metrics(
-                        pipeline,
-                        &acceptable_gold,
-                        None,
-                    ));
+                    trace.coverage =
+                        Some(coverage_shadow_metrics(pipeline, &acceptable_gold, None));
                 }
                 out.push(score_seed_selector_failure(
                     &case.id,
@@ -277,7 +274,12 @@ pub fn score_all_coverage_shadow(
     cases: &[DiscoveryEvalCase],
     allowed_catalogs: &[String],
 ) -> anyhow::Result<Vec<SeedSetCaseScore>> {
-    score_all_coverage_shadow_with_margin(registry, cases, allowed_catalogs, plasm_core::discovery_coverage::READY_MARGIN)
+    score_all_coverage_shadow_with_margin(
+        registry,
+        cases,
+        allowed_catalogs,
+        plasm_core::discovery_coverage::READY_MARGIN,
+    )
 }
 
 /// Shadow scoring with an explicit READY_MARGIN (holdout risk-coverage sweep).

@@ -20,7 +20,9 @@ pub fn format_coverage_reasoning(
     parts.push(format!("lock={provider}"));
 
     match route {
-        CoverageRoute::Clarify { alternative_sets, .. } => {
+        CoverageRoute::Clarify {
+            alternative_sets, ..
+        } => {
             let alts: Vec<_> = alternative_sets
                 .iter()
                 .map(|set| set.label.clone())
@@ -67,11 +69,7 @@ pub fn format_coverage_reasoning(
 
     if let (Some(pre), Some(post)) = (pre_invariant_ids, post_invariant_ids) {
         if pre != post {
-            parts.push(format!(
-                "invariants={}→{}",
-                pre.join("+"),
-                post.join("+")
-            ));
+            parts.push(format!("invariants={}→{}", pre.join("+"), post.join("+")));
         }
     }
 

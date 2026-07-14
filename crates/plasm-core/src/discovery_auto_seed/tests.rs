@@ -11,7 +11,9 @@ use crate::schema::CGS;
 
 use super::helpers::ArcCgs;
 use super::inject::{inject_workflow_mutation_targets, mutation_capabilities_for_entity};
-use super::pool::{group_candidates_by_entity, merge_required_entity_bundles, readmit_scored_entity_drops};
+use super::pool::{
+    group_candidates_by_entity, merge_required_entity_bundles, readmit_scored_entity_drops,
+};
 use super::{
     capability_query_from_intent_phrase, diversify_entity_bundles,
     retrieve_entity_candidate_bundles, EntityCandidateBundle, EntityCandidateConfig,
@@ -732,11 +734,15 @@ fn readmit_after_merge_required_restores_scored_message() {
         .into_iter()
         .filter(|b| b.entity != "Message")
         .collect();
-    let restored = readmit_scored_entity_drops(without_message, &pre, EntityCandidateConfig {
-        max_entities: 24,
-        max_per_catalog: 4,
-        ..Default::default()
-    });
+    let restored = readmit_scored_entity_drops(
+        without_message,
+        &pre,
+        EntityCandidateConfig {
+            max_entities: 24,
+            max_per_catalog: 4,
+            ..Default::default()
+        },
+    );
     assert!(
         restored.iter().any(|b| b.entity == "Message"),
         "Message restored: {:?}",

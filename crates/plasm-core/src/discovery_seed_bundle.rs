@@ -2,9 +2,9 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::catalog_search_index::CatalogSearchIndex;
 use crate::discovery_auto_seed::EntityCandidateBundle;
 use crate::discovery_intent_signals::intent_mentions_catalog_id;
-use crate::catalog_search_index::CatalogSearchIndex;
 
 pub const DEFAULT_MAX_SEED_BUNDLES: usize = 12;
 pub const DEFAULT_MAX_ROOTS_PER_BUNDLE: usize = 3;

@@ -2,13 +2,13 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use clap::Parser;
+#[cfg(feature = "llm-rerank")]
+use plasm_discovery_eval::build_seed_aggregate_from_runs;
 use plasm_discovery_eval::{
     build_aggregate, build_seed_aggregate, default_cases_path, default_catalogs_path,
     format_human_report, format_seed_human_report, load_cases, load_catalog_entry_ids,
     load_registry, resolve_apis_root, score_all_baseline, write_human_report, write_json_report,
 };
-#[cfg(feature = "llm-rerank")]
-use plasm_discovery_eval::build_seed_aggregate_from_runs;
 use plasm_eval_common::model_slug;
 
 #[derive(Parser, Debug)]

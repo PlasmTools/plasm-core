@@ -96,7 +96,10 @@ fn drop_redundant_attach(corpus: &WitnessCorpus, selected: &[usize]) -> Vec<usiz
                 return false;
             };
             let WitnessKind::DirectCapability {
-                entry_id, entity, kind, ..
+                entry_id,
+                entity,
+                kind,
+                ..
             } = &w.kind
             else {
                 return true;

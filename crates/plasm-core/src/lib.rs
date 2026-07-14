@@ -85,13 +85,13 @@ pub mod bind_wire_validate;
 pub mod catalog_id;
 pub mod catalog_il;
 pub mod catalog_ownership;
+pub mod catalog_search_index;
 pub mod cgs_context;
 pub mod cgs_expression_validate;
 pub mod cgs_federation;
 pub mod cgs_normalize;
 pub mod connect_profile;
 pub mod cross_entity;
-pub mod catalog_search_index;
 pub mod discovery;
 pub mod discovery_auto_seed;
 pub mod discovery_candidate_graph;
@@ -185,6 +185,7 @@ pub use catalog_ownership::{
     CatalogOwnershipContext, CatalogOwnershipError, InvokeCatalogResolutionContext,
     FEDERATED_RELATION_MISSING_OWNERSHIP,
 };
+pub use catalog_search_index::{CatalogSearchHit, CatalogSearchIndex};
 pub use cgs_context::{CgsContext, Prefix};
 pub use cgs_federation::{
     cgs_layer_stack, cgs_layer_stack_from_contexts, lookup_capability_in_layer_stack,
@@ -194,7 +195,6 @@ pub use comp_canonical::plasm_comp_commit_canonical;
 pub use connect_profile::{
     catalog_connect_profile, CatalogAuthCapability, CatalogConnectProfile, CatalogOauthCapability,
 };
-pub use catalog_search_index::{CatalogSearchHit, CatalogSearchIndex};
 pub use discovery::{
     derive_intent_exposure_surface_batch, relation_target_deferred_mutator_wires, Ambiguity,
     CapabilityQuery, CatalogEntryMeta, CgsCatalog, CgsDiscovery, ClosureStats,
@@ -318,16 +318,15 @@ pub use schema::{
     CapabilitySchema, CapabilityTemplateJson, Cardinality, CgsCapabilityIndex, CrossFieldRule,
     CrossFieldRuleType, DataClassDimension, DataClassName, DataClassSchema, DataClassSeverity,
     DiscoveryCapabilityHints, DiscoveryEntityHints, DiscoveryRelationHints, DiscoverySeedClass,
-    DiscoverySeedNav, EmbedOnMissPolicy,
-    EntityDef, FieldDeriveRule, FieldSchema, FieldValueKind, IdFormat, InputFieldSchema,
-    InputFieldWire, InputSchema, InputType, InputValidation, InputVariantSchema, JsonPathSegment,
-    NamedValueSchema, OauthDefaultScopeSet, OauthExtension, OauthRequirements, OauthScopeEntry,
-    OutputSchema, OutputType, ParameterRole, RelationMaterialization, RelationSchema,
-    RelationScopedFallback, ResourceSchema, ScopeAggregateKeyPolicy, ScopeRequirement,
-    SinkClassName, StringSemantics, ValidationOp, ValidationPredicate, ValueDomainKey,
-    ValueDomainSlot, ViewDefinition, ViewNodeSpec, ViewOutputBinding, ViewParamBinding,
-    ViewRelationBinding, ViewRelationOutputSpec, ViewScopeInject, ViewScopeParam,
-    WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
+    DiscoverySeedNav, EmbedOnMissPolicy, EntityDef, FieldDeriveRule, FieldSchema, FieldValueKind,
+    IdFormat, InputFieldSchema, InputFieldWire, InputSchema, InputType, InputValidation,
+    InputVariantSchema, JsonPathSegment, NamedValueSchema, OauthDefaultScopeSet, OauthExtension,
+    OauthRequirements, OauthScopeEntry, OutputSchema, OutputType, ParameterRole,
+    RelationMaterialization, RelationSchema, RelationScopedFallback, ResourceSchema,
+    ScopeAggregateKeyPolicy, ScopeRequirement, SinkClassName, StringSemantics, ValidationOp,
+    ValidationPredicate, ValueDomainKey, ValueDomainSlot, ViewDefinition, ViewNodeSpec,
+    ViewOutputBinding, ViewParamBinding, ViewRelationBinding, ViewRelationOutputSpec,
+    ViewScopeInject, ViewScopeParam, WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
 };
 pub use schema_overlay::{
     build_decode_scope_key, build_schema_overlay, overlay_bind_cache_suffix, overlay_collect_rows,

@@ -4,9 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::discovery_intent_class::DiscoveryIntentClass;
 use crate::discovery_intent_signals::intent_mentions_repo_path;
-use crate::schema::{
-    CapabilityKind, CapabilitySchema, DiscoverySeedClass, DiscoverySeedNav, CGS,
-};
+use crate::schema::{CapabilityKind, CapabilitySchema, DiscoverySeedClass, DiscoverySeedNav, CGS};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CatalogCapabilityMeta {
@@ -156,11 +154,7 @@ impl CatalogWorkflowContext {
     }
 
     /// Authored entity `discovery.seed_class`, if any.
-    pub fn entity_seed_class(
-        &self,
-        entry_id: &str,
-        entity: &str,
-    ) -> Option<DiscoverySeedClass> {
+    pub fn entity_seed_class(&self, entry_id: &str, entity: &str) -> Option<DiscoverySeedClass> {
         self.indexes
             .get(entry_id)
             .and_then(|idx| idx.entity_seed_class.get(entity).copied())
@@ -381,15 +375,15 @@ fn dedupe_phrases(phrases: Vec<String>) -> Vec<String> {
 }
 
 fn operation_terms_hit(meta: &CatalogCapabilityMeta, intent: &str) -> bool {
-    meta.operation_phrases.iter().any(|phrase| {
-        crate::catalog_search_index::phrase_tokens_covered_by_intent(phrase, intent)
-    })
+    meta.operation_phrases
+        .iter()
+        .any(|phrase| crate::catalog_search_index::phrase_tokens_covered_by_intent(phrase, intent))
 }
 
 fn target_terms_hit(meta: &CatalogCapabilityMeta, intent: &str) -> bool {
-    meta.target_phrases.iter().any(|phrase| {
-        crate::catalog_search_index::phrase_tokens_covered_by_intent(phrase, intent)
-    })
+    meta.target_phrases
+        .iter()
+        .any(|phrase| crate::catalog_search_index::phrase_tokens_covered_by_intent(phrase, intent))
 }
 
 /// Admit mutation capabilities via BM25 score; label operation vs target with authored terms.
@@ -784,8 +778,12 @@ mod tests {
         let index = build_catalog_seed_index("seed_workflow", &cgs);
         let search = search_index_for_cgs("seed_workflow", &cgs);
         let intent = "Post a summary comment on the incident ticket.";
-        let workflow =
-            match_intent_to_catalog(intent, &index, &search, &DiscoveryIntentClass::LocalizedMutation);
+        let workflow = match_intent_to_catalog(
+            intent,
+            &index,
+            &search,
+            &DiscoveryIntentClass::LocalizedMutation,
+        );
         assert!(is_localized_mutation(
             &DiscoveryIntentClass::LocalizedMutation,
             &workflow,
@@ -811,8 +809,12 @@ mod tests {
         let index = build_catalog_seed_index("seed_workflow", &cgs);
         let search = search_index_for_cgs("seed_workflow", &cgs);
         let intent = "Open a merge proposal from hotfix/cache into main and request reviewers.";
-        let workflow =
-            match_intent_to_catalog(intent, &index, &search, &DiscoveryIntentClass::LocalizedMutation);
+        let workflow = match_intent_to_catalog(
+            intent,
+            &index,
+            &search,
+            &DiscoveryIntentClass::LocalizedMutation,
+        );
         assert!(is_localized_mutation(
             &DiscoveryIntentClass::LocalizedMutation,
             &workflow,
@@ -838,8 +840,12 @@ mod tests {
         let index = build_catalog_seed_index("seed_workflow", &cgs);
         let search = search_index_for_cgs("seed_workflow", &cgs);
         let intent = "Browse capabilities for repository-scoped repo workflow: tickets, branches, merge proposals.";
-        let workflow =
-            match_intent_to_catalog(intent, &index, &search, &DiscoveryIntentClass::CatalogExploration);
+        let workflow = match_intent_to_catalog(
+            intent,
+            &index,
+            &search,
+            &DiscoveryIntentClass::CatalogExploration,
+        );
         assert!(!suggests_mutation_workflow(
             &DiscoveryIntentClass::CatalogExploration,
             &workflow,
@@ -899,8 +905,12 @@ mod tests {
         let index = build_catalog_seed_index("seed_workflow", &cgs);
         let search = search_index_for_cgs("seed_workflow", &cgs);
         let intent = "In the Acme catalog monorepo: open a bug ticket, cut a feature branch, commit a readme update, open a merge proposal, and leave a ticket note with the proposal link.";
-        let workflow =
-            match_intent_to_catalog(intent, &index, &search, &DiscoveryIntentClass::RepoScopedWorkflow);
+        let workflow = match_intent_to_catalog(
+            intent,
+            &index,
+            &search,
+            &DiscoveryIntentClass::RepoScopedWorkflow,
+        );
         assert!(suggests_multi_entity_workflow(
             &DiscoveryIntentClass::RepoScopedWorkflow,
             intent,
@@ -949,8 +959,12 @@ mod tests {
         let index = build_catalog_seed_index("seed_workflow", &cgs);
         let search = search_index_for_cgs("seed_workflow", &cgs);
         let intent = "In the Acme monorepo: open a bug ticket, cut a feature branch, commit a readme update, open a merge proposal, and leave a ticket note with the proposal link.";
-        let workflow =
-            match_intent_to_catalog(intent, &index, &search, &DiscoveryIntentClass::RepoScopedWorkflow);
+        let workflow = match_intent_to_catalog(
+            intent,
+            &index,
+            &search,
+            &DiscoveryIntentClass::RepoScopedWorkflow,
+        );
         assert!(suggests_mutation_workflow(
             &DiscoveryIntentClass::RepoScopedWorkflow,
             &workflow,
@@ -970,8 +984,12 @@ mod tests {
         let index = build_catalog_seed_index("seed_workflow", &cgs);
         let search = search_index_for_cgs("seed_workflow", &cgs);
         let intent = "On workspace acme/tool-test: open a ticket with a bug label, create a branch, commit a small markdown file, open a merge proposal linking the ticket, and comment on the ticket with the proposal link.";
-        let workflow =
-            match_intent_to_catalog(intent, &index, &search, &DiscoveryIntentClass::RepoScopedWorkflow);
+        let workflow = match_intent_to_catalog(
+            intent,
+            &index,
+            &search,
+            &DiscoveryIntentClass::RepoScopedWorkflow,
+        );
         assert!(suggests_multi_entity_workflow(
             &DiscoveryIntentClass::RepoScopedWorkflow,
             intent,

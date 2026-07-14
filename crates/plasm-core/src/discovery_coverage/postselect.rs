@@ -35,14 +35,11 @@ pub fn postprocess_coverage_selection(
         Some(candidate_graph),
         &protected,
     );
-    raw.supporting_capability_ids = supporting_capabilities_from_bundles(&raw.selected_ids, bundles);
+    raw.supporting_capability_ids =
+        supporting_capabilities_from_bundles(&raw.selected_ids, bundles);
     if let (Some(route), Some(evaluation)) = (route, evaluation) {
-        raw.reasoning = format_coverage_reasoning(
-            evaluation,
-            route,
-            Some(&pre_ids),
-            Some(&raw.selected_ids),
-        );
+        raw.reasoning =
+            format_coverage_reasoning(evaluation, route, Some(&pre_ids), Some(&raw.selected_ids));
     } else if pre_ids != raw.selected_ids {
         raw.reasoning = format!(
             "{} invariants={}→{}",

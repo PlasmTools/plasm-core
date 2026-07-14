@@ -46,10 +46,7 @@ impl std::fmt::Debug for CatalogSearchIndex {
 impl CatalogSearchIndex {
     /// Canonical discovery tokenizer (`DefaultTokenizer`: unicode, deunicode, stopwords, stem).
     pub fn tokenize(text: &str) -> HashSet<String> {
-        default_tokenizer()
-            .tokenize(text)
-            .into_iter()
-            .collect()
+        default_tokenizer().tokenize(text).into_iter().collect()
     }
 
     pub fn empty() -> Self {
@@ -71,10 +68,8 @@ impl CatalogSearchIndex {
 
     /// Build from an `IndexMap` of owned graphs (coverage / eval harnesses).
     pub fn build_from_index_map(catalogs: &IndexMap<String, CGS>) -> Self {
-        let map: HashMap<String, &CGS> = catalogs
-            .iter()
-            .map(|(id, cgs)| (id.clone(), cgs))
-            .collect();
+        let map: HashMap<String, &CGS> =
+            catalogs.iter().map(|(id, cgs)| (id.clone(), cgs)).collect();
         Self::build_from_cgs_map(&map)
     }
 

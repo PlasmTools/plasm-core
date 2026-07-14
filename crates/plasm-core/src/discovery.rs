@@ -727,14 +727,17 @@ fn score_token_hits(query: &HashSet<String>, text: &str) -> (u32, Vec<String>) {
 
 /// BM25 milli-score for one capability against free-text intent (ephemeral single-catalog index).
 #[cfg(test)]
-fn score_capability_bm25(cgs: &CGS, entry_id: &str, cap: &CapabilitySchema, query_text: &str) -> u32 {
+fn score_capability_bm25(
+    cgs: &CGS,
+    entry_id: &str,
+    cap: &CapabilitySchema,
+    query_text: &str,
+) -> u32 {
     if query_text.trim().is_empty() {
         return 0;
     }
-    let index = crate::catalog_search_index::CatalogSearchIndex::build_from_pairs([(
-        entry_id,
-        cgs,
-    )]);
+    let index =
+        crate::catalog_search_index::CatalogSearchIndex::build_from_pairs([(entry_id, cgs)]);
     index.capability_score(entry_id, cap.name.as_str(), query_text)
 }
 
@@ -1219,10 +1222,8 @@ pub fn derive_intent_exposure_surface_batch(
     for tok in crate::catalog_search_index::CatalogSearchIndex::tokenize(intent) {
         query_tokens.insert(tok);
     }
-    let bm25 = crate::catalog_search_index::CatalogSearchIndex::build_from_pairs([(
-        cid.as_str(),
-        cgs,
-    )]);
+    let bm25 =
+        crate::catalog_search_index::CatalogSearchIndex::build_from_pairs([(cid.as_str(), cgs)]);
 
     let mut seeded_entities = HashSet::new();
     for raw_ent in entity_batch {
@@ -1401,10 +1402,8 @@ pub fn relation_target_deferred_mutator_wires(
     } else {
         entry_id.to_string()
     };
-    let bm25 = crate::catalog_search_index::CatalogSearchIndex::build_from_pairs([(
-        cid.as_str(),
-        cgs,
-    )]);
+    let bm25 =
+        crate::catalog_search_index::CatalogSearchIndex::build_from_pairs([(cid.as_str(), cgs)]);
     let seeded: HashSet<String> = seeded_entities.iter().cloned().collect();
     let mut deferred = BTreeSet::new();
     for raw_ent in seeded_entities {
@@ -2294,12 +2293,8 @@ mod tests {
         cgs.capabilities
             .insert(CapabilityName::from("thread_list"), cap.clone());
 
-        let score = score_capability_bm25(
-            &cgs,
-            "gmail",
-            &cap,
-            "find conversation thread discussion",
-        );
+        let score =
+            score_capability_bm25(&cgs, "gmail", &cap, "find conversation thread discussion");
         assert!(
             score > 0,
             "discovery target_terms should contribute to BM25 score"

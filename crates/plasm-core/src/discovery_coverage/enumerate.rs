@@ -142,7 +142,12 @@ fn collect_entity_capabilities(
     let mut caps = Vec::new();
     for kind in READ_KINDS.into_iter().chain(MUTATE_KINDS.into_iter()) {
         for cap in cgs.find_capabilities(entity, kind) {
-            caps.push(capability_evidence(entry_id, entity, cap, entity_score.max(1)));
+            caps.push(capability_evidence(
+                entry_id,
+                entity,
+                cap,
+                entity_score.max(1),
+            ));
         }
     }
     caps
@@ -237,10 +242,7 @@ pub fn enumerate_seed_plans(
 
     if !federation_slots.is_empty() {
         if let Some(tuple) = federation_plan(plan, &seeds_by_provider, &signature) {
-            let provider = tuple
-                .primary_provider()
-                .unwrap_or("federation")
-                .to_string();
+            let provider = tuple.primary_provider().unwrap_or("federation").to_string();
             by_provider.entry(provider).or_default().push(tuple);
         }
     }
@@ -266,8 +268,7 @@ pub fn enumerate_seed_plans(
                 {
                     continue;
                 }
-                if let Some(seed_plan) =
-                    SeedPlan::from_seeds(vec![(*seed).clone()], &required_all)
+                if let Some(seed_plan) = SeedPlan::from_seeds(vec![(*seed).clone()], &required_all)
                 {
                     plans.push(seed_plan.with_signature(signature.clone()));
                 }
@@ -278,8 +279,7 @@ pub fn enumerate_seed_plans(
                     .all(|slot| !matches!(slot, RequirementSlot::RelationHop { .. }))
             {
                 // Single-entity read when no relation hop slots were derived.
-                if let Some(seed_plan) =
-                    SeedPlan::from_seeds(vec![(*seed).clone()], &required_all)
+                if let Some(seed_plan) = SeedPlan::from_seeds(vec![(*seed).clone()], &required_all)
                 {
                     plans.push(seed_plan.with_signature(signature.clone()));
                 }
@@ -336,13 +336,7 @@ pub fn enumerate_seed_plans(
                         .first()
                         .map(|s| s.entity.as_str())
                         .unwrap_or("")
-                        .cmp(
-                            right
-                                .seeds
-                                .first()
-                                .map(|s| s.entity.as_str())
-                                .unwrap_or(""),
-                        )
+                        .cmp(right.seeds.first().map(|s| s.entity.as_str()).unwrap_or(""))
                 })
         });
         plans.dedup_by(|a, b| a.candidate_ids() == b.candidate_ids());
@@ -370,9 +364,10 @@ fn all_slot_indices(plan: &DiscoveryCoveragePlan) -> Vec<usize> {
 }
 
 fn seed_covers_all_primary(seed: &SeedSatisfiability, plan: &DiscoveryCoveragePlan) -> bool {
-    plan.slots.iter().enumerate().all(|(idx, slot)| {
-        matches!(slot, RequirementSlot::FederateSlot { .. }) || seed.covers(idx)
-    })
+    plan.slots
+        .iter()
+        .enumerate()
+        .all(|(idx, slot)| matches!(slot, RequirementSlot::FederateSlot { .. }) || seed.covers(idx))
 }
 
 fn seed_covers_required_read_root(seed: &SeedSatisfiability, plan: &DiscoveryCoveragePlan) -> bool {
@@ -407,9 +402,12 @@ fn relation_compatible(seeds: &[SeedSatisfiability], catalogs: &IndexMap<String,
 }
 
 fn relation_reaches_entities(cgs: &CGS, from: &str, to: &str) -> bool {
-    cgs.entities
-        .get(from)
-        .is_some_and(|entity| entity.relations.values().any(|rel| rel.target_resource.as_str() == to))
+    cgs.entities.get(from).is_some_and(|entity| {
+        entity
+            .relations
+            .values()
+            .any(|rel| rel.target_resource.as_str() == to)
+    })
 }
 
 fn federation_plan(
@@ -436,7 +434,8 @@ fn federation_plan(
             .max_by_key(|seed| (seed.lexical_score, seed.entity.as_str()))?;
         seeds.push((*best).clone());
     }
-    SeedPlan::from_seeds(seeds, &all_slot_indices(plan)).map(|p| p.with_signature(signature.to_string()))
+    SeedPlan::from_seeds(seeds, &all_slot_indices(plan))
+        .map(|p| p.with_signature(signature.to_string()))
 }
 
 fn build_graph_parents(catalogs: &IndexMap<String, CGS>) -> HashMap<(String, String), Vec<String>> {
