@@ -1,4 +1,4 @@
-version: 2
+version: 3
 http_backend: https://YOUR_ACCOUNT.fibery.io
 data_classes:
   untrusted:
@@ -79,6 +79,11 @@ entities:
   Space:
     id_field: name
     description: A Fibery space (API app) grouping databases and views for one process area.
+    discovery:
+      names:
+      - fibery space
+      - space
+      seed_class: primary
     fields:
       name:
         required: true
@@ -88,6 +93,8 @@ entities:
         description: Databases belonging to this space.
         target: Database
         cardinality: many
+        discovery:
+          seed_nav: own
         materialize:
           kind: query_scoped
           capability: schema_query
@@ -97,6 +104,12 @@ entities:
     id_from:
       - fibery/name
     description: A Fibery database (API type) from workspace schema metadata.
+    discovery:
+      names:
+      - fibery database
+      - database
+      - schema type
+      seed_class: primary
     fields:
       qualified_name:
         required: true

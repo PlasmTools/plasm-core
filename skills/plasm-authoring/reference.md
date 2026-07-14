@@ -157,7 +157,7 @@ Symbolic teaching table / TSV teaching attaches **`entities.<Name>.description`*
 | `relations.*.discovery.seed_nav` | `attach` \| `own` \| `locate` | `attach` = decoration of source (comments/labels/reviews/pins/remote links); `own` = source owns history/collection (channel→messages) — XOR DirectCapabilities, prefer Source; `locate` = weak container (repo→issues) |
 | `entities.*.discovery.seed_class` | `primary` \| `dependent` \| `ambient` | Fallback when edges unset: list/mutate roots = `primary`; attach leaves = `dependent`; weak containers = `ambient` |
 
-History-browse phrases belong on the **Source** entity `names`. Materialize Query may still use the Target as `entity:`. Do **not** coach seed choice in descriptions. See [`docs/research-discovery-annotation-rubric.md`](../../../docs/research-discovery-annotation-rubric.md) §5.3 / §5.5.
+History-browse phrases belong on the **Source** entity `names`. Materialize Query may still use the Target as `entity:`. Do **not** coach seed choice in descriptions. Product spine: [`docs/intent-discovery.md`](../../../docs/intent-discovery.md). Craft rules: [`docs/research-discovery-annotation-rubric.md`](../../../docs/research-discovery-annotation-rubric.md) §5.3 / §5.5.
 
 **`views:` `description`** on a view definition should state **what composed projection** the agent gets — not list inner capability ids.
 

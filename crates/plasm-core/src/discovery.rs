@@ -395,6 +395,11 @@ impl InMemoryCgsRegistry {
             .collect()
     }
 
+    /// Borrow the loaded CGS for a canonical registry `entry_id` (no clone of the full map).
+    pub fn cgs_arc(&self, entry_id: &str) -> Option<Arc<CGS>> {
+        self.entries.get(entry_id).map(|row| Arc::clone(&row.cgs))
+    }
+
     /// Resolve a raw catalog id (entry_id, alias, label, or tag) to the canonical registry `entry_id`.
     ///
     /// When `allowed_entry_ids` is non-empty, only those catalogs are considered (tenant MCP scope).

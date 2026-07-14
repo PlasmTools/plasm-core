@@ -3,6 +3,7 @@
 #![allow(unused_imports)] // `pub(crate)` re-exports consumed by sibling modules and integration tests.
 
 mod backend;
+mod seed_resolve;
 mod seeds;
 mod session;
 
@@ -22,7 +23,10 @@ pub(crate) use seeds::{
     primary_entry_id_for_grouped, teaching_exposure_at, unchanged_expand_wave,
     CapabilityExposurePlan, PlasmContextToolMetaParams, STALE_EXECUTE_BINDING_NOTICE,
 };
-pub use seeds::{normalize_capability_seeds, resolve_capability_seeds, RankedCapabilitiesArg};
+pub use seed_resolve::{
+    resolve_capability_seeds, resolve_entity_name_case_insensitive,
+};
+pub use seeds::{normalize_capability_seeds, RankedCapabilitiesArg};
 pub use session::apply_capability_seeds;
 pub(crate) use session::execute_session_create_response_inner;
 #[cfg(test)]

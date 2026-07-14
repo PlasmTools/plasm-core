@@ -105,27 +105,6 @@ pub fn normalize_capability_seeds(mut seeds: Vec<CapabilitySeed>) -> Vec<Capabil
     out
 }
 
-/// Trim/dedupe seeds, then resolve each `entry_id` against the live registry (aliases, label, tags).
-pub fn resolve_capability_seeds(
-    seeds: Vec<CapabilitySeed>,
-    registry: &plasm_core::discovery::InMemoryCgsRegistry,
-    allowed_entry_ids: Option<&[String]>,
-) -> Result<Vec<CapabilitySeed>, String> {
-    let mut out = normalize_capability_seeds(seeds);
-    for s in &mut out {
-        s.entry_id = registry
-            .resolve_entry_id(s.entry_id.as_str(), allowed_entry_ids)
-            .map_err(|e| {
-                if e.to_string().starts_with("unknown catalog entry:") {
-                    e.to_string()
-                } else {
-                    format!("unknown catalog entry: {e}")
-                }
-            })?;
-    }
-    Ok(out)
-}
-
 pub(super) fn relation_endpoint_keys_for_wave(
     exp: &plasm_core::TeachingExposureSession,
     batch_entry_id: &str,

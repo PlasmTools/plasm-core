@@ -1,4 +1,4 @@
-version: 5
+version: 6
 http_backend: https://your-domain.atlassian.net
 data_classes:
   untrusted:
@@ -110,6 +110,7 @@ entities:
       - issue
       - ticket
       - jira issue
+      seed_class: primary
     fields:
       key:
         required: true
@@ -199,6 +200,11 @@ entities:
       comments:
         target: Comment
         cardinality: many
+        discovery:
+          seed_nav: attach
+          qualifier_terms:
+          - comment
+          - issue comment
         materialize:
           kind: query_scoped
           capability: comment_query
@@ -246,6 +252,11 @@ entities:
   Project:
     id_field: key
     description: A Jira project.
+    discovery:
+      names:
+      - project
+      - jira project
+      seed_class: ambient
     fields:
       key:
         required: true
@@ -314,6 +325,7 @@ entities:
       - comment
       - issue comment
       - jira comment
+      seed_class: dependent
     fields:
       id:
         required: true

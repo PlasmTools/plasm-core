@@ -1,4 +1,4 @@
-version: 6
+version: 7
 http_backend: https://api.clickup.com/api
 data_classes:
   untrusted:
@@ -156,6 +156,7 @@ entities:
       names:
       - clickup space
       - workspace space
+      seed_class: ambient
     fields:
       id:
         required: true
@@ -174,6 +175,8 @@ entities:
         description: Folders within this space.
         target: Folder
         cardinality: many
+        discovery:
+          seed_nav: locate
         materialize:
           kind: query_scoped
           capability: folder_query
@@ -182,6 +185,8 @@ entities:
         description: Folderless lists in this space.
         target: List
         cardinality: many
+        discovery:
+          seed_nav: locate
         materialize:
           kind: query_scoped
           capability: list_query
@@ -189,6 +194,11 @@ entities:
   Folder:
     id_field: id
     description: A grouping of lists within a space.
+    discovery:
+      names:
+      - clickup folder
+      - folder
+      seed_class: ambient
     fields:
       id:
         required: true
@@ -201,6 +211,8 @@ entities:
         description: Lists within this folder.
         target: List
         cardinality: many
+        discovery:
+          seed_nav: locate
         materialize:
           kind: query_scoped
           capability: folder_list_query
@@ -212,6 +224,7 @@ entities:
       names:
       - clickup list
       - list folder
+      seed_class: ambient
     fields:
       id:
         required: true
@@ -227,6 +240,8 @@ entities:
         description: Tasks within this list.
         target: Task
         cardinality: many
+        discovery:
+          seed_nav: own
         materialize:
           kind: query_scoped
           capability: list_task_query
@@ -241,6 +256,7 @@ entities:
       qualifier_names:
       - list
       - workspace
+      seed_class: primary
     fields:
       id:
         required: true
@@ -291,6 +307,8 @@ entities:
         description: Comments on this task.
         target: Comment
         cardinality: many
+        discovery:
+          seed_nav: attach
         materialize:
           kind: query_scoped
           capability: comment_query
@@ -364,6 +382,12 @@ entities:
   Goal:
     id_field: id
     description: A high-level objective with key results.
+    discovery:
+      names:
+      - goal
+      - clickup goal
+      - okr goal
+      seed_class: ambient
     fields:
       id:
         required: true
@@ -384,6 +408,11 @@ entities:
   KeyResult:
     id_field: id
     description: A measurable outcome tied to a goal.
+    discovery:
+      names:
+      - key result
+      - okr
+      seed_class: ambient
     fields:
       id:
         required: true
@@ -416,6 +445,11 @@ entities:
   Comment:
     id_field: id
     description: A comment on a task or view.
+    discovery:
+      names:
+      - comment
+      - task comment
+      seed_class: dependent
     fields:
       id:
         required: true
@@ -457,6 +491,11 @@ entities:
     id_field: id
     id_from: user.id
     description: A workspace or task member.
+    discovery:
+      names:
+      - member
+      - workspace member
+      seed_class: ambient
     fields:
       id:
         required: true

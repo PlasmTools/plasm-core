@@ -1,4 +1,4 @@
-version: 27
+version: 28
 http_backend: https://www.proofeditor.ai
 auth:
   scheme: bearer_token
@@ -23,6 +23,11 @@ entities:
     id_field: slug
     description: Read or edit a shared Proof document (title, body, auth hints).
     primary_read: document_get
+    discovery:
+      names:
+      - proof document
+      - shared document
+      seed_class: primary
     fields:
       slug:
         value_ref: nv_proof_document_ref

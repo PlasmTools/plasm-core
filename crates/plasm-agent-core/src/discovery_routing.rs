@@ -88,7 +88,7 @@ pub fn build_auto_seed_breakout_markdown(
             discover_preview,
         ),
         AutoSeedRouteOutcome::RoutingError { message, .. } => format!(
-            "## Couldn't route this intent\n\n{message}\n\nRetry `plasm_context` with explicit `seeds`."
+            "## Couldn't route this intent\n\n{message}\n\nRetry `plasm_context` with `session_mode: \"new\"` and a clearer `intent` (name the provider). Do not pass `seeds` on new when auto-seed is enabled."
         ),
         AutoSeedRouteOutcome::Ready { .. } => String::new(),
     }
@@ -101,7 +101,7 @@ fn format_clarify_breakout(
     let mut lines = vec![
         "## Which provider?".into(),
         String::new(),
-        "Ask the user, then retry `plasm_context` with `session_mode: \"new\"` and explicit `seeds`."
+        "Ask the user, then retry `plasm_context` with `session_mode: \"new\"` and an `intent` that names that provider (intent only — no `seeds` on new when auto-seed is enabled)."
             .into(),
         String::new(),
     ];
@@ -122,21 +122,20 @@ fn format_hard_miss_breakout(
     let mut lines = vec![
         "## Couldn't auto-open a session".into(),
         String::new(),
-        "**Next:** retry `plasm_context` with explicit `seeds` for the provider in your intent:"
+        "**Next:** retry `plasm_context` with `session_mode: \"new\"` and a sharper `intent` that names the provider and task (intent only — no `seeds` on new when auto-seed is enabled). Borrow catalog/entity wording from the browse preview below as prose in the intent — do not invent `{api, entity}` keys."
             .into(),
+        String::new(),
     ];
-    for hint in seed_hints_from_preview(intent, candidate_preview, 3) {
-        lines.push(format!(
-            "- `seeds: [{{api: \"{}\", entity: \"{}\"}}]`",
-            hint.entry_id, hint.entity
-        ));
+    let hints = seed_hints_from_preview(intent, candidate_preview, 3);
+    if !hints.is_empty() {
+        lines.push("Suggested intent focus (phrase these into `intent`, do not pass as `seeds`):".into());
+        for hint in hints {
+            lines.push(format!("- {} {}", hint.entry_id, hint.entity));
+        }
+        lines.push(String::new());
     }
-    if lines.len() == 3 {
-        lines.push("- `seeds: [{api: \"<catalog>\", entity: \"<Entity>\"}]".into());
-    }
-    lines.push(String::new());
     lines.push(
-        "Use `session_mode: \"extend\"` to add more entities, then write `plasm.program` from the teaching TSV."
+        "After a ready open, use `session_mode: \"extend\"` with `seeds` to add more entities, then write `plasm.program` from the teaching TSV."
             .into(),
     );
     if let Some(gap) = format_gap_summary(uncovered_requirements) {
@@ -236,7 +235,7 @@ fn format_gap_summary(uncovered: &[String]) -> Option<String> {
         parts.push(format!("and {} more", uncovered.len() - show));
     }
     Some(format!(
-        "Some steps may need explicit seeds or a smaller intent: {}.",
+        "Some steps may need a smaller or more specific intent: {}.",
         parts.join("; ")
     ))
 }
@@ -419,7 +418,8 @@ mod tests {
             None,
         );
         assert!(md.contains("Which provider?"));
-        assert!(md.contains("explicit `seeds`"));
+        assert!(md.contains("intent") && md.contains("provider"));
+        assert!(!md.contains("explicit `seeds`"));
         assert!(md.contains("GitHub — Issue, Repository"));
         assert!(!md.contains("Selector note"));
         assert!(!md.contains("bundle_index"));
@@ -449,6 +449,8 @@ mod tests {
         assert!(md.contains("Couldn't auto-open"));
         assert!(md.contains("github"));
         assert!(md.contains("Repository"));
+        assert!(md.contains("Suggested intent focus"));
+        assert!(!md.contains("`seeds:"));
         assert!(!md.contains("Selector note"));
         assert!(!md.contains("Uncovered:"));
         assert!(!md.contains("bundle_index"));

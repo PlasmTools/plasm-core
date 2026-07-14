@@ -31,13 +31,26 @@ fn workflow_mcp_tools_enabled() -> bool {
 }
 
 pub(crate) fn mcp_discover_tool_enabled() -> bool {
+    !mcp_semantic_auto_seed_enabled()
+}
+
+/// Runtime gate shared with [`mcp_discover_tool_enabled`] / plasm_context seeds schema.
+pub(crate) fn mcp_semantic_auto_seed_enabled() -> bool {
     #[cfg(feature = "semantic-auto-seed")]
     {
-        !crate::discovery_seed_select::semantic_auto_seed_enabled()
+        crate::discovery_seed_select::semantic_auto_seed_enabled()
     }
     #[cfg(not(feature = "semantic-auto-seed"))]
     {
-        true
+        false
+    }
+}
+
+fn plasm_context_seeds_schema_description() -> &'static str {
+    if mcp_semantic_auto_seed_enabled() {
+        "Required on session_mode \"extend\" only. Omit on \"new\" (intent-only auto-seed; rejected if passed). Each object is `{api, entity}` (or `{entry_id, entity}`); entity names resolve case-insensitively to catalog keys."
+    } else {
+        "Required non-empty on session_mode \"new\" and \"extend\". Each object is `{api, entity}` (or `{entry_id, entity}`); entity names resolve case-insensitively to catalog keys."
     }
 }
 
@@ -80,7 +93,7 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
                         { "required": ["entry_id"] }
                     ]
                 },
-                "description": "Optional on session_mode \"new\" when semantic auto-seed is enabled (intent-only open). Required non-empty array on \"extend\". Each object is `{api, entity}` (or `{entry_id, entity}`)."
+                "description": plasm_context_seeds_schema_description()
             }))
             .expect("seeds schema"),
         );
@@ -89,7 +102,7 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
             serde_json::from_value(serde_json::json!({
                 "type": ["array", "null"],
                 "items": { "type": "string" },
-                "description": "Optional capability **wire names** (e.g. from `discover_capabilities`). When non-empty, **non-seeded** mutators must appear in this list and score against **`intent`**. Seeded entities always teach **query/search/get** (and `primary_read`); **create/update/delete/action** need intent overlap (read-first open defers weak matches). Omit on expand to keep the session list; send **`null`** or **`[]`** to clear."
+                "description": "Optional capability **wire names**. When non-empty, **non-seeded** mutators must appear in this list and score against **`intent`**. Seeded entities always teach **query/search/get** (and `primary_read`); **create/update/delete/action** need intent overlap (read-first open defers weak matches). Omit on expand to keep the session list; send **`null`** or **`[]`** to clear."
             }))
             .expect("ranked_capabilities schema"),
         );

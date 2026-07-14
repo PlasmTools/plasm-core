@@ -224,6 +224,8 @@ fn log_discovery_response(out: &DiscoveryResult) {
     );
 }
 
+/// Legacy typed browse (`plasm-discovery` / `AgentDiscovery`). Prefer intent-only
+/// `plasm_context` or lexicon `POST /v1/discover`. Not exposed on MCP.
 async fn post_discover_typed(
     Extension(st): Extension<PlasmHostState>,
     Json(query): Json<DiscoveryQuery>,

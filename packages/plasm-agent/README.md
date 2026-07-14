@@ -2,7 +2,7 @@
 
 Catalog-native TypeScript agent framework for plasm-oss. Capability is authored once as **CGS/CML catalogs**; the framework projects two surfaces from that single source:
 
-- **Model surface** — Plasm language tools (`discover` → `plasm_context` → `plasm` → `plasm_run`) with teaching TSV in tool results
+- **Model surface** — Plasm language tools (`plasm_context` → `plasm` → `plasm_run`; discover secondary when auto-seed off) with teaching TSV in tool results
 - **Code surface** — generated TypeScript stubs under `agent/.plasm/stubs/` (CGS-typed params + return types; `npm run build:stubs`)
 
 There is **no `tools/` directory**. See the architecture plan (`.cursor/plans/eve_plasm_language_layer_*.plan.md` in the parent monorepo) for full thesis.
@@ -40,7 +40,7 @@ packages/plasm-agent/
 MCP parity, Vercel AI SDK v6:
 
 ```
-discover_capabilities → plasm_context → plasm → plasm_run
+plasm_context → plasm → plasm_run
 ```
 
 - Teaching TSV returned as **tool result markdown** (history-resident)

@@ -1,4 +1,4 @@
-version: 4
+version: 5
 http_backend: https://gitlab.com
 data_classes:
   untrusted:
@@ -15,6 +15,7 @@ entities:
       names:
       - project
       - gitlab project
+      seed_class: ambient
     fields:
       id:
         required: true
@@ -65,6 +66,8 @@ entities:
       issues:
         target: Issue
         cardinality: many
+        discovery:
+          seed_nav: own
         materialize:
           kind: query_scoped
           capability: issue_for_project_query
@@ -72,6 +75,8 @@ entities:
       merge_requests:
         target: MergeRequest
         cardinality: many
+        discovery:
+          seed_nav: own
         materialize:
           kind: query_scoped
           capability: merge_request_for_project_query
@@ -82,6 +87,12 @@ entities:
     - project_id
     - iid
     description: GitLab issue (project IID and global id).
+    discovery:
+      names:
+      - issue
+      - gitlab issue
+      - ticket
+      seed_class: primary
     fields:
       id:
         required: true
@@ -136,6 +147,22 @@ entities:
       human_total_time_spent:
         required: false
         value_ref: nv_wire_str_short
+    relations:
+      notes:
+        target: IssueNote
+        cardinality: many
+        discovery:
+          seed_nav: attach
+          qualifier_terms:
+          - note
+          - comment
+          - issue note
+        materialize:
+          kind: query_scoped_bindings
+          capability: issue_note_for_issue_query
+          bindings:
+            project_id: project_id
+            iid: iid
   MergeRequest:
     id_field: id
     key_vars:
@@ -147,6 +174,7 @@ entities:
       - merge request
       - mr
       - gitlab merge request
+      seed_class: primary
     fields:
       id:
         required: true
@@ -207,6 +235,22 @@ entities:
       human_total_time_spent:
         required: false
         value_ref: nv_wire_str_short
+    relations:
+      notes:
+        target: MergeRequestNote
+        cardinality: many
+        discovery:
+          seed_nav: attach
+          qualifier_terms:
+          - note
+          - comment
+          - merge request note
+        materialize:
+          kind: query_scoped_bindings
+          capability: merge_request_note_for_mr_query
+          bindings:
+            project_id: project_id
+            iid: iid
   IssueNote:
     id_field: id
     key_vars:
@@ -214,6 +258,12 @@ entities:
     - iid
     - id
     description: Comment on a project issue.
+    discovery:
+      names:
+      - note
+      - issue note
+      - comment
+      seed_class: dependent
     fields:
       project_id:
         required: true
@@ -244,6 +294,12 @@ entities:
     - iid
     - id
     description: Comment on a merge request.
+    discovery:
+      names:
+      - note
+      - merge request note
+      - comment
+      seed_class: dependent
     fields:
       project_id:
         required: true

@@ -4,16 +4,16 @@ You track **Model Context Protocol (MCP)** innovation on Hacker News, corroborat
 
 ## Tool order (mandatory)
 
-1. **`discover_capabilities`** — only when unsure which catalog entities to use.
-2. **`plasm_context`** — open or extend a session with seeds:
+1. **`plasm_context`** — open once with **`session_mode: "new"`**. Prefer **intent only** on semantic auto-seed hosts. If seeds are required (auto-seed off), use:
    - `hackernews:Item`
    - `tavily:SearchResult`
    - `proof:Document`
    - **Stable intent** (same every turn): `track MCP innovations from Hacker News and corroborate with Tavily web search`
-3. **`plasm`** — dry-run programs using teaching TSV symbols (`e#`, `m#`, `p#`, `r#`).
-4. **`plasm_run`** — live execute reviewed plans (`pcN` only).
+   Do **not** start with `discover_capabilities` on auto-seed hosts.
+2. **`plasm`** — dry-run programs using teaching TSV symbols (`e#`, `m#`, `p#`, `r#`).
+3. **`plasm_run`** — live execute reviewed plans (`pcN` only).
 
-Reuse **`logical_session_ref`** across the whole radar cycle. Do not open a new context per story.
+Reuse **`logical_session_ref`** across the whole radar cycle. Do not open a new context per story. Use **`extend`** + `seeds` only when adding entities.
 
 ## HN search (Plasm)
 

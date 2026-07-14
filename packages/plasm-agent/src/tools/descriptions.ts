@@ -1,21 +1,20 @@
-/** MCP-aligned tool descriptions (from plasm-core prompt_render assets). */
+/** MCP-aligned tool descriptions (intent-first; match plasm-core prompt_render assets). */
 
-export const DISCOVER_TOOL_DESCRIPTION = `Plasm is a source language. Pick catalogs/entities for one user goal — this tool does **not** produce program symbols. Tool order: optional \`discover_capabilities\` → \`plasm_context\` → \`plasm\` (dry-run) → \`plasm_run\` (live).
-     **Next:** copy TSV \`api\`/\`entity\` rows into one **\`plasm_context\`** **\`seeds\`** array on the same **\`intent\`**, then write **\`plasm.program\`** from teaching TSV (get \`e#(p#)\` vs search \`e#~"…"\` when exposed). Skip when you already know every \`api\`/\`entity\`. No alternate JSON discovery mode.`;
+export const DISCOVER_TOOL_DESCRIPTION = `Plasm is a source language. Lexicon catalog browse for one user goal — this tool does **not** produce program symbols.
+**Secondary path only.** On semantic auto-seed hosts, omit this tool and call \`plasm_context\` with \`session_mode: "new"\` + \`intent\` only.
+When auto-seed is off: copy TSV \`api\`/\`entity\` rows into \`plasm_context\` \`seeds\`, then write \`plasm.program\` from the teaching TSV.`;
 
-export const PLASM_CONTEXT_TOOL_DESCRIPTION = `Tool order: optional \`discover_capabilities\` → \`plasm_context\` → \`plasm\` (dry-run) → \`plasm_run\` (live).
-     **Call before \`plasm\` / \`plasm_run\`.** **One goal → one stable \`intent\` → one \`logical_session_ref\`.** Stable = same \`intent\` string on every turn for that goal (not per message/API). Bad: \`intent: "msg 3: sort moves"\` each turn — breaks reuse and fragments \`e#\`/\`p#\`. Multi-API: one **\`seeds\`** array on the same intent.
-**Session:** one goal → one **\`intent\`** → one **\`logical_session_ref\`**; use **\`e#\`/\`m#\`/\`p#\`/\`r#\` from this session's teaching TSV only** (contract examples are shapes; substitute from your table).
+export const PLASM_CONTEXT_TOOL_DESCRIPTION = `**Default first MCP call.** Tool order: \`plasm_context\` → \`plasm\` (dry-run) → \`plasm_run\` (live). Do not start with discover on auto-seed hosts.
 
-**Federated homonyms:** when multiple catalogs expose the same wire entity, method, relation, or field name, programs must use opaque **\`e#\` / \`m#\` / \`r#\` / \`p#\`** from this table — not bare wire names and not \`entry_id:Entity\` syntax. Each symbol is catalog-scoped; copying the wrong row's symbol is a compile error.
+**Auto-seed hosts:** \`session_mode: "new"\` + \`intent\` only — omit \`seeds\` (rejected if passed). Host selects entities and returns teaching TSV on ready. On clarify/hard_miss, rephrase intent with the provider brand.
 
-**Open or extend:** **\`intent\`** + **\`seeds\`** (\`{api, entity}\`).
+**When auto-seed is off / extend:** pass non-empty \`seeds\` (\`{api, entity}\`). Entity names resolve case-insensitively to catalog keys.
 
-Returns **\`logical_session_ref\`** + fenced teaching TSV. TSV is the active symbol table: copy left cells into **\`plasm.program\`** (Plasm source, not JSON). Delta waves assign new **\`e#\`** monotonically.
+**One workflow → one \`logical_session_ref\`.** \`intent\` accumulates; it does not select the session. Use \`e#\`/\`m#\`/\`p#\`/\`r#\` from this session's teaching TSV only.
 
-**Extend picks:** same **\`intent\`**, expanded **\`seeds\`** — delta TSV or reuse cheat sheet when already exposed.
+**Federated homonyms:** when multiple catalogs expose the same wire name, programs must use opaque symbols from this table — not bare wire names.
 
-**\`_meta.plasm\`:** \`logical_session_ref\`, \`continuity\`, \`domain_revision\`, optional **\`relations\`**.`;
+Returns \`logical_session_ref\` + fenced teaching TSV. \`_meta.plasm\`: \`logical_session_ref\`, \`continuity\`, \`domain_revision\`, optional \`relations\` / \`routing\`.`;
 
 export const PLASM_TOOL_DESCRIPTION = `**Plan Plasm** (dry-run): **\`logical_session_ref\`** + **\`program\`**. Returns reviewable plan topology and executable **\`run_ref\`** (\`pcN\`). Pass that token to **\`plasm_run\`**; do **not** echo the program.
 

@@ -102,6 +102,7 @@ use uuid::Uuid;
 mod artifact_access;
 mod artifact_resolve;
 mod committed_plasm_run;
+mod context_new_seeds;
 mod discover;
 mod mcp_http_dns_rebinding;
 mod mcp_http_user_agent;
@@ -956,84 +957,23 @@ impl PlasmMcpHandler {
         let seeds = match session_mode {
             PlasmContextSessionMode::Extend => parse_tool_seeds(tname, v)?,
             PlasmContextSessionMode::New => {
-                if let Some(explicit) = optional_seeds_on_new {
-                    explicit
-                } else {
-                    #[cfg(feature = "semantic-auto-seed")]
-                    {
-                        if crate::discovery_seed_select::semantic_auto_seed_enabled() {
-                            let outcome = crate::discovery_seed_select::route_intent_to_seeds(
-                                self.plasm.catalog.snapshot().as_ref(),
-                                intent,
-                                allowed_ids.clone(),
-                            )
-                            .await;
-                            match outcome {
-                                crate::discovery_routing::AutoSeedRouteOutcome::Ready {
-                                    seeds: pairs,
-                                    supporting_capability_ids,
-                                    ..
-                                } => {
-                                    auto_ranked_from_selector = Some(supporting_capability_ids);
-                                    pairs
-                                        .into_iter()
-                                        .map(|(entry_id, entity)| CapabilitySeed {
-                                            entry_id,
-                                            entity,
-                                        })
-                                        .collect()
-                                }
-                                abstain => {
-                                    let discover_preview =
-                                        crate::discovery_routing::discover_preview_markdown(
-                                            self.plasm.catalog.snapshot().as_ref(),
-                                            intent,
-                                            allowed_ids.as_deref(),
-                                        );
-                                    let text =
-                                        crate::discovery_routing::build_auto_seed_breakout_markdown(
-                                            &abstain,
-                                            intent,
-                                            discover_preview.as_deref(),
-                                        );
-                                    let routing = crate::discovery_routing::build_routing_meta(
-                                        &abstain,
-                                        "semantic",
-                                        discover_preview.as_deref(),
-                                    );
-                                    let mut meta = serde_json::Map::new();
-                                    meta.insert(
-                                        "plasm".to_string(),
-                                        serde_json::json!({ "routing": routing }),
-                                    );
-                                    let mut res =
-                                        CallToolResult::text_content(vec![TextContent::new(
-                                            text, None, None,
-                                        )]);
-                                    res = res.with_meta(Some(meta));
-                                    return Ok(res);
-                                }
-                            }
-                        } else {
-                            return Err(CallToolError::invalid_arguments(
-                                    tname,
-                                    Some(
-                                        "missing capability picks: pass non-empty `seeds` or enable semantic auto-seed (`PLASM_DISCOVERY_SEMANTIC_AUTO_SEED=1` with `semantic-auto-seed` build)"
-                                            .into(),
-                                    ),
-                                ));
-                        }
+                match context_new_seeds::resolve_context_new_seeds(
+                    tname,
+                    self.plasm.catalog.snapshot().as_ref(),
+                    intent,
+                    allowed_ids.clone(),
+                    optional_seeds_on_new,
+                )
+                .await?
+                {
+                    context_new_seeds::ContextNewSeeds::Ready {
+                        seeds,
+                        ranked_capabilities,
+                    } => {
+                        auto_ranked_from_selector = ranked_capabilities;
+                        seeds
                     }
-                    #[cfg(not(feature = "semantic-auto-seed"))]
-                    {
-                        return Err(CallToolError::invalid_arguments(
-                                tname,
-                                Some(
-                                    "missing capability picks: `plasm_context` with `session_mode: \"new\"` requires non-empty `seeds` unless the host is built with `semantic-auto-seed`"
-                                        .into(),
-                                ),
-                            ));
-                    }
+                    context_new_seeds::ContextNewSeeds::Abstain(res) => return Ok(res),
                 }
             }
         };

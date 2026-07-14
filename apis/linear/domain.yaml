@@ -1,4 +1,4 @@
-version: 12
+version: 13
 http_backend: https://api.linear.app
 data_classes:
   untrusted:
@@ -210,6 +210,11 @@ entities:
   Document:
     id_field: id
     description: A Linear document.
+    discovery:
+      names:
+      - linear document
+      - document
+      seed_class: primary
     fields:
       id:
         required: true
@@ -291,6 +296,12 @@ entities:
     id_field: viewer_id
     primary_read: my_work_get
     description: Issues assigned to the authenticated user (dashboard).
+    discovery:
+      names:
+      - my work
+      - assigned to me
+      - my issues
+      seed_class: primary
     fields:
       viewer_id:
         required: true
@@ -305,6 +316,8 @@ entities:
       issues:
         target: Issue
         cardinality: many
+        discovery:
+          seed_nav: own
         materialize:
           kind: view_embed
           view: my_work

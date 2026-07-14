@@ -73,6 +73,12 @@ entities:
       type for both; parent.type distinguishes them).
 
       '
+    discovery:
+      names:
+      - page
+      - notion page
+      - document
+      seed_class: primary
     fields:
       id:
         required: true
@@ -114,6 +120,11 @@ entities:
         target: Comment
         cardinality: many
         description: Comments on this page.
+        discovery:
+          seed_nav: attach
+          qualifier_terms:
+          - comment
+          - page comment
         materialize:
           kind: query_scoped
           capability: comment_query
@@ -121,6 +132,11 @@ entities:
   Database:
     id_field: id
     description: A Notion database — a container with a property schema whose rows are Pages.
+    discovery:
+      names:
+      - database
+      - notion database
+      seed_class: primary
     fields:
       id:
         required: true
@@ -154,6 +170,8 @@ entities:
         target: Page
         cardinality: many
         description: Pages (rows) within this database.
+        discovery:
+          seed_nav: own
         materialize:
           kind: query_scoped
           capability: database_query
@@ -187,6 +205,7 @@ entities:
       - comment
       - page comment
       - notion comment
+      seed_class: dependent
     fields:
       id:
         required: true
@@ -374,7 +393,7 @@ capabilities:
       value_ref: nv_wire_int
       required: false
       role: response_control
-version: 3
+version: 4
 auth:
   scheme: bearer_token
   env: NOTION_API_TOKEN

@@ -1,9 +1,14 @@
-version: 13
+version: 14
 http_backend: https://api.cloudflare.com/client/v4
 entities:
   Zone:
     id_field: id
     description: DNS and proxy site container that scopes Cloudflare resources for one hostname.
+    discovery:
+      names:
+      - zone
+      - cloudflare zone
+      seed_class: ambient
     fields:
       id:
         required: true
@@ -25,6 +30,7 @@ entities:
         target: Ruleset
         cardinality: many
         discovery:
+          seed_nav: locate
           qualifier_terms:
           - rulesets
           - ruleset engine
@@ -43,6 +49,7 @@ entities:
         target: SecurityOverview
         cardinality: one
         discovery:
+          seed_nav: locate
           qualifier_terms:
           - security overview
           - firewall summary
@@ -60,6 +67,11 @@ entities:
     - zone_id
     - ruleset_id
     description: Rules configuration held here—the inspect or replace target when the task names this ruleset.
+    discovery:
+      names:
+      - ruleset
+      - waf ruleset
+      seed_class: primary
     fields:
       zone_id:
         required: true
@@ -100,6 +112,7 @@ entities:
       - ruleset entrypoint
       - entrypoint ruleset
       - ruleset phase
+      seed_class: primary
     fields:
       zone_id:
         required: true

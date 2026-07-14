@@ -1,4 +1,4 @@
-version: 3
+version: 4
 http_backend: https://api.tavily.com
 data_classes:
   untrusted:
@@ -13,6 +13,7 @@ entities:
       - web search
       - search result
       - search
+      seed_class: primary
     fields:
       url:
         required: true

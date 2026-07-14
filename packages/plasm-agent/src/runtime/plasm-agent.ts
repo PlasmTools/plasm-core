@@ -116,7 +116,7 @@ export class PlasmAgent {
     } catch {
       base = [
         "You are a catalog-native Plasm agent.",
-        "Use discover_capabilities → plasm_context → plasm → plasm_run.",
+        "Use plasm_context → plasm → plasm_run. On auto-seed hosts: plasm_context new with intent only (no seeds).",
         "Keep one stable intent per user goal.",
       ].join("\n");
     }

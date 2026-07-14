@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.23] - 2026-07-14
+
+### Changed
+
+- **Intent-only `plasm_context` `new` (auto-seed hosts):** `seeds` are hard-rejected on `session_mode: "new"`; agents must rephrase `intent` on `clarify`/`hard_miss` (breakout includes capped catalog browse prose). Explicit `{api, entity}` belongs on `extend` (or on `new` only when auto-seed is off).
+- **Helm chart:** `discoveryAutoSeed.enabled` and `requireOpenRouterKey` default **true**; MCP omits `discover_capabilities` when auto-seed is on.
+- **MCP schema/prompts:** `seeds` description is extend-oriented when auto-seed is enabled; initialize + `plasm_context` assets forbid inventing entity keys.
+- **Seed resolve hygiene:** extract `context_new_seeds` + `seed_resolve`; registry `cgs_arc` avoids cloning the full catalog map.
+- **Catalog FO seed roles:** stamp `discovery.seed_class` / `seed_nav` across GitLab, Jira, Notion, ClickUp, Cloudflare, Fibery, Linear, Hacker News, Proof, and Tavily (attach notes/comments, ambient projects, primary work items).
+
+### Fixed
+
+- **Case-fold entity resolve:** explicit seed entity names match unique CGS keys case-insensitively (stops false misses on lowercase `repository`-style keys).
+
+### Added
+
+- **`docs/intent-discovery.md` (monorepo):** canonical product doc for primary intent discovery vs secondary lexicon browse.
+
 ## [0.4.22] - 2026-07-14
 
 ### Added

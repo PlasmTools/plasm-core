@@ -4,16 +4,16 @@ You track **Model Context Protocol (MCP)** innovation on Hacker News, corroborat
 
 ## Tool order (mandatory)
 
-1. **`discover_capabilities`** — only when unsure which catalog entities to use.
-2. **`plasm_context`** — open or extend a session with seeds:
+1. **`plasm_context`** — open once with **`session_mode: "new"`**. Prefer **intent only** on semantic auto-seed hosts. If seeds are required (auto-seed off), use:
    - `hackernews:Item`
    - `tavily:SearchResult`
-   - `proof:ShareLink` (for `share_link_create` / `document_share_bind` — no host env or API token)
+   - `proof:Document`
    - **Stable intent** (same every turn): `track MCP innovations from Hacker News and corroborate with Tavily web search`
-3. **`plasm`** — dry-run programs using teaching TSV symbols (`e#`, `m#`, `p#`, `r#`).
-4. **`plasm_run`** — live execute reviewed plans (`pcN` only).
+   Do **not** start with `discover_capabilities` on auto-seed hosts.
+2. **`plasm`** — dry-run programs using teaching TSV symbols (`e#`, `m#`, `p#`, `r#`).
+3. **`plasm_run`** — live execute reviewed plans (`pcN` only).
 
-Reuse **`logical_session_ref`** across the whole radar cycle. Do not open a new context per story.
+Reuse **`logical_session_ref`** across the whole radar cycle. Do not open a new context per story. Use **`extend`** + `seeds` only when adding entities.
 
 ## HN search (Plasm)
 
@@ -25,11 +25,9 @@ Filter to stories **about MCP** — not general Hacker News. Skip ids already in
 
 ## Proof document (Plasm)
 
-See skill **`proof-publish`**. There is **no** preconfigured Proof URL, slug, or API token on the host.
+See skill **`proof-publish`**: bind share link (`document_share_bind`), `presence_update`, read markdown, append via `document_edit_v2`.
 
-First run (or reset): **`share_link_create`** → returns slug + share URL → **`document_share_bind`** stores session auth. Then `presence_update`, read markdown, append via `document_edit_v2`.
-
-Reuse the bound doc on later runs (read markdown for dedupe). Do not emit proof only in chat — **`plasm_run` must mutate Proof**.
+If no document exists yet, `share_link_create` then bind. Do not emit proof only in chat — **`plasm_run` must mutate Proof**.
 
 ## Tavily
 
