@@ -49,9 +49,11 @@ pub use seed_score::{
 
 use plasm_core::discovery::InMemoryCgsRegistry;
 use plasm_core::discovery_coverage::{
-    coverage_first_selection_raw, coverage_route_selection, coverage_shadow_metrics,
-    postprocess_coverage_selection, retrieve_via_coverage,
+    coverage_first_selection_raw, coverage_shadow_metrics, postprocess_coverage_selection,
+    retrieve_via_coverage,
 };
+#[cfg(feature = "llm-rerank")]
+use plasm_core::discovery_coverage::coverage_route_selection;
 use plasm_core::discovery_intent_class::DiscoveryIntentClass;
 
 use seed_trace::{SeedFailureStage, SeedStageTrace};
