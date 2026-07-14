@@ -15,6 +15,7 @@ pub(crate) use backend::{
     patch_cgs_context_outbound_hosted, patch_cgs_context_resolved_http_backend,
     resolve_http_backend_for_entry,
 };
+pub use seed_resolve::{resolve_capability_seeds, resolve_entity_name_case_insensitive};
 pub(crate) use seeds::{
     build_capability_exposure_plan, build_plasm_context_agent_markdown,
     build_plasm_context_tool_meta, format_session_churn_advisory,
@@ -22,9 +23,6 @@ pub(crate) use seeds::{
     normalize_context_intent_for_domain_filter, normalize_ranked_capabilities_for_gate,
     primary_entry_id_for_grouped, teaching_exposure_at, unchanged_expand_wave,
     CapabilityExposurePlan, PlasmContextToolMetaParams, STALE_EXECUTE_BINDING_NOTICE,
-};
-pub use seed_resolve::{
-    resolve_capability_seeds, resolve_entity_name_case_insensitive,
 };
 pub use seeds::{normalize_capability_seeds, RankedCapabilitiesArg};
 pub use session::apply_capability_seeds;

@@ -128,7 +128,9 @@ fn format_hard_miss_breakout(
     ];
     let hints = seed_hints_from_preview(intent, candidate_preview, 3);
     if !hints.is_empty() {
-        lines.push("Suggested intent focus (phrase these into `intent`, do not pass as `seeds`):".into());
+        lines.push(
+            "Suggested intent focus (phrase these into `intent`, do not pass as `seeds`):".into(),
+        );
         for hint in hints {
             lines.push(format!("- {} {}", hint.entry_id, hint.entity));
         }

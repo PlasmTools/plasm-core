@@ -77,26 +77,26 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
         .expect("logical_session_ref schema"),
     );
     context_props.insert(
-            "seeds".into(),
-            serde_json::from_value(serde_json::json!({
-                "type": ["array", "null"],
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "api": { "type": "string" },
-                        "entry_id": { "type": "string" },
-                        "entity": { "type": "string" }
-                    },
-                    "required": ["entity"],
-                    "anyOf": [
-                        { "required": ["api"] },
-                        { "required": ["entry_id"] }
-                    ]
+        "seeds".into(),
+        serde_json::from_value(serde_json::json!({
+            "type": ["array", "null"],
+            "items": {
+                "type": "object",
+                "properties": {
+                    "api": { "type": "string" },
+                    "entry_id": { "type": "string" },
+                    "entity": { "type": "string" }
                 },
-                "description": plasm_context_seeds_schema_description()
-            }))
-            .expect("seeds schema"),
-        );
+                "required": ["entity"],
+                "anyOf": [
+                    { "required": ["api"] },
+                    { "required": ["entry_id"] }
+                ]
+            },
+            "description": plasm_context_seeds_schema_description()
+        }))
+        .expect("seeds schema"),
+    );
     context_props.insert(
             "ranked_capabilities".into(),
             serde_json::from_value(serde_json::json!({

@@ -72,8 +72,8 @@ pub fn resolve_capability_seeds(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::ranked_replay_fixtures::load_github_cgs;
+    use super::*;
 
     #[test]
     fn resolve_entity_name_case_insensitive_folds_unique_match() {
