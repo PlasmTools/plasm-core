@@ -721,6 +721,7 @@ mod relation_intent_rank_tests {
             discovery: Some(plasm_core::schema::DiscoveryEntityHints {
                 names: vec!["thing".into()],
                 qualifier_names: vec![],
+                seed_class: None,
             }),
         })
         .unwrap();

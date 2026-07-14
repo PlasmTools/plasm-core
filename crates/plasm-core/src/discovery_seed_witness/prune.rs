@@ -413,6 +413,7 @@ mod tests {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn direct_with_own(
         entry: &str,
         entity: &str,

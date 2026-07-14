@@ -128,16 +128,3 @@ fn weak_root_margin(entity_hits: &[(i32, String, String)]) -> bool {
     })
 }
 
-/// Re-derive confidence after building plan from intent (test helper).
-#[cfg(test)]
-pub fn confidence_for_intent(
-    intent: &str,
-    catalogs: &IndexMap<String, CGS>,
-    allowed_entry_ids: &[String],
-    catalog_route: &[String],
-    evaluation: &CoverageEvaluation,
-) -> DeriveConfidence {
-    let plan = derive_coverage_plan(intent, catalogs, allowed_entry_ids, catalog_route);
-    let hits = collect_derive_entity_hits(intent, catalogs, allowed_entry_ids);
-    derive_confidence(&plan, evaluation, &hits)
-}
