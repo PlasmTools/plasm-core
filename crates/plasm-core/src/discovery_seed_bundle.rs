@@ -3,7 +3,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::discovery_auto_seed::EntityCandidateBundle;
-use crate::domain_lexicon;
+use crate::discovery_intent_signals::intent_mentions_catalog_id;
+use crate::catalog_search_index::CatalogSearchIndex;
 
 pub const DEFAULT_MAX_SEED_BUNDLES: usize = 12;
 pub const DEFAULT_MAX_ROOTS_PER_BUNDLE: usize = 3;
@@ -45,11 +46,22 @@ pub fn explicitly_named_catalogs(
     intent: &str,
     bundles: &[EntityCandidateBundle],
 ) -> HashSet<String> {
-    let intent_tokens: HashSet<String> = domain_lexicon::tokens(intent).into_iter().collect();
+    let intent_lower = intent.to_ascii_lowercase();
+    let mut intent_tokens = CatalogSearchIndex::tokenize(intent);
+    for w in intent_lower.split(|c: char| !c.is_alphanumeric()) {
+        if w.len() >= 2 {
+            intent_tokens.insert(w.to_string());
+        }
+    }
     bundles
         .iter()
         .filter_map(|bundle| {
-            let catalog_tokens = domain_lexicon::tokens(&bundle.entry_id.replace('-', " "));
+            let id_norm = bundle.entry_id.replace('-', " ").to_ascii_lowercase();
+            let catalog_tokens: HashSet<String> = id_norm
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|w| w.len() >= 2)
+                .map(str::to_string)
+                .collect();
             (!catalog_tokens.is_empty()
                 && catalog_tokens
                     .iter()
@@ -57,22 +69,6 @@ pub fn explicitly_named_catalogs(
             .then(|| bundle.entry_id.clone())
         })
         .collect()
-}
-
-pub fn intent_requests_cross_catalog_composition(intent: &str) -> bool {
-    let tokens: HashSet<String> = domain_lexicon::tokens(intent).into_iter().collect();
-    [
-        "sync",
-        "synchronize",
-        "mirror",
-        "copy",
-        "transfer",
-        "import",
-        "export",
-        "forward",
-    ]
-    .iter()
-    .any(|token| tokens.contains(*token))
 }
 
 fn relation_covers(root: &EntityCandidateBundle, target: &EntityCandidateBundle) -> bool {
@@ -196,8 +192,7 @@ fn merged_bundle(
 }
 
 /// Build bounded unordered root-set bundles. Single-catalog alternatives are always present.
-/// Cross-catalog bundles are admitted only when catalogs are explicitly named or the
-/// intent contains an explicit transfer/composition verb.
+/// Cross-catalog bundles require ≥2 explicitly named catalogs (entry_id tokens in intent).
 pub fn build_candidate_seed_bundles(
     intent: &str,
     bundles: &[EntityCandidateBundle],
@@ -265,8 +260,6 @@ pub fn build_candidate_seed_bundles(
         catalog_bundles.insert(catalog, generated);
     }
 
-    let allow_unanchored_composition =
-        anchors.is_empty() && intent_requests_cross_catalog_composition(intent);
     let mut cross_bundles = Vec::new();
     for (left_index, left_catalog) in catalog_order.iter().enumerate() {
         for right_catalog in catalog_order.iter().skip(left_index + 1) {
@@ -275,7 +268,7 @@ pub fn build_candidate_seed_bundles(
             } else if anchors.len() == 1 {
                 anchors.contains(*left_catalog) || anchors.contains(*right_catalog)
             } else {
-                allow_unanchored_composition
+                false
             };
             if !pair_is_allowed {
                 continue;
@@ -301,32 +294,111 @@ pub fn build_candidate_seed_bundles(
         seen.insert(key)
     });
     seed_bundles.sort_by(compare_bundles);
-    seed_bundles = finalize_provider_diverse_bundles(seed_bundles, config.max_bundles);
+    seed_bundles = finalize_provider_diverse_bundles(seed_bundles, config.max_bundles, &anchors);
     seed_bundles
 }
 
-/// Keep at least one single-root bundle per catalog provider before filling remaining slots.
+/// Keep top singletons per provider, reserving multi-root depth for intent-named catalogs.
+///
+/// Naive round-robin across every provider fills `limit` at depth 0 and drops secondary
+/// roots (e.g. `github:Repository` behind Issue) on branded workflow intents.
 fn finalize_provider_diverse_bundles(
     bundles: Vec<CandidateSeedBundle>,
     limit: usize,
+    anchors: &HashSet<String>,
 ) -> Vec<CandidateSeedBundle> {
     if bundles.len() <= limit {
         return bundles;
     }
-    let mut retained = Vec::with_capacity(limit);
-    let mut retained_keys = HashSet::new();
-    let mut seen_providers = HashSet::new();
+    /// Max single-root bundles retained per provider in the first pass.
+    const PER_PROVIDER_SINGLES: usize = 3;
+
+    let mut singles_by_provider: HashMap<String, Vec<CandidateSeedBundle>> = HashMap::new();
+    let mut provider_order: Vec<String> = Vec::new();
     for bundle in &bundles {
         if bundle.candidate_ids.len() == 1 && bundle.catalogs.len() == 1 {
-            let provider = &bundle.catalogs[0];
-            if seen_providers.insert(provider.clone()) {
-                let mut key = bundle.candidate_ids.clone();
-                key.sort();
-                retained_keys.insert(key);
-                retained.push(bundle.clone());
+            let provider = bundle.catalogs[0].clone();
+            if !singles_by_provider.contains_key(&provider) {
+                provider_order.push(provider.clone());
             }
+            singles_by_provider
+                .entry(provider)
+                .or_default()
+                .push(bundle.clone());
         }
     }
+    for list in singles_by_provider.values_mut() {
+        list.sort_by(compare_bundles);
+        list.truncate(PER_PROVIDER_SINGLES);
+    }
+    // Named catalogs first so they claim multi-root depth before peer diversity fills the cap.
+    provider_order.sort_by_key(|p| (!anchors.contains(p), p.clone()));
+
+    let mut retained = Vec::with_capacity(limit);
+    let mut retained_keys = HashSet::new();
+
+    let push_single = |provider: &str,
+                       depth: usize,
+                       retained: &mut Vec<CandidateSeedBundle>,
+                       retained_keys: &mut HashSet<Vec<String>>,
+                       singles_by_provider: &HashMap<String, Vec<CandidateSeedBundle>>|
+     -> bool {
+        let Some(list) = singles_by_provider.get(provider) else {
+            return false;
+        };
+        let Some(bundle) = list.get(depth) else {
+            return false;
+        };
+        let mut key = bundle.candidate_ids.clone();
+        key.sort();
+        if retained_keys.insert(key) {
+            retained.push(bundle.clone());
+            true
+        } else {
+            false
+        }
+    };
+
+    // Phase 1: fill all depths for anchor providers (up to PER_PROVIDER_SINGLES each).
+    for provider in provider_order.iter().filter(|p| anchors.contains(*p)) {
+        for depth in 0..PER_PROVIDER_SINGLES {
+            if retained.len() >= limit {
+                break;
+            }
+            push_single(
+                provider,
+                depth,
+                &mut retained,
+                &mut retained_keys,
+                &singles_by_provider,
+            );
+        }
+    }
+
+    // Phase 2: round-robin remaining providers for catalog diversity.
+    let mut depth = 0usize;
+    while retained.len() < limit && depth < PER_PROVIDER_SINGLES {
+        let mut added = false;
+        for provider in provider_order.iter().filter(|p| !anchors.contains(*p)) {
+            if retained.len() >= limit {
+                break;
+            }
+            if push_single(
+                provider,
+                depth,
+                &mut retained,
+                &mut retained_keys,
+                &singles_by_provider,
+            ) {
+                added = true;
+            }
+        }
+        if !added {
+            break;
+        }
+        depth += 1;
+    }
+
     for bundle in bundles {
         if retained.len() >= limit {
             break;
@@ -346,13 +418,10 @@ fn inject_mirror_catalog_singletons(
     by_catalog: &HashMap<&str, Vec<&EntityCandidateBundle>>,
     seed_bundles: &mut Vec<CandidateSeedBundle>,
 ) {
-    if !intent_requests_cross_catalog_composition(intent) {
-        return;
-    }
-    for catalog in ["google-sheets", "google-drive"] {
-        let Some(roots) = by_catalog.get(catalog) else {
+    for (catalog, roots) in by_catalog {
+        if !intent_mentions_catalog_id(catalog, intent) {
             continue;
-        };
+        }
         let Some(top) = roots.first().copied() else {
             continue;
         };
@@ -411,19 +480,23 @@ mod tests {
     }
 
     #[test]
-    fn explicit_composition_builds_cross_catalog_bundle() {
+    fn explicit_named_catalogs_build_cross_catalog_bundle() {
         let bundles = vec![
             bundle("github", "Issue", 10, ""),
             bundle("clickup", "Task", 9, ""),
         ];
+        // Cross-catalog from ≥2 named entry_ids — not English sync/mirror verbs.
         let out = build_candidate_seed_bundles(
-            "sync GitHub issues into ClickUp tasks",
+            "Move github issues into clickup tasks",
             &bundles,
             Default::default(),
         );
-        assert!(out.iter().any(|b| {
-            b.candidate_ids == ["github:Issue".to_string(), "clickup:Task".to_string()]
-        }));
+        assert!(
+            out.iter().any(|b| {
+                b.candidate_ids == ["github:Issue".to_string(), "clickup:Task".to_string()]
+            }),
+            "got {out:?}"
+        );
     }
 
     #[test]

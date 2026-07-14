@@ -1,0 +1,12 @@
+[package]
+name = "plasm-semantic-seed"
+version.workspace = true
+edition.workspace = true
+description = "Shared BAML-backed semantic seed selector"
+
+[dependencies]
+plasm-core = { path = "../plasm-core" }
+plasm-eval-common = { path = "../plasm-eval-common" }
+anyhow = { workspace = true }
+baml = { workspace = true }
+tracing = { workspace = true }

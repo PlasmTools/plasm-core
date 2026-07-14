@@ -133,6 +133,9 @@ impl PlasmHostState {
     }
 
     /// Tool-model memo + typed-discovery index caches (after catalog digest rotation).
+    ///
+    /// Lexical BM25 (`CatalogSearchIndex`) lives inside [`InMemoryCgsRegistry`] and is rebuilt
+    /// when [`Self::reload_catalog_registry`] publishes a new registry via `from_pairs`.
     pub fn invalidate_catalog_derived_caches(&self) {
         self.tool_model_service().clear_cache();
         self.discovery_index_cache().clear();

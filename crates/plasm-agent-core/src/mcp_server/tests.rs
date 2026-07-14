@@ -192,17 +192,19 @@ fn mcp_server_initialize_workflow_uses_session_mode_not_intent_key() {
     assert!(text.contains("Reuse ref"));
     assert!(text.contains("Do NOT"));
     assert!(!text.contains("discover_capabilities` first only"));
-    let discover = default_plasm_tools()
-        .into_iter()
-        .find(|t| t.name == "discover_capabilities")
-        .expect("discover_capabilities");
-    let discover_desc = discover.description.as_deref().unwrap_or("");
-    assert!(
-        discover_desc.len() < 550,
-        "discover tool description too long: {} chars",
-        discover_desc.len()
-    );
-    assert!(!discover_desc.contains("query"));
+    if super::tools::mcp_discover_tool_enabled() {
+        let discover = default_plasm_tools()
+            .into_iter()
+            .find(|t| t.name == "discover_capabilities")
+            .expect("discover_capabilities");
+        let discover_desc = discover.description.as_deref().unwrap_or("");
+        assert!(
+            discover_desc.len() < 550,
+            "discover tool description too long: {} chars",
+            discover_desc.len()
+        );
+        assert!(!discover_desc.contains("query"));
+    }
 }
 
 #[test]
@@ -334,7 +336,11 @@ fn mcp_tool_list_hides_internal_auth_and_registry_tools() {
     assert!(!names.iter().any(|n| n == "plasm_incoming_auth"));
     assert!(!names.iter().any(|n| n == "list_registry"));
     assert!(names.iter().any(|n| n == "plasm_context"));
-    assert!(names.iter().any(|n| n == "discover_capabilities"));
+    if super::tools::mcp_discover_tool_enabled() {
+        assert!(names.iter().any(|n| n == "discover_capabilities"));
+    } else {
+        assert!(!names.iter().any(|n| n == "discover_capabilities"));
+    }
     let removed_init_tool = format!("plasm_{}", "session_init");
     let removed_add_tool = format!("add_{}", "capabilities");
     assert!(!names.iter().any(|n| n == &removed_init_tool));

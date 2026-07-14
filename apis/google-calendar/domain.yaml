@@ -14,6 +14,12 @@ entities:
   Calendar:
     id_field: id
     description: A Google Calendar from the authenticated user's calendar list.
+    discovery:
+      names:
+      - calendar
+      - google calendar
+      - primary calendar
+      seed_class: ambient
     fields:
       id:
         required: true
@@ -57,6 +63,8 @@ entities:
       events:
         target: Event
         cardinality: many
+        discovery:
+          seed_nav: locate
         materialize:
           kind: query_scoped_bindings
           capability: event_list
@@ -68,6 +76,14 @@ entities:
     - calendarId
     - id
     description: A Google Calendar event.
+    discovery:
+      names:
+      - event
+      - calendar event
+      - google calendar event
+      - meeting
+      - appointment
+      seed_class: primary
     fields:
       calendarId:
         required: true
@@ -247,6 +263,14 @@ capabilities:
     kind: query
     entity: Event
     description: List events in a specific calendar.
+    discovery:
+      operation_terms:
+      - list events
+      - list calendar events
+      target_terms:
+      - event
+      - calendar event
+      - meeting
     parameters:
     - name: calendarId
       value_ref: nv_event_list_calendar_id

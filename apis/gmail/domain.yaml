@@ -13,7 +13,13 @@ data_classes:
 entities:
   Message:
     id_field: id
-    description: A Gmail message (email). messages.list returns only id+threadId; messages.get returns full content including RFC 5322 headers flattened from payload.headers (headerFrom, headerSubject, …). Mailbox-wide text search uses the q parameter or Message~"…" (not the snippet field — snippet is a preview string returned on each list entry).
+    description: A single mailbox email for unread, search, get, or send at message grain.
+    discovery:
+      names:
+      - message
+      - email
+      - unread message
+      seed_class: primary
     fields:
       id:
         required: true
@@ -144,12 +150,14 @@ entities:
   Thread:
     id_field: id
     primary_read: thread_get
-    description: An email conversation thread — related messages where participants discuss decisions, rollout dates, and follow-ups.
+    description: Conversation aggregate spanning replies — find a thread by topic, then reach nested messages via its owned messages relation.
     discovery:
       names:
       - conversation thread
       - email thread
       - mail thread
+      - thread
+      seed_class: primary
     fields:
       id:
         required: true
@@ -162,9 +170,11 @@ entities:
         value_ref: nv_thread_history_id
     relations:
       messages:
-        description: Messages in this thread.
+        description: Nested messages owned by this conversation thread.
         target: Message
         cardinality: many
+        discovery:
+          seed_nav: own
         materialize:
           kind: from_parent_get
           path:

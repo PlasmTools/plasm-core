@@ -105,6 +105,11 @@ entities:
   Issue:
     id_field: key
     description: A Jira issue (bug, story, task, epic, etc.).
+    discovery:
+      names:
+      - issue
+      - ticket
+      - jira issue
     fields:
       key:
         required: true
@@ -215,6 +220,8 @@ entities:
       remotelinks:
         target: RemoteLink
         cardinality: many
+        discovery:
+          seed_nav: attach
         materialize:
           kind: query_scoped
           capability: remotelink_query
@@ -302,6 +309,11 @@ entities:
   Comment:
     id_field: id
     description: A comment on a Jira issue.
+    discovery:
+      names:
+      - comment
+      - issue comment
+      - jira comment
     fields:
       id:
         required: true
@@ -438,7 +450,12 @@ entities:
         value_ref: nv_changelog_items
   RemoteLink:
     id_field: id
-    description: A remote link attached to a Jira issue (external tracker, document, etc.).
+    description: An external web link attached to a Jira issue.
+    discovery:
+      seed_class: dependent
+      names:
+      - remote link
+      - issue link
     fields:
       id:
         required: true
@@ -472,6 +489,10 @@ entities:
   Transition:
     id_field: id
     description: An available workflow transition for a Jira issue.
+    discovery:
+      names:
+      - transition
+      - workflow transition
     fields:
       id:
         required: true
@@ -760,7 +781,11 @@ entities:
   IssueBrowseLink:
     id_field: issue_key
     primary_read: issue_browse_link_get
-    description: Shareable Jira web browse URL for an issue.
+    description: Shareable web browse URL for a Jira issue.
+    discovery:
+      names:
+      - browse link
+      - browse url
     fields:
       issue_key:
         required: true
@@ -915,6 +940,13 @@ capabilities:
     kind: action
     entity: Issue
     description: Move an issue along its workflow using a transition id from transition query.
+    discovery:
+      operation_terms:
+      - transition issue
+      - change status
+      target_terms:
+      - ticket
+      - issue
     output:
       type: side_effect
       description: The issue leaves its current status and enters the status targeted by the chosen transition.
@@ -1015,6 +1047,13 @@ capabilities:
     kind: create
     entity: Comment
     description: Add a comment to an issue; body is sent as Atlassian Document Format wrapping plain text.
+    discovery:
+      operation_terms:
+      - post comment
+      - add comment
+      target_terms:
+      - comment
+      - issue comment
     provides:
     - id
     - body
@@ -1033,6 +1072,12 @@ capabilities:
     kind: query
     entity: Comment
     description: List comments on an issue.
+    discovery:
+      operation_terms:
+      - list comments
+      target_terms:
+      - comment
+      - issue comment
     parameters:
     - name: issueIdOrKey
       value_ref: nv_comment_query_issue_id_or_key

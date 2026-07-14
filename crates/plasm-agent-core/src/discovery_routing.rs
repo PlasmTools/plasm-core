@@ -1,8 +1,13 @@
 //! Breakout markdown + `_meta.plasm.routing` for intent-only abstention paths.
 
+use plasm_core::discovery::{CapabilityQuery, CgsDiscovery};
 use plasm_core::discovery_auto_seed::EntityCandidateBundle;
-use plasm_core::discovery_intent_signals::{intent_mentions_repo_path, intent_names_catalog};
+use plasm_core::discovery_intent_signals::{intent_mentions_catalog_id, intent_mentions_repo_path};
 use plasm_core::discovery_seed_select::SeedAlternativeSetRaw;
+
+use crate::discovery_human_format::{format_discovery_markdown_for_mcp, DiscoveryTablePolicy};
+
+pub const BREAKOUT_DISCOVER_PREVIEW_MAX_ROWS: usize = 8;
 
 /// Outcome of auto-seed routing before session mint.
 #[derive(Debug, Clone)]
@@ -37,16 +42,51 @@ pub enum AutoSeedRouteOutcome {
 
 const BRAND_LOCK_BEST_EFFORT_MARKER: &str = "brand_lock_best_effort:";
 
-pub fn build_auto_seed_breakout_markdown(outcome: &AutoSeedRouteOutcome, intent: &str) -> String {
+pub fn discover_preview_markdown<C>(
+    catalog: &C,
+    intent: &str,
+    allowed_entry_ids: Option<&[String]>,
+) -> Option<String>
+where
+    C: CgsDiscovery,
+{
+    let mut query = CapabilityQuery {
+        phrases: vec![intent.to_string()],
+        ..Default::default()
+    };
+    if let Some(ids) = allowed_entry_ids {
+        if !ids.is_empty() {
+            query.entry_ids = Some(ids.to_vec());
+        }
+    }
+    let result = catalog.discover(&query).ok()?;
+    let policy = DiscoveryTablePolicy {
+        max_rows: BREAKOUT_DISCOVER_PREVIEW_MAX_ROWS,
+        max_per_entry: Some(BREAKOUT_DISCOVER_PREVIEW_MAX_ROWS),
+        ..Default::default()
+    };
+    Some(format_discovery_markdown_for_mcp(&result, &policy).markdown)
+}
+
+pub fn build_auto_seed_breakout_markdown(
+    outcome: &AutoSeedRouteOutcome,
+    intent: &str,
+    discover_preview: Option<&str>,
+) -> String {
     match outcome {
         AutoSeedRouteOutcome::Clarify {
             alternative_sets, ..
-        } => format_clarify_breakout(alternative_sets),
+        } => format_clarify_breakout(alternative_sets, discover_preview),
         AutoSeedRouteOutcome::HardMiss {
             uncovered_requirements,
             candidate_preview,
             ..
-        } => format_hard_miss_breakout(intent, candidate_preview, uncovered_requirements),
+        } => format_hard_miss_breakout(
+            intent,
+            candidate_preview,
+            uncovered_requirements,
+            discover_preview,
+        ),
         AutoSeedRouteOutcome::RoutingError { message, .. } => format!(
             "## Couldn't route this intent\n\n{message}\n\nRetry `plasm_context` with explicit `seeds`."
         ),
@@ -54,7 +94,10 @@ pub fn build_auto_seed_breakout_markdown(outcome: &AutoSeedRouteOutcome, intent:
     }
 }
 
-fn format_clarify_breakout(alternative_sets: &[SeedAlternativeSetRaw]) -> String {
+fn format_clarify_breakout(
+    alternative_sets: &[SeedAlternativeSetRaw],
+    discover_preview: Option<&str>,
+) -> String {
     let mut lines = vec![
         "## Which provider?".into(),
         String::new(),
@@ -66,6 +109,7 @@ fn format_clarify_breakout(alternative_sets: &[SeedAlternativeSetRaw]) -> String
         let entities = format_candidate_ids(&alt.candidate_ids);
         lines.push(format!("{}. {} — {entities}", i + 1, alt.label));
     }
+    append_discover_preview(&mut lines, discover_preview);
     lines.join("\n")
 }
 
@@ -73,6 +117,7 @@ fn format_hard_miss_breakout(
     intent: &str,
     candidate_preview: &[EntityCandidateBundle],
     uncovered_requirements: &[String],
+    discover_preview: Option<&str>,
 ) -> String {
     let mut lines = vec![
         "## Couldn't auto-open a session".into(),
@@ -98,9 +143,18 @@ fn format_hard_miss_breakout(
         lines.push(String::new());
         lines.push(gap);
     }
-    lines.push(String::new());
-    lines.push("Or call `discover_capabilities` to browse what's available.".into());
+    append_discover_preview(&mut lines, discover_preview);
     lines.join("\n")
+}
+
+fn append_discover_preview(lines: &mut Vec<String>, discover_preview: Option<&str>) {
+    let Some(preview) = discover_preview.filter(|text| !text.trim().is_empty()) else {
+        return;
+    };
+    lines.push(String::new());
+    lines.push("**Browse catalogs (lexical top matches):**".into());
+    lines.push(String::new());
+    lines.push(preview.trim().to_string());
 }
 
 struct SeedHint {
@@ -161,7 +215,7 @@ fn brand_locked_catalog(intent: &str) -> Option<String> {
         "cloudflare",
         "tavily",
     ] {
-        if intent_names_catalog(catalog, intent) {
+        if intent_mentions_catalog_id(catalog, intent) {
             matched.push(catalog.to_string());
         }
     }
@@ -202,9 +256,13 @@ fn format_candidate_ids(candidate_ids: &[String]) -> String {
 pub fn build_routing_meta(
     outcome: &AutoSeedRouteOutcome,
     selector_mode: &str,
+    discover_preview: Option<&str>,
 ) -> serde_json::Map<String, serde_json::Value> {
     let mut routing = serde_json::Map::new();
     routing.insert("selector_mode".into(), serde_json::json!(selector_mode));
+    if let Some(preview) = discover_preview.filter(|text| !text.trim().is_empty()) {
+        routing.insert("discover_preview".into(), serde_json::json!(preview));
+    }
     match outcome {
         AutoSeedRouteOutcome::Ready {
             seeds,
@@ -358,6 +416,7 @@ mod tests {
                 selector_latency_ms: 1,
             },
             "tasks on my plate",
+            None,
         );
         assert!(md.contains("Which provider?"));
         assert!(md.contains("explicit `seeds`"));
@@ -385,6 +444,7 @@ mod tests {
                 selector_latency_ms: 1,
             },
             "GitHub repo ryan-s-roberts/tool-test: create issue and branch",
+            None,
         );
         assert!(md.contains("Couldn't auto-open"));
         assert!(md.contains("github"));
@@ -401,10 +461,42 @@ mod tests {
                 selector_latency_ms: 1,
             },
             "semantic",
+            None,
         );
         assert_eq!(
             meta.get("selector_reasoning").and_then(|v| v.as_str()),
             Some("internal")
         );
+    }
+
+    #[test]
+    fn hard_miss_breakout_embeds_discover_preview_without_separate_tool_pointer() {
+        let preview = "```tsv\napi\tentity\ndescription\n```";
+        let md = build_auto_seed_breakout_markdown(
+            &AutoSeedRouteOutcome::HardMiss {
+                requirements: vec!["create issue".into()],
+                uncovered_requirements: vec!["Create an issue".into()],
+                reasoning: "internal".into(),
+                candidate_preview: vec![preview_bundle("github", "Repository")],
+                selector_latency_ms: 1,
+            },
+            "GitHub repo owner/repo workflow",
+            Some(preview),
+        );
+        assert!(md.contains("Browse catalogs"));
+        assert!(md.contains("```tsv"));
+        assert!(!md.contains("discover_capabilities"));
+        let meta = build_routing_meta(
+            &AutoSeedRouteOutcome::HardMiss {
+                requirements: vec!["create issue".into()],
+                uncovered_requirements: vec!["Create an issue".into()],
+                reasoning: "internal".into(),
+                candidate_preview: vec![],
+                selector_latency_ms: 1,
+            },
+            "semantic",
+            Some(preview),
+        );
+        assert!(meta.contains_key("discover_preview"));
     }
 }

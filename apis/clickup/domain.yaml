@@ -151,7 +151,11 @@ entities:
     relations: {}
   Space:
     id_field: id
-    description: A project area within a workspace.
+    description: A ClickUp workspace subdivision that groups folders.
+    discovery:
+      names:
+      - clickup space
+      - workspace space
     fields:
       id:
         required: true
@@ -203,7 +207,11 @@ entities:
           param: folder_id
   List:
     id_field: id
-    description: A container for tasks.
+    description: ClickUp list that groups work items.
+    discovery:
+      names:
+      - clickup list
+      - list folder
     fields:
       id:
         required: true
@@ -225,14 +233,12 @@ entities:
           param: list_id
   Task:
     id_field: id
-    description: A ClickUp project-tracker work item in a list or sprint — not an email or chat conversation thread.
+    description: A ClickUp work item in a list.
     discovery:
       names:
-      - project task
-      - tracker task
-      - sprint task
+      - task
+      - clickup task
       qualifier_names:
-      - sprint
       - list
       - workspace
     fields:
@@ -875,14 +881,13 @@ capabilities:
       required: true
       role: scope
   task_query:
-    description: Query ClickUp project-tracker tasks across a workspace — sprint/list work items, not mail or chat threads.
+    description: Query ClickUp tasks across a workspace.
     kind: query
     entity: Task
     discovery:
       target_terms:
-      - project task
-      - tracker task
-      - sprint task
+      - task
+      - clickup task
     parameters:
     - name: team_id
       value_ref: nv_task_query_team_id
@@ -937,14 +942,13 @@ capabilities:
       required: false
       role: response_control
   list_task_query:
-    description: List ClickUp project-tracker tasks in a list — work items for sprints and backlogs, not conversation threads.
+    description: List ClickUp tasks in a list.
     kind: query
     entity: Task
     discovery:
       target_terms:
-      - project task
-      - tracker task
-      - sprint task
+      - task
+      - clickup task
     parameters:
     - name: list_id
       value_ref: nv_list_task_query_list_id
@@ -1022,16 +1026,16 @@ capabilities:
       value_ref: nv_task_update_parent
       required: false
   list_create_task:
-    description: Create a ClickUp project-tracker task in a list — a sprint/backlog work item, not an email or chat follow-up thread.
+    description: Create a ClickUp task in a list.
     kind: create
     entity: Task
     discovery:
       operation_terms:
-      - create project task
-      - create tracker task
+      - create task
+      - add task
       target_terms:
-      - project task
-      - tracker task
+      - task
+      - clickup task
     parameters:
     - name: name
       value_ref: nv_wire_str_short

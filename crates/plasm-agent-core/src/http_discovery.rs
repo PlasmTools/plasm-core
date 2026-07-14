@@ -18,9 +18,9 @@ use plasm_core::schema::CGS;
 use plasm_discovery::DiscoveryQuery;
 use serde::{Deserialize, Serialize};
 
-use crate::release_version::RELEASE_VERSION;
 use crate::http_problem_util::problem_response;
 use crate::http_problem_util::problem_types;
+use crate::release_version::RELEASE_VERSION;
 use crate::server_state::{PlasmHostState, ToolModelHostError};
 use crate::tool_model::ToolModelQuery;
 use crate::tool_model_service::ToolModelServiceError;

@@ -3,7 +3,7 @@ http_backend: https://api.cloudflare.com/client/v4
 entities:
   Zone:
     id_field: id
-    description: Anchor for one proxied site—keep work scoped when firewall or proxy behavior is tied to that site.
+    description: DNS and proxy site container that scopes Cloudflare resources for one hostname.
     fields:
       id:
         required: true
@@ -95,6 +95,11 @@ entities:
     - zone_id
     - ruleset_phase
     description: Vendor-managed default ruleset binding for one execution phase.
+    discovery:
+      names:
+      - ruleset entrypoint
+      - entrypoint ruleset
+      - ruleset phase
     fields:
       zone_id:
         required: true

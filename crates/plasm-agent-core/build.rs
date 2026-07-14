@@ -81,7 +81,8 @@ fn docker_image_tag_version() -> Option<String> {
 }
 
 fn stamp_release_version() {
-    let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    let manifest_dir =
+        PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let pkg_version = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.0.0".into());
     let version = std::env::var("PLASM_RELEASE_VERSION")
         .ok()

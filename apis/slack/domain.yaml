@@ -19,7 +19,14 @@ data_classes:
 entities:
   Channel:
     id_field: id
-    description: A Slack channel, DM, group DM, or multi-party IM (conversation).
+    description: Conversation container for channel history and membership.
+    discovery:
+      names:
+      - channel
+      - conversation
+      - channel history
+      - message history
+      seed_class: primary
     fields:
       id:
         required: true
@@ -71,6 +78,8 @@ entities:
         description: Message history in this channel.
         target: Message
         cardinality: many
+        discovery:
+          seed_nav: own
         materialize:
           kind: query_scoped
           capability: channel_history
@@ -87,6 +96,8 @@ entities:
         description: Pinned items in this channel.
         target: Pin
         cardinality: many
+        discovery:
+          seed_nav: attach
         materialize:
           kind: query_scoped
           capability: pin_list
@@ -109,12 +120,12 @@ entities:
           param: channel
   Message:
     id_field: ts
-    description: A Slack channel or thread message — discussions, agreements, and rollout decisions in team conversations.
+    description: A Slack chat message for post, search, or update.
     discovery:
       names:
-      - conversation thread
-      - channel discussion
-      - message thread
+      - message
+      - chat message
+      seed_class: primary
     fields:
       ts:
         required: true
@@ -314,7 +325,14 @@ entities:
     relations: {}
   Pin:
     id_field: id
-    description: A pinned item in a channel.
+    description: A pinned message or file in a Slack channel.
+    discovery:
+      names:
+      - pin
+      - pinned message
+      - pinned item
+      - channel pin
+      seed_class: dependent
     fields:
       id:
         required: true
@@ -423,7 +441,7 @@ capabilities:
     - purpose
     - created
   channel_history:
-    description: Fetch the message history of a channel.
+    description: Query Message rows scoped by channel id (materialize for Channel.messages).
     kind: query
     entity: Message
     parameters:
@@ -984,9 +1002,18 @@ capabilities:
     - type
     - created
   pin_add:
-    description: Pin a message or file to a channel.
+    description: Pin by channel id and optional message timestamp.
     kind: action
     entity: Pin
+    discovery:
+      operation_terms:
+      - pin message
+      - pin a
+      - pin
+      target_terms:
+      - pin
+      - pinned item
+      - pinned message
     parameters:
     - name: channel
       value_ref: nv_pin_add_channel

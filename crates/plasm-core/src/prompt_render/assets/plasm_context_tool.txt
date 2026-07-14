@@ -1,6 +1,6 @@
 **Default first MCP call for a new workflow.** Call before `plasm` / `plasm_run`. Session identity is **`logical_session_ref`** only — not `intent`.
 
-**Intent-only open (semantic auto-seed hosts):** `session_mode: "new"` + **`intent`** only — the host retrieves entity candidates, runs seed-set selection, and opens a minimal teaching table when decision is **`ready`**. On **`clarify`**, **`hard_miss`**, or **`routing_error`** no session is minted; follow breakout guidance (ask user, call `discover_capabilities`, or pass explicit **`seeds`**).
+**Intent-only open (semantic auto-seed hosts):** `session_mode: "new"` + **`intent`** only — the host retrieves entity candidates, runs seed-set selection, and opens a minimal teaching table when decision is **`ready`**. On **`clarify`**, **`hard_miss`**, or **`routing_error`** no session is minted; follow breakout guidance (ask user, use embedded browse rows, or pass explicit **`seeds`**).
 
 **Session lifecycle (explicit):**
 - **`session_mode: "new"`** — mint `logical_session_ref` + fresh symbol table. Use **once** per workflow. **`seeds`** optional when semantic auto-seed is enabled; otherwise required.
@@ -16,7 +16,7 @@
 
 **Extend picks:** **`session_mode: "extend"`** + same **`logical_session_ref`**, expanded **`seeds`** — delta TSV or reuse cheat sheet when already exposed.
 
-**Discover before id (writes):** resolve human ids from live list/search, not catalog/eval samples. **`discover_capabilities`** is browse/recovery — not the primary open path when semantic auto-seed is enabled.
+**Discover before id (writes):** resolve human ids from live list/search, not catalog/eval samples. On semantic auto-seed hosts, breakout responses include browse rows — **`discover_capabilities`** is omitted from MCP tools/list (HTTP `/v1/discover` remains for non-MCP clients).
 
 **Relation seeds:** seed program roots only; `.r#` targets need not be seeded — `unused_seeds` is advisory.
 

@@ -35,6 +35,12 @@ pub enum SeedSelectionValidationError {
     CoverageRowCountMismatch { expected: usize, actual: usize },
     #[error("duplicate coverage row for requirement {0}")]
     DuplicateCoverageRequirement(i64),
+    #[error("unknown symbol (not in legend): {0}")]
+    UnknownSymbol(String),
+    #[error("selected catalog outside brand_lock: {0}")]
+    BrandLockViolation(String),
+    #[error("raw candidate id in symbol field (use s# only): {0}")]
+    RawIdHallucination(String),
     #[error("unknown candidate id: {0}")]
     UnknownCandidateId(String),
     #[error("unknown capability id: {0}")]
@@ -222,6 +228,9 @@ pub fn validation_error_label(e: &SeedSelectionValidationError) -> &'static str 
         SeedSelectionValidationError::DuplicateCoverageRequirement(_) => {
             "duplicate_coverage_requirement"
         }
+        SeedSelectionValidationError::UnknownSymbol(_) => "symbol_hallucination",
+        SeedSelectionValidationError::BrandLockViolation(_) => "brand_lock_violation",
+        SeedSelectionValidationError::RawIdHallucination(_) => "raw_id_hallucination",
         SeedSelectionValidationError::UnknownCandidateId(_) => "unknown_candidate_id",
         SeedSelectionValidationError::UnknownCapabilityId(_) => "unknown_capability_id",
         SeedSelectionValidationError::DuplicateSelectedId => "duplicate_selected_id",

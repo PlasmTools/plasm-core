@@ -150,6 +150,15 @@ Symbolic teaching table / TSV teaching attaches **`entities.<Name>.description`*
 | **Entity `description`** | Role / intent only: what class of task or decision this entity grounds — no relation, field, or parameter names that teaching table already prints | Payload inventories, relation "next step" hints, lists of related entities, REST-ish tours, capability ids, step-by-step APIs, HTTP status codes, `transport:`, explicit MCP seed instructions |
 | **Capability `description`** | What this operation **does** or **when** to pick it, in user/domain terms | "Call `foo_query` first", URL paths, error-code trivia (use `discovery.target_terms` for NL hints) |
 
+**Discovery seed graph roles (semantic auto-seed):** Prefer relation-edge roles; entity class is a weak fallback. Precedence: `relations.*.discovery.seed_nav` → `entities.*.discovery.seed_class` → unset (no special prune).
+
+| Field | Values | When to author |
+|-------|--------|----------------|
+| `relations.*.discovery.seed_nav` | `attach` \| `own` \| `locate` | `attach` = decoration of source (comments/labels/reviews/pins/remote links); `own` = source owns history/collection (channel→messages) — XOR DirectCapabilities, prefer Source; `locate` = weak container (repo→issues) |
+| `entities.*.discovery.seed_class` | `primary` \| `dependent` \| `ambient` | Fallback when edges unset: list/mutate roots = `primary`; attach leaves = `dependent`; weak containers = `ambient` |
+
+History-browse phrases belong on the **Source** entity `names`. Materialize Query may still use the Target as `entity:`. Do **not** coach seed choice in descriptions. See [`docs/research-discovery-annotation-rubric.md`](../../../docs/research-discovery-annotation-rubric.md) §5.3 / §5.5.
+
 **`views:` `description`** on a view definition should state **what composed projection** the agent gets — not list inner capability ids.
 
 **Teaching projection (default on):** For each entity with a primary Get and non-empty ordered **`F`** from `CGS::domain_projection_heading_fields` in [`crates/plasm-core/src/schema.rs`](../../../crates/plasm-core/src/schema.rs), the prompt renderer teaches **`F`** on the **projection witness row** — a validated get/query exemplar with trailing `[p#,…]` in `plasm_expr` and `· projection` in Meaning (not a separate entity heading line). Expressions still use `Entity(…)[subset]` for actual reads. **`F`** comes from that Get's explicit **`provides:`** list (order preserved); if `provides` is empty, **`F`** defaults to `id_field` first, then remaining fields lexicographically. Set **`domain_projection_examples: false`** to suppress projection brackets. Optional **`primary_read:`** names the **Get capability id** to override which Get defines **`F`**. Standalone `p#` gloss rows (including alias symbols referenced only in brackets) are emitted before the witness row uses them.

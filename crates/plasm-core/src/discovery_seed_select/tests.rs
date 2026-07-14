@@ -1,21 +1,20 @@
-use super::{
-    build_seed_bundle_index_tables, resolve_seed_coverage_assessment, validate_seed_selection,
-    SeedBundleIndexTables, SeedSelectionDecision, SeedSelectionRaw, SeedSelectionValidationError,
+use crate::discovery_auto_seed::EntityCandidateBundle;
+use crate::discovery_auto_seed::EntityCapabilityEvidence;
+use crate::discovery_intent_class::DiscoveryIntentClass;
+use crate::discovery_seed_select::{
+    resolve_llm_seed_selection, seeds_from_candidate_ids, validate_seed_selection,
+    LlmSeedSelectionInput, SeedSelectionDecision, SeedSelectionRaw, SeedSelectionValidationError,
+    ValidatedSeedSelection,
 };
-use crate::discovery_auto_seed::{EntityCandidateBundle, EntityCapabilityEvidence};
-use crate::discovery_seed_bundle::CandidateSeedBundle;
+use crate::discovery_seed_symbol_map::SeedSymbolMap;
 
-fn bundle(id: &str, eid: &str, ent: &str, cap: &str) -> EntityCandidateBundle {
-    bundle_with_hints(id, eid, ent, cap, "Query", "")
-}
-
-fn bundle_with_hints(
+fn bundle(
     id: &str,
     eid: &str,
     ent: &str,
     cap: &str,
     kind: &str,
-    relation_hints: &str,
+    relations: &str,
 ) -> EntityCandidateBundle {
     EntityCandidateBundle {
         candidate_id: id.into(),
@@ -31,537 +30,273 @@ fn bundle_with_hints(
             reason_codes: vec![],
             lexical_score: 1,
         }],
-        relation_hints: relation_hints.into(),
+        relation_hints: relations.into(),
         catalog_route_evidence: false,
     }
 }
 
-fn seed_bundle(catalog: &str, ids: &[&str]) -> CandidateSeedBundle {
-    CandidateSeedBundle {
-        candidate_ids: ids.iter().map(|id| (*id).to_string()).collect(),
-        catalogs: vec![catalog.into()],
-        max_lexical_score: 10,
-        total_lexical_score: ids.len() as u64 * 10,
-    }
+fn resolve(
+    input: LlmSeedSelectionInput,
+    map: &SeedSymbolMap,
+    bundles: &[EntityCandidateBundle],
+    intent_class: &DiscoveryIntentClass,
+) -> Result<SeedSelectionRaw, SeedSelectionValidationError> {
+    resolve_llm_seed_selection(input, map, bundles, intent_class, None, None)
 }
 
-fn seed_bundle_scored(catalog: &str, ids: &[&str], score: u32) -> CandidateSeedBundle {
-    CandidateSeedBundle {
-        candidate_ids: ids.iter().map(|id| (*id).to_string()).collect(),
-        catalogs: vec![catalog.into()],
-        max_lexical_score: score,
-        total_lexical_score: ids.len() as u64 * u64::from(score),
+fn ready_input(symbols: &[&str]) -> LlmSeedSelectionInput {
+    LlmSeedSelectionInput {
+        decision: SeedSelectionDecision::Ready,
+        selected_symbols: symbols.iter().map(|s| (*s).to_string()).collect(),
+        requirements: vec!["read issues".into()],
+        alternative_symbol_sets: vec![],
+        alternative_labels: vec![],
+        uncovered_requirements: vec![],
+        reasoning: "ok".into(),
     }
-}
-
-fn coverage_assessment(
-    requirements: Vec<(&str, Vec<i64>)>,
-    coverage: Vec<(i64, Vec<i64>)>,
-    tables: &SeedBundleIndexTables,
-) -> SeedSelectionRaw {
-    let reqs = requirements
-        .into_iter()
-        .enumerate()
-        .map(|(index, (text, deps))| (index as i64, text.to_string(), deps))
-        .collect();
-    resolve_seed_coverage_assessment(reqs, coverage, String::new(), tables, "")
-        .expect("resolve coverage")
 }
 
 #[test]
 fn ready_validates_seed_count_and_supporting() {
-    let bundles = vec![bundle("gmail:Thread", "gmail", "Thread", "thread_search")];
-    let raw = SeedSelectionRaw {
-        decision: SeedSelectionDecision::Ready,
-        requirements: vec!["find thread".into()],
-        selected_ids: vec!["gmail:Thread".into()],
-        supporting_capability_ids: vec!["gmail:Thread:thread_search".into()],
-        alternative_sets: vec![],
-        uncovered_requirements: vec![],
-        reasoning: "ok".into(),
-    };
+    let bundles = vec![bundle(
+        "gmail:Thread",
+        "gmail",
+        "Thread",
+        "thread_search",
+        "Query",
+        "",
+    )];
+    let map = SeedSymbolMap::build(&bundles, None);
+    let raw = resolve(
+        ready_input(&["s1"]),
+        &map,
+        &bundles,
+        &DiscoveryIntentClass::ReadListNav,
+    )
+    .expect("resolve");
     assert!(validate_seed_selection(&raw, &bundles).is_ok());
 }
 
 #[test]
-fn invented_bundle_index_is_routing_error() {
-    let bundles = vec![bundle("gmail:Thread", "gmail", "Thread", "thread_search")];
-    let tables =
-        build_seed_bundle_index_tables(&[seed_bundle("gmail", &["gmail:Thread"])], &bundles)
-            .expect("build tables");
-    let raw = resolve_seed_coverage_assessment(
-        vec![(0, "find thread".into(), vec![])],
-        vec![(0, vec![99])],
-        String::new(),
-        &tables,
+fn unknown_symbol_is_routing_error() {
+    let bundles = vec![bundle(
+        "gmail:Thread",
+        "gmail",
+        "Thread",
+        "thread_search",
+        "Query",
         "",
-    );
+    )];
+    let map = SeedSymbolMap::build(&bundles, None);
+    let err = resolve(
+        ready_input(&["s99"]),
+        &map,
+        &bundles,
+        &DiscoveryIntentClass::ReadListNav,
+    )
+    .unwrap_err();
     assert!(matches!(
-        raw,
-        Err(SeedSelectionValidationError::UnknownBundleIndex(99))
+        err,
+        SeedSelectionValidationError::UnknownSymbol(_)
     ));
 }
 
 #[test]
-fn bundle_roots_and_supporting_capabilities_are_resolved_together() {
-    let bundles = vec![
-        bundle("gmail:Thread", "gmail", "Thread", "thread_search"),
-        bundle("gmail:Message", "gmail", "Message", "message_list"),
-    ];
-    let seed_bundles = [seed_bundle("gmail", &["gmail:Thread", "gmail:Message"])];
-    let tables = build_seed_bundle_index_tables(&seed_bundles, &bundles).expect("build tables");
-    let raw = coverage_assessment(vec![("find mail", vec![])], vec![(0, vec![0])], &tables);
-    assert_eq!(raw.selected_ids, vec!["gmail:Message", "gmail:Thread"]);
-    assert_eq!(
-        raw.supporting_capability_ids,
-        vec!["gmail:Message:message_list", "gmail:Thread:thread_search"]
-    );
-}
-
-#[test]
-fn provider_distinct_minimal_complete_bundles_clarify() {
-    let bundles = vec![
-        bundle("gmail:Message", "gmail", "Message", "message_search"),
-        bundle("outlook:Message", "outlook", "Message", "message_search"),
-    ];
-    let seed_bundles = [
-        seed_bundle("gmail", &["gmail:Message"]),
-        seed_bundle("outlook", &["outlook:Message"]),
-    ];
-    let tables = build_seed_bundle_index_tables(&seed_bundles, &bundles).expect("build tables");
-    let raw = coverage_assessment(vec![("find mail", vec![])], vec![(0, vec![0, 1])], &tables);
-    assert_eq!(raw.decision, SeedSelectionDecision::Clarify);
-    assert_eq!(raw.alternative_sets.len(), 2);
-}
-
-#[test]
-fn requirement_dependency_cycle_is_routing_error() {
-    let bundles = vec![bundle("gmail:Thread", "gmail", "Thread", "thread_search")];
-    let tables =
-        build_seed_bundle_index_tables(&[seed_bundle("gmail", &["gmail:Thread"])], &bundles)
-            .expect("build tables");
-    let raw = resolve_seed_coverage_assessment(
-        vec![(0, "read".into(), vec![1]), (1, "write".into(), vec![0])],
-        vec![(0, vec![0]), (1, vec![0])],
-        String::new(),
-        &tables,
+fn raw_id_in_symbol_field_is_rejected() {
+    let bundles = vec![bundle(
+        "gmail:Thread",
+        "gmail",
+        "Thread",
+        "thread_search",
+        "Query",
         "",
-    );
+    )];
+    let map = SeedSymbolMap::build(&bundles, None);
+    let err = resolve(
+        ready_input(&["gmail:Thread"]),
+        &map,
+        &bundles,
+        &DiscoveryIntentClass::ReadListNav,
+    )
+    .unwrap_err();
     assert!(matches!(
-        raw,
-        Err(SeedSelectionValidationError::RequirementDependencyCycle)
+        err,
+        SeedSelectionValidationError::RawIdHallucination(_)
     ));
 }
 
 #[test]
-fn empty_support_set_yields_hard_miss() {
-    let bundles = vec![bundle("gmail:Thread", "gmail", "Thread", "thread_search")];
-    let tables =
-        build_seed_bundle_index_tables(&[seed_bundle("gmail", &["gmail:Thread"])], &bundles)
-            .expect("build tables");
-    let raw = coverage_assessment(
-        vec![("fine-tune model", vec![])],
-        vec![(0, vec![])],
-        &tables,
-    );
-    assert_eq!(raw.decision, SeedSelectionDecision::HardMiss);
-    assert_eq!(raw.uncovered_requirements, vec!["fine-tune model"]);
-}
-
-#[test]
-fn intersecting_coverage_selects_smallest_complete_bundle() {
+fn ready_resolve_is_membership_only_no_semantic_rewrite() {
     let bundles = vec![
-        bundle("github:Issue", "github", "Issue", "issue_list"),
-        bundle("github:IssueTriage", "github", "IssueTriage", "triage"),
+        bundle(
+            "github:Issue",
+            "github",
+            "Issue",
+            "issue_query",
+            "Query",
+            "labels→Label",
+        ),
+        bundle(
+            "github:Label",
+            "github",
+            "Label",
+            "label_query",
+            "Query",
+            "",
+        ),
     ];
-    let seed_bundles = [
-        seed_bundle("github", &["github:Issue"]),
-        seed_bundle("github", &["github:IssueTriage"]),
-    ];
-    let tables = build_seed_bundle_index_tables(&seed_bundles, &bundles).expect("build tables");
-    let raw = coverage_assessment(
-        vec![("list issues", vec![]), ("show labels", vec![0])],
-        vec![(0, vec![0, 1]), (1, vec![0, 1])],
-        &tables,
-    );
-    assert_eq!(raw.decision, SeedSelectionDecision::Ready);
-    assert_eq!(raw.selected_ids, vec!["github:Issue"]);
-}
-
-#[test]
-fn cross_provider_requirement_split_clarifies_instead_of_hard_miss() {
-    let bundles = vec![
-        bundle("github:PullRequest", "github", "PullRequest", "pr_create"),
-        bundle("gitlab:MergeRequest", "gitlab", "MergeRequest", "mr_create"),
-    ];
-    let seed_bundles = [
-        seed_bundle_scored("github", &["github:PullRequest"], 10),
-        seed_bundle_scored("gitlab", &["gitlab:MergeRequest"], 10),
-    ];
-    let tables = build_seed_bundle_index_tables(&seed_bundles, &bundles).expect("build tables");
-    let raw = coverage_assessment(
-        vec![("open merge request", vec![]), ("request review", vec![])],
-        vec![(0, vec![1]), (1, vec![0])],
-        &tables,
-    );
-    assert_eq!(raw.decision, SeedSelectionDecision::Clarify);
-    assert_eq!(raw.alternative_sets.len(), 2);
-}
-
-#[test]
-fn partial_empty_with_multi_provider_support_clarifies() {
-    let bundles = vec![
-        bundle("gmail:Message", "gmail", "Message", "message_search"),
-        bundle("outlook:Message", "outlook", "Message", "message_search"),
-    ];
-    let seed_bundles = [
-        seed_bundle("gmail", &["gmail:Message"]),
-        seed_bundle("outlook", &["outlook:Message"]),
-    ];
-    let tables = build_seed_bundle_index_tables(&seed_bundles, &bundles).expect("build tables");
-    let raw = coverage_assessment(
-        vec![("list community posts", vec![]), ("drop spam bots", vec![])],
-        vec![(0, vec![0, 1]), (1, vec![])],
-        &tables,
-    );
-    assert_eq!(raw.decision, SeedSelectionDecision::Clarify);
-    assert_eq!(raw.alternative_sets.len(), 2);
-    assert_eq!(raw.uncovered_requirements, vec!["drop spam bots"]);
-}
-
-#[test]
-fn catalog_anchored_cross_provider_requirements_federate_ready() {
-    let bundles = vec![
-        bundle("gitlab:MergeRequest", "gitlab", "MergeRequest", "mr_list"),
-        bundle("jira:Issue", "jira", "Issue", "issue_list"),
-    ];
-    let seed_bundles = [
-        seed_bundle("gitlab", &["gitlab:MergeRequest"]),
-        seed_bundle("jira", &["jira:Issue"]),
-    ];
-    let tables = build_seed_bundle_index_tables(&seed_bundles, &bundles).expect("build tables");
-    let raw = resolve_seed_coverage_assessment(
-        vec![
-            (
-                0,
-                "Link GitLab merge requests for the release".into(),
-                vec![],
-            ),
-            (1, "Track Jira release-note issues".into(), vec![]),
-        ],
-        vec![(0, vec![0]), (1, vec![1])],
-        String::new(),
-        &tables,
-        "",
+    let map = SeedSymbolMap::build(&bundles, None);
+    let label_symbol = map
+        .rows()
+        .iter()
+        .find(|row| row.entity == "Label")
+        .map(|row| row.symbol.as_str())
+        .expect("label row");
+    let raw = resolve(
+        ready_input(&[label_symbol]),
+        &map,
+        &bundles,
+        &DiscoveryIntentClass::ReadListNav,
     )
-    .expect("resolve coverage");
-    assert_eq!(raw.decision, SeedSelectionDecision::Ready);
-    assert_eq!(raw.selected_ids, vec!["gitlab:MergeRequest", "jira:Issue"]);
+    .expect("resolve");
+    // Product resolve must not rewrite Label→Issue; that living dead path is gone.
+    assert_eq!(raw.selected_ids, vec!["github:Label"]);
 }
 
 #[test]
-fn unbranded_single_provider_ready_expands_to_clarify() {
+fn localized_create_keeps_mutation_anchor() {
     let bundles = vec![
-        bundle("gmail:Message", "gmail", "Message", "message_search"),
-        bundle("outlook:Message", "outlook", "Message", "message_search"),
-    ];
-    let seed_bundles = [
-        seed_bundle("gmail", &["gmail:Message"]),
-        seed_bundle("outlook", &["outlook:Message"]),
-    ];
-    let tables = build_seed_bundle_index_tables(&seed_bundles, &bundles).expect("build tables");
-    let raw = resolve_seed_coverage_assessment(
-        vec![(0, "find finance invoices".into(), vec![])],
-        vec![(0, vec![0])],
-        String::new(),
-        &tables,
-        "Find invoices forwarded from finance that mention NET-45",
-    )
-    .expect("resolve coverage");
-    assert_eq!(raw.decision, SeedSelectionDecision::Clarify);
-    assert_eq!(raw.alternative_sets.len(), 2);
-}
-
-#[test]
-fn model_listed_multi_provider_intersection_clarifies() {
-    let bundles = vec![
-        bundle("gmail:Message", "gmail", "Message", "message_search"),
-        bundle("outlook:Message", "outlook", "Message", "message_search"),
-    ];
-    let seed_bundles = [
-        seed_bundle_scored("gmail", &["gmail:Message"], 10),
-        seed_bundle_scored("outlook", &["outlook:Message"], 9),
-    ];
-    let tables = build_seed_bundle_index_tables(&seed_bundles, &bundles).expect("build tables");
-    let raw = coverage_assessment(
-        vec![("list finance invoices", vec![])],
-        vec![(0, vec![0, 1])],
-        &tables,
-    );
-    assert_eq!(raw.decision, SeedSelectionDecision::Clarify);
-    assert_eq!(raw.alternative_sets.len(), 2);
-}
-
-#[test]
-fn read_only_ready_blocked_for_finetune_host_intent() {
-    let bundles = vec![bundle("jira:Issue", "jira", "Issue", "issue_list")];
-    let tables = build_seed_bundle_index_tables(&[seed_bundle("jira", &["jira:Issue"])], &bundles)
-        .expect("build tables");
-    let raw = resolve_seed_coverage_assessment(
-        vec![(0, "read closed Jira issues".into(), vec![])],
-        vec![(0, vec![0])],
-        String::new(),
-        &tables,
-        "Fine-tune an ML model using closed Jira issues as training data",
-    )
-    .expect("resolve coverage");
-    assert_eq!(raw.decision, SeedSelectionDecision::HardMiss);
-    assert!(raw.selected_ids.is_empty());
-}
-
-#[test]
-fn cross_provider_create_does_not_swap_issue_to_comment() {
-    let bundles = vec![
-        bundle("github:Issue", "github", "Issue", "issue_query"),
+        bundle(
+            "github:Repository",
+            "github",
+            "Repository",
+            "repo_branch_create",
+            "Action",
+            "",
+        ),
         bundle(
             "github:IssueComment",
             "github",
             "IssueComment",
             "issue_comment_create",
+            "Create",
+            "",
         ),
-        bundle("clickup:Task", "clickup", "Task", "task_create"),
     ];
-    let seed_bundles = [
-        seed_bundle("github", &["github:Issue"]),
-        seed_bundle("github", &["github:IssueComment"]),
-        seed_bundle("clickup", &["clickup:Task"]),
-    ];
-    let tables = build_seed_bundle_index_tables(&seed_bundles, &bundles).expect("build tables");
-    let raw = resolve_seed_coverage_assessment(
-        vec![
-            (0, "Read/list open GitHub issues".into(), vec![]),
-            (1, "Create ClickUp tasks".into(), vec![0]),
-        ],
-        vec![(0, vec![0]), (1, vec![2])],
-        String::new(),
-        &tables,
-        "Sync open GitHub issues with ClickUp tasks for the launch checklist.",
+    let map = SeedSymbolMap::build(&bundles, None);
+    let comment_symbol = map
+        .rows()
+        .iter()
+        .find(|row| row.entity == "IssueComment")
+        .map(|row| row.symbol.as_str())
+        .expect("comment symbol");
+    let raw = resolve(
+        ready_input(&[comment_symbol]),
+        &map,
+        &bundles,
+        &DiscoveryIntentClass::LocalizedMutation,
     )
-    .expect("resolve coverage");
-    assert_eq!(raw.decision, SeedSelectionDecision::Ready);
-    assert_eq!(raw.selected_ids.len(), 2);
-    assert!(raw.selected_ids.contains(&"github:Issue".to_string()));
-    assert!(raw.selected_ids.contains(&"clickup:Task".to_string()));
+    .expect("resolve");
+    assert_eq!(raw.selected_ids, vec!["github:IssueComment"]);
 }
 
 #[test]
-fn federated_merge_caps_one_root_per_catalog() {
+fn clarify_requires_two_alternative_symbol_sets() {
     let bundles = vec![
-        bundle("gitlab:MergeRequest", "gitlab", "MergeRequest", "mr_list"),
         bundle(
-            "gitlab:MergeRequestNote",
-            "gitlab",
-            "MergeRequestNote",
-            "note_list",
+            "github:Issue",
+            "github",
+            "Issue",
+            "issue_query",
+            "Query",
+            "",
         ),
-        bundle("jira:Issue", "jira", "Issue", "issue_list"),
-    ];
-    let seed_bundles = [
-        seed_bundle(
+        bundle(
+            "gitlab:Issue",
             "gitlab",
-            &["gitlab:MergeRequest", "gitlab:MergeRequestNote"],
+            "Issue",
+            "issue_query",
+            "Query",
+            "",
         ),
-        seed_bundle("jira", &["jira:Issue"]),
     ];
-    let tables = build_seed_bundle_index_tables(&seed_bundles, &bundles).expect("build tables");
-    let raw = resolve_seed_coverage_assessment(
-        vec![
-            (
-                0,
-                "Link GitLab merge requests for the release".into(),
-                vec![],
-            ),
-            (1, "Track Jira release-note issues".into(), vec![]),
-        ],
-        vec![(0, vec![0]), (1, vec![1])],
-        String::new(),
-        &tables,
+    let map = SeedSymbolMap::build(&bundles, None);
+    let raw = resolve(
+        LlmSeedSelectionInput {
+            decision: SeedSelectionDecision::Clarify,
+            selected_symbols: vec![],
+            requirements: vec!["list issues".into()],
+            alternative_symbol_sets: vec![vec!["s1".into()], vec!["s2".into()]],
+            alternative_labels: vec!["github".into(), "gitlab".into()],
+            uncovered_requirements: vec![],
+            reasoning: "ambiguous".into(),
+        },
+        &map,
+        &bundles,
+        &DiscoveryIntentClass::ReadListNav,
+    )
+    .expect("resolve");
+    assert_eq!(raw.decision, SeedSelectionDecision::Clarify);
+    assert_eq!(raw.alternative_sets.len(), 2);
+}
+
+#[test]
+fn hard_miss_requires_uncovered_requirements() {
+    let bundles = vec![bundle(
+        "github:Issue",
+        "github",
+        "Issue",
+        "issue_query",
+        "Query",
         "",
+    )];
+    let map = SeedSymbolMap::build(&bundles, None);
+    let err = resolve(
+        LlmSeedSelectionInput {
+            decision: SeedSelectionDecision::HardMiss,
+            selected_symbols: vec![],
+            requirements: vec![],
+            alternative_symbol_sets: vec![],
+            alternative_labels: vec![],
+            uncovered_requirements: vec![],
+            reasoning: "out of catalog".into(),
+        },
+        &map,
+        &bundles,
+        &DiscoveryIntentClass::HostCapabilityMiss {
+            summary: "fine-tune".into(),
+        },
     )
-    .expect("resolve coverage");
-    assert_eq!(raw.decision, SeedSelectionDecision::Ready);
-    assert_eq!(raw.selected_ids, vec!["gitlab:MergeRequest", "jira:Issue"]);
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        SeedSelectionValidationError::HardMissMissingUncovered
+    ));
 }
 
 #[test]
-fn non_context_singleton_replaces_issue_triage_context() {
-    let bundles = vec![
-        bundle_with_hints(
-            "github:Issue",
-            "github",
-            "Issue",
-            "issue_list",
-            "Query",
-            "labels→Label",
-        ),
-        bundle_with_hints(
-            "github:IssueTriageContext",
-            "github",
-            "IssueTriageContext",
-            "triage",
-            "Query",
-            "labels→Label",
-        ),
-    ];
-    let seed_bundles = [
-        seed_bundle("github", &["github:Issue"]),
-        seed_bundle("github", &["github:IssueTriageContext"]),
-    ];
-    let tables = build_seed_bundle_index_tables(&seed_bundles, &bundles).expect("build tables");
-    let raw = coverage_assessment(
-        vec![("list issues with labels", vec![])],
-        vec![(0, vec![1])],
-        &tables,
-    );
-    assert_eq!(raw.decision, SeedSelectionDecision::Ready);
-    assert_eq!(raw.selected_ids, vec!["github:Issue"]);
-}
-
-#[test]
-fn relation_nav_prefers_singleton_issue_over_issue_label_combo() {
-    let bundles = vec![
-        bundle_with_hints(
-            "github:Issue",
-            "github",
-            "Issue",
-            "issue_list",
-            "Query",
-            "labels→Label",
-        ),
-        bundle("github:Label", "github", "Label", "label_list"),
-    ];
-    let seed_bundles = [
-        seed_bundle("github", &["github:Issue"]),
-        seed_bundle("github", &["github:Issue", "github:Label"]),
-    ];
-    let tables = build_seed_bundle_index_tables(&seed_bundles, &bundles).expect("build tables");
-    let raw = coverage_assessment(
-        vec![("list issues with labels", vec![])],
-        vec![(0, vec![0, 1])],
-        &tables,
-    );
-    assert_eq!(raw.decision, SeedSelectionDecision::Ready);
-    assert_eq!(raw.selected_ids, vec!["github:Issue"]);
-}
-
-#[test]
-fn share_intent_prefers_page_over_database() {
-    let bundles = vec![
-        bundle_with_hints("notion:Page", "notion", "Page", "page_share", "Action", ""),
-        bundle("notion:Database", "notion", "Database", "db_list"),
-    ];
-    let seed_bundles = [
-        seed_bundle("notion", &["notion:Database"]),
-        seed_bundle("notion", &["notion:Page"]),
-    ];
-    let tables = build_seed_bundle_index_tables(&seed_bundles, &bundles).expect("build tables");
-    let raw = resolve_seed_coverage_assessment(
-        vec![(0, "grant read-only access to the brief".into(), vec![])],
-        vec![(0, vec![0])],
-        String::new(),
-        &tables,
-        "Grant read-only access to the strategy brief page",
+fn validated_ready_maps_to_seeds() {
+    let bundles = vec![bundle(
+        "gmail:Message",
+        "gmail",
+        "Message",
+        "message_get",
+        "Get",
+        "",
+    )];
+    let map = SeedSymbolMap::build(&bundles, None);
+    let raw = resolve(
+        ready_input(&["s1"]),
+        &map,
+        &bundles,
+        &DiscoveryIntentClass::ReadListNav,
     )
-    .expect("resolve coverage");
-    assert_eq!(raw.decision, SeedSelectionDecision::Ready);
-    assert_eq!(raw.selected_ids, vec!["notion:Page"]);
-}
-
-#[test]
-fn mutation_intent_prefers_issue_over_sprint_snapshot() {
-    let bundles = vec![
-        bundle_with_hints(
-            "jira:Issue",
-            "jira",
-            "Issue",
-            "issue_transition",
-            "Action",
-            "",
-        ),
-        bundle(
-            "jira:SprintBoardSnapshot",
-            "jira",
-            "SprintBoardSnapshot",
-            "sprint_get",
-        ),
-    ];
-    let seed_bundles = [
-        seed_bundle("jira", &["jira:SprintBoardSnapshot"]),
-        seed_bundle("jira", &["jira:Issue"]),
-    ];
-    let tables = build_seed_bundle_index_tables(&seed_bundles, &bundles).expect("build tables");
-    let raw = resolve_seed_coverage_assessment(
-        vec![(0, "transition issue to Done".into(), vec![])],
-        vec![(0, vec![0])],
-        String::new(),
-        &tables,
-        "Move the blocker ticket to Done in the current sprint",
-    )
-    .expect("resolve coverage");
-    assert_eq!(raw.decision, SeedSelectionDecision::Ready);
-    assert_eq!(raw.selected_ids, vec!["jira:Issue"]);
-}
-
-#[test]
-fn brand_lock_github_repo_workflow_ready_when_selector_over_splits() {
-    let bundles = vec![
-        bundle_with_hints(
-            "github:Repository",
-            "github",
-            "Repository",
-            "issue_create",
-            "Create",
-            "",
-        ),
-        bundle_with_hints(
-            "github:Issue",
-            "github",
-            "Issue",
-            "issue_create",
-            "Create",
-            "",
-        ),
-        bundle_with_hints(
-            "github:PullRequest",
-            "github",
-            "PullRequest",
-            "pr_create",
-            "Create",
-            "",
-        ),
-    ];
-    let seed_bundles = [
-        seed_bundle("github", &["github:Repository"]),
-        seed_bundle("github", &["github:Issue"]),
-        seed_bundle("github", &["github:PullRequest"]),
-    ];
-    let tables = build_seed_bundle_index_tables(&seed_bundles, &bundles).expect("build tables");
-    let intent =
-        "GitHub repo ryan-s-roberts/tool-test: create issue, branch, file, PR, labels, comment";
-    let raw = resolve_seed_coverage_assessment(
-        vec![
-            (0, "Create an issue in the GitHub repo".into(), vec![]),
-            (1, "Create a branch in the GitHub repo".into(), vec![]),
-            (2, "Open a pull request in the GitHub repo".into(), vec![]),
-            (3, "Add labels to the issue".into(), vec![]),
-        ],
-        vec![(0, vec![]), (1, vec![]), (2, vec![]), (3, vec![])],
-        "bundle 0 lacks create".into(),
-        &tables,
-        intent,
-    )
-    .expect("resolve coverage");
-    assert_eq!(raw.decision, SeedSelectionDecision::Ready);
-    assert!(raw.reasoning.contains("brand_lock_best_effort"));
-    assert_eq!(raw.selected_ids, vec!["github:Repository"]);
+    .expect("resolve");
+    let ValidatedSeedSelection::Ready(ready) =
+        validate_seed_selection(&raw, &bundles).expect("validate")
+    else {
+        panic!("expected ready");
+    };
+    let seeds = seeds_from_candidate_ids(&bundles, &ready.selected_ids);
+    assert_eq!(seeds, vec![("gmail".into(), "Message".into())]);
 }

@@ -10,7 +10,11 @@ data_classes:
 entities:
   Project:
     id_field: id
-    description: GitLab project (repository namespace).
+    description: GitLab project namespace for repository settings — not the merge-request mutator.
+    discovery:
+      names:
+      - project
+      - gitlab project
     fields:
       id:
         required: true
@@ -137,7 +141,12 @@ entities:
     key_vars:
     - project_id
     - iid
-    description: GitLab merge request.
+    description: A GitLab merge request.
+    discovery:
+      names:
+      - merge request
+      - mr
+      - gitlab merge request
     fields:
       id:
         required: true
@@ -567,6 +576,12 @@ capabilities:
     kind: create
     entity: Issue
     description: Create an issue in a project.
+    discovery:
+      operation_terms:
+      - create issue
+      - open issue
+      target_terms:
+      - issue
     parameters:
     - name: project_id
       value_ref: nv_issue_create_project_id
@@ -636,6 +651,15 @@ capabilities:
     kind: create
     entity: MergeRequest
     description: Open a new merge request.
+    discovery:
+      operation_terms:
+      - open merge request
+      - create merge request
+      - assign reviewers
+      target_terms:
+      - merge request
+      - mr
+      - reviewers
     parameters:
     - name: project_id
       value_ref: nv_merge_request_create_project_id

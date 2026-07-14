@@ -21,6 +21,8 @@ pub struct EntityCapabilityEvidence {
     pub lexical_score: u32,
 }
 
+use crate::discovery_candidate_graph::TypedCandidateGraph;
+
 /// One entity-level candidate for seed-set selection.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct EntityCandidateBundle {
@@ -43,6 +45,32 @@ pub struct EntityCandidateConfig {
     pub max_entities: usize,
     pub max_per_catalog: usize,
     pub max_capabilities_per_entity: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct EntityCandidateRetrieveResult {
+    pub bundles: Vec<EntityCandidateBundle>,
+    pub catalog_context: crate::discovery_seed_catalog::CatalogWorkflowContext,
+    pub intent_class: crate::discovery_intent_class::DiscoveryIntentClass,
+    pub named_catalogs: Vec<String>,
+    pub candidate_graph: TypedCandidateGraph,
+}
+
+impl std::ops::Deref for EntityCandidateRetrieveResult {
+    type Target = Vec<EntityCandidateBundle>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.bundles
+    }
+}
+
+impl<'a> IntoIterator for &'a EntityCandidateRetrieveResult {
+    type Item = &'a EntityCandidateBundle;
+    type IntoIter = std::slice::Iter<'a, EntityCandidateBundle>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.bundles.iter()
+    }
 }
 
 impl Default for EntityCandidateConfig {

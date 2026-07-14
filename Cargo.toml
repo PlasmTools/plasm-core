@@ -17,6 +17,9 @@ members = [
     "crates/plasm-trace-sink",
     "crates/plasm-otel",
     "crates/plasm-discovery",
+    "crates/plasm-discovery-eval",
+    "crates/plasm-eval-common",
+    "crates/plasm-semantic-seed",
     "crates/plasm-server",
     "crates/plasm-workflow-codegen",
     "crates/plasm-node",
@@ -26,10 +29,12 @@ resolver = "2"
 
 # Single SemVer for the OSS workspace (see monorepo RELEASING.md on PlasmTools/plasm).
 [workspace.package]
-version = "0.4.21"
+version = "0.4.22"
 edition = "2021"
 
 [workspace.dependencies]
+# In-memory Okapi BM25 + DefaultTokenizer (unicode-segmentation / Snowball / stopwords).
+bm25 = "2.3"
 # Core serialization and typing
 serde = { version = "1.0", features = ["derive"] }
 postcard = { version = "1.1", features = ["alloc"] }

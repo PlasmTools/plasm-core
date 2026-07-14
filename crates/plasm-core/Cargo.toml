@@ -10,6 +10,7 @@ default = ["ranked_capability_gate"]
 ranked_capability_gate = []
 
 [dependencies]
+bm25 = { workspace = true }
 serde = { workspace = true }
 postcard = { workspace = true }
 serde_json = { workspace = true }

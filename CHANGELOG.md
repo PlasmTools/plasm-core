@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.22] - 2026-07-14
+
+### Added
+
+- **Multipass semantic seed selection:** BM25 + graph expand → closed `w#` witnesses → Rust minimal covering plans → order-swapped pairwise compare (`ready` / `clarify` / `hard_miss`). New `plasm-semantic-seed` crate owns the BAML boundary.
+- **Catalog seed roles:** `discovery.seed_class` (`primary` / `dependent` / `ambient`) and relation `discovery.seed_nav` (`attach` / `own` / `locate`) on FO catalogs; graph+role witness prune (attach drop, orphan promote, ambient/locate drop, own XOR).
+- **Typed witness stamps:** `SeedClassStamp` / `SeedNavStamp` / `OwnPairs` / `PoolLinks` on `RequirementWitness`; prune uses enums only; BAML strings rendered solely at the presentation boundary.
+
+### Fixed
+
+- **GitHub repo-workflow auto-seed:** compositional intent signals distinguish multi-step mutation workflows from issue/comment-only requests; brand-lock rescues now finalize through `Repository` for monorepo phrasing without `owner/repo`, with mutation evidence guards instead of opening on `IssueComment`.
+- **Workflow capability evidence:** intent-aware inject surfaces bounded `issue_create`, `pr_create`, `repo_branch_create`, and related caps so selectors stop marking branch/PR/issue steps as uncovered; GitHub repo workflow inject runs for `open`/`cut`/`commit` phrasing without generic create verbs.
+- **Seed-set FO purity:** strip contrastive description coaching and eval-echo fingerprints from Slack/Discord/Jira/Teams catalogs; BAML role rules stay role-general (no entity-name decision tables).
+
+### Changed
+
+- **Semantic auto-seed discover consolidation:** embed capped discover TSV in `hard_miss`/`clarify` breakout; omit `discover_capabilities` from MCP `tools/list` when semantic auto-seed is enabled; refresh MCP prompt assets and selector capability sketches (cap names).
+- **Seed-set eval:** train / holdout / neighbor-minimality cases for intent-only auto-seed; FO-hard / clarify-soft scoring doctrine.
+
 ## [0.4.21] - 2026-07-12
 
 ### Fixed

@@ -2,7 +2,6 @@
 
 use crate::cgs_context::{CgsContext, Prefix};
 use crate::discovery_presentation::CatalogRoute;
-use crate::domain_lexicon;
 use crate::identity::{CapabilityParamName, EntityFieldName, EntityName};
 use crate::schema::{CapabilityKind, CapabilitySchema, EntityDef, InputType, RelationSchema, CGS};
 use crate::symbol_tuning::{
@@ -10,7 +9,6 @@ use crate::symbol_tuning::{
     ExposureSurface, ExposureSurfaceDelta,
 };
 use indexmap::IndexMap;
-use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
@@ -253,6 +251,9 @@ pub trait CgsCatalog: Send + Sync {
 /// Deterministic search and packaging of [`DiscoveryResult`].
 pub trait CgsDiscovery: Send + Sync {
     fn discover(&self, query: &CapabilityQuery) -> Result<DiscoveryResult, DiscoveryError>;
+
+    /// Process-owned BM25 corpus used by discover + seed retrieve (same index, no rebuild).
+    fn search_index(&self) -> &crate::catalog_search_index::CatalogSearchIndex;
 }
 
 struct RegistryRow {
@@ -342,9 +343,10 @@ fn build_entity_summaries(
 /// `(entry_id, label, tags, cgs)`. HTTP origin is [`CGS::http_backend`].
 pub type RegistryEntryPair = (String, String, Vec<String>, Arc<CGS>);
 
-/// In-memory catalog + discovery (lexicon-style token scoring, stable sort).
+/// In-memory catalog + discovery (Okapi BM25 via [`CatalogSearchIndex`]).
 pub struct InMemoryCgsRegistry {
     entries: IndexMap<String, RegistryRow>,
+    search_index: crate::catalog_search_index::CatalogSearchIndex,
 }
 
 impl InMemoryCgsRegistry {
@@ -364,7 +366,33 @@ impl InMemoryCgsRegistry {
                 },
             );
         }
-        Self { entries: map }
+        let search_pairs: Vec<(&str, &CGS)> = map
+            .iter()
+            .map(|(id, row)| (id.as_str(), row.cgs.as_ref()))
+            .collect();
+        let search_index =
+            crate::catalog_search_index::CatalogSearchIndex::build_from_pairs(search_pairs);
+        Self {
+            entries: map,
+            search_index,
+        }
+    }
+
+    /// Process-local BM25 index rebuilt with [`Self::from_pairs`] / catalog reload.
+    pub fn search_index(&self) -> &crate::catalog_search_index::CatalogSearchIndex {
+        &self.search_index
+    }
+
+    pub fn entry_ids(&self) -> Vec<String> {
+        self.entries.keys().cloned().collect()
+    }
+
+    /// All loaded catalog graphs keyed by registry `entry_id`.
+    pub fn catalog_arcs(&self) -> IndexMap<String, Arc<CGS>> {
+        self.entries
+            .iter()
+            .map(|(id, row)| (id.clone(), Arc::clone(&row.cgs)))
+            .collect()
     }
 
     /// Resolve a raw catalog id (entry_id, alias, label, or tag) to the canonical registry `entry_id`.
@@ -517,16 +545,30 @@ impl CgsCatalog for InMemoryCgsRegistry {
 fn collect_query_tokens(query: &CapabilityQuery) -> HashSet<String> {
     let mut set = HashSet::new();
     for t in &query.tokens {
-        for tok in domain_lexicon::tokens(t) {
-            set.insert(tok);
+        set.extend(crate::catalog_search_index::CatalogSearchIndex::tokenize(t));
+    }
+    for p in &query.phrases {
+        set.extend(crate::catalog_search_index::CatalogSearchIndex::tokenize(p));
+    }
+    set
+}
+
+/// Free-text query string for BM25 (`phrases` + `tokens` joined).
+fn collect_query_text(query: &CapabilityQuery) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    for t in &query.tokens {
+        let u = t.trim();
+        if !u.is_empty() {
+            parts.push(u);
         }
     }
     for p in &query.phrases {
-        for tok in domain_lexicon::tokens(p) {
-            set.insert(tok);
+        let u = p.trim();
+        if !u.is_empty() {
+            parts.push(u);
         }
     }
-    set
+    parts.join(" ")
 }
 
 fn catalog_route_probe_lower(query: &CapabilityQuery) -> String {
@@ -547,15 +589,12 @@ fn catalog_route_probe_lower(query: &CapabilityQuery) -> String {
 }
 
 fn catalog_route_tokens_from_query(query: &CapabilityQuery) -> HashSet<String> {
+    // Brand / entry-id tokens must survive stopwording — use raw alphanumeric splits.
     let mut set = HashSet::new();
-    for t in &query.tokens {
-        for tok in domain_lexicon::tokens_keep_brands(t) {
-            set.insert(tok);
-        }
-    }
-    for p in &query.phrases {
-        for tok in domain_lexicon::tokens_keep_brands(p) {
-            set.insert(tok);
+    let probe = catalog_route_probe_lower(query);
+    for w in probe.split(|c: char| !c.is_alphanumeric()) {
+        if w.len() >= 2 {
+            set.insert(w.to_string());
         }
     }
     set
@@ -677,7 +716,7 @@ fn catalog_routes_for_query(
 fn score_token_hits(query: &HashSet<String>, text: &str) -> (u32, Vec<String>) {
     let mut codes = Vec::new();
     let mut score = 0u32;
-    for tok in domain_lexicon::tokens(text) {
+    for tok in crate::catalog_search_index::CatalogSearchIndex::tokenize(text) {
         if query.contains(&tok) {
             score += 1;
             codes.push(format!("token:{tok}"));
@@ -686,53 +725,17 @@ fn score_token_hits(query: &HashSet<String>, text: &str) -> (u32, Vec<String>) {
     (score, codes)
 }
 
-pub(crate) fn score_capability(
-    query: &HashSet<String>,
-    cgs: &CGS,
-    cap: &CapabilitySchema,
-) -> (u32, Vec<String>) {
-    let mut total = 0u32;
-    let mut reasons = Vec::new();
-    for (s, mut r) in [
-        score_token_hits(query, cap.name.as_str()),
-        score_token_hits(query, &cap.description),
-        score_token_hits(query, cap.domain.as_str()),
-    ] {
-        total += s;
-        reasons.append(&mut r);
+/// BM25 milli-score for one capability against free-text intent (ephemeral single-catalog index).
+#[cfg(test)]
+fn score_capability_bm25(cgs: &CGS, entry_id: &str, cap: &CapabilitySchema, query_text: &str) -> u32 {
+    if query_text.trim().is_empty() {
+        return 0;
     }
-    if let Some(ent) = cgs.entities.get(cap.domain.as_str()) {
-        let (s, mut r) = score_token_hits(query, &ent.description);
-        total += s;
-        reasons.append(&mut r);
-        if let Some(h) = &ent.discovery {
-            for phrase in &h.names {
-                let (s, mut r) = score_token_hits(query, phrase.as_str());
-                total += s;
-                reasons.append(&mut r);
-            }
-            for phrase in &h.qualifier_names {
-                let (s, mut r) = score_token_hits(query, phrase.as_str());
-                total += s;
-                reasons.append(&mut r);
-            }
-        }
-    }
-    if let Some(h) = &cap.discovery {
-        for phrase in &h.operation_terms {
-            let (s, mut r) = score_token_hits(query, phrase.as_str());
-            total += s;
-            reasons.append(&mut r);
-        }
-        for phrase in &h.target_terms {
-            let (s, mut r) = score_token_hits(query, phrase.as_str());
-            total += s;
-            reasons.append(&mut r);
-        }
-    }
-    reasons.sort();
-    reasons.dedup();
-    (total, reasons)
+    let index = crate::catalog_search_index::CatalogSearchIndex::build_from_pairs([(
+        entry_id,
+        cgs,
+    )]);
+    index.capability_score(entry_id, cap.name.as_str(), query_text)
 }
 
 /// Non-zero when `rel.discovery.qualifier_terms` is empty (always admit) or intent overlaps a term.
@@ -763,8 +766,8 @@ fn entity_hint_matches(hints: &[String], domain: &str) -> bool {
         if domain_lower.contains(&h) || h.contains(&domain_lower) {
             return true;
         }
-        for ht in domain_lexicon::tokens(hint) {
-            for dt in domain_lexicon::tokens(domain) {
+        for ht in crate::catalog_search_index::CatalogSearchIndex::tokenize(hint) {
+            for dt in crate::catalog_search_index::CatalogSearchIndex::tokenize(domain) {
                 if ht == dt {
                     return true;
                 }
@@ -811,6 +814,7 @@ fn cap_passes_filters(query: &CapabilityQuery, entry_id: &str, cap: &CapabilityS
 
 impl CgsDiscovery for InMemoryCgsRegistry {
     fn discover(&self, query: &CapabilityQuery) -> Result<DiscoveryResult, DiscoveryError> {
+        let query_text = collect_query_text(query);
         let query_tokens = collect_query_tokens(query);
         let has_explicit_expand = query
             .expand_entities
@@ -822,11 +826,23 @@ impl CgsDiscovery for InMemoryCgsRegistry {
             || query.entry_ids.is_some()
             || has_explicit_expand;
 
-        if query_tokens.is_empty() && !has_explicit {
+        if query_text.trim().is_empty() && query_tokens.is_empty() && !has_explicit {
             return Err(DiscoveryError::EmptyQuery);
         }
 
         let catalog_route = catalog_routes_for_query(query, &self.entries);
+        let mut score_by_key: HashMap<(String, String), u32> = HashMap::new();
+        if !query_text.trim().is_empty() {
+            let limit = self.search_index.doc_count().max(1);
+            for hit in self.search_index.search(&query_text, limit) {
+                if let Some(route) = &catalog_route {
+                    if !route.contains(&hit.entry_id) {
+                        continue;
+                    }
+                }
+                score_by_key.insert((hit.entry_id, hit.capability_name), hit.score);
+            }
+        }
 
         let mut candidates: Vec<RankedCandidate> = Vec::new();
 
@@ -836,51 +852,53 @@ impl CgsDiscovery for InMemoryCgsRegistry {
                     continue;
                 }
             }
-            let caps: Vec<&CapabilitySchema> = row.cgs.capabilities.values().collect();
-            let entry_candidates: Vec<RankedCandidate> = caps
-                .par_iter()
-                .filter_map(|cap| {
-                    if !cap_passes_filters(query, entry_id, cap) {
-                        return None;
-                    }
-                    let (mut score, mut reasons) = score_capability(&query_tokens, &row.cgs, cap);
-                    if has_explicit
-                        && query
-                            .capability_names
-                            .as_ref()
-                            .is_some_and(|n| n.iter().any(|x| x == cap.name.as_str()))
-                    {
-                        score = score.saturating_add(1000);
-                        reasons.push("filter:capability_name".into());
-                    }
-                    if has_explicit
-                        && query
-                            .pick_capabilities
-                            .as_ref()
-                            .is_some_and(|n| n.iter().any(|x| x == cap.name.as_str()))
-                    {
-                        score = score.saturating_add(500);
-                        reasons.push("filter:pick_capabilities".into());
-                    }
-                    if query_tokens.is_empty() && score == 0 && has_explicit {
-                        reasons.push("filter:explicit_only".into());
-                    }
-                    if score == 0 && !query_tokens.is_empty() {
-                        return None;
-                    }
-                    reasons.sort();
-                    reasons.dedup();
-                    Some(RankedCandidate {
-                        entry_id: entry_id.clone(),
-                        entity: cap.domain.to_string(),
-                        capability_name: cap.name.to_string(),
-                        score,
-                        reason_codes: reasons,
-                        capability_description: capability_description_for_discovery(&row.cgs, cap),
-                    })
-                })
-                .collect();
-            candidates.extend(entry_candidates);
+            for cap in row.cgs.capabilities.values() {
+                if !cap_passes_filters(query, entry_id, cap) {
+                    continue;
+                }
+                let mut score = score_by_key
+                    .get(&(entry_id.clone(), cap.name.to_string()))
+                    .copied()
+                    .unwrap_or(0);
+                let mut reasons = vec!["bm25".to_string()];
+                if has_explicit
+                    && query
+                        .capability_names
+                        .as_ref()
+                        .is_some_and(|n| n.iter().any(|x| x == cap.name.as_str()))
+                {
+                    score = score.saturating_add(1000);
+                    reasons.push("filter:capability_name".into());
+                }
+                if has_explicit
+                    && query
+                        .pick_capabilities
+                        .as_ref()
+                        .is_some_and(|n| n.iter().any(|x| x == cap.name.as_str()))
+                {
+                    score = score.saturating_add(500);
+                    reasons.push("filter:pick_capabilities".into());
+                }
+                if query_text.trim().is_empty() && score == 0 && has_explicit {
+                    reasons.push("filter:explicit_only".into());
+                }
+                if score == 0 && !query_text.trim().is_empty() {
+                    continue;
+                }
+                if score == 0 && query_text.trim().is_empty() && !has_explicit {
+                    continue;
+                }
+                reasons.sort();
+                reasons.dedup();
+                candidates.push(RankedCandidate {
+                    entry_id: entry_id.clone(),
+                    entity: cap.domain.to_string(),
+                    capability_name: cap.name.to_string(),
+                    score,
+                    reason_codes: reasons,
+                    capability_description: capability_description_for_discovery(&row.cgs, cap),
+                });
+            }
         }
 
         candidates.sort_by(|a, b| {
@@ -1022,6 +1040,10 @@ impl CgsDiscovery for InMemoryCgsRegistry {
             entity_summaries,
             catalog_route,
         })
+    }
+
+    fn search_index(&self) -> &crate::catalog_search_index::CatalogSearchIndex {
+        &self.search_index
     }
 }
 
@@ -1194,9 +1216,13 @@ pub fn derive_intent_exposure_surface_batch(
         relation_endpoint_keys.iter().cloned().collect();
 
     let mut query_tokens = HashSet::new();
-    for tok in domain_lexicon::tokens(intent) {
+    for tok in crate::catalog_search_index::CatalogSearchIndex::tokenize(intent) {
         query_tokens.insert(tok);
     }
+    let bm25 = crate::catalog_search_index::CatalogSearchIndex::build_from_pairs([(
+        cid.as_str(),
+        cgs,
+    )]);
 
     let mut seeded_entities = HashSet::new();
     for raw_ent in entity_batch {
@@ -1232,7 +1258,7 @@ pub fn derive_intent_exposure_surface_batch(
             let Some(cap) = cgs.capabilities.get(cap_name) else {
                 continue;
             };
-            let (score, _) = score_capability(&query_tokens, cgs, cap);
+            let score = bm25.capability_score(cid.as_str(), cap.name.as_str(), intent);
             let include = if seeded_entity_cap_always_includes(
                 options.read_first_seeded,
                 cap,
@@ -1337,7 +1363,7 @@ pub fn derive_intent_exposure_surface_batch(
                 ) {
                     continue;
                 }
-                let (score, _) = score_capability(&query_tokens, cgs, cap);
+                let score = bm25.capability_score(cid.as_str(), cap.name.as_str(), intent);
                 if seeded_entities.contains(target) && options.read_first_seeded {
                     continue;
                 }
@@ -1375,10 +1401,10 @@ pub fn relation_target_deferred_mutator_wires(
     } else {
         entry_id.to_string()
     };
-    let mut query_tokens = HashSet::new();
-    for tok in domain_lexicon::tokens(intent) {
-        query_tokens.insert(tok);
-    }
+    let bm25 = crate::catalog_search_index::CatalogSearchIndex::build_from_pairs([(
+        cid.as_str(),
+        cgs,
+    )]);
     let seeded: HashSet<String> = seeded_entities.iter().cloned().collect();
     let mut deferred = BTreeSet::new();
     for raw_ent in seeded_entities {
@@ -1406,7 +1432,7 @@ pub fn relation_target_deferred_mutator_wires(
                 ) {
                     continue;
                 }
-                let (score, _) = score_capability(&query_tokens, cgs, cap);
+                let score = bm25.capability_score(cid.as_str(), cap.name.as_str(), intent);
                 if !mutating_capability_admitted(score, ranked_capability_names, cap.name.as_str())
                 {
                     continue;
@@ -1600,11 +1626,7 @@ mod tests {
             .get("langitem_create")
             .expect("langitem_create");
         let zero_intent = "xyzzy qwerty plugh unrelated";
-        let mut zero_tokens = HashSet::new();
-        for tok in domain_lexicon::tokens(zero_intent) {
-            zero_tokens.insert(tok);
-        }
-        let (zero_score, _) = score_capability(&zero_tokens, &cgs, cap);
+        let zero_score = score_capability_bm25(&cgs, "matrix", cap, zero_intent);
         assert_eq!(
             zero_score, 0,
             "fixture intent must score zero for langitem_create"
@@ -1642,19 +1664,11 @@ mod tests {
             .expect("langitem_create");
         let weak_intent = "langitem browse inventory metadata";
         let strong_intent = "create new langitem title";
-        let mut weak_tokens = HashSet::new();
-        for tok in domain_lexicon::tokens(weak_intent) {
-            weak_tokens.insert(tok);
-        }
-        let mut strong_tokens = HashSet::new();
-        for tok in domain_lexicon::tokens(strong_intent) {
-            strong_tokens.insert(tok);
-        }
-        let (weak_score, _) = score_capability(&weak_tokens, &cgs, cap);
-        let (strong_score, _) = score_capability(&strong_tokens, &cgs, cap);
+        let weak_score = score_capability_bm25(&cgs, "matrix", cap, weak_intent);
+        let strong_score = score_capability_bm25(&cgs, "matrix", cap, strong_intent);
         assert!(
-            weak_score > 0,
-            "fixture intent should score weakly: {weak_score}"
+            strong_score > 0,
+            "strong create intent should BM25-score: {strong_score}"
         );
         assert!(
             strong_score >= weak_score,
@@ -2252,6 +2266,7 @@ mod tests {
                 discovery: Some(DiscoveryEntityHints {
                     names: vec!["conversation thread".into(), "email thread".into()],
                     qualifier_names: vec![],
+                    seed_class: None,
                 }),
             },
         );
@@ -2279,14 +2294,15 @@ mod tests {
         cgs.capabilities
             .insert(CapabilityName::from("thread_list"), cap.clone());
 
-        let mut query_tokens = HashSet::new();
-        for tok in domain_lexicon::tokens("find conversation thread discussion") {
-            query_tokens.insert(tok);
-        }
-        let (score, _) = score_capability(&query_tokens, &cgs, &cap);
+        let score = score_capability_bm25(
+            &cgs,
+            "gmail",
+            &cap,
+            "find conversation thread discussion",
+        );
         assert!(
             score > 0,
-            "discovery target_terms should contribute to lexicon score"
+            "discovery target_terms should contribute to BM25 score"
         );
 
         let desc = capability_description_for_discovery(&cgs, &cap);

@@ -984,12 +984,22 @@ impl PlasmMcpHandler {
                                         .collect()
                                 }
                                 abstain => {
+                                    let discover_preview =
+                                        crate::discovery_routing::discover_preview_markdown(
+                                            self.plasm.catalog.snapshot().as_ref(),
+                                            intent,
+                                            allowed_ids.as_deref(),
+                                        );
                                     let text =
                                         crate::discovery_routing::build_auto_seed_breakout_markdown(
-                                            &abstain, intent,
+                                            &abstain,
+                                            intent,
+                                            discover_preview.as_deref(),
                                         );
                                     let routing = crate::discovery_routing::build_routing_meta(
-                                        &abstain, "semantic",
+                                        &abstain,
+                                        "semantic",
+                                        discover_preview.as_deref(),
                                     );
                                     let mut meta = serde_json::Map::new();
                                     meta.insert(

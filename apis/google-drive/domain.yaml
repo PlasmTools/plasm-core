@@ -291,7 +291,11 @@ entities:
     key_vars:
     - fileId
     - id
-    description: A top-level comment on a file.
+    description: A comment on a Drive file.
+    discovery:
+      names:
+      - drive comment
+      - file comment
     fields:
       id:
         required: true

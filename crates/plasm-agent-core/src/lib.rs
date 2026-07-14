@@ -10,17 +10,6 @@ pub mod appliance_services;
 pub mod auth_framework_host;
 mod auth_framework_postgres_schema;
 pub mod backend_normalize;
-#[cfg(feature = "semantic-auto-seed")]
-#[allow(
-    clippy::empty_line_after_doc_comments,
-    clippy::new_without_default,
-    clippy::map_clone,
-    clippy::unwrap_or_default,
-    clippy::derivable_impls,
-    clippy::upper_case_acronyms
-)]
-#[path = "semantic_auto_seed_baml/baml_client/mod.rs"]
-pub(crate) mod baml_client;
 pub mod binding_slots;
 pub mod binding_store;
 pub mod blocking_compute;
@@ -102,7 +91,6 @@ pub mod oauth_provider_model;
 pub mod oauth_provider_pull;
 pub mod oauth_provider_repository;
 pub mod oauth_runtime_source;
-pub mod release_version;
 mod op_ui_telemetry;
 pub mod operation;
 pub mod operation_error;
@@ -117,6 +105,7 @@ pub mod output;
 pub mod plan_commit_store;
 mod plan_dry_compact;
 mod plan_dry_display;
+pub mod release_version;
 pub(crate) mod tool_model_service;
 pub use plan_dry_display::PlanDryVerdict;
 mod approval_gate;

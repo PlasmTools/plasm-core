@@ -8,6 +8,11 @@ entities:
   SearchResult:
     id_field: url
     description: A ranked web search result from Tavily Search.
+    discovery:
+      names:
+      - web search
+      - search result
+      - search
     fields:
       url:
         required: true
@@ -33,6 +38,11 @@ entities:
   ExtractResult:
     id_field: url
     description: Extracted or crawled page content from Tavily Extract / Crawl.
+    discovery:
+      names:
+      - extract
+      - crawl
+      - page content
     fields:
       url:
         required: true

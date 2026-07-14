@@ -30,6 +30,17 @@ fn workflow_mcp_tools_enabled() -> bool {
         .unwrap_or(false)
 }
 
+pub(crate) fn mcp_discover_tool_enabled() -> bool {
+    #[cfg(feature = "semantic-auto-seed")]
+    {
+        !crate::discovery_seed_select::semantic_auto_seed_enabled()
+    }
+    #[cfg(not(feature = "semantic-auto-seed"))]
+    {
+        true
+    }
+}
+
 pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: bool) -> Vec<Tool> {
     let mut context_props = BTreeMap::new();
     context_props.insert(
@@ -113,46 +124,51 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
             ),
         );
 
-    let mut tools = vec![
-        Tool {
-            name: "plasm_context".into(),
-            title: Some("Open or extend Plasm context".into()),
-            description: Some(PLASM_CONTEXT_TOOL_DESCRIPTION.into()),
-            input_schema: ToolInputSchema::new(
-                vec!["session_mode".into(), "intent".into()],
-                Some(context_props),
-                None,
-            ),
-            annotations: Some(ToolAnnotations {
-                read_only_hint: Some(false),
-                open_world_hint: Some(true),
-                ..Default::default()
-            }),
-            execution: Some(ToolExecution {
-                task_support: Some(ToolExecutionTaskSupport::Forbidden),
-            }),
-            icons: vec![],
-            meta: None,
-            output_schema: None,
-        },
-        Tool {
-            name: "discover_capabilities".into(),
-            title: Some("Browse capabilities (recovery)".into()),
-            description: Some(DISCOVER_TOOL_DESCRIPTION.into()),
-            input_schema: ToolInputSchema::new(vec!["intent".into()], Some(discover_props), None),
-            annotations: Some(ToolAnnotations {
-                read_only_hint: Some(true),
-                open_world_hint: Some(true),
-                ..Default::default()
-            }),
-            execution: Some(ToolExecution {
-                task_support: Some(ToolExecutionTaskSupport::Forbidden),
-            }),
-            icons: vec![],
-            meta: None,
-            output_schema: None,
-        },
-    ];
+    let discover_tool = Tool {
+        name: "discover_capabilities".into(),
+        title: Some("Browse capabilities (recovery)".into()),
+        description: Some(DISCOVER_TOOL_DESCRIPTION.into()),
+        input_schema: ToolInputSchema::new(vec!["intent".into()], Some(discover_props), None),
+        annotations: Some(ToolAnnotations {
+            read_only_hint: Some(true),
+            open_world_hint: Some(true),
+            ..Default::default()
+        }),
+        execution: Some(ToolExecution {
+            task_support: Some(ToolExecutionTaskSupport::Forbidden),
+        }),
+        icons: vec![],
+        meta: None,
+        output_schema: None,
+    };
+
+    let mut tools = vec![Tool {
+        name: "plasm_context".into(),
+        title: Some("Open or extend Plasm context".into()),
+        description: Some(PLASM_CONTEXT_TOOL_DESCRIPTION.into()),
+        input_schema: ToolInputSchema::new(
+            vec!["session_mode".into(), "intent".into()],
+            Some(context_props),
+            None,
+        ),
+        annotations: Some(ToolAnnotations {
+            read_only_hint: Some(false),
+            open_world_hint: Some(true),
+            ..Default::default()
+        }),
+        execution: Some(ToolExecution {
+            task_support: Some(ToolExecutionTaskSupport::Forbidden),
+        }),
+        icons: vec![],
+        meta: None,
+        output_schema: None,
+    }];
+
+    let include_discover_tool = mcp_discover_tool_enabled();
+    if include_discover_tool {
+        tools.push(discover_tool);
+    }
+
     tools.push(Tool {
         name: "plasm".into(),
         title: Some("Plan Plasm (dry-run)".into()),

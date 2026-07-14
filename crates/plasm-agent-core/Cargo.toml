@@ -14,7 +14,7 @@ local_env_bootstrap_secrets = []
 # Forward to plasm-compile for EVM-backed schemas (e.g. apis/evm-erc20).
 evm = ["plasm-compile/evm"]
 # Intent-only plasm_context: semantic seed-set selector (requires OPENROUTER_API_KEY).
-semantic-auto-seed = ["dep:baml", "dep:plasm-eval-common"]
+semantic-auto-seed = ["dep:plasm-semantic-seed"]
 
 [lib]
 name = "plasm_agent_core"
@@ -29,8 +29,7 @@ plasm-runtime = { path = "../plasm-runtime" }
 plasm-trace = { path = "../plasm-trace" }
 plasm-observability-contracts = { path = "../plasm-observability-contracts" }
 plasm-otel = { path = "../plasm-otel" }
-plasm-eval-common = { path = "../plasm-eval-common", optional = true }
-baml = { workspace = true, optional = true }
+plasm-semantic-seed = { path = "../plasm-semantic-seed", optional = true }
 arc-swap = { workspace = true }
 anyhow = { workspace = true }
 dotenvy = { workspace = true }

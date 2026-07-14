@@ -91,13 +91,22 @@ pub mod cgs_federation;
 pub mod cgs_normalize;
 pub mod connect_profile;
 pub mod cross_entity;
+pub mod catalog_search_index;
 pub mod discovery;
 pub mod discovery_auto_seed;
+pub mod discovery_candidate_graph;
+pub mod discovery_controlled_lexicon;
+pub mod discovery_coverage;
+pub mod discovery_intent_class;
 pub mod discovery_intent_signals;
 pub mod discovery_presentation;
 pub mod discovery_seed_baml;
 pub mod discovery_seed_bundle;
+pub mod discovery_seed_catalog;
+pub mod discovery_seed_pipeline;
 pub mod discovery_seed_select;
+pub mod discovery_seed_symbol_map;
+pub mod discovery_seed_witness;
 pub mod domain_lexicon;
 pub mod entity_ref_value;
 pub mod error;
@@ -185,6 +194,7 @@ pub use comp_canonical::plasm_comp_commit_canonical;
 pub use connect_profile::{
     catalog_connect_profile, CatalogAuthCapability, CatalogConnectProfile, CatalogOauthCapability,
 };
+pub use catalog_search_index::{CatalogSearchHit, CatalogSearchIndex};
 pub use discovery::{
     derive_intent_exposure_surface_batch, relation_target_deferred_mutator_wires, Ambiguity,
     CapabilityQuery, CatalogEntryMeta, CgsCatalog, CgsDiscovery, ClosureStats,
@@ -307,7 +317,8 @@ pub use schema::{
     AttachmentMediaKind, AuthScheme, CapabilityKind, CapabilityManifest, CapabilityMapping,
     CapabilitySchema, CapabilityTemplateJson, Cardinality, CgsCapabilityIndex, CrossFieldRule,
     CrossFieldRuleType, DataClassDimension, DataClassName, DataClassSchema, DataClassSeverity,
-    DiscoveryCapabilityHints, DiscoveryEntityHints, DiscoveryRelationHints, EmbedOnMissPolicy,
+    DiscoveryCapabilityHints, DiscoveryEntityHints, DiscoveryRelationHints, DiscoverySeedClass,
+    DiscoverySeedNav, EmbedOnMissPolicy,
     EntityDef, FieldDeriveRule, FieldSchema, FieldValueKind, IdFormat, InputFieldSchema,
     InputFieldWire, InputSchema, InputType, InputValidation, InputVariantSchema, JsonPathSegment,
     NamedValueSchema, OauthDefaultScopeSet, OauthExtension, OauthRequirements, OauthScopeEntry,

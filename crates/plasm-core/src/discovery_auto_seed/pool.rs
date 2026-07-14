@@ -107,6 +107,10 @@ pub(crate) fn merge_required_entity_bundles(
 }
 
 /// Diversify entity bundles: best per catalog first, then fill by score with per-catalog cap.
+///
+/// Afterwards, re-admit discover-scored entities that lost the cut (see
+/// [`readmit_scored_entity_drops`]) so ready-case golds survive sibling noise without raising
+/// the global schema dump size.
 pub fn diversify_entity_bundles(
     mut bundles: Vec<EntityCandidateBundle>,
     config: EntityCandidateConfig,
@@ -145,6 +149,80 @@ pub fn diversify_entity_bundles(
         }
         *count += 1;
         out.push(b.clone());
+    }
+    readmit_scored_entity_drops(out, &bundles, config)
+}
+
+/// After diversify, re-admit discover-scored entity bundles dropped by per-catalog / global caps.
+///
+/// Injected `max_lexical_score == 0` neighbors stay subject to the hard cut; only bundles with a
+/// positive discover/group score are reserved so ready-case golds survive sibling PR/Thread noise
+/// without restoring a schema dump.
+pub(crate) fn readmit_scored_entity_drops(
+    diversified: Vec<EntityCandidateBundle>,
+    pre_diversify: &[EntityCandidateBundle],
+    config: EntityCandidateConfig,
+) -> Vec<EntityCandidateBundle> {
+    /// Extra per-catalog slots beyond [`EntityCandidateConfig::max_per_catalog`] for scored survivors.
+    const EXTRA_SCORED_PER_CATALOG: usize = 4;
+
+    let in_pool: HashSet<String> = diversified
+        .iter()
+        .map(|b| b.candidate_id.clone())
+        .collect();
+    let mut drops: Vec<EntityCandidateBundle> = pre_diversify
+        .iter()
+        .filter(|b| b.max_lexical_score > 0 && !in_pool.contains(&b.candidate_id))
+        .cloned()
+        .collect();
+    drops.sort_by(|a, b| {
+        b.max_lexical_score
+            .cmp(&a.max_lexical_score)
+            .then_with(|| a.entry_id.cmp(&b.entry_id))
+            .then_with(|| a.entity.cmp(&b.entity))
+    });
+
+    let mut out = diversified;
+    let mut per_catalog: HashMap<String, usize> = HashMap::new();
+    for b in &out {
+        *per_catalog.entry(b.entry_id.clone()).or_insert(0) += 1;
+    }
+    let catalog_cap = config
+        .max_per_catalog
+        .saturating_add(EXTRA_SCORED_PER_CATALOG);
+
+    for bundle in drops {
+        if out.iter().any(|b| b.candidate_id == bundle.candidate_id) {
+            continue;
+        }
+        let count = per_catalog.get(&bundle.entry_id).copied().unwrap_or(0);
+        if count >= catalog_cap {
+            continue;
+        }
+        if out.len() >= config.max_entities {
+            let evict_idx = out
+                .iter()
+                .enumerate()
+                .filter(|(_, b)| b.max_lexical_score == 0)
+                .min_by_key(|(_, b)| b.entity.as_str())
+                .map(|(idx, _)| idx)
+                .or_else(|| {
+                    out.iter()
+                        .enumerate()
+                        .filter(|(_, b)| b.max_lexical_score < bundle.max_lexical_score)
+                        .min_by_key(|(_, b)| (b.max_lexical_score, b.entity.as_str()))
+                        .map(|(idx, _)| idx)
+                });
+            let Some(idx) = evict_idx else {
+                continue;
+            };
+            let removed = out.remove(idx);
+            if let Some(c) = per_catalog.get_mut(&removed.entry_id) {
+                *c = c.saturating_sub(1);
+            }
+        }
+        *per_catalog.entry(bundle.entry_id.clone()).or_insert(0) += 1;
+        out.push(bundle);
     }
     out
 }

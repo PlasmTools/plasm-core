@@ -1,0 +1,188 @@
+version: 1
+http_backend: https://example.test
+entities:
+  Workspace:
+    id_field: id
+    key_vars:
+    - owner
+    - name
+    description: Project workspace anchoring tickets, branches, merge proposals, and notes.
+    fields:
+      id:
+        required: true
+        value_ref: nv_wire_str_short
+      owner:
+        required: true
+        value_ref: nv_wire_str_short
+      name:
+        required: true
+        value_ref: nv_wire_str_short
+    relations:
+      tickets:
+        target: Ticket
+        cardinality: many
+        discovery:
+          qualifier_terms:
+          - ticket
+          - bug
+          - issue
+      branches:
+        target: Branch
+        cardinality: many
+        discovery:
+          qualifier_terms:
+          - branch
+          - feature branch
+      merge_proposals:
+        target: MergeProposal
+        cardinality: many
+        discovery:
+          qualifier_terms:
+          - merge proposal
+          - pull request
+          - pr
+    discovery:
+      names:
+      - workspace
+      - repository
+      - repo
+      - monorepo
+  Ticket:
+    id_field: id
+    description: Tracker item for bugs and planned work.
+    fields:
+      id:
+        required: true
+        value_ref: nv_wire_str_short
+      title:
+        required: true
+        value_ref: nv_wire_str_short
+    relations:
+      notes:
+        target: TicketNote
+        cardinality: many
+        discovery:
+          qualifier_terms:
+          - note
+          - comment
+    discovery:
+      names:
+      - ticket
+      - bug
+      - issue
+  MergeProposal:
+    id_field: id
+    description: Code review proposal merging branch changes.
+    fields:
+      id:
+        required: true
+        value_ref: nv_wire_str_short
+    discovery:
+      names:
+      - merge proposal
+      - pull request
+      - pr
+  Branch:
+    id_field: id
+    description: Named line of development for commits.
+    fields:
+      id:
+        required: true
+        value_ref: nv_wire_str_short
+    discovery:
+      names:
+      - branch
+      - feature branch
+  TicketNote:
+    id_field: id
+    description: Comment on a ticket.
+    fields:
+      id:
+        required: true
+        value_ref: nv_wire_str_short
+    discovery:
+      names:
+      - note
+      - comment
+      - triage note
+  MailThread:
+    id_field: id
+    description: A conversation thread of related mail items.
+    discovery:
+      names:
+      - thread
+      - conversation thread
+    fields:
+      id:
+        required: true
+        value_ref: nv_wire_str_short
+    relations:
+      messages:
+        target: MailMessage
+        cardinality: many
+        discovery:
+          qualifier_terms:
+          - message
+          - email
+  MailMessage:
+    id_field: id
+    description: A single mail item in a thread.
+    discovery:
+      names:
+      - message
+      - email
+      - unread message
+    fields:
+      id:
+        required: true
+        value_ref: nv_wire_str_short
+    relations: {}
+capabilities:
+  workspace_branch_create:
+    entity: Workspace
+    kind: Action
+    description: Create a branch in the workspace.
+    discovery:
+      operation_terms:
+      - cut branch
+      - create branch
+      - feature branch
+  workspace_content_create:
+    entity: Workspace
+    kind: Create
+    description: Commit file content to the workspace.
+    discovery:
+      operation_terms:
+      - commit
+      - readme
+      - file update
+  ticket_create:
+    entity: Ticket
+    kind: Create
+    description: Open a new ticket.
+    discovery:
+      operation_terms:
+      - open ticket
+      - open bug
+      - create issue
+  merge_proposal_create:
+    entity: MergeProposal
+    kind: Create
+    description: Open a merge proposal.
+    discovery:
+      operation_terms:
+      - open merge proposal
+      - open pull request
+      - open pr
+  ticket_note_create:
+    entity: TicketNote
+    kind: Create
+    description: Leave a note on a ticket.
+    discovery:
+      operation_terms:
+      - leave note
+      - issue comment
+      - triage note
+values:
+  nv_wire_str_short:
+    type: string

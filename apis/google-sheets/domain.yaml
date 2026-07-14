@@ -10,8 +10,12 @@ data_classes:
 entities:
   Spreadsheet:
     id_field: spreadsheetId
-    description: A Google Sheets spreadsheet file (workbook). The Sheets v4 API does not list spreadsheets; obtain spreadsheet.
-      IDs via Drive or shared links.
+    description: A Google Sheets spreadsheet (workbook).
+    discovery:
+      names:
+      - spreadsheet
+      - workbook
+      - google sheet
     primary_read: spreadsheet_get
     fields:
       spreadsheetId:
@@ -83,8 +87,12 @@ entities:
     key_vars:
     - spreadsheetId
     - range
-    description: Cell values for a spreadsheet range (for example `Sheet1!A1:C10` or `R1C1:R10C3`).
+    description: Read or replace cell values for an A1 range — not the append-rows mutator for a workbook.
     primary_read: value_range_get
+    discovery:
+      names:
+      - value range
+      - cell range
     fields:
       spreadsheetId:
         required: true
@@ -244,6 +252,13 @@ capabilities:
     kind: action
     entity: Spreadsheet
     description: Append rows after the logical table found within the specified range.
+    discovery:
+      operation_terms:
+      - append
+      - append rows
+      target_terms:
+      - workbook
+      - spreadsheet
     parameters:
     - name: range
       value_ref: nv_value_range_append_range

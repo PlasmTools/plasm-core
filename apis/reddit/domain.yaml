@@ -49,6 +49,7 @@ entities:
       - trending discussion
       - subreddit
       - community discussion
+      seed_class: ambient
     fields:
       display_name:
         required: true
@@ -97,6 +98,7 @@ entities:
       - trending discussion
       - hot post
       - discussion thread
+      seed_class: primary
     fields:
       name:
         required: true
@@ -168,6 +170,8 @@ entities:
         description: Top-level comments returned with the post’s comment thread listing.
         target: Comment
         cardinality: many
+        discovery:
+          seed_nav: attach
         materialize:
           kind: query_scoped_bindings
           capability: comment_thread_query
@@ -178,6 +182,8 @@ entities:
     id_field: name
     primary_read: comment_get
     description: A comment on a post, identified by fullname (t1_…).
+    discovery:
+      seed_class: dependent
     fields:
       name:
         required: true

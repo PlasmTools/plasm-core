@@ -1,2 +1,2 @@
-**Not the default open step.** On auto-seed hosts, **`plasm_context`** `session_mode: "new"` + **`intent` only** first.
-**Recovery only:** **`hard_miss`**/**`clarify`**, or browse before explicit **`seeds`**. No program symbols — pick `api`/`entity`, then **`plasm_context`** **`seeds`** → **`plasm.program`**.
+**Not the default open step.** On auto-seed hosts, **`plasm_context`** `session_mode: "new"` + **`intent` only** first; breakout embeds browse rows when auto-seed abstains.
+**Recovery on auto-seed-off hosts only:** browse before explicit **`seeds`**. No program symbols — pick `api`/`entity`, then **`plasm_context`** **`seeds`** → **`plasm.program`**.

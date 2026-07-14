@@ -17,6 +17,12 @@ entities:
   MailFolder:
     id_field: id
     description: A mail folder in the signed-in mailbox.
+    discovery:
+      names:
+      - folder
+      - mail folder
+      - outlook folder
+      seed_class: ambient
     fields:
       id:
         required: true
@@ -54,6 +60,8 @@ entities:
       messages:
         target: Message
         cardinality: many
+        discovery:
+          seed_nav: locate
         materialize:
           kind: query_scoped_bindings
           capability: message_folder_query
@@ -61,12 +69,19 @@ entities:
             mailFolderId: id
   Message:
     id_field: id
-    description: A message in a mail conversation thread — grouped with related replies via conversationId.
+    description: An Outlook mail item — list threads/conversations via conversation grouping on messages.
     discovery:
       names:
-      - conversation thread
+      - message
+      - email
+      - unread message
+      - outlook message
+      - outlook mail
       - mail thread
-      - email thread
+      - outlook thread
+      - outlook threads
+      - conversation
+      seed_class: primary
     fields:
       id:
         required: true
@@ -198,6 +213,10 @@ entities:
   Calendar:
     id_field: id
     description: A calendar in the signed-in user's mailbox.
+    discovery:
+      names:
+      - calendar
+      - outlook calendar
     fields:
       id:
         required: true
@@ -234,6 +253,13 @@ entities:
   Event:
     id_field: id
     description: A calendar event in the signed-in user's schedule.
+    discovery:
+      names:
+      - event
+      - calendar event
+      - outlook event
+      - meeting
+      - appointment
     fields:
       id:
         required: true
@@ -319,13 +345,12 @@ capabilities:
   message_query:
     kind: query
     entity: Message
-    description: Find mail conversation threads and messages — where participants discussed rollout dates, agreements, or open follow-ups.
+    description: Find mail conversation threads and messages.
     discovery:
       target_terms:
       - conversation thread
       - thread
-      - discussion
-      - agreement
+      - message
     provides:
     - id
     - subject
@@ -548,6 +573,14 @@ capabilities:
     kind: query
     entity: Event
     description: List events across all calendars in the default mailbox view.
+    discovery:
+      operation_terms:
+      - list events
+      - list calendar events
+      target_terms:
+      - event
+      - calendar event
+      - meeting
     provides:
     - id
     - subject

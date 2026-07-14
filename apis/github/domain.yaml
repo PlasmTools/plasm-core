@@ -19,7 +19,14 @@ entities:
     key_vars:
     - owner
     - repo
-    description: A project repository that anchors code, issues, pull requests, workflows, releases, and labels.
+    description: A GitHub repository (owner/repo namespace for source and project settings).
+    discovery:
+      names:
+      - repository
+      - repo
+      - monorepo
+      - github repo
+      seed_class: primary
     fields:
       id:
         required: true
@@ -111,6 +118,10 @@ entities:
       branches:
         target: Branch
         cardinality: many
+        discovery:
+          qualifier_terms:
+          - branch
+          - feature branch
         materialize:
           kind: query_scoped_bindings
           capability: branch_query
@@ -131,6 +142,13 @@ entities:
     - repo
     - number
     description: A tracker item for planned work, defects, questions, and triage decisions.
+    discovery:
+      names:
+      - issue
+      - bug
+      - ticket
+      - github issue
+      seed_class: primary
     fields:
       repository_url:
         required: false
@@ -241,6 +259,11 @@ entities:
       labels:
         target: Label
         cardinality: many
+        discovery:
+          seed_nav: attach
+          qualifier_terms:
+          - label
+          - labels
         materialize:
           kind: prefer_from_parent_get
           on_embed_miss: fallback_scoped
@@ -257,6 +280,12 @@ entities:
       comments:
         target: IssueComment
         cardinality: many
+        discovery:
+          seed_nav: attach
+          qualifier_terms:
+          - comment
+          - issue comment
+          - triage note
         materialize:
           kind: query_scoped_bindings
           capability: issue_comment_query
@@ -281,6 +310,11 @@ entities:
     - repo
     - number
     description: A proposed code change with review, diff, merge, and branch state.
+    discovery:
+      names:
+      - pull request
+      - pr
+      seed_class: primary
     fields:
       repository_url:
         required: false
@@ -388,6 +422,8 @@ entities:
       reviews:
         target: PullRequestReview
         cardinality: many
+        discovery:
+          seed_nav: attach
         materialize:
           kind: query_scoped_bindings
           capability: pr_review_query
@@ -552,6 +588,10 @@ entities:
     - repo
     - name
     description: A named line of development pointing at a commit.
+    discovery:
+      names:
+      - branch
+      - feature branch
     fields:
       owner:
         required: true
@@ -593,7 +633,13 @@ entities:
     - pull_number
     - id
     id_field: id
-    description: A review on a pull request.
+    description: A completed review on an existing pull request (approve, comment, or request changes).
+    discovery:
+      names:
+      - pull request review
+      - pr review
+      - code review
+      seed_class: dependent
     fields:
       owner:
         required: false
@@ -711,6 +757,11 @@ entities:
     - name
     id_field: name
     description: Label for issues and PRs.
+    discovery:
+      names:
+      - label
+      - labels
+      seed_class: dependent
     fields:
       owner:
         required: true
@@ -831,6 +882,12 @@ entities:
   IssueComment:
     id_field: id
     description: A comment on a GitHub issue or pull request.
+    discovery:
+      names:
+      - comment
+      - issue comment
+      - triage note
+      seed_class: dependent
     fields:
       id:
         required: true
@@ -1735,6 +1792,15 @@ capabilities:
     kind: query
     entity: Issue
     description: Find issue-tracker items in a repository; pull request surfaces cover code-review work.
+    discovery:
+      operation_terms:
+      - list issues
+      - open issues
+      - search issues
+      target_terms:
+      - issue
+      - bug
+      - ticket
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
@@ -1786,6 +1852,14 @@ capabilities:
     kind: search
     entity: Issue
     description: Search issue and pull request conversations across GitHub.
+    discovery:
+      operation_terms:
+      - search issues
+      - find issues
+      target_terms:
+      - issue
+      - bug
+      - ticket
     parameters:
     - name: q
       value_ref: nv_wire_str_short
@@ -2945,6 +3019,13 @@ capabilities:
     kind: query
     entity: IssueComment
     description: Read the discussion comments under one issue or pull request thread.
+    discovery:
+      operation_terms:
+      - list comments
+      - read comments
+      target_terms:
+      - comment
+      - issue comment
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: owner
@@ -3004,6 +3085,14 @@ capabilities:
     kind: create
     entity: Issue
     description: Create an issue with optional initial labels.
+    discovery:
+      operation_terms:
+      - open issue
+      - open bug
+      - create issue
+      target_terms:
+      - issue
+      - bug
     provides:
     - id
     - owner
@@ -3195,6 +3284,14 @@ capabilities:
     kind: create
     entity: IssueComment
     description: Add a timeline comment to an issue or pull request thread.
+    discovery:
+      operation_terms:
+      - leave comment
+      - issue comment
+      - post comment
+      target_terms:
+      - comment
+      - note
     provides:
     - id
     - body
@@ -3310,6 +3407,17 @@ capabilities:
     kind: create
     entity: PullRequest
     description: Create a pull request from a head branch into a base branch.
+    discovery:
+      operation_terms:
+      - open pull request
+      - open pr
+      - create pull request
+      - request reviewers
+      - assign reviewers
+      target_terms:
+      - pull request
+      - pr
+      - reviewers
     provides:
     - id
     - owner
@@ -3358,6 +3466,12 @@ capabilities:
     kind: create
     entity: Label
     description: Create a label in a repository.
+    discovery:
+      operation_terms:
+      - add label
+      - create label
+      target_terms:
+      - label
     provides:
     - name
     - owner
@@ -3412,6 +3526,14 @@ capabilities:
     kind: action
     entity: Repository
     description: Create a new file at a repository path on the given branch (no blob sha).
+    discovery:
+      operation_terms:
+      - create file
+      - add file
+      - commit file
+      target_terms:
+      - file
+      - content
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
@@ -3467,6 +3589,13 @@ capabilities:
     kind: action
     entity: Repository
     description: Create a branch ref in a repository from an existing commit SHA.
+    discovery:
+      operation_terms:
+      - cut branch
+      - create branch
+      - open branch
+      target_terms:
+      - branch
     identity_key: [repository, name]
     scope_aggregate_key_policy: omit_when_redundant
     parameters:

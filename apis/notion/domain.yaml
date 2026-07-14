@@ -182,6 +182,11 @@ entities:
   Comment:
     id_field: id
     description: A comment on a Notion page or block, belonging to a discussion thread.
+    discovery:
+      names:
+      - comment
+      - page comment
+      - notion comment
     fields:
       id:
         required: true
@@ -293,6 +298,12 @@ capabilities:
     description: List unresolved comments on a page, sorted by creation time.
     kind: query
     entity: Comment
+    discovery:
+      operation_terms:
+      - list comments
+      target_terms:
+      - comment
+      - page comment
     parameters:
     - name: block_id
       value_ref: nv_comment_query_block_id
@@ -306,6 +317,13 @@ capabilities:
     description: Create a new comment on a page or within an existing discussion thread.
     kind: create
     entity: Comment
+    discovery:
+      operation_terms:
+      - post comment
+      - add comment
+      target_terms:
+      - comment
+      - page comment
   page_search:
     description: Search Notion pages (and database rows) shared with this integration by title.
     kind: search

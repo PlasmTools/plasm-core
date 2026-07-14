@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [features]
 default = []
-llm-rerank = ["dep:baml"]
+llm-rerank = ["dep:baml", "dep:plasm-semantic-seed"]
 
 [dependencies]
 plasm-core = { path = "../plasm-core" }
@@ -21,4 +21,6 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
+indexmap = { workspace = true }
+plasm-semantic-seed = { path = "../plasm-semantic-seed", optional = true }
 baml = { workspace = true, optional = true }

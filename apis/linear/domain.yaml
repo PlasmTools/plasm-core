@@ -90,6 +90,8 @@ entities:
   Label:
     id_field: name
     description: An issue label.
+    discovery:
+      seed_class: dependent
     fields:
       id:
         required: true
@@ -103,7 +105,11 @@ entities:
     relations: {}
   Comment:
     id_field: id
-    description: A comment on an issue.
+    description: A comment on a Linear issue.
+    discovery:
+      names:
+      - comment
+      seed_class: dependent
     fields:
       id:
         required: true
@@ -120,6 +126,11 @@ entities:
     id_field: identifier
     primary_read: issue_get
     description: A Linear work item (task, bug, or feature).
+    discovery:
+      names:
+      - issue
+      - linear issue
+      seed_class: primary
     fields:
       id:
         required: true
@@ -167,6 +178,8 @@ entities:
       labels:
         target: Label
         cardinality: many
+        discovery:
+          seed_nav: attach
         materialize:
           kind: from_parent_get
           path:
@@ -188,6 +201,8 @@ entities:
       comments:
         target: Comment
         cardinality: many
+        discovery:
+          seed_nav: attach
         materialize:
           kind: query_scoped
           capability: comment_by_issue_query
@@ -843,6 +858,11 @@ capabilities:
     kind: create
     entity: Comment
     description: Add a comment on an issue.
+    discovery:
+      operation_terms:
+      - post comment
+      - leave comment
+      - summary comment
     provides:
     - id
     - body

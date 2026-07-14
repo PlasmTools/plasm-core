@@ -45,7 +45,15 @@ entities:
             teamId: id
   Channel:
     id_field: id
-    description: A conversation channel within a team.
+    description: Conversation container for channel history within a team.
+    discovery:
+      names:
+      - channel
+      - teams channel
+      - team channel
+      - channel history
+      - message history
+      seed_class: primary
     fields:
       id:
         required: true
@@ -75,6 +83,8 @@ entities:
       messages:
         target: ChannelMessage
         cardinality: many
+        discovery:
+          seed_nav: own
         materialize:
           kind: query_scoped_bindings
           capability: channel_message_query
@@ -106,6 +116,8 @@ entities:
       messages:
         target: ChatMessage
         cardinality: many
+        discovery:
+          seed_nav: own
         materialize:
           kind: query_scoped_bindings
           capability: chat_message_query
@@ -113,7 +125,7 @@ entities:
             chatId: id
   ChatMessage:
     id_field: id
-    description: A Teams chat message in a conversation thread — discussions, agreements, and rollout decisions.
+    description: A Teams chat message in a conversation.
     discovery:
       names:
       - conversation thread
@@ -159,12 +171,12 @@ entities:
     relations: {}
   ChannelMessage:
     id_field: id
-    description: A Teams channel message in a team discussion thread — rollout decisions and agreements in channel context.
+    description: A Teams channel message for get, post, or update.
     discovery:
       names:
-      - channel thread
-      - team discussion
-      - conversation thread
+      - message
+      - team message
+      seed_class: primary
     fields:
       id:
         required: true
@@ -285,15 +297,13 @@ capabilities:
     - createdDateTime
     - lastUpdatedDateTime
   chat_message_query:
-    description: List Teams chat messages in a conversation — find threads where people agreed on rollout dates or follow-ups.
+    description: List Teams chat messages in a conversation.
     kind: query
     entity: ChatMessage
     discovery:
       target_terms:
-      - conversation thread
-      - team discussion
-      - agreement
-      - rollout
+      - chat message
+      - conversation
     provides:
     - id
     - bodyContent
@@ -331,15 +341,12 @@ capabilities:
       required: true
       role: scope
   channel_message_query:
-    description: List Teams channel messages in a discussion thread — find rollout agreements and missing follow-ups in channel context.
+    description: Query ChannelMessage rows scoped by channel id (materialize for Channel.messages).
     kind: query
     entity: ChannelMessage
     discovery:
       target_terms:
-      - channel thread
-      - team discussion
-      - agreement
-      - rollout
+      - team message
     provides:
     - id
     - bodyContent
