@@ -216,11 +216,7 @@ pub fn build_witness_corpus(
                 }
                 let summary = format!(
                     "relation {}.{} --{}→ {}.{}",
-                    bundle.entry_id,
-                    bundle.entity,
-                    edge.wire,
-                    bundle.entry_id,
-                    edge.target_entity
+                    bundle.entry_id, bundle.entity, edge.wire, bundle.entry_id, edge.target_entity
                 );
                 let hop_nav = seed_nav_stamp(
                     catalog_context,
@@ -533,7 +529,7 @@ fn parse_relation_hint_edges(hints: &str) -> Vec<(String, String)> {
         return Vec::new();
     }
     hints
-        .split(|c| c == ';' || c == ',')
+        .split([';', ','])
         .filter_map(|part| {
             let part = part.trim();
             let (wire, target) = part.split_once('→').or_else(|| part.split_once("->"))?;
