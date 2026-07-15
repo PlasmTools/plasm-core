@@ -16,6 +16,7 @@ use crate::discovery_seed_witness::{
 };
 
 /// Apply graph-aware seed invariants to a coverage ready selection.
+#[allow(clippy::too_many_arguments)]
 pub fn postprocess_coverage_selection(
     mut raw: SeedSelectionRaw,
     bundles: &[EntityCandidateBundle],
@@ -52,8 +53,7 @@ pub fn postprocess_coverage_selection(
             raw.selected_ids.join("+")
         );
     }
-    let Some(corpus) =
-        build_witness_corpus(bundles, &[], candidate_graph, Some(catalog_context))
+    let Some(corpus) = build_witness_corpus(bundles, &[], candidate_graph, Some(catalog_context))
     else {
         return raw;
     };

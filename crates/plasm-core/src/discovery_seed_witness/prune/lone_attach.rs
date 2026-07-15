@@ -47,7 +47,7 @@ pub(super) fn prefer_lone_attach_mutate_over_parents(
 
     let mut drop_idxs: HashSet<usize> = HashSet::new();
 
-    for (_entry_id, idxs) in &by_catalog {
+    for idxs in by_catalog.values() {
         let mut leaf_idxs: Vec<usize> = Vec::new();
         let mut leaf_entities: HashSet<&str> = HashSet::new();
         let mut other_idxs: Vec<usize> = Vec::new();
@@ -55,10 +55,7 @@ pub(super) fn prefer_lone_attach_mutate_over_parents(
             let Some(w) = corpus.witnesses.get(idx) else {
                 continue;
             };
-            let WitnessKind::DirectCapability {
-                entity, kind, ..
-            } = &w.kind
-            else {
+            let WitnessKind::DirectCapability { entity, kind, .. } = &w.kind else {
                 other_idxs.push(idx);
                 continue;
             };
@@ -92,9 +89,7 @@ pub(super) fn prefer_lone_attach_mutate_over_parents(
             .copied()
             .filter(|&idx| {
                 corpus.witnesses.get(idx).is_some_and(|w| match &w.kind {
-                    WitnessKind::DirectCapability {
-                        entity, kind, ..
-                    } => {
+                    WitnessKind::DirectCapability { entity, kind, .. } => {
                         if leaf_entities.contains(entity.as_str()) {
                             return false;
                         }
@@ -110,9 +105,7 @@ pub(super) fn prefer_lone_attach_mutate_over_parents(
         }
         let only_parents_or_leaf_sibs = other_idxs.iter().all(|&idx| {
             corpus.witnesses.get(idx).is_some_and(|w| match &w.kind {
-                WitnessKind::DirectCapability {
-                    entity, kind, ..
-                } => {
+                WitnessKind::DirectCapability { entity, kind, .. } => {
                     leaf_entities.contains(entity.as_str())
                         || (parents.contains(entity.as_str())
                             && (CapBucket::is_read_kind(kind)

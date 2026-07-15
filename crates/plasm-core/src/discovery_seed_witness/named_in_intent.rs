@@ -8,12 +8,10 @@ use super::corpus::RequirementWitness;
 pub(crate) fn witness_named_in_intent(intent: &str, witness: &RequirementWitness) -> bool {
     for alias in witness
         .aliases
-        .split(|c: char| c == ',' || c == ';' || c == '|' || c == '\n')
+        .split([',', ';', '|', '\n'])
     {
         let a = alias.trim();
-        if a.len() >= 3
-            && crate::catalog_search_index::phrase_tokens_covered_by_intent(a, intent)
-        {
+        if a.len() >= 3 && crate::catalog_search_index::phrase_tokens_covered_by_intent(a, intent) {
             return true;
         }
     }

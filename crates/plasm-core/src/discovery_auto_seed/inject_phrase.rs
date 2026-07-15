@@ -36,7 +36,8 @@ pub(crate) fn inject_phrase_named_leaves(
         .iter()
         .map(|s| s.as_str())
         .collect();
-    let mut catalog_ids: HashSet<String> = catalog_context.branded_entry_ids().into_iter().collect();
+    let mut catalog_ids: HashSet<String> =
+        catalog_context.branded_entry_ids().into_iter().collect();
     for entry_id in discovery.catalog_route.as_slice() {
         catalog_ids.insert(entry_id.clone());
     }
@@ -84,7 +85,7 @@ pub(crate) fn inject_phrase_named_leaves(
         scored.truncate(MAX_PHRASE_LEAVES_PER_CATALOG);
         for (priority, entity) in scored {
             let key = (entry_id.clone(), entity.clone());
-            let leaf_score = (priority as u32).max(1).min(64);
+            let leaf_score = (priority as u32).clamp(1, 64);
             if let Some(existing) = bundles.get_mut(&key) {
                 existing.max_lexical_score = existing.max_lexical_score.max(leaf_score);
                 reserved.insert(key, existing.clone());

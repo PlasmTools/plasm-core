@@ -123,7 +123,10 @@ pub(super) fn drop_redundant_attach(corpus: &WitnessCorpus, selected: &[usize]) 
         .collect()
 }
 
-pub(super) fn drop_redundant_locate_ambient(corpus: &WitnessCorpus, selected: &[usize]) -> Vec<usize> {
+pub(super) fn drop_redundant_locate_ambient(
+    corpus: &WitnessCorpus,
+    selected: &[usize],
+) -> Vec<usize> {
     let cover = coverage_index(corpus, selected);
     let primary_by_catalog: HashSet<&str> = selected
         .iter()
@@ -171,7 +174,10 @@ pub(super) fn drop_redundant_locate_ambient(corpus: &WitnessCorpus, selected: &[
         .collect()
 }
 
-pub(super) fn promote_orphan_attach_reads(corpus: &WitnessCorpus, selected: &[usize]) -> Vec<usize> {
+pub(super) fn promote_orphan_attach_reads(
+    corpus: &WitnessCorpus,
+    selected: &[usize],
+) -> Vec<usize> {
     // Group DirectCapabilities by catalog. Promote orphans *per catalog* so a
     // primary in another federated catalog does not veto attach→parent re-seat.
     let mut by_catalog: HashMap<&str, Vec<usize>> = HashMap::new();
@@ -240,9 +246,10 @@ pub(super) fn promote_orphan_attach_reads(corpus: &WitnessCorpus, selected: &[us
         let parent_entity = if shared.len() == 1 {
             shared.into_iter().next()
         } else {
-            shared.iter().copied().find(|parent| {
-                corpus.roles.entity_is_primary(entry_id, parent)
-            })
+            shared
+                .iter()
+                .copied()
+                .find(|parent| corpus.roles.entity_is_primary(entry_id, parent))
         };
         let Some(parent_entity) = parent_entity else {
             continue;
@@ -279,7 +286,10 @@ pub(super) fn promote_orphan_attach_reads(corpus: &WitnessCorpus, selected: &[us
 /// When an own-end **target** Query/Get is selected without its source, promote the
 /// in-pool source read. Falls back to a unique `pool` parent when `seed_nav=own` even
 /// if `own_pairs` is empty (same-catalog source not stamped). Search/mutators stay.
-pub(super) fn promote_orphan_own_target_reads(corpus: &WitnessCorpus, selected: &[usize]) -> Vec<usize> {
+pub(super) fn promote_orphan_own_target_reads(
+    corpus: &WitnessCorpus,
+    selected: &[usize],
+) -> Vec<usize> {
     let direct_entities: HashSet<(&str, &str)> = selected
         .iter()
         .filter_map(|&idx| corpus.witnesses.get(idx))
@@ -403,7 +413,8 @@ pub(super) fn demote_lone_ambient_to_own_primary(
     for (entry_id, idxs) in &by_catalog {
         let has_non_ambient = idxs.iter().any(|&idx| {
             corpus.witnesses.get(idx).is_some_and(|w| {
-                matches!(&w.kind, WitnessKind::DirectCapability { .. }) && !w.seed_class.is_ambient()
+                matches!(&w.kind, WitnessKind::DirectCapability { .. })
+                    && !w.seed_class.is_ambient()
             })
         });
         if has_non_ambient {
@@ -485,17 +496,14 @@ pub(super) fn demote_batch_attach_mutations_beside_primary(
 
     let mut drop_idxs: HashSet<usize> = HashSet::new();
 
-    for (_entry_id, idxs) in &by_catalog {
+    for idxs in by_catalog.values() {
         let has_primary = idxs.iter().any(|&idx| {
-            corpus
-                .witnesses
-                .get(idx)
-                .is_some_and(|w| {
-                    matches!(&w.kind, WitnessKind::DirectCapability { .. })
-                        && w.seed_class.is_primary()
-                        && !w.seed_nav.is_attach()
-                        && !w.seed_class.is_dependent()
-                })
+            corpus.witnesses.get(idx).is_some_and(|w| {
+                matches!(&w.kind, WitnessKind::DirectCapability { .. })
+                    && w.seed_class.is_primary()
+                    && !w.seed_nav.is_attach()
+                    && !w.seed_class.is_dependent()
+            })
         });
         if !has_primary {
             continue;
@@ -552,7 +560,10 @@ pub(super) fn demote_batch_attach_mutations_beside_primary(
 /// When ≥2 attach/dependent Create/Update witnesses in one catalog share exactly one
 /// typed parent, promote that parent and drop the leaves. Single-leaf localized Create
 /// and Action leaves remain untouched.
-pub(super) fn promote_shared_attach_mutations(corpus: &WitnessCorpus, selected: &[usize]) -> Vec<usize> {
+pub(super) fn promote_shared_attach_mutations(
+    corpus: &WitnessCorpus,
+    selected: &[usize],
+) -> Vec<usize> {
     let mut by_catalog: HashMap<&str, Vec<usize>> = HashMap::new();
     for &idx in selected {
         let Some(w) = corpus.witnesses.get(idx) else {
@@ -674,8 +685,6 @@ fn best_read_direct_capability(
     best.map(|(_, idx)| idx)
 }
 
-
-
 fn peer_parents_via_child_edges<'a>(
     corpus: &'a WitnessCorpus,
     entry_id: &str,
@@ -694,21 +703,12 @@ fn peer_parents_via_child_edges<'a>(
         if e != entry_id || peer == entity {
             continue;
         }
-        if w.pool
-            .child_targets()
-            .any(|child| child == entity)
-        {
+        if w.pool.child_targets().any(|child| child == entity) {
             parents.insert(peer.as_str());
         }
     }
     parents
 }
-
-
-
-
-
-
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum CoverKind {
@@ -748,4 +748,3 @@ fn coverage_index<'a>(
     }
     cover
 }
-
