@@ -107,8 +107,8 @@ fn plasm_plan_publication_renders_named_output_owner() {
 
 #[test]
 fn live_run_tool_meta_finalizes_run_explorer_ui() {
-    use crate::mcp_plasm_meta::{PlasmMetaIndex, RunUiStepFields};
     use crate::mcp_delivery::McpDeliveryProfile;
+    use crate::mcp_plasm_meta::{PlasmMetaIndex, RunUiStepFields};
     use crate::mcp_ui_payload::{finalize_mcp_tool_result, take_plasm_map};
     use crate::output::LossySummaryFieldNames;
     use crate::run_artifacts::{
@@ -150,9 +150,7 @@ fn live_run_tool_meta_finalizes_run_explorer_ui() {
         meta.get("ui").is_none(),
         "UI attach happens at MCP finalize, not in build_mcp_run_tool_meta"
     );
-    let plasm_obj = take_plasm_map(&meta)
-        .expect("plasm obj")
-        .clone();
+    let plasm_obj = take_plasm_map(&meta).expect("plasm obj").clone();
     let mut tool_meta = serde_json::Map::new();
     tool_meta.insert("plasm".into(), serde_json::Value::Object(plasm_obj));
     let res = finalize_mcp_tool_result(

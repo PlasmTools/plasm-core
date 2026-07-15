@@ -106,7 +106,9 @@ impl RunTokens {
             logical_session_ref: logical_session_ref
                 .filter(|s| !s.is_empty())
                 .map(str::to_string),
-            result_delivery: result_delivery.filter(|s| !s.is_empty()).map(str::to_string),
+            result_delivery: result_delivery
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
             artifact_uri,
             run_id,
             domain_revision,
@@ -147,9 +149,7 @@ impl RunTokens {
                 .get("domain_revision")
                 .and_then(|v| v.as_u64())
                 .and_then(|n| u32::try_from(n).ok()),
-            plasm
-                .get("symbol_map_fingerprint")
-                .and_then(|v| v.as_str()),
+            plasm.get("symbol_map_fingerprint").and_then(|v| v.as_str()),
         );
         // If no typed artifact, fall back to plasm step JSON refs.
         if tokens.artifact_uri.is_none() && tokens.run_id.is_none() {
@@ -280,11 +280,8 @@ impl AgentContent {
 
     /// Sole renderer of the agent token TSV fence + body + instruction.
     pub fn render(&self) -> String {
-        let token_refs: Vec<(&str, &str)> = self
-            .tokens
-            .iter()
-            .map(|(k, v)| (*k, v.as_str()))
-            .collect();
+        let token_refs: Vec<(&str, &str)> =
+            self.tokens.iter().map(|(k, v)| (*k, v.as_str())).collect();
         let header = render_agent_token_tsv(&token_refs);
         let mut out = header;
         if let Some(body) = &self.body {
@@ -384,8 +381,8 @@ mod tests {
     #[test]
     fn run_tokens_from_first_step_prefer_canonical_uri() {
         use crate::run_artifacts::{
-            artifact_http_path, plasm_run_resource_uri, plasm_short_resource_uri, RunArtifactHandle,
-            RunArtifactId,
+            artifact_http_path, plasm_run_resource_uri, plasm_short_resource_uri,
+            RunArtifactHandle, RunArtifactId,
         };
         let run = RunArtifactId::from_bytes([3u8; 32]);
         let ph = "ab".repeat(32);
@@ -417,7 +414,10 @@ mod tests {
             Some(0),
             Some("fp"),
         );
-        assert_eq!(tokens.artifact_uri.as_deref(), Some(handle.canonical_plasm_uri.as_str()));
+        assert_eq!(
+            tokens.artifact_uri.as_deref(),
+            Some(handle.canonical_plasm_uri.as_str())
+        );
         assert!(tokens.run_id.is_none());
         let md = AgentContent::run(tokens, "body").render();
         assert!(md.contains("kind\trun\n"));
@@ -429,8 +429,8 @@ mod tests {
     #[test]
     fn run_tokens_from_live_result_prefer_typed_artifact() {
         use crate::run_artifacts::{
-            artifact_http_path, plasm_run_resource_uri, plasm_short_resource_uri, RunArtifactHandle,
-            RunArtifactId,
+            artifact_http_path, plasm_run_resource_uri, plasm_short_resource_uri,
+            RunArtifactHandle, RunArtifactId,
         };
         let run = RunArtifactId::from_bytes([4u8; 32]);
         let ph = "ef".repeat(32);

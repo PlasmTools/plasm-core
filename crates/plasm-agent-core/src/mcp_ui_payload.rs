@@ -114,8 +114,7 @@ pub struct DualLaneToolResult {
 impl DualLaneToolResult {
     pub fn into_call_tool_result(self) -> CallToolResult {
         use rust_mcp_sdk::schema::TextContent;
-        let res =
-            CallToolResult::text_content(vec![TextContent::new(self.content, None, None)]);
+        let res = CallToolResult::text_content(vec![TextContent::new(self.content, None, None)]);
         let mut meta = Map::new();
         meta.insert("plasm".into(), Value::Object(self.plasm_meta));
         finalize_mcp_tool_result(res, meta, self.profile, self.inline_plan_ui)

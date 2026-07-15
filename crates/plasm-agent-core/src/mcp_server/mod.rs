@@ -817,9 +817,9 @@ impl PlasmMcpHandler {
         .await;
         match run_result {
             Ok(out) => {
-                let markdown = out.run_markdown.unwrap_or_else(|| {
-                    "# Plasm program plan\n\nNo execution output.".to_string()
-                });
+                let markdown = out
+                    .run_markdown
+                    .unwrap_or_else(|| "# Plasm program plan\n\nNo execution output.".to_string());
                 let response_chars = markdown.chars().count() as u64;
                 if response_chars > 0 {
                     let mut g = state.lock().await;
@@ -875,9 +875,9 @@ impl PlasmMcpHandler {
                     )
                     .into_call_tool_result()
                 } else {
-                    CallToolResult::from_content(vec![ContentBlock::TextContent(
-                        TextContent::new(markdown, None, None),
-                    )])
+                    CallToolResult::from_content(vec![ContentBlock::TextContent(TextContent::new(
+                        markdown, None, None,
+                    ))])
                 };
                 self.schedule_persist_transport_state(key);
                 Ok(res)
