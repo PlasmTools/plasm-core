@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.26] - 2026-07-15
+
+### Fixed
+
+- **Cursor MCP App paint after TSV cutover:** Plan Review prefers app-only `plasm_ui_read_plan` hydrate before `resources/read` when content tokens carry `run_ref` (Cursor often strips `_meta` and omits `structuredContent.ui`). Terminal messaging treats only paint-ready payload (`comp`) as complete — fetch refs alone are incomplete. `__plasmUiLastEvent.forwardChannels` reports `structuredContent.ui` keys (`structuredUiKeys`) so FullApps paint is not misdiagnosed as empty SC.
+
 ## [0.4.25] - 2026-07-15
 
 ### Changed
