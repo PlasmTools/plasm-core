@@ -55,7 +55,8 @@ pub(crate) fn group_candidates_by_entity(
     groups
 }
 
-/// After diversification, reserve slots for post-inject workflow-mutation bundles.
+/// After diversification, force `required` into the pool (evicting unprotected rows).
+/// When a required id is already present, refresh score/caps from the reserved row.
 pub(crate) fn merge_required_entity_bundles(
     mut out: Vec<EntityCandidateBundle>,
     required: &[EntityCandidateBundle],
@@ -64,7 +65,15 @@ pub(crate) fn merge_required_entity_bundles(
     let mut protected: HashSet<String> = HashSet::new();
 
     for bundle in required {
-        if out.iter().any(|b| b.candidate_id == bundle.candidate_id) {
+        if let Some(existing) = out
+            .iter_mut()
+            .find(|b| b.candidate_id == bundle.candidate_id)
+        {
+            existing.max_lexical_score =
+                existing.max_lexical_score.max(bundle.max_lexical_score);
+            if existing.capabilities.is_empty() && !bundle.capabilities.is_empty() {
+                existing.capabilities = bundle.capabilities.clone();
+            }
             protected.insert(bundle.candidate_id.clone());
             continue;
         }
@@ -222,4 +231,33 @@ pub(crate) fn readmit_scored_entity_drops(
         out.push(bundle);
     }
     out
+}
+
+/// Lift score-0 inject neighbors that hit authored entity phrases / workflow matches so
+/// [`readmit_scored_entity_drops`] and witness corpus can keep teaching-satellite leaves.
+pub(crate) fn boost_zero_score_phrase_hit_leaves(
+    bundles: &mut [EntityCandidateBundle],
+    catalog_context: &crate::discovery_seed_catalog::CatalogWorkflowContext,
+    intent: &str,
+) {
+    for bundle in bundles.iter_mut() {
+        if bundle.max_lexical_score > 0 {
+            continue;
+        }
+        let phrase = catalog_context.entity_phrase_match_score(
+            &bundle.entry_id,
+            &bundle.entity,
+            intent,
+        );
+        if phrase > 0 {
+            bundle.max_lexical_score = phrase.max(1) as u32;
+            continue;
+        }
+        if catalog_context
+            .workflow_match(&bundle.entry_id)
+            .is_some_and(|m| m.matched_entities.contains(&bundle.entity))
+        {
+            bundle.max_lexical_score = 1;
+        }
+    }
 }

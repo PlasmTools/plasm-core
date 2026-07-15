@@ -14,6 +14,8 @@ pub const BREAKOUT_DISCOVER_PREVIEW_MAX_ROWS: usize = 8;
 pub enum AutoSeedRouteOutcome {
     Ready {
         seeds: Vec<(String, String)>,
+        /// Teaching-only entities minted as `e#` (attach/dependent leaves).
+        teaching_satellites: Vec<(String, String)>,
         supporting_capability_ids: Vec<String>,
         requirements: Vec<String>,
         reasoning: String,
@@ -267,6 +269,7 @@ pub fn build_routing_meta(
     match outcome {
         AutoSeedRouteOutcome::Ready {
             seeds,
+            teaching_satellites,
             supporting_capability_ids,
             requirements,
             candidate_preview,
@@ -281,6 +284,20 @@ pub fn build_routing_meta(
             routing.insert(
                 "selected_seeds".into(),
                 serde_json::json!(seeds
+                    .iter()
+                    .map(|(api, ent)| serde_json::json!({ "api": api, "entity": ent }))
+                    .collect::<Vec<_>>()),
+            );
+            routing.insert(
+                "workflow_seeds".into(),
+                serde_json::json!(seeds
+                    .iter()
+                    .map(|(api, ent)| serde_json::json!({ "api": api, "entity": ent }))
+                    .collect::<Vec<_>>()),
+            );
+            routing.insert(
+                "teaching_satellites".into(),
+                serde_json::json!(teaching_satellites
                     .iter()
                     .map(|(api, ent)| serde_json::json!({ "api": api, "entity": ent }))
                     .collect::<Vec<_>>()),

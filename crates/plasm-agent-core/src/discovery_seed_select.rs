@@ -122,6 +122,7 @@ where
             );
             AutoSeedRouteOutcome::Ready {
                 seeds,
+                teaching_satellites: ready.teaching_satellites,
                 supporting_capability_ids: ready.supporting_capability_ids,
                 requirements: ready.requirements,
                 reasoning: ready.reasoning,

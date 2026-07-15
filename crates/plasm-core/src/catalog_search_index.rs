@@ -185,10 +185,71 @@ fn bm25_to_u32(score: f32) -> u32 {
 }
 
 /// True when every token of `phrase` appears in `intent` (catalog-authored op/target labels).
+///
+/// Authored discovery names (`comment`, `label`, …) must survive BM25 English stopwords —
+/// use raw alphanumeric coverage and a stemmer **without** stopwords so forms like
+/// `commenting` still cover authored `comment` without SoftNLP entity splitting.
+///
+/// Multi-token phrases use **raw** plural/singular coverage only. Stemmer relief is
+/// single-token only — otherwise `reviewers` stems to `review` and falsely covers
+/// authored `pull request review` on relation-nav intents.
 pub fn phrase_tokens_covered_by_intent(phrase: &str, intent: &str) -> bool {
-    let intent_tokens = CatalogSearchIndex::tokenize(intent);
-    let phrase_tokens = CatalogSearchIndex::tokenize(phrase);
-    !phrase_tokens.is_empty() && phrase_tokens.iter().all(|tok| intent_tokens.contains(tok))
+    let intent_raw = alphanumeric_tokens(intent);
+    let phrase_raw = alphanumeric_tokens(phrase);
+    if !phrase_raw.is_empty()
+        && phrase_raw
+            .iter()
+            .all(|tok| intent_covers_raw_token(&intent_raw, tok))
+    {
+        return true;
+    }
+    if phrase_raw.len() != 1 {
+        return false;
+    }
+    let intent_stem = tokenize_authored(intent);
+    let phrase_stem = tokenize_authored(phrase);
+    !phrase_stem.is_empty() && phrase_stem.iter().all(|tok| intent_stem.contains(tok))
+}
+
+fn alphanumeric_tokens(text: &str) -> HashSet<String> {
+    text.to_ascii_lowercase()
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|t| t.len() >= 2)
+        .map(str::to_string)
+        .collect()
+}
+
+fn intent_covers_raw_token(intent: &HashSet<String>, tok: &str) -> bool {
+    if intent.contains(tok) {
+        return true;
+    }
+    // Plural / singular surface forms for authored short labels only.
+    if tok.ends_with('s') && tok.len() > 3 {
+        let stem = &tok[..tok.len() - 1];
+        if intent.contains(stem) {
+            return true;
+        }
+    } else if intent.contains(&format!("{tok}s")) {
+        return true;
+    }
+    false
+}
+
+/// Stemmed tokens that keep authored discovery vocabulary (no English stopword deletion).
+fn tokenize_authored(text: &str) -> HashSet<String> {
+    authored_tokenizer()
+        .tokenize(text)
+        .into_iter()
+        .collect()
+}
+
+fn authored_tokenizer() -> DefaultTokenizer {
+    DefaultTokenizer::builder()
+        .language_mode(Language::English)
+        .normalization(true)
+        .stopwords(false)
+        .stemming(true)
+        .build()
 }
 
 /// Catalog-authored corpus for one capability (name, descriptions, discovery phrases).
@@ -306,6 +367,39 @@ mod tests {
                 .iter()
                 .any(|h| h.capability_name == "create_pull_request"),
             "DefaultTokenizer must stem/stopword so annotated 'open pull request' matches; hits={hits:?}"
+        );
+    }
+
+    #[test]
+    fn authored_phrase_covers_comment_stopword_and_commenting_stem() {
+        assert!(
+            phrase_tokens_covered_by_intent(
+                "comment",
+                "add a comment to the issue"
+            ),
+            "authored comment must survive stopwording against exact intent token"
+        );
+        assert!(
+            phrase_tokens_covered_by_intent(
+                "comment",
+                "commenting on the issue with the PR link"
+            ),
+            "authored comment must cover stemmed commenting"
+        );
+        assert!(phrase_tokens_covered_by_intent("issue comment", "add a comment to the issue"));
+    }
+
+    #[test]
+    fn pull_request_review_does_not_cover_requested_reviewers_nav() {
+        let intent =
+            "List open pull requests on the monorepo and show requested reviewers on each.";
+        assert!(
+            phrase_tokens_covered_by_intent("pull request", intent),
+            "primary alias must cover plural pull requests"
+        );
+        assert!(
+            !phrase_tokens_covered_by_intent("pull request review", intent),
+            "dependent 'pull request review' must not fire on 'requested reviewers' relation-nav"
         );
     }
 }

@@ -301,7 +301,7 @@ entities:
       - my work
       - assigned to me
       - my issues
-      seed_class: primary
+      seed_class: ambient
     fields:
       viewer_id:
         required: true

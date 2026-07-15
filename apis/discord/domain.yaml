@@ -23,6 +23,12 @@ entities:
   Guild:
     id_field: id
     description: A Discord server (guild).
+    discovery:
+      names:
+      - guild
+      - server
+      - discord server
+      seed_class: ambient
     fields:
       id:
         required: true
@@ -57,6 +63,8 @@ entities:
         description: Channels belonging to this guild.
         target: Channel
         cardinality: many
+        discovery:
+          seed_nav: locate
         materialize:
           kind: query_scoped
           capability: channel_list_for_guild

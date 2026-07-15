@@ -89,6 +89,9 @@ pub fn missing_named_catalog_coverage(
 }
 
 /// Build ready selection from a single verified plan (no semantic rewriter).
+///
+/// Callers must run [`super::admit_teaching_satellites`] and attach satellites /
+/// overflow handling before validation.
 pub fn selection_from_plan(
     corpus: &WitnessCorpus,
     plan: &DeterministicSeedPlan,
@@ -104,6 +107,7 @@ pub fn selection_from_plan(
             .collect(),
         selected_ids,
         supporting_capability_ids: supporting,
+            teaching_satellites: vec![],
         alternative_sets: vec![],
         uncovered_requirements: vec![],
         reasoning: format!(
@@ -134,6 +138,7 @@ pub fn selection_clarify_from_plans(
         requirements: vec![],
         selected_ids: vec![],
         supporting_capability_ids: vec![],
+            teaching_satellites: vec![],
         alternative_sets,
         uncovered_requirements: vec![],
         reasoning: reasoning.into(),
@@ -149,6 +154,7 @@ pub fn selection_hard_miss(
         requirements: vec![],
         selected_ids: vec![],
         supporting_capability_ids: vec![],
+            teaching_satellites: vec![],
         alternative_sets: vec![],
         uncovered_requirements: if uncovered.is_empty() {
             vec!["no covering seed plan".into()]

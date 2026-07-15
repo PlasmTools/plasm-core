@@ -11,6 +11,9 @@ use crate::discovery_seed_select::{
     apply_seed_invariants_protected, supporting_capabilities_from_bundles, SeedSelectionDecision,
     SeedSelectionRaw,
 };
+use crate::discovery_seed_witness::{
+    apply_teaching_satellites_to_ready, build_witness_corpus, DeterministicSeedPlan,
+};
 
 /// Apply graph-aware seed invariants to a coverage ready selection.
 pub fn postprocess_coverage_selection(
@@ -21,6 +24,7 @@ pub fn postprocess_coverage_selection(
     candidate_graph: &TypedCandidateGraph,
     route: Option<&CoverageRoute>,
     evaluation: Option<&CoverageEvaluation>,
+    intent: Option<&str>,
 ) -> SeedSelectionRaw {
     if raw.decision != SeedSelectionDecision::Ready {
         return raw;
@@ -48,7 +52,34 @@ pub fn postprocess_coverage_selection(
             raw.selected_ids.join("+")
         );
     }
-    raw
+    let Some(corpus) =
+        build_witness_corpus(bundles, &[], candidate_graph, Some(catalog_context))
+    else {
+        return raw;
+    };
+    let entities: Vec<(String, String)> = raw
+        .selected_ids
+        .iter()
+        .filter_map(|id| {
+            bundles
+                .iter()
+                .find(|b| &b.candidate_id == id)
+                .map(|b| (b.entry_id.clone(), b.entity.clone()))
+        })
+        .collect();
+    if entities.is_empty() {
+        return raw;
+    }
+    let plan = DeterministicSeedPlan {
+        symbol: "coverage_ready".into(),
+        candidate_ids: raw.selected_ids.clone(),
+        entities,
+        lexical_score: 0,
+        covered_witness_symbols: Vec::new(),
+        summary: "coverage".into(),
+    };
+    let all: Vec<usize> = (0..corpus.witnesses.len()).collect();
+    apply_teaching_satellites_to_ready(raw, &corpus, &plan, &all, intent)
 }
 
 /// Root hints from slots plus non-auxiliary entities already selected by coverage.

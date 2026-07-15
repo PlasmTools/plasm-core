@@ -35,6 +35,7 @@ pub fn empty_seed_selection_raw() -> SeedSelectionRaw {
         requirements: vec![],
         selected_ids: vec![],
         supporting_capability_ids: vec![],
+            teaching_satellites: vec![],
         alternative_sets: vec![],
         uncovered_requirements: vec!["no executable candidate bundles".into()],
         reasoning: "empty candidate bundle pool".into(),

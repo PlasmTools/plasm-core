@@ -341,6 +341,7 @@ pub fn score_all_coverage_shadow_with_margin(
                     requirements: Vec::new(),
                     selected_ids: Vec::new(),
                     supporting_capability_ids: Vec::new(),
+            teaching_satellites: vec![],
                     alternative_sets: Vec::new(),
                     uncovered_requirements: Vec::new(),
                     reasoning: "coverage shadow: no selection".into(),
@@ -353,6 +354,7 @@ pub fn score_all_coverage_shadow_with_margin(
                     &retrieved.candidate_graph,
                     Some(&pipeline.route),
                     Some(&pipeline.evaluation),
+                    Some(case.intent.as_str()),
                 );
                 trace.coverage = Some(coverage_shadow_metrics(
                     &pipeline,
@@ -368,6 +370,7 @@ pub fn score_all_coverage_shadow_with_margin(
                     requirements: Vec::new(),
                     selected_ids: Vec::new(),
                     supporting_capability_ids: Vec::new(),
+            teaching_satellites: vec![],
                     alternative_sets: Vec::new(),
                     uncovered_requirements: vec![error.to_string()],
                     reasoning: error.to_string(),

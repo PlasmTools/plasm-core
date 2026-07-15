@@ -965,11 +965,9 @@ impl PlasmMcpHandler {
             )
             .await?
             {
-                context_new_seeds::ContextNewSeeds::Ready {
-                    seeds,
-                    ranked_capabilities,
-                } => {
-                    auto_ranked_from_selector = ranked_capabilities;
+                ready @ context_new_seeds::ContextNewSeeds::Ready { .. } => {
+                    let (seeds, ranked) = ready.entities_for_teaching();
+                    auto_ranked_from_selector = ranked;
                     seeds
                 }
                 #[cfg(feature = "semantic-auto-seed")]

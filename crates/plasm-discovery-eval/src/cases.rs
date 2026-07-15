@@ -19,6 +19,9 @@ pub struct SeedExpect {
     pub acceptable_sets: Vec<Vec<SeedRef>>,
     #[serde(default)]
     pub must_exclude: Vec<SeedRef>,
+    /// Entities that must appear in teaching (workflow seeds ∪ teaching satellites).
+    #[serde(default)]
+    pub must_teach: Vec<SeedRef>,
     #[serde(default)]
     pub max_seeds: Option<usize>,
 }

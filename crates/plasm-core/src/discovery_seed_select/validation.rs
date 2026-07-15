@@ -69,6 +69,7 @@ pub struct ValidatedReadySeedSelection {
     pub requirements: Vec<String>,
     pub selected_ids: Vec<String>,
     pub supporting_capability_ids: Vec<String>,
+    pub teaching_satellites: Vec<(String, String)>,
     pub reasoning: String,
 }
 
@@ -139,6 +140,7 @@ pub fn validate_seed_selection(
                 requirements: raw.requirements.clone(),
                 selected_ids: raw.selected_ids.clone(),
                 supporting_capability_ids: raw.supporting_capability_ids.clone(),
+                teaching_satellites: raw.teaching_satellites.clone(),
                 reasoning: raw.reasoning.clone(),
             }))
         }

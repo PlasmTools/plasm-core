@@ -16,12 +16,42 @@ const MISSING_SEEDS_NO_FEATURE: &str = "missing capability picks: `plasm_context
 /// Outcome of resolving seeds for `session_mode: "new"`.
 pub(crate) enum ContextNewSeeds {
     Ready {
-        seeds: Vec<CapabilitySeed>,
+        /// Workflow plan seeds (≤3) — session reuse / FO gold.
+        workflow_seeds: Vec<CapabilitySeed>,
+        /// Teaching-only attach/hop leaves minted after seeds (do not count toward plan size).
+        teaching_satellites: Vec<CapabilitySeed>,
         ranked_capabilities: Option<Vec<String>>,
     },
     /// Abstain breakout — caller returns this tool result as-is (no session mint).
     #[cfg(feature = "semantic-auto-seed")]
     Abstain(CallToolResult),
+}
+
+impl ContextNewSeeds {
+    /// Exposure order: workflow seeds then satellites (deduped).
+    pub(crate) fn entities_for_teaching(self) -> (Vec<CapabilitySeed>, Option<Vec<String>>) {
+        match self {
+            Self::Ready {
+                workflow_seeds,
+                teaching_satellites,
+                ranked_capabilities,
+            } => {
+                let mut seeds = workflow_seeds;
+                for sat in teaching_satellites {
+                    if seeds
+                        .iter()
+                        .any(|s| s.entry_id == sat.entry_id && s.entity == sat.entity)
+                    {
+                        continue;
+                    }
+                    seeds.push(sat);
+                }
+                (seeds, ranked_capabilities)
+            }
+            #[cfg(feature = "semantic-auto-seed")]
+            Self::Abstain(_) => unreachable!("abstain is not teaching entities"),
+        }
+    }
 }
 
 pub(crate) fn semantic_auto_seed_on() -> bool {
@@ -54,7 +84,8 @@ where
 
     match explicit_seeds {
         Some(seeds) => Ok(ContextNewSeeds::Ready {
-            seeds,
+            workflow_seeds: seeds,
+            teaching_satellites: Vec::new(),
             ranked_capabilities: None,
         }),
         None => Err(CallToolError::invalid_arguments(
@@ -88,10 +119,15 @@ where
     match outcome {
         crate::discovery_routing::AutoSeedRouteOutcome::Ready {
             seeds: pairs,
+            teaching_satellites,
             supporting_capability_ids,
             ..
         } => Ok(ContextNewSeeds::Ready {
-            seeds: pairs
+            workflow_seeds: pairs
+                .into_iter()
+                .map(|(entry_id, entity)| CapabilitySeed { entry_id, entity })
+                .collect(),
+            teaching_satellites: teaching_satellites
                 .into_iter()
                 .map(|(entry_id, entity)| CapabilitySeed { entry_id, entity })
                 .collect(),

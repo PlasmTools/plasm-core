@@ -232,6 +232,14 @@ entities:
           kind: query_scoped
           capability: remotelink_query
           param: issueIdOrKey
+      browse_link:
+        target: IssueBrowseLink
+        cardinality: one
+        discovery:
+          seed_nav: attach
+          qualifier_terms:
+          - browse link
+          - browse url
       transitions:
         target: Transition
         cardinality: many
@@ -798,6 +806,7 @@ entities:
       names:
       - browse link
       - browse url
+      seed_class: dependent
     fields:
       issue_key:
         required: true
@@ -819,6 +828,12 @@ entities:
     id_field: sprint_id
     primary_read: sprint_board_snapshot_get
     description: Sprint board snapshot.
+    discovery:
+      names:
+      - sprint board
+      - board snapshot
+      - sprint snapshot
+      seed_class: ambient
     fields:
       sprint_id:
         required: true

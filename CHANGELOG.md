@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.24] - 2026-07-15
+
+### Fixed
+
+- **False-open on relation-nav + dependent Create:** multi-token discovery aliases no longer soft-match via stemmer (`reviewers` → `review` vs authored `pull request review`). Prefer-lone parent demotion is gated by authored alias coverage under `IntentGate::Strict`.
+- **Train FO regression** (`adv_minimality_pr_reviewers_only`): seats `PullRequest` instead of `PullRequestReview` when Create was co-selected without being named.
+
+### Changed
+
+- **`discovery_seed_witness` prune liturgy:** split `prune.rs` into `prune/{mod,support,lone_attach}` + `named_in_intent`, `kind::CapBucket`, `role_index::CorpusRoleIndex`, and sealed `CoverPolicy` (seating vs teaching). SoftNLP entity-id stem matching removed from witness naming.
+- **Semantic seed Ready path:** always prunes with `IntentGate::Strict(intent)`; tests use explicit `IntentGate::Ungated` for the FO-hazard polarity.
+
+### Added
+
+- Catalog FO stamps / ambient primaries (Linear `MyWorkSnapshot`, Notion `Database`, Discord / Teams / Jira refinements as authored).
+- Discovery seed-set eval case expansion (train / holdout / neighbor-minimality) + refreshed `openai/gpt-4.1-mini` baselines.
+
 ## [0.4.23] - 2026-07-14
 
 ### Changed

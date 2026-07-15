@@ -15,6 +15,11 @@ entities:
     id_field: id
     description: 'A collaboration team in Microsoft Teams: a shared space for channels, apps, and members in the signed-in
       user’s organization.'
+    discovery:
+      names:
+      - team
+      - teams team
+      seed_class: ambient
     fields:
       id:
         required: true
@@ -38,6 +43,8 @@ entities:
       channels:
         target: Channel
         cardinality: many
+        discovery:
+          seed_nav: locate
         materialize:
           kind: query_scoped_bindings
           capability: channel_query

@@ -21,6 +21,9 @@ pub struct SeedSelectionRaw {
     pub selected_ids: Vec<String>,
     #[serde(default)]
     pub supporting_capability_ids: Vec<String>,
+    /// Teaching-only entities (`entry_id`, `entity`) minted as `e#` but not workflow seeds.
+    #[serde(default)]
+    pub teaching_satellites: Vec<(String, String)>,
     #[serde(default)]
     pub alternative_sets: Vec<SeedAlternativeSetRaw>,
     #[serde(default)]

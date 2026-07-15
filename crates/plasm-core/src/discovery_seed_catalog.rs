@@ -178,6 +178,92 @@ impl CatalogWorkflowContext {
         self.search.entity_score(entry_id, entity, text) as i32
     }
 
+    /// Authored `discovery.names` / `qualifier_names` token-cover hit for this intent.
+    pub fn entity_authored_name_hit(&self, entry_id: &str, entity: &str) -> bool {
+        self.indexes
+            .get(entry_id)
+            .is_some_and(|idx| entity_name_hit(idx, entity, &self.intent))
+    }
+
+    /// Stamp-shaped teaching-satellite leaf (dependent / attach / 1-hop), without
+    /// requiring an authored name hit. Shared by pool inject and witness admit.
+    pub fn entity_is_satellite_shape(
+        &self,
+        entry_id: &str,
+        entity: &str,
+        pool_parents: &HashSet<String>,
+        cgs: Option<&CGS>,
+    ) -> bool {
+        match self.entity_seed_class(entry_id, entity) {
+            Some(DiscoverySeedClass::Primary) | Some(DiscoverySeedClass::Ambient) => {
+                return false;
+            }
+            Some(DiscoverySeedClass::Dependent) => return true,
+            None => {}
+        }
+        for parent in pool_parents {
+            if self
+                .relation_seed_nav(entry_id, parent, entity)
+                .is_some_and(|nav| matches!(nav, DiscoverySeedNav::Attach))
+            {
+                return true;
+            }
+        }
+        let Some(cgs) = cgs else {
+            return false;
+        };
+        for parent in pool_parents {
+            if cgs
+                .get_entity(parent.as_str())
+                .is_some_and(|ent| ent.relations.values().any(|rel| rel.target_resource == entity))
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Authored phrase hit + satellite shape — pool protection / inject enrollment.
+    pub fn entity_is_authored_satellite_leaf(
+        &self,
+        entry_id: &str,
+        entity: &str,
+        pool_parents: &HashSet<String>,
+        cgs: Option<&CGS>,
+    ) -> bool {
+        self.entity_authored_name_hit(entry_id, entity)
+            && self.entity_is_satellite_shape(entry_id, entity, pool_parents, cgs)
+    }
+
+    /// Workflow roots to protect when forcing leaves into a capped pool.
+    pub fn stamp_protect_root_entities(&self, entry_id: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut seen = HashSet::new();
+        if let Some(root) = self.workflow_root_entity(entry_id) {
+            seen.insert(root.clone());
+            out.push(root);
+        }
+        if let Some(index) = self.indexes.get(entry_id) {
+            for (entity, class) in &index.entity_seed_class {
+                if matches!(
+                    class,
+                    DiscoverySeedClass::Primary | DiscoverySeedClass::Ambient
+                ) && seen.insert(entity.clone())
+                {
+                    // Ambient only when already matched / present is decided by caller.
+                    if matches!(class, DiscoverySeedClass::Primary)
+                        || self
+                            .workflow_match(entry_id)
+                            .is_some_and(|m| m.matched_entities.contains(entity))
+                    {
+                        out.push(entity.clone());
+                    }
+                }
+            }
+        }
+        out
+    }
+
     pub fn workflow_root_entity(&self, entry_id: &str) -> Option<String> {
         let index = self.indexes.get(entry_id)?;
         let workflow = self.matches.get(entry_id)?;
@@ -583,6 +669,51 @@ pub fn is_localized_mutation(
     if workflow.matched_operation_entities.is_empty() {
         return false;
     }
+    // Multi-leaf / multi-operation workflows are not a single localized spine.
+    if workflow.matched_mutation_entities.is_empty() {
+        return false;
+    }
+    // Multi-leaf attach/dependent mutations are not a single localized spine.
+    // Primary Create noise (Task Create beside Comment Create) must not veto.
+    let leaf_mutations: HashSet<&str> = workflow
+        .matched_mutation_entities
+        .iter()
+        .filter(|entity| {
+            if matches!(
+                index.entity_seed_class.get(entity.as_str()),
+                Some(DiscoverySeedClass::Dependent)
+            ) {
+                return true;
+            }
+            index.relation_seed_nav.iter().any(|((from, to), nav)| {
+                to == entity.as_str()
+                    && *nav == DiscoverySeedNav::Attach
+                    && workflow.matched_entities.contains(from)
+            })
+        })
+        .map(String::as_str)
+        .collect();
+    let leaf_count = if leaf_mutations.is_empty() {
+        workflow.matched_mutation_entities.len()
+    } else {
+        leaf_mutations.len()
+    };
+    if leaf_count >= 2 {
+        return false;
+    }
+    // Primary + attach leaf both operation-matched (list PRs + reviewers) is not localized.
+    if workflow.matched_operation_entities.len() >= 2 {
+        return false;
+    }
+    if workflow.matched_capabilities.len() >= 3 && leaf_mutations.is_empty() {
+        return false;
+    }
+    if workflow.matched_capabilities.len() >= 5 {
+        return false;
+    }
+    if workflow.matched_operation_entities.len() >= 2 && workflow.matched_entities.len() >= 3 {
+        return false;
+    }
     !suggests_repo_scoped_workflow(intent_class, "", workflow, index)
 }
 
@@ -931,6 +1062,21 @@ mod tests {
         assert_eq!(
             workflow_root_entity(&index, &workflow).as_deref(),
             Some("Workspace")
+        );
+        // Multi-operation evidence must not stop at LocalizedMutation.
+        let localized_view = match_intent_to_catalog(
+            intent,
+            &index,
+            &search,
+            &DiscoveryIntentClass::LocalizedMutation,
+        );
+        assert!(
+            !is_localized_mutation(
+                &DiscoveryIntentClass::LocalizedMutation,
+                &localized_view,
+                &index
+            ),
+            "multi-mutation workflows must fall through to repo/workflow classification"
         );
     }
 

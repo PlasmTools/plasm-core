@@ -58,7 +58,7 @@ fn inject_relation_parent_bundles(
     }
 }
 
-fn catalog_parent_entities(cgs: &CGS, leaf: &str) -> Vec<String> {
+pub(crate) fn catalog_parent_entities(cgs: &CGS, leaf: &str) -> Vec<String> {
     cgs.entities
         .keys()
         .filter(|name| {
@@ -72,7 +72,7 @@ fn catalog_parent_entities(cgs: &CGS, leaf: &str) -> Vec<String> {
         .collect()
 }
 
-fn read_capabilities_for_entity(
+pub(crate) fn read_capabilities_for_entity(
     cgs: &CGS,
     entry_id: &str,
     entity: &str,
@@ -213,7 +213,7 @@ pub(crate) fn mutation_capabilities_for_entity(
     mutation_capabilities_for_entity_with_intent(cgs, entry_id, entity, max, "", None)
 }
 
-fn push_capability_evidence(
+pub(crate) fn push_capability_evidence(
     out: &mut Vec<EntityCapabilityEvidence>,
     seen: &mut HashSet<String>,
     entry_id: &str,

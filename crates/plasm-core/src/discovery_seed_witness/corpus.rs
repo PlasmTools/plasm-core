@@ -12,6 +12,7 @@ use crate::schema::DiscoverySeedNav;
 use super::roles::{
     prefer_seed_nav, OwnEdge, OwnPairs, PoolChild, PoolLinks, SeedClassStamp, SeedNavStamp,
 };
+use super::role_index::CorpusRoleIndex;
 
 /// Max closed witnesses presented to the LLM per selection call.
 /// Ranked by lexical score after brand-lock / top-catalog soft filter (not a schema dump).
@@ -63,6 +64,8 @@ pub struct WitnessCorpus {
     pub witnesses: Vec<RequirementWitness>,
     pub bundles: Vec<EntityCandidateBundle>,
     pub brand_lock_catalogs: Vec<String>,
+    /// Seed-class ambient/primary index (built once with the corpus).
+    pub roles: CorpusRoleIndex,
     pub(super) symbol_to_index: HashMap<String, usize>,
 }
 
@@ -265,6 +268,7 @@ pub fn build_witness_corpus(
         .collect();
 
     Some(WitnessCorpus {
+        roles: CorpusRoleIndex::build(&drafted),
         witnesses: drafted,
         bundles,
         brand_lock_catalogs: brand_lock_catalogs.to_vec(),
@@ -296,8 +300,91 @@ fn shortlist_witnesses_for_llm(
             .then_with(|| witness_entity(a).cmp(witness_entity(b)))
             .then_with(|| a.summary.cmp(&b.summary))
     });
-    drafted.truncate(MAX_WITNESSES);
-    drafted
+    let ranked = drafted;
+    let mut shortlist: Vec<RequirementWitness> = ranked.iter().take(MAX_WITNESSES).cloned().collect();
+    admit_primary_parents_for_attach_leaves(&mut shortlist, &ranked);
+    shortlist
+}
+
+/// Ensure attach/dependent leaves retain an in-corpus primary parent after lexical truncate.
+/// Without this, Comment/Review outrank Issue/PR and ParentPreferred cannot re-seat.
+fn admit_primary_parents_for_attach_leaves(
+    shortlist: &mut Vec<RequirementWitness>,
+    ranked: &[RequirementWitness],
+) {
+    const MAX_PARENT_ADMITS: usize = 4;
+    let mut owners: HashSet<String> = shortlist
+        .iter()
+        .map(|w| w.owner_candidate_id.clone())
+        .collect();
+    let mut admitted = 0usize;
+
+    let leaves: Vec<(String, String)> = shortlist
+        .iter()
+        .filter_map(|w| match &w.kind {
+            WitnessKind::DirectCapability {
+                entry_id, entity, ..
+            } if w.seed_nav.is_attach() || w.seed_class.is_dependent() => {
+                Some((entry_id.clone(), entity.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+
+    for (entry_id, entity) in leaves {
+        if admitted >= MAX_PARENT_ADMITS {
+            break;
+        }
+        let parent_entity = shortlist
+            .iter()
+            .chain(ranked.iter())
+            .find_map(|w| match &w.kind {
+                WitnessKind::DirectCapability {
+                    entry_id: e,
+                    entity: peer,
+                    ..
+                } if e == &entry_id
+                    && peer != &entity
+                    && w.seed_class.is_primary()
+                    && (w.pool.child_targets().any(|c| c == entity)
+                        || shortlist.iter().any(|leaf| {
+                            matches!(&leaf.kind, WitnessKind::DirectCapability { entity: le, .. } if le == &entity)
+                                && leaf.pool.parent_entities().any(|p| p == peer.as_str())
+                        })) =>
+                {
+                    Some(peer.clone())
+                }
+                _ => None,
+            });
+        let Some(parent_entity) = parent_entity else {
+            continue;
+        };
+        let parent_id = format!("{entry_id}:{parent_entity}");
+        if owners.contains(&parent_id) {
+            continue;
+        }
+        let Some(parent_w) = ranked.iter().find(|w| match &w.kind {
+            WitnessKind::DirectCapability {
+                entry_id: e,
+                entity: ent,
+                kind,
+                ..
+            } => {
+                e == &entry_id
+                    && ent == &parent_entity
+                    && matches!(
+                        kind.as_str(),
+                        "Query" | "Search" | "Get" | "query" | "search" | "get"
+                    )
+            }
+            _ => false,
+        }) else {
+            continue;
+        };
+        shortlist.push(parent_w.clone());
+        owners.insert(parent_id);
+        admitted += 1;
+    }
 }
 
 /// Keep only the N catalogs with the highest max witness lexical score.

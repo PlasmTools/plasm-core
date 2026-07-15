@@ -79,6 +79,7 @@ pub fn deterministic_provider_ambiguity(
         requirements: Vec::new(),
         selected_ids: Vec::new(),
         supporting_capability_ids: Vec::new(),
+            teaching_satellites: vec![],
         alternative_sets: alternatives,
         uncovered_requirements: Vec::new(),
         reasoning:

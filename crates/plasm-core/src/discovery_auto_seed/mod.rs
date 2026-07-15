@@ -2,6 +2,7 @@
 
 mod helpers;
 mod inject;
+mod inject_phrase;
 mod pool;
 mod types;
 
@@ -30,6 +31,7 @@ use inject::inject_retrieval_targets;
 use inject::inject_workflow_mutation_targets;
 use pool::{
     group_candidates_by_entity, merge_required_entity_bundles, readmit_scored_entity_drops,
+    boost_zero_score_phrase_hit_leaves,
 };
 
 /// Build tenant-scoped entity candidate bundles from lexical discovery (no score thresholds).
@@ -97,6 +99,7 @@ where
             &catalog_context,
             named_catalogs,
         );
+        // Phrase leaves merged in a second pass below (also when workflow inject is off).
         for bundle in &mut diversified {
             let key = (bundle.entry_id.clone(), bundle.entity.clone());
             if let Some(updated) = pool.get(&key) {
@@ -152,8 +155,57 @@ where
             }
         }
     }
-    // Workflow inject / merge_required can evict scored golds — restore once more from inject-time group.
+    // Phrase-named teaching leaves: inject, then one reserved-seat merge after readmit.
+    let reserved_leaves = {
+        let mut pool: IndexMap<(String, String), types::EntityCandidateBundle> = diversified
+            .iter()
+            .map(|b| ((b.entry_id.clone(), b.entity.clone()), b.clone()))
+            .collect();
+        let leaves = inject_phrase::inject_phrase_named_leaves(
+            &mut pool,
+            &catalogs,
+            intent,
+            &discovery,
+            &catalog_context,
+        );
+        for bundle in &mut diversified {
+            let key = (bundle.entry_id.clone(), bundle.entity.clone());
+            if let Some(updated) = pool.get(&key) {
+                bundle.max_lexical_score =
+                    bundle.max_lexical_score.max(updated.max_lexical_score);
+                if bundle.capabilities.is_empty() && !updated.capabilities.is_empty() {
+                    bundle.capabilities = updated.capabilities.clone();
+                }
+            }
+        }
+        leaves
+    };
+    boost_zero_score_phrase_hit_leaves(&mut diversified, &catalog_context, intent);
     diversified = readmit_scored_entity_drops(diversified, &pre_diversify, config);
+    // Single reserved-seat merge: stamp roots + phrase leaves survive the cap.
+    {
+        let mut reserved: IndexMap<(String, String), types::EntityCandidateBundle> = IndexMap::new();
+        let pool: IndexMap<(String, String), types::EntityCandidateBundle> = diversified
+            .iter()
+            .chain(reserved_leaves.iter())
+            .map(|b| ((b.entry_id.clone(), b.entity.clone()), b.clone()))
+            .collect();
+        for entry_id in catalog_context.branded_entry_ids() {
+            for entity in catalog_context.stamp_protect_root_entities(&entry_id) {
+                let key = (entry_id.clone(), entity);
+                if let Some(bundle) = pool.get(&key) {
+                    reserved.insert(key, bundle.clone());
+                }
+            }
+        }
+        for leaf in reserved_leaves {
+            reserved.insert((leaf.entry_id.clone(), leaf.entity.clone()), leaf);
+        }
+        if !reserved.is_empty() {
+            let seats: Vec<_> = reserved.into_values().collect();
+            diversified = merge_required_entity_bundles(diversified, &seats, config);
+        }
+    }
     let candidate_graph =
         crate::discovery_candidate_graph::TypedCandidateGraph::build(&diversified, &catalogs);
     Ok(EntityCandidateRetrieveResult {

@@ -582,7 +582,7 @@ fn corpus_stamps_attach_on_label_and_prune_drops_label_read() {
             matches!(&w.kind, WitnessKind::DirectCapability { entity, .. } if entity == "Label")
         })
         .unwrap();
-    let pruned = prune_witness_selection(&corpus, &[issue_idx, label_idx]);
+    let pruned = prune_witness_selection(&corpus, &[issue_idx, label_idx], IntentGate::Ungated);
     assert_eq!(pruned, vec![issue_idx]);
 }
 

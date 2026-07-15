@@ -668,6 +668,43 @@ fn github_repo_workflow_seed_bundles_include_repository() {
     );
 }
 
+#[test]
+fn github_tool_test_intent_pool_includes_label_comment_branch() {
+    let Some(reg) = load_multi_catalog_registry(&discovery_eval_catalog_ids()) else {
+        return;
+    };
+    let intent = "GitHub repository workflow for ryan-s-roberts/tool-test: create an issue, list/read existing labels, create a branch, create a file on that branch, add labels to the issue, create a pull request, add labels to the PR, and add a comment to the issue.";
+    let allowed: Vec<String> = discovery_eval_catalog_ids();
+    let bundles = retrieve_entity_candidate_bundles(
+        &reg,
+        intent,
+        Some(&allowed),
+        Default::default(),
+        &repo_workflow_class(),
+        &["github".into()],
+    )
+    .expect("retrieve bundles");
+    assert_eq!(
+        bundles
+            .catalog_context
+            .entity_seed_class("github", "IssueComment"),
+        Some(crate::schema::DiscoverySeedClass::Dependent),
+        "IssueComment must stamp seed_class=dependent"
+    );
+    let github: Vec<&str> = bundles
+        .bundles
+        .iter()
+        .filter(|b| b.entry_id == "github")
+        .map(|b| b.entity.as_str())
+        .collect();
+    for need in ["Label", "IssueComment", "Branch", "Repository", "Issue"] {
+        assert!(
+            github.contains(&need),
+            "expected github:{need} in pool for tool-test intent, got {github:?}"
+        );
+    }
+}
+
 fn bundle(entry: &str, entity: &str, score: u32) -> EntityCandidateBundle {
     EntityCandidateBundle {
         candidate_id: format!("{entry}:{entity}"),
@@ -748,4 +785,65 @@ fn readmit_after_merge_required_restores_scored_message() {
         "Message restored: {:?}",
         restored.iter().map(|b| &b.entity).collect::<Vec<_>>()
     );
+}
+
+
+
+
+#[test]
+fn inject_phrase_adds_issuecomment_when_pool_has_parents() {
+    use indexmap::IndexMap;
+    use super::inject_phrase::inject_phrase_named_leaves;
+    use super::helpers::ArcCgs;
+    use super::types::EntityCandidateBundle;
+    use crate::discovery::CapabilityQuery;
+    let Some(reg) = load_multi_catalog_registry(&discovery_eval_catalog_ids()) else {
+        return;
+    };
+    let intent = "GitHub repository workflow for ryan-s-roberts/tool-test: create an issue, list/read existing labels, create a branch, create a file on that branch, add labels to the issue, create a pull request, add labels to the PR, and add a comment to the issue.";
+    let ctx = reg.load_context("github").expect("github");
+    let cgs: ArcCgs = ctx.cgs;
+    let mut catalogs: IndexMap<String, ArcCgs> = IndexMap::new();
+    catalogs.insert("github".into(), cgs.clone());
+    let discovery = reg
+        .discover(&CapabilityQuery {
+            phrases: vec![intent.into()],
+            entry_ids: Some(vec!["github".into()]),
+            ..Default::default()
+        })
+        .expect("discover");
+    let map: std::collections::HashMap<String, &crate::schema::CGS> = catalogs
+        .iter()
+        .map(|(k, v)| (k.clone(), v.as_ref()))
+        .collect();
+    let catalog_context = crate::discovery_seed_catalog::CatalogWorkflowContext::build(
+        &map,
+        intent,
+        &repo_workflow_class(),
+        &["github".into()],
+    );
+    let mut pool = IndexMap::new();
+    for entity in ["Issue", "PullRequest", "Repository"] {
+        pool.insert(
+            ("github".into(), entity.into()),
+            EntityCandidateBundle {
+                candidate_id: format!("github:{entity}"),
+                entry_id: "github".into(),
+                entity: entity.into(),
+                entity_description: String::new(),
+                max_lexical_score: 10,
+                capabilities: vec![],
+                relation_hints: String::new(),
+                catalog_route_evidence: true,
+            },
+        );
+    }
+    inject_phrase_named_leaves(&mut pool, &catalogs, intent, &discovery, &catalog_context);
+    let ents: Vec<_> = pool.keys().map(|(_, e)| e.as_str()).collect();
+    assert!(
+        ents.contains(&"IssueComment"),
+        "phrase inject must add IssueComment, got {ents:?}"
+    );
+    assert!(ents.contains(&"Label"), "phrase inject must add/boost Label, got {ents:?}");
+    assert!(ents.contains(&"Branch"), "phrase inject must add Branch, got {ents:?}");
 }

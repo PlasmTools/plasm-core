@@ -41,10 +41,12 @@ use plasm_core::discovery_seed_catalog::CatalogWorkflowContext;
 use plasm_core::discovery_seed_select::SeedSelectionDecision;
 use plasm_core::discovery_seed_select::SeedSelectionRaw;
 use plasm_core::discovery_seed_witness::{
-    build_witness_corpus, construct_minimal_plans, missing_named_catalog_coverage,
-    prune_witness_selection, selection_clarify_from_plans, selection_from_plan,
-    selection_hard_miss, shortlist_plans, synthesize_clarify_alternatives, verify_plan,
-    DeterministicSeedPlan, PlanConstructError, RequirementWitness, WitnessCorpus, WitnessKind,
+    apply_teaching_satellites_to_ready, build_witness_corpus, construct_workflow_seed_plans,
+    dependent_action_shadowed_by_peer_primary, missing_named_catalog_coverage,
+    prefer_primary_cover_plan, prune_witness_selection, IntentGate, selection_clarify_from_plans,
+    selection_from_plan, selection_hard_miss, shortlist_plans, synthesize_clarify_alternatives,
+    verify_plan, DeterministicSeedPlan, PlanConstructError, RequirementWitness, WitnessCorpus,
+    WitnessKind,
 };
 
 /// Runtime settings for LLM narrow steps.
@@ -189,10 +191,10 @@ fn route_witness_assessment(
             ))
         }
         WitnessDecision::Continue => {
-            let indices = corpus
+            let pre_prune = corpus
                 .resolve_symbols(&assessment.selected_witness_symbols)
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
-            if indices.is_empty() {
+            if pre_prune.is_empty() {
                 return Ok(selection_clarify_from_plans(
                     corpus,
                     &[],
@@ -202,7 +204,7 @@ fn route_witness_assessment(
                     ),
                 ));
             }
-            let indices = prune_witness_selection(corpus, &indices);
+            let indices = prune_witness_selection(corpus, &pre_prune, IntentGate::Strict(intent));
             if indices.is_empty() {
                 return Ok(selection_clarify_from_plans(
                     corpus,
@@ -210,6 +212,23 @@ fn route_witness_assessment(
                     format!(
                         "{} | multipass=empty_after_role_prune",
                         assessment.reasoning
+                    ),
+                ));
+            }
+            if let Some(actions) =
+                dependent_action_shadowed_by_peer_primary(corpus, &indices, intent)
+            {
+                let names: Vec<String> = actions
+                    .iter()
+                    .map(|(e, ent)| format!("{e}:{ent}"))
+                    .collect();
+                return Ok(selection_clarify_from_plans(
+                    corpus,
+                    &[],
+                    format!(
+                        "{} | multipass=peer_primary_steals_dependent_action={}",
+                        assessment.reasoning,
+                        names.join(",")
                     ),
                 ));
             }
@@ -226,7 +245,7 @@ fn route_witness_assessment(
                 ));
             }
 
-            let plans = match construct_minimal_plans(corpus, &indices) {
+            let plans = match construct_workflow_seed_plans(corpus, &indices) {
                 Ok(plans) => plans,
                 Err(PlanConstructError::EmptyWitnesses) => {
                     return Ok(selection_clarify_from_plans(
@@ -254,24 +273,37 @@ fn route_witness_assessment(
                 ));
             }
             if verified.len() == 1 {
-                let mut raw = selection_from_plan(corpus, &verified[0]);
-                raw.reasoning = format!(
-                    "{} | {} | multipass=single_plan",
-                    assessment.reasoning, raw.reasoning
-                );
-                return Ok(raw);
+                return Ok(finalize_ready_plan(
+                    corpus,
+                    &verified[0],
+                    &pre_prune,
+                    intent,
+                    &assessment.reasoning,
+                    "single_plan",
+                ));
+            }
+
+            if let Some(winner) = prefer_primary_cover_plan(corpus, &verified) {
+                return Ok(finalize_ready_plan(
+                    corpus,
+                    winner,
+                    &pre_prune,
+                    intent,
+                    &assessment.reasoning,
+                    "primary_cover",
+                ));
             }
 
             let shortlist = shortlist_plans(&verified);
             match pairwise_agree_winner(intent, &shortlist, config)? {
-                Some(winner) => {
-                    let mut raw = selection_from_plan(corpus, winner);
-                    raw.reasoning = format!(
-                        "{} | {} | multipass=pairwise_agree",
-                        assessment.reasoning, raw.reasoning
-                    );
-                    Ok(raw)
-                }
+                Some(winner) => Ok(finalize_ready_plan(
+                    corpus,
+                    winner,
+                    &pre_prune,
+                    intent,
+                    &assessment.reasoning,
+                    "pairwise_agree",
+                )),
                 None => {
                     let mut raw = selection_clarify_from_plans(
                         corpus,
@@ -288,6 +320,35 @@ fn route_witness_assessment(
             }
         }
     }
+}
+
+fn finalize_ready_plan(
+    corpus: &WitnessCorpus,
+    plan: &DeterministicSeedPlan,
+    // Pre-prune witness indices so attach reads still feed satellite admission.
+    satellite_indices: &[usize],
+    intent: &str,
+    assessment_reasoning: &str,
+    multipass_tag: &str,
+) -> SeedSelectionRaw {
+    let mut raw = selection_from_plan(corpus, plan);
+    raw.reasoning = format!(
+        "{assessment_reasoning} | {} | multipass={multipass_tag}",
+        raw.reasoning
+    );
+    let raw = apply_teaching_satellites_to_ready(
+        raw,
+        corpus,
+        plan,
+        satellite_indices,
+        Some(intent),
+    );
+    if raw.decision == SeedSelectionDecision::Clarify && raw.alternative_sets.len() < 2 {
+        let mut raw = raw;
+        raw.alternative_sets = synthesize_clarify_alternatives(corpus);
+        return raw;
+    }
+    raw
 }
 
 fn ensure_clarify_alternatives(

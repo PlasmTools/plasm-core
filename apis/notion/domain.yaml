@@ -136,7 +136,7 @@ entities:
       names:
       - database
       - notion database
-      seed_class: primary
+      seed_class: ambient
     fields:
       id:
         required: true

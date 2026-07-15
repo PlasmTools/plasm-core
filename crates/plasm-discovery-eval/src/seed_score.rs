@@ -10,7 +10,7 @@ use plasm_core::discovery_seed_select::{
 
 use crate::cases::{SeedExpect, SeedRef};
 
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SeedSetMetrics {
     pub decision: String,
     pub decision_ok: bool,
@@ -20,6 +20,8 @@ pub struct SeedSetMetrics {
     pub false_open: bool,
     pub unsafe_open: bool,
     pub safe_ready: bool,
+    /// True when `must_teach` is empty or every required entity is in seeds ∪ teaching satellites.
+    pub must_teach_ok: bool,
     pub excluded_violation: bool,
     pub routing_error: bool,
     pub symbol_hallucination: bool,
@@ -29,6 +31,31 @@ pub struct SeedSetMetrics {
     pub clarify_to_ready: bool,
     pub hard_miss_to_ready: bool,
     pub gold_in_pool: bool,
+}
+
+impl Default for SeedSetMetrics {
+    fn default() -> Self {
+        Self {
+            decision: String::new(),
+            decision_ok: false,
+            bundle_exact: false,
+            seed_precision: 0.0,
+            seed_recall: 0.0,
+            false_open: false,
+            unsafe_open: false,
+            safe_ready: false,
+            must_teach_ok: true,
+            excluded_violation: false,
+            routing_error: false,
+            symbol_hallucination: false,
+            raw_id_hallucination: false,
+            seed_count: 0,
+            supporting_count: 0,
+            clarify_to_ready: false,
+            hard_miss_to_ready: false,
+            gold_in_pool: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
@@ -84,7 +111,17 @@ pub fn score_seed_selection(
                         })
                 })
                 .collect();
-            let metrics = score_ready(expect, &selected, &raw.decision, bundles);
+            let taught: Vec<SeedRef> = {
+                let mut taught = selected.clone();
+                for (entry_id, entity) in &ready.teaching_satellites {
+                    taught.push(SeedRef {
+                        entry_id: entry_id.clone(),
+                        entity: entity.clone(),
+                    });
+                }
+                taught
+            };
+            let metrics = score_ready(expect, &selected, &taught, &raw.decision, bundles);
             SeedSetCaseScore {
                 case_id: case_id.into(),
                 intent: intent.into(),
@@ -247,12 +284,14 @@ fn failure_stage_counts(scores: &[SeedSetCaseScore]) -> std::collections::BTreeM
 fn score_ready(
     expect: &SeedExpect,
     selected: &[SeedRef],
+    taught: &[SeedRef],
     decision: &SeedSelectionDecision,
     bundles: &[EntityCandidateBundle],
 ) -> SeedSetMetrics {
     let decision_ok = expect.decision_any.iter().any(|d| d == "ready")
         && *decision == SeedSelectionDecision::Ready;
     let selected_set: HashSet<SeedRef> = selected.iter().cloned().collect();
+    let taught_set: HashSet<SeedRef> = taught.iter().cloned().collect();
     let bundle_exact = expect.acceptable_sets.iter().any(|set| {
         let set_refs: HashSet<SeedRef> = set.iter().cloned().collect();
         set_refs == selected_set
@@ -260,6 +299,10 @@ fn score_ready(
     let false_open = !expect.acceptable_sets.is_empty()
         && *decision == SeedSelectionDecision::Ready
         && !bundle_exact;
+    let must_teach_ok = expect
+        .must_teach
+        .iter()
+        .all(|required| taught_set.contains(required));
     let excluded_violation = selected.iter().any(|s| expect.must_exclude.contains(s));
     let (precision, recall) = seed_pr_re(expect, selected);
     let max_ok = expect.max_seeds.unwrap_or(3);
@@ -272,9 +315,10 @@ fn score_ready(
         seed_precision: precision,
         seed_recall: recall,
         false_open,
+        must_teach_ok,
         excluded_violation,
         seed_count: selected.len(),
-        safe_ready: bundle_exact && !excluded_violation,
+        safe_ready: bundle_exact && !excluded_violation && must_teach_ok,
         gold_in_pool,
         ..Default::default()
     }
@@ -303,7 +347,7 @@ impl SeedSetMetrics {
             return true;
         }
         if expected_ready {
-            return self.false_open || self.excluded_violation;
+            return self.false_open || self.excluded_violation || !self.must_teach_ok;
         }
         false
     }
@@ -682,12 +726,13 @@ pub fn format_seed_human_report(report: &SeedSetAggregateReport) -> String {
     for c in &report.cases {
         writeln!(
             &mut out,
-            "[{}] decision={} exact={} false_open={} unsafe={} seeds={} gold_pool={}",
+            "[{}] decision={} exact={} false_open={} unsafe={} must_teach={} seeds={} gold_pool={}",
             c.case_id,
             c.metrics.decision,
             c.metrics.bundle_exact,
             c.metrics.false_open,
             c.metrics.unsafe_open,
+            c.metrics.must_teach_ok,
             c.metrics.seed_count,
             c.metrics.gold_in_pool,
         )
@@ -715,6 +760,7 @@ mod tests {
             requirements: vec![],
             selected_ids: vec!["nope".into()],
             supporting_capability_ids: vec!["x".into()],
+            teaching_satellites: vec![],
             alternative_sets: vec![],
             uncovered_requirements: vec![],
             reasoning: String::new(),
