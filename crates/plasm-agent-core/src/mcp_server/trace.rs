@@ -356,9 +356,9 @@ mod tests {
             }],
             run_markdown: None,
             run_plasm_meta: None,
-            agent_structured_plan_text: None,
 
             return_steps: Vec::new(),
+            inline_plan_ui: None,
         };
         let refs = run_artifact_refs_for_trace(&out);
         assert_eq!(refs.len(), 1);

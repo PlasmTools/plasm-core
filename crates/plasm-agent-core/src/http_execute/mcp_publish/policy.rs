@@ -162,7 +162,7 @@ impl PublishPlan {
         mcp_preview_markdown_needed(false, inline_char_count, policy)
     }
 
-    /// Agent delivery hint mirrored into `structuredContent.plasm.result_delivery`.
+    /// Agent delivery hint mirrored into `_meta.plasm.result_delivery` (and `structuredContent.ui` on full Apps).
     pub(crate) fn result_delivery(&self, preview_needed: bool) -> &'static str {
         if preview_needed {
             return "snapshot_only";

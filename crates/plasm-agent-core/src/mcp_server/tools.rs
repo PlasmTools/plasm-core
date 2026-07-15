@@ -7,6 +7,7 @@ use rust_mcp_sdk::schema::{
 };
 use serde_json::Map;
 
+use crate::mcp_delivery::McpDeliveryProfile;
 use crate::mcp_run_markdown::ArtifactAccessMode;
 use plasm_core::prompt_render::{
     DISCOVER_TOOL_DESCRIPTION, PLASM_CONTEXT_TOOL_DESCRIPTION, PLASM_PROGRAM_PARAM_DESCRIPTION,
@@ -55,6 +56,9 @@ fn plasm_context_seeds_schema_description() -> &'static str {
 }
 
 pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: bool) -> Vec<Tool> {
+    let delivery = McpDeliveryProfile::resolve(ui_apps_enabled, artifact_access);
+    let structured_ui_lane = delivery.emits_structured_ui();
+    let attach_ui_meta = delivery.attaches_ui_meta();
     let mut context_props = BTreeMap::new();
     context_props.insert(
         "session_mode".into(),
@@ -200,12 +204,12 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
             task_support: Some(ToolExecutionTaskSupport::Forbidden),
         }),
         icons: vec![],
-        meta: if ui_apps_enabled {
+        meta: if attach_ui_meta {
             Some(crate::plan_ui_mcp::plan_review_ui_tool_meta())
         } else {
             None
         },
-        output_schema: if ui_apps_enabled {
+        output_schema: if structured_ui_lane {
             Some(crate::mcp_ui_payload::plasm_tool_output_schema())
         } else {
             None
@@ -229,18 +233,18 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
             task_support: Some(ToolExecutionTaskSupport::Forbidden),
         }),
         icons: vec![],
-        meta: if ui_apps_enabled {
+        meta: if attach_ui_meta {
             Some(crate::run_explorer_ui_mcp::run_explorer_ui_tool_meta())
         } else {
             None
         },
-        output_schema: if ui_apps_enabled {
+        output_schema: if structured_ui_lane {
             Some(crate::mcp_ui_payload::plasm_run_tool_output_schema())
         } else {
             None
         },
     });
-    if ui_apps_enabled {
+    if attach_ui_meta {
         tools.push(Tool {
             name: "plasm_ui_list_catalogs".into(),
         title: Some("List tenant-enabled catalogs (MCP App)".into()),
@@ -317,7 +321,7 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
             output_schema: None,
         });
     }
-    if workflow_mcp_tools_enabled() && ui_apps_enabled {
+    if workflow_mcp_tools_enabled() && attach_ui_meta {
         tools.extend(crate::workflow_mcp::workflow_mcp_tools());
     }
     tools

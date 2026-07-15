@@ -62,8 +62,8 @@ fn empty_plan_run_with_markdown(
         code_plan_run_artifacts: Vec::new(),
         run_markdown: Some(markdown),
         run_plasm_meta: Some(meta),
-        agent_structured_plan_text: None,
         return_steps: Vec::new(),
+        inline_plan_ui: None,
     }
 }
 
@@ -257,8 +257,8 @@ async fn hydrate_plan_run_from_artifact(
         }],
         run_markdown: Some(out.markdown),
         run_plasm_meta: out.tool_meta,
-        agent_structured_plan_text: None,
         return_steps: Vec::new(),
+        inline_plan_ui: None,
     })
 }
 

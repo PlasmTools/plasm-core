@@ -93,9 +93,9 @@ async fn cep_8_await_returns_success_when_finalized() {
                 code_plan_run_artifacts: Vec::new(),
                 run_markdown: Some("## done".into()),
                 run_plasm_meta: None,
-                agent_structured_plan_text: None,
 
                 return_steps: Vec::new(),
+                inline_plan_ui: None,
             },
             None,
         );

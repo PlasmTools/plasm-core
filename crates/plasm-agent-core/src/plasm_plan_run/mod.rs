@@ -128,10 +128,10 @@ pub struct PlasmPlanRunResult {
     pub run_markdown: Option<String>,
     /// Optional `CallToolResult` `_meta` map (typically includes `plasm` steps when run snapshots exist).
     pub run_plasm_meta: Option<serde_json::Map<String, serde_json::Value>>,
-    /// Compact dry-run plan text for agent `structuredContent.plasm` only (not `_meta.plasm`).
-    pub agent_structured_plan_text: Option<String>,
     /// Live execution return roots (for HTTP Accept mapping).
     pub return_steps: Vec<crate::http_execute::PublishedResultStep>,
+    /// Dry-run only: inline plan DAG for FullApps `structuredContent.ui`.
+    pub inline_plan_ui: Option<crate::mcp_ui_payload::UiInlinePlanPayload>,
 }
 
 /// Dry-run a program plan: validate, type-check, and render simulation JSON per node.

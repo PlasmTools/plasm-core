@@ -19,17 +19,6 @@ use super::plasm_tool_dry_meta;
 use super::trace::CodePlanTraceInput;
 use super::transport::PlasmExecBinding;
 
-pub(crate) struct PlasmDryRunOutcome {
-    pub result: PlasmPlanRunResult,
-    pub inline_plan_ui: Option<UiInlinePlanPayload>,
-}
-
-/// Unified dry/live MCP `plasm` / `plasm_run` tool outcome for finalization.
-pub(crate) struct PlasmToolRunOutcome {
-    pub result: PlasmPlanRunResult,
-    pub inline_plan_ui: Option<UiInlinePlanPayload>,
-}
-
 pub(crate) struct PlasmDryRunContext<'a> {
     pub host: &'a PlasmHostState,
     pub es: Arc<ExecuteSession>,
@@ -42,7 +31,7 @@ pub(crate) struct PlasmDryRunContext<'a> {
 pub(crate) async fn execute_plasm_tool_dry_run(
     ctx: PlasmDryRunContext<'_>,
     program: &str,
-) -> Result<PlasmDryRunOutcome, String> {
+) -> Result<PlasmPlanRunResult, String> {
     let total_started = Instant::now();
     let plan_name = format!("plasm_dag_call_{}", ctx.call_index);
     let pipeline = ctx.host.engine.prompt_pipeline();
@@ -93,12 +82,6 @@ pub(crate) async fn execute_plasm_tool_dry_run(
         ));
     }
     let commit_ref = ctx.es.mint_plan_commit_ref();
-    let agent_plan_text = dry_text.clone();
-    let mut markdown = format!("```text\n{dry_text}\n```");
-    markdown.push_str(&format!(
-        "\n\n**Run:** pass `run_ref`: `{}` to **`plasm_run`**. Do not echo the program.",
-        commit_ref.as_str()
-    ));
     let commit_record = PlanCommitRecord::from_dry_review(
         commit_ref.clone(),
         compute_plan_commit_id_from_dry(&dry),
@@ -171,6 +154,26 @@ pub(crate) async fn execute_plasm_tool_dry_run(
         crate::symbol_map_resolve::symbol_map_fingerprint_for_session(ctx.es.as_ref()).as_deref(),
         projection_warning,
     );
+    let dry_verdict = agent_plasm
+        .get("dry_verdict")
+        .and_then(|v| v.as_str())
+        .unwrap_or("ok");
+    let plan_uri = agent_plasm.get("plan_uri").and_then(|v| v.as_str());
+    let symbol_fp = agent_plasm
+        .get("symbol_map_fingerprint")
+        .and_then(|v| v.as_str());
+    let markdown = crate::mcp_agent_present::AgentContent::plan(
+        &crate::mcp_agent_present::PlanTokenRefs {
+            run_ref: commit_ref.as_str(),
+            dry_verdict,
+            logical_session_ref: ctx.session_ref,
+            plan_uri,
+            domain_revision: Some(ctx.es.domain_revision),
+            symbol_map_fingerprint: symbol_fp,
+        },
+        &dry_text,
+    )
+    .render();
     let inline_plan_ui = inline_fits.then(|| UiInlinePlanPayload {
         comp: comp_val.expect("inline_fits implies comp_val"),
         plan_ux_reflection: plan_ux_reflection.clone(),
@@ -180,18 +183,15 @@ pub(crate) async fn execute_plasm_tool_dry_run(
     record_mcp_plasm_dry_run_phase("build_response", phase.elapsed());
     record_mcp_plasm_dry_run_phase("total", total_started.elapsed());
 
-    Ok(PlasmDryRunOutcome {
-        result: PlasmPlanRunResult {
-            version: dry.version,
-            node_results: dry.node_results,
-            graph_summary: dry.graph_summary,
-            comp: Some(comp_wire.as_ref().clone()),
-            code_plan_run_artifacts: Vec::new(),
-            run_markdown: Some(markdown),
-            run_plasm_meta: Some(meta),
-            agent_structured_plan_text: Some(agent_plan_text),
-            return_steps: Vec::new(),
-        },
+    Ok(PlasmPlanRunResult {
+        version: dry.version,
+        node_results: dry.node_results,
+        graph_summary: dry.graph_summary,
+        comp: Some(comp_wire.as_ref().clone()),
+        code_plan_run_artifacts: Vec::new(),
+        run_markdown: Some(markdown),
+        run_plasm_meta: Some(meta),
+        return_steps: Vec::new(),
         inline_plan_ui,
     })
 }

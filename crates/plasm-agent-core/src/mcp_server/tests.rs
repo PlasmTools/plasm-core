@@ -167,6 +167,43 @@ fn plasm_read_run_artifact_gated_on_tool_fallback_mode() {
 }
 
 #[test]
+fn tool_fallback_omits_output_schema_but_keeps_ui_resource_meta() {
+    use crate::mcp_run_markdown::ArtifactAccessMode;
+    let tool_only = super::tools::plasm_tools(ArtifactAccessMode::ToolFallback, true);
+    let plasm = tool_only
+        .iter()
+        .find(|t| t.name == "plasm")
+        .expect("plasm tool");
+    let plasm_run = tool_only
+        .iter()
+        .find(|t| t.name == "plasm_run")
+        .expect("plasm_run tool");
+    assert!(
+        plasm.output_schema.is_none(),
+        "ToolFallback must not advertise structuredContent outputSchema"
+    );
+    assert!(
+        plasm_run.output_schema.is_none(),
+        "ToolFallback must not advertise structuredContent outputSchema"
+    );
+    assert!(
+        plasm
+            .meta
+            .as_ref()
+            .and_then(|m| m.get("ui"))
+            .and_then(|u| u.get("resourceUri"))
+            .is_some(),
+        "ToolFallback may still mount Plan Review via _meta.ui.resourceUri"
+    );
+    let full = super::tools::plasm_tools(ArtifactAccessMode::ResourcesRead, true);
+    let full_plasm = full.iter().find(|t| t.name == "plasm").expect("plasm");
+    assert!(
+        full_plasm.output_schema.is_some(),
+        "full Apps lane must advertise outputSchema"
+    );
+}
+
+#[test]
 fn mcp_server_initialize_instructions_snapshot() {
     with_insta_snapshots(|| {
         insta::assert_snapshot!(

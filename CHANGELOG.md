@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.25] - 2026-07-15
+
+### Changed
+
+- **MCP TSV result cutover:** agent-facing `plasm` / `plasm_run` / `plasm_context` tool results put compact token TSV (+ plan/row bodies) only in `content`. Full plan/run payloads live in `structuredContent.ui` for MCP Apps; ToolFallback hosts get content-only (no `structuredContent`) so connectors that prefer structured lanes cannot suppress rows. Removed the agent `structuredContent.plasm` compromise lane.
+- **`McpDeliveryProfile` + `AgentContent` / `DualLaneToolResult`:** typed dual-lane finalize; `inline_plan_ui` folds into `PlasmPlanRunResult`; live MCP markdown wraps via `RunTokens::from_live_result` after meta attach.
+
+### Fixed
+
+- Claude / tool-only hosts no longer surface metadata-only tool results that omit plan text and inline row TSV.
+
 ## [0.4.24] - 2026-07-15
 
 ### Fixed

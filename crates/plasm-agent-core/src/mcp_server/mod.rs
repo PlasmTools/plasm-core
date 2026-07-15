@@ -1,13 +1,12 @@
 //! MCP Streamable HTTP server (rust-mcp-sdk) over Plasm discovery + execute ([`crate::server_state::PlasmHostState`]).
-//! Tool results use Markdown [`TextContent`]; **`plasm`** dry-runs put compact review text in Markdown and slim
-//! tokens in `_meta.plasm` + slim `structuredContent.plasm` (`run_ref`, `dry_verdict`, `plan_uri`, …); compact
-//! `plan_text` is injected into `structuredContent.plasm` only (not `_meta.plasm`).
-//! Full plan DAG / run snapshot rows live under `_meta.plasm.steps` (Run Explorer UI channel) or MCP
-//! `resources/read` on `plan_uri` / run artifact URIs — never in agent `structuredContent`.
-//! artifact URIs, and optional `lossy_summary_fields` per truncated step in `_meta.plasm`.
-//! Run snapshot URIs in Markdown use logical-session short form `plasm://session/{logical_session_ref}/r/{n}`
-//! (canonical `l_<token>` wire ref; see [`crate::run_artifacts::plasm_session_short_resource_uri`]);
-//! canonical `plasm://execute/.../run/{uuid}` remains accepted on read.
+//! Tool results use Markdown [`TextContent`] with canonical agent token TSV in **`content`**.
+//! **`plasm`** dry-runs and **`plasm_run`** put compact review / row TSV in `content` and continuity
+//! tokens in `_meta.plasm`. Negotiated MCP Apps receive full DAG / steps in `structuredContent.ui`
+//! only — there is **no** agent `structuredContent.plasm` lane. Tool-only hosts omit
+//! `structuredContent` entirely so connectors cannot suppress rows behind slim metadata.
+//! Full plan DAG / run snapshot rows also live under `_meta.plasm.steps` (Run Explorer UI) or MCP
+//! `resources/read` on `plan_uri` / run artifact URIs.
+//! Run snapshot URIs in Markdown prefer canonical `plasm://execute/.../run/{run_id}`.
 //! Tool results may include run snapshot URIs and inline hints when full data requires MCP `resources/read`;
 //! the server repeats that obligation in the reply when it applies.
 //!
@@ -722,6 +721,9 @@ impl PlasmMcpHandler {
             call_index,
         };
         let artifact_mode = self.resolved_artifact_access_mode(key, runtime).await;
+        let ui_apps_enabled = self.mcp_ui_apps_enabled_for_runtime(runtime).await;
+        let delivery_profile =
+            crate::mcp_delivery::McpDeliveryProfile::resolve(ui_apps_enabled, artifact_mode);
         let mcp_result_policy = crate::mcp_run_markdown::McpResultTransportPolicy {
             artifact_access: artifact_mode,
             ..Default::default()
@@ -750,10 +752,7 @@ impl PlasmMcpHandler {
                 )
                 .await
                 {
-                    return op_result.map(|result| plasm_tool_dry_run::PlasmToolRunOutcome {
-                        result,
-                        inline_plan_ui: None,
-                    });
+                    return op_result;
                 }
             }
             if run_live {
@@ -796,15 +795,11 @@ impl PlasmMcpHandler {
                     wait_live,
                 })
                 .await
-                .map(|result| plasm_tool_dry_run::PlasmToolRunOutcome {
-                    result,
-                    inline_plan_ui: None,
-                })
             } else {
                 let program = invocation
                     .program()
                     .ok_or_else(|| "missing `program`: call `plasm` with a program".to_string())?;
-                let dry_out = plasm_tool_dry_run::execute_plasm_tool_dry_run(
+                plasm_tool_dry_run::execute_plasm_tool_dry_run(
                     plasm_tool_dry_run::PlasmDryRunContext {
                         host: self.plasm.as_ref(),
                         es: Arc::clone(&es),
@@ -815,21 +810,16 @@ impl PlasmMcpHandler {
                     },
                     program,
                 )
-                .await?;
-                Ok(plasm_tool_dry_run::PlasmToolRunOutcome {
-                    result: dry_out.result,
-                    inline_plan_ui: dry_out.inline_plan_ui,
-                })
+                .await
             }
         }
         .instrument(plasm_tool_span)
         .await;
         match run_result {
             Ok(out) => {
-                let markdown = out
-                    .result
-                    .run_markdown
-                    .unwrap_or_else(|| "# Plasm program plan\n\nNo execution output.".to_string());
+                let markdown = out.run_markdown.unwrap_or_else(|| {
+                    "# Plasm program plan\n\nNo execution output.".to_string()
+                });
                 let response_chars = markdown.chars().count() as u64;
                 if response_chars > 0 {
                     let mut g = state.lock().await;
@@ -866,31 +856,29 @@ impl PlasmMcpHandler {
                     "none",
                     started.elapsed(),
                 );
-                let blocks = vec![ContentBlock::TextContent(TextContent::new(
-                    markdown, None, None,
-                ))];
-                let mut res = CallToolResult::from_content(blocks);
-                if let Some(m) = out.result.run_plasm_meta {
-                    let ui_apps_enabled = self.mcp_ui_apps_enabled_for_runtime(runtime).await;
-                    let artifact_access = self.artifact_access_mode_for_runtime(runtime).await;
-                    let structured_ui_lane =
-                        ui_apps_enabled && !artifact_access.omits_structured_ui_lane();
-                    if ui_apps_enabled && !structured_ui_lane {
+                let res = if let Some(m) = out.run_plasm_meta {
+                    if matches!(
+                        delivery_profile,
+                        crate::mcp_delivery::McpDeliveryProfile::ToolFallback
+                    ) {
                         tracing::debug!(
                             target: "plasm_agent::mcp",
-                            ?artifact_access,
+                            ?artifact_mode,
                             "omit structuredContent.ui for tool-only MCP host"
                         );
                     }
-                    res = crate::mcp_ui_payload::finalize_mcp_tool_result(
-                        res,
+                    crate::mcp_ui_payload::DualLaneToolResult::from_tool_meta(
+                        markdown,
                         m,
-                        out.result.agent_structured_plan_text.as_deref(),
+                        delivery_profile,
                         out.inline_plan_ui,
-                        ui_apps_enabled,
-                        structured_ui_lane,
-                    );
-                }
+                    )
+                    .into_call_tool_result()
+                } else {
+                    CallToolResult::from_content(vec![ContentBlock::TextContent(
+                        TextContent::new(markdown, None, None),
+                    )])
+                };
                 self.schedule_persist_transport_state(key);
                 Ok(res)
             }
@@ -1271,12 +1259,27 @@ impl PlasmMcpHandler {
                 relations_delta,
             },
         );
-        let mut res = CallToolResult::text_content(vec![TextContent::new(text, None, None)]);
-        if !plasm.is_empty() {
-            let mut meta = serde_json::Map::new();
-            meta.insert("plasm".to_string(), serde_json::Value::Object(plasm));
-            res = res.with_meta(Some(meta));
-        }
+        let text = crate::mcp_agent_present::AgentContent::context(
+            &crate::mcp_agent_present::ContextTokenRefs {
+                logical_session_ref: logical_session_ref.as_str(),
+                session_mode: session_mode.as_str(),
+                domain_revision,
+            },
+            &text,
+        )
+        .render();
+        let res = if plasm.is_empty() {
+            CallToolResult::text_content(vec![TextContent::new(text, None, None)])
+        } else {
+            // Context has no structured UI App yet — ContentOnly keeps one finalize exit.
+            crate::mcp_ui_payload::DualLaneToolResult {
+                content: text,
+                plasm_meta: plasm,
+                profile: crate::mcp_delivery::McpDeliveryProfile::ContentOnly,
+                inline_plan_ui: None,
+            }
+            .into_call_tool_result()
+        };
         self.persist_transport_state(key).await;
         Ok(res)
     }

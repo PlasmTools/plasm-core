@@ -47,11 +47,8 @@ pub enum ArtifactAccessMode {
 
 impl ArtifactAccessMode {
     /// Tool-only hosts (Claude Desktop / Code / API connector) ingest `structuredContent`
-    /// into model context — omit the UI render lane there; keep slim `structuredContent.plasm`.
-    pub fn omits_structured_ui_lane(self) -> bool {
-        matches!(self, Self::ToolFallback)
-    }
-
+    /// into model context — [`crate::mcp_delivery::McpDeliveryProfile::ToolFallback`]
+    /// therefore emits content (+ optional `_meta.ui`) only.
     pub fn exposes_read_tool(self) -> bool {
         matches!(self, Self::ToolFallback)
     }

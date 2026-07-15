@@ -40,8 +40,8 @@ pub async fn run_plasm_comp(
             code_plan_run_artifacts: Vec::new(),
             run_markdown: None,
             run_plasm_meta: None,
-            agent_structured_plan_text: None,
             return_steps: Vec::new(),
+            inline_plan_ui: None,
         });
     }
     // Heap-box the scoped live runner: debug async state machines for plan materialize
@@ -482,16 +482,34 @@ pub(crate) async fn run_executable_plan_phased(
             evidence_head_hex,
         );
     }
+    let run_markdown = if mcp_result_policy.is_some() {
+        if let Some(plasm) = run_plasm_meta
+            .as_ref()
+            .and_then(|m| m.get("plasm"))
+            .and_then(|v| v.as_object())
+        {
+            let artifact = steps.first().and_then(|s| s.artifact.as_ref());
+            crate::mcp_agent_present::AgentContent::run(
+                crate::mcp_agent_present::RunTokens::from_live_result(plasm, artifact),
+                &out.markdown,
+            )
+            .render()
+        } else {
+            out.markdown
+        }
+    } else {
+        out.markdown
+    };
     Ok(PlasmPlanRunResult {
         version: dry.version,
         node_results,
         graph_summary: graph_summary_with_approval_receipts(dry.graph_summary, &approval_receipts),
         comp: Some(comp),
         code_plan_run_artifacts,
-        run_markdown: Some(out.markdown),
+        run_markdown: Some(run_markdown),
         run_plasm_meta,
-        agent_structured_plan_text: None,
         return_steps: steps,
+        inline_plan_ui: None,
     })
 }
 
