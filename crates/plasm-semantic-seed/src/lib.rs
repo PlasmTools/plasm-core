@@ -43,10 +43,10 @@ use plasm_core::discovery_seed_select::SeedSelectionRaw;
 use plasm_core::discovery_seed_witness::{
     apply_teaching_satellites_to_ready, build_witness_corpus, construct_workflow_seed_plans,
     dependent_action_shadowed_by_peer_primary, missing_named_catalog_coverage,
-    prefer_primary_cover_plan, prune_witness_selection, IntentGate, selection_clarify_from_plans,
+    prefer_primary_cover_plan, prune_witness_selection, selection_clarify_from_plans,
     selection_from_plan, selection_hard_miss, shortlist_plans, synthesize_clarify_alternatives,
-    verify_plan, DeterministicSeedPlan, PlanConstructError, RequirementWitness, WitnessCorpus,
-    WitnessKind,
+    verify_plan, DeterministicSeedPlan, IntentGate, PlanConstructError, RequirementWitness,
+    WitnessCorpus, WitnessKind,
 };
 
 /// Runtime settings for LLM narrow steps.
@@ -336,13 +336,8 @@ fn finalize_ready_plan(
         "{assessment_reasoning} | {} | multipass={multipass_tag}",
         raw.reasoning
     );
-    let raw = apply_teaching_satellites_to_ready(
-        raw,
-        corpus,
-        plan,
-        satellite_indices,
-        Some(intent),
-    );
+    let raw =
+        apply_teaching_satellites_to_ready(raw, corpus, plan, satellite_indices, Some(intent));
     if raw.decision == SeedSelectionDecision::Clarify && raw.alternative_sets.len() < 2 {
         let mut raw = raw;
         raw.alternative_sets = synthesize_clarify_alternatives(corpus);

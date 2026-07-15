@@ -144,9 +144,7 @@ pub fn candidates_covering_for_plan(
                 for edge in witness.own_pairs.iter() {
                     if edge.target == *entity {
                         let pid = format!("{entry_id}:{}", edge.source);
-                        if corpus_has_owner(corpus, &pid)
-                            && !corpus.roles.owner_is_ambient(&pid)
-                        {
+                        if corpus_has_owner(corpus, &pid) && !corpus.roles.owner_is_ambient(&pid) {
                             sources.push(pid);
                         }
                     }
@@ -303,12 +301,7 @@ fn push_pool_parents(corpus: &WitnessCorpus, witness: &RequirementWitness, out: 
     }
 }
 
-fn push_hop_parents(
-    corpus: &WitnessCorpus,
-    entry_id: &str,
-    entity: &str,
-    out: &mut Vec<String>,
-) {
+fn push_hop_parents(corpus: &WitnessCorpus, entry_id: &str, entity: &str, out: &mut Vec<String>) {
     for bundle in &corpus.bundles {
         if bundle.entry_id != entry_id {
             continue;
@@ -324,10 +317,7 @@ fn push_hop_parents(
         }) else {
             continue;
         };
-        if parent_w
-            .pool
-            .child_targets()
-            .any(|t| t == entity)
+        if parent_w.pool.child_targets().any(|t| t == entity)
             && !out.iter().any(|id| id == &bundle.candidate_id)
         {
             out.push(bundle.candidate_id.clone());
@@ -500,10 +490,7 @@ pub fn apply_teaching_satellites_to_ready(
     }
 }
 
-fn is_satellite_candidate_witness(
-    corpus: &WitnessCorpus,
-    witness: &RequirementWitness,
-) -> bool {
+fn is_satellite_candidate_witness(corpus: &WitnessCorpus, witness: &RequirementWitness) -> bool {
     if is_attach_or_dependent_leaf(witness) {
         return true;
     }
@@ -608,7 +595,10 @@ mod tests {
             pool: PoolLinks {
                 parents: BTreeSet::new(),
                 children: [
-                    crate::discovery_seed_witness::roles::PoolChild::new("comments", "IssueComment"),
+                    crate::discovery_seed_witness::roles::PoolChild::new(
+                        "comments",
+                        "IssueComment",
+                    ),
                     crate::discovery_seed_witness::roles::PoolChild::new("labels", "Label"),
                 ]
                 .into_iter()
@@ -851,7 +841,9 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         assert!(
-            !plans.iter().any(|p| p.candidate_ids == ["github:IssueComment"]),
+            !plans
+                .iter()
+                .any(|p| p.candidate_ids == ["github:IssueComment"]),
             "ParentPreferred must not seat leaf Comment when Issue parent covers Create: {:?}",
             plans
                 .iter()
@@ -997,8 +989,8 @@ mod tests {
     fn strict_construct_requires_leaf_owner() {
         let (corpus, issue_idx, comment_idx) = leaf_and_parent_corpus();
         let selected = [issue_idx, comment_idx];
-        let strict =
-            construct_minimal_plans_with_cover(&corpus, &selected, CoverMode::Strict).expect("strict");
+        let strict = construct_minimal_plans_with_cover(&corpus, &selected, CoverMode::Strict)
+            .expect("strict");
         assert!(
             !strict.iter().any(|p| p.candidate_ids == ["github:Issue"]),
             "Strict must not admit Issue-alone when Comment Create remains: {:?}",
@@ -1025,7 +1017,9 @@ mod tests {
             admit_teaching_satellites(&corpus, &plan, &[issue_idx, comment_idx, label_idx], None);
         match admitted {
             SatelliteAdmission::Ok(sats) => {
-                assert!(sats.iter().any(|(e, n)| e == "github" && n == "IssueComment"));
+                assert!(sats
+                    .iter()
+                    .any(|(e, n)| e == "github" && n == "IssueComment"));
                 assert!(sats.iter().any(|(e, n)| e == "github" && n == "Label"));
                 assert!(!sats.iter().any(|(_, n)| n == "Issue"));
             }
@@ -1049,7 +1043,8 @@ mod tests {
         match admitted {
             SatelliteAdmission::Ok(sats) => {
                 assert!(
-                    sats.iter().any(|(e, n)| e == "github" && n == "IssueComment"),
+                    sats.iter()
+                        .any(|(e, n)| e == "github" && n == "IssueComment"),
                     "expected IssueComment satellite from intent, got {sats:?}"
                 );
             }

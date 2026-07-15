@@ -355,15 +355,7 @@ fn own_edge_xor_keeps_target_mutate_with_source() {
 fn promotes_orphan_attach_per_catalog_under_federation() {
     // Federated primary in catalog A must not veto orphan attach promote in catalog B.
     let corpus = corpus(vec![
-        direct(
-            "vcs",
-            "PullRequest",
-            "Query",
-            "primary",
-            "unset",
-            "",
-            90,
-        ),
+        direct("vcs", "PullRequest", "Query", "primary", "unset", "", 90),
         direct(
             "tracker",
             "Issue",
@@ -414,7 +406,11 @@ fn drops_ambient_container_when_primary_channel_selected() {
         ),
     ]);
     let pruned = prune_witness_selection(&corpus, &[0, 1], IntentGate::Ungated);
-    assert_eq!(pruned, vec![1], "ambient Team dropped beside Channel primary");
+    assert_eq!(
+        pruned,
+        vec![1],
+        "ambient Team dropped beside Channel primary"
+    );
 }
 
 #[test]
@@ -440,7 +436,11 @@ fn drops_ambient_snapshot_when_issue_primary_selected() {
         ),
     ]);
     let pruned = prune_witness_selection(&corpus, &[0, 1], IntentGate::Ungated);
-    assert_eq!(pruned, vec![1], "ambient snapshot dropped beside Issue primary");
+    assert_eq!(
+        pruned,
+        vec![1],
+        "ambient snapshot dropped beside Issue primary"
+    );
 }
 
 #[test]
@@ -468,7 +468,11 @@ fn promotes_own_target_query_to_source() {
         ),
     ]);
     let pruned = prune_witness_selection(&corpus, &[1], IntentGate::Ungated);
-    assert_eq!(pruned, vec![0], "orphan own-target Query promotes to Channel");
+    assert_eq!(
+        pruned,
+        vec![0],
+        "orphan own-target Query promotes to Channel"
+    );
 }
 
 #[test]
@@ -530,15 +534,7 @@ fn own_target_create_stays_on_target() {
 #[test]
 fn promotes_shared_attach_create_update_to_parent() {
     let corpus = corpus(vec![
-        direct(
-            "vcs",
-            "Repository",
-            "Query",
-            "primary",
-            "unset",
-            "",
-            90,
-        ),
+        direct("vcs", "Repository", "Query", "primary", "unset", "", 90),
         direct(
             "vcs",
             "Issue",
@@ -598,7 +594,11 @@ fn single_attach_create_stays_localized() {
         ),
     ]);
     let pruned = prune_witness_selection(&corpus, &[1], IntentGate::Ungated);
-    assert_eq!(pruned, vec![1], "single attach Create remains localized leaf");
+    assert_eq!(
+        pruned,
+        vec![1],
+        "single attach Create remains localized leaf"
+    );
 }
 
 #[test]
@@ -644,15 +644,7 @@ fn attach_action_with_create_does_not_batch_promote() {
 #[test]
 fn own_promote_per_catalog_under_federation() {
     let corpus = corpus(vec![
-        direct(
-            "tracker",
-            "Issue",
-            "Query",
-            "primary",
-            "unset",
-            "",
-            90,
-        ),
+        direct("tracker", "Issue", "Query", "primary", "unset", "", 90),
         direct_with_own(
             "comms",
             "Channel",
@@ -738,15 +730,7 @@ fn prefer_lone_comment_create_over_parent() {
 #[test]
 fn demote_batch_creates_beside_primary() {
     let corpus = corpus(vec![
-        direct(
-            "vcs",
-            "Repository",
-            "Query",
-            "primary",
-            "unset",
-            "",
-            90,
-        ),
+        direct("vcs", "Repository", "Query", "primary", "unset", "", 90),
         direct(
             "vcs",
             "IssueComment",
@@ -1003,8 +987,7 @@ fn prefer_lone_skips_when_leaf_unnamed_in_intent() {
     );
     review_q.aliases = review.aliases.clone();
     let corpus = corpus_for_plans(vec![pr, review, review_q]);
-    let intent =
-        "List open pull requests on the monorepo and show requested reviewers on each.";
+    let intent = "List open pull requests on the monorepo and show requested reviewers on each.";
     let pruned = prune_witness_selection(&corpus, &[0, 1, 2], IntentGate::Strict(intent));
     assert!(
         pruned.contains(&0),

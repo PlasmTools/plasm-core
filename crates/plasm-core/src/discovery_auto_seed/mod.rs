@@ -30,8 +30,8 @@ use helpers::ArcCgs;
 use inject::inject_retrieval_targets;
 use inject::inject_workflow_mutation_targets;
 use pool::{
-    group_candidates_by_entity, merge_required_entity_bundles, readmit_scored_entity_drops,
-    boost_zero_score_phrase_hit_leaves,
+    boost_zero_score_phrase_hit_leaves, group_candidates_by_entity, merge_required_entity_bundles,
+    readmit_scored_entity_drops,
 };
 
 /// Build tenant-scoped entity candidate bundles from lexical discovery (no score thresholds).
@@ -171,8 +171,7 @@ where
         for bundle in &mut diversified {
             let key = (bundle.entry_id.clone(), bundle.entity.clone());
             if let Some(updated) = pool.get(&key) {
-                bundle.max_lexical_score =
-                    bundle.max_lexical_score.max(updated.max_lexical_score);
+                bundle.max_lexical_score = bundle.max_lexical_score.max(updated.max_lexical_score);
                 if bundle.capabilities.is_empty() && !updated.capabilities.is_empty() {
                     bundle.capabilities = updated.capabilities.clone();
                 }
@@ -184,7 +183,8 @@ where
     diversified = readmit_scored_entity_drops(diversified, &pre_diversify, config);
     // Single reserved-seat merge: stamp roots + phrase leaves survive the cap.
     {
-        let mut reserved: IndexMap<(String, String), types::EntityCandidateBundle> = IndexMap::new();
+        let mut reserved: IndexMap<(String, String), types::EntityCandidateBundle> =
+            IndexMap::new();
         let pool: IndexMap<(String, String), types::EntityCandidateBundle> = diversified
             .iter()
             .chain(reserved_leaves.iter())

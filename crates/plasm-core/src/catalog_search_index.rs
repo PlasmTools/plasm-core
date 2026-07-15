@@ -237,10 +237,7 @@ fn intent_covers_raw_token(intent: &HashSet<String>, tok: &str) -> bool {
 
 /// Stemmed tokens that keep authored discovery vocabulary (no English stopword deletion).
 fn tokenize_authored(text: &str) -> HashSet<String> {
-    authored_tokenizer()
-        .tokenize(text)
-        .into_iter()
-        .collect()
+    authored_tokenizer().tokenize(text).into_iter().collect()
 }
 
 fn authored_tokenizer() -> DefaultTokenizer {
@@ -373,20 +370,17 @@ mod tests {
     #[test]
     fn authored_phrase_covers_comment_stopword_and_commenting_stem() {
         assert!(
-            phrase_tokens_covered_by_intent(
-                "comment",
-                "add a comment to the issue"
-            ),
+            phrase_tokens_covered_by_intent("comment", "add a comment to the issue"),
             "authored comment must survive stopwording against exact intent token"
         );
         assert!(
-            phrase_tokens_covered_by_intent(
-                "comment",
-                "commenting on the issue with the PR link"
-            ),
+            phrase_tokens_covered_by_intent("comment", "commenting on the issue with the PR link"),
             "authored comment must cover stemmed commenting"
         );
-        assert!(phrase_tokens_covered_by_intent("issue comment", "add a comment to the issue"));
+        assert!(phrase_tokens_covered_by_intent(
+            "issue comment",
+            "add a comment to the issue"
+        ));
     }
 
     #[test]

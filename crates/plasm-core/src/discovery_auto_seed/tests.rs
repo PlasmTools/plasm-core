@@ -787,16 +787,13 @@ fn readmit_after_merge_required_restores_scored_message() {
     );
 }
 
-
-
-
 #[test]
 fn inject_phrase_adds_issuecomment_when_pool_has_parents() {
-    use indexmap::IndexMap;
-    use super::inject_phrase::inject_phrase_named_leaves;
     use super::helpers::ArcCgs;
+    use super::inject_phrase::inject_phrase_named_leaves;
     use super::types::EntityCandidateBundle;
     use crate::discovery::CapabilityQuery;
+    use indexmap::IndexMap;
     let Some(reg) = load_multi_catalog_registry(&discovery_eval_catalog_ids()) else {
         return;
     };
@@ -844,6 +841,12 @@ fn inject_phrase_adds_issuecomment_when_pool_has_parents() {
         ents.contains(&"IssueComment"),
         "phrase inject must add IssueComment, got {ents:?}"
     );
-    assert!(ents.contains(&"Label"), "phrase inject must add/boost Label, got {ents:?}");
-    assert!(ents.contains(&"Branch"), "phrase inject must add Branch, got {ents:?}");
+    assert!(
+        ents.contains(&"Label"),
+        "phrase inject must add/boost Label, got {ents:?}"
+    );
+    assert!(
+        ents.contains(&"Branch"),
+        "phrase inject must add Branch, got {ents:?}"
+    );
 }

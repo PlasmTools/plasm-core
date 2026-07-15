@@ -69,8 +69,7 @@ pub(crate) fn merge_required_entity_bundles(
             .iter_mut()
             .find(|b| b.candidate_id == bundle.candidate_id)
         {
-            existing.max_lexical_score =
-                existing.max_lexical_score.max(bundle.max_lexical_score);
+            existing.max_lexical_score = existing.max_lexical_score.max(bundle.max_lexical_score);
             if existing.capabilities.is_empty() && !bundle.capabilities.is_empty() {
                 existing.capabilities = bundle.capabilities.clone();
             }
@@ -244,11 +243,8 @@ pub(crate) fn boost_zero_score_phrase_hit_leaves(
         if bundle.max_lexical_score > 0 {
             continue;
         }
-        let phrase = catalog_context.entity_phrase_match_score(
-            &bundle.entry_id,
-            &bundle.entity,
-            intent,
-        );
+        let phrase =
+            catalog_context.entity_phrase_match_score(&bundle.entry_id, &bundle.entity, intent);
         if phrase > 0 {
             bundle.max_lexical_score = phrase.max(1) as u32;
             continue;

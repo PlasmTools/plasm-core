@@ -213,10 +213,11 @@ impl CatalogWorkflowContext {
             return false;
         };
         for parent in pool_parents {
-            if cgs
-                .get_entity(parent.as_str())
-                .is_some_and(|ent| ent.relations.values().any(|rel| rel.target_resource == entity))
-            {
+            if cgs.get_entity(parent.as_str()).is_some_and(|ent| {
+                ent.relations
+                    .values()
+                    .any(|rel| rel.target_resource == entity)
+            }) {
                 return true;
             }
         }

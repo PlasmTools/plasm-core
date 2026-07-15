@@ -3,52 +3,38 @@
 //
 // Learn more at https://docs.boundaryml.com
 
-
 //! Generated enum types.
 
-use baml::{BamlEncode, BamlDecode, __internal::serde::{Serialize, Deserialize}};
-
-
-
+use baml::{
+    BamlDecode, BamlEncode,
+    __internal::serde::{Deserialize, Serialize},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, BamlEncode, BamlDecode, Serialize, Deserialize)]
-
 #[serde(crate = "::baml::__internal::serde")]
 pub enum CapabilityKind {
-
-
     QUERY,
-
 
     GET,
 
-
     CREATE,
-
 
     UPDATE,
 
-
     DELETE,
 
-
     ACTION,
-
-
 }
 
 impl ::std::default::Default for CapabilityKind {
     fn default() -> Self {
-        
         Self::QUERY
-        
     }
 }
 
 impl ::std::fmt::Display for CapabilityKind {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match self {
-
             Self::QUERY => write!(f, "QUERY"),
 
             Self::GET => write!(f, "GET"),
@@ -60,8 +46,6 @@ impl ::std::fmt::Display for CapabilityKind {
             Self::DELETE => write!(f, "DELETE"),
 
             Self::ACTION => write!(f, "ACTION"),
-
-
         }
     }
 }
@@ -71,7 +55,6 @@ impl ::std::str::FromStr for CapabilityKind {
 
     fn from_str(s: &str) -> ::std::result::Result<Self, Self::Err> {
         match s {
-
             "QUERY" => ::std::result::Result::Ok(Self::QUERY),
 
             "GET" => ::std::result::Result::Ok(Self::GET),
@@ -84,9 +67,7 @@ impl ::std::str::FromStr for CapabilityKind {
 
             "ACTION" => ::std::result::Result::Ok(Self::ACTION),
 
-
             _ => ::std::result::Result::Err(()),
-
         }
     }
 }
@@ -97,40 +78,26 @@ impl ::std::convert::AsRef<CapabilityKind> for CapabilityKind {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash, BamlEncode, BamlDecode, Serialize, Deserialize)]
-
 #[serde(crate = "::baml::__internal::serde")]
 pub enum Cardinality {
-
-
     ONE,
 
-
     MANY,
-
-
 }
 
 impl ::std::default::Default for Cardinality {
     fn default() -> Self {
-        
         Self::ONE
-        
     }
 }
 
 impl ::std::fmt::Display for Cardinality {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match self {
-
             Self::ONE => write!(f, "ONE"),
 
             Self::MANY => write!(f, "MANY"),
-
-
         }
     }
 }
@@ -140,14 +107,11 @@ impl ::std::str::FromStr for Cardinality {
 
     fn from_str(s: &str) -> ::std::result::Result<Self, Self::Err> {
         match s {
-
             "ONE" => ::std::result::Result::Ok(Self::ONE),
 
             "MANY" => ::std::result::Result::Ok(Self::MANY),
 
-
             _ => ::std::result::Result::Err(()),
-
         }
     }
 }
@@ -158,56 +122,37 @@ impl ::std::convert::AsRef<Cardinality> for Cardinality {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash, BamlEncode, BamlDecode, Serialize, Deserialize)]
-
 #[serde(crate = "::baml::__internal::serde")]
 pub enum FieldType {
-
-
     STRING,
-
 
     INTEGER,
 
-
     FLOAT,
-
 
     BOOLEAN,
 
-
     DATE,
-
 
     DATETIME,
 
-
     ENUM,
-
 
     ARRAY,
 
-
     ENTITY_REF,
-
-
 }
 
 impl ::std::default::Default for FieldType {
     fn default() -> Self {
-        
         Self::STRING
-        
     }
 }
 
 impl ::std::fmt::Display for FieldType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match self {
-
             Self::STRING => write!(f, "STRING"),
 
             Self::INTEGER => write!(f, "INTEGER"),
@@ -225,8 +170,6 @@ impl ::std::fmt::Display for FieldType {
             Self::ARRAY => write!(f, "ARRAY"),
 
             Self::ENTITY_REF => write!(f, "ENTITY_REF"),
-
-
         }
     }
 }
@@ -236,7 +179,6 @@ impl ::std::str::FromStr for FieldType {
 
     fn from_str(s: &str) -> ::std::result::Result<Self, Self::Err> {
         match s {
-
             "STRING" => ::std::result::Result::Ok(Self::STRING),
 
             "INTEGER" => ::std::result::Result::Ok(Self::INTEGER),
@@ -255,9 +197,7 @@ impl ::std::str::FromStr for FieldType {
 
             "ENTITY_REF" => ::std::result::Result::Ok(Self::ENTITY_REF),
 
-
             _ => ::std::result::Result::Err(()),
-
         }
     }
 }
@@ -268,41 +208,27 @@ impl ::std::convert::AsRef<FieldType> for FieldType {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash, BamlEncode, BamlDecode, Serialize, Deserialize)]
-
 #[serde(crate = "::baml::__internal::serde")]
 pub enum ParamLocation {
-
-
     PATH,
-
 
     QUERY,
 
-
     BODY,
 
-
     HEADER,
-
-
 }
 
 impl ::std::default::Default for ParamLocation {
     fn default() -> Self {
-        
         Self::PATH
-        
     }
 }
 
 impl ::std::fmt::Display for ParamLocation {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match self {
-
             Self::PATH => write!(f, "PATH"),
 
             Self::QUERY => write!(f, "QUERY"),
@@ -310,8 +236,6 @@ impl ::std::fmt::Display for ParamLocation {
             Self::BODY => write!(f, "BODY"),
 
             Self::HEADER => write!(f, "HEADER"),
-
-
         }
     }
 }
@@ -321,7 +245,6 @@ impl ::std::str::FromStr for ParamLocation {
 
     fn from_str(s: &str) -> ::std::result::Result<Self, Self::Err> {
         match s {
-
             "PATH" => ::std::result::Result::Ok(Self::PATH),
 
             "QUERY" => ::std::result::Result::Ok(Self::QUERY),
@@ -330,9 +253,7 @@ impl ::std::str::FromStr for ParamLocation {
 
             "HEADER" => ::std::result::Result::Ok(Self::HEADER),
 
-
             _ => ::std::result::Result::Err(()),
-
         }
     }
 }
@@ -342,4 +263,3 @@ impl ::std::convert::AsRef<ParamLocation> for ParamLocation {
         self
     }
 }
-

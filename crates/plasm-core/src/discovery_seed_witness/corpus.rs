@@ -9,10 +9,10 @@ use crate::discovery_seed_select::SeedSelectionValidationError;
 use crate::discovery_seed_symbol_map::entity_aliases_for;
 use crate::schema::DiscoverySeedNav;
 
+use super::role_index::CorpusRoleIndex;
 use super::roles::{
     prefer_seed_nav, OwnEdge, OwnPairs, PoolChild, PoolLinks, SeedClassStamp, SeedNavStamp,
 };
-use super::role_index::CorpusRoleIndex;
 
 /// Max closed witnesses presented to the LLM per selection call.
 /// Ranked by lexical score after brand-lock / top-catalog soft filter (not a schema dump).
@@ -301,7 +301,8 @@ fn shortlist_witnesses_for_llm(
             .then_with(|| a.summary.cmp(&b.summary))
     });
     let ranked = drafted;
-    let mut shortlist: Vec<RequirementWitness> = ranked.iter().take(MAX_WITNESSES).cloned().collect();
+    let mut shortlist: Vec<RequirementWitness> =
+        ranked.iter().take(MAX_WITNESSES).cloned().collect();
     admit_primary_parents_for_attach_leaves(&mut shortlist, &ranked);
     shortlist
 }

@@ -306,10 +306,7 @@ pub(super) fn candidates_covering(
     }
 }
 
-fn candidates_covering_strict(
-    corpus: &WitnessCorpus,
-    witness: &RequirementWitness,
-) -> Vec<String> {
+fn candidates_covering_strict(corpus: &WitnessCorpus, witness: &RequirementWitness) -> Vec<String> {
     if corpus
         .bundles
         .iter()
