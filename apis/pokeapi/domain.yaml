@@ -9,6 +9,11 @@ entities:
   Ability:
     id_field: name
     description: A special power a Pokémon can have.
+    discovery:
+      names:
+      - ability
+      - abilities
+      seed_class: dependent
     fields:
       id:
         required: false
@@ -31,6 +36,8 @@ entities:
         description: Pokémon that can have this ability.
         target: Pokemon
         cardinality: many
+        discovery:
+          seed_nav: locate
         materialize:
           kind: prefer_from_parent_get
           path:
@@ -705,6 +712,13 @@ entities:
   Pokemon:
     id_field: name
     description: A Pokémon with base stats and forms.
+    discovery:
+      names:
+      - pokemon
+      - pokémon
+      - mon
+      - pokedex entry
+      seed_class: primary
     fields:
       id:
         required: false
@@ -735,6 +749,8 @@ entities:
         description: Species this Pokémon belongs to.
         target: PokemonSpecies
         cardinality: one
+        discovery:
+          seed_nav: locate
         materialize:
           kind: from_parent_get
           path:
@@ -743,6 +759,12 @@ entities:
         description: Visual forms of this Pokémon.
         target: PokemonForm
         cardinality: many
+        discovery:
+          seed_nav: attach
+          qualifier_terms:
+          - form
+          - forms
+          - mega
         materialize:
           kind: from_parent_get
           path:
@@ -752,6 +774,11 @@ entities:
         description: Abilities this Pokémon can have.
         target: Ability
         cardinality: many
+        discovery:
+          seed_nav: attach
+          qualifier_terms:
+          - ability
+          - abilities
         materialize:
           kind: from_parent_get
           path:
@@ -762,6 +789,11 @@ entities:
         description: Elemental types of this Pokémon.
         target: Type
         cardinality: many
+        discovery:
+          seed_nav: attach
+          qualifier_terms:
+          - type
+          - types
         materialize:
           kind: from_parent_get
           path:
@@ -772,6 +804,11 @@ entities:
         description: Moves this Pokémon can learn.
         target: Move
         cardinality: many
+        discovery:
+          seed_nav: attach
+          qualifier_terms:
+          - move
+          - moves
         materialize:
           kind: from_parent_get
           path:
@@ -808,6 +845,12 @@ entities:
   PokemonForm:
     id_field: name
     description: A visual variant of a Pokémon.
+    discovery:
+      names:
+      - pokemon form
+      - form
+      - mega form
+      seed_class: dependent
     fields:
       id:
         required: false
@@ -841,6 +884,8 @@ entities:
         description: Base Pokémon for this form.
         target: Pokemon
         cardinality: one
+        discovery:
+          seed_nav: locate
       version_group:
         description: Version group this form was introduced.
         target: VersionGroup
@@ -876,6 +921,12 @@ entities:
   PokemonSpecies:
     id_field: name
     description: A Pokémon species with lore and breeding data.
+    discovery:
+      names:
+      - species
+      - pokemon species
+      - pokedex species
+      seed_class: dependent
     fields:
       id:
         required: false

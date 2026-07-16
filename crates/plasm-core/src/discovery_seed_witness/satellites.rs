@@ -541,7 +541,9 @@ mod tests {
         DeterministicSeedPlan,
     };
     use crate::discovery_seed_witness::role_index::CorpusRoleIndex;
-    use crate::discovery_seed_witness::roles::{PoolLinks, SeedClassStamp, SeedNavStamp};
+    use crate::discovery_seed_witness::roles::{
+        PoolChild, PoolLinks, SeedClassStamp, SeedNavStamp,
+    };
     use crate::schema::{DiscoverySeedClass, DiscoverySeedNav};
 
     fn sketch(id: &str, name: &str, kind: &str, score: u32) -> EntityCapabilityEvidence {
@@ -1050,5 +1052,103 @@ mod tests {
             }
             other => panic!("expected Ok satellites, got {other:?}"),
         }
+    }
+
+    /// Unset DirectCapability hop-seats reverse children; primary does not.
+    #[test]
+    fn primary_blocks_hop_seats_that_unset_would_admit() {
+        use std::collections::HashMap;
+        fn get_wit(
+            sym: &str,
+            entity: &str,
+            score: u32,
+            seed_class: SeedClassStamp,
+            children: BTreeSet<PoolChild>,
+        ) -> RequirementWitness {
+            RequirementWitness {
+                symbol: sym.into(),
+                kind: WitnessKind::DirectCapability {
+                    entry_id: "fx".into(),
+                    entity: entity.into(),
+                    capability_id: format!("fx:{entity}:Get"),
+                    capability_name: format!("{}_get", entity.to_ascii_lowercase()),
+                    kind: "Get".into(),
+                    description: format!("Get {entity}"),
+                },
+                owner_candidate_id: format!("fx:{entity}"),
+                lexical_score: score,
+                summary: format!("Get {entity}"),
+                entity_description: entity.into(),
+                aliases: entity.to_ascii_lowercase(),
+                pool: PoolLinks {
+                    parents: BTreeSet::new(),
+                    children,
+                    siblings: BTreeSet::new(),
+                },
+                seed_class,
+                seed_nav: SeedNavStamp::Unset,
+                own_pairs: Default::default(),
+            }
+        }
+        let root = get_wit(
+            "w0",
+            "Root",
+            90,
+            SeedClassStamp::Unset,
+            [PoolChild::new("leaf", "Leaf")].into_iter().collect(),
+        );
+        let leaf = get_wit(
+            "w1",
+            "Leaf",
+            70,
+            SeedClassStamp::Unset,
+            [PoolChild::new("root", "Root")].into_iter().collect(),
+        );
+        let bundles = vec![
+            EntityCandidateBundle {
+                candidate_id: "fx:Root".into(),
+                entry_id: "fx".into(),
+                entity: "Root".into(),
+                entity_description: "Root".into(),
+                max_lexical_score: 90,
+                capabilities: vec![sketch("fx:Root:Get", "root_get", "Get", 90)],
+                relation_hints: String::new(),
+                catalog_route_evidence: true,
+            },
+            EntityCandidateBundle {
+                candidate_id: "fx:Leaf".into(),
+                entry_id: "fx".into(),
+                entity: "Leaf".into(),
+                entity_description: "Leaf".into(),
+                max_lexical_score: 70,
+                capabilities: vec![sketch("fx:Leaf:Get", "leaf_get", "Get", 70)],
+                relation_hints: String::new(),
+                catalog_route_evidence: true,
+            },
+        ];
+        let witnesses = vec![root, leaf];
+        let mut symbol_to_index = HashMap::new();
+        for (i, w) in witnesses.iter().enumerate() {
+            symbol_to_index.insert(w.symbol.clone(), i);
+        }
+        let mut corpus = WitnessCorpus {
+            roles: CorpusRoleIndex::build(&witnesses),
+            witnesses,
+            bundles,
+            brand_lock_catalogs: vec!["fx".into()],
+            symbol_to_index,
+        };
+        let unset_covers = candidates_covering_for_plan(&corpus, &corpus.witnesses[0], &[0]);
+        assert!(
+            unset_covers.iter().any(|id| id == "fx:Leaf"),
+            "unset Root Get must hop-seat Leaf: {unset_covers:?}"
+        );
+        corpus.witnesses[0].seed_class = SeedClassStamp::Authored(DiscoverySeedClass::Primary);
+        let primary_covers = candidates_covering_for_plan(&corpus, &corpus.witnesses[0], &[0]);
+        assert_eq!(
+            primary_covers,
+            vec!["fx:Root".to_string()],
+            "primary Root Get must be owner-only: {primary_covers:?}"
+        );
     }
 }

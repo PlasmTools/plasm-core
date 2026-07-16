@@ -269,6 +269,7 @@ fn tool_meta_keeps_slim_agent_keys() {
             symbol_map_fingerprint: Some("deadbeef".into()),
             relations: None,
             relations_delta: None,
+            session_churn: None,
         },
     );
     assert!(meta.contains_key("session_mode"));

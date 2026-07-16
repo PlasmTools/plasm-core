@@ -2798,7 +2798,15 @@ capabilities:
   issue_label_query:
     kind: query
     entity: Label
-    description: List labels currently applied to issue #N (on-issue label set, not repo-wide definitions).
+    description: List labels on issue or PR #N (GitHub shares the issues API number space for pull requests).
+    discovery:
+      operation_terms:
+      - list issue labels
+      - list pr labels
+      - pr labels
+      target_terms:
+      - label
+      - labels
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: owner
@@ -3159,7 +3167,20 @@ capabilities:
   issue_update:
     kind: update
     entity: Issue
-    description: Update an issue; pass labels for a full replacement list of label names.
+    description: Update an issue or PR by number (GitHub labels PRs via the issues API); pass labels for a full replacement list of label names.
+    discovery:
+      operation_terms:
+      - update issue
+      - label issue
+      - label pr
+      - pr labels
+      - update pull request labels
+      - add labels
+      target_terms:
+      - issue
+      - pull request
+      - pr
+      - labels
     provides:
     - id
     - owner
@@ -3460,8 +3481,9 @@ capabilities:
       role: scope
     - name: title
       value_ref: nv_wire_str_short
-      required: true
+      required: false
       sink_class: external_publish
+      description: Title for a new pull request (omit when converting an existing issue).
     - name: head
       value_ref: nv_pr_create_head
       required: true
@@ -3481,6 +3503,19 @@ capabilities:
     - name: issue
       value_ref: nv_pr_create_issue
       required: false
+      description: Issue number to convert into this pull request (omit title when set).
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: true
+        fields: []
+      validation:
+        cross_field_rules:
+        - rule_type: exactly_one
+          fields:
+          - title
+          - issue
+          error_message: provide exactly one of title or issue (GitHub rejects both together)
   label_create:
     kind: create
     entity: Label
@@ -4718,7 +4753,7 @@ values:
     description: Head branch for the PR (same-repo branch name or owner:branch for a fork).
   nv_pr_create_issue:
     type: integer
-    description: Issue to turn into this pull request (optional).
+    description: Issue # to convert into this PR; do not also pass title.
   nv_pr_create_maintainer_can_modify:
     type: boolean
     description: Allow base maintainers to push to head.
@@ -4847,7 +4882,7 @@ values:
   nv_repo_content_write_text:
     type: string
     string_semantics: document
-    description: Plain UTF-8 file content; base64-encoded automatically before upload to GitHub. Do not pre-encode.
+    description: UTF-8 plaintext; runtime base64s for GitHub — never pre-encode.
   nv_repo_forks_query_sort:
     type: select
     allowed_values:

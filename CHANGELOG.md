@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.28] - 2026-07-16
+
+### Changed
+
+- **Write-path agent contract:** seeded mutators admit via BM25 **or** ranked boost (union); ranked is not a whitelist cage. Extracted `mutator_admit` + exposure-surface tests; removed English write-verb thesaurus.
+- **Plan dry echo:** `plan_dry_compact` summarizes heredocs always and long literals by length only (full program retained on plan commit).
+- **Cross-field `$`:** teaching-surface placeholders count as absent; cross-field rules vacate only when no concrete fields remain.
+- **Session churn advisory:** extracted `session_churn` module; Markdown + `_meta.plasm.session_churn` when seed overlap ≥2 or intent Jaccard ≥0.35 (no env kill switch).
+- **GitHub `pr_create`:** `exactly_one` title|issue; authoring note for optional XOR inputs.
+- **Pokeapi FO stamps** + same-catalog clarify seating; primary hop-seat contrast test (unset vs primary).
+
+### Fixed
+
+- Clarify “Which entity?” copy when FO seating fails inside one catalog (`discovery_routing`).
+
 ## [0.4.27] - 2026-07-16
 
 ### Changed

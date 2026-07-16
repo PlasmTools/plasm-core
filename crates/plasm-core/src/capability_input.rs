@@ -669,13 +669,25 @@ fn validate_cross_field_rule(
     object: &indexmap::IndexMap<String, Value>,
     rule: &crate::CrossFieldRule,
 ) -> Result<(), TypeError> {
-    let present_fields: Vec<_> = rule
+    // Teaching-surface `$` placeholders count as absent (same spirit as predicates). When every
+    // listed field is absent or still a placeholder, defer the rule to execute time.
+    let concretely_present: Vec<_> = rule
         .fields
         .iter()
-        .filter(|&field| {
-            object.contains_key(field) && !matches!(object.get(field), Some(Value::Null))
+        .filter(|&field| match object.get(field) {
+            None | Some(Value::Null) => false,
+            Some(v) if v.is_domain_example_placeholder() => false,
+            Some(_) => true,
         })
         .collect();
+    let any_placeholder = rule.fields.iter().any(|field| {
+        matches!(object.get(field), Some(v) if v.is_domain_example_placeholder())
+    });
+    if concretely_present.is_empty() && any_placeholder {
+        return Ok(());
+    }
+
+    let present_fields = concretely_present;
 
     let valid = match rule.rule_type {
         crate::CrossFieldRuleType::AtLeastOne => !present_fields.is_empty(),
@@ -684,10 +696,10 @@ fn validate_cross_field_rule(
             present_fields.is_empty() || present_fields.len() == rule.fields.len()
         }
         crate::CrossFieldRuleType::Implies => {
-            // If first field is present, second must be too
+            // If first field is concretely present, second must be too
             if rule.fields.len() >= 2 {
-                let first_present = object.contains_key(&rule.fields[0]);
-                let second_present = object.contains_key(&rule.fields[1]);
+                let first_present = present_fields.iter().any(|f| *f == &rule.fields[0]);
+                let second_present = present_fields.iter().any(|f| *f == &rule.fields[1]);
                 !first_present || second_present
             } else {
                 true
@@ -754,5 +766,71 @@ mod tests {
         let input = obj(&[("revenue", Value::Integer(-5))]);
         validate_input_predicate(&input, &min_value_revenue())
             .expect_err("a real negative revenue must still fail min_value");
+    }
+
+    /// GitHub FO: `pr_create` ExactlyOne(title, issue) — title+issue must fail at plan/typecheck.
+    #[test]
+    fn github_pr_create_rejects_title_and_issue_together() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/github");
+        let cgs = crate::loader::load_schema_dir(&dir).expect("github catalog");
+        let cap = cgs.capabilities.get("pr_create").expect("pr_create");
+        let schema = cap.input_schema.as_ref().expect("pr_create input_schema");
+        assert!(
+            schema
+                .validation
+                .cross_field_rules
+                .iter()
+                .any(|r| r.rule_type == crate::CrossFieldRuleType::ExactlyOne
+                    && r.fields.iter().any(|f| f == "title")
+                    && r.fields.iter().any(|f| f == "issue")),
+            "pr_create must stamp exactly_one title|issue"
+        );
+        let both = obj(&[
+            ("repository", Value::String("o/r".into())),
+            ("title", Value::String("t".into())),
+            ("head", Value::String("h".into())),
+            ("base", Value::String("main".into())),
+            ("issue", Value::Integer(1)),
+        ]);
+        let err = validate_capability_input(&both, schema, &cgs)
+            .expect_err("title+issue must fail exactly_one");
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("exactly one") || msg.contains("title") || msg.contains("issue"),
+            "error should name the XOR: {msg}"
+        );
+        let title_only = obj(&[
+            ("repository", Value::String("o/r".into())),
+            ("title", Value::String("t".into())),
+            ("head", Value::String("h".into())),
+            ("base", Value::String("main".into())),
+        ]);
+        validate_capability_input(&title_only, schema, &cgs).expect("title-only ok");
+        let issue_only = obj(&[
+            ("repository", Value::String("o/r".into())),
+            ("issue", Value::Integer(1)),
+            ("head", Value::String("h".into())),
+            ("base", Value::String("main".into())),
+        ]);
+        validate_capability_input(&issue_only, schema, &cgs).expect("issue-only ok");
+        // `$` is absent: title alone remains exactly_one-valid (not “any `$` ⇒ skip rule”).
+        let title_and_placeholder_issue = obj(&[
+            ("repository", Value::String("o/r".into())),
+            ("title", Value::String("t".into())),
+            ("head", Value::String("h".into())),
+            ("base", Value::String("main".into())),
+            ("issue", Value::String("$".into())),
+        ]);
+        validate_capability_input(&title_and_placeholder_issue, schema, &cgs)
+            .expect("title + issue=$ must treat $ as absent");
+        let both_placeholders = obj(&[
+            ("repository", Value::String("o/r".into())),
+            ("title", Value::String("$".into())),
+            ("head", Value::String("h".into())),
+            ("base", Value::String("main".into())),
+            ("issue", Value::String("$".into())),
+        ]);
+        validate_capability_input(&both_placeholders, schema, &cgs)
+            .expect("all-$ fields must vacate exactly_one until execute");
     }
 }

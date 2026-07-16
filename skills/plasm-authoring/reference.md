@@ -434,6 +434,20 @@ Plasm does **not** synthesize an implicit get-by-id from `id_field` alone — ob
 
 `input_schema.validation` predicates (`min_value`, `min_length`, `pattern`, …) and cross-field rules (`at_least_one`, `exactly_one`) are enforced against **concrete** values at execute time only. During teaching-surface synthesis the fields carry the `$` prompt placeholder, and predicates on **absent** (unlisted optional) fields are vacuously satisfied — so a capability with heavy input validation is still witnessed. Note that an `at_least_one` / `exactly_one` rule makes the capability **non-zero-arity** even when every individual field is optional: its teaching line is `method(field=…)`, never a bare `method()`.
 
+#### API shape rules (vendor XOR / exclusivity)
+
+When an upstream API rejects a **static** parameter combination (GitHub `pr_create` refuses `title` together with `issue`), stamp that in the catalog — do **not** special-case it in the host.
+
+1. Keep the conflicting params on `parameters:` (both typically `required: false`).
+2. Add a sibling `input_schema:` with empty object `fields: []` (merge keeps parameter-derived fields) and `validation.cross_field_rules`:
+   - `exactly_one` — one of the listed fields must be present
+   - `mutually_exclusive` — at most one may be present
+   - `at_least_one` / `all_or_none` / `implies` as needed
+3. Put a sharp `error_message` agents can act on at dry typecheck.
+4. Gloss the params (`description:` / `values:`) so teaching TSV states which shape is which.
+
+Example (GitHub `pr_create`): `exactly_one` over `[title, issue]` — title path opens a new PR; issue path converts issue `#N` and must omit title. Dry compile fails before `run_ref` mint; live 422 for that combo is a catalog miss.
+
 ### Composed read views
 
 **Purpose:** Model a first-class read projection that corresponds to no single upstream REST/GraphQL operation, but does map cleanly onto several existing `query` / `get` capabilities. This belongs in `domain.yaml` as **`views:`** — the same layer as entities and capabilities — not as an undocumented runtime shortcut.

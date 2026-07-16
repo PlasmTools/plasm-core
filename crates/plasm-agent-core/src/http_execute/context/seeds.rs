@@ -1,6 +1,7 @@
 //! Capability seeds, exposure planning, plasm_context MCP surface.
 
 use super::super::*;
+use super::session_churn::SessionChurnAdvisory;
 use plasm_core::discovery::relation_target_deferred_mutator_wires;
 use plasm_core::{ExposureEntityKey, TeachingExposureSession};
 use std::collections::{BTreeSet, HashSet};
@@ -121,57 +122,6 @@ pub(crate) fn format_exposure_entity_cheat_sheet(
     }
     let map = plasm_core::prompt_render::render_compact_exposure_symbol_map(exp);
     format!("Active symbols — {map}.")
-}
-
-/// Advisory when `session_mode: new` overlaps seeds with a recent live logical session.
-pub(crate) async fn format_session_churn_advisory(
-    st: &PlasmHostState,
-    tenant_scope: &str,
-    except: Option<crate::session_identity::LogicalSessionId>,
-    requested_seeds: &[CapabilitySeed],
-) -> String {
-    use crate::mcp_logical_ref::format_logical_session_wire_ref;
-
-    let requested: BTreeSet<(String, String)> = requested_seeds
-        .iter()
-        .map(|s| (s.entry_id.clone(), s.entity.clone()))
-        .collect();
-    if requested.is_empty() {
-        return String::new();
-    }
-    let recent = st
-        .logical_sessions
-        .recent_sessions_for_tenant(tenant_scope, except)
-        .await;
-    for rec in recent.into_iter().rev() {
-        let Some(pair) = st
-            .logical_execute_bindings
-            .get(&rec.logical_session_id.as_uuid())
-            .await
-        else {
-            continue;
-        };
-        let Some(sess) = st.get_execute_session(&pair.0, &pair.1).await else {
-            continue;
-        };
-        let exposed: BTreeSet<(String, String)> = capability_seeds_from_session(sess.as_ref())
-            .into_iter()
-            .map(|s| (s.entry_id, s.entity))
-            .collect();
-        let overlap: Vec<String> = requested
-            .intersection(&exposed)
-            .map(|(eid, ent)| format!("{eid}:{ent}"))
-            .collect();
-        if overlap.is_empty() {
-            continue;
-        }
-        let wire_ref = format_logical_session_wire_ref(rec.logical_session_id);
-        return format!(
-            "**Note:** session `{wire_ref}` already exposes {}. Use `session_mode: \"extend\"` with that `logical_session_ref` unless this is a separate goal.\n\n",
-            overlap.join(", ")
-        );
-    }
-    String::new()
 }
 
 pub(crate) fn format_session_unchanged_reuse_markdown(
@@ -504,6 +454,7 @@ pub(crate) struct PlasmContextToolMetaParams<'a> {
     pub symbol_map_fingerprint: Option<String>,
     pub relations: Option<serde_json::Value>,
     pub relations_delta: Option<serde_json::Value>,
+    pub session_churn: Option<&'a SessionChurnAdvisory>,
 }
 
 /// Slim `_meta.plasm` for `plasm_context`: continuity + teaching revision only.
@@ -520,6 +471,7 @@ pub(crate) fn build_plasm_context_tool_meta(
         symbol_map_fingerprint,
         relations,
         relations_delta,
+        session_churn,
     } = params;
     let mut plasm = serde_json::Map::new();
     plasm.insert(
@@ -572,6 +524,15 @@ pub(crate) fn build_plasm_context_tool_meta(
     }
     if let Some(delta) = relations_delta {
         plasm.insert("relations_delta".to_string(), delta);
+    }
+    if let Some(churn) = session_churn {
+        plasm.insert(
+            "session_churn".to_string(),
+            serde_json::json!({
+                "peer_ref": churn.peer_ref,
+                "overlap": churn.overlap,
+            }),
+        );
     }
     plasm
 }
@@ -982,6 +943,7 @@ mod ranked_replay_tests {
                 symbol_map_fingerprint: Some("abc".into()),
                 relations: None,
                 relations_delta: None,
+                session_churn: None,
             },
         );
         let continuity = meta

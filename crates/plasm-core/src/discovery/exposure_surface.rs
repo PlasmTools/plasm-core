@@ -1,12 +1,11 @@
 //! Intent-filtered exposure surface for MCP `plasm_context` / incremental expand waves.
 
 use crate::identity::{CapabilityParamName, EntityFieldName, EntityName};
-use crate::schema::{CapabilityKind, CapabilitySchema, EntityDef, InputType, CGS};
+use crate::schema::{CapabilityKind, CapabilitySchema, InputType, CGS};
 use crate::symbol_tuning::{
     ExposureCapabilityKey, ExposureEntityKey, ExposureSlotKey, ExposureSurface,
     ExposureSurfaceDelta,
 };
-use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashSet};
 
 use super::{resolve_canonical_entity_name, score_relation_against_intent};
@@ -52,88 +51,11 @@ fn fields_for_admitted_read_cap(
     }
 }
 
-#[cfg(feature = "ranked_capability_gate")]
-fn ranked_gate_allows_mutation(ranked_capability_names: Option<&[String]>, cap_name: &str) -> bool {
-    match ranked_capability_names {
-        None | Some([]) => true,
-        Some(names) => names.iter().any(|n| n.as_str() == cap_name),
-    }
-}
-
-/// How seeded-entity mutators (`create`/`update`/`delete`/`action`) are admitted on an exposure wave.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MutatorAdmit {
-    /// Production default: seeded reads always taught; mutators need intent/ranked admission.
-    #[default]
-    IntentOnly,
-    /// Test/benchmark overshow: seeded mutators always admitted.
-    AlwaysOnSeeds,
-}
-
-/// Options for [`derive_intent_exposure_surface_batch`].
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ExposureSurfaceOptions {
-    /// Production ([`MutatorAdmit::IntentOnly`]): seeded entities always teach reads
-    /// (`query`/`search`/`get` + `primary_read`); mutators require intent lexicon overlap or an
-    /// explicit `ranked_capability_names` listing. [`MutatorAdmit::AlwaysOnSeeds`] always admits
-    /// seeded mutators (tests / opt-in overshow). Non-seeded relation-target mutators always
-    /// require intent overlap (and ranked-gate when enabled).
-    pub mutator_admit: MutatorAdmit,
-}
-
-pub(crate) fn mutating_capability_admitted(
-    score: u32,
-    ranked_capability_names: Option<&[String]>,
-    cap_name: &str,
-) -> bool {
-    if score == 0 {
-        return false;
-    }
-    #[cfg(feature = "ranked_capability_gate")]
-    {
-        ranked_gate_allows_mutation(ranked_capability_names, cap_name)
-    }
-    #[cfg(not(feature = "ranked_capability_gate"))]
-    {
-        let _ = ranked_capability_names;
-        true
-    }
-}
-
-/// Capabilities on an explicitly seeded entity that are always admitted (no intent lexicon score).
-fn seeded_entity_cap_always_includes(
-    mutator_admit: MutatorAdmit,
-    cap: &CapabilitySchema,
-    entity_name: &str,
-    ent: &EntityDef,
-    seeded_entities: &HashSet<String>,
-) -> bool {
-    if cap.domain.as_str() != entity_name || !seeded_entities.contains(entity_name) {
-        return false;
-    }
-    if matches!(
-        cap.kind,
-        CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get
-    ) {
-        return true;
-    }
-    if ent
-        .primary_read
-        .as_deref()
-        .is_some_and(|pr| pr == cap.name.as_str())
-    {
-        return true;
-    }
-    matches!(mutator_admit, MutatorAdmit::AlwaysOnSeeds)
-        && matches!(
-            cap.kind,
-            CapabilityKind::Create
-                | CapabilityKind::Update
-                | CapabilityKind::Delete
-                | CapabilityKind::Action
-        )
-}
+pub use super::mutator_admit::{ExposureSurfaceOptions, MutatorAdmit};
+pub(crate) use super::mutator_admit::{
+    mutating_capability_admitted, seeded_mutating_capability_admitted,
+};
+use super::mutator_admit::seeded_entity_cap_always_includes;
 
 /// Max outgoing relation hints per entity in discover TSV (`wire→Target`).
 pub const DISCOVERY_OUTGOING_RELATIONS_MAX: usize = 3;
@@ -163,14 +85,15 @@ pub fn outgoing_relation_hints_for_entity(cgs: &CGS, entity: &str, max: usize) -
 /// - **Seeded entities** (`entity_batch`): always admit `query` / `search` / `get` on that
 ///   entity’s domain, plus [`EntityDef::primary_read`] when set. With
 ///   [`MutatorAdmit::AlwaysOnSeeds`], seeded `create` / `update` / `delete` / `action` are also
-///   always admitted (test/benchmark overshow). Production uses [`MutatorAdmit::IntentOnly`].
+///   always admitted (test/benchmark overshow). Production [`MutatorAdmit::IntentOnly`] admits
+///   seeded mutators via BM25 score **or** ranked boost.
 /// - **Non-seeded** read capabilities require a non-zero lexicon overlap score against `intent`.
 /// - **Non-seeded** mutating capabilities require a non-zero score; with `ranked_capability_gate`,
 ///   when `ranked_capability_names` is non-empty they must also appear in that list.
 /// - Relations on seeded entities are admitted only when the target appears in
 ///   `relation_endpoint_names` and relation intent scores > 0.
-/// - Mutation closure (1-hop relation targets): create/update/delete/action on targets when intent
-///   scores the capability (unchanged).
+/// - Mutation closure (1-hop relation targets): create/update/delete/action on targets when the
+///   seat-appropriate mutator gate passes.
 ///
 /// `entry_id` names the registry row for callers; exposure keys follow [`CGS::entry_id`] when set (see
 /// [`crate::symbol_tuning::legacy_exposure_surface_for_entities`]).
@@ -247,7 +170,7 @@ pub fn derive_intent_exposure_surface_batch(
                     CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get => {
                         score > 0
                     }
-                    _ => mutating_capability_admitted(
+                    _ => seeded_mutating_capability_admitted(
                         score,
                         ranked_capability_names,
                         cap.name.as_str(),
@@ -346,8 +269,16 @@ pub fn derive_intent_exposure_surface_batch(
                 {
                     continue;
                 }
-                if !mutating_capability_admitted(score, ranked_capability_names, cap.name.as_str())
-                {
+                let admit = if seeded_entities.contains(target) {
+                    seeded_mutating_capability_admitted(
+                        score,
+                        ranked_capability_names,
+                        cap.name.as_str(),
+                    )
+                } else {
+                    mutating_capability_admitted(score, ranked_capability_names, cap.name.as_str())
+                };
+                if !admit {
                     continue;
                 }
                 admitted_mutators.push(ExposureCapabilityKey {
@@ -465,456 +396,5 @@ pub fn relation_target_deferred_mutator_wires(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::discovery::score_capability_bm25;
-    use crate::loader::load_schema_dir;
-    use crate::symbol_tuning::{ExposureEntityKey, ExposureSlotKey, ExposureSurfaceDelta};
-    use crate::EntityName;
-    use std::path::Path;
-
-    fn relation_keys(entry_id: &str, names: &[&str]) -> Vec<ExposureEntityKey> {
-        names
-            .iter()
-            .map(|n| ExposureEntityKey {
-                entry_id: entry_id.to_string(),
-                entity: EntityName::from(*n),
-            })
-            .collect()
-    }
-
-    #[test]
-    fn intent_surface_omits_relation_until_relation_target_in_scope() {
-        let dir =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
-        let cgs = load_schema_dir(&dir).expect("overshow_tools");
-        let endpoints = relation_keys("overshow", &["Profile"]);
-        let delta = derive_intent_exposure_surface_batch(
-            &cgs,
-            "overshow",
-            "display profiles",
-            &endpoints,
-            &["Profile".to_string()],
-            None,
-            ExposureSurfaceOptions::default(),
-        );
-        assert!(
-            !delta.required.slots.iter().any(|s| matches!(
-                s,
-                ExposureSlotKey::Relation { relation, .. }
-                    if relation.as_str() == "recorded_matches"
-            )),
-            "Profile.recorded_matches targets RecordedContent; omit until that entity is in scope"
-        );
-    }
-
-    #[test]
-    fn intent_surface_includes_profile_relation_when_recorded_content_in_scope() {
-        let dir =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
-        let cgs = load_schema_dir(&dir).expect("overshow_tools");
-        let endpoints = relation_keys("overshow", &["Profile", "RecordedContent"]);
-        let delta = derive_intent_exposure_surface_batch(
-            &cgs,
-            "overshow",
-            "profile and captured content",
-            &endpoints,
-            &["Profile".to_string()],
-            None,
-            ExposureSurfaceOptions::default(),
-        );
-        assert!(
-            delta.required.slots.iter().any(|s| matches!(
-                s,
-                ExposureSlotKey::Relation { relation, .. }
-                    if relation.as_str() == "recorded_matches"
-            )),
-            "expected recorded_matches when RecordedContent is an allowed relation endpoint"
-        );
-    }
-
-    #[test]
-    fn mutating_capability_admitted_requires_nonzero_score() {
-        assert!(!mutating_capability_admitted(0, None, "langitem_create"));
-        assert!(mutating_capability_admitted(1, None, "langitem_create"));
-    }
-
-    #[test]
-    fn intent_surface_ranked_admits_seeded_mutator_at_zero_score() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/schemas/plasm_language_matrix");
-        let cgs = load_schema_dir(&dir).expect("plasm_language_matrix");
-        let cap = cgs
-            .capabilities
-            .get("langitem_create")
-            .expect("langitem_create");
-        let zero_intent = "xyzzy qwerty plugh unrelated";
-        let zero_score = score_capability_bm25(&cgs, "matrix", cap, zero_intent);
-        assert_eq!(
-            zero_score, 0,
-            "fixture intent must score zero for langitem_create"
-        );
-        let endpoints = relation_keys("matrix", &["LangItem"]);
-        let delta_ranked = derive_intent_exposure_surface_batch(
-            &cgs,
-            "matrix",
-            zero_intent,
-            &endpoints,
-            &["LangItem".to_string()],
-            Some(&["langitem_create".to_string()]),
-            ExposureSurfaceOptions {
-                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-            },
-        );
-        assert!(
-            delta_ranked
-                .required
-                .capabilities
-                .iter()
-                .any(|c| { c.capability.as_str() == "langitem_create" }),
-            "ranked wire name must admit seeded mutator at score zero"
-        );
-    }
-
-    #[test]
-    fn intent_surface_always_on_seeds_admits_seeded_mutators_on_first_wave() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/schemas/plasm_language_matrix");
-        let cgs = load_schema_dir(&dir).expect("plasm_language_matrix");
-        let cap = cgs
-            .capabilities
-            .get("langitem_create")
-            .expect("langitem_create");
-        let weak_intent = "langitem browse inventory metadata";
-        let strong_intent = "create new langitem title";
-        let weak_score = score_capability_bm25(&cgs, "matrix", cap, weak_intent);
-        let strong_score = score_capability_bm25(&cgs, "matrix", cap, strong_intent);
-        assert!(
-            strong_score > 0,
-            "strong create intent should BM25-score: {strong_score}"
-        );
-        assert!(
-            strong_score >= weak_score,
-            "strong intent should score at least as high as weak: {strong_score} vs {weak_score}"
-        );
-        let endpoints = relation_keys("matrix", &["LangItem"]);
-        let delta_weak = derive_intent_exposure_surface_batch(
-            &cgs,
-            "matrix",
-            weak_intent,
-            &endpoints,
-            &["LangItem".to_string()],
-            None,
-            ExposureSurfaceOptions {
-                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-            },
-        );
-        assert!(
-            delta_weak
-                .required
-                .capabilities
-                .iter()
-                .any(|c| { c.capability.as_str() == "langitem_create" }),
-            "read-first should admit seeded mutators even at weak intent score"
-        );
-        let delta_strong = derive_intent_exposure_surface_batch(
-            &cgs,
-            "matrix",
-            strong_intent,
-            &endpoints,
-            &["LangItem".to_string()],
-            None,
-            ExposureSurfaceOptions {
-                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-            },
-        );
-        assert!(
-            delta_strong
-                .required
-                .capabilities
-                .iter()
-                .any(|c| { c.capability.as_str() == "langitem_create" }),
-            "read-first should admit strong-scored seeded mutator"
-        );
-        let delta_ranked = derive_intent_exposure_surface_batch(
-            &cgs,
-            "matrix",
-            weak_intent,
-            &endpoints,
-            &["LangItem".to_string()],
-            Some(&["langitem_create".to_string()]),
-            ExposureSurfaceOptions {
-                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-            },
-        );
-        assert!(
-            delta_ranked
-                .required
-                .capabilities
-                .iter()
-                .any(|c| { c.capability.as_str() == "langitem_create" }),
-            "read-first should admit ranked mutator wire name"
-        );
-    }
-
-    #[test]
-    fn intent_surface_seeded_prompt_run_create_requires_intent_overlap() {
-        let dir =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
-        let cgs = load_schema_dir(&dir).expect("overshow_tools");
-        let endpoints = relation_keys("overshow", &["PromptRun"]);
-        let delta = derive_intent_exposure_surface_batch(
-            &cgs,
-            "overshow",
-            "list profiles read metadata only",
-            &endpoints,
-            &["PromptRun".to_string()],
-            None,
-            ExposureSurfaceOptions::default(),
-        );
-        assert!(
-            !delta
-                .required
-                .capabilities
-                .iter()
-                .any(|c| c.capability.as_str() == "prompt_run_create"),
-            "seeded PromptRun create must require intent overlap"
-        );
-        let delta_create = derive_intent_exposure_surface_batch(
-            &cgs,
-            "overshow",
-            "create and execute a new prompt run",
-            &endpoints,
-            &["PromptRun".to_string()],
-            None,
-            ExposureSurfaceOptions::default(),
-        );
-        assert!(
-            delta_create
-                .required
-                .capabilities
-                .iter()
-                .any(|c| c.capability.as_str() == "prompt_run_create"),
-            "seeded PromptRun create should appear when intent scores it"
-        );
-    }
-
-    #[test]
-    fn intent_surface_drops_unscored_reads_when_intent_targets_other_entity() {
-        let dir =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
-        let cgs = load_schema_dir(&dir).expect("overshow_tools");
-        let endpoints = relation_keys("overshow", &["Meeting", "Profile"]);
-        let delta = derive_intent_exposure_surface_batch(
-            &cgs,
-            "overshow",
-            "organisation project profile metadata list",
-            &endpoints,
-            &["Profile".to_string()],
-            None,
-            ExposureSurfaceOptions::default(),
-        );
-        assert!(
-            delta.required.capabilities.iter().any(|c| {
-                c.domain.as_str() == "Profile"
-                    && matches!(c.capability.as_str(), "profile_query" | "profile_get")
-            }),
-            "expected Profile query/get to remain when intent lexicon scores profile vocabulary"
-        );
-        assert!(
-            !delta.required.capabilities.iter().any(|c| {
-                c.domain.as_str() == "Meeting"
-                    && matches!(c.capability.as_str(), "meeting_query" | "meeting_get")
-            }),
-            "Meeting reads should be omitted when intent does not score meeting vocabulary"
-        );
-    }
-
-    #[cfg(feature = "ranked_capability_gate")]
-    #[test]
-    fn intent_surface_ranked_gate_excludes_non_seeded_scored_mutation() {
-        let dir =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
-        let cgs = load_schema_dir(&dir).expect("overshow_tools");
-        let endpoints = relation_keys("overshow", &["PromptRun", "Profile"]);
-        let ranked = vec!["prompt_run_create".to_string()];
-        let delta = derive_intent_exposure_surface_batch(
-            &cgs,
-            "overshow",
-            "create and execute a new prompt run",
-            &endpoints,
-            &["Profile".to_string()],
-            Some(&ranked),
-            ExposureSurfaceOptions::default(),
-        );
-        assert!(
-            !surface_has_capability(&delta, "PromptRun", "prompt_run_create"),
-            "PromptRun create must stay off surface when PromptRun is not seeded (ranked list alone does not add caps)"
-        );
-    }
-
-    #[cfg(feature = "ranked_capability_gate")]
-    #[test]
-    fn intent_surface_ranked_gate_keeps_mutation_on_list() {
-        let dir =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
-        let cgs = load_schema_dir(&dir).expect("overshow_tools");
-        let endpoints = relation_keys("overshow", &["PromptRun"]);
-        let ranked = vec!["prompt_run_create".to_string()];
-        let delta = derive_intent_exposure_surface_batch(
-            &cgs,
-            "overshow",
-            "create and execute a new prompt run",
-            &endpoints,
-            &["PromptRun".to_string()],
-            Some(&ranked),
-            ExposureSurfaceOptions::default(),
-        );
-        assert!(
-            delta.required.capabilities.iter().any(|c| {
-                c.capability.as_str() == "prompt_run_create"
-            }),
-            "ranked gate should admit mutations present in the ranked name list when intent scores them"
-        );
-    }
-
-    const FEDERATED_FIELD_LAB_INTENT: &str =
-        "Federated field lab v2 — pokeapi specimen linear missions proof dossier";
-
-    fn surface_has_capability(
-        delta: &ExposureSurfaceDelta,
-        domain: &str,
-        capability: &str,
-    ) -> bool {
-        delta
-            .required
-            .capabilities
-            .iter()
-            .any(|c| c.domain.as_str() == domain && c.capability.as_str() == capability)
-    }
-
-    #[test]
-    fn intent_surface_seeded_sharelink_create_requires_intent_overlap() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/proof");
-        if !dir.is_dir() {
-            return;
-        }
-        let mut cgs = load_schema_dir(&dir).expect("proof");
-        cgs.entry_id = Some("proof".into());
-        let endpoints = relation_keys("proof", &["ShareLink"]);
-        let delta = derive_intent_exposure_surface_batch(
-            &cgs,
-            "proof",
-            FEDERATED_FIELD_LAB_INTENT,
-            &endpoints,
-            &["ShareLink".to_string()],
-            None,
-            ExposureSurfaceOptions::default(),
-        );
-        assert!(
-            !surface_has_capability(&delta, "ShareLink", "share_link_create"),
-            "seeded create must require intent overlap when intent omits share/link/create tokens"
-        );
-        let delta_create = derive_intent_exposure_surface_batch(
-            &cgs,
-            "proof",
-            "create share link for proof dossier",
-            &endpoints,
-            &["ShareLink".to_string()],
-            None,
-            ExposureSurfaceOptions::default(),
-        );
-        assert!(
-            surface_has_capability(&delta_create, "ShareLink", "share_link_create"),
-            "seeded create should appear when intent scores the mutation"
-        );
-    }
-
-    #[test]
-    fn intent_surface_seeded_sharelink_create_with_intent_lexicon_match() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/proof");
-        if !dir.is_dir() {
-            return;
-        }
-        let mut cgs = load_schema_dir(&dir).expect("proof");
-        cgs.entry_id = Some("proof".into());
-        let endpoints = relation_keys("proof", &["ShareLink"]);
-        let delta = derive_intent_exposure_surface_batch(
-            &cgs,
-            "proof",
-            "create share link for proof dossier",
-            &endpoints,
-            &["ShareLink".to_string()],
-            None,
-            ExposureSurfaceOptions::default(),
-        );
-        assert!(
-            surface_has_capability(&delta, "ShareLink", "share_link_create"),
-            "seeded ShareLink must expose share_link_create when intent scores create"
-        );
-        let session = crate::symbol_tuning::TeachingExposureSession::new_with_intent_delta(
-            &cgs,
-            "proof",
-            &["ShareLink"],
-            delta,
-        );
-        let map = session.to_symbol_map();
-        let m = map.method_sym_for("proof", "ShareLink", "share_link_create");
-        assert!(
-            m.starts_with('m') && m.len() > 1,
-            "seeded share_link_create must receive an m# (got {m:?}) for federated lab plasm programs"
-        );
-    }
-
-    #[test]
-    fn intent_surface_seeded_pokemon_reads_without_intent_lexicon_match() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
-        if !dir.is_dir() {
-            return;
-        }
-        let cgs = load_schema_dir(&dir).expect("pokeapi");
-        let endpoints = relation_keys("pokeapi", &["Pokemon"]);
-        let delta = derive_intent_exposure_surface_batch(
-            &cgs,
-            "pokeapi",
-            FEDERATED_FIELD_LAB_INTENT,
-            &endpoints,
-            &["Pokemon".to_string()],
-            None,
-            ExposureSurfaceOptions::default(),
-        );
-        assert!(
-            surface_has_capability(&delta, "Pokemon", "pokemon_query"),
-            "seeded Pokemon must expose pokemon_query"
-        );
-        assert!(
-            surface_has_capability(&delta, "Pokemon", "pokemon_get"),
-            "seeded Pokemon must expose pokemon_get"
-        );
-    }
-
-    #[cfg(feature = "ranked_capability_gate")]
-    #[test]
-    fn intent_surface_ranked_gate_excludes_seeded_create_when_not_ranked() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/proof");
-        if !dir.is_dir() {
-            return;
-        }
-        let cgs = load_schema_dir(&dir).expect("proof");
-        let endpoints = relation_keys("proof", &["ShareLink"]);
-        let ranked = vec!["__not_share_link_create__".to_string()];
-        let delta = derive_intent_exposure_surface_batch(
-            &cgs,
-            "proof",
-            "create share link for proof dossier",
-            &endpoints,
-            &["ShareLink".to_string()],
-            Some(&ranked),
-            ExposureSurfaceOptions::default(),
-        );
-        assert!(
-            !surface_has_capability(&delta, "ShareLink", "share_link_create"),
-            "ranked gate excludes seeded-entity mutations not present in ranked_capabilities"
-        );
-    }
-}
+#[path = "exposure_surface_tests.rs"]
+mod tests;

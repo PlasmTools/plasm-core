@@ -202,14 +202,20 @@ impl PlasmMcpHandler {
         );
         let context_span = crate::spans::mcp_tool_plasm_context(logical_session_ref.as_str());
         let mut churn_advisory = String::new();
+        let mut session_churn: Option<crate::http_execute::SessionChurnAdvisory> = None;
         if session_mode == PlasmContextSessionMode::New {
-            churn_advisory = crate::http_execute::format_session_churn_advisory(
+            if let Some(adv) = crate::http_execute::format_session_churn_advisory(
                 self.plasm.as_ref(),
                 &scope,
                 Some(rec.logical_session_id),
                 &seeds,
+                &accumulated_intent,
             )
-            .await;
+            .await
+            {
+                churn_advisory = adv.markdown.clone();
+                session_churn = Some(adv);
+            }
         }
         let out: ApplyCapabilitySeedsOutcome = apply_capability_seeds(
             self.plasm.as_ref(),
@@ -381,6 +387,7 @@ impl PlasmMcpHandler {
                 symbol_map_fingerprint,
                 relations,
                 relations_delta,
+                session_churn: session_churn.as_ref(),
             },
         );
         let text = crate::mcp_agent_present::AgentContent::context(

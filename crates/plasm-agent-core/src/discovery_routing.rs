@@ -100,19 +100,46 @@ fn format_clarify_breakout(
     alternative_sets: &[SeedAlternativeSetRaw],
     discover_preview: Option<&str>,
 ) -> String {
-    let mut lines = vec![
-        "## Which provider?".into(),
-        String::new(),
-        "Ask the user, then retry `plasm_context` with `session_mode: \"new\"` and an `intent` that names that provider (intent only — no `seeds` on new when auto-seed is enabled)."
-            .into(),
-        String::new(),
-    ];
+    let single_catalog = clarify_single_catalog_id(alternative_sets);
+    let (title, guidance) = if let Some(catalog) = single_catalog.as_deref() {
+        (
+            "## Which entity?".into(),
+            format!(
+                "Ask the user, then retry `plasm_context` with `session_mode: \"new\"` and an `intent` that names the **{catalog}** entity/task (intent only — no `seeds` on new when auto-seed is enabled)."
+            ),
+        )
+    } else {
+        (
+            "## Which provider?".into(),
+            "Ask the user, then retry `plasm_context` with `session_mode: \"new\"` and an `intent` that names that provider (intent only — no `seeds` on new when auto-seed is enabled)."
+                .into(),
+        )
+    };
+    let mut lines = vec![title, String::new(), guidance, String::new()];
     for (i, alt) in alternative_sets.iter().enumerate() {
         let entities = format_candidate_ids(&alt.candidate_ids);
         lines.push(format!("{}. {} — {entities}", i + 1, alt.label));
     }
     append_discover_preview(&mut lines, discover_preview);
     lines.join("\n")
+}
+
+/// When every alternative candidate shares one catalog `entry_id`, return that id.
+fn clarify_single_catalog_id(alternative_sets: &[SeedAlternativeSetRaw]) -> Option<String> {
+    let mut catalogs = std::collections::BTreeSet::new();
+    for alt in alternative_sets {
+        for id in &alt.candidate_ids {
+            let catalog = id
+                .split_once(':')
+                .map(|(entry, _)| entry.to_string())
+                .unwrap_or_else(|| id.clone());
+            catalogs.insert(catalog);
+            if catalogs.len() > 1 {
+                return None;
+            }
+        }
+    }
+    catalogs.into_iter().next()
 }
 
 fn format_hard_miss_breakout(
@@ -442,6 +469,38 @@ mod tests {
         assert!(md.contains("GitHub — Issue, Repository"));
         assert!(!md.contains("Selector note"));
         assert!(!md.contains("bundle_index"));
+    }
+
+    #[test]
+    fn clarify_breakout_same_catalog_asks_which_entity() {
+        let md = build_auto_seed_breakout_markdown(
+            &AutoSeedRouteOutcome::Clarify {
+                requirements: vec!["pokemon get".into()],
+                alternative_sets: vec![
+                    SeedAlternativeSetRaw {
+                        candidate_ids: vec!["pokeapi:Pokemon".into()],
+                        label: "pokeapi.Pokemon ops=[Get,Query]".into(),
+                    },
+                    SeedAlternativeSetRaw {
+                        candidate_ids: vec!["pokeapi:Ability".into()],
+                        label: "pokeapi.Ability ops=[Get,Query]".into(),
+                    },
+                    SeedAlternativeSetRaw {
+                        candidate_ids: vec!["pokeapi:PokemonForm".into()],
+                        label: "pokeapi.PokemonForm ops=[Get,Query]".into(),
+                    },
+                ],
+                reasoning: "multipass=pairwise_disagree".into(),
+                candidate_preview: vec![],
+                selector_latency_ms: 1,
+            },
+            "pokeapi: fetch Pokemon pikachu",
+            None,
+        );
+        assert!(md.contains("Which entity?"), "{md}");
+        assert!(md.contains("**pokeapi**"), "{md}");
+        assert!(!md.contains("Which provider?"), "{md}");
+        assert!(md.contains("Pokemon"), "{md}");
     }
 
     #[test]

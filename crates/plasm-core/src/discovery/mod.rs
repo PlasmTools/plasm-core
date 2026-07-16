@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use thiserror::Error;
 
+mod mutator_admit;
 mod exposure_surface;
 pub use exposure_surface::{
     derive_intent_exposure_surface_batch, outgoing_relation_hints_for_entity,
