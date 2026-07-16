@@ -434,6 +434,10 @@ mod tests {
             &PlanTokenRefs {
                 run_ref: "pc0",
                 dry_verdict: "ok",
+                logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ",
+                plan_uri: Some(
+                    "plasm://execute/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/s1/plan/00000000-0000-4000-8000-000000000001",
+                ),
             },
             "plan ok · 1n 1r → items",
         )

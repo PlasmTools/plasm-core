@@ -18,6 +18,7 @@ pub const AGENT_TOKEN_KEYS: &[&str] = &[
     "dry_verdict",
     "dry_run",
     "logical_session_ref",
+    "plan_uri",
     "result_delivery",
     "artifact_uri",
 ];
@@ -41,10 +42,15 @@ impl AgentResultKind {
 }
 
 /// Slim plan tokens for dry-run agent content.
+///
+/// `logical_session_ref` (and optional `plan_uri`) must appear in agent `content` so MCP App
+/// views can hydrate when the host strips `_meta` / omits `structuredContent.ui` (Cursor).
 #[derive(Debug, Clone)]
 pub struct PlanTokenRefs<'a> {
     pub run_ref: &'a str,
     pub dry_verdict: &'a str,
+    pub logical_session_ref: &'a str,
+    pub plan_uri: Option<&'a str>,
 }
 
 /// Slim context tokens for `plasm_context` agent content.
@@ -56,6 +62,8 @@ pub struct ContextTokenRefs<'a> {
 /// Slim run tokens with `artifact_uri` preferred over `run_id` (single canonical lookup).
 #[derive(Debug, Clone, Default)]
 pub struct RunTokens {
+    /// Required for Cursor lossy App hydrate (`plasm_ui_read_run`) when `_meta` is stripped.
+    pub logical_session_ref: Option<String>,
     pub result_delivery: Option<String>,
     pub artifact_uri: Option<String>,
     /// Only set when `artifact_uri` is absent.
@@ -86,6 +94,7 @@ impl RunTokens {
             None => (None, None),
         };
         Self {
+            logical_session_ref: None,
             result_delivery: result_delivery
                 .filter(|s| !s.is_empty())
                 .map(str::to_string),
@@ -115,11 +124,15 @@ impl RunTokens {
             plasm.get("result_delivery").and_then(|v| v.as_str()),
             first_artifact,
         );
+        tokens.logical_session_ref = string_field(plasm, "logical_session_ref");
         // If no typed artifact, fall back to plasm step JSON refs.
         if tokens.artifact_uri.is_none() && tokens.run_id.is_none() {
             let from_json = Self::from_plasm_obj(plasm);
             tokens.artifact_uri = from_json.artifact_uri;
             tokens.run_id = from_json.run_id;
+            if tokens.logical_session_ref.is_none() {
+                tokens.logical_session_ref = from_json.logical_session_ref;
+            }
         }
         tokens
     }
@@ -140,6 +153,7 @@ impl RunTokens {
         };
 
         Self {
+            logical_session_ref: string_field(obj, "logical_session_ref"),
             result_delivery,
             artifact_uri,
             run_id,
@@ -158,12 +172,16 @@ pub struct AgentContent {
 
 impl AgentContent {
     pub fn plan(refs: &PlanTokenRefs<'_>, plan_body: &str) -> Self {
-        let tokens: Vec<(&'static str, String)> = vec![
+        let mut tokens: Vec<(&'static str, String)> = vec![
             ("kind", AgentResultKind::Plan.as_str().into()),
             ("run_ref", refs.run_ref.into()),
             ("dry_verdict", refs.dry_verdict.into()),
             ("dry_run", "true".into()),
+            ("logical_session_ref", refs.logical_session_ref.into()),
         ];
+        if let Some(uri) = refs.plan_uri.filter(|s| !s.is_empty()) {
+            tokens.push(("plan_uri", uri.into()));
+        }
         let run_instruction = format!(
             "**Run:** pass `run_ref`: `{}` to **`plasm_run`**. Do not echo the program.",
             refs.run_ref
@@ -193,6 +211,9 @@ impl AgentContent {
     pub fn run(tokens: RunTokens, body_markdown: &str) -> Self {
         let mut pairs: Vec<(&'static str, String)> =
             vec![("kind", AgentResultKind::Run.as_str().into())];
+        if let Some(s) = tokens.logical_session_ref.filter(|s| !s.is_empty()) {
+            pairs.push(("logical_session_ref", s));
+        }
         if let Some(s) = tokens
             .result_delivery
             .filter(|s| !s.is_empty() && s != "inline")
@@ -282,6 +303,10 @@ mod tests {
             &PlanTokenRefs {
                 run_ref: "pc2",
                 dry_verdict: "ok",
+                logical_session_ref: "l_ref",
+                plan_uri: Some(
+                    "plasm://execute/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/s1/plan/x",
+                ),
             },
             "plan ok · 1n 1r → r1\n\n01 r1           query Label{}",
         )
@@ -289,8 +314,10 @@ mod tests {
         assert!(md.contains("```tsv\nkey\tvalue\n"));
         assert!(md.contains("kind\tplan\n"));
         assert!(md.contains("run_ref\tpc2\n"));
-        assert!(!md.contains("logical_session_ref\t"));
-        assert!(!md.contains("plan_uri\t"));
+        assert!(md.contains("logical_session_ref\tl_ref\n"));
+        assert!(md.contains(
+            "plan_uri\tplasm://execute/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/s1/plan/x\n"
+        ));
         assert!(!md.contains("domain_revision\t"));
         assert!(md.contains("```text\nplan ok"));
         assert!(md.contains("plasm_run"));
@@ -347,12 +374,19 @@ mod tests {
             Some(handle.canonical_plasm_uri.as_str())
         );
         assert!(tokens.run_id.is_none());
-        let md = AgentContent::run(tokens, "body").render();
+        let md = AgentContent::run(
+            RunTokens {
+                logical_session_ref: Some("l_ref".into()),
+                ..tokens
+            },
+            "body",
+        )
+        .render();
         assert!(md.contains("kind\trun\n"));
+        assert!(md.contains("logical_session_ref\tl_ref\n"));
         assert!(md.contains(&handle.canonical_plasm_uri));
         assert!(!md.contains("run_id\t"));
         assert!(!md.contains("result_delivery\tinline"));
-        assert!(!md.contains("logical_session_ref\t"));
         assert!(!md.contains("domain_revision\t"));
         assert!(AGENT_TOKEN_KEYS.contains(&"artifact_uri"));
     }

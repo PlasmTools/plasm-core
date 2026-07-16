@@ -225,6 +225,8 @@ pub(crate) async fn execute_plasm_tool_dry_run(
         &crate::mcp_agent_present::PlanTokenRefs {
             run_ref: commit_ref.as_str(),
             dry_verdict,
+            logical_session_ref: ctx.session_ref,
+            plan_uri: Some(plan_refs.canonical_plan_uri.as_str()),
         },
         &dry_text,
     )
