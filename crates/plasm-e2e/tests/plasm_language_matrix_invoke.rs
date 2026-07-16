@@ -9,7 +9,9 @@ mod language_matrix;
 use plasm_agent::plasm_compile::compile_plasm_program;
 use plasm_agent::plasm_plan_run::{evaluate_plasm_comp_dry, run_plasm_comp, PlasmPlanRunResult};
 use plasm_compile::{compile_operation, parse_capability_template, CmlEnv};
-use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions, MutatorAdmit};
+use plasm_core::discovery::{
+    derive_intent_exposure_surface_batch, ExposureSurfaceOptions, MutatorAdmit,
+};
 use plasm_core::symbol_tuning::ExposureEntityKey;
 use plasm_core::value::Value;
 use plasm_core::{Expr, TeachingExposureSession};
