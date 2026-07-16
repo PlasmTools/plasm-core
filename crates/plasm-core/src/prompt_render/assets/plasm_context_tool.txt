@@ -1,10 +1,10 @@
 **Default first MCP call for a new workflow.** Call before `plasm` / `plasm_run`. Session identity is **`logical_session_ref`** only — not `intent`.
 
-**Intent-only open (semantic auto-seed hosts):** `session_mode: "new"` + **`intent` only** — omit **`seeds`** (rejected if passed). Host selects seeds and opens teaching TSV on **`ready`**. On **`clarify`** / **`hard_miss`** / **`routing_error`**, rephrase **`intent`** with the provider brand (use breakout browse preview as prose — do not invent `{api, entity}` keys).
+**Intent-only open (semantic auto-seed hosts):** `session_mode: "new"` + **`intent` only** — omit **`seeds`** (rejected if passed). Host selects a minimal capability surface and opens teaching TSV on **`ready`**. On **`clarify`** / **`hard_miss`** / **`routing_error`**, rephrase **`intent`** with the provider brand (use breakout browse preview as prose — do not invent `{api, entity}` keys).
 
 **Lifecycle:**
 - **`new`** — mint `logical_session_ref` + fresh symbol table once per workflow. Auto-seed on → no `seeds`; auto-seed off → `seeds` required.
-- **`extend`** — same `logical_session_ref`; append `intent`; non-empty **`seeds`** / `ranked_capabilities`. Symbols never reset. Entity names case-fold to catalog keys when unique.
+- **`extend`** — same `logical_session_ref` + appended **`intent`**; host selects additional capabilities (intent-only — do not invent entity seed names). Symbols never reset. Delta TSV when new surface is admitted; reuse cheat sheet when unchanged.
 - **`intent` does NOT select the session.** Only **`new`** discards symbols.
 
 **One workflow:** one `logical_session_ref`, many **`extend`** turns. Never **`new`** to recover from plan/parse errors — use **`extend`**.
@@ -12,5 +12,3 @@
 **Programs:** copy **`e#`/`m#`/`r#`** and wire names from the teaching TSV into `plasm.program`.
 
 **Discover:** omitted from MCP tools/list on auto-seed hosts; breakout embeds browse rows. HTTP `/v1/discover` remains for non-MCP clients.
-
-**`_meta.plasm`:** `logical_session_ref`, `session_mode`, `intent_turns`, `accumulated_intent`, `continuity`, `domain_revision`, optional **`relations`**, and on intent-only routing **`routing`**.

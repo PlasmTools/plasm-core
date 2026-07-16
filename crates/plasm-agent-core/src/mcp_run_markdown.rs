@@ -8,8 +8,9 @@
 //! path expressions and cannot be executed via the `plasm` tool alone.
 
 use crate::output::{
-    format_result_table_with_cgs, format_result_tsv_with_cgs, lossy_summary_field_names,
-    InBandSummaryReport, LossySummaryFieldNames,
+    format_result_tsv_with_cgs, format_result_tsv_with_full_fidelity_cgs,
+    lossy_summary_field_names, summary_sensitive_string_bytes, InBandSummaryReport,
+    LossySummaryFieldNames,
 };
 use crate::run_artifacts::RunArtifactHandle;
 use plasm_core::CGS;
@@ -23,6 +24,11 @@ pub const MCP_PLASM_MARKDOWN_PREVIEW_THRESHOLD_CHARS: usize = 4_000;
 /// Derived from the canonical host first-page size ([`crate::plan_read_bounds::DEFAULT_HOST_PAGE_SIZE`])
 /// so the first host page fits one MCP tool response; further pages use `run_ref` on `plasm_run`.
 pub const MCP_IN_BAND_ENTITY_ROW_CAP: usize = crate::plan_read_bounds::DEFAULT_HOST_PAGE_SIZE;
+
+/// Aggregate original UTF-8 bytes allowed for string cells that full-fidelity rendering restores
+/// (schema `ReferenceOnly`/`Lossy`, and default strings past the summary omit threshold) in a
+/// bounded MCP response. The TSV remains the authoritative result under this ceiling.
+pub const MCP_INLINE_FULL_FIDELITY_BYTE_BUDGET: usize = 12 * 1024;
 
 /// Above this row count, MCP may omit inline TSV and defer to snapshot-only preview (extreme results).
 pub const MCP_SNAPSHOT_ONLY_ROW_THRESHOLD: usize = 500;
@@ -147,32 +153,20 @@ impl AsRef<[String]> for OmittedReferenceOnlyFields {
 /// In-band execute result plus which fields were withheld or lossy-capped in the Markdown summary.
 #[derive(Debug, Clone)]
 pub(crate) struct McpFormattedExecuteResult {
-    pub block: McpExecuteResultBlock,
+    /// Raw TSV body (no markdown fence).
+    pub tsv_body: String,
     pub reference_only_omitted: OmittedReferenceOnlyFields,
     pub lossy_summary_fields: LossySummaryFieldNames,
-    /// Observed clamps / reference-only replacements while building `block` (single format pass).
+    /// Observed clamps / reference-only replacements while building `tsv_body` (single format pass).
     pub in_band_report: InBandSummaryReport,
 }
 
-/// In-band execute result body: either a fenced TSV block or an ASCII summary table.
-#[derive(Debug, Clone)]
-pub(crate) enum McpExecuteResultBlock {
-    TsvFence { body: String },
-    AsciiTable { body: String },
-}
-
-impl McpExecuteResultBlock {
-    pub(crate) fn into_mcp_result_markdown(self) -> String {
-        match self {
-            McpExecuteResultBlock::TsvFence { body } => {
-                let mut s = String::from("```tsv\n");
-                s.push_str(&body);
-                s.push_str("\n```\n");
-                s
-            }
-            McpExecuteResultBlock::AsciiTable { body } => body,
-        }
-    }
+/// Wrap a raw TSV body in a markdown ` ```tsv ` fence for MCP tool content.
+pub(crate) fn mcp_tsv_body_to_markdown_fence(body: &str) -> String {
+    let mut s = String::from("```tsv\n");
+    s.push_str(body);
+    s.push_str("\n```\n");
+    s
 }
 
 /// Truncate long expression source lines for MCP previews and traces.
@@ -218,7 +212,12 @@ pub(crate) fn mcp_inline_run_snapshot_line(
     handle: &RunArtifactHandle,
     artifact_access: ArtifactAccessMode,
 ) -> String {
-    artifact_access.snapshot_line(handle.plasm_uri.as_str())
+    let uri = if handle.canonical_plasm_uri.is_empty() {
+        handle.plasm_uri.as_str()
+    } else {
+        handle.canonical_plasm_uri.as_str()
+    };
+    artifact_access.snapshot_line(uri)
 }
 
 /// Union of schema-tagged lossy columns and any field names recorded while formatting in-band cells
@@ -232,35 +231,39 @@ pub(crate) fn merge_snapshot_column_hints(
     LossySummaryFieldNames::from_vec_sorted_dedup(v)
 }
 
-/// MCP `plasm` tool: use fenced TSV when there are no reference-only omissions; otherwise ASCII table with `(in artifact)`.
+/// MCP `plasm` tool: use compact TSV. When summary would omit/truncate string cells, restore them
+/// in full iff the shared admission classifier fits the inline byte budget (one policy for score +
+/// render).
 pub(crate) fn mcp_format_execute_result_table_or_tsv(
     result: &ExecutionResult,
     cgs: Option<&CGS>,
     max_entity_rows: Option<usize>,
 ) -> McpFormattedExecuteResult {
-    let lossy_summary_fields = lossy_summary_field_names(result, cgs);
+    let schema_lossy_summary_fields = lossy_summary_field_names(result, cgs);
     let (tsv, omitted_vec, tsv_report) = format_result_tsv_with_cgs(result, cgs, max_entity_rows);
     let reference_only_omitted = OmittedReferenceOnlyFields::from_vec_sorted_dedup(omitted_vec);
-    if reference_only_omitted.is_empty() {
+    let restore_bytes = summary_sensitive_string_bytes(result, cgs, max_entity_rows);
+    let needs_restore = restore_bytes > 0
+        || !reference_only_omitted.is_empty()
+        || !schema_lossy_summary_fields.is_empty();
+    let full_fidelity_allowed = needs_restore
+        && result.count <= MCP_IN_BAND_ENTITY_ROW_CAP
+        && restore_bytes <= MCP_INLINE_FULL_FIDELITY_BYTE_BUDGET;
+    if full_fidelity_allowed {
+        let (full_tsv, full_report) =
+            format_result_tsv_with_full_fidelity_cgs(result, cgs, max_entity_rows);
         McpFormattedExecuteResult {
-            block: McpExecuteResultBlock::TsvFence { body: tsv },
-            reference_only_omitted,
-            lossy_summary_fields,
-            in_band_report: tsv_report,
+            tsv_body: full_tsv,
+            reference_only_omitted: OmittedReferenceOnlyFields::default(),
+            lossy_summary_fields: LossySummaryFieldNames::default(),
+            in_band_report: full_report,
         }
     } else {
-        let (table, omitted2, table_report) =
-            format_result_table_with_cgs(result, cgs, max_entity_rows);
-        let omitted2 = OmittedReferenceOnlyFields::from_vec_sorted_dedup(omitted2);
-        debug_assert_eq!(
-            reference_only_omitted, omitted2,
-            "TSV vs table omission mismatch"
-        );
         McpFormattedExecuteResult {
-            block: McpExecuteResultBlock::AsciiTable { body: table },
-            reference_only_omitted: omitted2,
-            lossy_summary_fields,
-            in_band_report: table_report,
+            tsv_body: tsv,
+            reference_only_omitted,
+            lossy_summary_fields: schema_lossy_summary_fields,
+            in_band_report: tsv_report,
         }
     }
 }
@@ -285,14 +288,14 @@ pub(crate) fn mcp_compact_markdown_single(
     let mut out = slim_result_section_header("## ", &format!("{label} (preview)"), entity_rows);
     out.push_str(MCP_MARKDOWN_PREVIEW_SINGLE_PROLOGUE);
     if !omitted.is_empty() {
-        out.push_str("**Omitted from summary (reference-only fields):** ");
+        out.push_str("**Fidelity:** full values for ");
         out.push_str(&omitted.join_comma());
-        out.push('\n');
+        out.push_str(" are in the snapshot.\n");
     }
     if !lossy_summary_fields.is_empty() {
-        out.push_str("**Abbreviated in-band columns (full text in snapshot):** ");
+        out.push_str("**Fidelity:** abbreviated values for ");
         out.push_str(&lossy_summary_fields.join_comma());
-        out.push('\n');
+        out.push_str(" are in the snapshot.\n");
     }
     out
 }
@@ -318,20 +321,20 @@ pub(crate) fn mcp_compact_markdown_multi_line(
         let step_no = i + 1;
         out.push_str(&slim_result_section_header("### ", label, *nrows));
         if let Some((_, h)) = truncated_step_uris.iter().find(|(s, _)| *s == step_no) {
-            out.push_str(&artifact_access.snapshot_line(h.plasm_uri.as_str()));
+            out.push_str(&mcp_inline_run_snapshot_line(h, artifact_access));
             out.push('\n');
         }
         out.push('\n');
     }
     if !omitted.is_empty() {
-        out.push_str("**Omitted from summary (reference-only fields):** ");
+        out.push_str("**Fidelity:** full values for ");
         out.push_str(&omitted.join_comma());
-        out.push('\n');
+        out.push_str(" are in the snapshot.\n");
     }
     if !lossy_summary_union.is_empty() {
-        out.push_str("**Abbreviated in-band columns (full text in snapshot):** ");
+        out.push_str("**Fidelity:** abbreviated values for ");
         out.push_str(&lossy_summary_union.join_comma());
-        out.push('\n');
+        out.push_str(" are in the snapshot.\n");
     }
     out
 }
@@ -405,7 +408,10 @@ mod tests {
         assert!(!s.contains("MUST"), "multi-line preview: {s}");
         assert!(!s.contains("Optional full JSON"), "multi-line preview: {s}");
         assert!(s.contains("commentBody"), "multi-line preview: {s}");
-        assert!(s.contains(&h.plasm_uri), "truncated step URI inline: {s}");
+        assert!(
+            s.contains(&h.canonical_plasm_uri),
+            "canonical truncated step URI inline: {s}"
+        );
     }
 
     fn sample_handle() -> RunArtifactHandle {
@@ -459,10 +465,11 @@ mod tests {
             "## Result\n{}",
             mcp_inline_run_snapshot_line(&h, ArtifactAccessMode::ResourcesRead)
         );
+        let canonical_uri = h.canonical_plasm_uri.clone();
         let out2 = mcp_prepend_artifact_followup_markdown(body.clone(), true, &[h], &omitted);
         assert_eq!(out2, body, "{out2}");
         assert!(!out2.contains("Optional full JSON"), "{out2}");
-        assert!(out2.contains("plasm://r/3"), "{out2}");
+        assert!(out2.contains(&canonical_uri), "{out2}");
     }
 
     #[test]
@@ -492,5 +499,58 @@ mod tests {
         assert!(out.contains("body"), "{out}");
         assert!(!out.contains("call **`resources/read`**"), "{out}");
         assert!(out.ends_with("table\n"), "{out}");
+    }
+
+    #[test]
+    fn full_fidelity_restores_default_long_string_under_budget() {
+        use crate::output::{REFERENCE_ONLY_PLACEHOLDER, SUMMARY_DEFAULT_STRING_OMIT_CHARS};
+        use indexmap::IndexMap;
+        use plasm_compile::DecodedRelation;
+        use plasm_core::{EntityKey, Ref, Value};
+        use plasm_runtime::{
+            CachedEntity, EntityCompleteness, ExecutionResult, ExecutionSource, ExecutionStats,
+        };
+
+        let long = "x".repeat(SUMMARY_DEFAULT_STRING_OMIT_CHARS + 1);
+        let r = Ref {
+            entity_type: "Note".into(),
+            key: EntityKey::Simple("1".into()),
+        };
+        let mut fields = IndexMap::new();
+        fields.insert("body".into(), Value::String(long.clone()));
+        let entity = CachedEntity::from_decoded(
+            r,
+            fields,
+            IndexMap::<String, DecodedRelation>::new(),
+            0,
+            EntityCompleteness::Complete,
+        );
+        let result = ExecutionResult {
+            entities: vec![entity],
+            count: 1,
+            has_more: false,
+            pagination_resume: None,
+            paging_handle: None,
+            source: ExecutionSource::Live,
+            stats: ExecutionStats {
+                duration_ms: 0,
+                network_requests: 0,
+                cache_hits: 0,
+                cache_misses: 0,
+                ..Default::default()
+            },
+            request_fingerprints: vec![],
+        };
+        let formatted = mcp_format_execute_result_table_or_tsv(&result, None, None);
+        let body = &formatted.tsv_body;
+        assert!(
+            body.contains(&long),
+            "default long string must restore in full under budget, got: {body}"
+        );
+        assert!(
+            !body.contains(REFERENCE_ONLY_PLACEHOLDER),
+            "must not claim full fidelity while leaving placeholder: {body}"
+        );
+        assert!(formatted.reference_only_omitted.is_empty());
     }
 }

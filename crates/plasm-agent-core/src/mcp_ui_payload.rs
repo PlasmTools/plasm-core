@@ -174,7 +174,6 @@ const UI_STEP_REF_KEYS: &[&str] = &[
     "row_count",
     "node_id",
     "artifact_uri",
-    "canonical_artifact_uri",
     "artifact_path",
     "run_id",
 ];
@@ -435,10 +434,6 @@ mod tests {
             &PlanTokenRefs {
                 run_ref: "pc0",
                 dry_verdict: "ok",
-                logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ",
-                plan_uri: Some("plasm://execute/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/s1/plan/00000000-0000-4000-8000-000000000001"),
-                domain_revision: None,
-                symbol_map_fingerprint: None,
             },
             "plan ok · 1n 1r → items",
         )

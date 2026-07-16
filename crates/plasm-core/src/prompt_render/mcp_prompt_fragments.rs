@@ -248,7 +248,9 @@ pub fn format_ranked_replay_diagnostics(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
+    use crate::discovery::{
+        derive_intent_exposure_surface_batch, ExposureSurfaceOptions, MutatorAdmit,
+    };
     use crate::loader::load_schema_dir;
     use crate::ExposureEntityKey;
     use std::path::PathBuf;
@@ -278,7 +280,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             Some(&["langitem_create".to_string()]),
             ExposureSurfaceOptions {
-                read_first_seeded: true,
+                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
             },
         );
         let exp = TeachingExposureSession::new_with_intent_delta(&cgs, "matrix", &entities, delta);
@@ -315,7 +317,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             None,
             ExposureSurfaceOptions {
-                read_first_seeded: true,
+                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
             },
         );
         let exp = TeachingExposureSession::new_with_intent_delta(&cgs, "matrix", &entities, delta);

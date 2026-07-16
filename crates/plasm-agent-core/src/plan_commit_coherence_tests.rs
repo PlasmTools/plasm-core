@@ -1,5 +1,6 @@
 //! Durable/hot exposure coherence for plan commits (append-only domain_revision).
 
+use plasm_core::MutatorAdmit;
 use std::sync::Arc;
 
 use super::tests::{minimal_artifact, rehydrate_record};
@@ -61,7 +62,7 @@ async fn open_overshow_profile_host() -> (
             logical_session_id: None,
             context_intent: None,
             ranked_capabilities: None,
-            read_first_seeded_exposure: false,
+            mutator_admit: MutatorAdmit::IntentOnly,
         },
     )
     .await

@@ -19,6 +19,7 @@ use plasm_agent_core::server_state::{CatalogBootstrap, PlasmHostState};
 use plasm_core::discovery::InMemoryCgsRegistry;
 use plasm_core::expr_parser::ParsedExpr;
 use plasm_core::loader::load_schema_dir;
+use plasm_core::MutatorAdmit;
 use plasm_core::{Expr, QueryExpr};
 use plasm_runtime::{
     CancelSignal, ExecutionConfig, ExecutionEngine, ExecutionMode, ExecutionSource, ExecutionStats,
@@ -101,7 +102,7 @@ async fn open_overshow_session(host: &PlasmHostState) -> (String, String, Arc<Ex
             logical_session_id: None,
             context_intent: None,
             ranked_capabilities: None,
-            read_first_seeded_exposure: false,
+            mutator_admit: MutatorAdmit::IntentOnly,
         },
     )
     .await

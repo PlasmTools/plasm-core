@@ -18,13 +18,8 @@ pub const AGENT_TOKEN_KEYS: &[&str] = &[
     "dry_verdict",
     "dry_run",
     "logical_session_ref",
-    "plan_uri",
-    "domain_revision",
-    "symbol_map_fingerprint",
     "result_delivery",
     "artifact_uri",
-    "run_id",
-    "session_mode",
 ];
 
 /// Discriminator for agent-facing tool results.
@@ -50,40 +45,28 @@ impl AgentResultKind {
 pub struct PlanTokenRefs<'a> {
     pub run_ref: &'a str,
     pub dry_verdict: &'a str,
-    pub logical_session_ref: &'a str,
-    pub plan_uri: Option<&'a str>,
-    pub domain_revision: Option<u32>,
-    pub symbol_map_fingerprint: Option<&'a str>,
 }
 
 /// Slim context tokens for `plasm_context` agent content.
 #[derive(Debug, Clone)]
 pub struct ContextTokenRefs<'a> {
     pub logical_session_ref: &'a str,
-    pub session_mode: &'a str,
-    pub domain_revision: Option<u32>,
 }
 
 /// Slim run tokens with `artifact_uri` preferred over `run_id` (single canonical lookup).
 #[derive(Debug, Clone, Default)]
 pub struct RunTokens {
-    pub logical_session_ref: Option<String>,
     pub result_delivery: Option<String>,
     pub artifact_uri: Option<String>,
     /// Only set when `artifact_uri` is absent.
     pub run_id: Option<String>,
-    pub domain_revision: Option<u32>,
-    pub symbol_map_fingerprint: Option<String>,
 }
 
 impl RunTokens {
     /// Prefer a single `artifact_uri`; suppress `run_id` when `artifact_uri` is present.
     pub fn from_artifact(
-        logical_session_ref: Option<&str>,
         result_delivery: Option<&str>,
         artifact: Option<&crate::run_artifacts::RunArtifactHandle>,
-        domain_revision: Option<u32>,
-        symbol_map_fingerprint: Option<&str>,
     ) -> Self {
         let (artifact_uri, run_id) = match artifact {
             Some(h) => {
@@ -103,36 +86,23 @@ impl RunTokens {
             None => (None, None),
         };
         Self {
-            logical_session_ref: logical_session_ref
-                .filter(|s| !s.is_empty())
-                .map(str::to_string),
             result_delivery: result_delivery
                 .filter(|s| !s.is_empty())
                 .map(str::to_string),
             artifact_uri,
             run_id,
-            domain_revision,
-            symbol_map_fingerprint: symbol_map_fingerprint
-                .filter(|s| !s.is_empty())
-                .map(str::to_string),
         }
     }
 
     /// Prefer a single `artifact_uri`; suppress `run_id` when `artifact_uri` is present.
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn from_first_step(
-        logical_session_ref: Option<&str>,
         result_delivery: Option<&str>,
         first_step: Option<&crate::mcp_plasm_meta::RunUiStepFields>,
-        domain_revision: Option<u32>,
-        symbol_map_fingerprint: Option<&str>,
     ) -> Self {
         Self::from_artifact(
-            logical_session_ref,
             result_delivery,
             first_step.and_then(|s| s.artifact.as_ref()),
-            domain_revision,
-            symbol_map_fingerprint,
         )
     }
 
@@ -142,14 +112,8 @@ impl RunTokens {
         first_artifact: Option<&crate::run_artifacts::RunArtifactHandle>,
     ) -> Self {
         let mut tokens = Self::from_artifact(
-            plasm.get("logical_session_ref").and_then(|v| v.as_str()),
             plasm.get("result_delivery").and_then(|v| v.as_str()),
             first_artifact,
-            plasm
-                .get("domain_revision")
-                .and_then(|v| v.as_u64())
-                .and_then(|n| u32::try_from(n).ok()),
-            plasm.get("symbol_map_fingerprint").and_then(|v| v.as_str()),
         );
         // If no typed artifact, fall back to plasm step JSON refs.
         if tokens.artifact_uri.is_none() && tokens.run_id.is_none() {
@@ -162,13 +126,7 @@ impl RunTokens {
 
     /// Build from a `_meta.plasm` object (tests / last-resort JSON bridge).
     pub fn from_plasm_obj(obj: &Map<String, Value>) -> Self {
-        let logical_session_ref = string_field(obj, "logical_session_ref");
         let result_delivery = string_field(obj, "result_delivery");
-        let domain_revision = obj
-            .get("domain_revision")
-            .and_then(|v| v.as_u64())
-            .and_then(|n| u32::try_from(n).ok());
-        let symbol_map_fingerprint = string_field(obj, "symbol_map_fingerprint");
 
         let top_artifact = string_field(obj, "artifact_uri");
         let step_artifact = first_step_string(obj, "artifact_uri")
@@ -182,12 +140,9 @@ impl RunTokens {
         };
 
         Self {
-            logical_session_ref,
             result_delivery,
             artifact_uri,
             run_id,
-            domain_revision,
-            symbol_map_fingerprint,
         }
     }
 }
@@ -203,22 +158,12 @@ pub struct AgentContent {
 
 impl AgentContent {
     pub fn plan(refs: &PlanTokenRefs<'_>, plan_body: &str) -> Self {
-        let mut tokens: Vec<(&'static str, String)> = vec![
+        let tokens: Vec<(&'static str, String)> = vec![
             ("kind", AgentResultKind::Plan.as_str().into()),
             ("run_ref", refs.run_ref.into()),
             ("dry_verdict", refs.dry_verdict.into()),
             ("dry_run", "true".into()),
-            ("logical_session_ref", refs.logical_session_ref.into()),
         ];
-        if let Some(uri) = refs.plan_uri.filter(|s| !s.is_empty()) {
-            tokens.push(("plan_uri", uri.into()));
-        }
-        if let Some(d) = refs.domain_revision {
-            tokens.push(("domain_revision", d.to_string()));
-        }
-        if let Some(fp) = refs.symbol_map_fingerprint.filter(|s| !s.is_empty()) {
-            tokens.push(("symbol_map_fingerprint", fp.into()));
-        }
         let run_instruction = format!(
             "**Run:** pass `run_ref`: `{}` to **`plasm_run`**. Do not echo the program.",
             refs.run_ref
@@ -232,14 +177,10 @@ impl AgentContent {
     }
 
     pub fn context(refs: &ContextTokenRefs<'_>, body_markdown: &str) -> Self {
-        let mut tokens: Vec<(&'static str, String)> = vec![
+        let tokens: Vec<(&'static str, String)> = vec![
             ("kind", AgentResultKind::Context.as_str().into()),
             ("logical_session_ref", refs.logical_session_ref.into()),
-            ("session_mode", refs.session_mode.into()),
         ];
-        if let Some(d) = refs.domain_revision {
-            tokens.push(("domain_revision", d.to_string()));
-        }
         let body = body_markdown.trim();
         Self {
             kind: AgentResultKind::Context,
@@ -252,17 +193,11 @@ impl AgentContent {
     pub fn run(tokens: RunTokens, body_markdown: &str) -> Self {
         let mut pairs: Vec<(&'static str, String)> =
             vec![("kind", AgentResultKind::Run.as_str().into())];
-        if let Some(s) = tokens.logical_session_ref.filter(|s| !s.is_empty()) {
-            pairs.push(("logical_session_ref", s));
-        }
-        if let Some(s) = tokens.result_delivery.filter(|s| !s.is_empty()) {
+        if let Some(s) = tokens
+            .result_delivery
+            .filter(|s| !s.is_empty() && s != "inline")
+        {
             pairs.push(("result_delivery", s));
-        }
-        if let Some(d) = tokens.domain_revision {
-            pairs.push(("domain_revision", d.to_string()));
-        }
-        if let Some(s) = tokens.symbol_map_fingerprint.filter(|s| !s.is_empty()) {
-            pairs.push(("symbol_map_fingerprint", s));
         }
         if let Some(s) = tokens.artifact_uri.filter(|s| !s.is_empty()) {
             pairs.push(("artifact_uri", s));
@@ -347,10 +282,6 @@ mod tests {
             &PlanTokenRefs {
                 run_ref: "pc2",
                 dry_verdict: "ok",
-                logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ",
-                plan_uri: Some("plasm://execute/ph/s/plan/uuid"),
-                domain_revision: Some(0),
-                symbol_map_fingerprint: Some("fp"),
             },
             "plan ok · 1n 1r → r1\n\n01 r1           query Label{}",
         )
@@ -358,6 +289,9 @@ mod tests {
         assert!(md.contains("```tsv\nkey\tvalue\n"));
         assert!(md.contains("kind\tplan\n"));
         assert!(md.contains("run_ref\tpc2\n"));
+        assert!(!md.contains("logical_session_ref\t"));
+        assert!(!md.contains("plan_uri\t"));
+        assert!(!md.contains("domain_revision\t"));
         assert!(md.contains("```text\nplan ok"));
         assert!(md.contains("plasm_run"));
     }
@@ -367,14 +301,14 @@ mod tests {
         let md = AgentContent::context(
             &ContextTokenRefs {
                 logical_session_ref: "l_ref",
-                session_mode: "new",
-                domain_revision: Some(1),
             },
             "## teaching\nok",
         )
         .render();
         assert!(md.contains("kind\tcontext\n"));
-        assert!(md.contains("session_mode\tnew\n"));
+        assert!(md.contains("logical_session_ref\tl_ref\n"));
+        assert!(!md.contains("session_mode\tnew\n"));
+        assert!(!md.contains("domain_revision\t"));
         assert!(md.contains("## teaching\nok"));
     }
 
@@ -407,13 +341,7 @@ mod tests {
             lossy_summary_fields: crate::output::LossySummaryFieldNames::default(),
             column_schema: None,
         };
-        let tokens = RunTokens::from_first_step(
-            Some("l_ref"),
-            Some("inline"),
-            Some(&step),
-            Some(0),
-            Some("fp"),
-        );
+        let tokens = RunTokens::from_first_step(Some("inline"), Some(&step));
         assert_eq!(
             tokens.artifact_uri.as_deref(),
             Some(handle.canonical_plasm_uri.as_str())
@@ -423,6 +351,9 @@ mod tests {
         assert!(md.contains("kind\trun\n"));
         assert!(md.contains(&handle.canonical_plasm_uri));
         assert!(!md.contains("run_id\t"));
+        assert!(!md.contains("result_delivery\tinline"));
+        assert!(!md.contains("logical_session_ref\t"));
+        assert!(!md.contains("domain_revision\t"));
         assert!(AGENT_TOKEN_KEYS.contains(&"artifact_uri"));
     }
 
@@ -456,7 +387,6 @@ mod tests {
             Some(handle.canonical_plasm_uri.as_str())
         );
         assert!(tokens.run_id.is_none());
-        assert_eq!(tokens.domain_revision, Some(3));
     }
 
     #[test]

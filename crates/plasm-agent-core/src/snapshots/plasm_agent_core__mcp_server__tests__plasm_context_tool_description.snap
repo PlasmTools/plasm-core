@@ -1,28 +1,18 @@
 ---
-source: plasm-oss/crates/plasm-agent-core/src/mcp_server/tests.rs
-assertion_line: 372
+source: crates/plasm-agent-core/src/mcp_server/tests.rs
 expression: context
 ---
 **Default first MCP call for a new workflow.** Call before `plasm` / `plasm_run`. Session identity is **`logical_session_ref`** only — not `intent`.
 
-**Intent-only open (semantic auto-seed hosts):** `session_mode: "new"` + **`intent`** only — the host retrieves entity candidates, runs seed-set selection, and opens a minimal teaching table when decision is **`ready`**. On **`clarify`**, **`hard_miss`**, or **`routing_error`** no session is minted; follow breakout guidance (ask user, use embedded browse rows, or pass explicit **`seeds`**).
+**Intent-only open (semantic auto-seed hosts):** `session_mode: "new"` + **`intent` only** — omit **`seeds`** (rejected if passed). Host selects a minimal capability surface and opens teaching TSV on **`ready`**. On **`clarify`** / **`hard_miss`** / **`routing_error`**, rephrase **`intent`** with the provider brand (use breakout browse preview as prose — do not invent `{api, entity}` keys).
 
-**Session lifecycle (explicit):**
-- **`session_mode: "new"`** — mint `logical_session_ref` + fresh symbol table. Use **once** per workflow. **`seeds`** optional when semantic auto-seed is enabled; otherwise required.
-- **`session_mode: "extend"`** — same `logical_session_ref`; append this turn's `intent`; add non-empty **`seeds`** / fix `ranked_capabilities`. Symbols **never** reset.
-- **`intent` does NOT select the session.** Rewording `intent` on `extend` is normal. Only **`session_mode: "new"`** discards symbols.
+**Lifecycle:**
+- **`new`** — mint `logical_session_ref` + fresh symbol table once per workflow. Auto-seed on → no `seeds`; auto-seed off → `seeds` required.
+- **`extend`** — same `logical_session_ref` + appended **`intent`**; host selects additional capabilities (intent-only — do not invent entity seed names). Symbols never reset. Delta TSV when new surface is admitted; reuse cheat sheet when unchanged.
+- **`intent` does NOT select the session.** Only **`new`** discards symbols.
 
-**One workflow:** one `logical_session_ref`, many **`extend`** calls, evolving `intent` each turn.
-**Never** call **`session_mode: "new"`** to recover from a plan/parse error — use **`extend`** with corrected `seeds` / `ranked_capabilities`.
+**One workflow:** one `logical_session_ref`, many **`extend`** turns. Never **`new`** to recover from plan/parse errors — use **`extend`**.
 
-**Programs = this table:** copy **`e#`/`m#`/`r#`** and catalog **wire names** from the left column into `plasm.program`. Catalog type names and API ids are not program syntax.
+**Programs:** copy **`e#`/`m#`/`r#`** and wire names from the teaching TSV into `plasm.program`.
 
-**Open or extend:** **`session_mode`** + **`intent`** + optional/required **`seeds`** (`{api, entity}`). Returns **`logical_session_ref`** + fenced teaching TSV when ready. Logical-session ledger: symbols append in **arrival order** — existing **`e#`** assignments never shift. **SYMBOL SPACE RESET** banner = pinned catalog digest changed; discard cached symbols.
-
-**Extend picks:** **`session_mode: "extend"`** + same **`logical_session_ref`**, expanded **`seeds`** — delta TSV or reuse cheat sheet when already exposed.
-
-**Discover before id (writes):** resolve human ids from live list/search, not catalog/eval samples. On semantic auto-seed hosts, breakout responses include browse rows — **`discover_capabilities`** is omitted from MCP tools/list (HTTP `/v1/discover` remains for non-MCP clients).
-
-**Relation seeds:** seed program roots only; `.r#` targets need not be seeded — `unused_seeds` is advisory.
-
-**`_meta.plasm`:** `logical_session_ref`, `session_mode`, `intent_turns`, `accumulated_intent`, `continuity`, `domain_revision`, optional **`relations`**, and on intent-only routing **`routing`** (`decision`, previews, alternatives).
+**Discover:** omitted from MCP tools/list on auto-seed hosts; breakout embeds browse rows. HTTP `/v1/discover` remains for non-MCP clients.

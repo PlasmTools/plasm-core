@@ -1,4 +1,4 @@
-version: 33
+version: 34
 http_backend: https://api.github.com
 data_classes:
   untrusted:
@@ -539,7 +539,13 @@ entities:
     - owner
     - repo
     - filename
-    description: A file in a repository commit or contents blob (path + sha for updates).
+    description: A file at a repository path (contents blob) — read existence, bytes, and sha before updates.
+    discovery:
+      names:
+      - file
+      - content
+      - repository file
+      - path
     fields:
       owner:
         required: true
@@ -2033,7 +2039,20 @@ capabilities:
   commit_file_get:
     kind: get
     entity: CommitFile
-    description: Resolve one repository file blob (path and sha) at a branch or commit ref via the contents API.
+    description: Read one repository file at a path (existence, content, and sha) on a branch or commit ref — prefer this over mutation probes.
+    discovery:
+      operation_terms:
+      - read file
+      - get file
+      - fetch contents
+      - check file exists
+      - does file exist
+      - open file
+      target_terms:
+      - file
+      - content
+      - path
+      - README
     provides:
     - owner
     - repo

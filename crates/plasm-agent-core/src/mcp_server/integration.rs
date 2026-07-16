@@ -37,7 +37,16 @@ fn matrix_federated_host() -> PlasmHostState {
     matrix_federated_host_with_base(None)
 }
 
+/// Integration hosts skip system-proxy probes (`SCDynamicStore` can hang under agent/CI sandboxes).
+fn ensure_test_http_no_system_proxy() {
+    if std::env::var_os("PLASM_HTTP_NO_SYSTEM_PROXY").is_none() {
+        // SAFETY: test-only process env; set before any reqwest Client build in this module.
+        unsafe { std::env::set_var("PLASM_HTTP_NO_SYSTEM_PROXY", "1") };
+    }
+}
+
 fn matrix_federated_host_with_base(base_url: Option<&str>) -> PlasmHostState {
+    ensure_test_http_no_system_proxy();
     let cgs = Arc::new(load_schema_dir(&matrix_fixture_dir()).expect("plasm_language_matrix"));
     let reg = InMemoryCgsRegistry::from_pairs(vec![
         (
@@ -58,7 +67,7 @@ fn matrix_federated_host_with_base(base_url: Option<&str>) -> PlasmHostState {
         ..Default::default()
     };
     let engine = ExecutionEngine::new(config).expect("engine");
-    build_plasm_host_state(PlasmHostBootstrap {
+    let mut st = build_plasm_host_state(PlasmHostBootstrap {
         engine,
         mode: ExecutionMode::Live,
         registry: Arc::new(reg),
@@ -67,7 +76,10 @@ fn matrix_federated_host_with_base(base_url: Option<&str>) -> PlasmHostState {
         run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
-    })
+    });
+    // Dedicated pool mirrors production MCP hosts; required for live fuse / plasm_run paths.
+    st.oss.live_plan_pool = Arc::new(crate::live_plan_run_worker::LivePlanRunPool::new());
+    st
 }
 
 async fn spawn_matrix_langitem_mock() -> String {
@@ -252,7 +264,7 @@ impl MatrixPcNFixture {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mcp_apply_capability_seeds_federates_multi_catalog_and_dry_runs_distinct_e_symbols() {
     let st = Arc::new(matrix_federated_host());
     let seeds = vec![
@@ -322,7 +334,7 @@ async fn mcp_apply_capability_seeds_federates_multi_catalog_and_dry_runs_distinc
     evaluate_plasm_comp_dry(&es, &rel_bundle).expect("dry-run federated relation hop");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mcp_federated_post_async_finalize_compiles_e2_with_cross_cache() {
     let st = Arc::new(matrix_federated_host());
     let seeds = vec![
@@ -385,7 +397,7 @@ async fn mcp_federated_post_async_finalize_compiles_e2_with_cross_cache() {
     evaluate_plasm_comp_dry(&es, &bundle).expect("dry-run e2");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mcp_async_wait_poll_reaches_terminal_result() {
     let es = minimal_execute_session();
     let session_ref = "l_AAAAAAAAQACAAAAAAAAAAQ";
@@ -444,7 +456,7 @@ async fn mcp_async_wait_poll_reaches_terminal_result() {
     assert_eq!(terminal.run_markdown.as_deref(), Some("## done (1 rows)"));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mcp_policy_always_spawns_async_when_wait_live() {
     use crate::run_delivery::should_spawn_async_for_policy;
 
@@ -487,7 +499,7 @@ async fn mcp_policy_always_spawns_async_when_wait_live() {
     ));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mcp_query_limit_uses_async_await_path() {
     let st = Arc::new(matrix_federated_host());
     let seeds = vec![CapabilitySeed {
@@ -570,7 +582,7 @@ async fn mcp_query_limit_uses_async_await_path() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn matrix_query_limit_on_injected_live_plan_pool() {
     let mut st = matrix_federated_host();
     st.oss.live_plan_pool = Arc::new(crate::live_plan_run_worker::LivePlanRunPool::new());
@@ -644,7 +656,7 @@ async fn matrix_query_limit_on_injected_live_plan_pool() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn matrix_render_only_live_await_finishes_within_wall_time() {
     let mut st = matrix_federated_host();
     st.oss.live_plan_pool = Arc::new(crate::live_plan_run_worker::LivePlanRunPool::new());
@@ -722,7 +734,7 @@ hdr"#;
 }
 
 #[cfg(not(debug_assertions))]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn matrix_query_limit_on_release_stack_budget() {
     use crate::live_plan_run_worker::{LivePlanRunPool, DEFAULT_LIVE_PLAN_RUN_STACK_BYTES_RELEASE};
 
@@ -800,7 +812,7 @@ async fn matrix_query_limit_on_release_stack_budget() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mcp_dry_run_plan_commit_merges_from_durable_when_in_memory_stale() {
     use crate::plan_commit_store::resolve_committed_plan;
 
@@ -826,7 +838,7 @@ async fn mcp_dry_run_plan_commit_merges_from_durable_when_in_memory_stale() {
     resolve_committed_plan(&merged, &fx.pc).expect("pcN merged from durable descriptor");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mcp_dry_run_plan_commit_survives_rehydrate_for_plasm_run() {
     use crate::plan_commit_store::resolve_committed_plan;
 
@@ -840,7 +852,7 @@ async fn mcp_dry_run_plan_commit_survives_rehydrate_for_plasm_run() {
     assert_eq!(committed.program, fx.program);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mcp_pc_n_committed_await_uses_stored_review() {
     use crate::plan_commit_store::resolve_committed_plan;
 
@@ -887,7 +899,7 @@ async fn mcp_pc_n_committed_await_uses_stored_review() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mcp_plan_trace_hooks_emit_plasm_line_and_network_totals() {
     let base_url = spawn_matrix_langitem_mock().await;
     let st = Arc::new(matrix_federated_host_with_base(Some(base_url.as_str())));
@@ -1054,7 +1066,7 @@ fn plasm_dry_run_continuation_error_blocks_wait_and_cancel_only() {
     assert!(crate::operation::plasm_dry_run_continuation_error("page(l_x_pg1)").is_none());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn execute_mcp_live_run_page_handle_synthetic_continuation() {
     use super::committed_plasm_run::{
         execute_mcp_live_run, CommittedRunArtifacts, ExecuteMcpLiveRun, McpExecuteWire,
@@ -1206,7 +1218,7 @@ fn call_tool_result_markdown(res: &rust_mcp_sdk::schema::CallToolResult) -> Stri
         .join("")
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn plasm_run_page_handle_through_handler() {
     use super::PlasmMcpHandler;
     use crate::execute_session::SyntheticPageCursor;
@@ -1301,7 +1313,7 @@ async fn plasm_run_page_handle_through_handler() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn plasm_read_run_artifact_matches_resources_read() {
     let prior = std::env::var("PLASM_MCP_ARTIFACT_ACCESS").ok();
     std::env::set_var("PLASM_MCP_ARTIFACT_ACCESS", "tool");
@@ -1319,9 +1331,9 @@ async fn plasm_read_run_artifact_matches_resources_read() {
         let mcp_handler = PlasmMcpHandler::new(Arc::clone(&st)).to_mcp_server_handler();
         let runtime = test_mcp_runtime(mcp_handler, "artifact-read-parity");
         let mcp_key = "artifact-read-parity";
-
-        let context_res = handler
-            .handle_mcp_tool_plasm_context(
+        let context_res = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            handler.handle_mcp_tool_plasm_context(
                 mcp_key,
                 &runtime,
                 &json!({
@@ -1329,9 +1341,11 @@ async fn plasm_read_run_artifact_matches_resources_read() {
                     "intent": "artifact read parity",
                     "seeds": [{"api": "github", "entity": "LangItem"}]
                 }),
-            )
-            .await
-            .expect("plasm_context");
+            ),
+        )
+        .await
+        .expect("plasm_context timed out")
+        .expect("plasm_context");
         let logical_session_ref = context_res
             .meta
             .as_ref()
@@ -1339,9 +1353,9 @@ async fn plasm_read_run_artifact_matches_resources_read() {
             .and_then(|p| p.get("logical_session_ref"))
             .and_then(|v| v.as_str())
             .expect("logical_session_ref in plasm_context meta");
-
-        let plan_res = handler
-            .handle_plasm_mcp_tool(
+        let run_res = tokio::time::timeout(
+            std::time::Duration::from_secs(25),
+            handler.handle_plasm_mcp_tool(
                 mcp_key,
                 &runtime,
                 &json!({
@@ -1351,36 +1365,16 @@ async fn plasm_read_run_artifact_matches_resources_read() {
                 "plasm",
                 true,
                 std::time::Instant::now(),
-            )
-            .await
-            .expect("plasm dry");
-        let run_ref = plan_res
-            .meta
-            .as_ref()
-            .and_then(|m| m.get("plasm"))
-            .and_then(|p| p.get("run_ref"))
-            .and_then(|v| v.as_str())
-            .expect("run_ref in plasm meta");
-
-        let run_res = handler
-            .handle_plasm_mcp_tool(
-                mcp_key,
-                &runtime,
-                &json!({
-                    "logical_session_ref": logical_session_ref,
-                    "run_ref": run_ref
-                }),
-                "plasm_run",
-                false,
-                std::time::Instant::now(),
-            )
-            .await
-            .expect("plasm_run");
+            ),
+        )
+        .await
+        .expect("plasm fuse timed out")
+        .expect("plasm auto-executes read");
 
         let run_markdown = call_tool_result_markdown(&run_res);
         assert!(
             run_markdown.contains("```tsv"),
-            "small live run must inline TSV in tool content: {run_markdown}"
+            "small auto-executed read must inline TSV in tool content: {run_markdown}"
         );
 
         let logical_uuid =

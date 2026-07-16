@@ -1,11 +1,11 @@
-**Run Plasm** (live): **`logical_session_ref`** + **`run_ref`** — a `pcN` plan commit from **`plasm`**, or the page handle from a prior result's "more pages" line. Real HTTP/API; may return **`resource_link`** snapshots.
+**Run Plasm** (live write / review commit): **`logical_session_ref`** + **`run_ref`** — a `pcN` from **`plasm`** when the plan needed review, or the page handle from a prior "more pages" line. Real HTTP/API; may return **`resource_link`** snapshots.
 
-**Review gate:** first live run executes the reviewed plan for the `pcN` **`run_ref`** from **`plasm`**. If the token is missing, expired, or from another plan, call **`plasm`** again.
+**When to call:** only after **`plasm`** returned a **`run_ref`** for a mutating / review-gated plan, or to continue paging. Clean read-only **`plasm`** calls already return rows — do not re-run them with **`plasm_run`**.
 
-**Paging:** when a result says `more pages — call plasm_run with run_ref: "…"`, copy that handle into **`run_ref`** on the next **`plasm_run`** (same **`logical_session_ref`**; no second **`plasm`** call). Use paging only when **no** run snapshot was stored for that step. When a snapshot URI is present, read it first — the snapshot holds the complete materialized batch; paging is not a substitute for artifact read. `page(...)` is HTTP-execute program syntax only — not an MCP tool argument.
+**Review gate:** first live write executes the reviewed plan for that `pcN`. If the token is missing, expired, or from another plan, call **`plasm`** again.
 
-**Live execute:** server spawns one async operation and awaits terminal rows in the tool response. Progress uses standard `notifications/plasm/op` on the registered handle.
+**Paging:** when a result says `more pages — call plasm_run with run_ref: "…"`, copy that handle into **`run_ref`** (same **`logical_session_ref`**). Use paging only when **no** snapshot was stored. `page(...)` is HTTP-execute program syntax only.
 
-**Live results:** `## {return_label} ({n} rows)` header always. **Small results (≤25 rows):** inline ` ```tsv ` in tool **`content`** — use directly; live runs may still store a server-side snapshot for Run Explorer. Check **`structuredContent.plasm.result_delivery`**: `inline` means rows are in **`content`**; `snapshot_only` means fetch via the artifact read path (suffix below). A `plasm://…` snapshot line or `(in artifact)` cells in **`content`** also require artifact read. Multi-return programs use `# Results` with `### {label} ({n} rows)` per root. **`structuredContent.plasm.index_delta`** is not the row payload channel.
+**Live results:** `## {return_label} ({n} rows)` header. Small results (≤25 rows): inline ` ```tsv ` when `result_delivery` is `inline`; `snapshot_only` / `(in artifact)` need the artifact read path (suffix below).
 
 **Retry:** transient `session materialization changed during concurrent execute` — re-issue the same `plasm_run` once.

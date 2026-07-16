@@ -224,8 +224,8 @@ mod tests {
             out.markdown
         );
         assert!(
-            out.markdown.contains(&handle.plasm_uri),
-            "expected inline snapshot URI: {}",
+            out.markdown.contains(&handle.canonical_plasm_uri),
+            "expected canonical snapshot URI: {}",
             out.markdown
         );
         assert!(
@@ -286,8 +286,8 @@ mod tests {
             out.markdown
         );
         assert!(
-            out.markdown.contains(&handle.plasm_uri),
-            "expected inline snapshot URI: {}",
+            out.markdown.contains(&handle.canonical_plasm_uri),
+            "expected canonical snapshot URI: {}",
             out.markdown
         );
         assert!(

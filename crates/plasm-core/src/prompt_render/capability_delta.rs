@@ -431,7 +431,9 @@ pub(crate) fn render_mutator_recap_lines_for_caps(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
+    use crate::discovery::{
+        derive_intent_exposure_surface_batch, ExposureSurfaceOptions, MutatorAdmit,
+    };
     use crate::loader::load_schema_dir;
     use crate::symbol_tuning::exposed_mutator_capability_keys;
     use std::path::PathBuf;
@@ -456,7 +458,7 @@ mod tests {
             &entities,
             Some(&["issue_create".to_string()]),
             ExposureSurfaceOptions {
-                read_first_seeded: true,
+                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
             },
         );
         let exp = TeachingExposureSession::new_with_intent_delta(
@@ -520,7 +522,7 @@ mod tests {
             &entities,
             Some(&["langitem_create".to_string(), "langitem_query".to_string()]),
             ExposureSurfaceOptions {
-                read_first_seeded: true,
+                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
             },
         );
         let exp = TeachingExposureSession::new_with_intent_delta(
@@ -566,7 +568,7 @@ mod tests {
             &entities,
             Some(&["langitem_create".to_string()]),
             ExposureSurfaceOptions {
-                read_first_seeded: true,
+                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
             },
         );
         let exp = TeachingExposureSession::new_with_intent_delta(

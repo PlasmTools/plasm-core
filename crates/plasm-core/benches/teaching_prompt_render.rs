@@ -7,7 +7,9 @@
 //! Override cap: `PLASM_PROMPT_MATRIX_SYNTH_MAX_MS=<ms>`.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
+use plasm_core::discovery::{
+    derive_intent_exposure_surface_batch, ExposureSurfaceOptions, MutatorAdmit,
+};
 use plasm_core::loader::load_schema_dir;
 use plasm_core::prompt_render::{
     render_prompt_tsv_with_config, render_teaching_prompt_bundle_for_exposure, RenderConfig,
@@ -94,7 +96,7 @@ fn teaching_prompt_benchmarks(c: &mut Criterion) {
                         &[entity.to_string()],
                         None,
                         ExposureSurfaceOptions {
-                            read_first_seeded: true,
+                            mutator_admit: MutatorAdmit::AlwaysOnSeeds,
                         },
                     );
                     let exposure = TeachingExposureSession::new_with_intent_delta(

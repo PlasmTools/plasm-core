@@ -374,7 +374,9 @@ fn prompt_matrix_full_tsv_size_within_baseline() {
 
 #[test]
 fn seeded_pokemon_teaching_includes_bare_query_row() {
-    use crate::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
+    use crate::discovery::{
+        derive_intent_exposure_surface_batch, ExposureSurfaceOptions, MutatorAdmit,
+    };
 
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
     if !dir.is_dir() {
@@ -391,7 +393,7 @@ fn seeded_pokemon_teaching_includes_bare_query_row() {
         &["Pokemon".to_string()],
         None,
         ExposureSurfaceOptions {
-            read_first_seeded: true,
+            mutator_admit: MutatorAdmit::AlwaysOnSeeds,
         },
     );
     assert!(
@@ -437,7 +439,9 @@ fn seeded_pokemon_teaching_includes_bare_query_row() {
 /// B2 — simple string-id entities teach positional literals (e.g. `e#(pikachu)`), not `e#(p#)`.
 #[test]
 fn seeded_pokemon_identity_row_uses_positional_literal() {
-    use crate::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
+    use crate::discovery::{
+        derive_intent_exposure_surface_batch, ExposureSurfaceOptions, MutatorAdmit,
+    };
 
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
     if !dir.is_dir() {
@@ -454,7 +458,7 @@ fn seeded_pokemon_identity_row_uses_positional_literal() {
         &["Pokemon".to_string()],
         None,
         ExposureSurfaceOptions {
-            read_first_seeded: true,
+            mutator_admit: MutatorAdmit::AlwaysOnSeeds,
         },
     );
     let map =

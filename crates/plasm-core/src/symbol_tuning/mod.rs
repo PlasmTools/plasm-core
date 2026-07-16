@@ -23,6 +23,7 @@
 //! snapshots when the catalog fingerprint and exposure rows match a recent session.
 
 mod capability_surface_params;
+mod expose_surface;
 mod keys;
 mod opaque_symbol_hash;
 mod persisted_ident_metadata;
@@ -373,13 +374,10 @@ pub fn legacy_exposure_surface_for_entities(
                 source: ekey.clone(),
                 relation: rname.clone(),
             });
-            let tgt = rel.target_resource.as_str();
-            if cgs.get_entity(tgt).is_some() {
-                out.entities.insert(ExposureEntityKey {
-                    entry_id: cid.clone(),
-                    entity: EntityName::from(tgt),
-                });
-            }
+            // Relation slots alone do not expose the target entity. Targets are only
+            // surface.entities when they carry teachable capabilities (see intent mutation
+            // closure / expose_surface e# admission). Bare target inserts produced empty
+            // teaching blocks under surface filters.
         }
         let Some(names) = cgs.capability_names_by_domain().get(ename) else {
             continue;
@@ -3031,50 +3029,6 @@ impl TeachingExposureSession {
         legacy_exposure_surface_for_entities(cgs.as_ref(), entry_id, entities, &mut self.surface);
     }
 
-    pub fn expose_surface(
-        &mut self,
-        cgs_layers: &[&CGS],
-        owning_cgs: Arc<CGS>,
-        catalog_entry_id: &str,
-        entity_names_in_order: &[&str],
-        delta: ExposureSurfaceDelta,
-    ) -> ExposureAppendReport {
-        if cgs_layers.is_empty() {
-            return ExposureAppendReport::default();
-        }
-        self.catalog_cgs
-            .insert(catalog_entry_id.to_string(), owning_cgs.clone());
-        self.ledger.clear_symbol_map_cache();
-        self.surface.merge_from(&delta.required);
-        let mut entities_added = 0usize;
-        for n in entity_names_in_order {
-            let ekey = ExposureEntityKey {
-                entry_id: catalog_entry_id.to_string(),
-                entity: EntityName::from(*n),
-            };
-            if !self.surface.entities.contains(&ekey) {
-                continue;
-            }
-            let qkey = QualifiedEntityKey::new(catalog_entry_id, *n);
-            if self.tables.qualified_entity_to_sym.contains_key(&qkey) {
-                continue;
-            }
-            let Some(_ent) = owning_cgs.get_entity(n) else {
-                continue;
-            };
-            // Delta wave: same explicit-seed policy as [`Self::expose_entities`].
-            entities_added += 1;
-            let sym = OpaqueESym::from_zero_based(self.entities.len() as u32);
-            self.entities.push((*n).to_string());
-            self.entity_catalog_entry_ids
-                .push(catalog_entry_id.to_string());
-            self.tables.qualified_entity_to_sym.insert(qkey, sym);
-            self.record_entity_binding(sym, catalog_entry_id, n);
-        }
-        self.assign_new_methods_and_idents(cgs_layers);
-        ExposureAppendReport { entities_added }
-    }
-
     fn named_value_row_description(&self, meta: &IdentMetadata) -> String {
         let IdentMetadata::RegistryBacked {
             catalog_entry_id,
@@ -5002,7 +4956,7 @@ mod tests {
             &["LangItem".to_string()],
             None,
             crate::discovery::ExposureSurfaceOptions {
-                read_first_seeded: true,
+                mutator_admit: crate::MutatorAdmit::AlwaysOnSeeds,
             },
         );
         let mut exp =
@@ -5017,7 +4971,7 @@ mod tests {
             &["LangSummary".to_string()],
             None,
             crate::discovery::ExposureSurfaceOptions {
-                read_first_seeded: true,
+                mutator_admit: crate::MutatorAdmit::AlwaysOnSeeds,
             },
         );
         exp.expose_surface(

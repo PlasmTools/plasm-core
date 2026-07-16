@@ -9,6 +9,8 @@ use std::collections::BTreeMap;
 use rust_mcp_sdk::schema::{ClientCapabilities, InitializeRequestParams, ServerCapabilities};
 use serde_json::{Map, Value};
 
+use crate::mcp_client_info::McpClientInfo;
+
 /// Extension identifier from [MCP Apps spec](https://github.com/modelcontextprotocol/ext-apps).
 pub const MCP_UI_EXTENSION_ID: &str = "io.modelcontextprotocol/ui";
 
@@ -94,17 +96,21 @@ fn known_mcp_app_host(client: &InitializeRequestParams) -> bool {
 }
 
 /// Whether this transport should register MCP App UI tools and per-result UI lanes.
-pub fn client_supports_mcp_ui_apps(client: Option<&InitializeRequestParams>) -> bool {
+///
+/// [`McpClientInfo::Default`] means MCP Apps stay disabled unless env forces them on.
+pub fn client_supports_mcp_ui_apps(client: &McpClientInfo) -> bool {
     if let Some(forced) = mcp_ui_apps_mode_from_env() {
         return forced;
     }
-    let Some(params) = client else {
-        return false;
-    };
-    if client_capabilities_support_mcp_ui_apps(&params.capabilities) {
-        return true;
+    match client {
+        McpClientInfo::Default => false,
+        McpClientInfo::Initialized(params) => {
+            if client_capabilities_support_mcp_ui_apps(&params.capabilities) {
+                return true;
+            }
+            known_mcp_app_host(params)
+        }
     }
-    known_mcp_app_host(params)
 }
 
 #[cfg(test)]
@@ -134,16 +140,21 @@ mod tests {
     }
 
     #[test]
+    fn default_client_disables_ui_apps() {
+        assert!(!client_supports_mcp_ui_apps(&McpClientInfo::Default));
+    }
+
+    #[test]
     fn extension_mime_types_gate_ui_apps() {
         let mut ext = BTreeMap::new();
         ext.insert(MCP_UI_EXTENSION_ID.into(), ui_extension_settings());
-        let params = client_with_extensions(ext);
-        assert!(client_supports_mcp_ui_apps(Some(&params)));
+        let params = McpClientInfo::from_initialize(client_with_extensions(ext));
+        assert!(client_supports_mcp_ui_apps(&params));
     }
 
     #[test]
     fn missing_extension_falls_back_to_known_host() {
-        let params = InitializeRequestParams {
+        let params = McpClientInfo::from_initialize(InitializeRequestParams {
             capabilities: ClientCapabilities::default(),
             client_info: Implementation {
                 name: "cursor-vscode".into(),
@@ -155,13 +166,13 @@ mod tests {
             },
             protocol_version: LATEST_PROTOCOL_VERSION.into(),
             meta: None,
-        };
-        assert!(client_supports_mcp_ui_apps(Some(&params)));
+        });
+        assert!(client_supports_mcp_ui_apps(&params));
     }
 
     #[test]
     fn unknown_host_without_extension_is_disabled() {
-        let params = InitializeRequestParams {
+        let params = McpClientInfo::from_initialize(InitializeRequestParams {
             capabilities: ClientCapabilities::default(),
             client_info: Implementation {
                 name: "unknown-mcp-client".into(),
@@ -173,8 +184,8 @@ mod tests {
             },
             protocol_version: LATEST_PROTOCOL_VERSION.into(),
             meta: None,
-        };
-        assert!(!client_supports_mcp_ui_apps(Some(&params)));
+        });
+        assert!(!client_supports_mcp_ui_apps(&params));
     }
 
     #[test]

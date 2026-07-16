@@ -14,6 +14,7 @@ use axum::http::Request;
 use axum::Router;
 use plasm_core::discovery::InMemoryCgsRegistry;
 use plasm_core::loader::load_schema_dir;
+use plasm_core::MutatorAdmit;
 use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 use std::path::Path;
 use tower::util::ServiceExt;
@@ -673,7 +674,7 @@ async fn execute_session_create_marks_reused_on_second_open() {
         logical_session_id: None,
         context_intent: None,
         ranked_capabilities: None,
-        read_first_seeded_exposure: false,
+        mutator_admit: MutatorAdmit::IntentOnly,
     };
     let first = execute_session_create_response(&st, None, body.clone())
         .await
@@ -700,7 +701,7 @@ async fn expand_domain_session_updates_session_entities() {
             logical_session_id: None,
             context_intent: None,
             ranked_capabilities: None,
-            read_first_seeded_exposure: false,
+            mutator_admit: MutatorAdmit::IntentOnly,
         },
     )
     .await
@@ -815,7 +816,7 @@ async fn unknown_entity_parse_error_includes_session_bounds() {
             logical_session_id: None,
             context_intent: None,
             ranked_capabilities: None,
-            read_first_seeded_exposure: false,
+            mutator_admit: MutatorAdmit::IntentOnly,
         },
     )
     .await

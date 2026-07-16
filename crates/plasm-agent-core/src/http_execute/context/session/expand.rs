@@ -1,6 +1,7 @@
 //! Expand teaching waves.
 
 use super::super::super::*;
+use plasm_core::MutatorAdmit;
 
 use super::super::seeds::{
     dedup_preserve_arrival_order, normalize_capability_seeds, process_order_for_expand_group,
@@ -62,10 +63,24 @@ async fn commit_expand_wave(
             .into());
         };
         if ctx.get_entity(&seed.entity).is_none() {
-            return Err(format!(
-                "unknown entity `{}` in catalog `{}`",
-                seed.entity, seed.entry_id
-            )
+            let hints = crate::http_execute::context::seed_resolve::nearest_entity_names(
+                ctx.cgs.as_ref(),
+                seed.entity.as_str(),
+                5,
+            );
+            return Err(if hints.is_empty() {
+                format!(
+                    "unknown entity `{}` in catalog `{}`",
+                    seed.entity, seed.entry_id
+                )
+            } else {
+                format!(
+                    "unknown entity `{}` in catalog `{}` — nearest: {}",
+                    seed.entity,
+                    seed.entry_id,
+                    hints.join(", ")
+                )
+            }
             .into());
         }
         groups
@@ -110,7 +125,7 @@ async fn commit_expand_wave(
                 &normalized,
                 ranked_slice,
                 plasm_core::discovery::ExposureSurfaceOptions {
-                    read_first_seeded: true,
+                    mutator_admit: MutatorAdmit::IntentOnly,
                 },
             );
             exp.expose_surface(&layers, ctx.cgs.clone(), eid.as_str(), &refs, delta);

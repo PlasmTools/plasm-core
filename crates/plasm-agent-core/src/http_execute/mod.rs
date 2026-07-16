@@ -23,7 +23,7 @@ use axum::http::StatusCode;
 use axum::response::Response;
 use http_problem::prelude::{StatusCode as ProblemStatus, Uri};
 use http_problem::Problem;
-use plasm_core::{PagingHandle, PromptRenderMode, CGS};
+use plasm_core::{MutatorAdmit, PagingHandle, PromptRenderMode, CGS};
 use plasm_runtime::ExecutionResult;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -135,7 +135,7 @@ pub struct CreateExecuteSessionBody {
     #[serde(default)]
     pub ranked_capabilities: Option<Vec<String>>,
     #[serde(default)]
-    pub read_first_seeded_exposure: bool,
+    pub mutator_admit: MutatorAdmit,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

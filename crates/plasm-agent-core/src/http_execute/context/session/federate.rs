@@ -1,6 +1,7 @@
 //! Federate catalog rows.
 
 use super::super::super::*;
+use plasm_core::MutatorAdmit;
 
 use super::super::seeds::normalize_execute_entity_names;
 use super::exposure_replay::{apply_federate_exposure_wave, ExposureCatalogWave};
@@ -157,7 +158,7 @@ async fn commit_federate_wave_inner(
         &ExposureCatalogWave {
             entry_id: new_entry_id.clone(),
             entities: names.clone(),
-            read_first_seeded: true,
+            mutator_admit: MutatorAdmit::IntentOnly,
         },
         scope_intent.as_deref(),
         ranked_slice,

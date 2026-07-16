@@ -5,7 +5,7 @@ use crate::mcp_run_markdown::{
     mcp_compact_markdown_multi_line, mcp_compact_markdown_single,
     mcp_format_execute_result_table_or_tsv, mcp_in_band_row_limit_note,
     mcp_inline_run_snapshot_line, mcp_prepend_artifact_followup_markdown,
-    slim_result_section_header, OmittedReferenceOnlyFields,
+    mcp_tsv_body_to_markdown_fence, slim_result_section_header, OmittedReferenceOnlyFields,
 };
 use crate::output::LossySummaryFieldNames;
 use crate::run_artifacts::RunArtifactHandle;
@@ -91,7 +91,7 @@ fn build_step_section(
     _total_steps: usize,
 ) {
     if let Some(fmt) = &resolved.format {
-        sections.push_str(&fmt.formatted.block.clone().into_mcp_result_markdown());
+        sections.push_str(&mcp_tsv_body_to_markdown_fence(&fmt.formatted.tsv_body));
         if let StepInBandMode::CappedInline { shown } = resolved.mode {
             sections.push_str(&mcp_in_band_row_limit_note(
                 shown,
@@ -107,11 +107,12 @@ fn build_step_section(
         }
     } else if resolved.mode.skips_inline_format() {
         if let Some(handle) = &resolved.artifact {
-            sections.push_str(
-                &plan
-                    .artifact_access
-                    .artifact_only_body(handle.plasm_uri.as_str()),
-            );
+            let uri = if handle.canonical_plasm_uri.is_empty() {
+                handle.plasm_uri.as_str()
+            } else {
+                handle.canonical_plasm_uri.as_str()
+            };
+            sections.push_str(&plan.artifact_access.artifact_only_body(uri));
         }
     }
     append_paging_if_needed(sections, paging, step, resolved, i);

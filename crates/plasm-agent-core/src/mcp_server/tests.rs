@@ -420,8 +420,8 @@ fn plasm_context_tool_description_contract_append_vs_refresh() {
         .expect("plasm_context description");
     let workflow = plasm_core::prompt_render::MCP_INITIALIZE_WORKFLOW;
     assert!(
-        desc.contains("**Extend picks:**"),
-        "expected append guidance in plasm_context description"
+        desc.contains("`extend`") && desc.contains("intent-only"),
+        "expected intent-only extend guidance in plasm_context description"
     );
     assert!(
         workflow.contains("session_mode"),

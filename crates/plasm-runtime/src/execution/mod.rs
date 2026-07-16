@@ -787,21 +787,30 @@ impl ExecutionEngine {
     ) -> Result<Self, RuntimeError> {
         // GitHub and several other APIs reject requests without User-Agent (often HTML 403 → JSON parse errors).
         let per_host = config.per_host_max_inflight.max(1);
-        let client = reqwest::Client::builder()
+        let mut builder = reqwest::Client::builder()
             .user_agent(concat!(
                 "plasm-runtime/",
                 env!("CARGO_PKG_VERSION"),
                 " (+https://github.com)"
             ))
             .timeout(std::time::Duration::from_secs(config.timeout_seconds))
-            .pool_max_idle_per_host(per_host)
-            .build()
-            .map_err(|e| RuntimeError::RequestError {
-                message: format!("Failed to create HTTP client: {e}"),
-                attempts: 1,
-                status: None,
-                body: None,
-            })?;
+            .pool_max_idle_per_host(per_host);
+        // Opt out of macOS SCDynamicStore / system proxy probes (and env proxies).
+        // Tests and locked-down agents set `PLASM_HTTP_NO_SYSTEM_PROXY=1`.
+        if std::env::var_os("PLASM_HTTP_NO_SYSTEM_PROXY").is_some_and(|v| {
+            matches!(
+                v.to_str().unwrap_or(""),
+                "1" | "true" | "TRUE" | "yes" | "YES"
+            )
+        }) {
+            builder = builder.no_proxy();
+        }
+        let client = builder.build().map_err(|e| RuntimeError::RequestError {
+            message: format!("Failed to create HTTP client: {e}"),
+            attempts: 1,
+            status: None,
+            body: None,
+        })?;
 
         let inner = ReqwestHttpTransport::new(client);
         let policy = HttpResiliencePolicy::from(&config);

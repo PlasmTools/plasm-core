@@ -12,7 +12,7 @@ mod summary;
 
 pub use in_band_fidelity::{InBandSummaryReport, SummaryFidelityLoss};
 pub(crate) use presentation_fields::{lossy_summary_field_names, LossySummaryFieldNames};
-pub(crate) use summary::format_result_tsv_with_cgs;
+pub(crate) use summary::{format_result_tsv_with_cgs, format_result_tsv_with_full_fidelity_cgs};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OutputFormat {
@@ -122,7 +122,7 @@ pub fn http_execute_results_value(result: &ExecutionResult) -> serde_json::Value
     serde_json::Value::Array(entities)
 }
 
-const REFERENCE_ONLY_PLACEHOLDER: &str = "(in artifact)";
+pub(crate) const REFERENCE_ONLY_PLACEHOLDER: &str = "(in artifact)";
 
 fn try_plasm_attachment_inner(v: &Value) -> Option<&indexmap::IndexMap<String, Value>> {
     let obj = v.as_object()?;
@@ -415,7 +415,7 @@ fn format_value_for_summary_cell_impl(
         }),
         Some(AgentPresentation::Default) | None => {
             if let Value::String(s) = v {
-                if s.chars().count() > 256 {
+                if summary_string_needs_full_fidelity_restore(presentation, s) {
                     omitted.insert(field_name.to_string());
                     if let Some(rep) = report {
                         in_band_fidelity::record_value_cell_fidelity(
@@ -436,6 +436,47 @@ fn format_value_for_summary_cell_impl(
         in_band_fidelity::record_value_cell_fidelity(v, presentation, field_name, &out, rep);
     }
     out
+}
+
+/// Default-presentation strings longer than this become `(in artifact)` in summary cells.
+pub(crate) const SUMMARY_DEFAULT_STRING_OMIT_CHARS: usize = 256;
+
+/// Whether a summary cell would drop/truncate this string — and thus needs restore under full fidelity.
+pub(crate) fn summary_string_needs_full_fidelity_restore(
+    presentation: Option<AgentPresentation>,
+    s: &str,
+) -> bool {
+    match presentation {
+        Some(AgentPresentation::ReferenceOnly) | Some(AgentPresentation::Lossy) => true,
+        Some(AgentPresentation::Default) | None => {
+            s.chars().count() > SUMMARY_DEFAULT_STRING_OMIT_CHARS
+        }
+    }
+}
+
+/// UTF-8 bytes of string cells that full-fidelity MCP rendering would restore in-band.
+///
+/// Includes schema `ReferenceOnly` / `Lossy` strings and default strings past
+/// [`SUMMARY_DEFAULT_STRING_OMIT_CHARS`]. Measured before TSV whitespace normalisation.
+pub(crate) fn summary_sensitive_string_bytes(
+    result: &ExecutionResult,
+    cgs: Option<&CGS>,
+    max_entity_rows: Option<usize>,
+) -> usize {
+    result
+        .entities
+        .iter()
+        .take(max_entity_rows.unwrap_or(usize::MAX))
+        .flat_map(|entity| {
+            entity.fields.iter().filter_map(|(field, value)| {
+                let Value::String(s) = value.to_value() else {
+                    return None;
+                };
+                let presentation = field_presentation(cgs, &entity.reference.entity_type, field);
+                summary_string_needs_full_fidelity_restore(presentation, &s).then_some(s.len())
+            })
+        })
+        .sum()
 }
 
 fn format_json(result: &ExecutionResult) -> String {

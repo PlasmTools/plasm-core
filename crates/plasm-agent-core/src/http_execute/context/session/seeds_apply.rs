@@ -1,6 +1,7 @@
 //! Apply capability seeds.
 
 use super::super::super::*;
+use plasm_core::MutatorAdmit;
 
 use super::super::backend::tenant_outbound_hosted_kv_for_entries;
 use super::super::seeds::{
@@ -284,7 +285,8 @@ pub async fn apply_capability_seeds(
                 RankedCapabilitiesArg::Unspecified => None,
                 RankedCapabilitiesArg::Set(opt) => opt.clone(),
             },
-            read_first_seeded_exposure: true,
+            // Intent (and optional ranked_capabilities) admit mutators — not blanket first-wave expansion.
+            mutator_admit: MutatorAdmit::IntentOnly,
         };
         let primary_entities = open_body.entities.clone();
         let (restored_exposure, ledger_reset) =

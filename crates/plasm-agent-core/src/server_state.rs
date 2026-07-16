@@ -561,7 +561,7 @@ mod tests {
     use std::path::Path;
     use std::sync::Arc;
 
-    use plasm_core::discovery::{CgsCatalog, InMemoryCgsRegistry};
+    use plasm_core::discovery::{CgsCatalog, InMemoryCgsRegistry, MutatorAdmit};
     use plasm_core::loader::load_schema_dir;
     use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 
@@ -659,7 +659,7 @@ mod tests {
                 logical_session_id: None,
                 context_intent: None,
                 ranked_capabilities: None,
-                read_first_seeded_exposure: false,
+                mutator_admit: MutatorAdmit::IntentOnly,
             },
             true,
             None,
@@ -705,7 +705,7 @@ mod tests {
                 logical_session_id: None,
                 context_intent: None,
                 ranked_capabilities: None,
-                read_first_seeded_exposure: false,
+                mutator_admit: MutatorAdmit::IntentOnly,
             },
             false,
             Some(&hosted),
@@ -774,7 +774,7 @@ mod tests {
                 logical_session_id: None,
                 context_intent: None,
                 ranked_capabilities: None,
-                read_first_seeded_exposure: false,
+                mutator_admit: MutatorAdmit::IntentOnly,
             },
             false,
             None,
@@ -827,7 +827,7 @@ mod tests {
                 logical_session_id: None,
                 context_intent: None,
                 ranked_capabilities: None,
-                read_first_seeded_exposure: false,
+                mutator_admit: MutatorAdmit::IntentOnly,
             },
             false,
             Some(&hosted),
@@ -873,7 +873,7 @@ mod tests {
                 logical_session_id: None,
                 context_intent: None,
                 ranked_capabilities: None,
-                read_first_seeded_exposure: false,
+                mutator_admit: MutatorAdmit::IntentOnly,
             },
             false,
             Some(&hosted),

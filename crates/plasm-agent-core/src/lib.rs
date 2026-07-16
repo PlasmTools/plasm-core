@@ -65,6 +65,7 @@ pub mod listen_endpoint;
 pub mod live_plan_run_worker;
 pub mod local_trace_archive;
 pub mod mcp_api_key_registry;
+pub mod mcp_client_info;
 pub mod mcp_config_admin;
 pub mod mcp_config_readiness;
 pub mod mcp_config_repository;

@@ -199,7 +199,8 @@ pub use discovery::{
     derive_intent_exposure_surface_batch, relation_target_deferred_mutator_wires, Ambiguity,
     CapabilityQuery, CatalogEntryMeta, CgsCatalog, CgsDiscovery, ClosureStats,
     DiscoveryContextJson, DiscoveryError, DiscoveryResult, DiscoverySchemaNeighborhood,
-    EntitySummary, ExposureSurfaceOptions, InMemoryCgsRegistry, RankedCandidate, RegistryEntryPair,
+    EntitySummary, ExposureSurfaceOptions, InMemoryCgsRegistry, MutatorAdmit, RankedCandidate,
+    RegistryEntryPair,
 };
 pub use discovery_presentation::{CatalogRoute, DiscoveryDecision};
 pub use entity_ref_value::{

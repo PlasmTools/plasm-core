@@ -630,8 +630,10 @@ mod ranked_replay_tests {
     }
 
     #[test]
-    fn read_first_open_admits_seeded_mutator_at_weak_intent() {
-        use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
+    fn always_on_seeds_admits_seeded_mutator_at_weak_intent() {
+        use plasm_core::discovery::{
+            derive_intent_exposure_surface_batch, ExposureSurfaceOptions, MutatorAdmit,
+        };
 
         let cgs = matrix_cgs_arc();
         let entities = ["LangItem"];
@@ -649,7 +651,7 @@ mod ranked_replay_tests {
                 .collect::<Vec<_>>(),
             None,
             ExposureSurfaceOptions {
-                read_first_seeded: true,
+                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
             },
         );
         let exp = TeachingExposureSession::new_with_intent_delta(
@@ -699,7 +701,7 @@ mod ranked_replay_tests {
             &seeded,
             None,
             ExposureSurfaceOptions {
-                read_first_seeded: true,
+                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
             },
         );
         let mut exp =
@@ -723,7 +725,7 @@ mod ranked_replay_tests {
         let seeded = vec!["Repository".to_string(), "Issue".to_string()];
         let endpoints = github_issue_repo_endpoints();
         let intent = "create new issue title body repository";
-        let exp = github_exp_with_intent(intent, None, true);
+        let exp = github_exp_with_intent(intent, None, MutatorAdmit::AlwaysOnSeeds);
         assert!(
             relation_target_deferred_mutator_hint(
                 &cgs, "github", intent, &endpoints, &seeded, &exp, None,
@@ -734,7 +736,7 @@ mod ranked_replay_tests {
     }
 
     #[test]
-    fn ranked_replay_surfaces_deferred_mutator_after_read_first_open() {
+    fn ranked_replay_surfaces_deferred_mutator_after_always_on_seeds_open() {
         use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
 
         let cgs = github_cgs_arc();
@@ -759,7 +761,7 @@ mod ranked_replay_tests {
             &seeded,
             None,
             ExposureSurfaceOptions {
-                read_first_seeded: true,
+                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
             },
         );
         let mut exp = TeachingExposureSession::new_with_intent_delta(
@@ -788,7 +790,7 @@ mod ranked_replay_tests {
             &seeded,
             Some(&ranked),
             ExposureSurfaceOptions {
-                read_first_seeded: true,
+                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
             },
         );
         exp.expose_surface(
@@ -823,7 +825,7 @@ mod ranked_replay_tests {
         let exp = matrix_exp_with_intent(
             "langitem browse inventory metadata",
             Some(&["langitem_create".to_string()]),
-            true,
+            MutatorAdmit::AlwaysOnSeeds,
         );
         let md = format_session_unchanged_reuse_markdown(Some(&exp));
         assert!(
@@ -849,7 +851,7 @@ mod ranked_replay_tests {
         let exp = matrix_exp_with_intent(
             "create new langitem title",
             Some(&["langitem_create".to_string()]),
-            true,
+            MutatorAdmit::AlwaysOnSeeds,
         );
         let caps_before = exp.surface.capabilities.clone();
         let diag =
@@ -882,7 +884,7 @@ mod ranked_replay_tests {
             &entities,
             Some(&["issue_create".to_string()]),
             ExposureSurfaceOptions {
-                read_first_seeded: true,
+                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
             },
         );
         assert!(
@@ -941,7 +943,7 @@ mod ranked_replay_tests {
             &entities,
             Some(&["pr_create".to_string()]),
             ExposureSurfaceOptions {
-                read_first_seeded: true,
+                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
             },
         );
         assert!(

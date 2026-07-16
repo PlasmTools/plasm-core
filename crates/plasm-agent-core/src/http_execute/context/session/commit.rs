@@ -229,6 +229,7 @@ mod tests {
     use crate::test_support::session_fixtures::ExecuteSessionFixture;
     use plasm_core::discovery::{
         derive_intent_exposure_surface_batch, ExposureSurfaceOptions, InMemoryCgsRegistry,
+        MutatorAdmit,
     };
     use plasm_core::TeachingExposureSession;
     use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
@@ -265,7 +266,7 @@ mod tests {
         let exp = crate::http_execute::context::ranked_replay_fixtures::matrix_exp_with_intent(
             "create new langitem title",
             Some(&["langitem_create".to_string()]),
-            true,
+            MutatorAdmit::AlwaysOnSeeds,
         );
         let snapshot = ExposureWaveSnapshot {
             slots_before: exp.surface.slots.clone(),
@@ -294,7 +295,7 @@ mod tests {
             &entities,
             None,
             ExposureSurfaceOptions {
-                read_first_seeded: true,
+                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
             },
         );
         let mut exp = TeachingExposureSession::new_with_intent_delta(
@@ -325,7 +326,7 @@ mod tests {
             &entities,
             Some(&[mutator.to_string()]),
             ExposureSurfaceOptions {
-                read_first_seeded: true,
+                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
             },
         );
         exp.expose_surface(

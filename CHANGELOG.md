@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.27] - 2026-07-16
+
+### Changed
+
+- **MCP efficiency cutover:** compact tool descriptions; capability-granular intent-only `plasm_context` exposure (`MutatorAdmit::IntentOnly`); clean read-only `plasm` plans auto-execute without minting a review `pcN`; budgeted full-fidelity inline TSV; slim agent continuity tokens.
+- **`McpClientInfo::{Default, Initialized}`:** closed client-policy enum (no optional bag / handshake wait); default = ResourcesRead + MCP Apps off.
+- **`MutatorAdmit`:** replaces `read_first_seeded*` bools; production waves always `IntentOnly`.
+- **Structural:** `mcp_server` carved (`host_policy`, dispatch, initialize, plasm handlers); `discovery/` + `symbol_tuning/expose_surface` extracts; GitHub `CommitFile` discovery + eval coverage (`gh-78`/`gh-79`).
+
+### Fixed
+
+- Full-fidelity MCP TSV admission/render share one classifier (including default long strings); fused clean reads no longer double-dry via plan commit.
+
 ## [0.4.26] - 2026-07-15
 
 ### Fixed

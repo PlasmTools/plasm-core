@@ -696,3 +696,20 @@
   expect:
     entities_any: [Repository]
   notes: "Reference eval for identity_key + conflict_rules on repo_branch_create."
+
+- id: gh-78
+  schema: github
+  goal: "Check whether docs/LABEL_COLORS.md already exists on main in plasm/plasm and read its contents if present — do not create or update the file"
+  tags: [get, file]
+  covers: [get]
+  expect:
+    entities_any: [CommitFile]
+  notes: "Existence/read must use CommitFile.commit_file_get (GET contents), never a write probe."
+
+- id: gh-79
+  schema: github
+  goal: "Read README.md from owner/repo on the default branch for the file preview panel"
+  tags: [get, file]
+  covers: [get]
+  expect:
+    entities_any: [CommitFile, Repository]

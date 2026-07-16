@@ -49,7 +49,7 @@ pub(crate) fn mcp_semantic_auto_seed_enabled() -> bool {
 
 fn plasm_context_seeds_schema_description() -> &'static str {
     if mcp_semantic_auto_seed_enabled() {
-        "Required on session_mode \"extend\" only. Omit on \"new\" (intent-only auto-seed; rejected if passed). Each object is `{api, entity}` (or `{entry_id, entity}`); entity names resolve case-insensitively to catalog keys."
+        "Omit on both \"new\" and \"extend\" when semantic auto-seed is enabled (intent-only; rejected if passed). Host selects capabilities from `intent`. Manual `{api, entity}` / `{entry_id, entity}` seeds are only for hosts with auto-seed off."
     } else {
         "Required non-empty on session_mode \"new\" and \"extend\". Each object is `{api, entity}` (or `{entry_id, entity}`); entity names resolve case-insensitively to catalog keys."
     }
@@ -106,7 +106,7 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
             serde_json::from_value(serde_json::json!({
                 "type": ["array", "null"],
                 "items": { "type": "string" },
-                "description": "Optional capability **wire names**. When non-empty, **non-seeded** mutators must appear in this list and score against **`intent`**. Seeded entities always teach **query/search/get** (and `primary_read`); **create/update/delete/action** need intent overlap (read-first open defers weak matches). Omit on expand to keep the session list; send **`null`** or **`[]`** to clear."
+                "description": "Optional capability **wire names**. When non-empty, **non-seeded** mutators must appear in this list and score against **`intent`**. Seeded entities always teach **query/search/get** (and `primary_read`); **create/update/delete/action** require intent overlap or this list. Omit on expand to keep the session list; send **`null`** or **`[]`** to clear."
             }))
             .expect("ranked_capabilities schema"),
         );
@@ -121,7 +121,7 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
     plasm_program_props.insert(
             "logical_session_ref".into(),
             json_schema_string_type(
-                "Same `logical_session_ref` returned by `plasm_context`. Reuse for follow-up `plasm` (plan) and `plasm_run` (execute) calls.",
+                "Same `logical_session_ref` returned by `plasm_context`. Reuse for follow-up `plasm` (reads execute when clean; writes return `run_ref`) and `plasm_run` (reviewed writes / paging).",
             ),
         );
     plasm_program_props.insert(

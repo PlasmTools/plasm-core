@@ -2,7 +2,7 @@
 
 pub(crate) use crate::mcp_run_markdown::ArtifactAccessMode;
 
-use rust_mcp_sdk::schema::InitializeRequestParams;
+use crate::mcp_client_info::McpClientInfo;
 
 /// Verified `initialize.clientInfo.name` values where the agent toolkit cannot reliably invoke
 /// MCP `resources/read` (see docs/mcp-client-conformance.md).
@@ -42,20 +42,25 @@ pub(crate) fn client_user_agent_hint(http_ua: Option<&str>) -> Option<String> {
         })
 }
 
-/// Detect artifact access mode from initialize metadata and optional HTTP user-agent.
+/// Detect artifact access mode from [`McpClientInfo`] and optional HTTP user-agent.
+///
+/// [`McpClientInfo::Default`] applies ResourcesRead unless env or UA forces ToolFallback.
 pub(crate) fn detect_artifact_access_mode(
-    client: Option<&InitializeRequestParams>,
+    client: &McpClientInfo,
     user_agent: Option<&str>,
 ) -> ArtifactAccessMode {
     if let Some(mode) = artifact_access_mode_from_env() {
         return mode;
     }
-    if let Some(params) = client {
-        let name = params.client_info.name.to_ascii_lowercase();
-        let version = params.client_info.version.to_ascii_lowercase();
-        if is_known_tool_only_mcp_host(&name, &version) {
-            return ArtifactAccessMode::ToolFallback;
+    match client {
+        McpClientInfo::Initialized(params) => {
+            let name = params.client_info.name.to_ascii_lowercase();
+            let version = params.client_info.version.to_ascii_lowercase();
+            if is_known_tool_only_mcp_host(&name, &version) {
+                return ArtifactAccessMode::ToolFallback;
+            }
         }
+        McpClientInfo::Default => {}
     }
     if let Some(ua) = user_agent {
         let ua_lower = ua.to_ascii_lowercase();
@@ -77,12 +82,14 @@ fn is_known_tool_only_mcp_host(name: &str, version: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rust_mcp_sdk::schema::{ClientCapabilities, Implementation, LATEST_PROTOCOL_VERSION};
+    use rust_mcp_sdk::schema::{
+        ClientCapabilities, Implementation, InitializeRequestParams, LATEST_PROTOCOL_VERSION,
+    };
 
     const RESOURCES_READ_WIRE_NAMES: &[&str] = &["cursor-vscode", "cline"];
 
-    fn client(name: &str, version: &str) -> InitializeRequestParams {
-        InitializeRequestParams {
+    fn client(name: &str, version: &str) -> McpClientInfo {
+        McpClientInfo::from_initialize(InitializeRequestParams {
             capabilities: ClientCapabilities::default(),
             client_info: Implementation {
                 name: name.into(),
@@ -94,13 +101,13 @@ mod tests {
             },
             protocol_version: LATEST_PROTOCOL_VERSION.into(),
             meta: None,
-        }
+        })
     }
 
     #[test]
     fn default_is_resources_read() {
         assert_eq!(
-            detect_artifact_access_mode(None, None),
+            detect_artifact_access_mode(&McpClientInfo::Default, None),
             ArtifactAccessMode::ResourcesRead
         );
     }
@@ -115,7 +122,7 @@ mod tests {
             };
             let params = client(display, "1.0.0");
             assert_eq!(
-                detect_artifact_access_mode(Some(&params), None),
+                detect_artifact_access_mode(&params, None),
                 ArtifactAccessMode::ToolFallback,
                 "wire name {wire}"
             );
@@ -126,7 +133,7 @@ mod tests {
     fn claude_desktop_is_tool_fallback() {
         let params = client("claude-ai", "0.1.0");
         assert_eq!(
-            detect_artifact_access_mode(Some(&params), None),
+            detect_artifact_access_mode(&params, None),
             ArtifactAccessMode::ToolFallback
         );
     }
@@ -140,7 +147,7 @@ mod tests {
             };
             let params = client(display, "1.0.0");
             assert_eq!(
-                detect_artifact_access_mode(Some(&params), None),
+                detect_artifact_access_mode(&params, None),
                 ArtifactAccessMode::ResourcesRead,
                 "wire name {wire}"
             );
@@ -151,7 +158,7 @@ mod tests {
     fn undocumented_anthropic_connector_substring_is_tool_fallback() {
         let params = client("my-claude-connector-beta", "0.1");
         assert_eq!(
-            detect_artifact_access_mode(Some(&params), None),
+            detect_artifact_access_mode(&params, None),
             ArtifactAccessMode::ToolFallback
         );
     }
@@ -159,7 +166,10 @@ mod tests {
     #[test]
     fn anthropic_mcp_user_agent_is_tool_fallback() {
         assert_eq!(
-            detect_artifact_access_mode(None, Some("anthropic-mcp-connector/1.0"),),
+            detect_artifact_access_mode(
+                &McpClientInfo::Default,
+                Some("anthropic-mcp-connector/1.0"),
+            ),
             ArtifactAccessMode::ToolFallback
         );
     }

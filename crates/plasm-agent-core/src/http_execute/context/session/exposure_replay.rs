@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use indexmap::IndexMap;
-use plasm_core::discovery::ExposureSurfaceOptions;
+use plasm_core::discovery::{ExposureSurfaceOptions, MutatorAdmit};
 use plasm_core::{CgsContext, TeachingExposureSession, CGS};
 
 use super::super::seeds::relation_endpoint_keys_for_wave;
@@ -12,8 +12,8 @@ use super::super::seeds::relation_endpoint_keys_for_wave;
 pub struct ExposureCatalogWave {
     pub entry_id: String,
     pub entities: Vec<String>,
-    /// Federate follow-up waves use `true`; first open/rehydrate primary wave uses `false`.
-    pub read_first_seeded: bool,
+    /// Production waves always use [`MutatorAdmit::IntentOnly`] (match live federate/expand).
+    pub mutator_admit: MutatorAdmit,
 }
 
 #[cfg(test)]
@@ -40,9 +40,8 @@ pub fn catalog_waves_from_pairing(
         waves.push(ExposureCatalogWave {
             entry_id,
             entities: entities[start..end].to_vec(),
-            // Match live federate: first wave is primary open (`read_first_seeded: false`);
-            // every subsequent wave (even same catalog re-entry) is incremental.
-            read_first_seeded: !waves.is_empty(),
+            // Match live federate/expand/seeds_apply: IntentOnly on every wave.
+            mutator_admit: MutatorAdmit::IntentOnly,
         });
         start = end;
     }
@@ -72,7 +71,7 @@ pub fn build_initial_exposure_wave(
                 &wave.entities,
                 ranked_capabilities,
                 ExposureSurfaceOptions {
-                    read_first_seeded: wave.read_first_seeded,
+                    mutator_admit: wave.mutator_admit,
                 },
             );
             TeachingExposureSession::new_with_intent_delta(
@@ -112,7 +111,7 @@ pub fn apply_federate_exposure_wave(
             &wave.entities,
             ranked_capabilities,
             ExposureSurfaceOptions {
-                read_first_seeded: wave.read_first_seeded,
+                mutator_admit: wave.mutator_admit,
             },
         );
         exp.expose_surface(
@@ -196,13 +195,13 @@ mod tests {
         assert_eq!(waves.len(), 3);
         assert_eq!(waves[0].entry_id, "linear");
         assert_eq!(waves[0].entities, vec!["LangItem"]);
-        assert!(!waves[0].read_first_seeded);
+        assert_eq!(waves[0].mutator_admit, MutatorAdmit::IntentOnly);
         assert_eq!(waves[1].entry_id, "github");
         assert_eq!(waves[1].entities, vec!["LangDetail"]);
-        assert!(waves[1].read_first_seeded);
+        assert_eq!(waves[1].mutator_admit, MutatorAdmit::IntentOnly);
         assert_eq!(waves[2].entry_id, "linear");
         assert_eq!(waves[2].entities, vec!["LangTag"]);
-        assert!(waves[2].read_first_seeded);
+        assert_eq!(waves[2].mutator_admit, MutatorAdmit::IntentOnly);
     }
 
     #[test]
@@ -239,7 +238,7 @@ mod tests {
             &ExposureCatalogWave {
                 entry_id: "pokeapi".to_string(),
                 entities: vec!["Berry".to_string()],
-                read_first_seeded: false,
+                mutator_admit: MutatorAdmit::IntentOnly,
             },
             Some(intent),
             None,
@@ -253,7 +252,7 @@ mod tests {
             &ExposureCatalogWave {
                 entry_id: "pokeapi".to_string(),
                 entities: vec!["BerryFirmness".to_string()],
-                read_first_seeded: true,
+                mutator_admit: MutatorAdmit::IntentOnly,
             },
             Some(intent),
             None,
@@ -299,7 +298,7 @@ mod tests {
             &ExposureCatalogWave {
                 entry_id: "github".to_string(),
                 entities: vec!["Repository".into()],
-                read_first_seeded: false,
+                mutator_admit: MutatorAdmit::IntentOnly,
             },
             Some("label documentation workflow"),
             None,
@@ -316,7 +315,7 @@ mod tests {
                     "PullRequest".into(),
                     "Branch".into(),
                 ],
-                read_first_seeded: true,
+                mutator_admit: MutatorAdmit::IntentOnly,
             },
             Some("label documentation workflow"),
             None,
@@ -335,7 +334,7 @@ mod tests {
             &ExposureCatalogWave {
                 entry_id: "github".to_string(),
                 entities: vec!["IssueComment".into()],
-                read_first_seeded: true,
+                mutator_admit: MutatorAdmit::IntentOnly,
             },
             Some("label documentation workflow"),
             None,
@@ -370,7 +369,7 @@ mod tests {
             &ExposureCatalogWave {
                 entry_id: "github".to_string(),
                 entities: vec!["Repository".into()],
-                read_first_seeded: false,
+                mutator_admit: MutatorAdmit::IntentOnly,
             },
             Some("label documentation workflow"),
             None,
@@ -387,7 +386,7 @@ mod tests {
                     "PullRequest".into(),
                     "Branch".into(),
                 ],
-                read_first_seeded: true,
+                mutator_admit: MutatorAdmit::IntentOnly,
             },
             Some("label documentation workflow"),
             None,
@@ -399,7 +398,7 @@ mod tests {
             &ExposureCatalogWave {
                 entry_id: "github".to_string(),
                 entities: vec!["IssueComment".into()],
-                read_first_seeded: true,
+                mutator_admit: MutatorAdmit::IntentOnly,
             },
             Some("label documentation workflow"),
             None,

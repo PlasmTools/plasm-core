@@ -6,6 +6,7 @@ use std::sync::Arc;
 use indexmap::IndexMap;
 use plasm_core::discovery::InMemoryCgsRegistry;
 use plasm_core::loader::load_schema_dir;
+use plasm_core::MutatorAdmit;
 use plasm_core::{CgsContext, SymbolMap, TeachingExposureSession, CGS};
 use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 
@@ -98,7 +99,7 @@ pub fn interleaved_federated_matrix_fixture() -> InterleavedFederatedFixture {
         &ExposureCatalogWave {
             entry_id: "linear".to_string(),
             entities: vec!["LangItem".to_string()],
-            read_first_seeded: false,
+            mutator_admit: MutatorAdmit::IntentOnly,
         },
         None,
         None,
@@ -110,7 +111,7 @@ pub fn interleaved_federated_matrix_fixture() -> InterleavedFederatedFixture {
         &ExposureCatalogWave {
             entry_id: "github".to_string(),
             entities: vec!["LangDetail".to_string()],
-            read_first_seeded: true,
+            mutator_admit: MutatorAdmit::IntentOnly,
         },
         None,
         None,
@@ -122,7 +123,7 @@ pub fn interleaved_federated_matrix_fixture() -> InterleavedFederatedFixture {
         &ExposureCatalogWave {
             entry_id: "linear".to_string(),
             entities: vec!["LangTag".to_string()],
-            read_first_seeded: true,
+            mutator_admit: MutatorAdmit::IntentOnly,
         },
         None,
         None,

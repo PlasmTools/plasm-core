@@ -2,7 +2,7 @@
 
 use super::super::*;
 use crate::plasm_plan_run::symbol_map_for_plasm_surface_parse;
-use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
+use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions, MutatorAdmit};
 use plasm_core::{load_schema, CgsContext, ExposureEntityKey, TeachingExposureSession, CGS};
 use std::path::PathBuf;
 use std::sync::{Arc, Once};
@@ -77,7 +77,7 @@ pub(super) fn github_ranked_mutator_session(
             .collect::<Vec<_>>(),
         Some(&ranked.iter().map(|s| (*s).to_string()).collect::<Vec<_>>()),
         ExposureSurfaceOptions {
-            read_first_seeded: true,
+            mutator_admit: MutatorAdmit::AlwaysOnSeeds,
         },
     );
     assert!(

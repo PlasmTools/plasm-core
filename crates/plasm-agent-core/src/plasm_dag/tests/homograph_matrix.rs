@@ -7,6 +7,7 @@ use super::test_support::assert_compile_rejects_unknown_cap_param;
 use super::test_support::github_symbol_map;
 use crate::plasm_plan_run::evaluate_plasm_plan_dry;
 use plasm_core::{CgsContext, PromptPipelineConfig, SymbolMap, TeachingExposureSession};
+use plasm_core::MutatorAdmit;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -133,7 +134,7 @@ fn langitem_create_query_session() -> ExecuteSession {
         &["LangItem".to_string()],
         Some(&["langitem_create".to_string(), "langitem_query".to_string()]),
         plasm_core::discovery::ExposureSurfaceOptions {
-            read_first_seeded: true,
+            mutator_admit: MutatorAdmit::AlwaysOnSeeds,
         },
     );
     let exp = TeachingExposureSession::new_with_intent_delta(
@@ -333,7 +334,7 @@ fn compound_branch_mutator_session() -> ExecuteSession {
             "langcompoundbranch_get".to_string(),
         ]),
         plasm_core::discovery::ExposureSurfaceOptions {
-            read_first_seeded: true,
+            mutator_admit: MutatorAdmit::AlwaysOnSeeds,
         },
     );
     let exp = TeachingExposureSession::new_with_intent_delta(
@@ -515,7 +516,7 @@ fn langitem_query_update_tags_session() -> ExecuteSession {
             "langitem_update".to_string(),
         ]),
         plasm_core::discovery::ExposureSurfaceOptions {
-            read_first_seeded: true,
+            mutator_admit: MutatorAdmit::AlwaysOnSeeds,
         },
     );
     let exp = TeachingExposureSession::new_with_intent_delta(

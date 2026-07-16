@@ -7,11 +7,11 @@ use rust_mcp_sdk::schema::{CallToolResult, TextContent};
 
 use crate::http_execute::CapabilitySeed;
 
-const SEEDS_REJECTED_ON_AUTO_SEED_NEW: &str = "do not pass `seeds` on session_mode \"new\" when semantic auto-seed is enabled — pass `intent` only; the host selects seeds. On clarify/hard_miss, rephrase `intent` with the provider brand (and entity names from the breakout browse preview as prose). Use `seeds` only on session_mode \"extend\".";
+const SEEDS_REJECTED_ON_AUTO_SEED: &str = "do not pass `seeds` when semantic auto-seed is enabled — pass `intent` only; the host selects capabilities. On clarify/hard_miss, rephrase `intent` with the provider brand (and entity names from the breakout browse preview as prose).";
 
 const MISSING_SEEDS_ENABLE_AUTO_SEED: &str = "missing capability picks: pass non-empty `seeds` or enable semantic auto-seed (`PLASM_DISCOVERY_SEMANTIC_AUTO_SEED=1` with `semantic-auto-seed` build)";
 
-const MISSING_SEEDS_NO_FEATURE: &str = "missing capability picks: `plasm_context` with `session_mode: \"new\"` requires non-empty `seeds` unless the host is built with `semantic-auto-seed`";
+const MISSING_SEEDS_NO_FEATURE: &str = "missing capability picks: `plasm_context` requires non-empty `seeds` unless the host is built with `semantic-auto-seed`";
 
 /// Outcome of resolving seeds for `session_mode: "new"`.
 pub(crate) enum ContextNewSeeds {
@@ -76,7 +76,7 @@ where
         if explicit_seeds.is_some() {
             return Err(CallToolError::invalid_arguments(
                 tool,
-                Some(SEEDS_REJECTED_ON_AUTO_SEED_NEW.into()),
+                Some(SEEDS_REJECTED_ON_AUTO_SEED.into()),
             ));
         }
         return route_auto_seed(tool, catalog, intent, allowed_entry_ids).await;
@@ -175,4 +175,45 @@ where
         tool,
         Some(MISSING_SEEDS_NO_FEATURE.into()),
     ))
+}
+
+/// Resolve seeds for `session_mode: "extend"` (intent-only when auto-seed is on).
+pub(crate) async fn resolve_context_extend_seeds<C>(
+    tool: &str,
+    catalog: &C,
+    intent: &str,
+    allowed_entry_ids: Option<Vec<String>>,
+    explicit_seeds: Option<Vec<CapabilitySeed>>,
+) -> Result<ContextNewSeeds, CallToolError>
+where
+    C: CgsDiscovery + CgsCatalog + Send + Sync,
+{
+    if semantic_auto_seed_on() {
+        if explicit_seeds.is_some() {
+            return Err(CallToolError::invalid_arguments(
+                tool,
+                Some(SEEDS_REJECTED_ON_AUTO_SEED.into()),
+            ));
+        }
+        return route_auto_seed(tool, catalog, intent, allowed_entry_ids).await;
+    }
+
+    match explicit_seeds {
+        Some(seeds) => Ok(ContextNewSeeds::Ready {
+            workflow_seeds: seeds,
+            teaching_satellites: Vec::new(),
+            ranked_capabilities: None,
+        }),
+        None => Err(CallToolError::invalid_arguments(
+            tool,
+            Some(
+                if cfg!(feature = "semantic-auto-seed") {
+                    MISSING_SEEDS_ENABLE_AUTO_SEED
+                } else {
+                    MISSING_SEEDS_NO_FEATURE
+                }
+                .into(),
+            ),
+        )),
+    }
 }

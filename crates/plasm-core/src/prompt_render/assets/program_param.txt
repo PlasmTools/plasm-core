@@ -3,14 +3,13 @@ Plasm source text, not JSON data — one expression, or `label = …` bindings t
 Symbols from the `plasm_context` teaching TSV: `e#` entity, `m#` method, `r#` relation; **wire names** for fields, params, and filters. Substitute real values for teaching placeholders (`$`, `<id>`); never emit `$`.
 
 Shape:
-- Get by identity: `e#(id)` (parens, ids unquoted). Query/filter: `e#{field="val"}` (braces, quote scalars only inside `{…}`). Relation nav: `producer.r#` (not a filter wire after `.`).
+- Get by identity: `e#(id)` (parens). Query/filter: `e#{field="val"}` (braces). Relation nav: `producer.r#`.
 - Search when taught: `e#~"text"` or `e#~$` (bare `e#~` is a parse error).
 - Postfix from the TSV left column: `.filter{…}` `.sort(field,desc)` `.limit(n)` `.group_by` `.aggregate`; `[field,…]` projects.
-- Write effect: `source => e#.m#(param=…)` when scoping a write off an existing binding; create-from-nothing: `e#.m#(param=…)` when there is no upstream row (no `source =>`).
-- After `repo = e#(…)`, prefer **`repo.m#(…)`** / **`repo.r#`** over repeating the get head — equivalent, shorter.
+- Write effect: `source => e#.m#(param=…)`; create-from-nothing: `e#.m#(param=…)`.
+- After `repo = e#(…)`, prefer **`repo.m#(…)`** / **`repo.r#`**.
 - Batch independent reads into ONE program: bind shared scope once, then return several roots on the final line.
-- Chain dependent writes when values flow: `mainbranch = repo.r4.filter{name="main"}[sha]` then `newbranch = repo.m46(name=mainbranch.sha)` in one program — the SHA never needs a read-back.
 
-Strings use JSON escapes inside quotes; multiline string bindings: `label = <<TAG` … `TAG` (pass `param=label`, not `label.content`). Row-to-text templates: `label = source[field,…] <<TAG` or `label = a,b <<TAG` with Minijinja — those use `binding.content` for string params.
+Strings use JSON escapes inside quotes; multiline: `label = <<TAG` … `TAG` (pass `param=label`). Row-to-text: `label = source[field,…] <<TAG` — use `binding.content` for string params.
 
-Full grammar and worked examples are in the `plasm` tool description. On any parse/symbol error, extend the same session (`session_mode: "extend"`, same `logical_session_ref`) — do not open a new one.
+Full grammar is in the `plasm` tool description. On parse/symbol error, extend the same session (`session_mode: "extend"`, same `logical_session_ref`) — do not open a new one.

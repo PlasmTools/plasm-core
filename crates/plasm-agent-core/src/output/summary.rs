@@ -60,8 +60,31 @@ pub(crate) fn format_result_tsv_with_cgs(
         &mut omitted,
         &policy,
         &mut report,
+        false,
     );
     (text, omitted.into_iter().collect(), report)
+}
+
+/// MCP-only TSV rendering that preserves schema `ReferenceOnly` and `Lossy` strings when the
+/// caller has already admitted them under a strict aggregate byte budget.
+pub(crate) fn format_result_tsv_with_full_fidelity_cgs(
+    result: &ExecutionResult,
+    cgs: Option<&CGS>,
+    max_entity_rows: Option<usize>,
+) -> (String, InBandSummaryReport) {
+    let policy = TsvCellPolicy::mcp_default();
+    let mut omitted = BTreeSet::new();
+    let mut report = InBandSummaryReport::default();
+    let text = format_tsv_inner(
+        result,
+        cgs,
+        max_entity_rows,
+        &mut omitted,
+        &policy,
+        &mut report,
+        true,
+    );
+    (text, report)
 }
 
 fn format_tsv_inner(
@@ -71,6 +94,7 @@ fn format_tsv_inner(
     omitted: &mut BTreeSet<String>,
     policy: &TsvCellPolicy,
     report: &mut InBandSummaryReport,
+    full_fidelity: bool,
 ) -> String {
     if result.entities.is_empty() {
         return "(no results)".into();
@@ -90,13 +114,17 @@ fn format_tsv_inner(
         let row: Vec<String> = columns
             .iter()
             .map(|col| {
-                let raw = super::format_summary_column_cell(
-                    col.as_str(),
-                    entity,
-                    cgs,
-                    omitted,
-                    Some(report),
-                );
+                let raw = if full_fidelity {
+                    full_fidelity_tsv_cell(col, entity, cgs, omitted, report)
+                } else {
+                    super::format_summary_column_cell(
+                        col.as_str(),
+                        entity,
+                        cgs,
+                        omitted,
+                        Some(report),
+                    )
+                };
                 let (cell, transport_truncated) = sanitize_tsv_cell_with_flag(&raw, policy);
                 if transport_truncated && col.as_str() != "_ref" {
                     report.record(col.as_str(), SummaryFidelityLoss::TsvScalarTransportClamp);
@@ -108,4 +136,21 @@ fn format_tsv_inner(
     }
 
     lines.join("\n")
+}
+
+fn full_fidelity_tsv_cell(
+    col: &str,
+    entity: &plasm_runtime::CachedEntity,
+    cgs: Option<&CGS>,
+    omitted: &mut BTreeSet<String>,
+    report: &mut InBandSummaryReport,
+) -> String {
+    if let Some(plasm_core::Value::String(s)) = entity.fields.get(col).map(|value| value.to_value())
+    {
+        let presentation = super::field_presentation(cgs, &entity.reference.entity_type, col);
+        if super::summary_string_needs_full_fidelity_restore(presentation, &s) {
+            return s;
+        }
+    }
+    super::format_summary_column_cell(col, entity, cgs, omitted, Some(report))
 }

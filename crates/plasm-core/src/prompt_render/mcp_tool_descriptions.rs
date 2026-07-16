@@ -41,10 +41,10 @@ pub const DISCOVER_TOOL_DESCRIPTION: &str = include_str!("assets/discover_tool.t
 pub const PLASM_PROGRAM_PARAM_DESCRIPTION: &str = include_str!("assets/program_param.txt");
 
 /// Max bytes for [`PLASM_PROGRAM_PARAM_DESCRIPTION`] (truncation-resistant field surface).
-pub const PLASM_PROGRAM_PARAM_MAX_BYTES: usize = 2048;
+pub const PLASM_PROGRAM_PARAM_MAX_BYTES: usize = 1600;
 
 /// Max bytes for [`PLASM_TOOL_DESCRIPTION`].
-pub const PLASM_TOOL_DESCRIPTION_MAX_BYTES: usize = 8000;
+pub const PLASM_TOOL_DESCRIPTION_MAX_BYTES: usize = 4200;
 
 /// Host-truncation prefixes that must still carry program-authoring mandates.
 pub const PLASM_TOOL_DESCRIPTION_PREFIX_BYTES: usize = 2048;
@@ -58,7 +58,7 @@ pub const MCP_TOOL_SYNTAX_CONTRACT_MARKER: &str = "`program` is Plasm source tex
 
 /// Marker for tests; tool-order line in MCP tool descriptions.
 pub const MCP_TOOL_SEQUENCING_MARKER: &str =
-    "Default open: `plasm_context` (intent-only) → `plasm` → `plasm_run`; `discover_capabilities` only on hard_miss/clarify.";
+    "`plasm_context` (intent-only) → `plasm` (reads execute when clean; writes return `run_ref`) → `plasm_run` for reviewed writes/paging; `discover_capabilities` only on hard_miss/clarify.";
 
 /// Marker for tests; grammar contract opener in [`PLASM_TOOL_DESCRIPTION`].
 pub const TEACHING_VALID_EXPR_MARKER: &str =

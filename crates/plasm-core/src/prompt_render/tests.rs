@@ -875,6 +875,8 @@ fn linear_issue_heading_projection_despite_method_style_get() {
 /// Intent-scoped Issue surface: query/search share the witness field set → bare producers, no `rows:`.
 #[test]
 fn github_issue_intent_surface_omits_set_equal_projection_on_query_search() {
+    use crate::discovery::MutatorAdmit;
+
     let dir = apis_dir("github");
     if !dir.exists() {
         return;
@@ -892,7 +894,7 @@ fn github_issue_intent_surface_omits_set_equal_projection_on_query_search() {
         &["Issue".to_string()],
         None,
         crate::discovery::ExposureSurfaceOptions {
-            read_first_seeded: true,
+            mutator_admit: MutatorAdmit::AlwaysOnSeeds,
         },
     );
     let exp = TeachingExposureSession::new_with_intent_delta(&cgs, "github", &["Issue"], delta);
@@ -1051,7 +1053,9 @@ fn tsv_additive_wave_omits_global_contract_but_keeps_column_header() {
 
 #[test]
 fn expand_wave_emits_parent_relation_edge_for_pokeapi_berry_firmness() {
-    use crate::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
+    use crate::discovery::{
+        derive_intent_exposure_surface_batch, ExposureSurfaceOptions, MutatorAdmit,
+    };
     use crate::symbol_tuning::ExposureEntityKey;
 
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
@@ -1073,7 +1077,7 @@ fn expand_wave_emits_parent_relation_edge_for_pokeapi_berry_firmness() {
         &["Berry".to_string()],
         None,
         ExposureSurfaceOptions {
-            read_first_seeded: true,
+            mutator_admit: MutatorAdmit::AlwaysOnSeeds,
         },
     );
     let mut exp =
@@ -1090,7 +1094,7 @@ fn expand_wave_emits_parent_relation_edge_for_pokeapi_berry_firmness() {
         &["BerryFirmness".to_string()],
         None,
         ExposureSurfaceOptions {
-            read_first_seeded: true,
+            mutator_admit: MutatorAdmit::AlwaysOnSeeds,
         },
     );
     exp.expose_surface(&[&cgs], cgs_arc, "pokeapi", &["BerryFirmness"], delta2);
@@ -2023,7 +2027,7 @@ fn plasm_tool_description_includes_row_compute_worked_example() {
 
 #[test]
 fn mcp_static_tool_descriptions_byte_budget() {
-    const MAX_WORKFLOW_BYTES: usize = 2500;
+    const MAX_WORKFLOW_BYTES: usize = 1200;
 
     let workflow = super::MCP_INITIALIZE_WORKFLOW;
     let plasm_tool = super::PLASM_TOOL_DESCRIPTION;
@@ -2047,7 +2051,7 @@ fn mcp_static_tool_descriptions_byte_budget() {
         discover.len()
     );
     assert!(
-        context.len() <= 2700,
+        context.len() <= 1800,
         "plasm_context tool description too long: {} bytes",
         context.len()
     );
@@ -2248,7 +2252,8 @@ fn row_producer_teaching_includes_inputs_and_rows_contract() {
 #[test]
 fn static_grammar_includes_symbols_only_rule() {
     assert!(
-        super::PLASM_TOOL_DESCRIPTION.contains("Session symbols + wires"),
+        super::PLASM_TOOL_DESCRIPTION.contains("**Symbolic only:**")
+            && super::PLASM_TOOL_DESCRIPTION.contains("wire names"),
         "canonical static grammar must teach TSV-only program tokens and wire names"
     );
 }
@@ -2562,7 +2567,9 @@ fn prompt_stats_fixture_cgs() -> CGS {
             name: "shelf".into(),
             description: String::new(),
             target_resource: "Shelf".into(),
-            cardinality: Cardinality::Many,
+            // One + no materialize stays valid under the executable-materialize gate;
+            // teaching still omits a nav TSV line when the hop is not materialized.
+            cardinality: Cardinality::One,
             materialize: None,
             discovery: None,
         }],
@@ -2647,7 +2654,7 @@ fn prompt_surface_stats_counts_caps_nav_and_domain_tools() {
         exposure_opt.as_ref(),
         cfg.uses_symbols(),
     );
-    // Book: one query line; Shelf: one. Many `shelf` relation is Unmaterialized → no nav line in teaching table.
+    // Book: one query line; Shelf: one. One `shelf` relation without materialize → no nav line in teaching table.
     assert_eq!(domain_tools, 2);
 
     let prompt = "αβγδε"; // 5 chars → legacy est 1; o200k is model-based

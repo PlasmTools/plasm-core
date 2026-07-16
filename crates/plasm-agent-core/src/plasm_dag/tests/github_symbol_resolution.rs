@@ -399,8 +399,8 @@ written"#,
 
 /// Read-first Repository seed admits all mutators (including repo_content_create) without ranked_capabilities.
 #[test]
-fn read_first_seeded_repository_exposes_repo_content_create_m_sym() {
-    use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
+fn always_on_seeds_repository_exposes_repo_content_create_m_sym() {
+    use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions, MutatorAdmit};
     use plasm_core::{ExposureEntityKey, SymbolMap, TeachingExposureSession};
 
     let cgs = github_cgs();
@@ -415,7 +415,7 @@ fn read_first_seeded_repository_exposes_repo_content_create_m_sym() {
         &["Repository".to_string()],
         None,
         ExposureSurfaceOptions {
-            read_first_seeded: true,
+            mutator_admit: MutatorAdmit::AlwaysOnSeeds,
         },
     );
     assert!(
@@ -622,7 +622,9 @@ created"#,
 #[test]
 fn cross_wave_github_incremental_exposure_symbol_stability() {
     use crate::plasm_dag::ExecuteSession;
-    use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
+    use plasm_core::discovery::{
+        derive_intent_exposure_surface_batch, ExposureSurfaceOptions, MutatorAdmit,
+    };
     use plasm_core::{CgsContext, ExposureEntityKey, TeachingExposureSession};
     use std::sync::Arc;
 
@@ -649,7 +651,7 @@ fn cross_wave_github_incremental_exposure_symbol_stability() {
                 .collect::<Vec<_>>(),
             Some(&ranked.iter().map(|s| (*s).to_string()).collect::<Vec<_>>()),
             ExposureSurfaceOptions {
-                read_first_seeded: true,
+                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
             },
         )
     };
@@ -712,7 +714,7 @@ fn cross_wave_github_incremental_exposure_symbol_stability() {
         &new_seeds.iter().map(|e| e.to_string()).collect::<Vec<_>>(),
         Some(&session_ranked),
         ExposureSurfaceOptions {
-            read_first_seeded: true,
+            mutator_admit: MutatorAdmit::AlwaysOnSeeds,
         },
     );
     exp.expose_surface(&layers, cgs.clone(), "github", &new_seeds, w2);

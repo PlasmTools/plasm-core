@@ -1,4 +1,4 @@
-//! MCP `plasm` dry-run path: compile, evaluate, commit, trace, and build [`PlasmPlanRunResult`].
+//! MCP `plasm` dry-run path: compile, evaluate, commit (writes), or fuse clean reads.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -14,18 +14,24 @@ use crate::plasm_plan_run::{
     evaluate_plasm_comp_dry, render_plasm_plan_dry_text_for_session, PlasmPlanRunResult,
 };
 use crate::server_state::PlasmHostState;
+use crate::trace_hub::PlanRunTraceHooks;
+use crate::trace_sink_emit::PlasmTraceContext;
 
 use super::plasm_tool_dry_meta;
 use super::trace::CodePlanTraceInput;
 use super::transport::PlasmExecBinding;
 
 pub(crate) struct PlasmDryRunContext<'a> {
-    pub host: &'a PlasmHostState,
+    pub host: Arc<PlasmHostState>,
     pub es: Arc<ExecuteSession>,
     pub binding: &'a PlasmExecBinding,
     pub session_ref: &'a str,
     pub ls_key: &'a str,
     pub call_index: u64,
+    pub mcp_session_key: &'a str,
+    pub mcp_trace: PlasmTraceContext,
+    pub plan_trace: PlanRunTraceHooks,
+    pub mcp_result_policy: crate::mcp_run_markdown::McpResultTransportPolicy,
 }
 
 pub(crate) async fn execute_plasm_tool_dry_run(
@@ -68,19 +74,86 @@ pub(crate) async fn execute_plasm_tool_dry_run(
         None,
     );
     let flow_gate = dry.evaluate_gate();
-    if let crate::PlanGateDecision::Denied(denial) = plan_gate(
+    let gate_decision = plan_gate(
         &flow_gate,
         PlanGateContext {
             force: false,
             plan_commit_ref: None,
         },
-    ) {
+    );
+    if let crate::PlanGateDecision::Denied(denial) = &gate_decision {
         return Err(format!(
             "plan denied by flow policy ({:?}): {} violation(s)",
             denial.verdict,
             denial.violations.len()
         ));
     }
+    let ux_ctx = crate::plan_ux_reflection::PlanUxBuildContext {
+        session: Some(ctx.es.as_ref()),
+        param_bindings: &[],
+    };
+    let plan_ux_reflection = crate::plan_ux_reflection::plan_ux_reflection_value(&dry, &ux_ctx);
+    let comp_val = serde_json::to_value(comp_wire.as_ref()).ok();
+    let inline_fits = comp_val
+        .as_ref()
+        .is_some_and(|comp| inline_ui_payload_fits(comp, &plan_ux_reflection));
+    record_mcp_plasm_dry_run_phase("prepare", phase.elapsed());
+
+    let auto_execute = matches!(gate_decision, crate::PlanGateDecision::Proceed(_))
+        && matches!(dry.flow.verdict, crate::plan_flow::FlowVerdict::Clean)
+        && !crate::plan_flow::validated_plan_has_remote_mutation(dry.validated_plan());
+    if auto_execute {
+        phase = Instant::now();
+        let plan_refs = CodePlanTraceInput {
+            hub: &ctx.host.trace_hub,
+            store: Arc::clone(&ctx.host.run_artifacts),
+            mcp_key: ctx.ls_key,
+            es: ctx.es.as_ref(),
+            prompt_hash: ctx.binding.prompt_hash.as_str(),
+            session_id: ctx.binding.session_id.as_str(),
+            comp: Arc::clone(&comp_wire),
+            program: &program_for_trace,
+            plan_call_index: ctx.call_index,
+            code_chars: program_for_trace.chars().count() as u64,
+        }
+        .emit_evaluate(Some(plan_ux_reflection), inline_fits)
+        .await;
+        let _ = plan_refs;
+        record_mcp_plasm_dry_run_phase("trace_emit", phase.elapsed());
+        record_mcp_plasm_dry_run_phase("total", total_started.elapsed());
+
+        return super::committed_plasm_run::execute_mcp_live_run(
+            super::committed_plasm_run::ExecuteMcpLiveRun {
+                es: Arc::clone(&ctx.es),
+                host: Arc::clone(&ctx.host),
+                wire: super::committed_plasm_run::McpExecuteWire {
+                    prompt_hash: ctx.binding.prompt_hash.clone(),
+                    session_id: ctx.binding.session_id.clone(),
+                    session_ref: ctx.session_ref.to_string(),
+                    ls_key: ctx.ls_key.to_string(),
+                    mcp_session_key: ctx.mcp_session_key.to_string(),
+                },
+                bundle,
+                kind: super::committed_plasm_run::McpLiveRunKind::FusedCleanRead {
+                    dry: Box::new(dry),
+                    verdict: compact.verdict,
+                },
+                mcp_trace: ctx.mcp_trace,
+                artifacts: super::committed_plasm_run::CommittedRunArtifacts {
+                    trace_hub: Arc::clone(&ctx.host.trace_hub),
+                    run_artifacts: Arc::clone(&ctx.host.run_artifacts),
+                    program_for_trace,
+                    plan_call_index: ctx.call_index,
+                },
+                plan_trace: Some(ctx.plan_trace),
+                mcp_result_policy: Some(ctx.mcp_result_policy),
+                force_run: false,
+                wait_live: true,
+            },
+        )
+        .await;
+    }
+
     let commit_ref = ctx.es.mint_plan_commit_ref();
     let commit_record = PlanCommitRecord::from_dry_review(
         commit_ref.clone(),
@@ -98,20 +171,10 @@ pub(crate) async fn execute_plasm_tool_dry_run(
             denial.violations.len()
         )
     })?;
-    let ux_ctx = crate::plan_ux_reflection::PlanUxBuildContext {
-        session: Some(ctx.es.as_ref()),
-        param_bindings: &[],
-    };
-    let plan_ux_reflection = crate::plan_ux_reflection::plan_ux_reflection_value(&dry, &ux_ctx);
-    let comp_val = serde_json::to_value(comp_wire.as_ref()).ok();
-    let inline_fits = comp_val
-        .as_ref()
-        .is_some_and(|comp| inline_ui_payload_fits(comp, &plan_ux_reflection));
-    record_mcp_plasm_dry_run_phase("prepare", phase.elapsed());
 
     phase = Instant::now();
     crate::plan_commit_store::register_plan_commit_with_persist(
-        ctx.host,
+        ctx.host.as_ref(),
         ctx.binding.prompt_hash.as_str(),
         ctx.binding.session_id.as_str(),
         commit_record,
@@ -158,18 +221,10 @@ pub(crate) async fn execute_plasm_tool_dry_run(
         .get("dry_verdict")
         .and_then(|v| v.as_str())
         .unwrap_or("ok");
-    let plan_uri = agent_plasm.get("plan_uri").and_then(|v| v.as_str());
-    let symbol_fp = agent_plasm
-        .get("symbol_map_fingerprint")
-        .and_then(|v| v.as_str());
     let markdown = crate::mcp_agent_present::AgentContent::plan(
         &crate::mcp_agent_present::PlanTokenRefs {
             run_ref: commit_ref.as_str(),
             dry_verdict,
-            logical_session_ref: ctx.session_ref,
-            plan_uri,
-            domain_revision: Some(ctx.es.domain_revision),
-            symbol_map_fingerprint: symbol_fp,
         },
         &dry_text,
     )

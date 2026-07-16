@@ -701,11 +701,29 @@ fn is_read_kind(kind: PlanNodeKind) -> bool {
     )
 }
 
-fn is_remote_mutation(kind: PlanNodeKind, effect_class: EffectClass) -> bool {
+/// Whether a node may mutate a remote system.
+///
+/// This remains deliberately structural: callers must refuse automatic execution whenever
+/// either the declared node kind or its effect class indicates a remote mutation.
+pub(crate) fn is_remote_mutation(kind: PlanNodeKind, effect_class: EffectClass) -> bool {
     matches!(
         kind,
         PlanNodeKind::Create | PlanNodeKind::Update | PlanNodeKind::Delete | PlanNodeKind::Action
     ) || matches!(effect_class, EffectClass::Write | EffectClass::SideEffect)
+}
+
+/// Whether a validated plan contains any node that may mutate a remote system.
+pub(crate) fn validated_plan_has_remote_mutation(
+    plan: &crate::plasm_plan::Plan<ValidatedPlanState>,
+) -> bool {
+    plan.nodes.iter().any(|node| {
+        is_remote_mutation(node.kind(), node.effect_class())
+            || matches!(
+                node,
+                ValidatedPlanNode::ForEach(n)
+                    if is_remote_mutation(n.effect_template.kind, n.effect_template.effect_class)
+            )
+    })
 }
 
 #[cfg(test)]

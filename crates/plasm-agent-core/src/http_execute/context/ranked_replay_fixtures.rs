@@ -2,7 +2,9 @@
 
 #![allow(dead_code)]
 
-use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
+use plasm_core::discovery::{
+    derive_intent_exposure_surface_batch, ExposureSurfaceOptions, MutatorAdmit,
+};
 use plasm_core::loader::{load_schema, load_schema_dir};
 use plasm_core::{ExposureEntityKey, TeachingExposureSession, CGS};
 use std::path::PathBuf;
@@ -41,7 +43,7 @@ pub(crate) fn github_issue_repo_endpoints() -> Vec<ExposureEntityKey> {
 pub(crate) fn matrix_exp_with_intent(
     intent: &str,
     ranked: Option<&[String]>,
-    read_first: bool,
+    mutator_admit: MutatorAdmit,
 ) -> TeachingExposureSession {
     let cgs = load_matrix_cgs();
     let entities = ["LangItem"];
@@ -56,9 +58,7 @@ pub(crate) fn matrix_exp_with_intent(
             .map(|e| (*e).to_string())
             .collect::<Vec<_>>(),
         ranked,
-        ExposureSurfaceOptions {
-            read_first_seeded: read_first,
-        },
+        ExposureSurfaceOptions { mutator_admit },
     );
     TeachingExposureSession::new_with_intent_delta(&cgs, "matrix", &entities, delta)
 }
@@ -66,7 +66,7 @@ pub(crate) fn matrix_exp_with_intent(
 pub(crate) fn github_exp_with_intent(
     intent: &str,
     ranked: Option<&[String]>,
-    read_first: bool,
+    mutator_admit: MutatorAdmit,
 ) -> TeachingExposureSession {
     let cgs = load_github_cgs();
     let entities = vec!["Repository".to_string(), "Issue".to_string()];
@@ -78,9 +78,7 @@ pub(crate) fn github_exp_with_intent(
         &endpoints,
         &entities,
         ranked,
-        ExposureSurfaceOptions {
-            read_first_seeded: read_first,
-        },
+        ExposureSurfaceOptions { mutator_admit },
     );
     TeachingExposureSession::new_with_intent_delta(&cgs, "github", &["Repository", "Issue"], delta)
 }

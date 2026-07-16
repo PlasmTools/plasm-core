@@ -2,6 +2,7 @@ use super::*;
 use crate::load_schema;
 use crate::loader::load_schema_dir;
 use crate::symbol_tuning::TeachingExposureSession;
+use crate::MutatorAdmit;
 use std::path::PathBuf;
 
 #[test]
@@ -115,7 +116,7 @@ fn resolve_cap_param_rejects_query_scope_p_on_mutator_invoke() {
             &["LangItem".to_string()],
             Some(&["langitem_query".to_string(), "langitem_update".to_string()]),
             discovery::ExposureSurfaceOptions {
-                read_first_seeded: true,
+                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
             },
         ),
     );
@@ -278,7 +279,7 @@ fn resolve_cap_param_shared_scope_p_on_issue_create_when_only_issue_query_commit
             &["Issue".to_string()],
             Some(&["issue_query".to_string()]),
             discovery::ExposureSurfaceOptions {
-                read_first_seeded: false,
+                mutator_admit: MutatorAdmit::IntentOnly,
             },
         ),
     );

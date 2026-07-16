@@ -47,10 +47,16 @@ use reqwest::Client;
 use std::time::Duration;
 
 fn trace_sink_http_client() -> Client {
-    Client::builder()
-        .timeout(Duration::from_secs(60))
-        .build()
-        .unwrap_or_else(|_| Client::new())
+    let mut builder = Client::builder().timeout(Duration::from_secs(60));
+    if std::env::var_os("PLASM_HTTP_NO_SYSTEM_PROXY").is_some_and(|v| {
+        matches!(
+            v.to_str().unwrap_or(""),
+            "1" | "true" | "TRUE" | "yes" | "YES"
+        )
+    }) {
+        builder = builder.no_proxy();
+    }
+    builder.build().unwrap_or_else(|_| Client::new())
 }
 
 /// Inputs for [`build_plasm_host_state`] (keeps the surface under clippy’s argument limit).

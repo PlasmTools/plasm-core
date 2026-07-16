@@ -150,7 +150,7 @@ pub(crate) async fn execute_session_create_response_inner(
                         &names,
                         ranked_for_domain.as_deref(),
                         plasm_core::discovery::ExposureSurfaceOptions {
-                            read_first_seeded: body.read_first_seeded_exposure,
+                            mutator_admit: body.mutator_admit,
                         },
                     );
                     plasm_core::TeachingExposureSession::new_with_intent_delta(

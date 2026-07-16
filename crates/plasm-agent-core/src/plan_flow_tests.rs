@@ -285,3 +285,77 @@ fn approval_gate_json_shape_for_approve_enforcement() {
     assert_eq!(gate["entity"], "Product");
     assert_eq!(gate["capability"], "create");
 }
+
+#[test]
+fn remote_mutation_classifier_marks_action_and_writes() {
+    assert!(is_remote_mutation(
+        PlanNodeKind::Action,
+        EffectClass::SideEffect
+    ));
+    assert!(is_remote_mutation(PlanNodeKind::Create, EffectClass::Write));
+    assert!(is_remote_mutation(PlanNodeKind::Update, EffectClass::Read));
+    assert!(is_remote_mutation(PlanNodeKind::Delete, EffectClass::Read));
+    assert!(is_remote_mutation(PlanNodeKind::Query, EffectClass::Write));
+    assert!(!is_remote_mutation(PlanNodeKind::Query, EffectClass::Read));
+    assert!(!is_remote_mutation(PlanNodeKind::Get, EffectClass::Read));
+    assert!(!is_remote_mutation(PlanNodeKind::Search, EffectClass::Read));
+}
+
+#[test]
+fn validated_plan_has_remote_mutation_false_for_read_only_query() {
+    let plan = serde_json::json!({
+        "version": 1,
+        "kind": "program",
+        "nodes": [{
+            "id": "q",
+            "kind": "query",
+            "qualified_entity": { "entry_id": "flow", "entity": "Message" },
+            "expr": "Message",
+            "ir": { "expr": { "op": "query", "entity": "Message" } },
+            "effect_class": "read",
+            "result_shape": "list"
+        }],
+        "return": { "kind": "node", "node": "q" }
+    });
+    let validated = parse_and_validate_plan_json(&plan).expect("validate");
+    assert!(!validated_plan_has_remote_mutation(validated.artifact()));
+}
+
+#[test]
+fn validated_plan_has_remote_mutation_true_for_action() {
+    let plan = serde_json::json!({
+        "version": 1,
+        "kind": "program",
+        "nodes": [
+            {
+                "id": "messages",
+                "kind": "query",
+                "qualified_entity": { "entry_id": "flow", "entity": "Message" },
+                "expr": "Message",
+                "ir": { "expr": { "op": "query", "entity": "Message", "capability": "message_query" } },
+                "effect_class": "read",
+                "result_shape": "list"
+            },
+            {
+                "id": "send",
+                "kind": "action",
+                "qualified_entity": { "entry_id": "flow", "entity": "Message" },
+                "depends_on": ["messages"],
+                "uses_result": [{ "node": "messages", "as": "messages" }],
+                "effect_class": "side_effect",
+                "result_shape": "side_effect_ack",
+                "ir_template": {
+                    "expr": {
+                        "op": "invoke",
+                        "capability": "send",
+                        "target": { "entity_type": "Message", "key": { "id": "1" } },
+                        "input": {}
+                    }
+                }
+            }
+        ],
+        "return": { "kind": "node", "node": "send" }
+    });
+    let validated = parse_and_validate_plan_json(&plan).expect("validate");
+    assert!(validated_plan_has_remote_mutation(validated.artifact()));
+}

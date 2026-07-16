@@ -45,7 +45,6 @@ pub struct CommittedRunArtifacts {
 }
 
 /// Which live `plasm_run` path to execute.
-#[derive(Clone)]
 pub enum McpLiveRunKind {
     ReviewedCommit {
         committed: Box<CommittedPlan>,
@@ -55,6 +54,11 @@ pub enum McpLiveRunKind {
     PageContinuation {
         #[allow(dead_code)] // ingress marker: pairs continuation bundle with resolved handle
         page_handle: PagingHandle,
+    },
+    /// MCP `plasm` fused clean read: dry already proven; skip commit persist and re-dry.
+    FusedCleanRead {
+        dry: Box<DryPlasmPlanEvaluation>,
+        verdict: PlanDryVerdict,
     },
 }
 
@@ -114,7 +118,6 @@ pub async fn resolve_mcp_live_run_ingress(
 }
 
 /// Ingress for MCP `plasm_run` live execute.
-#[derive(Clone)]
 pub struct ExecuteMcpLiveRun {
     pub es: Arc<ExecuteSession>,
     pub host: Arc<PlasmHostState>,
@@ -129,20 +132,23 @@ pub struct ExecuteMcpLiveRun {
     pub wait_live: bool,
 }
 
-impl ExecuteMcpLiveRun {
-    fn code_plan_trace_input(&self, comp: Arc<TraceCompWire>) -> CodePlanTraceInput<'_> {
-        CodePlanTraceInput {
-            hub: self.artifacts.trace_hub.as_ref(),
-            store: Arc::clone(&self.artifacts.run_artifacts),
-            mcp_key: self.wire.ls_key.as_str(),
-            es: self.es.as_ref(),
-            prompt_hash: self.wire.prompt_hash.as_str(),
-            session_id: self.wire.session_id.as_str(),
-            comp,
-            program: self.artifacts.program_for_trace.as_str(),
-            plan_call_index: self.artifacts.plan_call_index,
-            code_chars: self.artifacts.program_for_trace.chars().count() as u64,
-        }
+fn code_plan_trace_input<'a>(
+    artifacts: &'a CommittedRunArtifacts,
+    es: &'a ExecuteSession,
+    wire: &'a McpExecuteWire,
+    comp: Arc<TraceCompWire>,
+) -> CodePlanTraceInput<'a> {
+    CodePlanTraceInput {
+        hub: artifacts.trace_hub.as_ref(),
+        store: Arc::clone(&artifacts.run_artifacts),
+        mcp_key: wire.ls_key.as_str(),
+        es,
+        prompt_hash: wire.prompt_hash.as_str(),
+        session_id: wire.session_id.as_str(),
+        comp,
+        program: artifacts.program_for_trace.as_str(),
+        plan_call_index: artifacts.plan_call_index,
+        code_chars: artifacts.program_for_trace.chars().count() as u64,
     }
 }
 
@@ -152,20 +158,25 @@ struct LiveDryOutcome {
     plan_commit_ref: Option<PlanCommitRef>,
 }
 
-fn prepare_live_dry(run: &ExecuteMcpLiveRun) -> Result<LiveDryOutcome, String> {
-    match &run.kind {
+fn prepare_live_dry(
+    kind: McpLiveRunKind,
+    es: &ExecuteSession,
+    bundle: &PlasmCompBundle,
+    force_run: bool,
+) -> Result<LiveDryOutcome, String> {
+    match kind {
         McpLiveRunKind::ReviewedCommit {
             committed,
             plan_commit_ref,
         } => {
-            let dry = dry_for_committed_plasm_run(run.es.as_ref(), &run.bundle, committed.as_ref())
+            let dry = dry_for_committed_plasm_run(es, bundle, committed.as_ref())
                 .map_err(|e| e.detail())?;
             let gate = dry.evaluate_gate();
             if plan_requires_review_gate(
                 &gate,
                 PlanGateContext {
-                    force: run.force_run,
-                    plan_commit_ref: Some(plan_commit_ref),
+                    force: force_run,
+                    plan_commit_ref: Some(&plan_commit_ref),
                 },
             ) {
                 return Err(
@@ -176,17 +187,17 @@ fn prepare_live_dry(run: &ExecuteMcpLiveRun) -> Result<LiveDryOutcome, String> {
             Ok(LiveDryOutcome {
                 dry,
                 verdict: committed.verdict,
-                plan_commit_ref: Some(plan_commit_ref.clone()),
+                plan_commit_ref: Some(plan_commit_ref),
             })
         }
         McpLiveRunKind::PageContinuation { .. } => {
-            let dry = evaluate_plasm_comp_dry(run.es.as_ref(), &run.bundle)?;
+            let dry = evaluate_plasm_comp_dry(es, bundle)?;
             let compact = build_plan_dry_compact_view(
                 dry.validated_plan(),
                 &dry.topological_order,
                 &dry.review,
                 &dry.graph_summary,
-                Some(run.es.as_ref()),
+                Some(es),
                 None,
             );
             Ok(LiveDryOutcome {
@@ -195,6 +206,11 @@ fn prepare_live_dry(run: &ExecuteMcpLiveRun) -> Result<LiveDryOutcome, String> {
                 plan_commit_ref: None,
             })
         }
+        McpLiveRunKind::FusedCleanRead { dry, verdict } => Ok(LiveDryOutcome {
+            dry: *dry,
+            verdict,
+            plan_commit_ref: None,
+        }),
     }
 }
 
@@ -203,40 +219,54 @@ pub async fn execute_mcp_live_run(run: ExecuteMcpLiveRun) -> Result<PlasmPlanRun
         return Err("plasm_run requires live execute".to_string());
     }
 
-    let live = prepare_live_dry(&run)?;
+    let ExecuteMcpLiveRun {
+        es,
+        host,
+        wire,
+        bundle,
+        kind,
+        mcp_trace,
+        artifacts,
+        plan_trace,
+        mcp_result_policy,
+        force_run,
+        wait_live: _,
+    } = run;
+    let live = prepare_live_dry(kind, es.as_ref(), &bundle, force_run)?;
     let comp_wire = Arc::new(crate::plasm_comp_wire::trace_comp_wire_from_dry(&live.dry));
     let plan_ux_reflection = Some(crate::plan_ux_reflection::plan_ux_reflection_value(
         &live.dry,
         &crate::plan_ux_reflection::PlanUxBuildContext {
-            session: Some(run.es.as_ref()),
+            session: Some(es.as_ref()),
             param_bindings: &[],
         },
     ));
-    let trace_input = run.code_plan_trace_input(Arc::clone(&comp_wire));
-    let execute_plan_id = trace_input.emit_execute_started().await;
+    let execute_plan_id =
+        code_plan_trace_input(&artifacts, es.as_ref(), &wire, Arc::clone(&comp_wire))
+            .emit_execute_started()
+            .await;
 
     let await_out =
         match crate::mcp_plasm_run_phases::mcp_plasm_run_phase("async_live_await", || async {
-            let accept_payload =
-                build_run_explorer_accept_payload(&live.dry, Some(run.es.as_ref()));
+            let accept_payload = build_run_explorer_accept_payload(&live.dry, Some(es.as_ref()));
             deliver_live_run_await(
                 LiveRunAwaitContext::for_mcp_plasm_run(
-                    Arc::clone(&run.es),
-                    Arc::clone(&run.host),
-                    run.wire.prompt_hash.clone(),
-                    run.wire.session_id.clone(),
-                    run.wire.session_ref.clone(),
-                    run.wire.mcp_session_key.clone(),
-                    run.bundle.clone(),
+                    Arc::clone(&es),
+                    Arc::clone(&host),
+                    wire.prompt_hash.clone(),
+                    wire.session_id.clone(),
+                    wire.session_ref.clone(),
+                    wire.mcp_session_key.clone(),
+                    bundle.clone(),
                     accept_payload,
                     live.verdict,
                     live.plan_commit_ref.clone(),
-                    run.mcp_trace.clone(),
+                    mcp_trace.clone(),
                     live.dry,
                 ),
                 LiveRunSpawnOpts {
-                    plan_trace: run.plan_trace.clone(),
-                    mcp_result_policy: run.mcp_result_policy,
+                    plan_trace: plan_trace.clone(),
+                    mcp_result_policy,
                 },
             )
             .await
@@ -249,7 +279,7 @@ pub async fn execute_mcp_live_run(run: ExecuteMcpLiveRun) -> Result<PlasmPlanRun
         {
             Ok(result) => result,
             Err(err) => {
-                run.code_plan_trace_input(Arc::clone(&comp_wire))
+                code_plan_trace_input(&artifacts, es.as_ref(), &wire, Arc::clone(&comp_wire))
                     .emit_execute_failed(execute_plan_id)
                     .await;
                 return Err(err);
@@ -257,7 +287,7 @@ pub async fn execute_mcp_live_run(run: ExecuteMcpLiveRun) -> Result<PlasmPlanRun
         };
 
     crate::mcp_plasm_run_phases::mcp_plasm_run_phase("artifact_persist", || async {
-        run.code_plan_trace_input(Arc::clone(&comp_wire))
+        code_plan_trace_input(&artifacts, es.as_ref(), &wire, Arc::clone(&comp_wire))
             .emit_execute_completed(Some(execute_plan_id), plan_ux_reflection, &await_out)
             .await;
         Ok(await_out)
