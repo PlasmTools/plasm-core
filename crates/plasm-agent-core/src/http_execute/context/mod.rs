@@ -25,7 +25,6 @@ pub(crate) use seeds::{
     unchanged_expand_wave, CapabilityExposurePlan, PlasmContextToolMetaParams,
     STALE_EXECUTE_BINDING_NOTICE,
 };
-pub(crate) use session_churn::{format_session_churn_advisory, SessionChurnAdvisory};
 pub use seeds::{normalize_capability_seeds, RankedCapabilitiesArg};
 pub use session::apply_capability_seeds;
 pub(crate) use session::execute_session_create_response_inner;
@@ -39,3 +38,4 @@ pub use session::{
     execute_session_create_response, expand_execute_teaching_session, federate_execute_session,
     ExpandTeachingWaveResult,
 };
+pub(crate) use session_churn::{format_session_churn_advisory, SessionChurnAdvisory};

@@ -51,11 +51,11 @@ fn fields_for_admitted_read_cap(
     }
 }
 
-pub use super::mutator_admit::{ExposureSurfaceOptions, MutatorAdmit};
+use super::mutator_admit::seeded_entity_cap_always_includes;
 pub(crate) use super::mutator_admit::{
     mutating_capability_admitted, seeded_mutating_capability_admitted,
 };
-use super::mutator_admit::seeded_entity_cap_always_includes;
+pub use super::mutator_admit::{ExposureSurfaceOptions, MutatorAdmit};
 
 /// Max outgoing relation hints per entity in discover TSV (`wire→Target`).
 pub const DISCOVERY_OUTGOING_RELATIONS_MAX: usize = 3;

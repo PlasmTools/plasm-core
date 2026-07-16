@@ -19,8 +19,7 @@ fn relation_keys(entry_id: &str, names: &[&str]) -> Vec<ExposureEntityKey> {
 
 #[test]
 fn intent_surface_omits_relation_until_relation_target_in_scope() {
-    let dir =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
     let cgs = load_schema_dir(&dir).expect("overshow_tools");
     let endpoints = relation_keys("overshow", &["Profile"]);
     let delta = derive_intent_exposure_surface_batch(
@@ -44,8 +43,7 @@ fn intent_surface_omits_relation_until_relation_target_in_scope() {
 
 #[test]
 fn intent_surface_includes_profile_relation_when_recorded_content_in_scope() {
-    let dir =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
     let cgs = load_schema_dir(&dir).expect("overshow_tools");
     let endpoints = relation_keys("overshow", &["Profile", "RecordedContent"]);
     let delta = derive_intent_exposure_surface_batch(
@@ -73,11 +71,10 @@ fn mutating_capability_admitted_requires_nonzero_score() {
     assert!(mutating_capability_admitted(1, None, "langitem_create"));
 }
 
-
 #[test]
 fn intent_surface_ranked_admits_seeded_mutator_at_zero_score() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/schemas/plasm_language_matrix");
+    let dir =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix");
     let cgs = load_schema_dir(&dir).expect("plasm_language_matrix");
     let cap = cgs
         .capabilities
@@ -111,11 +108,10 @@ fn intent_surface_ranked_admits_seeded_mutator_at_zero_score() {
     );
 }
 
-
 #[test]
 fn intent_surface_ranked_boost_does_not_cage_scored_seeded_mutators() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/schemas/plasm_language_matrix");
+    let dir =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix");
     let cgs = load_schema_dir(&dir).expect("plasm_language_matrix");
     let endpoints = relation_keys("matrix", &["LangItem"]);
     // Ranked lists an unrelated wire; BM25-scoring create intent must still admit.
@@ -142,19 +138,27 @@ fn intent_surface_ranked_boost_does_not_cage_scored_seeded_mutators() {
 
 #[test]
 fn seeded_mutator_admits_ranked_boost_at_zero_score() {
-    assert!(!seeded_mutating_capability_admitted(0, None, "langitem_create"));
+    assert!(!seeded_mutating_capability_admitted(
+        0,
+        None,
+        "langitem_create"
+    ));
     assert!(seeded_mutating_capability_admitted(
         0,
         Some(&["langitem_create".to_string()]),
         "langitem_create",
     ));
-    assert!(seeded_mutating_capability_admitted(1, None, "langitem_create"));
+    assert!(seeded_mutating_capability_admitted(
+        1,
+        None,
+        "langitem_create"
+    ));
 }
 
 #[test]
 fn intent_surface_always_on_seeds_admits_seeded_mutators_on_first_wave() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/schemas/plasm_language_matrix");
+    let dir =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix");
     let cgs = load_schema_dir(&dir).expect("plasm_language_matrix");
     let cap = cgs
         .capabilities
@@ -234,8 +238,7 @@ fn intent_surface_always_on_seeds_admits_seeded_mutators_on_first_wave() {
 
 #[test]
 fn intent_surface_seeded_prompt_run_create_requires_intent_overlap() {
-    let dir =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
     let cgs = load_schema_dir(&dir).expect("overshow_tools");
     let endpoints = relation_keys("overshow", &["PromptRun"]);
     let delta = derive_intent_exposure_surface_batch(
@@ -276,8 +279,7 @@ fn intent_surface_seeded_prompt_run_create_requires_intent_overlap() {
 
 #[test]
 fn intent_surface_drops_unscored_reads_when_intent_targets_other_entity() {
-    let dir =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
     let cgs = load_schema_dir(&dir).expect("overshow_tools");
     let endpoints = relation_keys("overshow", &["Meeting", "Profile"]);
     let delta = derive_intent_exposure_surface_batch(
@@ -308,8 +310,7 @@ fn intent_surface_drops_unscored_reads_when_intent_targets_other_entity() {
 #[cfg(feature = "ranked_capability_gate")]
 #[test]
 fn intent_surface_ranked_gate_excludes_non_seeded_scored_mutation() {
-    let dir =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
     let cgs = load_schema_dir(&dir).expect("overshow_tools");
     let endpoints = relation_keys("overshow", &["PromptRun", "Profile"]);
     let ranked = vec!["prompt_run_create".to_string()];
@@ -331,8 +332,7 @@ fn intent_surface_ranked_gate_excludes_non_seeded_scored_mutation() {
 #[cfg(feature = "ranked_capability_gate")]
 #[test]
 fn intent_surface_ranked_gate_keeps_mutation_on_list() {
-    let dir =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
     let cgs = load_schema_dir(&dir).expect("overshow_tools");
     let endpoints = relation_keys("overshow", &["PromptRun"]);
     let ranked = vec!["prompt_run_create".to_string()];
@@ -356,11 +356,7 @@ fn intent_surface_ranked_gate_keeps_mutation_on_list() {
 const FEDERATED_FIELD_LAB_INTENT: &str =
     "Federated field lab v2 — pokeapi specimen linear missions proof dossier";
 
-fn surface_has_capability(
-    delta: &ExposureSurfaceDelta,
-    domain: &str,
-    capability: &str,
-) -> bool {
+fn surface_has_capability(delta: &ExposureSurfaceDelta, domain: &str, capability: &str) -> bool {
     delta
         .required
         .capabilities

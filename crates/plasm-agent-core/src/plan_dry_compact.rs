@@ -79,7 +79,10 @@ fn compact_heredocs(expr: &str) -> String {
                 .take(close_idx)
                 .map(|l| l.chars().count() + 1)
                 .sum();
-            let _ = write!(out, "<<{tag} … ({inner_len} chars, {FULL_RETAINED}) … {tag}");
+            let _ = write!(
+                out,
+                "<<{tag} … ({inner_len} chars, {FULL_RETAINED}) … {tag}"
+            );
             let consumed = body_start
                 + body_rest
                     .lines()

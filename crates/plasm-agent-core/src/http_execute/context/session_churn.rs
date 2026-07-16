@@ -99,10 +99,8 @@ mod tests {
     #[test]
     fn session_churn_intent_jaccard_thresholds() {
         assert!(
-            (intent_token_jaccard(
-                "create github issue labels",
-                "create github issue labels"
-            ) - 1.0)
+            (intent_token_jaccard("create github issue labels", "create github issue labels")
+                - 1.0)
                 .abs()
                 < 1e-9
         );

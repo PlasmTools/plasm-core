@@ -680,9 +680,10 @@ fn validate_cross_field_rule(
             Some(_) => true,
         })
         .collect();
-    let any_placeholder = rule.fields.iter().any(|field| {
-        matches!(object.get(field), Some(v) if v.is_domain_example_placeholder())
-    });
+    let any_placeholder = rule
+        .fields
+        .iter()
+        .any(|field| matches!(object.get(field), Some(v) if v.is_domain_example_placeholder()));
     if concretely_present.is_empty() && any_placeholder {
         return Ok(());
     }

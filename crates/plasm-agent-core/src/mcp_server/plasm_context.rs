@@ -209,7 +209,7 @@ impl PlasmMcpHandler {
                 &scope,
                 Some(rec.logical_session_id),
                 &seeds,
-                &accumulated_intent,
+                accumulated_intent,
             )
             .await
             {
