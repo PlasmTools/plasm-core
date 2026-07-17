@@ -11,7 +11,13 @@ labels = e2{repo=repo}
 branches = e3{repo=repo}
 labels, branches
 ```
-Batch reads aggressively. Mutating nodes need **`run_ref`** + **`plasm_run`** approval; batch writes only when co-committed gates are acceptable.
+Batch reads aggressively. **Prefer one multi-write program** when steps share one approval: writes run **bind-ordered (sequential)**; **one** `run_ref` covers the whole plan — not N×(`plasm`+`plasm_run`). Create `provides` / `[field,…]` projection feed later writes in the same program:
+```
+repo = e_repo(owner="org", name="repo")
+issue = e_issue.m_create(repository=repo, title="…")
+comment = e_comment.m_create(issue=issue, body="…")
+issue, comment
+```
 
 **Strings:** JSON escapes in quotes (`\n` `\t` `\\` `\"`); unknown `\x` errors. Prefer tagged `<<TAG` … `TAG` heredocs for long bodies (real newlines).
 
@@ -31,7 +37,7 @@ PLASM_RPT_TAG
 TSV table semantics:
 - Header `plasm_expr<TAB>Meaning`; left = syntax; never copy `Meaning`.
 - Executable rows start with `e#`; `r#`/`v#` are never roots.
-- Result arrows: `→` one record; `↣` list; `↠` terminal write (re-read `e#(id=…)` to continue).
+- Result arrows: `→` one record; `↣` list; `↠` write shape. **In the same program**, bind the write and use `binding.wire` / identity later. TSV `chain: e#(id=…).m#` is for a **later turn** after the prior run — not a ban on in-program chaining.
 
 Core surface:
 - Get identity: `e#(id)` (parens). Query/filter: `e#{field=…}` (braces). Search when taught: `e#~$` / `e#~"text"`.
@@ -51,4 +57,4 @@ Symbol and fill rules:
 - Session handles (`logical_session_ref`, `run_ref`/`pcN`) are MCP tokens — not program syntax.
 - Replace teaching placeholders (`$`, `<id>`) with real values; never emit `$` from a teaching row.
 - Quote scalars only in `{…}` predicates and string invoke params. Prefer `label = e#` then `label.filter{…}` over bare `e#.filter{…}`.
-- Parse/symbol errors: **`session_mode: "extend"`** with the same **`logical_session_ref`**, not **`new`**.
+- Session / parse recovery: see **`plasm_context`**. On error, **`session_mode: "extend"`** + same **`logical_session_ref`** — never **`new`**.

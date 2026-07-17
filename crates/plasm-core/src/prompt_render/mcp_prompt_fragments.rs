@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 
 use crate::symbol_tuning::{
-    exposed_mutator_capability_keys, resolve_ranked_wire_candidates, seeded_ranked_wire_candidates,
-    ExposureCapabilityKey,
+    bare_ranked_capability_wire, exposed_mutator_capability_keys, resolve_ranked_wire_candidates,
+    seeded_ranked_wire_candidates, ExposureCapabilityKey,
 };
 use crate::TeachingExposureSession;
 
@@ -119,7 +119,8 @@ fn mutator_wires_on_seeded_entities(exp: &TeachingExposureSession) -> Vec<String
 }
 
 fn suggest_nearest_capability_wire(exp: &TeachingExposureSession, unknown: &str) -> Option<String> {
-    let unk = unknown.trim().to_ascii_lowercase();
+    let wire_seg = bare_ranked_capability_wire(unknown).unwrap_or_else(|| unknown.to_string());
+    let unk = wire_seg.trim().to_ascii_lowercase();
     if unk.is_empty() {
         return None;
     }
@@ -136,11 +137,7 @@ fn suggest_nearest_capability_wire(exp: &TeachingExposureSession, unknown: &str)
         if w == unk {
             continue;
         }
-        let score = if w.contains(&unk) || unk.contains(&w) {
-            1
-        } else {
-            levenshtein(&unk, &w)
-        };
+        let score = levenshtein(&unk, &w);
         if score <= 6 && best.as_ref().map(|(s, _)| score < *s).unwrap_or(true) {
             best = Some((score, wire));
         }
@@ -148,13 +145,16 @@ fn suggest_nearest_capability_wire(exp: &TeachingExposureSession, unknown: &str)
     best.map(|(_, w)| w)
 }
 
+const RANKED_UNKNOWN_CAP: usize = 5;
+
 /// Agent-facing diagnostic when ranked replay did not expand the teaching surface.
+///
+/// Returns `None` when there is nothing actionable (already exposed only, or no change).
 pub fn format_ranked_replay_diagnostics(
     exp: &TeachingExposureSession,
     ranked_names: &[String],
     caps_before: &BTreeSet<ExposureCapabilityKey>,
-) -> String {
-    let mut already_exposed = Vec::new();
+) -> Option<String> {
     let mut newly_added = Vec::new();
     let mut unknown = Vec::new();
     let mut non_seeded = Vec::new();
@@ -191,7 +191,8 @@ pub fn format_ranked_replay_diagnostics(
         let on_surface = cap_key_on_surface(exp, key);
         let was_on_surface = cap_key_was_on_surface(caps_before, key);
         if was_on_surface && on_surface {
-            already_exposed.push(format_qualified_cap(key));
+            // Already on surface — silent (no agent markdown).
+            continue;
         } else if !was_on_surface && on_surface {
             newly_added.push(format_qualified_cap(key));
         } else {
@@ -203,27 +204,25 @@ pub fn format_ranked_replay_diagnostics(
     if !newly_added.is_empty() {
         parts.push(format!("ranked added: {}", newly_added.join(", ")));
     }
-    if !already_exposed.is_empty() {
-        parts.push(format!("already exposed: {}", already_exposed.join(", ")));
-    }
     if !unknown.is_empty() {
-        let available = mutator_wires_on_seeded_entities(exp);
-        let available_note = if available.is_empty() {
-            String::new()
-        } else {
-            format!("; mutators on seeded entities: {}", available.join(", "))
-        };
-        let parts_with_hints: Vec<String> = unknown
-            .iter()
+        let total = unknown.len();
+        let shown = unknown.iter().take(RANKED_UNKNOWN_CAP);
+        let parts_with_hints: Vec<String> = shown
             .map(|name| {
                 suggest_nearest_capability_wire(exp, name)
                     .map(|hint| format!("{name} (did you mean {hint}?)"))
                     .unwrap_or_else(|| (*name).to_string())
             })
             .collect();
+        let more = if total > RANKED_UNKNOWN_CAP {
+            format!(" (+{} more)", total - RANKED_UNKNOWN_CAP)
+        } else {
+            String::new()
+        };
         parts.push(format!(
-            "unsupported in this catalog: {} — no capability with this wire name exists in loaded catalogs; do not invent names; use only wires from the teaching table{available_note}",
-            parts_with_hints.join(", ")
+            "unsupported in this catalog: {}{} — no capability with this wire name exists in loaded catalogs; do not invent names; use only wires from the teaching table",
+            parts_with_hints.join(", "),
+            more
         ));
     }
     if !non_seeded.is_empty() {
@@ -239,9 +238,9 @@ pub fn format_ranked_replay_diagnostics(
         parts.push(format!("rejected by intent gate: {}", rejected.join(", ")));
     }
     if parts.is_empty() {
-        "ranked replay: no surface change".to_string()
+        None
     } else {
-        format!("Ranked replay: {}.", parts.join("; "))
+        Some(format!("Ranked replay: {}.", parts.join("; ")))
     }
 }
 
@@ -284,11 +283,13 @@ mod tests {
             },
         );
         let exp = TeachingExposureSession::new_with_intent_delta(&cgs, "matrix", &entities, delta);
-        let caps_before = exp.surface.capabilities.clone();
+        // Empty caps_before → treat as newly added (still on surface) so we emit ranked added.
+        let caps_before = BTreeSet::new();
         let diag =
-            format_ranked_replay_diagnostics(&exp, &["langitem_create".to_string()], &caps_before);
+            format_ranked_replay_diagnostics(&exp, &["langitem_create".to_string()], &caps_before)
+                .expect("newly added ranked wire should diagnose");
         assert!(
-            diag.contains("matrix:LangItem.langitem_create"),
+            diag.contains("ranked added:") && diag.contains("matrix:LangItem.langitem_create"),
             "expected qualified key in diagnostic: {diag}"
         );
     }
@@ -323,7 +324,8 @@ mod tests {
         let exp = TeachingExposureSession::new_with_intent_delta(&cgs, "matrix", &entities, delta);
         let caps_before = exp.surface.capabilities.clone();
         let diag =
-            format_ranked_replay_diagnostics(&exp, &["branch_delete".to_string()], &caps_before);
+            format_ranked_replay_diagnostics(&exp, &["branch_delete".to_string()], &caps_before)
+                .expect("unsupported wire should diagnose");
         assert!(
             diag.contains("unsupported in this catalog"),
             "expected not-in-catalog framing: {diag}"
@@ -333,8 +335,95 @@ mod tests {
             "must not tell agents to invent better names: {diag}"
         );
         assert!(
-            diag.contains("langitem_create") || diag.contains("mutators on seeded"),
-            "should list real mutators on seeded entities: {diag}"
+            !diag.contains("mutators on seeded"),
+            "must not dump mutator laundry list: {diag}"
+        );
+    }
+
+    #[test]
+    fn diagnostics_silent_when_only_already_exposed() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = load_schema_dir(&root.join("../../fixtures/schemas/plasm_language_matrix"))
+            .expect("matrix");
+        let entities = ["LangItem"];
+        let endpoints = entities
+            .iter()
+            .map(|e| ExposureEntityKey {
+                entry_id: "matrix".into(),
+                entity: crate::EntityName::from(*e),
+            })
+            .collect::<Vec<_>>();
+        let intent = "create new langitem title";
+        let delta = derive_intent_exposure_surface_batch(
+            &cgs,
+            "matrix",
+            intent,
+            &endpoints,
+            &entities
+                .iter()
+                .map(|e| (*e).to_string())
+                .collect::<Vec<_>>(),
+            Some(&["langitem_create".to_string()]),
+            ExposureSurfaceOptions {
+                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
+            },
+        );
+        let exp = TeachingExposureSession::new_with_intent_delta(&cgs, "matrix", &entities, delta);
+        let caps_before = exp.surface.capabilities.clone();
+        assert!(
+            format_ranked_replay_diagnostics(&exp, &["langitem_create".to_string()], &caps_before)
+                .is_none(),
+            "already-exposed ranked wire must not emit agent markdown"
+        );
+        assert!(
+            format_ranked_replay_diagnostics(
+                &exp,
+                &["matrix:LangItem:langitem_create".to_string()],
+                &caps_before
+            )
+            .is_none(),
+            "qualified discovery id already on surface must be silent"
+        );
+    }
+
+    #[test]
+    fn diagnostics_no_false_did_you_mean_from_qualified_substring() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = load_schema_dir(&root.join("../../fixtures/schemas/plasm_language_matrix"))
+            .expect("matrix");
+        let entities = ["LangItem"];
+        let endpoints = entities
+            .iter()
+            .map(|e| ExposureEntityKey {
+                entry_id: "matrix".into(),
+                entity: crate::EntityName::from(*e),
+            })
+            .collect::<Vec<_>>();
+        let delta = derive_intent_exposure_surface_batch(
+            &cgs,
+            "matrix",
+            "create langitem",
+            &endpoints,
+            &entities
+                .iter()
+                .map(|e| (*e).to_string())
+                .collect::<Vec<_>>(),
+            None,
+            ExposureSurfaceOptions {
+                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
+            },
+        );
+        let exp = TeachingExposureSession::new_with_intent_delta(&cgs, "matrix", &entities, delta);
+        let caps_before = exp.surface.capabilities.clone();
+        let diag = format_ranked_replay_diagnostics(
+            &exp,
+            &["matrix:LangItem:branch_delete".to_string()],
+            &caps_before,
+        )
+        .expect("invented qualified wire");
+        assert!(
+            !diag.contains("did you mean langitem_create"),
+            "must not substring-match qualified id to unrelated wire: {diag}"
         );
     }
 }

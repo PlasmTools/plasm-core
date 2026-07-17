@@ -206,17 +206,42 @@ pub fn loaded_catalog_entry_ids(exp: &TeachingExposureSession) -> BTreeSet<Strin
     ids
 }
 
+/// Strip discovery / diagnostic qualification to a bare capability wire.
+///
+/// Accepts bare `wire`, `entry:Entity:wire` (discovery `capability_id`), and
+/// `entry:Entity.wire` (qualified diagnostic form).
+pub fn bare_ranked_capability_wire(raw: &str) -> Option<String> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return None;
+    }
+    if let Some((_, rest)) = s.split_once(':') {
+        if let Some((_, wire)) = rest.rsplit_once(':') {
+            let w = wire.trim();
+            return (!w.is_empty()).then(|| w.to_string());
+        }
+        if let Some((_, wire)) = rest.rsplit_once('.') {
+            let w = wire.trim();
+            return (!w.is_empty()).then(|| w.to_string());
+        }
+    }
+    Some(s.to_string())
+}
+
 /// Resolve a ranked wire name to catalog-qualified capability keys defined in loaded catalogs.
 pub fn resolve_ranked_wire_candidates(
     exp: &TeachingExposureSession,
     ranked_wire: &str,
 ) -> Vec<ExposureCapabilityKey> {
+    let Some(wire) = bare_ranked_capability_wire(ranked_wire) else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
     for entry_id in loaded_catalog_entry_ids(exp) {
         let Some(cgs) = exp.catalog_cgs_for_entry(entry_id.as_str()) else {
             continue;
         };
-        if let Some(cap) = cgs.get_capability(ranked_wire) {
+        if let Some(cap) = cgs.get_capability(wire.as_str()) {
             out.push(ExposureCapabilityKey {
                 entry_id,
                 domain: cap.domain.clone(),
@@ -238,4 +263,26 @@ pub fn seeded_ranked_wire_candidates(
         .into_iter()
         .filter(|k| exp.contains_qualified_entity(k.entry_id.as_str(), k.domain.as_str()))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bare_ranked_capability_wire;
+
+    #[test]
+    fn bare_ranked_strips_discovery_and_diagnostic_forms() {
+        assert_eq!(
+            bare_ranked_capability_wire("github:Issue:issue_create").as_deref(),
+            Some("issue_create")
+        );
+        assert_eq!(
+            bare_ranked_capability_wire("matrix:LangItem.langitem_create").as_deref(),
+            Some("langitem_create")
+        );
+        assert_eq!(
+            bare_ranked_capability_wire("issue_create").as_deref(),
+            Some("issue_create")
+        );
+        assert_eq!(bare_ranked_capability_wire("  ").as_deref(), None);
+    }
 }

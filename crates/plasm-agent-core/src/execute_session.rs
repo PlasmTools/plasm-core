@@ -506,6 +506,9 @@ pub struct ExecuteSession {
     pub context_intent: Option<String>,
     /// Optional ranked capability-name gate for mutators (aligned with [`SessionReuseKey::ranked_capabilities`]).
     pub ranked_capabilities: Option<Vec<String>>,
+    /// When true, the next exposure-wave commit may append agent-facing ranked-replay diagnostics.
+    /// Turn-local provenance from [`crate::http_execute::RankedCapabilitiesArg`]; not part of reuse keys.
+    pub(crate) ranked_replay_emit_diagnostics: bool,
     /// Share-link / instance token bound once per execute session (Bearer + optional `share_token` CML env).
     pub session_share_token: Arc<RwLock<Option<String>>>,
     /// Proof: `baseToken` from the latest successful `editor_state_get`; merged as `base_token` CML env for `/ops`.
@@ -614,6 +617,7 @@ impl ExecuteSession {
             registry_catalog_hashes_by_entry: HashMap::new(),
             context_intent,
             ranked_capabilities,
+            ranked_replay_emit_diagnostics: false,
             session_share_token: Arc::new(RwLock::new(None)),
             session_proof_base_token: Arc::new(RwLock::new(None)),
             graph_cache: core.graph_cache(),

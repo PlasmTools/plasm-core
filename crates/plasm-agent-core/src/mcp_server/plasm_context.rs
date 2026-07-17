@@ -127,16 +127,11 @@ impl PlasmMcpHandler {
                 }
             }
         };
+        // Agent-explicit ranked (emit) always wins; host auto-seed only fills when unspecified.
         let ranked_capabilities = match (ranked_capabilities_arg, auto_ranked_from_selector) {
-            (RankedCapabilitiesArg::Set(Some(names)), _) => RankedCapabilitiesArg::Set(Some(names)),
-            (RankedCapabilitiesArg::Set(None), Some(auto)) => {
-                RankedCapabilitiesArg::Set(Some(auto))
-            }
-            (other, Some(auto)) => match other {
-                RankedCapabilitiesArg::Unspecified => RankedCapabilitiesArg::Set(Some(auto)),
-                x => x,
-            },
-            (x, None) => x,
+            (arg, _) if arg.emit_diagnostics() => arg,
+            (_, Some(auto)) => RankedCapabilitiesArg::host(Some(auto)),
+            (other, None) => other,
         };
         let seeds = crate::http_execute::resolve_capability_seeds(
             seeds,

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.30] - 2026-07-17
+
+### Fixed
+
+- **Ranked-replay silence:** strip discovery-qualified capability ids to bare wires before resolve; agent diagnostics only for explicit `ranked_capabilities` (host/auto-seed stays silent); drop mutator laundry lists and already-exposed noise.
+
+### Changed
+
+- **Ranked provenance:** `RankedCapabilitiesArg::{agent,host}` + session `ranked_replay_emit_diagnostics` — no twin `*_with_ranked_diag` APIs or emit threading through expand/federate.
+- **Write-path teaching:** one bind-ordered multi-write example in `plasm` tool copy; thinner `program` param; GitHub stamps for label replace, assignees add, PR update/merge, Copilot assign.
+
 ## [0.4.29] - 2026-07-17
 
 ### Fixed

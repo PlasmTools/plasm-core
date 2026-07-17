@@ -253,6 +253,11 @@ entities:
       milestone:
         target: Milestone
         cardinality: one
+        discovery:
+          seed_nav: attach
+          qualifier_terms:
+          - milestone
+          - milestones
       issue_type:
         target: IssueType
         cardinality: one
@@ -409,6 +414,11 @@ entities:
       milestone:
         target: Milestone
         cardinality: one
+        discovery:
+          seed_nav: attach
+          qualifier_terms:
+          - milestone
+          - milestones
       changed_files:
         target: PullRequestFile
         cardinality: many
@@ -797,6 +807,11 @@ entities:
     - number
     id_field: number
     description: A milestone grouping issues and pull requests.
+    discovery:
+      names:
+      - milestone
+      - milestones
+      seed_class: dependent
     fields:
       owner:
         required: true
@@ -3175,7 +3190,8 @@ capabilities:
       - label pr
       - pr labels
       - update pull request labels
-      - add labels
+      - set labels
+      - replace labels
       target_terms:
       - issue
       - pull request
@@ -3279,6 +3295,14 @@ capabilities:
     kind: action
     entity: Issue
     description: Add assignees without replacing existing ones.
+    discovery:
+      operation_terms:
+      - add assignees
+      - assign users
+      - assign people
+      target_terms:
+      - assignee
+      - issue
     parameters:
     - name: assignees
       value_ref: nv_issue_assignees_add_assignees
@@ -3301,6 +3325,14 @@ capabilities:
     kind: action
     entity: Issue
     description: Assign Copilot agent to an issue.
+    discovery:
+      operation_terms:
+      - assign copilot
+      - copilot agent
+      - assign coding agent
+      target_terms:
+      - copilot
+      - issue
     parameters:
     - name: target_repo
       value_ref: nv_issue_assign_copilot_target_repo
@@ -3385,6 +3417,15 @@ capabilities:
     kind: update
     entity: PullRequest
     description: Update an open pull request — change title, body, state, or base branch.
+    discovery:
+      operation_terms:
+      - update pull request
+      - update pr
+      - edit pull request
+      - change pr base
+      target_terms:
+      - pull request
+      - pr
     provides:
     - id
     - owner
@@ -3419,6 +3460,13 @@ capabilities:
     kind: action
     entity: PullRequest
     description: Merge a pull request.
+    discovery:
+      operation_terms:
+      - merge pull request
+      - merge pr
+      target_terms:
+      - pull request
+      - pr
     parameters:
     - name: commit_title
       value_ref: nv_wire_str_short
@@ -5137,7 +5185,7 @@ values:
     type: array
     items:
       value_ref: nv_wire_str_short
-    description: Label names defined on the repository.
+    description: Full replacement set of label names (not additive).
   nv_workflow_job_labels:
     type: array
     items:

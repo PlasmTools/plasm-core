@@ -48,11 +48,11 @@ pub use session_bindings::{EntityBinding, MethodBinding, RelationBinding};
 pub use symbol_traits::{SymbolAllocate, SymbolRender, SymbolResolve, SymbolSession};
 
 pub use capability_surface_params::{
-    capability_exposure_param_pairs, capability_exposure_param_triples,
-    capability_optional_legend_param_pairs, compact_mutator_param_marker,
-    exposed_mutator_capability_keys, input_field_is_array, loaded_catalog_entry_ids,
-    optional_legend_param_syms, resolve_ranked_wire_candidates, seeded_ranked_wire_candidates,
-    CapabilityParamSurfaceFilter,
+    bare_ranked_capability_wire, capability_exposure_param_pairs,
+    capability_exposure_param_triples, capability_optional_legend_param_pairs,
+    compact_mutator_param_marker, exposed_mutator_capability_keys, input_field_is_array,
+    loaded_catalog_entry_ids, optional_legend_param_syms, resolve_ranked_wire_candidates,
+    seeded_ranked_wire_candidates, CapabilityParamSurfaceFilter,
 };
 pub use persisted_ledger::{
     catalog_cgs_hashes_from_session, catalog_pins_match, PersistedSymbolLedger,

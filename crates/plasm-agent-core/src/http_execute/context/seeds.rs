@@ -215,10 +215,10 @@ pub(super) fn ranked_capabilities_need_exposure_replay(
     exp: &plasm_core::TeachingExposureSession,
     ranked_arg: &RankedCapabilitiesArg,
 ) -> bool {
-    let RankedCapabilitiesArg::Set(Some(list)) = ranked_arg else {
+    let Some(list) = ranked_arg.names() else {
         return false;
     };
-    let Some(normalized) = normalize_ranked_capabilities_for_gate(Some(list.clone())) else {
+    let Some(normalized) = normalize_ranked_capabilities_for_gate(Some(list.to_vec())) else {
         return false;
     };
     normalized.iter().any(|name| {
@@ -326,10 +326,49 @@ pub(crate) fn normalize_context_intent_for_domain_filter(raw: Option<&str>) -> O
 /// MCP `plasm_context` `ranked_capabilities` argument: omitted vs explicit replace/clear.
 #[derive(Clone, Debug)]
 pub enum RankedCapabilitiesArg {
-    /// Key absent — keep the session's ranked list on expand waves.
+    /// Key absent — keep the session's ranked list on expand waves; no agent diagnostics.
     Unspecified,
     /// Key present (`null`, `[]`, or string array) — replace the session list when intent-scoped.
-    Set(Option<Vec<String>>),
+    Set {
+        names: Option<Vec<String>>,
+        /// Agent-explicit this turn — exposure commit may append ranked-replay markdown.
+        emit_diagnostics: bool,
+    },
+}
+
+impl RankedCapabilitiesArg {
+    /// Agent-explicit replace (may emit ranked-replay diagnostics).
+    pub fn agent(names: Option<Vec<String>>) -> Self {
+        Self::Set {
+            names,
+            emit_diagnostics: true,
+        }
+    }
+
+    /// Host / auto-seed replace (silent).
+    pub fn host(names: Option<Vec<String>>) -> Self {
+        Self::Set {
+            names,
+            emit_diagnostics: false,
+        }
+    }
+
+    pub fn names(&self) -> Option<&[String]> {
+        match self {
+            Self::Set { names: Some(v), .. } => Some(v.as_slice()),
+            _ => None,
+        }
+    }
+
+    pub fn emit_diagnostics(&self) -> bool {
+        matches!(
+            self,
+            Self::Set {
+                emit_diagnostics: true,
+                ..
+            }
+        )
+    }
 }
 
 pub(crate) fn normalize_ranked_capabilities_for_gate(
@@ -337,8 +376,7 @@ pub(crate) fn normalize_ranked_capabilities_for_gate(
 ) -> Option<Vec<String>> {
     let mut v: Vec<String> = raw?
         .into_iter()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+        .filter_map(|s| plasm_core::bare_ranked_capability_wire(&s))
         .collect();
     if v.is_empty() {
         return None;
@@ -383,9 +421,6 @@ pub(super) async fn apply_ranked_capabilities_session_update(
     session_id: &str,
     ranked_arg: &RankedCapabilitiesArg,
 ) -> Result<(), super::session::SessionMutateError> {
-    let RankedCapabilitiesArg::Set(opt) = ranked_arg else {
-        return Ok(());
-    };
     let prompt_hash_p: PromptHashHex = prompt_hash
         .parse()
         .map_err(|e: &'static str| super::session::SessionMutateError::from(e))?;
@@ -399,10 +434,22 @@ pub(super) async fn apply_ranked_capabilities_session_update(
         return Err("unknown or expired execute session".into());
     };
     let mut sess = (*sess_arc).clone();
-    if sess.context_intent.is_none() {
-        return Ok(());
+    match ranked_arg {
+        RankedCapabilitiesArg::Unspecified => {
+            sess.ranked_replay_emit_diagnostics = false;
+        }
+        RankedCapabilitiesArg::Set {
+            names,
+            emit_diagnostics,
+        } => {
+            if sess.context_intent.is_none() {
+                sess.ranked_replay_emit_diagnostics = false;
+            } else {
+                sess.ranked_capabilities = normalize_ranked_capabilities_for_gate(names.clone());
+                sess.ranked_replay_emit_diagnostics = *emit_diagnostics;
+            }
+        }
     }
-    sess.ranked_capabilities = normalize_ranked_capabilities_for_gate(opt.clone());
     st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), sess)
         .await?;
     Ok(())
@@ -560,13 +607,32 @@ mod ranked_replay_tests {
     };
 
     #[test]
+    fn normalize_ranked_capabilities_strips_discovery_ids() {
+        let got = normalize_ranked_capabilities_for_gate(Some(vec![
+            "github:Issue:issue_create".into(),
+            "matrix:LangItem.langitem_create".into(),
+            "issue_update".into(),
+            "github:Issue:issue_create".into(),
+        ]))
+        .expect("non-empty");
+        assert_eq!(
+            got,
+            vec![
+                "issue_create".to_string(),
+                "issue_update".to_string(),
+                "langitem_create".to_string(),
+            ]
+        );
+    }
+
+    #[test]
     fn ranked_capabilities_need_exposure_replay_when_mutator_missing_from_surface() {
         let cgs = load_github_cgs();
         let exp = TeachingExposureSession::new(&cgs, "github", &["Repository"]);
         assert!(
             ranked_capabilities_need_exposure_replay(
                 &exp,
-                &RankedCapabilitiesArg::Set(Some(vec!["zzzz_mutator_not_on_surface".into()])),
+                &RankedCapabilitiesArg::host(Some(vec!["zzzz_mutator_not_on_surface".into()])),
             ),
             "unknown ranked mutator must trigger replay"
         );
@@ -580,7 +646,7 @@ mod ranked_replay_tests {
         assert!(
             !ranked_capabilities_need_exposure_replay(
                 &exp,
-                &RankedCapabilitiesArg::Set(Some(vec![on_surface.to_string()])),
+                &RankedCapabilitiesArg::host(Some(vec![on_surface.to_string()])),
             ),
             "ranked cap already on surface must not trigger replay"
         );
@@ -631,7 +697,7 @@ mod ranked_replay_tests {
         assert!(
             !ranked_capabilities_need_exposure_replay(
                 &exp,
-                &RankedCapabilitiesArg::Set(Some(vec![mutator.into()])),
+                &RankedCapabilitiesArg::host(Some(vec![mutator.into()])),
             ),
             "seeded mutator already on surface must not trigger ranked replay"
         );
@@ -737,7 +803,7 @@ mod ranked_replay_tests {
         assert!(
             ranked_capabilities_need_exposure_replay(
                 &exp,
-                &RankedCapabilitiesArg::Set(Some(vec![mutator.into()])),
+                &RankedCapabilitiesArg::host(Some(vec![mutator.into()])),
             ),
             "ranked replay gate must fire for deferred relation-target mutator"
         );
@@ -815,15 +881,10 @@ mod ranked_replay_tests {
             MutatorAdmit::AlwaysOnSeeds,
         );
         let caps_before = exp.surface.capabilities.clone();
-        let diag =
-            format_ranked_replay_diagnostics(&exp, &["langitem_create".to_string()], &caps_before);
         assert!(
-            diag.contains("already exposed"),
-            "expected already-exposed diagnostic: {diag}"
-        );
-        assert!(
-            diag.contains("matrix:LangItem.langitem_create"),
-            "diagnostics must use qualified capability keys: {diag}"
+            format_ranked_replay_diagnostics(&exp, &["langitem_create".to_string()], &caps_before)
+                .is_none(),
+            "already-exposed ranked wire must not emit agent markdown"
         );
     }
 

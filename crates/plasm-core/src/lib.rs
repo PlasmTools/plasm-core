@@ -346,9 +346,9 @@ pub use summary_render::{
     render_intent_with_projection, render_intent_with_projection_federated, render_outcome,
 };
 pub use symbol_tuning::{
-    catalog_cgs_hashes_from_session, catalog_pins_match, entity_slices_for_render,
-    first_opaque_m_sym_in_expr, method_syms_in_expr, relation_endpoint_keys,
-    resolve_prompt_surface_entities, strip_prompt_expression_annotations,
+    bare_ranked_capability_wire, catalog_cgs_hashes_from_session, catalog_pins_match,
+    entity_slices_for_render, first_opaque_m_sym_in_expr, method_syms_in_expr,
+    relation_endpoint_keys, resolve_prompt_surface_entities, strip_prompt_expression_annotations,
     symbol_map_cache_key_federated, symbol_map_cache_key_single_catalog,
     symbol_map_fingerprint_hex, symbol_map_for_prompt, wire_surface_for_parse,
     wire_surface_for_teaching_session, CatalogScope, ExposedEntitySymbolRow,

@@ -122,6 +122,7 @@ async fn commit_federate_wave_inner(
     let scope_intent = sess.context_intent.clone();
     let ranked_names = sess.ranked_capabilities.clone();
     let ranked_slice = ranked_names.as_deref();
+    let emit_ranked_replay_diagnostics = sess.ranked_replay_emit_diagnostics;
 
     if sess.contexts_by_entry.contains_key(&new_entry_id) {
         return Err(format!("session already includes catalog entry `{new_entry_id}`").into());
@@ -176,6 +177,7 @@ async fn commit_federate_wave_inner(
             entity_count_before: n0,
             relation_keys,
             ranked_capability_names: ranked_names,
+            emit_ranked_replay_diagnostics,
         },
     )
     .await?;

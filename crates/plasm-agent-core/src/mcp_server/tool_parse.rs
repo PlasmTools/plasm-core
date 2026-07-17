@@ -115,7 +115,7 @@ pub(crate) fn parse_plasm_context_ranked_capabilities(
 ) -> Result<RankedCapabilitiesArg, CallToolError> {
     match v.get("ranked_capabilities") {
         None => Ok(RankedCapabilitiesArg::Unspecified),
-        Some(serde_json::Value::Null) => Ok(RankedCapabilitiesArg::Set(None)),
+        Some(serde_json::Value::Null) => Ok(RankedCapabilitiesArg::agent(None)),
         Some(serde_json::Value::Array(arr)) => {
             let mut out = Vec::with_capacity(arr.len());
             for (i, item) in arr.iter().enumerate() {
@@ -127,7 +127,7 @@ pub(crate) fn parse_plasm_context_ranked_capabilities(
                 })?;
                 out.push(s.to_string());
             }
-            Ok(RankedCapabilitiesArg::Set(Some(out)))
+            Ok(RankedCapabilitiesArg::agent(Some(out)))
         }
         Some(_) => Err(CallToolError::invalid_arguments(
             tool,

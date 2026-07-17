@@ -192,10 +192,10 @@ pub async fn apply_capability_seeds(
     } = resolve_execute_binding(st, binding, logical_session_id).await;
 
     if seeds.is_empty() {
-        if matches!(
-            &ranked_capabilities,
-            RankedCapabilitiesArg::Set(Some(list)) if !list.is_empty()
-        ) {
+        if ranked_capabilities
+            .names()
+            .is_some_and(|list| !list.is_empty())
+        {
             if let Some((ph, sid)) = &binding {
                 if let Some(sess_arc) = st.get_execute_session(ph, sid).await {
                     seeds = super::super::seeds::capability_seeds_from_session(sess_arc.as_ref());
@@ -281,10 +281,7 @@ pub async fn apply_capability_seeds(
             principal: principal.clone(),
             logical_session_id,
             context_intent: normalize_context_intent_for_domain_filter(Some(plasm_context_intent)),
-            ranked_capabilities: match &ranked_capabilities {
-                RankedCapabilitiesArg::Unspecified => None,
-                RankedCapabilitiesArg::Set(opt) => opt.clone(),
-            },
+            ranked_capabilities: ranked_capabilities.names().map(|s| s.to_vec()),
             // Intent (and optional ranked_capabilities) admit mutators — not blanket first-wave expansion.
             mutator_admit: MutatorAdmit::IntentOnly,
         };
@@ -391,8 +388,8 @@ pub async fn apply_capability_seeds(
                         &entities,
                         &exp,
                         match &ranked_capabilities {
-                            RankedCapabilitiesArg::Set(opt) => opt.as_deref(),
                             RankedCapabilitiesArg::Unspecified => None,
+                            RankedCapabilitiesArg::Set { names, .. } => names.as_deref(),
                         },
                     ) {
                         open_md.push_str(&hint);
@@ -475,6 +472,14 @@ pub async fn apply_capability_seeds(
                 symbol_space_reset: false,
             });
         }
+    } else {
+        apply_ranked_capabilities_session_update(
+            st,
+            prompt_hash.as_str(),
+            session_id.as_str(),
+            &ranked_capabilities,
+        )
+        .await?;
     }
 
     let skip_primary_open = binding.is_none() && waves.iter().any(|w| w.mode == "open");

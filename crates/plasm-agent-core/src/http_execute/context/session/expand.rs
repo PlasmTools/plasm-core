@@ -40,6 +40,7 @@ async fn commit_expand_wave(
     let scope_intent = sess.context_intent.clone();
     let ranked_names = sess.ranked_capabilities.clone();
     let ranked_slice = ranked_names.as_deref();
+    let emit_ranked_replay_diagnostics = sess.ranked_replay_emit_diagnostics;
     let Some(mut exp) = sess.teaching_exposure.take() else {
         return Err("session has no incremental exposure state".into());
     };
@@ -145,6 +146,7 @@ async fn commit_expand_wave(
             entity_count_before: n0,
             relation_keys,
             ranked_capability_names: ranked_names,
+            emit_ranked_replay_diagnostics,
         },
     )
     .await?;

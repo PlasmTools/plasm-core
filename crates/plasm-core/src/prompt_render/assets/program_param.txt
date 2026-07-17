@@ -6,10 +6,10 @@ Shape:
 - Get by identity: `e#(id)` (parens). Query/filter: `e#{field="val"}` (braces). Relation nav: `producer.r#`.
 - Search when taught: `e#~"text"` or `e#~$` (bare `e#~` is a parse error).
 - Postfix from the TSV left column: `.filter{…}` `.sort(field,desc)` `.limit(n)` `.group_by` `.aggregate`; `[field,…]` projects.
-- Write effect: `source => e#.m#(param=…)`; create-from-nothing: `e#.m#(param=…)`.
+- Write: `source => e#.m#(param=…)`; create: `e#.m#(param=…)`. Prior write **`provides`** fields usable as later args; `[field,…]` on creates projects them.
 - After `repo = e#(…)`, prefer **`repo.m#(…)`** / **`repo.r#`**.
-- Batch independent reads into ONE program: bind shared scope once, then return several roots on the final line.
+- Multi-write / batch-read shape: see the `plasm` tool description.
 
 Strings use JSON escapes inside quotes; multiline: `label = <<TAG` … `TAG` (pass `param=label`). Row-to-text: `label = source[field,…] <<TAG` — use `binding.content` for string params.
 
-Full grammar is in the `plasm` tool description. On parse/symbol error, extend the same session (`session_mode: "extend"`, same `logical_session_ref`) — do not open a new one.
+Full grammar is in the `plasm` tool description. Session / parse recovery: see **`plasm_context`** (`session_mode: "extend"`, same `logical_session_ref` — not `new`).

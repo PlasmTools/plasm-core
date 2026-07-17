@@ -2023,6 +2023,20 @@ fn plasm_tool_description_includes_row_compute_worked_example() {
         !frontmatter.contains("e2(p10="),
         "canonical frontmatter must not hardcode catalog-specific symbol indices"
     );
+    assert!(
+        frontmatter.contains("bind-ordered")
+            && frontmatter.contains("e_issue.m_create")
+            && frontmatter.contains("e_comment.m_create"),
+        "write-batch guidance must prefer one multi-write program with create→write example"
+    );
+    assert!(
+        !frontmatter.contains("co-committed gates"),
+        "retired undefined co-committed-gates phrasing"
+    );
+    assert!(
+        !frontmatter.contains("re-read `e#(id=…)` to continue"),
+        "↠ must not be framed as an in-program re-read ban"
+    );
 }
 
 #[test]
