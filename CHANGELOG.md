@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.29] - 2026-07-17
+
+### Fixed
+
+- **Cursor MCP App paint:** plan/run agent content tokens now include `logical_session_ref` (and `plan_uri` on dry-run) so Plan Review / Run Explorer can call `plasm_ui_read_*` when the host strips `_meta` and omits `structuredContent.ui`. App hosts also merge `toolinput` session into hydrate when content tokens omit the ref.
+- **Vultr CR prune:** cull older semver tags (keep newest 3) and tighten ephemeral keep (default 2); digest-safe deletes; aggressive re-prune on bake quota/`denied` failures.
+
 ## [0.4.28] - 2026-07-16
 
 ### Changed
