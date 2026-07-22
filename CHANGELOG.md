@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.31] - 2026-07-22
+
+### Added
+
+- **Flow-policy goldens:** shared `query_then_sanitize_plan` / topo helpers; G-C2/G-C4 + expanded `flow_policy_validate` coverage (alias G-C3/G-B2 removed; docs retarget G-C3→G-A5, G-B2→G-X1).
+
 ## [0.4.30] - 2026-07-17
 
 ### Fixed

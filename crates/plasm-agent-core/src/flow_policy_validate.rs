@@ -399,8 +399,12 @@ mod tests {
     use crate::flow_policy_vocabulary::{
         CapabilityVocabEntry, CatalogVocabulary, DataClassVocabEntry, SinkClassVocabEntry,
     };
-    use crate::plan_flow_policy::{FlowPolicy, ForbiddenFlowRule};
+    use crate::plan_flow_policy::{
+        CapabilityGatePattern, CapabilityGateRule, FlowPolicy, ForbiddenFlowRule,
+        OperatorDisposition, SanitizerRecognition,
+    };
     use plasm_core::{DataClassName, SinkClassName};
+    use std::collections::BTreeSet;
 
     fn sample_vocab() -> ProjectFlowVocabulary {
         ProjectFlowVocabulary {
@@ -432,16 +436,38 @@ mod tests {
                     },
                 ],
                 entities: vec!["Instance".into()],
-                capabilities: vec![CapabilityVocabEntry {
-                    entity: "Instance".into(),
-                    name: "delete".into(),
-                    kind: "delete".into(),
-                    effect_class: "write".into(),
-                    deterministic: true,
-                    output_labels: vec![],
-                    sink_classes: vec![],
-                    control_params: vec![],
-                }],
+                capabilities: vec![
+                    CapabilityVocabEntry {
+                        entity: "Instance".into(),
+                        name: "delete".into(),
+                        kind: "delete".into(),
+                        effect_class: "write".into(),
+                        deterministic: true,
+                        output_labels: vec![],
+                        sink_classes: vec![],
+                        control_params: vec![],
+                    },
+                    CapabilityVocabEntry {
+                        entity: "Message".into(),
+                        name: "sanitize_body".into(),
+                        kind: "action".into(),
+                        effect_class: "side_effect".into(),
+                        deterministic: true,
+                        output_labels: vec![],
+                        sink_classes: vec![],
+                        control_params: vec![],
+                    },
+                    CapabilityVocabEntry {
+                        entity: "Message".into(),
+                        name: "llm_rewrite".into(),
+                        kind: "action".into(),
+                        effect_class: "side_effect".into(),
+                        deterministic: false,
+                        output_labels: vec![],
+                        sink_classes: vec![],
+                        control_params: vec![],
+                    },
+                ],
             }],
         }
     }
@@ -504,5 +530,83 @@ mod tests {
         let r = validate_flow_policy(&policy, &sample_vocab());
         assert!(r.ok);
         assert!(r.warnings.iter().any(|e| e.code == "dimension_mismatch"));
+    }
+
+    #[test]
+    fn rejects_missing_reason() {
+        let policy = FlowPolicy {
+            forbidden: vec![ForbiddenFlowRule {
+                from_label: DataClassName::new("credentials").unwrap(),
+                to_sink: Some(SinkClassName::new("external_publish").unwrap()),
+                reason: Some("   ".into()),
+            }],
+            ..FlowPolicy::empty_allow()
+        };
+        let r = validate_flow_policy(&policy, &sample_vocab());
+        assert!(!r.ok);
+        assert!(r.errors.iter().any(|e| e.code == "missing_reason"));
+    }
+
+    #[test]
+    fn rejects_unknown_sanitizer_label() {
+        let policy = FlowPolicy {
+            sanitizers: vec![SanitizerRecognition {
+                capability: "sanitize_body".into(),
+                clears: BTreeSet::from([DataClassName::new("not_a_label").unwrap()]),
+            }],
+            ..FlowPolicy::empty_allow()
+        };
+        let r = validate_flow_policy(&policy, &sample_vocab());
+        assert!(!r.ok);
+        assert!(r.errors.iter().any(|e| e.code == "unknown_sanitizer_label"));
+    }
+
+    #[test]
+    fn rejects_non_deterministic_sanitizer() {
+        let policy = FlowPolicy {
+            sanitizers: vec![SanitizerRecognition {
+                capability: "llm_rewrite".into(),
+                clears: BTreeSet::from([DataClassName::new("untrusted").unwrap()]),
+            }],
+            ..FlowPolicy::empty_allow()
+        };
+        let r = validate_flow_policy(&policy, &sample_vocab());
+        assert!(!r.ok);
+        assert!(r
+            .errors
+            .iter()
+            .any(|e| e.code == "non_deterministic_sanitizer"));
+    }
+
+    #[test]
+    fn warns_broad_capability_gate() {
+        let policy = FlowPolicy {
+            capability_gates: vec![CapabilityGateRule {
+                pattern: CapabilityGatePattern {
+                    entry_id: None,
+                    entity: None,
+                    capability: "delete".into(),
+                },
+                enforcement: OperatorDisposition::Deny,
+            }],
+            ..FlowPolicy::empty_allow()
+        };
+        let r = validate_flow_policy(&policy, &sample_vocab());
+        assert!(r.ok, "{r:?}");
+        assert!(r.warnings.iter().any(|w| w.code == "broad_capability_gate"));
+    }
+
+    #[test]
+    fn warns_deny_posture_with_no_allow_gates() {
+        let policy = FlowPolicy {
+            default_posture: OperatorDisposition::Deny,
+            ..FlowPolicy::empty_allow()
+        };
+        let r = validate_flow_policy(&policy, &sample_vocab());
+        assert!(r.ok, "{r:?}");
+        assert!(r
+            .warnings
+            .iter()
+            .any(|w| w.code == "deny_posture_no_allow_gates"));
     }
 }

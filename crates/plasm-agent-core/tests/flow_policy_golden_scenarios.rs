@@ -17,7 +17,8 @@ use plasm_agent_core::plasm_plan::parse_and_validate_plan_json;
 use plasm_agent_core::{
     verify_plan_flow, CapabilityGatePattern, CapabilityGateRule, EffectEvent, FlowCatalogView,
     FlowPolicy, FlowPolicySnapshot, FlowVerdict, ForbiddenFlowRule, NodeDisposition,
-    OperatorDisposition, PolicyRevision, QualifiedCapabilityKey, SinkParamRef,
+    OperatorDisposition, PolicyRevision, QualifiedCapabilityKey, SanitizerRecognition,
+    SinkParamRef,
 };
 use plasm_core::{load_schema_dir_unvalidated, CapabilityParamName, DataClassName, SinkClassName};
 
@@ -81,6 +82,55 @@ fn query_then_send_plan() -> serde_json::Value {
 /// Plan topo order for the query-then-send plan.
 fn query_send_topo() -> Vec<String> {
     vec!["messages".to_string(), "send".to_string()]
+}
+
+/// Plan: query messages then sanitize_body with body hole (catalog clears untrusted).
+fn query_then_sanitize_plan() -> serde_json::Value {
+    serde_json::json!({
+        "version": 1,
+        "kind": "program",
+        "nodes": [
+            {
+                "id": "messages",
+                "kind": "query",
+                "qualified_entity": { "entry_id": "flow", "entity": "Message" },
+                "expr": "Message",
+                "ir": { "expr": { "op": "query", "entity": "Message", "capability": "message_query" } },
+                "effect_class": "read",
+                "result_shape": "list"
+            },
+            {
+                "id": "sanitize",
+                "kind": "action",
+                "qualified_entity": { "entry_id": "flow", "entity": "Message" },
+                "depends_on": ["messages"],
+                "uses_result": [{ "node": "messages", "as": "messages" }],
+                "effect_class": "side_effect",
+                "result_shape": "side_effect_ack",
+                "ir_template": {
+                    "expr": {
+                        "op": "invoke",
+                        "capability": "sanitize_body",
+                        "target": { "entity_type": "Message", "key": { "id": "1" } },
+                        "input": {
+                            "body": {
+                                "__plasm_hole": {
+                                    "kind": "node_input",
+                                    "alias": "messages",
+                                    "path": ["body"]
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        ],
+        "return": { "kind": "node", "node": "sanitize" }
+    })
+}
+
+fn query_sanitize_topo() -> Vec<String> {
+    vec!["messages".to_string(), "sanitize".to_string()]
 }
 
 /// Hand-built FlowCatalogView for the query→send tests (avoids loading the full CGS for pure policy tests).
@@ -668,5 +718,165 @@ fn flow_matrix_sanitize_body_clears_untrusted() {
     assert!(
         sanitizers.iter().any(|s| s.as_str() == "untrusted"),
         "flow_matrix: sanitize_body capability must sanitize untrusted; got {sanitizers:?}"
+    );
+}
+
+// ─────────────────────────────────────────────────────────
+// G-C: Catalog + policy sanitizer clearance
+// G-C3 is covered by G-A5 (control-taint voids clearance) — no alias test.
+// ─────────────────────────────────────────────────────────
+
+/// G-C2: `sanitize_body` clears `untrusted` via catalog `sanitizes:` when control params are clean.
+#[test]
+fn g_c2_sanitize_body_clears_untrusted_via_catalog() {
+    let catalog = flow_matrix_view();
+    let validated = parse_and_validate_plan_json(&query_then_sanitize_plan()).expect("validate plan");
+    let checked = verify_plan_flow(
+        validated.artifact(),
+        &query_sanitize_topo(),
+        &catalog,
+        &FlowPolicySnapshot::Inactive,
+    );
+    let proof = checked
+        .analysis
+        .sink_proofs
+        .get("sanitize")
+        .expect("sanitize sink proof");
+    assert!(
+        matches!(
+            proof,
+            plasm_agent_core::SinkProof::Sanitized { by, cleared }
+                if by == "sanitize_body"
+                    && cleared.iter().any(|l| l.as_str() == "untrusted")
+        ),
+        "G-C2: sanitize_body must Sanitized-clear untrusted; got {proof:?}"
+    );
+    let facts = checked
+        .analysis
+        .node_facts
+        .get("sanitize")
+        .expect("sanitize facts");
+    assert!(
+        !facts
+            .row_join()
+            .labels
+            .contains(&DataClassName::new("untrusted").expect("untrusted")),
+        "G-C2: outgoing labels must not carry untrusted after sanitize_body"
+    );
+}
+
+/// G-C4: Policy `sanitizers[]` augments catalog — clears credentials beyond catalog `sanitizes:`.
+#[test]
+fn g_c4_policy_sanitizer_augments_catalog_clearance() {
+    let mut catalog = flow_matrix_view();
+    let read_key = QualifiedCapabilityKey::from_parts("flow", "Message", "message_query");
+    catalog
+        .capability_output_labels
+        .entry(read_key)
+        .or_default()
+        .insert(DataClassName::new("credentials").expect("credentials"));
+
+    let policy = FlowPolicy {
+        default_posture: OperatorDisposition::Allow,
+        sanitizers: vec![SanitizerRecognition {
+            capability: "sanitize_body".into(),
+            clears: BTreeSet::from([DataClassName::new("credentials").expect("credentials")]),
+        }],
+        ..FlowPolicy::empty_allow()
+    };
+    let snapshot = FlowPolicySnapshot::Active {
+        revision: PolicyRevision(1),
+        policy,
+    };
+
+    let validated = parse_and_validate_plan_json(&query_then_sanitize_plan()).expect("validate plan");
+    let checked = verify_plan_flow(
+        validated.artifact(),
+        &query_sanitize_topo(),
+        &catalog,
+        &snapshot,
+    );
+    let proof = checked
+        .analysis
+        .sink_proofs
+        .get("sanitize")
+        .expect("sanitize sink proof");
+    assert!(
+        matches!(
+            proof,
+            plasm_agent_core::SinkProof::Sanitized { cleared, .. }
+                if cleared.iter().any(|l| l.as_str() == "credentials")
+                    && cleared.iter().any(|l| l.as_str() == "untrusted")
+        ),
+        "G-C4: policy+catalog clearance must include credentials and untrusted; got {proof:?}"
+    );
+    let facts = checked
+        .analysis
+        .node_facts
+        .get("sanitize")
+        .expect("sanitize facts");
+    assert!(
+        !facts
+            .row_join()
+            .labels
+            .contains(&DataClassName::new("credentials").expect("credentials")),
+        "G-C4: credentials must be cleared by policy sanitizer"
+    );
+}
+
+// ─────────────────────────────────────────────────────────
+// G-X / G-B2: Federated entry_id gate scoping
+// G-B2 is the same contract as G-X1 — covered here, documented in the golden catalog.
+// ─────────────────────────────────────────────────────────
+
+/// G-X1 / G-B2: Gate scoped to `vultr`/`Instance`/`delete` blocks Vultr only.
+#[test]
+fn g_x1_entry_id_scoped_gate_does_not_block_other_catalog() {
+    let policy = FlowPolicy {
+        default_posture: OperatorDisposition::Allow,
+        capability_gates: vec![CapabilityGateRule {
+            pattern: CapabilityGatePattern {
+                entry_id: Some("vultr".into()),
+                entity: Some("Instance".into()),
+                capability: "delete".into(),
+            },
+            enforcement: OperatorDisposition::Deny,
+        }],
+        ..FlowPolicy::empty_allow()
+    };
+    let effective = FlowPolicySnapshot::Active {
+        revision: PolicyRevision(1),
+        policy,
+    }
+    .effective_policy();
+
+    let vultr_delete = EffectEvent {
+        entry_id: "vultr".into(),
+        entity: "Instance".into(),
+        kind: plasm_agent_core::plasm_plan::PlanNodeKind::Delete,
+        effect_class: plasm_agent_core::plasm_plan::EffectClass::Write,
+        capability: "delete".into(),
+    };
+    let linear_delete = EffectEvent {
+        entry_id: "linear".into(),
+        entity: "Issue".into(),
+        kind: plasm_agent_core::plasm_plan::PlanNodeKind::Delete,
+        effect_class: plasm_agent_core::plasm_plan::EffectClass::Write,
+        capability: "delete".into(),
+    };
+
+    assert!(
+        matches!(
+            effective.disposition_for_event(&vultr_delete, None),
+            NodeDisposition::Deny
+        ),
+        "G-X1: vultr Instance delete must Deny"
+    );
+    assert!(
+        matches!(
+            effective.disposition_for_event(&linear_delete, None),
+            NodeDisposition::Allow
+        ),
+        "G-X1: linear Issue delete must remain Allow (unmatched gate)"
     );
 }
