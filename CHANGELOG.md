@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.32] - 2026-07-22
+
+### Changed
+
+- **Workspace SemVer** aligned with monorepo Plan Security authoring fixes (incomplete-row retention, sink catalog / any-catalog model, validate refuses WIP).
+
 ## [0.4.31] - 2026-07-22
 
 ### Added
