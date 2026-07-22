@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.33] - 2026-07-22
+
+### Changed
+
+- **Workspace SemVer** aligned with monorepo Plan Security cutover: explicit `FlowPolicySink` (`:any`/`:pending`/`:concrete`), shared `FlowPolicyCompleteness`, vocabulary canonicalize at fetch (`name` + sink `id`), empty-vocab hints.
+
 ## [0.4.32] - 2026-07-22
 
 ### Changed
