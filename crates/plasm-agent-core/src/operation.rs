@@ -708,11 +708,7 @@ pub fn async_live_run_accept_parts(
 }
 
 fn dry_verdict_wire(verdict: PlanDryVerdict) -> &'static str {
-    match verdict {
-        PlanDryVerdict::Ok => "ok",
-        PlanDryVerdict::Review => "review",
-        PlanDryVerdict::Deny => "deny",
-    }
+    verdict.as_wire()
 }
 
 /// Slim agent-facing plan commit fields (`run_ref` + `dry_verdict` only).

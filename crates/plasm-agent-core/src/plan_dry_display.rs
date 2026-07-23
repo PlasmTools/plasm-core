@@ -21,6 +21,17 @@ pub enum PlanDryVerdict {
     Deny,
 }
 
+impl PlanDryVerdict {
+    /// Canonical agent/control-plane wire string (`ok` | `review` | `deny`).
+    pub fn as_wire(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Review => "review",
+            Self::Deny => "deny",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlanDryReview {
     pub has_unprojected_multi_row_read: bool,

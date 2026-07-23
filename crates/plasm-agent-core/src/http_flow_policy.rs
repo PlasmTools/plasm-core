@@ -9,7 +9,9 @@ use serde_json::{json, Value};
 
 use crate::control_plane_http::control_plane_headers_authorized;
 use crate::flow_policy_repository::{FlowPolicyRepository, FlowPolicyRepositoryError};
-use crate::flow_policy_simulate::{simulate_flow_policy, SimulatePolicyArm};
+use crate::flow_policy_simulate::{
+    simulate_flow_policy_with_options, SimulateError, SimulateOptions, SimulatePolicyArm,
+};
 use crate::flow_policy_validate::validate_flow_policy;
 use crate::flow_policy_vocabulary::project_vocabulary;
 use crate::http_execute::CapabilitySeed;
@@ -59,6 +61,9 @@ struct SimulateBody {
     program: String,
     #[serde(default = "default_intent")]
     intent: String,
+    /// Optional ephemeral draft policy (draft arm only; no DB write).
+    #[serde(default)]
+    policy: Option<FlowPolicy>,
 }
 
 fn default_policy_arm() -> SimulatePolicyArm {
@@ -262,29 +267,86 @@ async fn simulate_handler(
     Extension(st): Extension<PlasmHostState>,
     headers: axum::http::HeaderMap,
     Json(body): Json<SimulateBody>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     if !control_plane_headers_authorized(&headers, "flow policy simulate") {
-        return Err(StatusCode::UNAUTHORIZED);
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"code": "unauthorized", "error": "unauthorized"})),
+        ));
     }
-    let repo = repo(&st)?;
-    let row = repo
-        .get_or_default(&body.tenant_id, &body.workspace_slug, &body.project_slug)
-        .await
-        .map_err(map_repo_err)?;
-    let result = simulate_flow_policy(
+
+    let ephemeral = body.policy.clone();
+    let row = if matches!(body.policy_arm, SimulatePolicyArm::Draft) && ephemeral.is_some() {
+        // Ephemeral draft arm: policy is entirely in the request — no DB read/write.
+        synthetic_simulate_row(&body)
+    } else if let Some(repo) = st.flow_policy_repository() {
+        repo.get_or_default(&body.tenant_id, &body.workspace_slug, &body.project_slug)
+            .await
+            .map_err(|e| {
+                let status = map_repo_err(e);
+                (
+                    status,
+                    Json(json!({
+                        "code": "repository_error",
+                        "error": "flow policy repository error"
+                    })),
+                )
+            })?
+    } else {
+        // No store and no ephemeral body — fail closed with typed arm errors.
+        return Err(map_simulate_err(match body.policy_arm {
+            SimulatePolicyArm::Draft => SimulateError::DraftMissing,
+            SimulatePolicyArm::Published => SimulateError::PublishedInactive,
+        }));
+    };
+
+    let result = simulate_flow_policy_with_options(
         &st,
         &row,
         body.policy_arm,
         body.seeds,
         body.program.as_str(),
         body.intent.as_str(),
+        SimulateOptions {
+            ephemeral_policy: ephemeral,
+        },
     )
     .await
-    .map_err(|e| {
-        tracing::warn!(message = %e, "flow policy simulate failed");
-        StatusCode::BAD_REQUEST
+    .map_err(map_simulate_err)?;
+
+    let value = serde_json::to_value(&result).map_err(|e| {
+        map_simulate_err(SimulateError::Other(format!(
+            "simulate response encode failed: {e}"
+        )))
     })?;
-    Ok(Json(serde_json::to_value(result).unwrap_or(json!({}))))
+    Ok(Json(value))
+}
+
+fn synthetic_simulate_row(body: &SimulateBody) -> crate::flow_policy_repository::FlowPolicyRow {
+    crate::flow_policy_repository::FlowPolicyRow {
+        tenant_id: body.tenant_id.clone(),
+        workspace_slug: body.workspace_slug.clone(),
+        project_slug: body.project_slug.clone(),
+        published_revision: 0,
+        published_policy: None,
+        published_at: None,
+        published_by_subject: None,
+        draft_policy: None,
+        draft_updated_at: None,
+        draft_validated_at: None,
+        draft_validation_ok: None,
+    }
+}
+
+fn map_simulate_err(e: SimulateError) -> (StatusCode, Json<Value>) {
+    tracing::warn!(code = e.code(), message = %e.message(), "flow policy simulate failed");
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({
+            "code": e.code(),
+            "error": e.message(),
+        })),
+    )
 }
 
 fn row_to_wire(row: &crate::flow_policy_repository::FlowPolicyRow) -> Value {

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.34] - 2026-07-23
+
+### Added
+
+- **Plan Security Simulate contract:** typed `SimulateError` codes, ephemeral draft `policy` on simulate (no DB write), `PlanDryVerdict::as_wire`, HTTP `/internal/flow-policy/v1/simulate` contract tests, and live `simulate_flow_policy` dry-verdict goldens on the language matrix.
+
+### Changed
+
+- **Simulate draft arm** skips flow-policy repository when ephemeral policy is posted; missing store without ephemeral fails closed (`draft_missing` / `published_inactive`).
+
 ## [0.4.33] - 2026-07-22
 
 ### Changed

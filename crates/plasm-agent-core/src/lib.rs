@@ -116,6 +116,10 @@ mod flow_policy_env;
 pub mod flow_policy_repository;
 mod flow_policy_session;
 mod flow_policy_simulate;
+pub use flow_policy_simulate::{
+    simulate_flow_policy, simulate_flow_policy_with_options, FlowPolicySimulateResult,
+    SimulateError, SimulateOptions, SimulatePolicyArm,
+};
 mod flow_policy_validate;
 mod flow_policy_vocabulary;
 mod plan_execute_shared;
