@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.35] - 2026-07-23
+
+### Fixed
+
+- **plasm-web Docker bake:** copy `fixtures/flow-policies` to `/fixtures/flow-policies` so compile-time `@external_resource` packs resolve under `/app` WORKDIR.
+
 ## [0.4.34] - 2026-07-23
 
 ### Added
