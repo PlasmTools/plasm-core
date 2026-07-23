@@ -730,7 +730,8 @@ fn flow_matrix_sanitize_body_clears_untrusted() {
 #[test]
 fn g_c2_sanitize_body_clears_untrusted_via_catalog() {
     let catalog = flow_matrix_view();
-    let validated = parse_and_validate_plan_json(&query_then_sanitize_plan()).expect("validate plan");
+    let validated =
+        parse_and_validate_plan_json(&query_then_sanitize_plan()).expect("validate plan");
     let checked = verify_plan_flow(
         validated.artifact(),
         &query_sanitize_topo(),
@@ -789,7 +790,8 @@ fn g_c4_policy_sanitizer_augments_catalog_clearance() {
         policy,
     };
 
-    let validated = parse_and_validate_plan_json(&query_then_sanitize_plan()).expect("validate plan");
+    let validated =
+        parse_and_validate_plan_json(&query_then_sanitize_plan()).expect("validate plan");
     let checked = verify_plan_flow(
         validated.artifact(),
         &query_sanitize_topo(),

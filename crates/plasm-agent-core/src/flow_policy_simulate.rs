@@ -139,10 +139,9 @@ pub async fn simulate_flow_policy_with_options(
         .map_err(|e| SimulateError::Session(e.to_string()))?;
     st.sessions.replace_session(&ph_typed, &sid_typed, es).await;
 
-    let es = st
-        .get_execute_session(&ph, &sid)
-        .await
-        .ok_or_else(|| SimulateError::Session("simulate session missing after policy pin".into()))?;
+    let es = st.get_execute_session(&ph, &sid).await.ok_or_else(|| {
+        SimulateError::Session("simulate session missing after policy pin".into())
+    })?;
 
     let pipeline = st.engine.prompt_pipeline();
     let cross = st.sessions.symbol_map_cross_cache();
@@ -227,7 +226,8 @@ mod tests {
 
     #[test]
     fn draft_missing_without_ephemeral() {
-        let err = policy_snapshot_for_arm(&empty_row(), SimulatePolicyArm::Draft, None).unwrap_err();
+        let err =
+            policy_snapshot_for_arm(&empty_row(), SimulatePolicyArm::Draft, None).unwrap_err();
         assert_eq!(err, SimulateError::DraftMissing);
         assert_eq!(err.code(), "draft_missing");
     }

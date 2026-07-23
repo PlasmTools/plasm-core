@@ -10,10 +10,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use plasm_agent_core::{
-    EffectEvent, FlowPolicy, NodeDisposition, OperatorDisposition,
-};
 use plasm_agent_core::plasm_plan::{EffectClass, PlanNodeKind};
+use plasm_agent_core::{EffectEvent, FlowPolicy, NodeDisposition, OperatorDisposition};
 use serde::Deserialize;
 
 fn workspace_root() -> PathBuf {
@@ -76,7 +74,9 @@ fn simulate_pack_has_eight_normative_scenarios() {
     let pack = load_pack();
     assert_eq!(pack.version, 1);
     assert_eq!(pack.scenarios.len(), 8);
-    assert!(pack.policy_fixture.contains("vultr-linear-ops-security.json"));
+    assert!(pack
+        .policy_fixture
+        .contains("vultr-linear-ops-security.json"));
     let ids: Vec<_> = pack.scenarios.iter().map(|s| s.id.as_str()).collect();
     assert_eq!(ids, ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8"]);
     for sc in &pack.scenarios {
@@ -115,7 +115,11 @@ fn simulate_pack_seeds_exist_in_catalog_domains() {
             }
         }
     }
-    assert!(errors.is_empty(), "seed validation failed:\n{}", errors.join("\n"));
+    assert!(
+        errors.is_empty(),
+        "seed validation failed:\n{}",
+        errors.join("\n")
+    );
 }
 
 #[test]
@@ -260,11 +264,11 @@ mod live_dry_run {
     use plasm_agent_core::flow_policy_repository::FlowPolicyRow;
     use plasm_agent_core::http::{build_plasm_host_state, PlasmHostBootstrap};
     use plasm_agent_core::http_execute::CapabilitySeed;
+    use plasm_agent_core::server_state::CatalogBootstrap;
     use plasm_agent_core::{
         simulate_flow_policy_with_options, CapabilityGatePattern, CapabilityGateRule,
         SimulateOptions, SimulatePolicyArm,
     };
-    use plasm_agent_core::server_state::CatalogBootstrap;
     use plasm_core::discovery::InMemoryCgsRegistry;
     use plasm_core::loader::load_schema_dir;
     use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
@@ -369,4 +373,3 @@ mod live_dry_run {
         assert_eq!(result.dry_verdict, "ok");
     }
 }
-
