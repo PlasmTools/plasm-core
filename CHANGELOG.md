@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.36] - 2026-07-24
+
+### Fixed
+
+- **plasm-web Docker bake:** load Plan Security scenario/preset packs from `web/priv/flow_policies/` (ships with `COPY web/priv`) instead of monorepo `/fixtures` path expand.
+
 ## [0.4.35] - 2026-07-23
 
 ### Fixed
