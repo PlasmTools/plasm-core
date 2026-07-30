@@ -257,8 +257,7 @@ mod tests {
     }
 
     #[test]
-    fn copy_notice_never_echoes_secret() {
-        let secret = "plasm-secret-value";
+    fn copy_notice_uses_requested_titles() {
         let ok_notice = copy_notice("API key secret copied", "copy failed", Ok(()));
         let err_notice = copy_notice(
             "API key secret copied",
@@ -266,8 +265,6 @@ mod tests {
             Err("clipboard missing".into()),
         );
 
-        assert!(!ok_notice.summary.contains(secret));
-        assert!(err_notice.details.iter().all(|line| !line.contains(secret)));
         assert_eq!(ok_notice.title, "API key secret copied");
         assert_eq!(err_notice.title, "copy failed");
     }
