@@ -42,6 +42,20 @@ After install, run **`plasm-server`**. The boot checklist runs embedded Postgres
 
 Until step 2 completes, **Clients** copy actions warn that no transport key exists.
 
+### Clipboard behavior
+
+Copy shortcuts place the actual value directly on the system clipboard; they do not open a viewer or add a confirmation step.
+
+| Tab | Key | Copied value |
+|-----|-----|--------------|
+| **Clients** | **`c`** | Credential-bearing MCP client JSON |
+| **Clients** | **`p`** | Credential-bearing **`plasm`** profile JSON |
+| **Clients** | **`#`** | Bare MCP URL |
+| **Keys** | **`c`** | Revealed API key secret |
+| **Keys** | **`#`** | Key label |
+
+**Keys `c` and Clients `c` / `p` copy credentials.** Treat them like passwords. Desktop clipboard-history tools may retain these values after the active clipboard changes. If the desktop session does not permit clipboard access, the TUI reports an explicit failure instead of opening a viewer or claiming success.
+
 ---
 
 ## Enable APIs (APIs tab)
