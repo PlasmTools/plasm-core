@@ -6,6 +6,7 @@ pub(crate) struct UpdateDeps<'a> {
     pub(crate) admin_bridge: Option<&'a AdminBridge>,
     pub(crate) host_state: Option<&'a PlasmHostState>,
     pub(crate) listen: &'a plasm_agent_core::listen_endpoint::TcpListenEndpoint,
+    pub(crate) clipboard: ClipboardService,
 }
 pub(crate) fn update_modal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>) -> bool {
     let admin_busy = state.admin_busy();

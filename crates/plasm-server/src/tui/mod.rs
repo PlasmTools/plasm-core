@@ -22,6 +22,7 @@ pub(crate) use prelude::*;
 
 mod admin;
 mod catalog;
+mod clipboard;
 mod helpers;
 mod input;
 mod notice;
@@ -33,6 +34,7 @@ mod styles;
 
 pub(crate) use admin::*;
 pub(crate) use catalog::*;
+pub(crate) use clipboard::*;
 pub(crate) use helpers::*;
 pub(crate) use input::*;
 pub(crate) use notice::*;
@@ -119,6 +121,7 @@ mod tests {
             admin_bridge: bridge,
             host_state: None,
             listen,
+            clipboard: ClipboardService::new(),
         }
     }
 

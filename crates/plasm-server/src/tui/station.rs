@@ -38,6 +38,7 @@ pub(crate) fn run_running_mode(
         admin_bridge: admin_bridge.as_ref(),
         host_state: Some(host_state.as_ref()),
         listen: &listen,
+        clipboard: ClipboardService::new(),
     };
 
     while running.load(Ordering::SeqCst) {
