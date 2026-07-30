@@ -105,11 +105,6 @@ pub(crate) fn api_key_row_copy_line(k: &McpConfigApiKeyRow) -> String {
     api_key_row_label(k)
 }
 
-pub(crate) fn copy_text_to_clipboard(text: &str) -> Result<(), String> {
-    let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
-    cb.set_text(text).map_err(|e| e.to_string())
-}
-
 pub(crate) fn env_nonempty_string(key: &str) -> Option<String> {
     std::env::var(key)
         .ok()

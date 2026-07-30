@@ -494,7 +494,7 @@ pub(crate) fn update_normal_key(
                 copy_notice(
                     "MCP URL copied",
                     "MCP URL copy failed",
-                    copy_text_to_clipboard(&url),
+                    deps.clipboard.copy_text(&url),
                 ),
             );
         }
@@ -506,7 +506,7 @@ pub(crate) fn update_normal_key(
                     copy_notice(
                         "Key label copied",
                         "Key label copy failed",
-                        copy_text_to_clipboard(&line),
+                        deps.clipboard.copy_text(&line),
                     ),
                 );
             } else {
@@ -1220,7 +1220,13 @@ pub(crate) fn update(state: &mut RunState, msg: UiMsg, deps: &UpdateDeps<'_>) ->
             false
         }
         UiMsg::Admin(comp) => {
-            apply_admin_completion(state, deps.admin_bridge, deps.listen, *comp);
+            apply_admin_completion(
+                state,
+                deps.admin_bridge,
+                deps.listen,
+                &deps.clipboard,
+                *comp,
+            );
             false
         }
         UiMsg::LogLine(line) => {

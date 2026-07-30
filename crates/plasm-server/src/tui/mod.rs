@@ -411,6 +411,7 @@ mod tests {
             &mut state,
             None,
             &test_listen(),
+            &ClipboardService::new(),
             AdminCompletion::OAuthDeviceBindStarted {
                 corr: 42,
                 prompt: crate::appliance_oauth_admin::DeviceBindPrompt {
