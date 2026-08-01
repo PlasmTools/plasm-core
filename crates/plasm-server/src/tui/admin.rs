@@ -72,6 +72,7 @@ pub(crate) fn apply_admin_completion(
     state: &mut RunState,
     bridge: Option<&AdminBridge>,
     listen: &plasm_agent_core::listen_endpoint::TcpListenEndpoint,
+    clipboard: &ClipboardService,
     comp: AdminCompletion,
 ) {
     match comp {
@@ -365,7 +366,7 @@ pub(crate) fn apply_admin_completion(
                         copy_notice(
                             "API key secret copied",
                             "API key secret copy failed",
-                            copy_text_to_clipboard(&raw),
+                            clipboard.copy_text(&raw),
                         ),
                     ),
                     (AdminTaskKind::CopyingMcpJson, Ok(raw)) => {
@@ -375,7 +376,7 @@ pub(crate) fn apply_admin_completion(
                                 copy_notice(
                                     "MCP client config copied",
                                     "MCP client config copy failed",
-                                    copy_text_to_clipboard(&json),
+                                    clipboard.copy_text(&json),
                                 ),
                             ),
                             Err(e) => set_notice(
@@ -396,7 +397,7 @@ pub(crate) fn apply_admin_completion(
                                 copy_notice(
                                     "Plasm CLI profile copied",
                                     "Plasm CLI profile copy failed",
-                                    copy_text_to_clipboard(&json),
+                                    clipboard.copy_text(&json),
                                 ),
                             ),
                             Err(e) => set_notice(

@@ -6,6 +6,7 @@ pub(crate) struct UpdateDeps<'a> {
     pub(crate) admin_bridge: Option<&'a AdminBridge>,
     pub(crate) host_state: Option<&'a PlasmHostState>,
     pub(crate) listen: &'a plasm_agent_core::listen_endpoint::TcpListenEndpoint,
+    pub(crate) clipboard: ClipboardService,
 }
 pub(crate) fn update_modal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>) -> bool {
     let admin_busy = state.admin_busy();
@@ -493,7 +494,7 @@ pub(crate) fn update_normal_key(
                 copy_notice(
                     "MCP URL copied",
                     "MCP URL copy failed",
-                    copy_text_to_clipboard(&url),
+                    deps.clipboard.copy_text(&url),
                 ),
             );
         }
@@ -505,7 +506,7 @@ pub(crate) fn update_normal_key(
                     copy_notice(
                         "Key label copied",
                         "Key label copy failed",
-                        copy_text_to_clipboard(&line),
+                        deps.clipboard.copy_text(&line),
                     ),
                 );
             } else {
@@ -1219,7 +1220,13 @@ pub(crate) fn update(state: &mut RunState, msg: UiMsg, deps: &UpdateDeps<'_>) ->
             false
         }
         UiMsg::Admin(comp) => {
-            apply_admin_completion(state, deps.admin_bridge, deps.listen, *comp);
+            apply_admin_completion(
+                state,
+                deps.admin_bridge,
+                deps.listen,
+                &deps.clipboard,
+                *comp,
+            );
             false
         }
         UiMsg::LogLine(line) => {
