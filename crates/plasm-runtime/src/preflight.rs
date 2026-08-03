@@ -11,17 +11,20 @@ use plasm_core::preflight::{
 };
 use plasm_core::TypedFieldValue;
 use plasm_core::{
-    CapabilitySchema, EntityDef, GetExpr, InvokeExpr, Predicate, QueryExpr, Ref, Value, CGS,
+    CapabilityKind, CapabilitySchema, EntityDef, GetExpr, InvokeExpr, Predicate, QueryExpr, Ref,
+    Value, CGS,
 };
 use std::collections::HashSet;
+
+use crate::compile_stub_value::{preflight_compile_stub_value, STUB_STRING, ZERO_UUID};
 
 pub(crate) fn merge_preflight_fields_into_env(
     env: &mut CmlEnv,
     prefix: &str,
     fields: &IndexMap<String, TypedFieldValue>,
 ) {
-    for (k, v) in fields {
-        env.insert(format!("{prefix}_{k}"), v.to_value());
+    for (field_name, value) in fields {
+        env.insert(format!("{prefix}_{field_name}"), value.to_value());
     }
 }
 
@@ -53,7 +56,10 @@ pub(crate) async fn apply_preflight_steps(
                 let Some(PreflightInvoke { invoke }) = invoke else {
                     continue;
                 };
-                hydrate_invoke_target(engine, cgs, cache, mode, env, invoke, get, prefix).await?;
+                hydrate_invoke_target(
+                    engine, capability, cgs, cache, mode, env, invoke, get, prefix,
+                )
+                .await?;
             }
             PreflightStep::HydrateEntityRefParam { param, get, merge } => {
                 if !env_param_present(env, param) {
@@ -121,9 +127,18 @@ pub(crate) async fn apply_preflight_steps(
 }
 
 /// Compile-only preflight: inject stub merge keys so CML templates compile without HTTP hydration.
-pub(crate) fn apply_preflight_compile_stubs(env: &mut CmlEnv, capability: &CapabilitySchema) {
+///
+/// Invoke-target stubs cover the referenced Get entity's declared fields, preserving the catalog
+/// contract that `provides` does not strip decoded fields. This compile environment is necessarily
+/// a schema-derived superset: live hydration merges only fields actually present in the decoded
+/// row. Undeclared CML variables such as `ds_typo` are still rejected.
+pub(crate) fn apply_preflight_compile_stubs(
+    env: &mut CmlEnv,
+    capability: &CapabilitySchema,
+    cgs: &CGS,
+) -> Result<(), RuntimeError> {
     let Some(PreflightPlan(steps)) = capability.preflight.as_ref() else {
-        return;
+        return Ok(());
     };
     for step in steps {
         match step {
@@ -133,7 +148,10 @@ pub(crate) fn apply_preflight_compile_stubs(env: &mut CmlEnv, capability: &Capab
                 }
                 for wire_key in merge.keys() {
                     if env.get(wire_key).is_none() {
-                        env.insert(wire_key.clone(), preflight_compile_stub_value(wire_key));
+                        env.insert(
+                            wire_key.clone(),
+                            preflight_wire_key_compile_stub_value(wire_key),
+                        );
                     }
                 }
             }
@@ -145,7 +163,10 @@ pub(crate) fn apply_preflight_compile_stubs(env: &mut CmlEnv, capability: &Capab
                 }
                 for wire_key in merge.keys() {
                     if env.get(wire_key).is_none() {
-                        env.insert(wire_key.clone(), preflight_compile_stub_value(wire_key));
+                        env.insert(
+                            wire_key.clone(),
+                            preflight_wire_key_compile_stub_value(wire_key),
+                        );
                     }
                 }
             }
@@ -161,21 +182,117 @@ pub(crate) fn apply_preflight_compile_stubs(env: &mut CmlEnv, capability: &Capab
                     env.insert(merge.clone(), Value::Array(Vec::new()));
                 }
             }
-            PreflightStep::HydrateInvokeTarget { .. } => {}
+            PreflightStep::HydrateInvokeTarget { get, prefix } => {
+                // Schema validation rejects this step on Create. Match live preflight's defensive
+                // behavior if an unvalidated CGS is passed directly to the runtime.
+                if capability.kind != CapabilityKind::Create {
+                    add_hydrate_invoke_target_compile_stubs(env, capability, cgs, get, prefix)?;
+                }
+            }
             PreflightStep::ExistenceCheck { .. } => {}
         }
     }
+    Ok(())
 }
 
-fn preflight_compile_stub_value(wire_key: &str) -> Value {
+struct HydrateInvokeTargetContract<'a> {
+    prefix: String,
+    get: &'a CapabilitySchema,
+    entity: &'a EntityDef,
+}
+
+/// Resolve the schema contract shared by compile-only stubbing and live hydration.
+///
+/// `CGS::validate` owns these invariants for loaded catalogs. The checks here are a defensive
+/// boundary for callers that construct a CGS programmatically and invoke runtime APIs directly.
+fn resolve_hydrate_invoke_target_contract<'a>(
+    capability: &CapabilitySchema,
+    cgs: &'a CGS,
+    get_name: &str,
+    prefix: &str,
+) -> Result<HydrateInvokeTargetContract<'a>, RuntimeError> {
+    let prefix = prefix.trim();
+    if prefix.is_empty() {
+        return Err(RuntimeError::ConfigurationError {
+            message: format!(
+                "preflight hydrate_invoke_target on capability '{}': prefix must not be empty",
+                capability.name
+            ),
+        });
+    }
+    let get = cgs.get_capability(get_name).ok_or_else(|| {
+        RuntimeError::ConfigurationError {
+            message: format!(
+                "preflight hydrate_invoke_target on capability '{}': Get capability '{}' was not found",
+                capability.name, get_name
+            ),
+        }
+    })?;
+    if get.kind != CapabilityKind::Get {
+        return Err(RuntimeError::ConfigurationError {
+            message: format!(
+                "preflight hydrate_invoke_target on capability '{}': capability '{}' must be kind get",
+                capability.name, get_name
+            ),
+        });
+    }
+    if get.domain != capability.domain {
+        return Err(RuntimeError::ConfigurationError {
+            message: format!(
+                "preflight hydrate_invoke_target on capability '{}': Get '{}' is for entity {}, expected {}",
+                capability.name, get_name, get.domain, capability.domain
+            ),
+        });
+    }
+    let entity = cgs.get_entity(get.domain.as_str()).ok_or_else(|| {
+        RuntimeError::ConfigurationError {
+            message: format!(
+                "preflight hydrate_invoke_target on capability '{}': entity '{}' for Get '{}' was not found",
+                capability.name, get.domain, get_name
+            ),
+        }
+    })?;
+    Ok(HydrateInvokeTargetContract {
+        prefix: prefix.to_string(),
+        get,
+        entity,
+    })
+}
+
+fn add_hydrate_invoke_target_compile_stubs(
+    env: &mut CmlEnv,
+    capability: &CapabilitySchema,
+    cgs: &CGS,
+    get_name: &str,
+    prefix: &str,
+) -> Result<(), RuntimeError> {
+    let contract = resolve_hydrate_invoke_target_contract(capability, cgs, get_name, prefix)?;
+    for (field_name, field) in &contract.entity.fields {
+        let env_key = format!("{}_{field_name}", contract.prefix);
+        let named_value = cgs.named_value_for_slot(field).map_err(|error| {
+            RuntimeError::ConfigurationError {
+                message: format!(
+                    "preflight hydrate_invoke_target on capability '{}': cannot resolve type of field '{}': {error}",
+                    capability.name, field_name
+                ),
+            }
+        })?;
+        // Live hydration treats this prefix as authoritative and overwrites colliding input keys.
+        // Compile-only hydration must do the same so both paths compile against the same namespace.
+        env.insert(env_key, preflight_compile_stub_value(named_value, cgs));
+    }
+    Ok(())
+}
+
+fn preflight_wire_key_compile_stub_value(wire_key: &str) -> Value {
     if wire_key.ends_with("Id")
         || wire_key.ends_with("_id")
         || wire_key == "id"
         || wire_key.ends_with("Ids")
     {
-        Value::String("00000000-0000-0000-0000-000000000000".to_string())
+        Value::String(ZERO_UUID.to_string())
     } else {
-        Value::String("preflight-stub".to_string())
+        Value::String(STUB_STRING.to_string())
     }
 }
 
@@ -186,24 +303,20 @@ fn env_param_present(env: &CmlEnv, name: &str) -> bool {
 #[allow(clippy::too_many_arguments)]
 async fn hydrate_invoke_target(
     engine: &ExecutionEngine,
+    capability: &CapabilitySchema,
     cgs: &CGS,
     cache: &mut SessionMaterialization,
     mode: ExecutionMode,
     env: &mut CmlEnv,
     invoke: &InvokeExpr,
-    get_cap: &str,
+    get_name: &str,
     prefix: &str,
 ) -> Result<(), RuntimeError> {
-    let prefix = prefix.trim();
-    if prefix.is_empty() {
-        return Err(RuntimeError::ConfigurationError {
-            message: "preflight hydrate_invoke_target: prefix must not be empty".to_string(),
-        });
-    }
+    let contract = resolve_hydrate_invoke_target_contract(capability, cgs, get_name, prefix)?;
 
     if let Some(entity) = cache.get(&invoke.target) {
         if entity.completeness == EntityCompleteness::Complete {
-            merge_preflight_fields_into_env(env, prefix, &entity.fields);
+            merge_preflight_fields_into_env(env, &contract.prefix, &entity.fields);
             return Ok(());
         }
     }
@@ -219,14 +332,14 @@ async fn hydrate_invoke_target(
             &get,
             cgs,
             mode,
-            Some(get_cap),
+            Some(contract.get.name.as_str()),
             false,
             Some(cache),
             &ViewAmbientContext::default(),
         )
         .await?;
     cache.insert(cached.clone())?;
-    merge_preflight_fields_into_env(env, prefix, &cached.fields);
+    merge_preflight_fields_into_env(env, &contract.prefix, &cached.fields);
     Ok(())
 }
 
@@ -670,6 +783,32 @@ async fn existence_check_step(
 mod tests {
     use super::*;
     use plasm_core::Predicate;
+
+    fn hydrate_fixture() -> CGS {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/hydrate_invoke_target");
+        plasm_core::load_schema(&dir).expect("load hydrate_invoke_target fixture")
+    }
+
+    #[test]
+    fn hydrate_invoke_target_compile_stub_overwrites_existing_env_like_live_hydration() {
+        let cgs = hydrate_fixture();
+        let capability = cgs
+            .get_capability("datasource_run")
+            .expect("datasource_run capability");
+        let mut env = CmlEnv::new();
+        env.insert(
+            "ds_type".to_string(),
+            Value::String("already-present".to_string()),
+        );
+
+        apply_preflight_compile_stubs(&mut env, capability, &cgs).expect("compile stubs");
+
+        assert_eq!(
+            env.get("ds_type"),
+            Some(&Value::String(STUB_STRING.to_string()))
+        );
+    }
 
     #[test]
     fn scope_bind_from_param_builds_predicate() {

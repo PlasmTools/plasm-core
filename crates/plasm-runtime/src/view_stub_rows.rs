@@ -10,6 +10,9 @@ use crate::cache::{CachedEntity, EntityCompleteness};
 use crate::execution::{current_timestamp, ExecutionResult, ExecutionSource, ExecutionStats};
 use crate::RuntimeError;
 
+/// View preflight rows are rendered into entity references and downstream node bindings. Keep
+/// their placeholders scalar and stable rather than sharing CML compile-environment stubs, whose
+/// normalized entity-ref and wire-format shapes serve a different contract.
 fn placeholder_value(field_type: &FieldType) -> Value {
     match field_type {
         FieldType::Boolean => Value::Bool(false),
@@ -172,6 +175,21 @@ fn stub_entity_ref(
 mod tests {
     use super::*;
     use crate::view_test_support::matrix_views_cgs;
+
+    #[test]
+    fn view_placeholders_remain_scalar_and_stable() {
+        assert_eq!(placeholder_value(&FieldType::Number), Value::Integer(0));
+        assert_eq!(
+            placeholder_value(&FieldType::String),
+            Value::String(String::new())
+        );
+        assert_eq!(
+            placeholder_value(&FieldType::EntityRef {
+                target: "File".into()
+            }),
+            Value::String("stub-File".into())
+        );
+    }
 
     #[test]
     fn stub_query_uses_provides_fields() {

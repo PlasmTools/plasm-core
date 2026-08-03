@@ -105,6 +105,7 @@ pub mod auth_resolution;
 pub mod binding_kv;
 pub mod branch_commit;
 pub mod cache;
+mod compile_stub_value;
 pub mod error;
 pub mod evm;
 pub mod execution;
