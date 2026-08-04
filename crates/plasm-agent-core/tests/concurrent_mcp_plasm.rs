@@ -1,4 +1,5 @@
 //! CEP-13: parallel MCP `plasm_context` / `plasm` / `plasm_run` on one logical session.
+#![recursion_limit = "256"]
 
 use std::path::PathBuf;
 use std::sync::Arc;

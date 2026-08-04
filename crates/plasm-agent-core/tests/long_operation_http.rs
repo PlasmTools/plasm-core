@@ -1,4 +1,5 @@
 //! Fast oneshot HTTP smoke tests for long-operation query params and dispatch wiring.
+#![recursion_limit = "256"]
 
 use std::path::Path;
 use std::sync::Arc;

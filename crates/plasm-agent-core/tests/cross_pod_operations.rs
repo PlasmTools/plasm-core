@@ -1,4 +1,5 @@
 //! Cross-pod async operation persistence (shared Redis session registry, no live executor).
+#![recursion_limit = "256"]
 
 use std::path::Path;
 use std::sync::Arc;

@@ -6,6 +6,7 @@
 //! Full `simulate_flow_policy` needs a live catalog host; these goldens lock the
 //! pack schema, seed⊆CGS entity names, and capability-gate dispositions that
 //! drive S3/S5/S6 expected dry verdicts under the preset.
+#![recursion_limit = "256"]
 
 use std::fs;
 use std::path::{Path, PathBuf};
