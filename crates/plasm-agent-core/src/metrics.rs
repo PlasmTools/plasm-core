@@ -31,6 +31,7 @@ struct AgentMetrics {
     trace_sink_http_calls: Counter<u64>,
     trace_sink_http_duration_ms: Histogram<f64>,
     trace_sink_batch_serialize_errors: Counter<u64>,
+    trace_sink_durable_plan_ux_stripped: Counter<u64>,
     catalog_registry_reload_calls: Counter<u64>,
     catalog_registry_reload_duration_ms: Histogram<f64>,
     tenant_outbound_hosted_kv_lookups: Counter<u64>,
@@ -126,6 +127,12 @@ fn agent_metrics() -> &'static AgentMetrics {
             trace_sink_batch_serialize_errors: m
                 .u64_counter("plasm.trace_sink.batch_serialize_errors_total")
                 .with_description("Failed to JSON-serialize a trace sink ingest batch before POST.")
+                .build(),
+            trace_sink_durable_plan_ux_stripped: m
+                .u64_counter("plasm.trace_sink.durable_plan_ux_stripped_total")
+                .with_description(
+                    "Durable code_plan ingest payloads that dropped plan_ux_reflection to stay under size budget.",
+                )
                 .build(),
             catalog_registry_reload_calls: m
                 .u64_counter("plasm.catalog_registry.reload.calls_total")
@@ -386,6 +393,12 @@ pub fn record_trace_sink_batch_spawned(event_count: usize) {
 pub fn record_trace_sink_batch_serialize_failed() {
     agent_metrics()
         .trace_sink_batch_serialize_errors
+        .add(1, &[]);
+}
+
+pub fn record_trace_sink_durable_plan_ux_stripped() {
+    agent_metrics()
+        .trace_sink_durable_plan_ux_stripped
         .add(1, &[]);
 }
 

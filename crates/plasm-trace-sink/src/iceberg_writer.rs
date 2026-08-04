@@ -9,12 +9,15 @@ use crate::append_port::{
 };
 use crate::config::IcebergConnectParams;
 use crate::config::WarehouseLocation;
-use crate::metrics::record_iceberg_detail_prune_fallback;
+use crate::metrics::{
+    record_iceberg_detail_prune_fallback, record_trace_event_detail_serialize_failed,
+};
 use crate::model::{
     year_month_bucket_utc, year_month_buckets_for_trace_ms, AuditEvent, DurableTraceDetail,
     TraceDetailRecord, TraceHeadRow, TraceSpanRow, TraceSummary, TraceTotals,
     AUDIT_EVENT_KIND_MCP_TRACE_SEGMENT,
 };
+use crate::trace_event_decode::decode_mcp_trace_segment;
 use crate::trace_totals::{head_needs_segment_recompute, trace_totals_from_head_or_records};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -95,6 +98,12 @@ fn audit_iceberg_schema_versioned(schema_id: i32) -> IcebergSchema {
         .with_struct_field(iceberg_struct_field(
             6,
             "mcp_session_id",
+            false,
+            PrimitiveType::String,
+        ))
+        .with_struct_field(iceberg_struct_field(
+            21,
+            "logical_session_id",
             false,
             PrimitiveType::String,
         ))
@@ -476,6 +485,7 @@ fn audit_arrow_schema() -> Arc<Schema> {
         ),
         Field::new("trace_id", DataType::Utf8, false),
         Field::new("mcp_session_id", DataType::Utf8, true),
+        Field::new("logical_session_id", DataType::Utf8, true),
         Field::new("plasm_prompt_hash", DataType::Utf8, true),
         Field::new("plasm_execute_session", DataType::Utf8, true),
         Field::new("run_id", DataType::Utf8, true),
@@ -548,6 +558,7 @@ fn audit_batch(events: &[AuditEvent]) -> anyhow::Result<RecordBatch> {
     let mut ingested_at = Vec::with_capacity(n);
     let mut trace_id = Vec::with_capacity(n);
     let mut mcp_session_id: Vec<Option<String>> = Vec::with_capacity(n);
+    let mut logical_session_id: Vec<Option<String>> = Vec::with_capacity(n);
     let mut plasm_prompt_hash: Vec<Option<String>> = Vec::with_capacity(n);
     let mut plasm_execute_session: Vec<Option<String>> = Vec::with_capacity(n);
     let mut run_id: Vec<Option<String>> = Vec::with_capacity(n);
@@ -570,6 +581,7 @@ fn audit_batch(events: &[AuditEvent]) -> anyhow::Result<RecordBatch> {
         ingested_at.push(ts_micros(ev.ingested_at));
         trace_id.push(ev.trace_id.to_string());
         mcp_session_id.push(ev.mcp_session_id.clone());
+        logical_session_id.push(ev.logical_session_id.clone());
         plasm_prompt_hash.push(ev.plasm_prompt_hash.clone());
         plasm_execute_session.push(ev.plasm_execute_session.clone());
         run_id.push(ev.run_id.clone());
@@ -596,6 +608,9 @@ fn audit_batch(events: &[AuditEvent]) -> anyhow::Result<RecordBatch> {
         Arc::new(StringArray::from(trace_id)),
         Arc::new(StringArray::from_iter(
             mcp_session_id.iter().map(|s| s.as_deref()),
+        )),
+        Arc::new(StringArray::from_iter(
+            logical_session_id.iter().map(|s| s.as_deref()),
         )),
         Arc::new(StringArray::from_iter(
             plasm_prompt_hash.iter().map(|s| s.as_deref()),
@@ -822,6 +837,7 @@ impl IcebergSink {
     /// (`audit_iceberg_schema`, `trace_iceberg_schema`, `trace_heads_iceberg_schema`). If an older
     /// warehouse or JDBC catalog row disagrees (mixed Parquet generations), clear object storage
     /// and reset catalog metadata, then redeploy—there is no in-place additive migration path.
+    /// Adding `logical_session_id` on `audit_events` is such a cutover: reset the lake before deploy.
     pub async fn connect(params: &IcebergConnectParams) -> anyhow::Result<Self> {
         let catalog_url = params.catalog.as_str();
         let warehouse = &params.warehouse;
@@ -1151,9 +1167,9 @@ impl IcebergSink {
     ) -> anyhow::Result<Vec<AuditEvent>> {
         let sql = format!(
             "SELECT event_id, schema_version, emitted_at, ingested_at, trace_id, mcp_session_id, \
-             plasm_prompt_hash, plasm_execute_session, run_id, call_index, line_index, tenant_id, \
-             principal_sub, tenant_partition, event_kind, request_units, payload_json, \
-             workspace_slug, project_slug, year_month_bucket \
+             logical_session_id, plasm_prompt_hash, plasm_execute_session, run_id, call_index, \
+             line_index, tenant_id, principal_sub, tenant_partition, event_kind, request_units, \
+             payload_json, workspace_slug, project_slug, year_month_bucket \
              FROM {} WHERE {} \
              ORDER BY emitted_at ASC NULLS LAST, call_index ASC NULLS LAST, line_index ASC NULLS LAST",
             self.audit_fqn, where_clause
@@ -1455,8 +1471,24 @@ pub fn trace_detail_record_from_audit_event(e: &AuditEvent) -> Option<TraceDetai
     if e.event_kind != AUDIT_EVENT_KIND_MCP_TRACE_SEGMENT {
         return None;
     }
-    let trace = serde_json::from_value::<plasm_trace::TraceEvent>(e.payload.clone()).ok()?;
-    let mut record = serde_json::to_value(&trace).ok()?;
+    let event = decode_mcp_trace_segment(
+        e,
+        Some("mcp_trace_segment TraceEvent deserialize failed; dropping from detail projection"),
+    )?;
+    let mut record = match event.to_detail_record_value() {
+        Ok(v) => v,
+        Err(err) => {
+            record_trace_event_detail_serialize_failed();
+            tracing::warn!(
+                target: "plasm_trace_sink::projection",
+                error = %err,
+                trace_id = %e.trace_id,
+                event_id = %e.event_id,
+                "TraceEvent detail serialize failed; dropping from detail projection"
+            );
+            return None;
+        }
+    };
     if let serde_json::Value::Object(ref mut map) = record {
         map.insert(
             "event_id".to_string(),
@@ -1466,6 +1498,12 @@ pub fn trace_detail_record_from_audit_event(e: &AuditEvent) -> Option<TraceDetai
             "emitted_at".to_string(),
             serde_json::Value::String(e.emitted_at.to_rfc3339()),
         );
+        if let Some(ls) = e.logical_session_id.as_ref().filter(|s| !s.is_empty()) {
+            map.insert(
+                "logical_session_id".to_string(),
+                serde_json::Value::String(ls.clone()),
+            );
+        }
     }
     Some(TraceDetailRecord {
         kind: AUDIT_EVENT_KIND_MCP_TRACE_SEGMENT.to_string(),
@@ -1507,10 +1545,15 @@ pub fn durable_detail_from_events(
         if e.event_kind != AUDIT_EVENT_KIND_MCP_TRACE_SEGMENT {
             continue;
         }
-        let Ok(trace) = serde_json::from_value::<TraceEvent>(e.payload.clone()) else {
-            continue;
-        };
-        mcp_rows.push(McpTraceRow { sort_key: i, trace });
+        if let Some(decoded) = decode_mcp_trace_segment(
+            e,
+            Some("durable_detail_from_events: TraceEvent deserialize failed"),
+        ) {
+            mcp_rows.push(McpTraceRow {
+                sort_key: i,
+                trace: decoded,
+            });
+        }
     }
     let records: Vec<TraceDetailRecord> = events
         .iter()
@@ -1563,6 +1606,7 @@ fn decode_audit_row(batch: &RecordBatch, row: usize) -> anyhow::Result<AuditEven
     let ingested_at = ts_col(batch, "ingested_at", row)?;
     let trace_id = uuid_col(batch, "trace_id", row)?;
     let mcp_session_id = opt_string_col(batch, "mcp_session_id", row);
+    let logical_session_id = opt_string_col(batch, "logical_session_id", row);
     let plasm_prompt_hash = opt_string_col(batch, "plasm_prompt_hash", row);
     let plasm_execute_session = opt_string_col(batch, "plasm_execute_session", row);
     let run_id = opt_string_col(batch, "run_id", row);
@@ -1587,6 +1631,7 @@ fn decode_audit_row(batch: &RecordBatch, row: usize) -> anyhow::Result<AuditEven
         ingested_at,
         trace_id,
         mcp_session_id,
+        logical_session_id,
         plasm_prompt_hash,
         plasm_execute_session,
         run_id,
@@ -1873,10 +1918,11 @@ mod schema_freeze_tests {
     #[test]
     fn audit_iceberg_schema_has_pruning_and_slugs() {
         let s = audit_iceberg_schema();
-        assert_eq!(s.iter().count(), 20);
+        assert_eq!(s.iter().count(), 21);
         assert!(s.get_name("workspace_slug").is_some());
         assert!(s.get_name("project_slug").is_some());
         assert!(s.get_name("year_month_bucket").is_some());
+        assert!(s.get_name("logical_session_id").is_some());
     }
 
     #[test]

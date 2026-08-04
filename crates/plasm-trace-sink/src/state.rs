@@ -13,7 +13,7 @@ use crate::model::{
     AUDIT_EVENT_KIND_MCP_TRACE_SEGMENT,
 };
 use crate::projector::project_trace_spans;
-use plasm_trace::{SessionTraceCountersSnapshot, SessionTraceData, TraceEvent};
+use plasm_trace::{SessionTraceCountersSnapshot, SessionTraceData};
 
 /// Shared state: all durable data lives in Iceberg via [`AuditSpanStore`].
 pub struct AppState {
@@ -263,14 +263,11 @@ impl AppState {
                     mcp_session_id = ev.mcp_session_id.clone();
                 }
                 if ev.event_kind == AUDIT_EVENT_KIND_MCP_TRACE_SEGMENT {
-                    match serde_json::from_value::<TraceEvent>(ev.payload.clone()) {
-                        Ok(te) => data.apply_event_counters(&te),
-                        Err(e) => tracing::debug!(
-                            target: "plasm_trace_sink::heads",
-                            error = %e,
-                            trace_id = %trace_id,
-                            "trace head: could not decode TraceEvent from audit payload"
-                        ),
+                    if let Some(te) = crate::trace_event_decode::decode_mcp_trace_segment(
+                        ev,
+                        Some("trace head: could not decode TraceEvent from audit payload"),
+                    ) {
+                        data.apply_event_counters(&te);
                     }
                 }
             }
@@ -335,6 +332,7 @@ mod tests {
             ingested_at: Utc::now(),
             trace_id: Uuid::new_v4(),
             mcp_session_id: None,
+            logical_session_id: None,
             plasm_prompt_hash: None,
             plasm_execute_session: None,
             run_id: None,

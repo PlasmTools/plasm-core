@@ -59,7 +59,7 @@ fn plasm_trace_totals_from_segment_records(
 ) -> PlasmTraceTotals {
     let events: Vec<TraceEvent> = records
         .iter()
-        .filter_map(|v| serde_json::from_value(v.clone()).ok())
+        .filter_map(|v| crate::trace_event_decode::decode_audit_payload(v.clone()).ok())
         .collect();
     if events.is_empty() {
         return PlasmTraceTotals::default();

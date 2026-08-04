@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.37] - 2026-08-04
+
+### Fixed
+
+- **SaaS Trace plans:** durable `mcp_trace_segment` decode no longer silently drops `code_plan_*` rows; instrument deserialize failures; keep Plan Security `flow` seal when slimming oversized durable `plan_ux_reflection`.
+- **Plan Security flow graph:** fail closed unless `flow.counts` / `trace` / `violations` are present (no invented sparse seals).
+
+### Changed
+
+- **`AuditEvent.logical_session_id`:** first-class Iceberg `audit_events` column (field id 21). Payload is pure `TraceEvent` JSON; nested `_plasm_audit` is legacy-only and stripped on decode. **Reset the Iceberg warehouse** on deploy (no additive lake migration).
+- **Trace → Plan Security deep-link:** archive hydrate loads program + sealed `comp` / `plan_ux_reflection` via query params.
+
 ## [0.4.36] - 2026-07-24
 
 ### Fixed

@@ -1,16 +1,17 @@
 //! Project audit events into denormalized `trace_spans` rows (billing + retrieval).
 
-use plasm_trace::{TraceEvent, TraceSegment};
+use plasm_trace::TraceSegment;
 use uuid::Uuid;
 
 use crate::model::{AuditEvent, TraceSpanRow, AUDIT_EVENT_KIND_MCP_TRACE_SEGMENT};
+use crate::trace_event_decode::decode_mcp_trace_segment;
 
 /// `mcp_trace_segment` rows deserialize to [`TraceEvent`]; only `plasm_line` spans bill per line.
 pub fn project_trace_spans(ev: &AuditEvent) -> Vec<TraceSpanRow> {
     if ev.event_kind != AUDIT_EVENT_KIND_MCP_TRACE_SEGMENT {
         return Vec::new();
     }
-    let Ok(te) = serde_json::from_value::<TraceEvent>(ev.payload.clone()) else {
+    let Some(te) = decode_mcp_trace_segment(ev, None) else {
         return Vec::new();
     };
     let TraceSegment::PlasmLine {

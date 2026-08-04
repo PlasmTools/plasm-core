@@ -24,6 +24,9 @@ pub struct AuditEvent {
     /// Correlates all spans from one logical invocation (MCP `plasm` call or a multi-line HTTP run).
     pub trace_id: Uuid,
     pub mcp_session_id: Option<String>,
+    /// MCP logical session UUID (agent window). First-class lake column — not nested in `payload`.
+    #[serde(default)]
+    pub logical_session_id: Option<String>,
     pub plasm_prompt_hash: Option<String>,
     pub plasm_execute_session: Option<String>,
     pub run_id: Option<String>,

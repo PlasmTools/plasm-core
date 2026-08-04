@@ -232,26 +232,11 @@ pub fn spawn_emit_mcp_trace_segment(
     let mut payload = precomputed_payload.unwrap_or_else(|| {
         serde_json::to_value(trace_event).unwrap_or_else(|_| serde_json::json!({}))
     });
-    if fields.logical_session_id.is_some() || fields.mcp_session_id.is_some() {
-        if let serde_json::Value::Object(ref mut map) = payload {
-            let mut audit = serde_json::Map::new();
-            if let Some(ls) = &fields.logical_session_id {
-                audit.insert(
-                    "logical_session_id".into(),
-                    serde_json::Value::String(ls.clone()),
-                );
-            }
-            if let Some(ms) = &fields.mcp_session_id {
-                audit.insert(
-                    "mcp_transport_session_id".into(),
-                    serde_json::Value::String(ms.clone()),
-                );
-            }
-            if !audit.is_empty() {
-                map.insert("_plasm_audit".into(), serde_json::Value::Object(audit));
-            }
-        }
+    // Payload is pure TraceEvent JSON — never nest correlation keys beside the flatten.
+    if let serde_json::Value::Object(ref mut map) = payload {
+        map.remove("_plasm_audit");
     }
+    slim_durable_code_plan_payload(&mut payload);
 
     let event = AuditEvent {
         event_id,
@@ -260,6 +245,7 @@ pub fn spawn_emit_mcp_trace_segment(
         ingested_at: chrono::Utc::now(),
         trace_id: fields.trace_id,
         mcp_session_id: fields.mcp_session_id.clone(),
+        logical_session_id: fields.logical_session_id.clone(),
         plasm_prompt_hash: fields.plasm_prompt_hash.clone(),
         plasm_execute_session: fields.plasm_execute_session.clone(),
         run_id: fields.run_id.clone(),
@@ -277,4 +263,135 @@ pub fn spawn_emit_mcp_trace_segment(
     ingest.spawn_ingest_batch(IngestBatchRequest {
         events: vec![event],
     });
+}
+
+/// Cap durable code-plan payloads so large plan UX does not preferentially fail sink ingest
+/// while tiny `mcp_resource_read` rows succeed. Live hub/SSE keep the full segment.
+///
+/// When over budget, strip fat plan-UX fields (`steps` / `columns` / `edges` / …) but **keep**
+/// `flow` (Plan Security seal) so cold Trace cards still paint Clean chrome + flow graph.
+const DURABLE_CODE_PLAN_PAYLOAD_BUDGET: usize = 256 * 1024;
+
+/// Fat keys removable from durable `plan_ux_reflection` without losing the flow seal.
+const DURABLE_PLAN_UX_FAT_KEYS: &[&str] = &[
+    "steps",
+    "columns",
+    "edges",
+    "param_bindings",
+    "live",
+    "session",
+];
+
+fn slim_durable_code_plan_payload(payload: &mut serde_json::Value) {
+    let Some(obj) = payload.as_object_mut() else {
+        return;
+    };
+    let kind = obj
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    if kind != "code_plan_evaluate" && kind != "code_plan_execute" {
+        return;
+    }
+    let Ok(raw) = serde_json::to_string(payload) else {
+        return;
+    };
+    if raw.len() <= DURABLE_CODE_PLAN_PAYLOAD_BUDGET {
+        return;
+    }
+    let Some(obj) = payload.as_object_mut() else {
+        return;
+    };
+    let Some(ux) = obj
+        .get_mut("plan_ux_reflection")
+        .and_then(|v| v.as_object_mut())
+    else {
+        return;
+    };
+    if ux.get("flow").is_none() {
+        return;
+    }
+    let mut removed = 0usize;
+    for key in DURABLE_PLAN_UX_FAT_KEYS {
+        if ux.remove(*key).is_some() {
+            removed += 1;
+        }
+    }
+    if removed == 0 {
+        return;
+    }
+    tracing::info!(
+        target: "plasm_agent::trace_sink",
+        kind = %kind,
+        payload_bytes_before = raw.len(),
+        budget = DURABLE_CODE_PLAN_PAYLOAD_BUDGET,
+        fat_keys_removed = removed,
+        "stripped fat plan_ux_reflection fields from durable code_plan ingest (kept flow seal); hub/SSE retain full reflection"
+    );
+    crate::metrics::record_trace_sink_durable_plan_ux_stripped();
+}
+
+#[cfg(test)]
+mod slim_durable_tests {
+    use super::slim_durable_code_plan_payload;
+
+    #[test]
+    fn slim_keeps_flow_seal_when_stripping_fat_fields() {
+        let mut payload = serde_json::json!({
+            "emitted_at_ms": 1,
+            "kind": "code_plan_evaluate",
+            "plan_handle": "p1",
+            "plan_id": "00000000-0000-0000-0000-000000000001",
+            "plan_name": "demo",
+            "plan_hash": "abc",
+            "plan_uri": "",
+            "canonical_plan_uri": "",
+            "plan_http_path": "",
+            "prompt_hash": "p".repeat(64),
+            "session_id": "s1",
+            "node_count": 1,
+            "code_chars": 10,
+            "comp": { "nodes": [], "edges": [] },
+            "plan_ux_reflection": {
+                "schema_version": 3,
+                "layout": "sequential",
+                "steps": [{ "id": "n1", "ordinal": 1, "widget": "read_surface", "effect_class": "read", "approval_gate": false, "headline": "x" }],
+                "columns": [{ "id": "c", "label": "c" }],
+                "edges": [],
+                "writes": [],
+                "review": { "verdict": "ok", "write_count": 0, "read_count": 1 },
+                "flow": {
+                    "schema_version": 1,
+                    "verdict": "clean",
+                    "counts": { "allow": 1, "approve": 0, "review": 0, "deny": 0 },
+                    "violations": [],
+                    "trace": [{ "id": "n1", "ordinal": 1, "disposition": "allow", "labels_in": [], "labels_out": [] }]
+                }
+            }
+        });
+        // Force over-budget by bloating a fat field.
+        if let Some(steps) = payload
+            .pointer_mut("/plan_ux_reflection/steps")
+            .and_then(|v| v.as_array_mut())
+        {
+            let pad = "x".repeat(300_000);
+            steps.push(serde_json::json!({
+                "id": "pad",
+                "ordinal": 2,
+                "widget": "read_surface",
+                "effect_class": "read",
+                "approval_gate": false,
+                "headline": pad
+            }));
+        }
+        slim_durable_code_plan_payload(&mut payload);
+        let ux = payload.get("plan_ux_reflection").expect("ux");
+        assert!(ux.get("flow").is_some(), "flow seal must survive slim");
+        assert_eq!(
+            ux.pointer("/flow/verdict").and_then(|v| v.as_str()),
+            Some("clean")
+        );
+        assert!(ux.get("steps").is_none(), "fat steps must be stripped");
+    }
 }

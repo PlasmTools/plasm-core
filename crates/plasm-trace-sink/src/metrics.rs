@@ -25,6 +25,8 @@ struct SinkMetrics {
     iceberg_detail_prune_fallback: Counter<u64>,
     projection_heads_backfill_rows: Counter<u64>,
     segment_projection_gc_rows: Counter<u64>,
+    trace_event_deserialize_failed: Counter<u64>,
+    trace_event_detail_serialize_failed: Counter<u64>,
 }
 
 static SINK_METRICS: OnceLock<SinkMetrics> = OnceLock::new();
@@ -90,6 +92,18 @@ fn sink_metrics() -> &'static SinkMetrics {
             segment_projection_gc_rows: m
                 .u64_counter("plasm.trace_sink.projection.segment_gc.rows_purged_total")
                 .with_description("Expired trace_segments rows deleted by TTL background GC.")
+                .build(),
+            trace_event_deserialize_failed: m
+                .u64_counter("plasm.trace_sink.projection.trace_event_deserialize_failed_total")
+                .with_description(
+                    "mcp_trace_segment audit payloads that failed TraceEvent deserialize (silent drop avoided via metric).",
+                )
+                .build(),
+            trace_event_detail_serialize_failed: m
+                .u64_counter("plasm.trace_sink.projection.trace_event_detail_serialize_failed_total")
+                .with_description(
+                    "Decoded TraceEvent rows that failed to_detail_record_value during detail projection.",
+                )
                 .build(),
         }
     })
@@ -199,4 +213,19 @@ pub(crate) fn record_segment_projection_gc(rows: u64) {
     if rows > 0 {
         sink_metrics().segment_projection_gc_rows.add(rows, &[]);
     }
+}
+
+/// Failed typed decode of an `mcp_trace_segment` audit payload (`kind` label when peekable).
+pub(crate) fn record_trace_event_deserialize_failed(segment_kind: &str) {
+    sink_metrics().trace_event_deserialize_failed.add(
+        1,
+        &[KeyValue::new("segment_kind", segment_kind.to_string())],
+    );
+}
+
+/// Failed detail-row serialize after a successful TraceEvent decode.
+pub(crate) fn record_trace_event_detail_serialize_failed() {
+    sink_metrics()
+        .trace_event_detail_serialize_failed
+        .add(1, &[]);
 }

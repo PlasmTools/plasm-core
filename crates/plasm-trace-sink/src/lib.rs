@@ -13,7 +13,12 @@ pub(crate) mod projection;
 pub mod projector;
 mod spans;
 pub mod state;
+mod trace_event_decode;
 mod trace_totals;
+
+#[cfg(test)]
+#[path = "code_plan_projection_tests.rs"]
+mod code_plan_projection_tests;
 
 pub use append_port::{AuditSpanReader, AuditSpanStore, AuditSpanWriter};
 pub use config::{
