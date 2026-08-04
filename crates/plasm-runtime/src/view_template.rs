@@ -199,10 +199,7 @@ pub fn render_view_param_bind_template(
 /// Rewrite agent-friendly `.split('sep')[n]` into `| split_part('sep', n)` for view templates.
 pub fn desugar_view_computed_template(template: &str) -> String {
     let mut s = template.to_string();
-    loop {
-        let Some(dot) = s.find(".split(") else {
-            break;
-        };
+    while let Some(dot) = s.find(".split(") {
         let expr_start = s[..dot]
             .char_indices()
             .rev()
