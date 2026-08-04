@@ -39,7 +39,7 @@ pub(crate) fn spawn_mcp_teaching_prompt_session_reporter(
             logical_id: &str,
         ) -> McpSessionPlasmStats {
             let g = session_states.read().await;
-            for (_tk, st) in g.iter() {
+            for st in g.values() {
                 let s = st.lock().await;
                 if let Some(ls) = s.logical_by_id.get(logical_id) {
                     let lg = ls.lock().await;

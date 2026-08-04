@@ -74,13 +74,14 @@ pub(crate) fn reject_derive_map_invalid_rhs(
                 return Err(derive_map_invalid_rhs_err(Some(t)));
             }
         }
-        PlanValue::NodeSymbol { path, .. } | PlanValue::BindingSymbol { path, .. } => {
+        PlanValue::NodeSymbol { path, .. } | PlanValue::BindingSymbol { path, .. }
             if path.first().is_some_and(|seg| {
                 path_segment_looks_like_relation_hop(seg.as_str(), source_relation_wires)
-            }) {
-                return Err(derive_map_relation_hop_err());
-            }
+            }) =>
+        {
+            return Err(derive_map_relation_hop_err());
         }
+        PlanValue::NodeSymbol { .. } | PlanValue::BindingSymbol { .. } => {}
         _ => {}
     }
     Ok(())
