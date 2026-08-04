@@ -230,7 +230,7 @@ fn clarify_alternatives_for_providers(
         })
         .filter_map(|(provider, plans)| plans.first().map(|plan| (provider, plan)))
         .collect();
-    ranked.sort_by(|left, right| right.1.lexical_score.cmp(&left.1.lexical_score));
+    ranked.sort_by_key(|right| std::cmp::Reverse(right.1.lexical_score));
     ranked
         .into_iter()
         .map(|(entry_id, seed_plan)| SeedAlternativeSetRaw {

@@ -138,7 +138,7 @@ pub fn collect_entity_hits(
             hits.push((score, entry_id.clone(), entity.clone()));
         }
     }
-    hits.sort_by(|left, right| right.0.cmp(&left.0));
+    hits.sort_by_key(|right| std::cmp::Reverse(right.0));
     hits
 }
 

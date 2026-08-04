@@ -10,9 +10,8 @@ use crate::iceberg_writer::{durable_detail_from_events, trace_detail_record_from
 use crate::model::{AuditEvent, AUDIT_EVENT_KIND_MCP_TRACE_SEGMENT, SCHEMA_VERSION};
 
 fn sample_code_plan_audit(with_ux: bool) -> AuditEvent {
-    let comp = Arc::new(
-        TraceCompWire::from_json_value(minimal_trace_comp_json()).expect("minimal comp"),
-    );
+    let comp =
+        Arc::new(TraceCompWire::from_json_value(minimal_trace_comp_json()).expect("minimal comp"));
     let ux = with_ux.then(|| {
         serde_json::json!({
             "schema_version": 3,
@@ -153,7 +152,10 @@ fn legacy_payload_plasm_audit_nest_still_decodes() {
         );
     }
     let rec = trace_detail_record_from_audit_event(&e).expect("project strips nest");
-    assert_eq!(rec.record.get("kind").and_then(|k| k.as_str()), Some("code_plan_evaluate"));
+    assert_eq!(
+        rec.record.get("kind").and_then(|k| k.as_str()),
+        Some("code_plan_evaluate")
+    );
     // Column empty → detail omits logical_session_id (no re-attach from nest).
     assert!(rec.record.get("logical_session_id").is_none());
     assert!(rec.record.get("_plasm_audit").is_none());

@@ -10,7 +10,7 @@
 
 use super::*;
 use crate::baml_client::types;
-use baml::{BamlDecode, __internal::serde::Serialize};
+use baml::{__internal::serde::Serialize, BamlDecode};
 
 #[derive(Debug, Clone, Default, BamlDecode, Serialize)]
 #[serde(crate = "::baml::__internal::serde")]

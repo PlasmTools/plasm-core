@@ -7,8 +7,8 @@
 
 use super::*;
 use baml::{
-    BamlDecode, BamlEncode, BamlSerde,
     __internal::serde::{Deserialize, Serialize},
+    BamlDecode, BamlEncode, BamlSerde,
 };
 
 /// Generated from: ("user" | "assistant")

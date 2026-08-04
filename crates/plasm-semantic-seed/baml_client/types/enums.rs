@@ -6,8 +6,8 @@
 //! Generated enum types.
 
 use baml::{
-    BamlDecode, BamlEncode,
     __internal::serde::{Deserialize, Serialize},
+    BamlDecode, BamlEncode,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, BamlEncode, BamlDecode, Serialize, Deserialize)]

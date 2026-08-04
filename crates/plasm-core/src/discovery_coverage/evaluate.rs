@@ -175,7 +175,7 @@ fn detect_ambiguity(
 
     // Dominant grounded margin → not ambiguous (can_ready will select).
     if has_grounded_root_hint(plan) {
-        viable.sort_by(|left, right| right.1.lexical_score.cmp(&left.1.lexical_score));
+        viable.sort_by_key(|right| std::cmp::Reverse(right.1.lexical_score));
         let top = viable[0].1.lexical_score;
         let second = viable.get(1).map(|(_, p)| p.lexical_score).unwrap_or(0);
         if top.saturating_sub(second) >= READY_MARGIN {
@@ -183,7 +183,7 @@ fn detect_ambiguity(
         }
     }
 
-    viable.sort_by(|left, right| right.1.lexical_score.cmp(&left.1.lexical_score));
+    viable.sort_by_key(|right| std::cmp::Reverse(right.1.lexical_score));
     ProviderAmbiguity::Between {
         providers: viable
             .iter()

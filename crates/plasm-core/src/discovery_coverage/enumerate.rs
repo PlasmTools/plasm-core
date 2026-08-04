@@ -140,7 +140,7 @@ fn collect_entity_capabilities(
     entity_score: u32,
 ) -> Vec<EntityCapabilityEvidence> {
     let mut caps = Vec::new();
-    for kind in READ_KINDS.into_iter().chain(MUTATE_KINDS.into_iter()) {
+    for kind in READ_KINDS.into_iter().chain(MUTATE_KINDS) {
         for cap in cgs.find_capabilities(entity, kind) {
             caps.push(capability_evidence(
                 entry_id,

@@ -7,8 +7,8 @@
 
 use super::*;
 use baml::{
-    BamlDecode, BamlEncode,
     __internal::serde::{Deserialize, Serialize},
+    BamlDecode, BamlEncode,
 };
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]

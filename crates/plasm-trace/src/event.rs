@@ -86,9 +86,15 @@ mod tests {
         let payload = serde_json::to_value(&ev).expect("ser");
         let decoded = TraceEvent::from_payload_json(payload).expect("decode");
         assert_eq!(decoded.emitted_at_ms, 42);
-        assert!(matches!(decoded.segment, TraceSegment::CodePlanEvaluate { .. }));
+        assert!(matches!(
+            decoded.segment,
+            TraceSegment::CodePlanEvaluate { .. }
+        ));
         let record = decoded.to_detail_record_value().expect("ser");
-        assert_eq!(record.get("kind").and_then(|k| k.as_str()), Some("code_plan_evaluate"));
+        assert_eq!(
+            record.get("kind").and_then(|k| k.as_str()),
+            Some("code_plan_evaluate")
+        );
         assert!(record.get(LEGACY_PLASM_AUDIT_PAYLOAD_KEY).is_none());
     }
 

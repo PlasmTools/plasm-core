@@ -1288,7 +1288,6 @@ impl IdentMetadata {
             array_items,
             string_semantics,
             allowed_values,
-            value_registry_key: _,
             ..
         } = self
         else {
