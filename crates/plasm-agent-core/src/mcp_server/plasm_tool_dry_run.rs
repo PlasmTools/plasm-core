@@ -104,6 +104,8 @@ pub(crate) async fn execute_plasm_tool_dry_run(
         && !crate::plan_flow::validated_plan_has_remote_mutation(dry.validated_plan());
     if auto_execute {
         phase = Instant::now();
+        // Keep a clone for the View lane; agent meta/content stay run-shaped (no DAG).
+        let plan_ux_for_ui = plan_ux_reflection.clone();
         let plan_refs = CodePlanTraceInput {
             hub: &ctx.host.trace_hub,
             store: Arc::clone(&ctx.host.run_artifacts),
@@ -118,11 +120,10 @@ pub(crate) async fn execute_plasm_tool_dry_run(
         }
         .emit_evaluate(Some(plan_ux_reflection), inline_fits)
         .await;
-        let _ = plan_refs;
         record_mcp_plasm_dry_run_phase("trace_emit", phase.elapsed());
         record_mcp_plasm_dry_run_phase("total", total_started.elapsed());
 
-        return super::committed_plasm_run::execute_mcp_live_run(
+        let mut out = super::committed_plasm_run::execute_mcp_live_run(
             super::committed_plasm_run::ExecuteMcpLiveRun {
                 es: Arc::clone(&ctx.es),
                 host: Arc::clone(&ctx.host),
@@ -151,7 +152,36 @@ pub(crate) async fn execute_plasm_tool_dry_run(
                 wait_live: true,
             },
         )
-        .await;
+        .await?;
+
+        // Plan Review paints from structuredContent.ui only (SEP-1865). Never put comp /
+        // plan_ux_reflection into agent content or `_meta.plasm`.
+        if inline_fits {
+            out.inline_plan_ui = Some(UiInlinePlanPayload {
+                comp: comp_val.expect("inline_fits implies comp_val"),
+                plan_ux_reflection: plan_ux_for_ui,
+            });
+        } else if let Some(root) = out.run_plasm_meta.as_mut() {
+            // Thin fetch refs only — hosts hydrate via resources/read / plasm_ui_read_plan.
+            let plasm = root
+                .entry("plasm".to_string())
+                .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+            if let Some(obj) = plasm.as_object_mut() {
+                obj.insert(
+                    "plan_uri".into(),
+                    serde_json::Value::String(plan_refs.plan_uri.clone()),
+                );
+                obj.insert(
+                    "canonical_plan_uri".into(),
+                    serde_json::Value::String(plan_refs.canonical_plan_uri.clone()),
+                );
+                obj.insert(
+                    "plan_http_path".into(),
+                    serde_json::Value::String(plan_refs.plan_http_path.clone()),
+                );
+            }
+        }
+        return Ok(out);
     }
 
     let commit_ref = ctx.es.mint_plan_commit_ref();

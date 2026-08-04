@@ -130,7 +130,8 @@ pub struct PlasmPlanRunResult {
     pub run_plasm_meta: Option<serde_json::Map<String, serde_json::Value>>,
     /// Live execution return roots (for HTTP Accept mapping).
     pub return_steps: Vec<crate::http_execute::PublishedResultStep>,
-    /// Dry-run only: inline plan DAG for FullApps `structuredContent.ui`.
+    /// FullApps View lane only (`structuredContent.ui`): inline plan DAG + UX reflection.
+    /// Set on dry-run review responses and fused clean-read live results — never agent `content`.
     pub inline_plan_ui: Option<crate::mcp_ui_payload::UiInlinePlanPayload>,
 }
 

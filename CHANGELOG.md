@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.38] - 2026-08-04
+
+### Fixed
+
+- **Plan Review hang on fused clean-reads:** `plasm` auto-execute responses now attach plan DAG + `plan_ux_reflection` on `structuredContent.ui` (SEP-1865 View lane) while agent `content` / `_meta.plasm` stay run-shaped (rows + thin continuity only). Oversized plans get thin `plan_uri` / `plan_http_path` fetch refs instead of inlining the DAG into agent context.
+
 ## [0.4.37] - 2026-08-04
 
 ### Fixed
