@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.39] - 2026-08-04
+
+### Fixed
+
+- **Plan Review only for review plans:** fused clean-reads no longer attach plan DAG / Plan Review UI. `plasm` returns rows (Run Explorer); Plan Review paints only when dry-run yields a `run_ref` for review.
+- **Plan Review hang on fused reads:** host clears the toolinput watchdog on run-shaped `plasm` results (“Clean read executed inline — see Run Explorer”) instead of waiting forever for a plan.
+- **Advisory structural review gates MCP fuse:** unprojected multi-row reads and unnarrowed list roots set `needs_review` even when the default host page caps fetch cost — MCP returns a `run_ref` plan instead of auto-executing. Default host page remains non-expensive (first page stays sync).
+
 ## [0.4.38] - 2026-08-04
 
 ### Fixed

@@ -52,7 +52,8 @@ pub struct PlanDryReview {
 }
 
 impl PlanDryReview {
-    /// True when live execute should auto-async (unbounded / expensive reads), not advisory review alone.
+    /// True when live execute should auto-async (fanout / true fetch-all), not advisory review alone.
+    /// Unnarrowed roots with a default host page stay sync but still `needs_review` for MCP plan return.
     pub fn execution_is_expensive(&self) -> bool {
         crate::plan_read_bounds::read_execution_is_expensive(
             self.has_unbounded_read_root,
@@ -778,6 +779,7 @@ fn json_string_array(value: Option<&serde_json::Value>) -> Vec<String> {
 }
 
 fn surface_read_list_root_unbounded(s: &ValidatedSurfaceNode) -> bool {
+    // Default host page caps fetch cost but is not an agent-declared bound — still advisory.
     matches!(s.result_shape, crate::plasm_plan::ResultShape::List)
         && s.effect_class == EffectClass::Read
         && s.depends_on.is_empty()
@@ -785,7 +787,6 @@ fn surface_read_list_root_unbounded(s: &ValidatedSurfaceNode) -> bool {
         && s.pushed_read_budget.is_none()
         && s.kind != PlanNodeKind::Search
         && s.predicates.is_empty()
-        && crate::plan_read_bounds::effective_host_page_size(s).is_none()
 }
 
 pub(crate) fn return_roots_include_unbounded_list_surface(plan: &Plan<ValidatedPlanState>) -> bool {

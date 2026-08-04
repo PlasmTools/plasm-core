@@ -203,9 +203,9 @@ pub fn inline_ui_payload_fits(comp: &Value, plan_ux: &Value) -> bool {
 
 /// View lane payload from `_meta.plasm` (spec `structuredContent.ui`).
 ///
-/// Fused clean-read responses are **run-shaped** in agent `_meta.plasm` (steps / TSV) but may
-/// still carry [`UiInlinePlanPayload`] for Plan Review. Plan DAG bytes stay on this UI lane only —
-/// never copied into agent `content` or `_meta.plasm.comp`.
+/// Plan Review DAG (`comp` / `plan_ux_reflection`) is only attached for dry-run
+/// [`UiPayloadKind::PlanReview`]. Fused clean-reads are run-shaped — Run Explorer only;
+/// callers must not pass [`UiInlinePlanPayload`] on that path.
 fn structured_ui_payload_from_meta(
     plasm: &Value,
     inline_plan_ui: Option<&UiInlinePlanPayload>,
@@ -213,41 +213,38 @@ fn structured_ui_payload_from_meta(
     let obj = plasm.as_object()?;
     let kind = UiPayloadKind::from_plasm_obj(obj)?;
     let mut out = Map::new();
-    // Prefer plan_review when we are inlining a plan DAG so Plan Review hosts key off `kind`
-    // even though agent meta remains run-shaped (steps).
-    let ui_kind = if inline_plan_ui.is_some() && kind == UiPayloadKind::RunExplorer {
-        UiPayloadKind::PlanReview
-    } else {
-        kind
-    };
     out.insert(
         "kind".to_string(),
-        Value::String(ui_kind.as_str().to_string()),
+        Value::String(kind.as_str().to_string()),
     );
 
-    // Thin plan fetch refs are safe on the UI lane for both dry-run and fused reads.
-    for key in UI_PLAN_REF_KEYS {
-        if let Some(v) = obj.get(*key) {
-            out.insert(key.to_string(), v.clone());
-        }
-    }
-
-    if let Some(inline) = inline_plan_ui {
-        out.insert("comp".to_string(), inline.comp.clone());
-        out.insert(
-            "plan_ux_reflection".to_string(),
-            inline.plan_ux_reflection.clone(),
-        );
-    } else if ui_kind == UiPayloadKind::PlanReview {
-        for key in UI_PLAN_INLINE_KEYS {
+    // Plan fetch refs only on Plan Review (dry-run / `run_ref` responses).
+    if kind == UiPayloadKind::PlanReview {
+        for key in UI_PLAN_REF_KEYS {
             if let Some(v) = obj.get(*key) {
                 out.insert(key.to_string(), v.clone());
             }
         }
     }
 
-    // Run Explorer steps stay on the UI lane for fused clean-reads (alongside plan DAG).
-    if kind == UiPayloadKind::RunExplorer || ui_kind == UiPayloadKind::RunExplorer {
+    // Inline plan DAG: dry-run review only. Ignore accidental inline on run-shaped meta.
+    if kind == UiPayloadKind::PlanReview {
+        if let Some(inline) = inline_plan_ui {
+            out.insert("comp".to_string(), inline.comp.clone());
+            out.insert(
+                "plan_ux_reflection".to_string(),
+                inline.plan_ux_reflection.clone(),
+            );
+        } else {
+            for key in UI_PLAN_INLINE_KEYS {
+                if let Some(v) = obj.get(*key) {
+                    out.insert(key.to_string(), v.clone());
+                }
+            }
+        }
+    }
+
+    if kind == UiPayloadKind::RunExplorer {
         if let Some(rd) = obj.get("result_delivery") {
             out.insert("result_delivery".to_string(), rd.clone());
         }
@@ -527,7 +524,7 @@ mod tests {
     }
 
     #[test]
-    fn finalize_fused_clean_read_puts_plan_on_ui_lane_only() {
+    fn finalize_fused_clean_read_is_run_explorer_without_plan_dag() {
         let mut tool_meta = Map::new();
         let plasm = json!({
             "logical_session_ref": "l_AAAAAAAAQACAAAAAAAAAAQ",
@@ -551,6 +548,7 @@ mod tests {
         let comp = json!({ "version": 1, "steps": { "n1": { "kind": "invoke" } }, "bind": { "topo": ["n1"] }, "return": { "kind": "step", "step": "n1" } });
         let ux = json!({ "schema_version": 3, "flow": { "verdict": "clean" }, "steps": [{ "operation": "query" }] });
         let res = CallToolResult::text_content(vec![TextContent::new(markdown, None, None)]);
+        // Even if a caller wrongly passes inline plan on a fused read, UI lane stays Run Explorer.
         let out = finalize_mcp_tool_result(
             res,
             tool_meta,
@@ -561,24 +559,19 @@ mod tests {
             }),
         );
         let wire = serde_json::to_value(&out).expect("serialize");
-        // Agent lanes must not carry the DAG.
         assert!(wire.pointer("/_meta/plasm/comp").is_none());
-        assert!(wire.pointer("/_meta/plasm/plan_ux_reflection").is_none());
         assert!(wire.pointer("/structuredContent/plasm").is_none());
         let text = first_text(&out);
-        assert!(!text.contains("\"comp\""));
         assert!(text.contains("kind\trun"));
-        // View lane: plan DAG + run steps together for Plan Review + Run Explorer.
         assert_eq!(
             wire.pointer("/structuredContent/ui/kind")
                 .and_then(|v| v.as_str()),
-            Some("plan_review")
+            Some("run_explorer")
         );
-        assert_eq!(wire.pointer("/structuredContent/ui/comp"), Some(&comp));
-        assert_eq!(
-            wire.pointer("/structuredContent/ui/plan_ux_reflection"),
-            Some(&ux)
-        );
+        assert!(wire.pointer("/structuredContent/ui/comp").is_none());
+        assert!(wire
+            .pointer("/structuredContent/ui/plan_ux_reflection")
+            .is_none());
         assert_eq!(
             wire.pointer("/structuredContent/ui/steps/0/return_label")
                 .and_then(|v| v.as_str()),

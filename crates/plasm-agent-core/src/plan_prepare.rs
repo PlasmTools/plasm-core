@@ -203,14 +203,23 @@ pub fn analyze_read_boundedness(plan: &Plan<ValidatedPlanState>) -> ReadBoundedn
         if surface_is_read_bounded(surface) {
             continue;
         }
+        // Unnarrowed root → structural advisory (`needs_review`) even when the default host
+        // page caps the first fetch. Default page alone is not "expensive" live work.
         if crate::plan_node_graph::node_dependencies(n).is_empty() {
             out.has_unbounded_read_root = true;
         }
-        out.has_paginated_list_fetch_all_default = true;
+        if crate::plan_read_bounds::effective_host_page_size(surface).is_none() {
+            out.has_paginated_list_fetch_all_default = true;
+        }
     }
     out
 }
 
+/// Agent-declared read bounds only (explicit page/limit budget, search text, or API predicates).
+///
+/// The default host page ([`crate::plan_read_bounds::DEFAULT_HOST_PAGE_SIZE`]) caps live fetch cost
+/// but does **not** clear structural advisory review — see
+/// [`return_path_node_is_unprojected_multi_row_read`].
 #[must_use]
 fn surface_is_read_bounded(surface: &ValidatedSurfaceNode) -> bool {
     if surface.page_size.is_some() || surface.pushed_read_budget.is_some() {
@@ -220,15 +229,6 @@ fn surface_is_read_bounded(surface: &ValidatedSurfaceNode) -> bool {
         return true;
     }
     if !surface.predicates.is_empty() {
-        return true;
-    }
-    if surface.effect_class == crate::plasm_plan::EffectClass::Read
-        && matches!(
-            surface.result_shape,
-            crate::plasm_plan::ResultShape::List | crate::plasm_plan::ResultShape::Page
-        )
-        && matches!(surface.kind, PlanNodeKind::Query | PlanNodeKind::Search)
-    {
         return true;
     }
     false
@@ -246,10 +246,13 @@ pub(crate) fn compute_op_is_full_collection(op: &ComputeOp) -> bool {
     )
 }
 
-/// List/page read node on the return path without projection or pushed read budget.
+/// List/page read on the return path without `[field,…]` projection.
+///
+/// This is **advisory structural review** (full-row materialization). The default host page does
+/// not clear it — MCP must return a `run_ref` plan rather than fusing auto-execute.
+/// An explicit project compute between the read and the return clears the advisory.
 #[must_use]
 pub(crate) fn return_path_node_is_unprojected_multi_row_read(n: &ValidatedPlanNode) -> bool {
-    use crate::plan_read_bounds::effective_host_page_size;
     use crate::plasm_plan::EffectClass;
 
     match n {
@@ -261,7 +264,7 @@ pub(crate) fn return_path_node_is_unprojected_multi_row_read(n: &ValidatedPlanNo
                     crate::plasm_plan::ResultShape::List | crate::plasm_plan::ResultShape::Page
                 ) =>
         {
-            !surface_is_read_bounded(s) && effective_host_page_size(s).is_none()
+            true
         }
         ValidatedPlanNode::ForEach(fe)
             if fe.effect_class == EffectClass::Read
@@ -271,18 +274,20 @@ pub(crate) fn return_path_node_is_unprojected_multi_row_read(n: &ValidatedPlanNo
                     crate::plasm_plan::ResultShape::List | crate::plasm_plan::ResultShape::Page
                 ) =>
         {
-            fe.predicates.is_empty() && fe.effect_template.kind != PlanNodeKind::Search
+            true
         }
         _ => false,
     }
 }
 
-/// List/page read on the return path without projection or pushed read budget.
+/// List/page read on the return path without projection or a downstream project step.
 #[must_use]
 pub(crate) fn return_path_has_unprojected_multi_row_read(plan: &Plan<ValidatedPlanState>) -> bool {
     let reachable = crate::plan_node_graph::nodes_reachable_from_return(plan);
     plan.nodes.iter().any(|n| {
-        reachable.contains(n.id().as_str()) && return_path_node_is_unprojected_multi_row_read(n)
+        reachable.contains(n.id().as_str())
+            && return_path_node_is_unprojected_multi_row_read(n)
+            && !project_compute_downstream_of_node(plan, n.id().as_str())
     })
 }
 
@@ -324,6 +329,43 @@ pub(crate) fn limit_compute_downstream_of_node(
             match &plan.nodes[*idx] {
                 ValidatedPlanNode::Compute(inner) => current = inner.compute.source.clone(),
                 ValidatedPlanNode::RelationTraversal(r) if r.id.as_str() == node_id => return true,
+                _ => return false,
+            }
+        }
+    })
+}
+
+/// True when a `project` compute sits on a chain from `node_id` toward a return consumer.
+#[must_use]
+pub(crate) fn project_compute_downstream_of_node(
+    plan: &Plan<ValidatedPlanState>,
+    node_id: &str,
+) -> bool {
+    let by_id: HashMap<String, usize> = plan
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.id().as_str().to_string(), i))
+        .collect();
+    plan.nodes.iter().any(|n| {
+        let ValidatedPlanNode::Compute(c) = n else {
+            return false;
+        };
+        if !matches!(c.compute.op, ComputeOp::Project { .. }) {
+            return false;
+        }
+        let mut current = c.compute.source.clone();
+        loop {
+            if current == node_id {
+                return true;
+            }
+            let Some(idx) = by_id.get(current.as_str()) else {
+                return false;
+            };
+            match &plan.nodes[*idx] {
+                ValidatedPlanNode::Compute(inner) => current = inner.compute.source.clone(),
+                ValidatedPlanNode::RelationTraversal(r) if r.id.as_str() == node_id => return true,
+                ValidatedPlanNode::Derive(d) => current = d.source.as_str().to_string(),
                 _ => return false,
             }
         }
@@ -661,7 +703,15 @@ mod tests {
         let bounded = analyze_read_boundedness(validated.artifact());
         assert!(
             !bounded.execution_is_expensive(),
-            "default host page should bound bare query returns: {bounded:?}"
+            "default host page should keep bare query sync (not expensive): {bounded:?}"
+        );
+        assert!(
+            bounded.has_unbounded_read_root,
+            "unnarrowed root remains advisory even with default host page: {bounded:?}"
+        );
+        assert!(
+            return_path_has_unprojected_multi_row_read(validated.artifact()),
+            "unprojected list is advisory"
         );
         let surface = match &validated.nodes()[0] {
             ValidatedPlanNode::Surface(s) => s,
@@ -671,6 +721,65 @@ mod tests {
             effective_host_page_size(surface),
             Some(crate::plan_read_bounds::DEFAULT_HOST_PAGE_SIZE)
         );
+        let review = PlanDryReview {
+            has_unprojected_multi_row_read: true,
+            has_unbounded_read_root: true,
+            ..Default::default()
+        };
+        assert!(
+            review.needs_review(true),
+            "advisory unprojected/unnarrowed must need review (MCP returns plan, no fuse)"
+        );
+        assert_eq!(
+            crate::plan_gate::merged_gate_verdict(
+                &crate::plan_flow::PlanFlowAnalysis {
+                    policy_revision: None,
+                    verdict: crate::plan_flow::FlowVerdict::Clean,
+                    node_facts: Default::default(),
+                    node_dispositions: Default::default(),
+                    sink_proofs: Default::default(),
+                    violations: Vec::new(),
+                },
+                &review,
+                true,
+            ),
+            crate::plan_dry_display::PlanDryVerdict::Review
+        );
+    }
+
+    #[test]
+    fn limited_projected_list_clears_unprojected_advisory() {
+        let s = test_session(vec!["Product"]);
+        let mut nodes = vec![serde_json::json!({
+            "id": "r1",
+            "kind": "query",
+            "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+            "expr": "Product",
+            "ir": { "expr": { "op": "query", "entity": "Product" } },
+            "effect_class": "read",
+            "result_shape": "list"
+        })];
+        nodes.push(limit_compute_json("r1", 3));
+        nodes.push(project_compute_json("limited", "projected"));
+        let plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "name": "projected",
+            "nodes": nodes,
+            "return": { "kind": "node", "node": "projected" }
+        });
+        let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
+        assert!(
+            !dry.review.has_unbounded_read_root,
+            "limit pushdown clears unnarrowed: {:?}",
+            dry.review
+        );
+        assert!(
+            !dry.review.has_unprojected_multi_row_read,
+            "downstream project clears unprojected advisory: {:?}",
+            dry.review
+        );
+        assert!(!dry.review.needs_review(false));
     }
 
     #[test]
@@ -878,6 +987,16 @@ mod tests {
             analyze_read_boundedness(dry_unbounded.validated_plan()).execution_is_expensive(),
         );
         assert!(!dry_unbounded.review.execution_is_expensive());
+        assert!(
+            dry_unbounded.review.has_unbounded_read_root,
+            "unnarrowed advisory: {:?}",
+            dry_unbounded.review
+        );
+        assert!(
+            dry_unbounded.review.needs_review(true),
+            "MCP fuse must not auto-execute advisory lists: {:?}",
+            dry_unbounded.review
+        );
     }
 
     fn project_compute_json(source: &str, id: &str) -> serde_json::Value {

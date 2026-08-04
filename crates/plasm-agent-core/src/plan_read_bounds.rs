@@ -34,15 +34,17 @@ pub enum PushedReadBudget {
 }
 
 /// Shared cost gate: true when live execute should spawn async / MCP server-await.
+///
+/// Default host page (first page only) is **not** expensive. Unnarrowed roots still set
+/// [`ReadBoundedness::has_unbounded_read_root`] for advisory `needs_review` / MCP plan return.
 #[must_use]
 pub fn read_execution_is_expensive(
-    has_unbounded_read_root: bool,
+    _has_unbounded_read_root: bool,
     has_paginated_list_fetch_all_default: bool,
     has_relation_many_source_fanout: bool,
     has_foreach_fanout_risk: bool,
 ) -> bool {
-    has_unbounded_read_root
-        || has_paginated_list_fetch_all_default
+    has_paginated_list_fetch_all_default
         || has_relation_many_source_fanout
         || has_foreach_fanout_risk
 }

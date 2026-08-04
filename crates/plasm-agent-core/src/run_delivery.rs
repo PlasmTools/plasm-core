@@ -419,7 +419,8 @@ mod tests {
 
     fn expensive_review() -> PlanDryReview {
         PlanDryReview {
-            has_unbounded_read_root: true,
+            // True fetch-all / fanout — not merely an unnarrowed root with default host page.
+            has_paginated_list_fetch_all_default: true,
             ..Default::default()
         }
     }
