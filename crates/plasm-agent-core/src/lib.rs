@@ -27,6 +27,7 @@ pub mod discovery_human_format;
 pub mod discovery_routing;
 #[cfg(feature = "semantic-auto-seed")]
 pub mod discovery_seed_select;
+pub mod pending_clarify;
 pub mod dispatch;
 pub mod domain_revision;
 pub mod dotenv_safe;

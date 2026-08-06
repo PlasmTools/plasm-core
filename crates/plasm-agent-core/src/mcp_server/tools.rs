@@ -110,6 +110,22 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
             }))
             .expect("ranked_capabilities schema"),
         );
+    context_props.insert(
+        "routing_ref".into(),
+        serde_json::from_value(serde_json::json!({
+            "type": ["string", "null"],
+            "description": "Optional clarify receipt (`rc_…`) from a prior clarify breakout. Requires `clarify_choice`. Deterministically continues without re-running semantic routing."
+        }))
+        .expect("routing_ref schema"),
+    );
+    context_props.insert(
+        "clarify_choice".into(),
+        serde_json::from_value(serde_json::json!({
+            "type": ["string", "number", "null"],
+            "description": "With `routing_ref`: 1-based alternative index or a `catalog:entity` id from the clarify breakout."
+        }))
+        .expect("clarify_choice schema"),
+    );
     let mut discover_props = BTreeMap::new();
     discover_props.insert(
             "intent".into(),

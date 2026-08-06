@@ -1,13 +1,13 @@
 **Default first MCP call for a new workflow.** Call before `plasm` / `plasm_run`. Session identity is **`logical_session_ref`** only — not `intent`.
 
-**Intent-only open (semantic auto-seed hosts):** `session_mode: "new"` + **`intent` only** — omit **`seeds`** (rejected if passed). Host selects a minimal capability surface and opens teaching TSV on **`ready`**. On **`clarify`** / **`hard_miss`** / **`routing_error`**, rephrase **`intent`** with the provider brand (use breakout browse preview as prose — do not invent `{api, entity}` keys).
+**Intent-only open (semantic auto-seed hosts):** `session_mode: "new"` + **`intent` only** — omit **`seeds`** (rejected if passed). Host selects a minimal capability surface and opens teaching TSV on **`ready`**. On **`clarify`** / **`hard_miss`** / **`routing_error`**, rephrase **`intent`** with the provider brand (use breakout browse preview as prose — do not invent `{api, entity}` keys), **or** continue with **`routing_ref`** + **`clarify_choice`** from the breakout. Abstain does **not** mint a session.
 
 **Lifecycle:**
-- **`new`** — mint `logical_session_ref` + fresh symbol table once per workflow. Auto-seed on → no `seeds`; auto-seed off → `seeds` required.
-- **`extend`** — same `logical_session_ref` + appended **`intent`**; host selects additional capabilities (intent-only — do not invent entity seed names). Symbols never reset. Delta TSV when new surface is admitted; reuse cheat sheet when unchanged.
+- **`new`** — mint `logical_session_ref` + fresh symbol table once per workflow (**after** ready). Auto-seed on → no `seeds`; auto-seed off → `seeds` required.
+- **`extend`** — same `logical_session_ref` + this turn's **`intent`** (delta route against already-exposed entities; intent-only when auto-seed on). Symbols never reset. Delta TSV when new surface is admitted; reuse cheat sheet / `delta_noop` when unchanged. Abstain does **not** append intent.
 - **`intent` does NOT select the session.** Only **`new`** discards symbols.
 
-**One workflow:** one `logical_session_ref`, many **`extend`** turns. Never **`new`** to recover from plan/parse errors — use **`extend`**.
+**One workflow:** one `logical_session_ref`, many **`extend`** turns. Never **`new`** to recover from plan/parse errors or mid-workflow clarify — use **`extend`**.
 
 **Programs:** copy **`e#`/`m#`/`r#`** and wire names from the teaching TSV into `plasm.program`.
 

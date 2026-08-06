@@ -136,6 +136,54 @@ pub(crate) fn parse_plasm_context_ranked_capabilities(
     }
 }
 
+pub(crate) fn parse_plasm_context_routing_ref(
+    tool: &str,
+    v: &serde_json::Value,
+) -> Result<Option<String>, CallToolError> {
+    match v.get("routing_ref") {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(s)) => {
+            let t = s.trim();
+            if t.is_empty() {
+                Ok(None)
+            } else if !t.starts_with("rc_") {
+                Err(CallToolError::invalid_arguments(
+                    tool,
+                    Some("`routing_ref` must be the `rc_…` token from a clarify breakout".into()),
+                ))
+            } else {
+                Ok(Some(t.to_string()))
+            }
+        }
+        Some(_) => Err(CallToolError::invalid_arguments(
+            tool,
+            Some("`routing_ref` must be a string".into()),
+        )),
+    }
+}
+
+pub(crate) fn parse_plasm_context_clarify_choice(
+    tool: &str,
+    v: &serde_json::Value,
+) -> Result<Option<String>, CallToolError> {
+    match v.get("clarify_choice") {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(s)) => {
+            let t = s.trim();
+            if t.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(t.to_string()))
+            }
+        }
+        Some(serde_json::Value::Number(n)) => Ok(Some(n.to_string())),
+        Some(_) => Err(CallToolError::invalid_arguments(
+            tool,
+            Some("`clarify_choice` must be a 1-based index string/number or catalog:entity id".into()),
+        )),
+    }
+}
+
 pub(crate) fn parse_optional_principal(v: &serde_json::Value) -> Option<String> {
     v.get("principal")
         .and_then(|x| x.as_str())

@@ -3,8 +3,8 @@ use crate::discovery_auto_seed::EntityCapabilityEvidence;
 use crate::discovery_intent_class::DiscoveryIntentClass;
 use crate::discovery_seed_select::{
     resolve_llm_seed_selection, seeds_from_candidate_ids, validate_seed_selection,
-    LlmSeedSelectionInput, SeedSelectionDecision, SeedSelectionRaw, SeedSelectionValidationError,
-    ValidatedSeedSelection,
+    LlmSeedSelectionInput, SeedAlternativeSetRaw, SeedSelectionDecision, SeedSelectionRaw,
+    SeedSelectionValidationError, ValidatedSeedSelection,
 };
 use crate::discovery_seed_symbol_map::SeedSymbolMap;
 
@@ -238,6 +238,119 @@ fn clarify_requires_two_alternative_symbol_sets() {
     .expect("resolve");
     assert_eq!(raw.decision, SeedSelectionDecision::Clarify);
     assert_eq!(raw.alternative_sets.len(), 2);
+}
+
+#[test]
+fn brand_lock_rejects_provider_clarify() {
+    use super::validation::{
+        classify_clarify, validate_seed_selection_with_brand_lock, ClarifyKind,
+    };
+    let bundles = vec![
+        bundle(
+            "github:Issue",
+            "github",
+            "Issue",
+            "issue_query",
+            "Query",
+            "",
+        ),
+        bundle(
+            "linear:Issue",
+            "linear",
+            "Issue",
+            "issue_query",
+            "Query",
+            "",
+        ),
+    ];
+    let raw = SeedSelectionRaw {
+        decision: SeedSelectionDecision::Clarify,
+        requirements: vec!["issues".into()],
+        selected_ids: vec![],
+        supporting_capability_ids: vec![],
+        teaching_satellites: vec![],
+        alternative_sets: vec![
+            SeedAlternativeSetRaw {
+                candidate_ids: vec!["github:Issue".into()],
+                label: "github".into(),
+            },
+            SeedAlternativeSetRaw {
+                candidate_ids: vec!["linear:Issue".into()],
+                label: "linear".into(),
+            },
+        ],
+        uncovered_requirements: vec![],
+        reasoning: "which tracker".into(),
+    };
+    assert_eq!(
+        classify_clarify(&raw.alternative_sets),
+        ClarifyKind::ProviderDisambiguation
+    );
+    let err = validate_seed_selection_with_brand_lock(
+        &raw,
+        &bundles,
+        Some(&["github".into(), "linear".into()]),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        SeedSelectionValidationError::ClarifyUnderBrandLock(_)
+    ));
+}
+
+#[test]
+fn brand_lock_allows_entity_clarify_within_one_catalog() {
+    use super::validation::{
+        classify_clarify, validate_seed_selection_with_brand_lock, ClarifyKind,
+    };
+    let bundles = vec![
+        bundle(
+            "github:Issue",
+            "github",
+            "Issue",
+            "issue_query",
+            "Query",
+            "",
+        ),
+        bundle(
+            "github:PullRequest",
+            "github",
+            "PullRequest",
+            "pr_query",
+            "Query",
+            "",
+        ),
+    ];
+    let raw = SeedSelectionRaw {
+        decision: SeedSelectionDecision::Clarify,
+        requirements: vec!["open work".into()],
+        selected_ids: vec![],
+        supporting_capability_ids: vec![],
+        teaching_satellites: vec![],
+        alternative_sets: vec![
+            SeedAlternativeSetRaw {
+                candidate_ids: vec!["github:Issue".into()],
+                label: "issues".into(),
+            },
+            SeedAlternativeSetRaw {
+                candidate_ids: vec!["github:PullRequest".into()],
+                label: "prs".into(),
+            },
+        ],
+        uncovered_requirements: vec![],
+        reasoning: "issue vs pr".into(),
+    };
+    assert_eq!(
+        classify_clarify(&raw.alternative_sets),
+        ClarifyKind::EntityDisambiguation
+    );
+    let ok = validate_seed_selection_with_brand_lock(
+        &raw,
+        &bundles,
+        Some(&["github".into()]),
+    )
+    .expect("entity clarify under brand lock");
+    assert!(matches!(ok, ValidatedSeedSelection::Abstain(_)));
 }
 
 #[test]

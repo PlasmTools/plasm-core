@@ -7,7 +7,7 @@ use plasm_core::discovery_auto_seed::EntityCandidateBundle;
 use plasm_core::discovery_coverage::retrieve_via_coverage;
 use plasm_core::discovery_seed_pipeline::prepare_seed_retrieval;
 use plasm_core::discovery_seed_select::{
-    validate_seed_selection, SeedSelectionDecision, ValidatedSeedSelection,
+    validate_seed_selection_with_brand_lock, SeedSelectionDecision, ValidatedSeedSelection,
 };
 use plasm_semantic_seed::{
     select_discovery_seeds, SelectorCatalogHost, SelectorConfig, SelectorRequest,
@@ -38,6 +38,7 @@ pub async fn route_intent_to_seeds<C>(
     catalog: &C,
     intent: &str,
     allowed_entry_ids: Option<Vec<String>>,
+    exclude_exposed: Option<&[(String, String)]>,
 ) -> AutoSeedRouteOutcome
 where
     C: plasm_core::discovery::CgsDiscovery + plasm_core::discovery::CgsCatalog + Send + Sync,
@@ -75,13 +76,31 @@ where
         }
     };
 
-    let preview = preview_bundles(&retrieved.bundles);
+    // Exclude already-exposed entities from the candidate pool so extend routes a delta.
+    let mut bundles = retrieved.bundles;
+    if let Some(exposed) = exclude_exposed {
+        if !exposed.is_empty() {
+            bundles.retain(|b| {
+                !exposed.iter().any(|(e, n)| {
+                    e == &b.entry_id && n.eq_ignore_ascii_case(&b.entity)
+                })
+            });
+        }
+    }
+    if bundles.is_empty() {
+        return AutoSeedRouteOutcome::Noop {
+            reasoning: "all candidates already exposed on this session".into(),
+            selector_latency_ms: elapsed_ms(started),
+        };
+    }
+
+    let preview = preview_bundles(&bundles);
     let allowed_slice: Vec<String> = allowed_entry_ids.clone().unwrap_or_default();
     let raw = match select_discovery_seeds(
         SelectorRequest {
             intent,
             intent_class: &retrieved.intent_class,
-            bundles: &retrieved.bundles,
+            bundles: &bundles,
             catalog_context: &retrieved.catalog_context,
             brand_lock_catalogs: &retrieved.named_catalogs,
             candidate_graph: retrieved.candidate_graph.clone(),
@@ -107,16 +126,20 @@ where
     };
 
     let latency = elapsed_ms(started);
-    match validate_seed_selection(&raw, &retrieved.bundles) {
+    match validate_seed_selection_with_brand_lock(
+        &raw,
+        &bundles,
+        Some(retrieved.named_catalogs.as_slice()),
+    ) {
         Ok(ValidatedSeedSelection::Ready(ready)) => {
             let seeds = plasm_core::discovery_seed_select::seeds_from_candidate_ids(
-                &retrieved.bundles,
+                &bundles,
                 &ready.selected_ids,
             );
             info!(
                 target: "plasm_agent::discovery_auto_seed",
                 seed_count = seeds.len(),
-                candidate_count = retrieved.bundles.len(),
+                candidate_count = bundles.len(),
                 selector_latency_ms = latency,
                 "semantic auto-seed ready"
             );

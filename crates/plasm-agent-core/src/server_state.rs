@@ -105,6 +105,8 @@ pub struct PlasmOssHostState {
     pub session_coordination: Arc<SessionCoordination>,
     /// HTTP `User-Agent` per MCP transport session id (`mcp-session-id` header).
     pub mcp_http_user_agents: Arc<DashMap<String, String>>,
+    /// Semantic auto-seed clarify receipts (`routing_ref` → alternatives) for deterministic continuation.
+    pub pending_clarify: Arc<crate::pending_clarify::PendingClarifyRegistry>,
 }
 
 /// Hosted / control-plane state: same process as [`PlasmOssHostState`], but injected after OSS bootstrap.

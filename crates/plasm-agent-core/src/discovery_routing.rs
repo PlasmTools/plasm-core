@@ -22,6 +22,11 @@ pub enum AutoSeedRouteOutcome {
         candidate_preview: Vec<EntityCandidateBundle>,
         selector_latency_ms: u64,
     },
+    /// Extend delta: every candidate was already exposed (no teaching work).
+    Noop {
+        reasoning: String,
+        selector_latency_ms: u64,
+    },
     Clarify {
         requirements: Vec<String>,
         alternative_sets: Vec<SeedAlternativeSetRaw>,
@@ -75,10 +80,45 @@ pub fn build_auto_seed_breakout_markdown(
     intent: &str,
     discover_preview: Option<&str>,
 ) -> String {
+    build_auto_seed_breakout_markdown_with_context(
+        outcome,
+        intent,
+        discover_preview,
+        &BreakoutContext::default(),
+    )
+}
+
+/// Session-mode-aware breakout copy + optional `routing_ref` continuation.
+#[derive(Debug, Clone)]
+pub struct BreakoutContext {
+    /// `"new"` or `"extend"`.
+    pub session_mode: &'static str,
+    /// Wire ref when extending (or after a ready open); omitted on pre-mint `new` abstain.
+    pub logical_session_ref: Option<String>,
+    /// Deterministic clarify receipt for the next `plasm_context` call.
+    pub routing_ref: Option<String>,
+}
+
+impl Default for BreakoutContext {
+    fn default() -> Self {
+        Self {
+            session_mode: "new",
+            logical_session_ref: None,
+            routing_ref: None,
+        }
+    }
+}
+
+pub fn build_auto_seed_breakout_markdown_with_context(
+    outcome: &AutoSeedRouteOutcome,
+    intent: &str,
+    discover_preview: Option<&str>,
+    ctx: &BreakoutContext,
+) -> String {
     match outcome {
         AutoSeedRouteOutcome::Clarify {
             alternative_sets, ..
-        } => format_clarify_breakout(alternative_sets, discover_preview),
+        } => format_clarify_breakout(alternative_sets, discover_preview, ctx),
         AutoSeedRouteOutcome::HardMiss {
             uncovered_requirements,
             candidate_preview,
@@ -88,37 +128,76 @@ pub fn build_auto_seed_breakout_markdown(
             candidate_preview,
             uncovered_requirements,
             discover_preview,
+            ctx,
         ),
-        AutoSeedRouteOutcome::RoutingError { message, .. } => format!(
-            "## Couldn't route this intent\n\n{message}\n\nRetry `plasm_context` with `session_mode: \"new\"` and a clearer `intent` (name the provider). Do not pass `seeds` on new when auto-seed is enabled."
-        ),
-        AutoSeedRouteOutcome::Ready { .. } => String::new(),
+        AutoSeedRouteOutcome::RoutingError { message, .. } => {
+            format_routing_error_breakout(message, ctx)
+        }
+        AutoSeedRouteOutcome::Ready { .. } | AutoSeedRouteOutcome::Noop { .. } => String::new(),
     }
+}
+
+fn retry_guidance(ctx: &BreakoutContext, task_hint: &str) -> String {
+    let mode = if ctx.session_mode == "extend" {
+        "extend"
+    } else {
+        "new"
+    };
+    let mut parts = vec![format!(
+        "Retry `plasm_context` with `session_mode: \"{mode}\"` and {task_hint} (intent only — no `seeds` when auto-seed is enabled)."
+    )];
+    if mode == "extend" {
+        if let Some(r) = ctx.logical_session_ref.as_deref() {
+            parts.push(format!("Keep the same `logical_session_ref` (`{r}`)."));
+        } else {
+            parts.push("Keep the same `logical_session_ref`.".into());
+        }
+    }
+    if let Some(rr) = ctx.routing_ref.as_deref() {
+        parts.push(format!(
+            "Or pass `routing_ref: \"{rr}\"` with `clarify_choice` set to a 1-based alternative index or a `catalog:entity` id from the list below."
+        ));
+    }
+    parts.join(" ")
+}
+
+fn format_routing_error_breakout(message: &str, ctx: &BreakoutContext) -> String {
+    format!(
+        "## Couldn't route this intent\n\n{message}\n\n{}",
+        retry_guidance(ctx, "a clearer `intent` that names the provider")
+    )
 }
 
 fn format_clarify_breakout(
     alternative_sets: &[SeedAlternativeSetRaw],
     discover_preview: Option<&str>,
+    ctx: &BreakoutContext,
 ) -> String {
     let single_catalog = clarify_single_catalog_id(alternative_sets);
-    let (title, guidance) = if let Some(catalog) = single_catalog.as_deref() {
+    let (title, task_hint) = if let Some(catalog) = single_catalog.as_deref() {
         (
             "## Which entity?".into(),
-            format!(
-                "Ask the user, then retry `plasm_context` with `session_mode: \"new\"` and an `intent` that names the **{catalog}** entity/task (intent only — no `seeds` on new when auto-seed is enabled)."
-            ),
+            format!("an `intent` that names the **{catalog}** entity/task"),
         )
     } else {
         (
             "## Which provider?".into(),
-            "Ask the user, then retry `plasm_context` with `session_mode: \"new\"` and an `intent` that names that provider (intent only — no `seeds` on new when auto-seed is enabled)."
-                .into(),
+            "an `intent` that names that provider".into(),
         )
     };
-    let mut lines = vec![title, String::new(), guidance, String::new()];
+    let mut lines = vec![
+        title,
+        String::new(),
+        retry_guidance(ctx, &task_hint),
+        String::new(),
+    ];
     for (i, alt) in alternative_sets.iter().enumerate() {
-        let entities = format_candidate_ids(&alt.candidate_ids);
+        let entities = format_candidate_ids_qualified(&alt.candidate_ids);
         lines.push(format!("{}. {} — {entities}", i + 1, alt.label));
+    }
+    if let Some(rr) = ctx.routing_ref.as_deref() {
+        lines.push(String::new());
+        lines.push(format!("`routing_ref`: `{rr}`"));
     }
     append_discover_preview(&mut lines, discover_preview);
     lines.join("\n")
@@ -147,12 +226,23 @@ fn format_hard_miss_breakout(
     candidate_preview: &[EntityCandidateBundle],
     uncovered_requirements: &[String],
     discover_preview: Option<&str>,
+    ctx: &BreakoutContext,
 ) -> String {
+    let title = if ctx.session_mode == "extend" {
+        "## Couldn't extend this session"
+    } else {
+        "## Couldn't auto-open a session"
+    };
     let mut lines = vec![
-        "## Couldn't auto-open a session".into(),
+        title.into(),
         String::new(),
-        "**Next:** retry `plasm_context` with `session_mode: \"new\"` and a sharper `intent` that names the provider and task (intent only — no `seeds` on new when auto-seed is enabled). Borrow catalog/entity wording from the browse preview below as prose in the intent — do not invent `{api, entity}` keys."
-            .into(),
+        format!(
+            "**Next:** {}",
+            retry_guidance(
+                ctx,
+                "a sharper `intent` that names the provider and task. Borrow catalog/entity wording from the browse preview below as prose in the intent — do not invent `{api, entity}` keys"
+            )
+        ),
         String::new(),
     ];
     let hints = seed_hints_from_preview(intent, candidate_preview, 3);
@@ -165,10 +255,17 @@ fn format_hard_miss_breakout(
         }
         lines.push(String::new());
     }
-    lines.push(
-        "After a ready open, use `session_mode: \"extend\"` with `seeds` to add more entities, then write `plasm.program` from the teaching TSV."
-            .into(),
-    );
+    if ctx.session_mode == "new" {
+        lines.push(
+            "After a ready open, use `session_mode: \"extend\"` with the same `logical_session_ref` and a new `intent` to add more catalogs/entities, then write `plasm.program` from the teaching TSV."
+                .into(),
+        );
+    } else {
+        lines.push(
+            "Stay on this `logical_session_ref` — do not call `session_mode: \"new\"` to recover from clarify/hard_miss."
+                .into(),
+        );
+    }
     if let Some(gap) = format_gap_summary(uncovered_requirements) {
         lines.push(String::new());
         lines.push(gap);
@@ -271,16 +368,8 @@ fn format_gap_summary(uncovered: &[String]) -> Option<String> {
     ))
 }
 
-fn format_candidate_ids(candidate_ids: &[String]) -> String {
-    candidate_ids
-        .iter()
-        .map(|id| {
-            id.split_once(':')
-                .map(|(_, entity)| entity.to_string())
-                .unwrap_or_else(|| id.clone())
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
+fn format_candidate_ids_qualified(candidate_ids: &[String]) -> String {
+    candidate_ids.join(", ")
 }
 
 pub fn build_routing_meta(
@@ -288,10 +377,22 @@ pub fn build_routing_meta(
     selector_mode: &str,
     discover_preview: Option<&str>,
 ) -> serde_json::Map<String, serde_json::Value> {
+    build_routing_meta_with_context(outcome, selector_mode, discover_preview, None)
+}
+
+pub fn build_routing_meta_with_context(
+    outcome: &AutoSeedRouteOutcome,
+    selector_mode: &str,
+    discover_preview: Option<&str>,
+    routing_ref: Option<&str>,
+) -> serde_json::Map<String, serde_json::Value> {
     let mut routing = serde_json::Map::new();
     routing.insert("selector_mode".into(), serde_json::json!(selector_mode));
     if let Some(preview) = discover_preview.filter(|text| !text.trim().is_empty()) {
         routing.insert("discover_preview".into(), serde_json::json!(preview));
+    }
+    if let Some(rr) = routing_ref.filter(|s| !s.is_empty()) {
+        routing.insert("routing_ref".into(), serde_json::json!(rr));
     }
     match outcome {
         AutoSeedRouteOutcome::Ready {
@@ -397,6 +498,17 @@ pub fn build_routing_meta(
                 serde_json::json!(selector_latency_ms),
             );
         }
+        AutoSeedRouteOutcome::Noop {
+            reasoning,
+            selector_latency_ms,
+        } => {
+            routing.insert("decision".into(), serde_json::json!("delta_noop"));
+            insert_selector_reasoning(&mut routing, reasoning);
+            routing.insert(
+                "selector_latency_ms".into(),
+                serde_json::json!(selector_latency_ms),
+            );
+        }
     }
     routing
 }
@@ -466,9 +578,45 @@ mod tests {
         assert!(md.contains("Which provider?"));
         assert!(md.contains("intent") && md.contains("provider"));
         assert!(!md.contains("explicit `seeds`"));
-        assert!(md.contains("GitHub — Issue, Repository"));
+        assert!(md.contains("GitHub — github:Issue, github:Repository"));
         assert!(!md.contains("Selector note"));
         assert!(!md.contains("bundle_index"));
+        assert!(md.contains("session_mode: \"new\""), "{md}");
+    }
+
+    #[test]
+    fn clarify_breakout_on_extend_says_extend_not_new() {
+        let md = build_auto_seed_breakout_markdown_with_context(
+            &AutoSeedRouteOutcome::Clarify {
+                requirements: vec!["pokemon".into()],
+                alternative_sets: vec![
+                    SeedAlternativeSetRaw {
+                        candidate_ids: vec!["pokeapi:Pokemon".into()],
+                        label: "Pokemon".into(),
+                    },
+                    SeedAlternativeSetRaw {
+                        candidate_ids: vec!["pokeapi:Berry".into()],
+                        label: "Berry".into(),
+                    },
+                ],
+                reasoning: "entity".into(),
+                candidate_preview: vec![],
+                selector_latency_ms: 1,
+            },
+            "pokeapi Pokemon",
+            None,
+            &BreakoutContext {
+                session_mode: "extend",
+                logical_session_ref: Some("l_testref".into()),
+                routing_ref: Some("rc_abc".into()),
+            },
+        );
+        assert!(md.contains("session_mode: \"extend\""), "{md}");
+        assert!(md.contains("l_testref"), "{md}");
+        assert!(md.contains("rc_abc"), "{md}");
+        assert!(md.contains("clarify_choice"), "{md}");
+        assert!(!md.contains("session_mode: \"new\""), "{md}");
+        assert!(md.contains("pokeapi:Pokemon"), "{md}");
     }
 
     #[test]
@@ -529,9 +677,14 @@ mod tests {
         assert!(md.contains("Repository"));
         assert!(md.contains("Suggested intent focus"));
         assert!(!md.contains("`seeds:"));
+        assert!(!md.contains("with `seeds` to add"));
         assert!(!md.contains("Selector note"));
         assert!(!md.contains("Uncovered:"));
         assert!(!md.contains("bundle_index"));
+        assert!(md.contains("session_mode: \"new\""), "{md}");
+        assert!(md.contains("After a ready open"), "{md}");
+        assert!(!md.contains("Stay on this `logical_session_ref`"), "{md}");
+        assert!(!md.contains("extend\"` with `seeds`"), "{md}");
         let meta = build_routing_meta(
             &AutoSeedRouteOutcome::HardMiss {
                 requirements: vec!["create issue".into()],

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.40] - 2026-08-06
+
+### Fixed
+
+- **Semantic auto-seed lifecycle:** route before mint/append so clarify/hard_miss no longer orphan sessions or poison accumulated intent.
+- **Delta extend:** route on the current-turn intent only and exclude already-exposed `(catalog, entity)` pairs so multi-catalog federation does not re-litigate prior seeds.
+- **Clarify continuation:** bound `routing_ref` + `clarify_choice` receipts (`ClarifyBinding`) redeem only under the matching `new`/`extend` session; no forged supporting capability ids.
+- **Mode-aware breakouts + brand lock:** extend/new copy no longer contradicts auto-seed policy; provider-level clarify under named brands is rejected via `ClarifyKind`.
+
+### Changed
+
+- Unified `resolve_context_seeds(phase, policy)` and domain `ContextRouteDecision` (presentation split from routing); deleted vestigial post-route delta rewrite.
+
 ## [0.4.39] - 2026-08-04
 
 ### Fixed

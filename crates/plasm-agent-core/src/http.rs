@@ -159,6 +159,7 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
             catalog_reload_lock,
             session_coordination: Arc::new(crate::session_coordination::SessionCoordination::new()),
             mcp_http_user_agents: Arc::new(DashMap::new()),
+            pending_clarify: Arc::new(crate::pending_clarify::PendingClarifyRegistry::new()),
         },
         saas: None,
     }

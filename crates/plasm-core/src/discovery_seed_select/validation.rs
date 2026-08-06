@@ -57,6 +57,8 @@ pub enum SeedSelectionValidationError {
     ClarifySelectedSeeds,
     #[error("clarify requires alternative_sets")]
     ClarifyMissingAlternatives,
+    #[error("provider clarify forbidden when brand_lock is set: {0}")]
+    ClarifyUnderBrandLock(String),
     #[error("hard_miss must not select seeds")]
     HardMissSelectedSeeds,
     #[error("hard_miss requires uncovered_requirements")]
@@ -89,19 +91,68 @@ pub enum ValidatedSeedSelection {
     Abstain(ValidatedAbstainSeedSelection),
 }
 
+/// Clarify topology relative to named brands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClarifyKind {
+    /// All alternatives share a single catalog (entity / surface disambiguation).
+    EntityDisambiguation,
+    /// Alternatives span multiple catalogs ("which provider?").
+    ProviderDisambiguation,
+}
+
+/// Classify clarify alternatives by catalog span (independent of brand_lock membership).
+#[must_use]
+pub fn classify_clarify(alternative_sets: &[SeedAlternativeSetRaw]) -> ClarifyKind {
+    let mut catalogs = HashSet::new();
+    for alt in alternative_sets {
+        for id in &alt.candidate_ids {
+            let catalog = id.split_once(':').map(|(c, _)| c).unwrap_or(id.as_str());
+            catalogs.insert(catalog);
+        }
+    }
+    if catalogs.len() <= 1 {
+        ClarifyKind::EntityDisambiguation
+    } else {
+        ClarifyKind::ProviderDisambiguation
+    }
+}
+
 pub fn validate_seed_selection(
     raw: &SeedSelectionRaw,
     bundles: &[EntityCandidateBundle],
+) -> Result<ValidatedSeedSelection, SeedSelectionValidationError> {
+    validate_seed_selection_with_brand_lock(raw, bundles, None)
+}
+
+/// Validate selector output; when `brand_lock` is non-empty, reject provider-level clarify
+/// and selected seeds outside the lock.
+pub fn validate_seed_selection_with_brand_lock(
+    raw: &SeedSelectionRaw,
+    bundles: &[EntityCandidateBundle],
+    brand_lock: Option<&[String]>,
 ) -> Result<ValidatedSeedSelection, SeedSelectionValidationError> {
     let candidate_ids: HashSet<&str> = bundles.iter().map(|b| b.candidate_id.as_str()).collect();
     let capability_ids: HashSet<String> = bundles
         .iter()
         .flat_map(|b| b.capabilities.iter().map(|c| c.capability_id.clone()))
         .collect();
+    let brand_lock: HashSet<&str> = brand_lock
+        .unwrap_or(&[])
+        .iter()
+        .map(|s| s.as_str())
+        .collect();
 
     for id in &raw.selected_ids {
         if !candidate_ids.contains(id.as_str()) {
             return Err(SeedSelectionValidationError::UnknownCandidateId(id.clone()));
+        }
+        if !brand_lock.is_empty() {
+            let catalog = id.split_once(':').map(|(c, _)| c).unwrap_or(id.as_str());
+            if !brand_lock.contains(catalog) {
+                return Err(SeedSelectionValidationError::BrandLockViolation(
+                    catalog.to_string(),
+                ));
+            }
         }
     }
     for id in &raw.supporting_capability_ids {
@@ -150,6 +201,26 @@ pub fn validate_seed_selection(
             }
             if raw.alternative_sets.len() < 2 {
                 return Err(SeedSelectionValidationError::ClarifyMissingAlternatives);
+            }
+            if !brand_lock.is_empty() {
+                for alt in &raw.alternative_sets {
+                    for id in &alt.candidate_ids {
+                        let catalog = id.split_once(':').map(|(c, _)| c).unwrap_or(id.as_str());
+                        if !brand_lock.contains(catalog) {
+                            return Err(SeedSelectionValidationError::BrandLockViolation(
+                                catalog.to_string(),
+                            ));
+                        }
+                    }
+                }
+                // Named brands ⇒ only entity-level clarify; reject provider disambiguation.
+                if classify_clarify(&raw.alternative_sets)
+                    == ClarifyKind::ProviderDisambiguation
+                {
+                    return Err(SeedSelectionValidationError::ClarifyUnderBrandLock(
+                        brand_lock.iter().cloned().collect::<Vec<_>>().join(","),
+                    ));
+                }
             }
             Ok(ValidatedSeedSelection::Abstain(
                 ValidatedAbstainSeedSelection {
@@ -241,6 +312,7 @@ pub fn validation_error_label(e: &SeedSelectionValidationError) -> &'static str 
         SeedSelectionValidationError::ReadyHasAbstentionFields => "ready_has_abstention_fields",
         SeedSelectionValidationError::ClarifySelectedSeeds => "clarify_selected_seeds",
         SeedSelectionValidationError::ClarifyMissingAlternatives => "clarify_missing_alternatives",
+        SeedSelectionValidationError::ClarifyUnderBrandLock(_) => "clarify_under_brand_lock",
         SeedSelectionValidationError::HardMissSelectedSeeds => "hard_miss_selected_seeds",
         SeedSelectionValidationError::HardMissMissingUncovered => "hard_miss_missing_uncovered",
     }

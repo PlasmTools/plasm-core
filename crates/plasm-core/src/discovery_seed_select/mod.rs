@@ -14,7 +14,8 @@ pub use rewriter::{
 };
 pub use types::{SeedAlternativeSetRaw, SeedSelectionDecision, SeedSelectionRaw};
 pub use validation::{
-    seeds_from_candidate_ids, validate_seed_selection, validation_error_label,
+    classify_clarify, seeds_from_candidate_ids, validate_seed_selection,
+    validate_seed_selection_with_brand_lock, validation_error_label, ClarifyKind,
     SeedSelectionValidationError, ValidatedAbstainSeedSelection, ValidatedReadySeedSelection,
     ValidatedSeedSelection,
 };

@@ -15,13 +15,16 @@ use crate::http_execute::{
 use crate::incoming_auth::tenant_scope;
 use crate::mcp_logical_ref::format_logical_session_wire_ref;
 use crate::session_identity::{
-    accumulated_intent_meta_preview, LogicalSessionId, PlasmContextSessionMode,
+    accumulated_intent_meta_preview, LogicalSessionId, LogicalSessionRecord, PlasmContextSessionMode,
 };
 use crate::trace_hub::PlasmContextTrace;
 
-use super::context_new_seeds;
+use super::context_new_seeds::{
+    self, ContextPhase, ContextRouteDecision, SeedsPolicy,
+};
 use super::tool_parse::{
-    parse_optional_principal, parse_plasm_context_ranked_capabilities,
+    parse_optional_principal, parse_plasm_context_clarify_choice,
+    parse_plasm_context_ranked_capabilities, parse_plasm_context_routing_ref,
     parse_plasm_context_session_mode, parse_tool_seeds_optional,
 };
 use super::transport::PlasmExecBinding;
@@ -41,6 +44,8 @@ impl PlasmMcpHandler {
         })?;
         let (session_mode, extend_ref) = parse_plasm_context_session_mode(tname, v)?;
         let ranked_capabilities_arg = parse_plasm_context_ranked_capabilities(tname, v)?;
+        let routing_ref_arg = parse_plasm_context_routing_ref(tname, v)?;
+        let clarify_choice_arg = parse_plasm_context_clarify_choice(tname, v)?;
         let principal = parse_optional_principal(v);
         let tcfg = self.tenant_mcp_cfg(runtime).await?;
         let allowed_ids: Option<Vec<String>> = tcfg.as_ref().map(|cfg| {
@@ -49,15 +54,44 @@ impl PlasmMcpHandler {
             ids
         });
         let scope = tenant_scope(principal_incoming.as_ref());
-
         let optional_seeds = parse_tool_seeds_optional(tname, v)?;
 
-        let rec = match session_mode {
+        // --- Route-before-commit: resolve seeds first; mint/append only on Expand/Noop ---
+        let (rec, seeds, auto_ranked_from_selector) = match session_mode {
             PlasmContextSessionMode::New => {
-                self.plasm
+                let decision = self
+                    .route_context_turn(
+                        tname,
+                        intent,
+                        ContextPhase::New,
+                        allowed_ids.clone(),
+                        optional_seeds,
+                        None,
+                        None,
+                        routing_ref_arg.as_deref(),
+                        clarify_choice_arg.as_deref(),
+                    )
+                    .await?;
+                let (seeds, auto_ranked) = match decision {
+                    #[cfg(feature = "semantic-auto-seed")]
+                    ContextRouteDecision::Abstain(plan) => {
+                        return Ok(context_new_seeds::present_abstain(plan, intent));
+                    }
+                    ContextRouteDecision::Noop => {
+                        return Err(CallToolError::from_message(
+                            "internal: delta_noop is only valid for session_mode extend",
+                        ));
+                    }
+                    expand @ ContextRouteDecision::Expand { .. } => {
+                        expand.into_expand().expect("expand")
+                    }
+                };
+                let rec = self
+                    .plasm
                     .logical_sessions
                     .mint_session(&scope, intent)
-                    .await
+                    .await;
+                (rec, seeds, auto_ranked)
             }
             PlasmContextSessionMode::Extend => {
                 let wire = extend_ref
@@ -75,17 +109,103 @@ impl PlasmMcpHandler {
                     ));
                 }
                 let id = LogicalSessionId(logical_uuid);
-                let Some(rec) = self
-                    .plasm
-                    .logical_sessions
-                    .append_intent_turn(id, intent)
-                    .await
-                else {
+                let Some(existing) = self.plasm.logical_sessions.get(id).await else {
                     return Err(CallToolError::from_message(
                         "logical_session_ref is unknown or expired: use session_mode \"new\" to start a fresh session",
                     ));
                 };
-                rec
+                let logical_session_ref =
+                    format_logical_session_wire_ref(existing.logical_session_id);
+
+                let binding = self.resolve_binding_for_logical(key, logical_uuid).await;
+                let live_es = {
+                    let mut found = None;
+                    if let Some(b) = &binding {
+                        found = self
+                            .plasm
+                            .get_execute_session(&b.prompt_hash, &b.session_id)
+                            .await;
+                    }
+                    if found.is_none() {
+                        if let Some(pair) =
+                            self.plasm.logical_execute_bindings.get(&logical_uuid).await
+                        {
+                            found = self
+                                .plasm
+                                .get_execute_session(&pair.0, &pair.1)
+                                .await;
+                        }
+                    }
+                    found
+                };
+                if live_es.is_none() {
+                    return Err(CallToolError::from_message(
+                        "session_mode \"extend\" requires a live execute session for this logical_session_ref — use session_mode \"new\" or reopen after expiry",
+                    ));
+                }
+                let exposed: Vec<(String, String)> = live_es
+                    .as_ref()
+                    .and_then(|es| es.teaching_exposure.as_ref())
+                    .map(|exp| {
+                        exp.all_qualified_entities()
+                            .into_iter()
+                            .map(|k| (k.entry_id, k.entity.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let decision = self
+                    .route_context_turn(
+                        tname,
+                        intent,
+                        ContextPhase::Extend {
+                            exposed: exposed.as_slice(),
+                        },
+                        allowed_ids.clone(),
+                        optional_seeds,
+                        Some(logical_session_ref.as_str()),
+                        Some(logical_uuid),
+                        routing_ref_arg.as_deref(),
+                        clarify_choice_arg.as_deref(),
+                    )
+                    .await?;
+
+                match decision {
+                    #[cfg(feature = "semantic-auto-seed")]
+                    ContextRouteDecision::Abstain(plan) => {
+                        return Ok(context_new_seeds::present_abstain(plan, intent));
+                    }
+                    ContextRouteDecision::Noop => {
+                        let Some(rec) = self
+                            .plasm
+                            .logical_sessions
+                            .append_intent_turn(id, intent)
+                            .await
+                        else {
+                            return Err(CallToolError::from_message(
+                                "logical_session_ref is unknown or expired: use session_mode \"new\" to start a fresh session",
+                            ));
+                        };
+                        return Ok(present_delta_noop(&rec, &logical_session_ref));
+                    }
+                    expand @ ContextRouteDecision::Expand { .. } => {
+                        let (seeds, auto_ranked) = expand.into_expand().expect("expand");
+                        let Some(rec) = self
+                            .plasm
+                            .logical_sessions
+                            .append_intent_turn(id, intent)
+                            .await
+                        else {
+                            return Err(CallToolError::from_message(
+                                "logical_session_ref is unknown or expired: use session_mode \"new\" to start a fresh session",
+                            ));
+                        };
+                        if seeds.is_empty() {
+                            return Ok(present_delta_noop(&rec, &logical_session_ref));
+                        }
+                        (rec, seeds, auto_ranked)
+                    }
+                }
             }
         };
         let logical_session_ref = format_logical_session_wire_ref(rec.logical_session_id);
@@ -93,40 +213,6 @@ impl PlasmMcpHandler {
         let ls_key = logical_uuid.to_string();
         let accumulated_intent = rec.accumulated_intent.as_str();
 
-        let (seeds, auto_ranked_from_selector) = match session_mode {
-            PlasmContextSessionMode::New => match context_new_seeds::resolve_context_new_seeds(
-                tname,
-                self.plasm.catalog.snapshot().as_ref(),
-                intent,
-                allowed_ids.clone(),
-                optional_seeds,
-            )
-            .await?
-            {
-                ready @ context_new_seeds::ContextNewSeeds::Ready { .. } => {
-                    ready.entities_for_teaching()
-                }
-                #[cfg(feature = "semantic-auto-seed")]
-                context_new_seeds::ContextNewSeeds::Abstain(res) => return Ok(res),
-            },
-            PlasmContextSessionMode::Extend => {
-                match context_new_seeds::resolve_context_extend_seeds(
-                    tname,
-                    self.plasm.catalog.snapshot().as_ref(),
-                    accumulated_intent,
-                    allowed_ids.clone(),
-                    optional_seeds,
-                )
-                .await?
-                {
-                    ready @ context_new_seeds::ContextNewSeeds::Ready { .. } => {
-                        ready.entities_for_teaching()
-                    }
-                    #[cfg(feature = "semantic-auto-seed")]
-                    context_new_seeds::ContextNewSeeds::Abstain(res) => return Ok(res),
-                }
-            }
-        };
         // Agent-explicit ranked (emit) always wins; host auto-seed only fills when unspecified.
         let ranked_capabilities = match (ranked_capabilities_arg, auto_ranked_from_selector) {
             (arg, _) if arg.emit_diagnostics() => arg,
@@ -159,34 +245,6 @@ impl PlasmMcpHandler {
             }
         }
         let binding = self.resolve_binding_for_logical(key, logical_uuid).await;
-        if session_mode == PlasmContextSessionMode::Extend {
-            let live = async {
-                if let Some(b) = &binding {
-                    if self
-                        .plasm
-                        .get_execute_session(&b.prompt_hash, &b.session_id)
-                        .await
-                        .is_some()
-                    {
-                        return true;
-                    }
-                }
-                if let Some(pair) = self.plasm.logical_execute_bindings.get(&logical_uuid).await {
-                    return self
-                        .plasm
-                        .get_execute_session(&pair.0, &pair.1)
-                        .await
-                        .is_some();
-                }
-                false
-            }
-            .await;
-            if !live {
-                return Err(CallToolError::from_message(
-                    "session_mode \"extend\" requires a live execute session for this logical_session_ref — use session_mode \"new\" or reopen after expiry",
-                ));
-            }
-        }
         tracing::debug!(
             target: "plasm_agent::mcp",
             tool = tname,
@@ -395,7 +453,6 @@ impl PlasmMcpHandler {
         let res = if plasm.is_empty() {
             CallToolResult::text_content(vec![TextContent::new(text, None, None)])
         } else {
-            // Context has no structured UI App yet — ContentOnly keeps one finalize exit.
             crate::mcp_ui_payload::DualLaneToolResult {
                 content: text,
                 plasm_meta: plasm,
@@ -407,4 +464,84 @@ impl PlasmMcpHandler {
         self.persist_transport_state(key).await;
         Ok(res)
     }
+
+    /// Route seeds for the current turn (no mint/append).
+    async fn route_context_turn(
+        &self,
+        tool: &str,
+        intent: &str,
+        phase: ContextPhase<'_>,
+        allowed_ids: Option<Vec<String>>,
+        optional_seeds: Option<Vec<crate::http_execute::CapabilitySeed>>,
+        logical_session_ref: Option<&str>,
+        logical_session_id: Option<uuid::Uuid>,
+        routing_ref: Option<&str>,
+        clarify_choice: Option<&str>,
+    ) -> Result<ContextRouteDecision, CallToolError> {
+        let catalog = self.plasm.catalog.snapshot();
+        let policy = if context_new_seeds::semantic_auto_seed_on() {
+            #[cfg(feature = "semantic-auto-seed")]
+            {
+                let _ = optional_seeds;
+                SeedsPolicy::Auto(context_new_seeds::AutoSeedRouteArgs {
+                    tool,
+                    intent,
+                    logical_session_ref,
+                    logical_session_id,
+                    allowed_entry_ids: allowed_ids.clone(),
+                    pending_clarify: self.plasm.pending_clarify.as_ref(),
+                    routing_ref,
+                    clarify_choice,
+                })
+            }
+            #[cfg(not(feature = "semantic-auto-seed"))]
+            {
+                let _ = (logical_session_ref, logical_session_id, routing_ref, clarify_choice);
+                SeedsPolicy::Explicit(optional_seeds)
+            }
+        } else {
+            let _ = (logical_session_ref, logical_session_id, routing_ref, clarify_choice);
+            SeedsPolicy::Explicit(optional_seeds)
+        };
+        context_new_seeds::resolve_context_seeds(
+            tool,
+            catalog.as_ref(),
+            intent,
+            allowed_ids,
+            phase,
+            policy,
+        )
+        .await
+    }
+}
+
+fn present_delta_noop(rec: &LogicalSessionRecord, logical_session_ref: &str) -> CallToolResult {
+    let text = format!(
+        "Session already exposes the requested surface — no teaching delta.\n\n`logical_session_ref`: `{logical_session_ref}`\n\nReuse this ref for `plasm` / `plasm_run`, or `extend` again with a new catalog/entity intent."
+    );
+    let mut plasm = serde_json::Map::new();
+    plasm.insert(
+        "logical_session_ref".into(),
+        serde_json::json!(logical_session_ref),
+    );
+    plasm.insert("session_mode".into(), serde_json::json!("extend"));
+    plasm.insert(
+        "intent_turns".into(),
+        serde_json::json!(rec.intent_turns.len()),
+    );
+    plasm.insert("delta_noop".into(), serde_json::json!(true));
+    let text = crate::mcp_agent_present::AgentContent::context(
+        &crate::mcp_agent_present::ContextTokenRefs {
+            logical_session_ref,
+        },
+        &text,
+    )
+    .render();
+    crate::mcp_ui_payload::DualLaneToolResult {
+        content: text,
+        plasm_meta: plasm,
+        profile: crate::mcp_delivery::McpDeliveryProfile::ContentOnly,
+        inline_plan_ui: None,
+    }
+    .into_call_tool_result()
 }
