@@ -14,8 +14,8 @@ pub use rewriter::{
 };
 pub use types::{SeedAlternativeSetRaw, SeedSelectionDecision, SeedSelectionRaw};
 pub use validation::{
-    classify_clarify, seeds_from_candidate_ids, validate_seed_selection,
-    validate_seed_selection_with_brand_lock, validation_error_label, ClarifyKind,
-    SeedSelectionValidationError, ValidatedAbstainSeedSelection, ValidatedReadySeedSelection,
-    ValidatedSeedSelection,
+    classify_clarify, seeds_from_candidate_ids, try_federation_ready_under_brand_lock,
+    validate_seed_selection, validate_seed_selection_with_brand_lock, validation_error_label,
+    ClarifyKind, SeedSelectionValidationError, ValidatedAbstainSeedSelection,
+    ValidatedReadySeedSelection, ValidatedSeedSelection,
 };

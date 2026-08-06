@@ -7,7 +7,8 @@ use plasm_core::discovery_auto_seed::EntityCandidateBundle;
 use plasm_core::discovery_coverage::retrieve_via_coverage;
 use plasm_core::discovery_seed_pipeline::prepare_seed_retrieval;
 use plasm_core::discovery_seed_select::{
-    validate_seed_selection_with_brand_lock, SeedSelectionDecision, ValidatedSeedSelection,
+    try_federation_ready_under_brand_lock, validate_seed_selection_with_brand_lock,
+    SeedSelectionDecision, SeedSelectionValidationError, ValidatedSeedSelection,
 };
 use plasm_semantic_seed::{
     select_discovery_seeds, SelectorCatalogHost, SelectorConfig, SelectorRequest,
@@ -173,10 +174,44 @@ where
                 selector_latency_ms: latency,
             },
         },
-        Err(error) => AutoSeedRouteOutcome::RoutingError {
-            message: format!("selector validation: {error}"),
-            selector_latency_ms: latency,
-        },
+        Err(error) => {
+            // Named multi-brand intents: selector often emits provider clarify; collapse to Ready.
+            if matches!(
+                &error,
+                SeedSelectionValidationError::ClarifyUnderBrandLock(_)
+            ) {
+                if let Some(ready) = try_federation_ready_under_brand_lock(
+                    &raw,
+                    &bundles,
+                    retrieved.named_catalogs.as_slice(),
+                ) {
+                    let seeds = plasm_core::discovery_seed_select::seeds_from_candidate_ids(
+                        &bundles,
+                        &ready.selected_ids,
+                    );
+                    info!(
+                        target: "plasm_agent::discovery_auto_seed",
+                        seed_count = seeds.len(),
+                        candidate_count = bundles.len(),
+                        selector_latency_ms = latency,
+                        "semantic auto-seed ready (federation brand_lock repair)"
+                    );
+                    return AutoSeedRouteOutcome::Ready {
+                        seeds,
+                        teaching_satellites: ready.teaching_satellites,
+                        supporting_capability_ids: ready.supporting_capability_ids,
+                        requirements: ready.requirements,
+                        reasoning: ready.reasoning,
+                        candidate_preview: preview,
+                        selector_latency_ms: latency,
+                    };
+                }
+            }
+            AutoSeedRouteOutcome::RoutingError {
+                message: format!("selector validation: {error}"),
+                selector_latency_ms: latency,
+            }
+        }
     }
 }
 

@@ -252,6 +252,80 @@ pub fn validate_seed_selection_with_brand_lock(
     }
 }
 
+/// When the selector emits provider-level clarify despite named brands, collapse
+/// one-catalog-per-alternative sets into a federation **Ready** (≤3 seeds).
+///
+/// Returns `None` when the clarify is not a clean federation shape (mixed catalogs
+/// per alt, brand_lock not fully covered, missing bundles, or empty supporting caps).
+#[must_use]
+pub fn try_federation_ready_under_brand_lock(
+    raw: &SeedSelectionRaw,
+    bundles: &[EntityCandidateBundle],
+    brand_lock: &[String],
+) -> Option<ValidatedReadySeedSelection> {
+    if brand_lock.is_empty() || raw.decision != SeedSelectionDecision::Clarify {
+        return None;
+    }
+    if classify_clarify(&raw.alternative_sets) != ClarifyKind::ProviderDisambiguation {
+        return None;
+    }
+    let n = raw.alternative_sets.len();
+    if !(2..=3).contains(&n) {
+        return None;
+    }
+
+    let lock: HashSet<&str> = brand_lock.iter().map(String::as_str).collect();
+    let candidate_ids: HashSet<&str> = bundles.iter().map(|b| b.candidate_id.as_str()).collect();
+
+    let mut selected_ids = Vec::new();
+    let mut covered: HashSet<&str> = HashSet::new();
+    for alt in &raw.alternative_sets {
+        let mut cats = HashSet::new();
+        for id in &alt.candidate_ids {
+            let catalog = id.split_once(':').map(|(c, _)| c).unwrap_or(id.as_str());
+            cats.insert(catalog);
+        }
+        if cats.len() != 1 {
+            return None;
+        }
+        let catalog = *cats.iter().next()?;
+        if !lock.contains(catalog) {
+            return None;
+        }
+        if !covered.insert(catalog) {
+            // Two alts for the same catalog — not a clean 1:1 federation.
+            return None;
+        }
+        let pick = alt.candidate_ids.iter().find(|id| candidate_ids.contains(id.as_str()))?;
+        if !selected_ids.iter().any(|s| s == pick) {
+            selected_ids.push(pick.clone());
+        }
+    }
+    if !lock.iter().all(|c| covered.contains(c)) {
+        return None;
+    }
+    if selected_ids.is_empty() || selected_ids.len() > 3 {
+        return None;
+    }
+
+    let supporting =
+        super::rewriter::supporting_capabilities_from_bundles(&selected_ids, bundles);
+    if supporting.is_empty() {
+        return None;
+    }
+
+    Some(ValidatedReadySeedSelection {
+        requirements: raw.requirements.clone(),
+        selected_ids,
+        supporting_capability_ids: supporting,
+        teaching_satellites: Vec::new(),
+        reasoning: format!(
+            "brand_lock_best_effort: federation ready from provider clarify under named brands ({})",
+            brand_lock.join(",")
+        ),
+    })
+}
+
 /// Map validated candidate ids to `{entry_id, entity}` seeds.
 pub fn seeds_from_candidate_ids(
     bundles: &[EntityCandidateBundle],

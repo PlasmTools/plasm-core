@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.41] - 2026-08-06
+
+### Fixed
+
+- **Multi-brand federation one-shot:** provider-level clarify under a complete named `brand_lock` is deterministically repaired into federation **ready** (one seed per catalog, ≤3) instead of `routing_error`.
+
 ## [0.4.40] - 2026-08-06
 
 ### Fixed
