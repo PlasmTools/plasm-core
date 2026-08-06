@@ -15,13 +15,12 @@ use crate::http_execute::{
 use crate::incoming_auth::tenant_scope;
 use crate::mcp_logical_ref::format_logical_session_wire_ref;
 use crate::session_identity::{
-    accumulated_intent_meta_preview, LogicalSessionId, LogicalSessionRecord, PlasmContextSessionMode,
+    accumulated_intent_meta_preview, LogicalSessionId, LogicalSessionRecord,
+    PlasmContextSessionMode,
 };
 use crate::trace_hub::PlasmContextTrace;
 
-use super::context_new_seeds::{
-    self, ContextPhase, ContextRouteDecision, SeedsPolicy,
-};
+use super::context_new_seeds::{self, ContextPhase, ContextRouteDecision, SeedsPolicy};
 use super::tool_parse::{
     parse_optional_principal, parse_plasm_context_clarify_choice,
     parse_plasm_context_ranked_capabilities, parse_plasm_context_routing_ref,
@@ -60,31 +59,30 @@ impl PlasmMcpHandler {
         let (rec, seeds, auto_ranked_from_selector) = match session_mode {
             PlasmContextSessionMode::New => {
                 let decision = self
-                    .route_context_turn(
-                        tname,
+                    .route_context_turn(RouteContextTurn {
+                        tool: tname,
                         intent,
-                        ContextPhase::New,
-                        allowed_ids.clone(),
+                        phase: ContextPhase::New,
+                        allowed_ids: allowed_ids.clone(),
                         optional_seeds,
-                        None,
-                        None,
-                        routing_ref_arg.as_deref(),
-                        clarify_choice_arg.as_deref(),
-                    )
+                        logical_session_ref: None,
+                        logical_session_id: None,
+                        routing_ref: routing_ref_arg.as_deref(),
+                        clarify_choice: clarify_choice_arg.as_deref(),
+                    })
                     .await?;
                 let (seeds, auto_ranked) = match decision {
                     #[cfg(feature = "semantic-auto-seed")]
                     ContextRouteDecision::Abstain(plan) => {
                         return Ok(context_new_seeds::present_abstain(plan, intent));
                     }
+                    #[cfg(feature = "semantic-auto-seed")]
                     ContextRouteDecision::Noop => {
                         return Err(CallToolError::from_message(
                             "internal: delta_noop is only valid for session_mode extend",
                         ));
                     }
-                    expand @ ContextRouteDecision::Expand { .. } => {
-                        expand.into_expand().expect("expand")
-                    }
+                    expand @ ContextRouteDecision::Expand { .. } => expand.into_expand(),
                 };
                 let rec = self
                     .plasm
@@ -130,10 +128,7 @@ impl PlasmMcpHandler {
                         if let Some(pair) =
                             self.plasm.logical_execute_bindings.get(&logical_uuid).await
                         {
-                            found = self
-                                .plasm
-                                .get_execute_session(&pair.0, &pair.1)
-                                .await;
+                            found = self.plasm.get_execute_session(&pair.0, &pair.1).await;
                         }
                     }
                     found
@@ -155,19 +150,19 @@ impl PlasmMcpHandler {
                     .unwrap_or_default();
 
                 let decision = self
-                    .route_context_turn(
-                        tname,
+                    .route_context_turn(RouteContextTurn {
+                        tool: tname,
                         intent,
-                        ContextPhase::Extend {
+                        phase: ContextPhase::Extend {
                             exposed: exposed.as_slice(),
                         },
-                        allowed_ids.clone(),
+                        allowed_ids: allowed_ids.clone(),
                         optional_seeds,
-                        Some(logical_session_ref.as_str()),
-                        Some(logical_uuid),
-                        routing_ref_arg.as_deref(),
-                        clarify_choice_arg.as_deref(),
-                    )
+                        logical_session_ref: Some(logical_session_ref.as_str()),
+                        logical_session_id: Some(logical_uuid),
+                        routing_ref: routing_ref_arg.as_deref(),
+                        clarify_choice: clarify_choice_arg.as_deref(),
+                    })
                     .await?;
 
                 match decision {
@@ -175,6 +170,7 @@ impl PlasmMcpHandler {
                     ContextRouteDecision::Abstain(plan) => {
                         return Ok(context_new_seeds::present_abstain(plan, intent));
                     }
+                    #[cfg(feature = "semantic-auto-seed")]
                     ContextRouteDecision::Noop => {
                         let Some(rec) = self
                             .plasm
@@ -189,7 +185,7 @@ impl PlasmMcpHandler {
                         return Ok(present_delta_noop(&rec, &logical_session_ref));
                     }
                     expand @ ContextRouteDecision::Expand { .. } => {
-                        let (seeds, auto_ranked) = expand.into_expand().expect("expand");
+                        let (seeds, auto_ranked) = expand.into_expand();
                         let Some(rec) = self
                             .plasm
                             .logical_sessions
@@ -468,51 +464,65 @@ impl PlasmMcpHandler {
     /// Route seeds for the current turn (no mint/append).
     async fn route_context_turn(
         &self,
-        tool: &str,
-        intent: &str,
-        phase: ContextPhase<'_>,
-        allowed_ids: Option<Vec<String>>,
-        optional_seeds: Option<Vec<crate::http_execute::CapabilitySeed>>,
-        logical_session_ref: Option<&str>,
-        logical_session_id: Option<uuid::Uuid>,
-        routing_ref: Option<&str>,
-        clarify_choice: Option<&str>,
+        args: RouteContextTurn<'_>,
     ) -> Result<ContextRouteDecision, CallToolError> {
         let catalog = self.plasm.catalog.snapshot();
         let policy = if context_new_seeds::semantic_auto_seed_on() {
             #[cfg(feature = "semantic-auto-seed")]
             {
-                let _ = optional_seeds;
+                let _ = args.optional_seeds;
                 SeedsPolicy::Auto(context_new_seeds::AutoSeedRouteArgs {
-                    tool,
-                    intent,
-                    logical_session_ref,
-                    logical_session_id,
-                    allowed_entry_ids: allowed_ids.clone(),
+                    tool: args.tool,
+                    intent: args.intent,
+                    logical_session_ref: args.logical_session_ref,
+                    logical_session_id: args.logical_session_id,
+                    allowed_entry_ids: args.allowed_ids.clone(),
                     pending_clarify: self.plasm.pending_clarify.as_ref(),
-                    routing_ref,
-                    clarify_choice,
+                    routing_ref: args.routing_ref,
+                    clarify_choice: args.clarify_choice,
                 })
             }
             #[cfg(not(feature = "semantic-auto-seed"))]
             {
-                let _ = (logical_session_ref, logical_session_id, routing_ref, clarify_choice);
-                SeedsPolicy::Explicit(optional_seeds)
+                let _ = (
+                    args.logical_session_ref,
+                    args.logical_session_id,
+                    args.routing_ref,
+                    args.clarify_choice,
+                );
+                SeedsPolicy::Explicit(args.optional_seeds)
             }
         } else {
-            let _ = (logical_session_ref, logical_session_id, routing_ref, clarify_choice);
-            SeedsPolicy::Explicit(optional_seeds)
+            let _ = (
+                args.logical_session_ref,
+                args.logical_session_id,
+                args.routing_ref,
+                args.clarify_choice,
+            );
+            SeedsPolicy::Explicit(args.optional_seeds)
         };
         context_new_seeds::resolve_context_seeds(
-            tool,
+            args.tool,
             catalog.as_ref(),
-            intent,
-            allowed_ids,
-            phase,
+            args.intent,
+            args.allowed_ids,
+            args.phase,
             policy,
         )
         .await
     }
+}
+
+struct RouteContextTurn<'a> {
+    tool: &'a str,
+    intent: &'a str,
+    phase: ContextPhase<'a>,
+    allowed_ids: Option<Vec<String>>,
+    optional_seeds: Option<Vec<crate::http_execute::CapabilitySeed>>,
+    logical_session_ref: Option<&'a str>,
+    logical_session_id: Option<uuid::Uuid>,
+    routing_ref: Option<&'a str>,
+    clarify_choice: Option<&'a str>,
 }
 
 fn present_delta_noop(rec: &LogicalSessionRecord, logical_session_ref: &str) -> CallToolResult {

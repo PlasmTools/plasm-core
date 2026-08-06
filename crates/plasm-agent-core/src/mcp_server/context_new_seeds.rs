@@ -22,7 +22,11 @@ const MISSING_SEEDS_NO_FEATURE: &str = "missing capability picks: `plasm_context
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ContextPhase<'a> {
     New,
-    Extend { exposed: &'a [(String, String)] },
+    Extend {
+        /// Already-exposed teaching pairs (read when semantic auto-seed routes a delta).
+        #[cfg_attr(not(feature = "semantic-auto-seed"), allow(dead_code))]
+        exposed: &'a [(String, String)],
+    },
 }
 
 impl ContextPhase<'_> {
@@ -37,6 +41,7 @@ impl ContextPhase<'_> {
         }
     }
 
+    #[cfg(feature = "semantic-auto-seed")]
     #[must_use]
     fn session_mode(self) -> &'static str {
         match self {
@@ -45,6 +50,7 @@ impl ContextPhase<'_> {
         }
     }
 
+    #[cfg(feature = "semantic-auto-seed")]
     #[must_use]
     fn exclude_exposed(&self) -> Option<&[(String, String)]> {
         match self {
@@ -55,10 +61,15 @@ impl ContextPhase<'_> {
 }
 
 /// Explicit seeds vs auto-route (feature builds only).
+#[cfg(feature = "semantic-auto-seed")]
 pub(crate) enum SeedsPolicy<'a> {
     Explicit(Option<Vec<CapabilitySeed>>),
-    #[cfg(feature = "semantic-auto-seed")]
     Auto(AutoSeedRouteArgs<'a>),
+}
+
+#[cfg(not(feature = "semantic-auto-seed"))]
+pub(crate) enum SeedsPolicy {
+    Explicit(Option<Vec<CapabilitySeed>>),
 }
 
 /// Arguments for semantic auto-seed routing.
@@ -84,6 +95,7 @@ pub(crate) enum ContextRouteDecision {
         ranked_capabilities: Option<Vec<String>>,
     },
     /// Extend: intent committed, no teaching delta.
+    #[cfg(feature = "semantic-auto-seed")]
     Noop,
     /// Abstain breakout — present separately; do not mint/append.
     #[cfg(feature = "semantic-auto-seed")]
@@ -99,10 +111,8 @@ pub(crate) struct AbstainPlan {
 }
 
 impl ContextRouteDecision {
-    /// Teaching exposure order for Expand.
-    pub(crate) fn into_expand(
-        self,
-    ) -> Result<(Vec<CapabilitySeed>, Option<Vec<String>>), Self> {
+    /// Teaching exposure order for Expand. Panics if not Expand (callers match first).
+    pub(crate) fn into_expand(self) -> (Vec<CapabilitySeed>, Option<Vec<String>>) {
         match self {
             Self::Expand {
                 workflow_seeds,
@@ -119,9 +129,10 @@ impl ContextRouteDecision {
                     }
                     seeds.push(sat);
                 }
-                Ok((seeds, ranked_capabilities))
+                (seeds, ranked_capabilities)
             }
-            other => Err(other),
+            #[cfg(feature = "semantic-auto-seed")]
+            other => panic!("into_expand on non-Expand: {other:?}"),
         }
     }
 }
@@ -131,6 +142,7 @@ pub(crate) fn semantic_auto_seed_on() -> bool {
 }
 
 /// Resolve seeds for `plasm_context` (route before mint/append).
+#[cfg(feature = "semantic-auto-seed")]
 pub(crate) async fn resolve_context_seeds<C>(
     tool: &str,
     catalog: &C,
@@ -143,7 +155,6 @@ where
     C: CgsDiscovery + CgsCatalog + Send + Sync,
 {
     match policy {
-        #[cfg(feature = "semantic-auto-seed")]
         SeedsPolicy::Auto(auto) => {
             if !semantic_auto_seed_on() {
                 return Err(CallToolError::invalid_arguments(
@@ -153,50 +164,91 @@ where
             }
             route_auto_seed(catalog, phase, auto).await
         }
-        SeedsPolicy::Explicit(explicit_seeds) => {
-            if semantic_auto_seed_on() {
-                if explicit_seeds.is_some() {
-                    return Err(CallToolError::invalid_arguments(
-                        tool,
-                        Some(SEEDS_REJECTED_ON_AUTO_SEED.into()),
-                    ));
-                }
-                #[cfg(feature = "semantic-auto-seed")]
-                {
-                    return Err(CallToolError::invalid_arguments(
-                        tool,
-                        Some("internal: auto-seed on requires SeedsPolicy::Auto".into()),
-                    ));
-                }
-                #[cfg(not(feature = "semantic-auto-seed"))]
-                {
-                    let _ = (catalog, intent, allowed_entry_ids, phase);
-                    return Err(CallToolError::invalid_arguments(
-                        tool,
-                        Some(MISSING_SEEDS_NO_FEATURE.into()),
-                    ));
-                }
-            }
-            let _ = (catalog, intent, allowed_entry_ids, phase);
-            match explicit_seeds {
-                Some(seeds) => Ok(ContextRouteDecision::Expand {
-                    workflow_seeds: seeds,
-                    teaching_satellites: Vec::new(),
-                    ranked_capabilities: None,
-                }),
-                None => Err(CallToolError::invalid_arguments(
-                    tool,
-                    Some(
-                        if cfg!(feature = "semantic-auto-seed") {
-                            MISSING_SEEDS_ENABLE_AUTO_SEED
-                        } else {
-                            MISSING_SEEDS_NO_FEATURE
-                        }
-                        .into(),
-                    ),
-                )),
-            }
+        SeedsPolicy::Explicit(explicit_seeds) => resolve_explicit_seeds(
+            tool,
+            catalog,
+            intent,
+            allowed_entry_ids,
+            phase,
+            explicit_seeds,
+        ),
+    }
+}
+
+#[cfg(not(feature = "semantic-auto-seed"))]
+pub(crate) async fn resolve_context_seeds<C>(
+    tool: &str,
+    catalog: &C,
+    intent: &str,
+    allowed_entry_ids: Option<Vec<String>>,
+    phase: ContextPhase<'_>,
+    policy: SeedsPolicy,
+) -> Result<ContextRouteDecision, CallToolError>
+where
+    C: CgsDiscovery + CgsCatalog + Send + Sync,
+{
+    match policy {
+        SeedsPolicy::Explicit(explicit_seeds) => resolve_explicit_seeds(
+            tool,
+            catalog,
+            intent,
+            allowed_entry_ids,
+            phase,
+            explicit_seeds,
+        ),
+    }
+}
+
+fn resolve_explicit_seeds(
+    tool: &str,
+    catalog: &impl CgsDiscovery,
+    intent: &str,
+    allowed_entry_ids: Option<Vec<String>>,
+    phase: ContextPhase<'_>,
+    explicit_seeds: Option<Vec<CapabilitySeed>>,
+) -> Result<ContextRouteDecision, CallToolError> {
+    if semantic_auto_seed_on() {
+        if explicit_seeds.is_some() {
+            return Err(CallToolError::invalid_arguments(
+                tool,
+                Some(SEEDS_REJECTED_ON_AUTO_SEED.into()),
+            ));
         }
+        #[cfg(feature = "semantic-auto-seed")]
+        {
+            let _ = (catalog, intent, allowed_entry_ids, phase);
+            return Err(CallToolError::invalid_arguments(
+                tool,
+                Some("internal: auto-seed on requires SeedsPolicy::Auto".into()),
+            ));
+        }
+        #[cfg(not(feature = "semantic-auto-seed"))]
+        {
+            let _ = (catalog, intent, allowed_entry_ids, phase);
+            return Err(CallToolError::invalid_arguments(
+                tool,
+                Some(MISSING_SEEDS_NO_FEATURE.into()),
+            ));
+        }
+    }
+    let _ = (catalog, intent, allowed_entry_ids, phase);
+    match explicit_seeds {
+        Some(seeds) => Ok(ContextRouteDecision::Expand {
+            workflow_seeds: seeds,
+            teaching_satellites: Vec::new(),
+            ranked_capabilities: None,
+        }),
+        None => Err(CallToolError::invalid_arguments(
+            tool,
+            Some(
+                if cfg!(feature = "semantic-auto-seed") {
+                    MISSING_SEEDS_ENABLE_AUTO_SEED
+                } else {
+                    MISSING_SEEDS_NO_FEATURE
+                }
+                .into(),
+            ),
+        )),
     }
 }
 
@@ -229,7 +281,9 @@ where
     if args.routing_ref.is_some() && args.clarify_choice.is_none() {
         return Err(CallToolError::invalid_arguments(
             args.tool,
-            Some("`routing_ref` requires `clarify_choice` (1-based index or catalog:entity)".into()),
+            Some(
+                "`routing_ref` requires `clarify_choice` (1-based index or catalog:entity)".into(),
+            ),
         ));
     }
 
@@ -273,14 +327,15 @@ where
             );
             let routing_ref = match &abstain {
                 crate::discovery_routing::AutoSeedRouteOutcome::Clarify {
-                    alternative_sets, ..
-                } if !alternative_sets.is_empty() => Some(args.pending_clarify.insert(
-                    PendingClarifyChoice::new(
+                    alternative_sets,
+                    ..
+                } if !alternative_sets.is_empty() => {
+                    Some(args.pending_clarify.insert(PendingClarifyChoice::new(
                         alternative_sets.clone(),
                         args.intent,
                         expected_binding,
-                    ),
-                )),
+                    )))
+                }
                 _ => None,
             };
             let breakout = crate::discovery_routing::BreakoutContext {
@@ -305,9 +360,9 @@ fn resolve_from_clarify_receipt(
     choice: &str,
     expected: &ClarifyBinding,
 ) -> Result<ContextRouteDecision, CallToolError> {
-    let receipt = pending.redeem(routing_ref, expected).map_err(|e| {
-        CallToolError::invalid_arguments(tool, Some(e.to_message()))
-    })?;
+    let receipt = pending
+        .redeem(routing_ref, expected)
+        .map_err(|e| CallToolError::invalid_arguments(tool, Some(e.to_message())))?;
     let pairs = resolve_clarify_choice(&receipt.alternatives, choice).map_err(|e| {
         CallToolError::invalid_arguments(tool, Some(ClarifyRedeemError::Choice(e).to_message()))
     })?;
@@ -347,7 +402,7 @@ pub(crate) fn present_abstain(plan: AbstainPlan, intent: &str) -> CallToolResult
     res
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "semantic-auto-seed"))]
 mod tests {
     use super::*;
 
@@ -366,7 +421,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "semantic-auto-seed")]
     #[test]
     fn clarify_binding_matches_phase() {
         let sid = uuid::Uuid::new_v4();
