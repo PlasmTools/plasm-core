@@ -213,10 +213,7 @@ fn structured_ui_payload_from_meta(
     let obj = plasm.as_object()?;
     let kind = UiPayloadKind::from_plasm_obj(obj)?;
     let mut out = Map::new();
-    out.insert(
-        "kind".to_string(),
-        Value::String(kind.as_str().to_string()),
-    );
+    out.insert("kind".to_string(), Value::String(kind.as_str().to_string()));
 
     // Plan fetch refs only on Plan Review (dry-run / `run_ref` responses).
     if kind == UiPayloadKind::PlanReview {

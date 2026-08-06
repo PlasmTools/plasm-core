@@ -179,7 +179,10 @@ pub(crate) fn parse_plasm_context_clarify_choice(
         Some(serde_json::Value::Number(n)) => Ok(Some(n.to_string())),
         Some(_) => Err(CallToolError::invalid_arguments(
             tool,
-            Some("`clarify_choice` must be a 1-based index string/number or catalog:entity id".into()),
+            Some(
+                "`clarify_choice` must be a 1-based index string/number or catalog:entity id"
+                    .into(),
+            ),
         )),
     }
 }

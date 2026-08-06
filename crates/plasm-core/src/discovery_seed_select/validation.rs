@@ -1,6 +1,6 @@
 //! Seed selection validation.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::discovery_auto_seed::EntityCandidateBundle;
 
@@ -214,9 +214,7 @@ pub fn validate_seed_selection_with_brand_lock(
                     }
                 }
                 // Named brands ⇒ only entity-level clarify; reject provider disambiguation.
-                if classify_clarify(&raw.alternative_sets)
-                    == ClarifyKind::ProviderDisambiguation
-                {
+                if classify_clarify(&raw.alternative_sets) == ClarifyKind::ProviderDisambiguation {
                     return Err(SeedSelectionValidationError::ClarifyUnderBrandLock(
                         brand_lock.iter().cloned().collect::<Vec<_>>().join(","),
                     ));
@@ -253,27 +251,62 @@ pub fn validate_seed_selection_with_brand_lock(
 }
 
 /// When the selector emits provider-level clarify despite named brands, collapse
-/// one-catalog-per-alternative sets into a federation **Ready** (≤3 seeds).
+/// into a federation **Ready** (≤3 seeds).
 ///
-/// Returns `None` when the clarify is not a clean federation shape (mixed catalogs
-/// per alt, brand_lock not fully covered, missing bundles, or empty supporting caps).
+/// Strategy:
+/// 1. Prefer one candidate per clarify alternative when alts are cleanly
+///    one-catalog-per-brand and fully cover `brand_lock`.
+/// 2. Otherwise pick one bundle per `brand_lock` catalog (intent/alt hints,
+///    then lexical score).
+///
+/// Returns `None` when brand coverage cannot be satisfied from `bundles`.
 #[must_use]
 pub fn try_federation_ready_under_brand_lock(
     raw: &SeedSelectionRaw,
     bundles: &[EntityCandidateBundle],
     brand_lock: &[String],
+    intent: &str,
 ) -> Option<ValidatedReadySeedSelection> {
     if brand_lock.is_empty() || raw.decision != SeedSelectionDecision::Clarify {
         return None;
     }
-    if classify_clarify(&raw.alternative_sets) != ClarifyKind::ProviderDisambiguation {
+    if !(2..=3).contains(&brand_lock.len()) {
         return None;
     }
-    let n = raw.alternative_sets.len();
-    if !(2..=3).contains(&n) {
+    // Never promote entity-level clarify (same catalog) into multi-seed Ready.
+    if classify_clarify(&raw.alternative_sets) == ClarifyKind::EntityDisambiguation {
         return None;
     }
 
+    let selected_ids = federation_selected_ids_from_alts(raw, bundles, brand_lock)
+        .or_else(|| federation_selected_ids_from_bundles(raw, bundles, brand_lock, intent))?;
+
+    let supporting = super::rewriter::supporting_capabilities_from_bundles(&selected_ids, bundles);
+    if supporting.is_empty() {
+        return None;
+    }
+
+    Some(ValidatedReadySeedSelection {
+        requirements: raw.requirements.clone(),
+        selected_ids,
+        supporting_capability_ids: supporting,
+        teaching_satellites: Vec::new(),
+        reasoning: format!(
+            "brand_lock_best_effort: federation ready from provider clarify under named brands ({})",
+            brand_lock.join(",")
+        ),
+    })
+}
+
+fn federation_selected_ids_from_alts(
+    raw: &SeedSelectionRaw,
+    bundles: &[EntityCandidateBundle],
+    brand_lock: &[String],
+) -> Option<Vec<String>> {
+    let n = raw.alternative_sets.len();
+    if n != brand_lock.len() || !(2..=3).contains(&n) {
+        return None;
+    }
     let lock: HashSet<&str> = brand_lock.iter().map(String::as_str).collect();
     let candidate_ids: HashSet<&str> = bundles.iter().map(|b| b.candidate_id.as_str()).collect();
 
@@ -289,14 +322,13 @@ pub fn try_federation_ready_under_brand_lock(
             return None;
         }
         let catalog = *cats.iter().next()?;
-        if !lock.contains(catalog) {
+        if !lock.contains(catalog) || !covered.insert(catalog) {
             return None;
         }
-        if !covered.insert(catalog) {
-            // Two alts for the same catalog — not a clean 1:1 federation.
-            return None;
-        }
-        let pick = alt.candidate_ids.iter().find(|id| candidate_ids.contains(id.as_str()))?;
+        let pick = alt
+            .candidate_ids
+            .iter()
+            .find(|id| candidate_ids.contains(id.as_str()))?;
         if !selected_ids.iter().any(|s| s == pick) {
             selected_ids.push(pick.clone());
         }
@@ -304,26 +336,86 @@ pub fn try_federation_ready_under_brand_lock(
     if !lock.iter().all(|c| covered.contains(c)) {
         return None;
     }
-    if selected_ids.is_empty() || selected_ids.len() > 3 {
+    if selected_ids.len() != brand_lock.len() {
         return None;
     }
+    Some(selected_ids)
+}
 
-    let supporting =
-        super::rewriter::supporting_capabilities_from_bundles(&selected_ids, bundles);
-    if supporting.is_empty() {
-        return None;
+fn federation_selected_ids_from_bundles(
+    raw: &SeedSelectionRaw,
+    bundles: &[EntityCandidateBundle],
+    brand_lock: &[String],
+    intent: &str,
+) -> Option<Vec<String>> {
+    let hint = {
+        let mut parts = Vec::new();
+        parts.push(intent.to_ascii_lowercase());
+        for r in &raw.requirements {
+            parts.push(r.to_ascii_lowercase());
+        }
+        parts.push(raw.reasoning.to_ascii_lowercase());
+        for alt in &raw.alternative_sets {
+            parts.push(alt.label.to_ascii_lowercase());
+            for id in &alt.candidate_ids {
+                parts.push(id.to_ascii_lowercase());
+            }
+        }
+        parts.join(" ")
+    };
+
+    // Preferred candidate ids mentioned in clarify alts, keyed by catalog.
+    let mut alt_pref: HashMap<&str, Vec<&str>> = HashMap::new();
+    for alt in &raw.alternative_sets {
+        for id in &alt.candidate_ids {
+            let catalog = id.split_once(':').map(|(c, _)| c).unwrap_or(id.as_str());
+            alt_pref.entry(catalog).or_default().push(id.as_str());
+        }
     }
 
-    Some(ValidatedReadySeedSelection {
-        requirements: raw.requirements.clone(),
-        selected_ids,
-        supporting_capability_ids: supporting,
-        teaching_satellites: Vec::new(),
-        reasoning: format!(
-            "brand_lock_best_effort: federation ready from provider clarify under named brands ({})",
-            brand_lock.join(",")
-        ),
-    })
+    let mut selected_ids = Vec::new();
+    for brand in brand_lock {
+        let catalog = brand.as_str();
+        let mut catalog_bundles: Vec<&EntityCandidateBundle> =
+            bundles.iter().filter(|b| b.entry_id == catalog).collect();
+        if catalog_bundles.is_empty() {
+            return None;
+        }
+        catalog_bundles.sort_by(|a, b| {
+            b.max_lexical_score
+                .cmp(&a.max_lexical_score)
+                .then_with(|| a.candidate_id.cmp(&b.candidate_id))
+        });
+
+        let pick = alt_pref
+            .get(catalog)
+            .and_then(|prefs| {
+                prefs.iter().find_map(|pid| {
+                    catalog_bundles
+                        .iter()
+                        .find(|b| b.candidate_id == *pid)
+                        .map(|b| b.candidate_id.clone())
+                })
+            })
+            .or_else(|| {
+                catalog_bundles
+                    .iter()
+                    .find(|b| {
+                        let ent = b.entity.to_ascii_lowercase();
+                        !ent.is_empty() && hint.contains(&ent)
+                    })
+                    .map(|b| b.candidate_id.clone())
+            })
+            .or_else(|| catalog_bundles.first().map(|b| b.candidate_id.clone()))?;
+
+        if !selected_ids.iter().any(|s| s == &pick) {
+            selected_ids.push(pick);
+        }
+    }
+    if selected_ids.len() != brand_lock.len() {
+        return None;
+    }
+    Some(selected_ids)
 }
 
 /// Map validated candidate ids to `{entry_id, entity}` seeds.

@@ -27,7 +27,6 @@ pub mod discovery_human_format;
 pub mod discovery_routing;
 #[cfg(feature = "semantic-auto-seed")]
 pub mod discovery_seed_select;
-pub mod pending_clarify;
 pub mod dispatch;
 pub mod domain_revision;
 pub mod dotenv_safe;
@@ -105,6 +104,7 @@ mod operation_progress_sse;
 pub mod oss_local_state;
 pub mod outbound_secret_provider;
 pub mod output;
+pub mod pending_clarify;
 pub mod plan_commit_store;
 mod plan_dry_compact;
 mod plan_dry_display;

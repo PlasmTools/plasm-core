@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.42] - 2026-08-06
+
+### Fixed
+
+- **Multi-brand federation one-shot (bundle fallback):** when provider clarify under `brand_lock` cannot collapse via one-catalog-per-alt coverage, repair selects one seed per locked catalog from candidate bundles (alt prefs → intent entity hint → lexical score) instead of `routing_error`.
+
 ## [0.4.41] - 2026-08-06
 
 ### Fixed

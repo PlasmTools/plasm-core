@@ -362,7 +362,7 @@ fn federation_ready_repairs_provider_clarify_under_multi_brand_lock() {
         validate_seed_selection_with_brand_lock(&raw, &bundles, Some(&brand)).unwrap_err(),
         SeedSelectionValidationError::ClarifyUnderBrandLock(_)
     ));
-    let ready = try_federation_ready_under_brand_lock(&raw, &bundles, &brand)
+    let ready = try_federation_ready_under_brand_lock(&raw, &bundles, &brand, "federate")
         .expect("federation repair");
     assert_eq!(ready.selected_ids.len(), 3);
     assert!(ready.selected_ids.contains(&"github:Repository".into()));
@@ -370,6 +370,66 @@ fn federation_ready_repairs_provider_clarify_under_multi_brand_lock() {
     assert!(ready.selected_ids.contains(&"pokeapi:Pokemon".into()));
     assert!(!ready.supporting_capability_ids.is_empty());
     assert!(ready.reasoning.contains("brand_lock_best_effort"));
+}
+
+#[test]
+fn federation_ready_bundle_fallback_when_alts_incomplete() {
+    use super::validation::try_federation_ready_under_brand_lock;
+    let bundles = vec![
+        bundle(
+            "github:Repository",
+            "github",
+            "Repository",
+            "repo_get",
+            "Get",
+            "",
+        ),
+        bundle(
+            "linear:Issue",
+            "linear",
+            "Issue",
+            "issue_query",
+            "Query",
+            "",
+        ),
+        bundle(
+            "pokeapi:Pokemon",
+            "pokeapi",
+            "Pokemon",
+            "pokemon_get",
+            "Get",
+            "",
+        ),
+        bundle("pokeapi:Berry", "pokeapi", "Berry", "berry_get", "Get", ""),
+    ];
+    let raw = SeedSelectionRaw {
+        decision: SeedSelectionDecision::Clarify,
+        requirements: vec![],
+        selected_ids: vec![],
+        supporting_capability_ids: vec![],
+        teaching_satellites: vec![],
+        alternative_sets: vec![
+            SeedAlternativeSetRaw {
+                candidate_ids: vec!["github:Repository".into()],
+                label: "github".into(),
+            },
+            SeedAlternativeSetRaw {
+                candidate_ids: vec!["linear:Issue".into()],
+                label: "linear".into(),
+            },
+        ],
+        uncovered_requirements: vec![],
+        reasoning: "which provider".into(),
+    };
+    let brand = ["github".into(), "linear".into(), "pokeapi".into()];
+    let intent = "Federate github Repository, linear Issue triage, and pokeapi Pokemon pikachu.";
+    let ready = try_federation_ready_under_brand_lock(&raw, &bundles, &brand, intent)
+        .expect("bundle fallback repair");
+    assert_eq!(ready.selected_ids.len(), 3);
+    assert!(ready.selected_ids.contains(&"github:Repository".into()));
+    assert!(ready.selected_ids.contains(&"linear:Issue".into()));
+    assert!(ready.selected_ids.contains(&"pokeapi:Pokemon".into()));
+    assert!(!ready.selected_ids.contains(&"pokeapi:Berry".into()));
 }
 
 #[test]
@@ -413,7 +473,7 @@ fn federation_ready_refuses_incomplete_brand_coverage() {
         reasoning: "partial".into(),
     };
     let brand = ["github".into(), "linear".into(), "pokeapi".into()];
-    assert!(try_federation_ready_under_brand_lock(&raw, &bundles, &brand).is_none());
+    assert!(try_federation_ready_under_brand_lock(&raw, &bundles, &brand, "federate").is_none());
 }
 
 #[test]
@@ -462,12 +522,8 @@ fn brand_lock_allows_entity_clarify_within_one_catalog() {
         classify_clarify(&raw.alternative_sets),
         ClarifyKind::EntityDisambiguation
     );
-    let ok = validate_seed_selection_with_brand_lock(
-        &raw,
-        &bundles,
-        Some(&["github".into()]),
-    )
-    .expect("entity clarify under brand lock");
+    let ok = validate_seed_selection_with_brand_lock(&raw, &bundles, Some(&["github".into()]))
+        .expect("entity clarify under brand lock");
     assert!(matches!(ok, ValidatedSeedSelection::Abstain(_)));
 }
 

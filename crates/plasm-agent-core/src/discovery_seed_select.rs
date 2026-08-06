@@ -82,9 +82,9 @@ where
     if let Some(exposed) = exclude_exposed {
         if !exposed.is_empty() {
             bundles.retain(|b| {
-                !exposed.iter().any(|(e, n)| {
-                    e == &b.entry_id && n.eq_ignore_ascii_case(&b.entity)
-                })
+                !exposed
+                    .iter()
+                    .any(|(e, n)| e == &b.entry_id && n.eq_ignore_ascii_case(&b.entity))
             });
         }
     }
@@ -184,6 +184,7 @@ where
                     &raw,
                     &bundles,
                     retrieved.named_catalogs.as_slice(),
+                    intent,
                 ) {
                     let seeds = plasm_core::discovery_seed_select::seeds_from_candidate_ids(
                         &bundles,
