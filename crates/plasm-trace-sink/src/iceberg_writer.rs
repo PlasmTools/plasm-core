@@ -1573,7 +1573,7 @@ pub fn durable_detail_from_events(
         .map(|i| mcp_rows[i].trace.clone())
         .collect();
     let session = session_data_from_ordered_events(mcp_session_id.as_str(), session_traces);
-    let totals: TraceTotals = totals_from_session_data(&session).into();
+    let totals: TraceTotals = totals_from_session_data(&session);
 
     DurableTraceDetail {
         summary: TraceSummary {

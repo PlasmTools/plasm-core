@@ -1,6 +1,6 @@
-//! Sink-specific projection row types; wire DTOs live in [`plasm_observability_contracts`].
+//! Sink-specific projection row types; wire DTOs live in [`plasm_trace_wire`].
 
-pub use plasm_observability_contracts::{
+pub use plasm_trace_wire::{
     AuditEvent, DurableTraceDetail, IngestBatchRequest, IngestBatchResponse, TraceDetailRecord,
     TraceDetailResponse, TraceGetResponse, TraceListResponse, TraceSummary, TraceTotals,
     AUDIT_EVENT_KIND_MCP_TRACE_SEGMENT, SCHEMA_VERSION,

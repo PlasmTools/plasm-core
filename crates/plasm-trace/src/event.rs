@@ -26,7 +26,7 @@ impl TraceEvent {
     /// Decode durable `payload_json` as a [`TraceEvent`].
     ///
     /// Strips the legacy `_plasm_audit` nest (correlation now lives on
-    /// [`plasm_observability_contracts::AuditEvent::logical_session_id`]).
+    /// [`plasm_trace_wire::AuditEvent::logical_session_id`]).
     pub fn from_payload_json(mut payload: serde_json::Value) -> Result<Self, String> {
         if let serde_json::Value::Object(ref mut map) = payload {
             map.remove(LEGACY_PLASM_AUDIT_PAYLOAD_KEY);

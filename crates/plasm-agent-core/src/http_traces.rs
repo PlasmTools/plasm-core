@@ -28,10 +28,10 @@ use crate::http_problem_util::{problem_response, problem_types};
 use crate::incoming_auth::IncomingPrincipal;
 use crate::server_state::PlasmHostState;
 use crate::trace_hub::{TraceDetailDto, TraceListStatus, TraceSummaryDto};
-use plasm_observability_contracts::{
+use plasm_trace::merge_trace_totals;
+use plasm_trace_wire::{
     TraceDetailResponse as SinkTraceDetailResponse, TraceListResponse as SinkTraceListResponse,
 };
-use plasm_trace::merge_trace_totals;
 use tracing::Instrument;
 
 #[derive(Debug, Deserialize)]
@@ -501,30 +501,9 @@ fn hub_status_from_sink(status: &str) -> &'static str {
     }
 }
 
-fn hub_totals_from_sink(
-    t: &plasm_observability_contracts::TraceTotals,
-) -> crate::trace_hub::TraceTotals {
-    crate::trace_hub::TraceTotals {
-        plasm_tool_calls: t.plasm_tool_calls,
-        plasm_expressions: t.plasm_expressions,
-        expression_lines: t.expression_lines,
-        multi_line_plasm_invocations: t.multi_line_plasm_invocations,
-        teaching_prompt_chars: t.teaching_prompt_chars,
-        plasm_invocation_chars: t.plasm_invocation_chars,
-        plasm_response_chars: t.plasm_response_chars,
-        mcp_resource_read_chars: t.mcp_resource_read_chars,
-        mcp_resource_read_ui_chars: t.mcp_resource_read_ui_chars,
-        total_duration_ms: t.total_duration_ms,
-        network_requests: t.network_requests,
-        cache_hits: t.cache_hits,
-        cache_misses: t.cache_misses,
-        http_trace_entry_count: t.http_trace_entry_count,
-        code_plans_evaluated: t.code_plans_evaluated,
-        code_plans_executed: t.code_plans_executed,
-        code_plan_code_chars: t.code_plan_code_chars,
-        code_plan_nodes: t.code_plan_nodes,
-        code_plan_derived_runs: t.code_plan_derived_runs,
-    }
+fn hub_totals_from_sink(t: &plasm_trace_wire::TraceTotals) -> crate::trace_hub::TraceTotals {
+    // Same wire type as `plasm_trace::TraceTotals` (re-exported).
+    t.clone()
 }
 
 #[cfg(test)]

@@ -1,8 +1,8 @@
 //! One append-only trace segment (tool / domain / expression row).
 
-use plasm_observability_contracts::RunArtifactArchiveRef;
 use plasm_runtime::http_trace::HttpTraceEntry;
 use plasm_runtime::{ExecutionSource, ExecutionStats};
+use plasm_trace_wire::RunArtifactArchiveRef;
 use serde::{Deserialize, Serialize};
 
 /// Source + REPL display strings recorded with each executed line trace.

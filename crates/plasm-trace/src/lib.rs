@@ -17,7 +17,7 @@ pub use contract::{
 };
 
 pub use event::TraceEvent;
-pub use plasm_observability_contracts::RunArtifactArchiveRef;
+pub use plasm_trace_wire::RunArtifactArchiveRef;
 pub use segment::{CodePlanRunArtifactRef, PlasmLineTraceMeta, TraceSegment};
 pub use session::{
     session_data_from_events, session_data_from_ordered_events, SessionTraceCountersSnapshot,

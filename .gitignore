@@ -9,6 +9,9 @@ docker/.buildx-cache/
 # Local runtime / cache (trace sink JSONL, Iceberg warehouse, etc.) — not for VCS
 var/
 
+# fastembed / Qdrant ONNX model cache (downloaded at runtime; never commit)
+.fastembed_cache/
+
 # Profiling output (dhat, etc.) — never commit
 dhat-heap.json
 # insta scratch (accepted snapshots are committed as *.snap only)

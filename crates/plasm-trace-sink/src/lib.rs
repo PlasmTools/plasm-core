@@ -1,5 +1,5 @@
 //! Plasm trace sink: HTTP ingest backed by Iceberg (Parquet + SqlCatalog).
-//! Wire/serde request and response DTOs come from [`plasm_observability_contracts`]; this crate holds
+//! Wire/serde request and response DTOs come from [`plasm_trace_wire`]; this crate holds
 //! product storage/projection (Iceberg, Postgres) and only adds sink-only row types in [`model`].
 
 pub mod append_port;

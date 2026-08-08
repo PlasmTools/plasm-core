@@ -17,7 +17,7 @@ harness = false
 # JanKaul iceberg-rust stack: SqlCatalog (Postgres) + DataFusion + Parquet on local FS.
 anyhow = { workspace = true }
 opentelemetry = { workspace = true }
-plasm-observability-contracts = { path = "../plasm-observability-contracts" }
+plasm-trace-wire = { path = "../plasm-trace-wire" }
 plasm-otel = { path = "../plasm-otel" }
 plasm-trace = { path = "../plasm-trace" }
 async-trait = { workspace = true }

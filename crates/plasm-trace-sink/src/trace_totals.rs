@@ -2,10 +2,10 @@
 
 use plasm_trace::{
     merge_trace_totals, session_data_from_ordered_events, totals_from_session_data,
-    SessionTraceCountersSnapshot, SessionTraceData, TraceEvent, TraceTotals as PlasmTraceTotals,
+    SessionTraceCountersSnapshot, SessionTraceData, TraceEvent, TraceTotals,
 };
 
-use crate::model::{TraceHeadRow, TraceTotals};
+use crate::model::TraceHeadRow;
 
 /// True when list/detail should recompute KPIs from durable segment rows instead of head snapshot.
 pub(crate) fn head_needs_segment_recompute(h: &TraceHeadRow) -> bool {
@@ -32,10 +32,6 @@ fn head_totals_snapshot_stale(h: &TraceHeadRow) -> bool {
 
 /// Derive list totals from a durable head row (`totals_json` snapshot or line-based fallback).
 pub(crate) fn trace_totals_from_head_row(h: &TraceHeadRow) -> TraceTotals {
-    plasm_trace_totals_from_head_row(h).into()
-}
-
-fn plasm_trace_totals_from_head_row(h: &TraceHeadRow) -> PlasmTraceTotals {
     let tj = h.totals_json.trim();
     if !tj.is_empty() {
         if let Ok(snap) = serde_json::from_str::<SessionTraceCountersSnapshot>(tj) {
@@ -44,25 +40,25 @@ fn plasm_trace_totals_from_head_row(h: &TraceHeadRow) -> PlasmTraceTotals {
             return totals_from_session_data(&data);
         }
     }
-    PlasmTraceTotals {
+    TraceTotals {
         plasm_tool_calls: h.max_call_index.map(|c| (c.max(0) as u64) + 1).unwrap_or(0),
         plasm_expressions: 0,
         expression_lines: h.expression_lines.max(0) as u64,
-        ..PlasmTraceTotals::default()
+        ..TraceTotals::default()
     }
 }
 
 /// Recompute totals from flattened trace segment JSON (detail projection / legacy heads).
-fn plasm_trace_totals_from_segment_records(
+fn trace_totals_from_segment_records(
     records: &[serde_json::Value],
     mcp_session_id: &str,
-) -> PlasmTraceTotals {
+) -> TraceTotals {
     let events: Vec<TraceEvent> = records
         .iter()
         .filter_map(|v| crate::trace_event_decode::decode_audit_payload(v.clone()).ok())
         .collect();
     if events.is_empty() {
-        return PlasmTraceTotals::default();
+        return TraceTotals::default();
     }
     let session: SessionTraceData = session_data_from_ordered_events(mcp_session_id, events);
     totals_from_session_data(&session)
@@ -77,15 +73,10 @@ pub(crate) fn trace_totals_from_head_or_records(
         return trace_totals_from_head_row(h);
     }
     merge_trace_totals(
-        &plasm_trace_totals_from_head_row(h),
-        &plasm_trace_totals_from_segment_records(
-            records,
-            h.mcp_session_id.as_deref().unwrap_or(""),
-        ),
+        &trace_totals_from_head_row(h),
+        &trace_totals_from_segment_records(records, h.mcp_session_id.as_deref().unwrap_or("")),
     )
-    .into()
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

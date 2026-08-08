@@ -4,6 +4,9 @@ Shared bootstrap for OpenTelemetry **traces**, **metrics**, and **logs** over **
 
 Used by `plasm-mcp` / `plasm` and `plasm-trace-sink`.
 
+This crate is the **OTLP export lane** only. MCP/execute session timelines live in `plasm-trace` /
+`plasm-trace-wire`; durable Iceberg ingest is the optional `plasm-trace-sink` binary.
+
 ## When OTLP is enabled
 
 OTLP export initializes when **not** disabled and at least one collector endpoint is configured:

@@ -1,0 +1,11 @@
+[package]
+name = "plasm-trace-wire"
+version.workspace = true
+edition.workspace = true
+description = "Wire/serde DTOs for Plasm execution-trace ingest, list/detail, and run artifact identity (not OTEL)"
+
+[dependencies]
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true, features = ["serde", "v4"] }

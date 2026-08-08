@@ -559,7 +559,9 @@ mod tests {
         assert!(wire.pointer("/_meta/plasm/comp").is_none());
         assert!(wire.pointer("/structuredContent/plasm").is_none());
         let text = first_text(&out);
-        assert!(text.contains("kind\trun"));
+        assert!(!text.contains("kind\trun"));
+        assert!(!text.contains("artifact_uri\t"));
+        assert!(text.contains("## items (1 rows)"));
         assert_eq!(
             wire.pointer("/structuredContent/ui/kind")
                 .and_then(|v| v.as_str()),
@@ -641,8 +643,9 @@ mod tests {
             .and_then(|m| m.get("plasm"))
             .is_none());
         let text = first_text(&out);
-        assert!(text.contains("kind\trun"));
-        assert!(text.contains("artifact_uri\tplasm://execute/ph/s/run/prabc"));
+        assert!(!text.contains("kind\trun"));
+        assert!(!text.contains("artifact_uri\t"));
+        assert!(text.contains("## items (1 rows)"));
         assert!(!text.contains("run_id\t"));
     }
 

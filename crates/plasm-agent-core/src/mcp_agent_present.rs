@@ -60,9 +60,12 @@ pub struct ContextTokenRefs<'a> {
 }
 
 /// Slim run tokens with `artifact_uri` preferred over `run_id` (single canonical lookup).
+///
+/// Agent `content` only surfaces these when delivery is truncated / `snapshot_only`.
+/// Fully `inline` runs render body-only (no leading token fence); URI stays on `_meta.plasm`.
 #[derive(Debug, Clone, Default)]
 pub struct RunTokens {
-    /// Required for Cursor lossy App hydrate (`plasm_ui_read_run`) when `_meta` is stripped.
+    /// Carried for meta / App hydrate; omitted from inline agent `content` token fence.
     pub logical_session_ref: Option<String>,
     pub result_delivery: Option<String>,
     pub artifact_uri: Option<String>,
@@ -209,22 +212,28 @@ impl AgentContent {
     }
 
     pub fn run(tokens: RunTokens, body_markdown: &str) -> Self {
-        let mut pairs: Vec<(&'static str, String)> =
-            vec![("kind", AgentResultKind::Run.as_str().into())];
-        if let Some(s) = tokens.logical_session_ref.filter(|s| !s.is_empty()) {
-            pairs.push(("logical_session_ref", s));
-        }
-        if let Some(s) = tokens
-            .result_delivery
-            .filter(|s| !s.is_empty() && s != "inline")
-        {
-            pairs.push(("result_delivery", s));
-        }
-        if let Some(s) = tokens.artifact_uri.filter(|s| !s.is_empty()) {
-            pairs.push(("artifact_uri", s));
-        } else if let Some(s) = tokens.run_id.filter(|s| !s.is_empty()) {
-            pairs.push(("run_id", s));
-        }
+        let inline = match tokens.result_delivery.as_deref() {
+            None | Some("") | Some("inline") => true,
+            Some(_) => false,
+        };
+        let pairs = if inline {
+            // Body-only: no kind / artifact_uri / session fence when rows are fully inline.
+            Vec::new()
+        } else {
+            let mut pairs = Vec::new();
+            if let Some(s) = tokens
+                .result_delivery
+                .filter(|s| !s.is_empty() && s != "inline")
+            {
+                pairs.push(("result_delivery", s));
+            }
+            if let Some(s) = tokens.artifact_uri.filter(|s| !s.is_empty()) {
+                pairs.push(("artifact_uri", s));
+            } else if let Some(s) = tokens.run_id.filter(|s| !s.is_empty()) {
+                pairs.push(("run_id", s));
+            }
+            pairs
+        };
         let body = body_markdown.trim();
         Self {
             kind: AgentResultKind::Run,
@@ -236,16 +245,22 @@ impl AgentContent {
 
     /// Sole renderer of the agent token TSV fence + body + instruction.
     pub fn render(&self) -> String {
-        let token_refs: Vec<(&str, &str)> =
-            self.tokens.iter().map(|(k, v)| (*k, v.as_str())).collect();
-        let header = render_agent_token_tsv(&token_refs);
-        let mut out = header;
+        let mut out = String::new();
+        if !self.tokens.is_empty() {
+            let token_refs: Vec<(&str, &str)> =
+                self.tokens.iter().map(|(k, v)| (*k, v.as_str())).collect();
+            out.push_str(&render_agent_token_tsv(&token_refs));
+        }
         if let Some(body) = &self.body {
-            out.push_str("\n\n");
+            if !out.is_empty() {
+                out.push_str("\n\n");
+            }
             out.push_str(body);
         }
         if let Some(instr) = &self.run_instruction {
-            out.push_str("\n\n");
+            if !out.is_empty() {
+                out.push_str("\n\n");
+            }
             out.push_str(instr);
         }
         let _ = self.kind;
@@ -382,13 +397,33 @@ mod tests {
             "body",
         )
         .render();
-        assert!(md.contains("kind\trun\n"));
-        assert!(md.contains("logical_session_ref\tl_ref\n"));
-        assert!(md.contains(&handle.canonical_plasm_uri));
-        assert!(!md.contains("run_id\t"));
-        assert!(!md.contains("result_delivery\tinline"));
-        assert!(!md.contains("domain_revision\t"));
+        // Inline: body only — no leading token fence.
+        assert_eq!(md, "body");
+        assert!(!md.contains("kind\trun"));
+        assert!(!md.contains("logical_session_ref\t"));
+        assert!(!md.contains("artifact_uri\t"));
+        assert!(!md.contains("```tsv\nkey\tvalue"));
         assert!(AGENT_TOKEN_KEYS.contains(&"artifact_uri"));
+    }
+
+    #[test]
+    fn agent_content_run_snapshot_only_emits_artifact_uri_without_kind() {
+        let md = AgentContent::run(
+            RunTokens {
+                logical_session_ref: Some("l_ref".into()),
+                result_delivery: Some("snapshot_only".into()),
+                artifact_uri: Some("plasm://execute/ph/s/run/prabc".into()),
+                run_id: None,
+            },
+            "## Snapshot\nread artifact",
+        )
+        .render();
+        assert!(md.contains("```tsv\nkey\tvalue\n"));
+        assert!(md.contains("result_delivery\tsnapshot_only\n"));
+        assert!(md.contains("artifact_uri\tplasm://execute/ph/s/run/prabc\n"));
+        assert!(!md.contains("kind\trun"));
+        assert!(!md.contains("logical_session_ref\t"));
+        assert!(md.contains("## Snapshot\nread artifact"));
     }
 
     #[test]
@@ -434,10 +469,17 @@ mod tests {
             }]
         });
         let obj = plasm.as_object().expect("obj");
-        let out = AgentContent::run(RunTokens::from_plasm_obj(obj), "## rows\n```tsv\na\tb\n```")
-            .render();
-        assert!(out.contains("kind\trun\n"));
-        assert!(out.contains("artifact_uri\tplasm://execute/ph/s/run/prabc\n"));
+        let tokens = RunTokens::from_plasm_obj(obj);
+        assert_eq!(
+            tokens.artifact_uri.as_deref(),
+            Some("plasm://execute/ph/s/run/prabc")
+        );
+        assert!(tokens.run_id.is_none());
+        let out = AgentContent::run(tokens, "## rows\n```tsv\na\tb\n```").render();
+        // Inline delivery: URI stays on tokens/meta, not in agent content.
+        assert_eq!(out, "## rows\n```tsv\na\tb\n```");
+        assert!(!out.contains("kind\trun"));
+        assert!(!out.contains("artifact_uri\t"));
         assert!(!out.contains("run_id\t"));
     }
 }

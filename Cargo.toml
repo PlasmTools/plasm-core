@@ -4,7 +4,7 @@ members = [
     "crates/plasm-cml",
     "crates/plasm-compile",
     "crates/plasm-runtime",
-    "crates/plasm-observability-contracts",
+    "crates/plasm-trace-wire",
     "crates/plasm-trace",
     "crates/plasm-mock",
     "crates/plasm-cli",
@@ -29,8 +29,11 @@ resolver = "2"
 
 # Single SemVer for the OSS workspace (see monorepo RELEASING.md on PlasmTools/plasm).
 [workspace.package]
-version = "0.4.43"
+version = "0.4.44"
 edition = "2021"
+license = "BUSL-1.1"
+repository = "https://github.com/PlasmTools/plasm-core"
+description = "Typed capability graph (CGS), CML mappings, and path language for agents across APIs"
 
 [workspace.dependencies]
 # In-memory Okapi BM25 + DefaultTokenizer (unicode-segmentation / Snowball / stopwords).

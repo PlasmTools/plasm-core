@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use chrono::{TimeZone, Utc};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use plasm_observability_contracts::{AuditEvent, AUDIT_EVENT_KIND_MCP_TRACE_SEGMENT};
 use plasm_trace_sink::iceberg_writer::durable_detail_from_events;
+use plasm_trace_wire::{AuditEvent, AUDIT_EVENT_KIND_MCP_TRACE_SEGMENT};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -129,7 +129,7 @@ fn bench_durable_detail_json_serialize(c: &mut Criterion) {
     let events = synthetic_trace_events(500, "tenant-bench");
     let trace_id = events[0].trace_id;
     let detail = durable_detail_from_events(trace_id, events, "tenant-bench".to_string());
-    let response = plasm_observability_contracts::TraceDetailResponse { trace_id, detail };
+    let response = plasm_trace_wire::TraceDetailResponse { trace_id, detail };
 
     c.bench_function("trace_detail_response_json_500_records", |b| {
         b.iter(|| black_box(serde_json::to_vec(&response).unwrap()));

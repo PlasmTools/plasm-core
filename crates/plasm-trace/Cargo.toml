@@ -2,11 +2,11 @@
 name = "plasm-trace"
 version.workspace = true
 edition.workspace = true
-description = "Canonical MCP / execute session trace segments, events, and totals"
+description = "MCP/execute session execution-trace model (TraceHub segments); not OTEL — see plasm-otel"
 
 [dependencies]
 plasm-core = { path = "../plasm-core" }
-plasm-observability-contracts = { path = "../plasm-observability-contracts" }
+plasm-trace-wire = { path = "../plasm-trace-wire" }
 plasm-runtime = { path = "../plasm-runtime" }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -4,7 +4,7 @@
 
 **[Documentation (GitHub Pages)](https://plasmtools.github.io/plasm-core/)** · **[Source](https://github.com/PlasmTools/plasm-core)**
 
-Plasm is a **typed capability graph** (CGS), **wire mappings** (CML), and a **path-expression language** agents use against real APIs: validate before transport, compact session symbols, HTTP and MCP hosts, and curated catalogs under `apis/`. Deep dives—**`plasm-server`**, **`plasm`** remote terminal, execute semantics, authoring, views, schema overlays, and env flags—live in the **[documentation site](https://plasmtools.github.io/plasm-core/)**.
+Plasm is a **typed capability graph** (CGS), **wire mappings** (CML), and a **path-expression language** agents use against real APIs: validate before transport, compact session symbols, HTTP and MCP hosts, and **42 curated integration catalogs** under [`apis/`](apis/) (see the [full catalog table](apis/README.md#catalog)). Deep dives—**`plasm-server`**, **`plasm`** remote terminal, execute semantics, authoring, views, schema overlays, and env flags—live in the **[documentation site](https://plasmtools.github.io/plasm-core/)**.
 
 ### Why this exists
 
@@ -40,7 +40,20 @@ Split CGS + CML trees live under [`apis/`](apis/README.md). The links below poin
 
 **On-chain (native transport):** [evm-erc20](apis/evm-erc20/README.md) (2) — **intentionally narrow** (ERC-20 balance + `Transfer` logs): it exists to **demonstrate the interface** when the mapping target is **native EVM** (JSON-RPC to a chain URL), not OpenAPI/GraphQL over HTTP. Plasm is **not** HTTP-only—HTTP and GraphQL are the common catalog shapes today; this catalog shows the **same CGS → CML → runtime path** on a **non-HTTP wire**. Broader on-chain surfaces are orthogonal to proving that transport seam. Enable the **`evm`** Cargo feature (see README).
 
+## Observability (two lanes)
+
+**OTEL ≠ stored execution trace.** Do not merge these.
+
+| Lane | Crates | Role |
+|------|--------|------|
+| **OTLP export** | `plasm-otel` | Spans/metrics/logs via standard `OTEL_*` env |
+| **Execution trace** | `plasm-trace-wire` + `plasm-trace` | Wire DTOs + MCP/execute session timeline (TraceHub) |
+| **Durable sink** (SaaS ops binary) | `plasm-trace-sink` | Optional Iceberg HTTP ingest when `PLASM_TRACE_SINK_URL` is set — Helm subchart; not a Cargo dep of the appliance |
+
+OSS appliance and agent paths use otel + trace (+ wire). The sink is product/deploy optional and often `--exclude`d from local OSS CI builds (Iceberg/datafusion drift).
+
 ## License
 
-Plasm is licensed under the [Business Source License 1.1](LICENSE). The Change
-License is Apache License 2.0 on the Change Date stated in the license.
+Plasm is licensed under the [Business Source License 1.1](LICENSE) (`BUSL-1.1`).
+GitHub’s license API often reports `NOASSERTION` for BSL — that is a detector gap, not an
+unlicensed tree. The Change License is Apache License 2.0 on the Change Date in `LICENSE`.

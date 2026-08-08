@@ -1,6 +1,4 @@
-//! Aggregate KPIs for trace list cards (demo-oriented).
-
-use serde::{Deserialize, Serialize};
+//! Aggregate KPIs for trace list cards — wire type from [`plasm_trace_wire::TraceTotals`].
 
 use crate::{
     segment_counters::{
@@ -10,35 +8,7 @@ use crate::{
     SessionTraceData, TraceSegment,
 };
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct TraceTotals {
-    pub plasm_tool_calls: u64,
-    pub plasm_expressions: u64,
-    pub expression_lines: u64,
-    pub multi_line_plasm_invocations: u64,
-    pub teaching_prompt_chars: u64,
-    pub plasm_invocation_chars: u64,
-    pub plasm_response_chars: u64,
-    #[serde(default)]
-    pub mcp_resource_read_chars: u64,
-    #[serde(default)]
-    pub mcp_resource_read_ui_chars: u64,
-    pub total_duration_ms: u64,
-    pub network_requests: u64,
-    pub cache_hits: u64,
-    pub cache_misses: u64,
-    pub http_trace_entry_count: u64,
-    #[serde(default)]
-    pub code_plans_evaluated: u64,
-    #[serde(default)]
-    pub code_plans_executed: u64,
-    #[serde(default)]
-    pub code_plan_code_chars: u64,
-    #[serde(default)]
-    pub code_plan_nodes: u64,
-    #[serde(default)]
-    pub code_plan_derived_runs: u64,
-}
+pub use plasm_trace_wire::TraceTotals;
 
 pub fn totals_from_session_data(data: &SessionTraceData) -> TraceTotals {
     // Prefer cumulative aggregates (complete session) when present.
@@ -197,31 +167,5 @@ pub fn merge_trace_totals(a: &TraceTotals, b: &TraceTotals) -> TraceTotals {
         code_plan_code_chars: a.code_plan_code_chars.max(b.code_plan_code_chars),
         code_plan_nodes: a.code_plan_nodes.max(b.code_plan_nodes),
         code_plan_derived_runs: a.code_plan_derived_runs.max(b.code_plan_derived_runs),
-    }
-}
-
-impl From<TraceTotals> for plasm_observability_contracts::TraceTotals {
-    fn from(t: TraceTotals) -> Self {
-        Self {
-            plasm_tool_calls: t.plasm_tool_calls,
-            plasm_expressions: t.plasm_expressions,
-            expression_lines: t.expression_lines,
-            multi_line_plasm_invocations: t.multi_line_plasm_invocations,
-            teaching_prompt_chars: t.teaching_prompt_chars,
-            plasm_invocation_chars: t.plasm_invocation_chars,
-            plasm_response_chars: t.plasm_response_chars,
-            mcp_resource_read_chars: t.mcp_resource_read_chars,
-            mcp_resource_read_ui_chars: t.mcp_resource_read_ui_chars,
-            total_duration_ms: t.total_duration_ms,
-            network_requests: t.network_requests,
-            cache_hits: t.cache_hits,
-            cache_misses: t.cache_misses,
-            http_trace_entry_count: t.http_trace_entry_count,
-            code_plans_evaluated: t.code_plans_evaluated,
-            code_plans_executed: t.code_plans_executed,
-            code_plan_code_chars: t.code_plan_code_chars,
-            code_plan_nodes: t.code_plan_nodes,
-            code_plan_derived_runs: t.code_plan_derived_runs,
-        }
     }
 }

@@ -47,7 +47,11 @@ cargo run -p plasm-repl -- --schema apis/<api> --backend http://localhost:9090
 
 ## Core Boundaries
 
-Prefer catalog edits over core runtime changes. If an API cannot be represented with current CGS / CML / runtime semantics, stop and describe the missing expressiveness before modifying core crates.
+Prefer catalog edits over core runtime changes when the gap is authoring or mapping.
+
+If current CGS / CML / runtime semantics cannot express a real catalog need, **do** change core —
+but state the missing expressiveness and the minimal semantic extension first (short note in the
+PR / commit body). Do not invent one-off catalog escapes that paper over a language hole.
 
 Keep secrets out of schema files. Catalog auth reads from environment variables or supported runtime secret providers.
 
@@ -58,7 +62,7 @@ Durable, non-obvious notes for working in this OSS subtree on a Cursor Cloud VM.
 - **Toolchain**: requires Rust stable **≥ 1.85** (a transitive `alloy-eip7702` dep needs `edition2024`). The base image ships 1.83, which is too old; `rustup default stable` is set in the snapshot. There is no `rust-toolchain.toml` pin.
 - **System deps** (already installed in snapshot, not in the update script): `libssl-dev` + `pkg-config` (`openssl-sys`, pulled by `auth-framework`'s native-tls path) and `protobuf-compiler` (`baml` build script needs `protoc`).
 - **Generated `baml_client`**: `crates/plasm-eval/baml_client` (and `crates/plasm-extract/baml_client`) are **gitignored** and produced by `baml-cli generate` (v0.220.0) from the repo root. `plasm-eval` and `plasm-repl` will not compile without it. Re-run `baml-cli generate` after editing anything under `baml_src/`. `cargo fmt`/clippy diffs in `baml_client` are expected (the generator output is not fmt-clean); the pre-commit hook formats it in `fix` mode.
-- **`plasm-trace-sink` does not build here**: the floating git dep `datafusion_iceberg` (locked at `JanKaul/iceberg-rust`) now requires `datafusion` 54 while the workspace pins `datafusion` 53, yielding an `IcebergCatalog: CatalogProvider` trait mismatch. It is an optional Iceberg trace sink; no core or appliance crate depends on it. Build/lint/test with `--exclude plasm-trace-sink`.
+- **`plasm-trace-sink` (SaaS ops binary)**: durable Iceberg ingest for the execution-trace lane (`PLASM_TRACE_SINK_URL`); not OTEL and not a Cargo dep of the appliance. Often fails to build in this OSS subtree (floating `datafusion_iceberg` vs workspace `datafusion` pin). Build/lint/test with `--exclude plasm-trace-sink`.
 - **Some test targets can't compile in this subtree** (they assume the deeper parent-monorepo layout / unexported fixtures): `plasm-core` & `plasm-runtime` lib tests and several `plasm-discovery`/`plasm-e2e` tests `include_str!`/read `../../../fixtures/schemas/*_overlay/`, `pokeapi_mini`, `workflow_matrix` paths that resolve outside `/workspace`; `plasm-agent-core`'s `cross_pod_operations` test overflows the type-layout recursion limit on current rustc. Run the rest with `cargo test --workspace --exclude plasm-trace-sink --exclude plasm-core --exclude plasm-runtime --exclude plasm-agent-core --no-fail-fast` (≈235 pass; network/live tests self-ignore).
 - **Lint**: `scripts/ci/rust-quality.sh` runs `cargo fmt --all -- --check` + `cargo clippy --workspace --all-targets -- -D warnings`. Under this OSS subtree/newer clippy it will trip on the items above; `cargo clippy --workspace --exclude plasm-trace-sink` (lib/bins) is clean apart from one newer style lint in `plasm-runtime/src/view_template.rs`.
 - **Running live queries**: `plasm-cgs` (package `plasm-cli`) does schema validation/round-trips; the live REPL is `cargo run -p plasm-repl -- --schema apis/<x> --backend <url>` (pipe an expression then `:quit` on stdin for non-interactive use; get-by-id form is `Entity(id)`). Debug builds can **stack-overflow** on large recursive catalogs (e.g. `pokeapi`) because debug stack frames are larger — use a small flat catalog (`xkcd`, backend `https://xkcd.com`) or build `--release` for those.
