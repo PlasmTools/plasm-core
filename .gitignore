@@ -1,4 +1,5 @@
-/target
+# Cargo build output at any workspace depth
+target/
 Cargo.lock
 
 # Local build artifacts (optional)
@@ -38,10 +39,11 @@ __pycache__/
 /crates/plasm-discovery-eval/baml_client
 eval-reports/
 # plasm-eval last-run artifacts next to cases.yaml ({model-slug}.latest.*)
-apis/**/eval/*.latest.human.txt
-apis/**/eval/*.latest.json
-fixtures/**/eval/*.latest.human.txt
-fixtures/**/eval/*.latest.json
+**/eval/*.latest.human.txt
+**/eval/*.latest.json
+
+# Cargo-vendor manifest backups are not source
+third_party/**/Cargo.toml.orig
 
 # Large GitHub REST OpenAPI bundle (curl from github/rest-api-description; see apis/github/README.md)
 fixtures/real_openapi_specs/github_api_github_com.json
