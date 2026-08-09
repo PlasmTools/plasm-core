@@ -12,6 +12,7 @@ publish = false
 default = ["embedded_postgres", "semantic-auto-seed"]
 embedded_postgres = ["plasm/embedded_postgres"]
 semantic-auto-seed = ["plasm-agent-core/semantic-auto-seed"]
+
 [[bin]]
 name = "plasm-server"
 path = "src/main.rs"
