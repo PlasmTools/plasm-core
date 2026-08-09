@@ -33,15 +33,15 @@ Use these commands as appropriate:
 ```bash
 cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/<api>
 cargo run -p plasm-cli --bin plasm-cgs -- validate --spec path/to/openapi.json apis/<api>
-cargo run -p plasm-repl -- --schema apis/<api> --backend http://localhost:1080 --help
-cargo run -p plasm-eval -- coverage --schema apis/<api> --cases apis/<api>/eval/cases.yaml
+cargo run -p plasm-repl --features baml -- --schema apis/<api> --backend http://localhost:1080 --help
+cargo run -p plasm-eval --features baml -- coverage --schema apis/<api> --cases apis/<api>/eval/cases.yaml
 ```
 
 Use Hermit for mock-backed transport checks when an OpenAPI spec is available, then live or vendor sandbox testing per the e2e-test skill:
 
 ```bash
 hermit --specs path/to/openapi.json --port 9090 --use-examples
-cargo run -p plasm-repl -- --schema apis/<api> --backend http://localhost:9090
+cargo run -p plasm-repl --features baml -- --schema apis/<api> --backend http://localhost:9090
 # In-session: expressions from teaching table; optional :output table
 ```
 
@@ -61,9 +61,9 @@ Durable, non-obvious notes for working in this OSS subtree on a Cursor Cloud VM.
 
 - **Toolchain**: requires Rust stable **≥ 1.85** (a transitive `alloy-eip7702` dep needs `edition2024`). The base image ships 1.83, which is too old; `rustup default stable` is set in the snapshot. There is no `rust-toolchain.toml` pin.
 - **System deps** (already installed in snapshot, not in the update script): `libssl-dev` + `pkg-config` (`openssl-sys`, pulled by `auth-framework`'s native-tls path) and `protobuf-compiler` (`baml` build script needs `protoc`).
-- **Generated `baml_client`**: `crates/plasm-eval/baml_client` (and `crates/plasm-extract/baml_client`) are **gitignored** and produced by `baml-cli generate` (v0.220.0) from the repo root. `plasm-eval` and `plasm-repl` will not compile without it. Re-run `baml-cli generate` after editing anything under `baml_src/`. `cargo fmt`/clippy diffs in `baml_client` are expected (the generator output is not fmt-clean); the pre-commit hook formats it in `fix` mode.
+- **Generated `baml_client`**: `crates/plasm-eval/baml_client`, `crates/plasm-semantic-seed/baml_client`, and `crates/plasm-discovery-eval/baml_client` are **gitignored** and produced by `baml-cli generate` (v0.220.0) from the repo root. Default **library** builds of `plasm-eval` / `plasm-repl` / `plasm-semantic-seed` do not require them (`baml` / `llm-rerank` are opt-in). **`plasm-server` defaults include `semantic-auto-seed`**, so appliance source builds still need `plasm-semantic-seed/baml_client` unless you pass `--no-default-features`. Re-run `baml-cli generate` after editing anything under `baml_src/`.
 - **`plasm-trace-sink` (SaaS ops binary)**: durable Iceberg ingest for the execution-trace lane (`PLASM_TRACE_SINK_URL`); not OTEL and not a Cargo dep of the appliance. Often fails to build in this OSS subtree (floating `datafusion_iceberg` vs workspace `datafusion` pin). Build/lint/test with `--exclude plasm-trace-sink`.
 - **Some test targets can't compile in this subtree** (they assume the deeper parent-monorepo layout / unexported fixtures): `plasm-core` & `plasm-runtime` lib tests and several `plasm-discovery`/`plasm-e2e` tests `include_str!`/read `../../../fixtures/schemas/*_overlay/`, `pokeapi_mini`, `workflow_matrix` paths that resolve outside `/workspace`; `plasm-agent-core`'s `cross_pod_operations` test overflows the type-layout recursion limit on current rustc. Run the rest with `cargo test --workspace --exclude plasm-trace-sink --exclude plasm-core --exclude plasm-runtime --exclude plasm-agent-core --no-fail-fast` (≈235 pass; network/live tests self-ignore).
 - **Lint**: `scripts/ci/rust-quality.sh` runs `cargo fmt --all -- --check` + `cargo clippy --workspace --all-targets -- -D warnings`. Under this OSS subtree/newer clippy it will trip on the items above; `cargo clippy --workspace --exclude plasm-trace-sink` (lib/bins) is clean apart from one newer style lint in `plasm-runtime/src/view_template.rs`.
-- **Running live queries**: `plasm-cgs` (package `plasm-cli`) does schema validation/round-trips; the live REPL is `cargo run -p plasm-repl -- --schema apis/<x> --backend <url>` (pipe an expression then `:quit` on stdin for non-interactive use; get-by-id form is `Entity(id)`). Debug builds can **stack-overflow** on large recursive catalogs (e.g. `pokeapi`) because debug stack frames are larger — use a small flat catalog (`xkcd`, backend `https://xkcd.com`) or build `--release` for those.
+- **Running live queries**: `plasm-cgs` (package `plasm-cli`) does schema validation/round-trips; after BAML generation, the live REPL is `cargo run -p plasm-repl --features baml -- --schema apis/<x> --backend <url>` (pipe an expression then `:quit` on stdin for non-interactive use; get-by-id form is `Entity(id)`). Debug builds can **stack-overflow** on large recursive catalogs (e.g. `pokeapi`) because debug stack frames are larger — use a small flat catalog (`xkcd`, backend `https://xkcd.com`) or build `--release` for those.
 - **Appliance**: `cargo run -p plasm-server -- --no-tui --schema fixtures/schemas/capability_with_input` boots headless, **auto-starts an embedded Postgres** (`pg-embed`), and serves HTTP+MCP on `127.0.0.1:3000` (`/v1/health`, `/v1/registry`, `/execute`). Pass a split catalog directory (`domain.yaml` + `mappings.yaml`) or a packaged plugin dir.

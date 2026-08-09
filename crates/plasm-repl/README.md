@@ -8,4 +8,7 @@ Plasm is a **general-purpose language and runtime for API mapping** (schema, exp
 
 Catalog behavior belongs in **`apis/<name>/`**, fixtures, and optional **plugins**—expressed as data and schema-driven rules. Code here stays **agnostic**, driven only by loaded CGS and generic IR/types.
 
+The REPL is BAML-backed and therefore opt-in: generate the `plasm-eval`
+client, then run `cargo run -p plasm-repl --features baml -- …`.
+
 See [AGENTS.md](../../AGENTS.md) for workspace layout and commands.

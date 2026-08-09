@@ -9,6 +9,11 @@ readme = "README.md"
 [[bin]]
 name = "plasm-eval"
 path = "src/main.rs"
+required-features = ["baml"]
+
+[features]
+default = []
+baml = ["dep:baml"]
 
 [dependencies]
 plasm-core = { path = "../plasm-core" }
@@ -19,7 +24,7 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
-baml = { workspace = true }
+baml = { workspace = true, optional = true }
 dotenvy = { workspace = true }
 chrono = { workspace = true }
 tracing = { workspace = true }

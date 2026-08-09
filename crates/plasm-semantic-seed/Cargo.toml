@@ -5,9 +5,13 @@ edition.workspace = true
 license = "MIT OR Apache-2.0"
 description = "Shared BAML-backed semantic seed selector"
 
+[features]
+default = []
+baml = ["dep:baml"]
+
 [dependencies]
 plasm-core = { path = "../plasm-core" }
 plasm-eval-common = { path = "../plasm-eval-common" }
 anyhow = { workspace = true }
-baml = { workspace = true }
+baml = { workspace = true, optional = true }
 tracing = { workspace = true }

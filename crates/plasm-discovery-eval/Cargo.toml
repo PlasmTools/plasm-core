@@ -12,7 +12,11 @@ path = "src/main.rs"
 
 [features]
 default = []
-llm-rerank = ["dep:baml", "dep:plasm-semantic-seed"]
+llm-rerank = [
+    "dep:baml",
+    "dep:plasm-semantic-seed",
+    "plasm-semantic-seed/baml",
+]
 
 [dependencies]
 plasm-core = { path = "../plasm-core" }

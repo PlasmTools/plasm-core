@@ -4,6 +4,11 @@ Primary OSS distribution binary: in-process [`plasm-agent-core`](../plasm-agent-
 
 **Compile-time:** this crate **defaults to** [`plasm`](../plasm)'s **`embedded_postgres`** feature (bundles **pg-embed**). At runtime embedded Postgres **autostarts** (no env required): cache data dir, an **ephemeral loopback port** (override with `PLASM_EMBEDDED_POSTGRES_PORT`), database **`plasm_appliance`**, superuser password **`plasm_embedded_local_dev`** when none is set (pg-embed `initdb --pwfile` cannot be empty). Opt out **`PLASM_EMBEDDED_POSTGRES=0`**, or set a non-loopback Postgres URL (`DATABASE_URL` / `PLASM_MCP_CONFIG_DATABASE_URL` / `PLASM_AUTH_STORAGE_URL`). Slim binary without pg-embed: **`cargo build -p plasm-server --no-default-features`**.
 
+**Semantic auto-seed** is on by default (via `semantic-auto-seed`). Source
+builds need generated `crates/plasm-semantic-seed/baml_client` (`baml-cli
+generate`). Slim / no-BAML appliance builds: omit it with
+`--no-default-features` (and re-add `embedded_postgres` if still desired).
+
 From the **workspace root** (monorepo or `plasm-oss` checkout):
 
 ```bash

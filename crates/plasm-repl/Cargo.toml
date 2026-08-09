@@ -9,6 +9,7 @@ readme = "README.md"
 [features]
 default = []
 evm = ["plasm/evm"]
+baml = ["plasm-eval/baml"]
 
 [lib]
 name = "plasm_repl"
@@ -17,6 +18,7 @@ path = "src/lib.rs"
 [[bin]]
 name = "plasm-repl"
 path = "src/main.rs"
+required-features = ["baml"]
 
 [dependencies]
 plasm = { path = "../plasm" }

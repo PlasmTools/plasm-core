@@ -15,7 +15,7 @@ local_env_bootstrap_secrets = []
 # Forward to plasm-compile for EVM-backed schemas (e.g. apis/evm-erc20).
 evm = ["plasm-compile/evm"]
 # Intent-only plasm_context: semantic seed-set selector (requires OPENROUTER_API_KEY).
-semantic-auto-seed = ["dep:plasm-semantic-seed"]
+semantic-auto-seed = ["dep:plasm-semantic-seed", "plasm-semantic-seed/baml"]
 
 [lib]
 name = "plasm_agent_core"

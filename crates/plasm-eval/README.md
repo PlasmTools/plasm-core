@@ -10,4 +10,7 @@ Catalog behavior belongs in **`apis/<name>/`**, fixtures, and optional **plugins
 
 **LLM eval (`plasm-eval` default run):** all cases execute **in YAML order** on **one BAML `TranslatePlan` transcript** (teaching table/schema only in the first user turn; each case appends a `--- GOAL ---` turn, mirroring `plasm-repl` `:llm`). There is no parallel “job” mode.
 
+The library builds without generated BAML code. The CLI is opt-in: generate
+`crates/plasm-eval/baml_client`, then run with `--features baml`.
+
 See [AGENTS.md](../../AGENTS.md) for workspace layout and commands.
