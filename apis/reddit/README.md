@@ -12,7 +12,7 @@ Curated read surface for the Reddit OAuth host: identity, subreddit metadata, po
 
 ```bash
 export REDDIT_ACCESS_TOKEN=…
-cargo run --bin plasm-repl -- --schema apis/reddit --backend https://oauth.reddit.com
+cargo run -p plasm-repl -- --schema apis/reddit --backend https://oauth.reddit.com
 ```
 
 Eval coverage (no LLM):

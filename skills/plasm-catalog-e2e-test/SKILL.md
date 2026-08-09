@@ -59,7 +59,7 @@ flowchart TD
 Before any transport test runs, validate the catalog. Always pass the catalog **directory** so split `domain.yaml` + `mappings.yaml` load together.
 
 ```bash
-cargo run -p plasm-cli --bin plasm -- schema validate apis/<api>
+cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/<api>
 ```
 
 Failure means the catalog is malformed; return control to [plasm-authoring](../plasm-authoring/SKILL.md). Do not attempt transport tests on a broken CGS.
@@ -67,7 +67,7 @@ Failure means the catalog is malformed; return control to [plasm-authoring](../p
 When an OpenAPI spec is available, also run the spec-driven mapping check (deterministic, no transport):
 
 ```bash
-cargo run -p plasm-cli --bin plasm -- validate --schema apis/<api> --spec path/to/openapi.json
+cargo run -p plasm-cli --bin plasm-cgs -- validate --spec path/to/openapi.json apis/<api>
 ```
 
 This catches missing capability mappings, body shape drift, and mismatched parameters against the spec — distinct from runtime checks.
@@ -106,7 +106,7 @@ Inside the REPL, copy expression shapes from teaching table. Do **not** invent C
 <EntityName>                             # query-all when teaching table teaches it as bare
 <EntityName>[field1, field2]             # query + projection
 <EntityName>(<id>)                       # get by primary id when teaching is e#(<id>)
-<EntityName>{p#=<value>, …}              # filtered query when teaching table teaches keyed params
+<EntityName>{field=<value>, …}           # filtered query; use wire names from teaching TSV
 <EntityName>(<id>).<relation>            # relation navigation
 ```
 

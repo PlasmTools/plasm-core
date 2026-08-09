@@ -4,14 +4,9 @@ A **wave‑3** [Plasm](../../README.md) domain for **Microsoft Teams** via **Mic
 
 ```bash
 export MICROSOFT_GRAPH_ACCESS_TOKEN="…"   # OAuth 2.0 access token for Graph (delegated user)
-cargo run -p plasm --bin plasm-cgs -- \
+cargo run -p plasm-repl -- \
   --schema apis/microsoft-teams \
-  --backend https://graph.microsoft.com \
-  team query
-cargo run -p plasm --bin plasm-cgs -- \
-  --schema apis/microsoft-teams \
-  --backend https://graph.microsoft.com \
-  team "<team-guid>"
+  --backend https://graph.microsoft.com
 ```
 
 ## Auth and permissions
@@ -46,7 +41,7 @@ Microsoft Graph returns **`@odata.nextLink`** (absolute URL) for collection cont
 ## Validation
 
 ```bash
-cargo run -p plasm-cli --bin plasm -- schema validate apis/microsoft-teams
-cargo run -p plasm --bin plasm-cgs -- --schema apis/microsoft-teams --backend https://graph.microsoft.com --help
+cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/microsoft-teams
+cargo run -p plasm-repl -- --schema apis/microsoft-teams --backend https://graph.microsoft.com --help
 cargo run -p plasm-eval -- coverage --schema apis/microsoft-teams --cases apis/microsoft-teams/eval/cases.yaml
 ```

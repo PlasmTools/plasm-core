@@ -16,7 +16,7 @@ Plasm CGS/CML for Cloudflare REST v4. **Phase 1** covers **zone-scoped** flows: 
 Validate after edits:
 
 ```bash
-cargo run -p plasm-cli --bin plasm -- schema validate apis/cloudflare
+cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/cloudflare
 ```
 
 Ground truth: Cloudflare REST API (OpenAPI). The upstream **full** spec is large and contains path patterns that **Hermit** (used by `plasm validate`) cannot load. This directory therefore keeps:
@@ -51,8 +51,8 @@ Grant the token access to the **zones** you need (specific zone IDs or all zones
 
 ```bash
 export CLOUDFLARE_API_TOKEN='...'
-cargo run -p plasm-cli --bin plasm -- schema validate apis/cloudflare
-cargo run -p plasm-cli --bin plasm -- validate --spec apis/cloudflare/openapi.hermit.json apis/cloudflare
+cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/cloudflare
+cargo run -p plasm-cli --bin plasm-cgs -- validate --spec apis/cloudflare/openapi.hermit.json apis/cloudflare
 ```
 
 ## Scope (Phase 1)

@@ -27,7 +27,7 @@ Press **`q`** to quit (graceful shutdown).
 | **`Esc`** | Cancel modal / dismiss notice |
 | **`q`** | Quit |
 
-Tabs (left → right): **Status · Clients · APIs · OAuth · Keys · Runs · Storage · Logs**.
+Tabs (left → right): **Status · Clients · APIs · OAuth · Keys · Discovery · Runs · Storage · Logs**.
 
 ---
 
@@ -169,13 +169,27 @@ From **APIs**, **`o`** on a catalog jumps here with that catalog pre-selected.
 
 ---
 
+## Discovery (Discovery tab)
+
+Semantic auto-seed: intent-only `plasm_context` (`session_mode: "new"` without `seeds`). Shortcut **`d`** jumps here. Bootstrap files live under `{PLASM_LOCAL_STATE_DIR}/bootstrap-secrets/` (appliance default `{data-dir}/local/bootstrap-secrets/`).
+
+| Key | Action |
+|-----|--------|
+| **`e`** | Toggle semantic auto-seed on/off (persisted) |
+| **`k`** | Set OpenRouter API key (modal; **`Enter`** saves, **`Esc`** cancels) |
+
+CLI parity: `plasm-server discovery status|enable|disable|set-openrouter-key|clear-openrouter-key` — see [Appliance CLI](../reference/appliance-cli.md).
+
+---
+
 ## Other tabs
 
 | Tab | Use |
 |-----|-----|
 | **Status** | HTTP/MCP URL, Postgres, catalog directory, boot milestones |
+| **Discovery** | Semantic auto-seed + OpenRouter key (`e`, `k`) |
 | **Runs** | Recent execute runs and artifact links |
-| **Storage** | `PLASM_TRACE_ARCHIVE_DIR`, `PLASM_RUN_ARTIFACTS_DIR` paths |
+| **Storage** | `PLASM_LOCAL_STATE_DIR` / trace archive / run-artifact paths |
 | **Logs** | In-process log tail; optional mirror file via **`PLASM_APPLIANCE_DIAG_LOG`** |
 
 ---
@@ -185,8 +199,9 @@ From **APIs**, **`o`** on a catalog jumps here with that catalog pre-selected.
 | Task | TUI | CLI |
 |------|-----|-----|
 | Enable APIs | **APIs** → **`Space`** → **`s`** | `plasm-server mcp apis set …` |
-| MCP transport key | **Keys** → **`a`** | `plasm-server mcp keys add --name …` |
+| MCP transport key | **Keys** → **`a`** | `plasm-server mcp keys add --name NAME` |
 | Copy MCP config | **Clients** → **`c`** | `plasm-server mcp keys reveal …` |
+| Semantic auto-seed | **Discovery** → **`e`** / **`k`** | `plasm-server discovery …` |
 | Outbound API key | **APIs** → **`a`** | env / OAuth CLI |
 | OAuth provider | **OAuth** → **`n`** / **`d`** | `plasm-server oauth …` |
 | Scripting / CI | — | **`--no-tui`** + [CLI reference](../reference/appliance-cli.md) |

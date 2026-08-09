@@ -51,12 +51,12 @@ Self-managed instances use the same header against your own origin.
 ## Example
 
 ```bash
-cargo run --bin plasm -- \
+cargo run -p plasm-repl -- \
   --schema apis/gitlab \
   --backend https://gitlab.com \
   project query --search 'plasm' --limit 5
 
-cargo run --bin plasm -- \
+cargo run -p plasm-repl -- \
   --schema apis/gitlab \
   --backend https://gitlab.com \
   issue query --state opened --limit 10
@@ -65,7 +65,7 @@ cargo run --bin plasm -- \
 Compound-key entities (**Issue**, **MergeRequest**): positional `id` is the **IID**; the project is `--project-id` (numeric id or URL-encoded path).
 
 ```bash
-cargo run --bin plasm -- \
+cargo run -p plasm-repl -- \
   --schema apis/gitlab \
   --backend https://gitlab.com \
   issue 42 --project-id 'namespace%2Fproject-name'
@@ -75,32 +75,32 @@ cargo run --bin plasm -- \
 
 ```bash
 # Create a project (name required; optional path, visibility, …)
-cargo run --bin plasm -- --schema apis/gitlab --backend https://gitlab.com \
+cargo run -p plasm-repl -- --schema apis/gitlab --backend https://gitlab.com \
   project create --name 'demo' --path 'demo' --visibility private
 
 # Create an issue in a project
-cargo run --bin plasm -- --schema apis/gitlab --backend https://gitlab.com \
+cargo run -p plasm-repl -- --schema apis/gitlab --backend https://gitlab.com \
   issue create --project-id 12345 --title 'Bug' --description 'Details…'
 
 # Merge request: create, then merge (optional merge flags)
-cargo run --bin plasm -- --schema apis/gitlab --backend https://gitlab.com \
+cargo run -p plasm-repl -- --schema apis/gitlab --backend https://gitlab.com \
   mergerequest merge-request-create --project-id 12345 --title 'Feature' \
   --source-branch my-feature --target-branch main
-cargo run --bin plasm -- --schema apis/gitlab --backend https://gitlab.com \
+cargo run -p plasm-repl -- --schema apis/gitlab --backend https://gitlab.com \
   mergerequest --project-id 12345 7 merge-request-merge
 
 # Issue note: list and add (scoped subcommands use kebab-case capability ids)
-cargo run --bin plasm -- --schema apis/gitlab --backend https://gitlab.com \
+cargo run -p plasm-repl -- --schema apis/gitlab --backend https://gitlab.com \
   issuenote --project-id 12345 --iid 1 issue-note-for-issue-query --limit 20
-cargo run --bin plasm -- --schema apis/gitlab --backend https://gitlab.com \
+cargo run -p plasm-repl -- --schema apis/gitlab --backend https://gitlab.com \
   issuenote --project-id 12345 --iid 1 issue-note-create --body 'LGTM'
 
 # Subscribe / time stats / award emoji (compound key: --project-id then IID, then action)
-cargo run --bin plasm -- --schema apis/gitlab --backend https://gitlab.com \
+cargo run -p plasm-repl -- --schema apis/gitlab --backend https://gitlab.com \
   issue --project-id 12345 1 subscribe
-cargo run --bin plasm -- --schema apis/gitlab --backend https://gitlab.com \
+cargo run -p plasm-repl -- --schema apis/gitlab --backend https://gitlab.com \
   issue --project-id 12345 1 time-stats
-cargo run --bin plasm -- --schema apis/gitlab --backend https://gitlab.com \
+cargo run -p plasm-repl -- --schema apis/gitlab --backend https://gitlab.com \
   issueawardemoji --project-id 12345 --iid 1 issue-award-emoji-create --name thumbsup
 ```
 

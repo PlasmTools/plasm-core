@@ -31,8 +31,8 @@ Do not add scripts or generator crates that mechanically emit canonical `domain.
 Use these commands as appropriate:
 
 ```bash
-cargo run -p plasm-cli --bin plasm -- schema validate apis/<api>
-cargo run -p plasm-cli --bin plasm -- validate --schema apis/<api> --spec path/to/openapi.json
+cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/<api>
+cargo run -p plasm-cli --bin plasm-cgs -- validate --spec path/to/openapi.json apis/<api>
 cargo run -p plasm-repl -- --schema apis/<api> --backend http://localhost:1080 --help
 cargo run -p plasm-eval -- coverage --schema apis/<api> --cases apis/<api>/eval/cases.yaml
 ```

@@ -21,4 +21,12 @@ cargo clippy --workspace --all-targets -- -D warnings
 echo "rust-quality: cargo clippy -p plasm-node --all-targets -- -D warnings"
 cargo clippy -p plasm-node --all-targets -- -D warnings
 
+if [[ -x "${ROOT}/scripts/guards/check_docs_contracts.sh" ]] || [[ -f "${ROOT}/scripts/guards/check_docs_contracts.sh" ]]; then
+  echo "rust-quality: docs contract guard"
+  bash "${ROOT}/scripts/guards/check_docs_contracts.sh"
+fi
+
+echo "rust-quality: fenced doc examples"
+cargo test -p plasm-core doc_fenced_plasm_examples_parse_under_language_matrix -- --nocapture
+
 echo "rust-quality: ok"

@@ -6,7 +6,7 @@ A [Plasm](../../README.md) domain model for the [Tavily API](https://docs.tavily
 export TAVILY_API_TOKEN=tvly-...   # in /Users/ryan/code/plasm/.env
 source /Users/ryan/code/plasm/.env
 
-cargo run --bin plasm -- \
+cargo run -p plasm-repl -- \
   --schema apis/tavily \
   --backend https://api.tavily.com \
   --repl

@@ -5,7 +5,7 @@ This package targets the **Proof agent HTTP surface** described in [EveryInc/pro
 Author and maintain **`mappings.yaml`** directly (paths, query, headers, body CML). Validate after edits:
 
 ```bash
-cargo run -p plasm-cli --bin plasm -- schema validate apis/proof
+cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/proof
 ```
 
 ## Local Proof SDK
@@ -88,7 +88,7 @@ Probed **2026-05** with anonymous requests (no doc secrets):
 
 ## Incremental teaching waves (execute / MCP)
 
-To keep prompts small and monotonic (`e#` / `m#` / `p#`), open sessions with a **tight seed list** and expand in waves ([incremental-teaching-prompts.md](../../../docs/incremental-teaching-prompts.md)):
+To keep prompts small and monotonic (`e#` / `m#` / `r#` (+ wire names)), open sessions with a **tight seed list** and expand in waves ([incremental-teaching-prompts.md](../../../docs/incremental-teaching-prompts.md)):
 
 1. **Wave 1 — `Document` and/or `ShareLink`:** seed `{api: proof, entity: ShareLink}` when the program calls **`share_link_create`** — the teaching table always includes that create (and any query/get on ShareLink) even when the stable `intent` omits “share link” tokens. Document-only seeds expose Document reads/creates on the seeded entity; relation closure does not add ShareLink without a seed or relation.
 2. **Wave 2 — `EditorState`:** `editor_state_get` for revision / contract / marks before mutating.

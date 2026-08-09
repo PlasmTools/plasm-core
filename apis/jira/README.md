@@ -4,7 +4,7 @@ A [Plasm](../../README.md) domain model for the [Jira REST API v3](https://devel
 
 ```bash
 export JIRA_AUTH="Basic $(echo -n 'your@email.com:your_api_token' | base64)"
-cargo run --bin plasm -- \
+cargo run -p plasm-repl -- \
   --schema apis/jira \
   --backend https://your-domain.atlassian.net \
   --repl
@@ -305,13 +305,8 @@ Both are injected as the `Authorization` header by the auth scheme declared in `
 Schema loads and CLI generates correctly. All 20 capabilities verified:
 
 ```bash
-cargo run --bin plasm -- --schema apis/jira --help
-cargo run --bin plasm -- --schema apis/jira issue --help
-cargo run --bin plasm -- --schema apis/jira issue search --help
-cargo run --bin plasm -- --schema apis/jira project query --help
-cargo run --bin plasm -- --schema apis/jira worklog query --help
-cargo run --bin plasm -- --schema apis/jira changelog query --help
-cargo run --bin plasm -- --schema apis/jira component query --help
+cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/jira
+cargo run -p plasm-repl -- --schema apis/jira --help
 ```
 
 Pagination flags (`--limit`, `--all`, `--offset`) confirmed present on paginated capabilities.

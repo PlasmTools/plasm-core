@@ -5,15 +5,15 @@ A [Plasm](../../README.md) domain model for [PokéAPI](https://pokeapi.co/) (v2)
 ## CLI / REPL
 
 ```bash
-cargo run --bin plasm-repl -- \
+cargo run -p plasm-repl -- \
   --schema apis/pokeapi \
   --backend https://pokeapi.co
 ```
 
-```bash
-# One-shot JSON (live HTTPS)
-plasm-cgs --schema apis/pokeapi --backend https://pokeapi.co \
-  --output json pokemon pikachu
+```text
+# In plasm-repl (wire/id from teaching table):
+Pokemon(name=pikachu)
+# or session-symbolic: e1(name=pikachu)[name,id]
 ```
 
 No API key is required for the public service.

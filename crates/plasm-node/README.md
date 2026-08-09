@@ -23,6 +23,6 @@ cargo build -p plasm-node --release
 
 - `loadCatalog(catalogDir)` — load `domain.yaml` + `mappings.yaml`, pin `catalog_cgs_hash`
 - `exposeSeeds(intent, seeds)` — append to agent-global `TeachingExposureSession`, return teaching TSV delta
-- `dryRun(program)` — compile + dry-run, mint `plan_commit_ref`
+- `dryRun(program)` — compile + dry-run, mint `run_ref` (`pcN`)
 
 Live execute with host transport callback is not wired in v0.

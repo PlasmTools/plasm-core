@@ -7,12 +7,12 @@ Primary OSS distribution binary: in-process [`plasm-agent-core`](../plasm-agent-
 From the **workspace root** (monorepo or `plasm-oss` checkout):
 
 ```bash
-cargo run -p plasm-server --release -- --plugin-dir target/plasm-plugins --port 3000
+cargo run -p plasm-server --release -- --catalog-dir target/plasm-catalogs --port 3000
 ```
 
 Binds **`127.0.0.1:<port>`** by default (HTTP + MCP on `/mcp`). LAN or containers: `--listen-host 0.0.0.0` or `PLASM_LISTEN_HOST`. In Kubernetes, default bind is `0.0.0.0` when `KUBERNETES_SERVICE_HOST` is set.
 
-- **Release / `install.sh` default:** no flags required — state under `~/.plasm/appliance` (`postgres/`, `local/`, `plugins/` from the installer). Same layout via `PLASM_APPLIANCE_DIR` or `--data-dir`.
+- **Release / `install.sh` default:** no flags required — state under `~/.plasm/appliance` (`postgres/`, `local/`, `catalogs/` / packed catalog dir from the installer). Same layout via `PLASM_APPLIANCE_DIR` or `--data-dir`.
 - Headless: add `--no-tui`
 - **Durable layout:** `PLASM_EMBEDDED_POSTGRES_DATA_DIR` → `{appliance}/postgres`, `PLASM_LOCAL_STATE_DIR` → `{appliance}/local` (see `docs/oss-core-trace-artifacts.md`). Put `PLASM_APPLIANCE_DIAG_LOG` and other non-DB files **next to** `postgres/`, not inside it.
 - **Local auth KV encryption key:** when durable Postgres-backed auth storage is active and `AUTH_STORAGE_ENCRYPTION_KEY` is unset, `plasm-server` now reuses or creates a local key file at `{PLASM_LOCAL_STATE_DIR}/bootstrap-secrets/AUTH_STORAGE_ENCRYPTION_KEY` (for `--data-dir ~/.plasm/appliance`, that becomes `~/.plasm/appliance/local/bootstrap-secrets/AUTH_STORAGE_ENCRYPTION_KEY`). Keep that file stable across restarts or previously encrypted OAuth secrets and MCP API keys will become unreadable. To manage the key yourself, set `AUTH_STORAGE_ENCRYPTION_KEY` explicitly. Kubernetes / hosted deployments should continue using explicit secret management (`PLASM_SECRETS_DIR` / environment), not this local bootstrap path.

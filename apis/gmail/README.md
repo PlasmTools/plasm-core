@@ -5,7 +5,7 @@ A [Plasm](../../README.md) domain model for the [Gmail REST API v1](https://deve
 ```bash
 # Run against the live API (requires GMAIL_ACCESS_TOKEN in env)
 export GMAIL_ACCESS_TOKEN=ya29.a0...
-cargo run --bin plasm -- \
+cargo run -p plasm-repl -- \
   --schema apis/gmail \
   --backend https://gmail.googleapis.com \
   --repl
@@ -308,11 +308,8 @@ plasm --schema apis/gmail --backend https://gmail.googleapis.com \
 Schema loads without panics. All subcommand names, typed flags, and pagination controls verified.
 
 ```bash
-cargo run --bin plasm -- --schema apis/gmail --help
-cargo run --bin plasm -- --schema apis/gmail message --help
-cargo run --bin plasm -- --schema apis/gmail message query --help
-cargo run --bin plasm -- --schema apis/gmail label --help
-cargo run --bin plasm -- --schema apis/gmail profile --help
+cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/gmail
+cargo run -p plasm-repl -- --schema apis/gmail --help
 ```
 
 CLI outputs verified:

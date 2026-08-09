@@ -5,7 +5,7 @@ Public GraphQL API ([GraphQLZero](https://graphqlzero.almansi.me/)) with no auth
 ## Run (REPL)
 
 ```bash
-cargo run --bin plasm -- \
+cargo run -p plasm-repl -- \
   --schema apis/graphqlzero \
   --backend https://graphqlzero.almansi.me \
   --repl

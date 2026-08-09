@@ -4,7 +4,7 @@ A [Plasm](../../README.md) domain model for the [Notion REST API](https://develo
 
 ```bash
 export NOTION_API_TOKEN=secret_...
-cargo run --bin plasm -- \
+cargo run -p plasm-repl -- \
   --schema apis/notion \
   --backend https://api.notion.com \
   --repl

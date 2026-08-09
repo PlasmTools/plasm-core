@@ -29,10 +29,10 @@ Default origin is `https://api.vultr.com` (`http_backend` in `domain.yaml`); pat
 List regions and compute plans (cursor pagination: `--limit`, `--all`, optional `--cursor`):
 
 ```bash
-cargo run -p plasm --bin plasm-cgs -- --schema apis/vultr --backend https://api.vultr.com \
+cargo run -p plasm-repl -- --schema apis/vultr --backend https://api.vultr.com
   region query --limit 50
 
-cargo run -p plasm --bin plasm-cgs -- --schema apis/vultr --backend https://api.vultr.com \
+cargo run -p plasm-repl -- --schema apis/vultr --backend https://api.vultr.com
   plan query --type vhf --limit 20
 ```
 
@@ -41,16 +41,16 @@ Current account (GET `/v2/account`); the row key is the account `email` from the
 ```bash
 # replace with your account email as returned by the API
 export ACCT_EMAIL='admin@example.com'
-cargo run -p plasm --bin plasm-cgs -- --schema apis/vultr --backend https://api.vultr.com \
+cargo run -p plasm-repl -- --schema apis/vultr --backend https://api.vultr.com
   account "$ACCT_EMAIL"
 ```
 
 `AccountBgp` and `AccountBandwidth` are singleton reads: `implicit_request_identity` is set, so you pass any stable positional id for the cache (for example `current`):
 
 ```bash
-cargo run -p plasm --bin plasm-cgs -- --schema apis/vultr --backend https://api.vultr.com \
+cargo run -p plasm-repl -- --schema apis/vultr --backend https://api.vultr.com
   accountbgp current
-cargo run -p plasm --bin plasm-cgs -- --schema apis/vultr --backend https://api.vultr.com \
+cargo run -p plasm-repl -- --schema apis/vultr --backend https://api.vultr.com
   accountbandwidth current
 ```
 
@@ -58,15 +58,15 @@ Identity and network (examples; destructive deletes omitted):
 
 ```bash
 # List all API keys (unfiltered, no server pagination in mapping)
-cargo run -p plasm --bin plasm-cgs -- --schema apis/vultr --backend https://api.vultr.com \
+cargo run -p plasm-repl -- --schema apis/vultr --backend https://api.vultr.com
   apikey query
 
 # Team users, IAM read models, SSH keys, VPCs, firewalls
-cargo run -p plasm --bin plasm-cgs -- --schema apis/vultr --backend https://api.vultr.com \
+cargo run -p plasm-repl -- --schema apis/vultr --backend https://api.vultr.com
   user query --limit 20
-cargo run -p plasm --bin plasm-cgs -- --schema apis/vultr --backend https://api.vultr.com \
+cargo run -p plasm-repl -- --schema apis/vultr --backend https://api.vultr.com
   iampolicy query --limit 10
-cargo run -p plasm --bin plasm-cgs -- --schema apis/vultr --backend https://api.vultr.com \
+cargo run -p plasm-repl -- --schema apis/vultr --backend https://api.vultr.com
   vpc query --limit 5
 ```
 

@@ -8,9 +8,9 @@ This directory holds **split** Plasm CGS trees: each API is a folder with `domai
 
 **Canon:** Do not overwrite existing `apis/<name>/` trees without an explicit decision; add new APIs as new directories.
 
-**Multi-entry runtime:** Author **`apis/<name>/`**, then pack to JSON IL with **`cargo run -p plasm --bin plasm-pack-catalogs -- --workspace . --apis-root apis --output-dir target/plasm-catalogs`** (or **`just build-catalogs`**). Start **`plasm-mcp --catalog-dir target/plasm-catalogs`**. **Hosted SaaS images** (monorepo) pass **`--package-list deploy/saas-packaged-apis.txt`**; **OSS appliance release tarballs** use **`plasm-oss/scripts/oss-packaged-apis.txt`** (includes Google Workspace; SaaS list does not). Omit **`--package-list`** to pack every API under **`apis/`** (local default). Images do not ship raw **`apis/`** for runtime loading.
+**Multi-entry runtime:** Author `**apis/<name>/`**, then pack to JSON IL with `**cargo run -p plasm --bin plasm-pack-catalogs -- --apis-root apis --output-dir target/plasm-catalogs`** (or `**just build-catalogs**`). Start `**plasm-mcp --catalog-dir target/plasm-catalogs**`. **Hosted SaaS images** (monorepo) pass `**--package-list deploy/saas-packaged-apis.txt`**; **OSS appliance release tarballs** use `**plasm-oss/scripts/oss-packaged-apis.txt`** (includes Google Workspace; SaaS list does not). Omit `**--package-list`** to pack every API under `**apis/`** (local default). Images do not ship raw `**apis/**` for runtime loading.
 
-**Federation:** A multi-entry registry lets HTTP/MCP execute sessions load **more than one** API schema in the **same** session (monotonic `e#` / `m#` / `p#`, per-catalog dispatch — **no** CGS merge). See `[docs/incremental-teaching-prompts.md](../reference/incremental-teaching-prompts.md#federated-sessions-multi-catalog)`.
+**Federation:** A multi-entry registry lets HTTP/MCP execute sessions load **more than one** API schema in the **same** session (monotonic `e#` / `m#` / `r#`, per-catalog dispatch — **no** CGS merge). See `[docs/incremental-teaching-prompts.md](../reference/incremental-teaching-prompts.md#federated-sessions-multi-catalog)`.
 
 ---
 
@@ -66,7 +66,7 @@ This directory holds **split** Plasm CGS trees: each API is a folder with `domai
 Use a given API’s README for env vars and backend URL. Typical pattern:
 
 ```bash
-cargo run --bin plasm-repl -- --schema apis/<name> --backend <origin>
+cargo run -p plasm-repl -- --schema apis/<name> --backend <origin>
 ```
 
 Each API’s `domain.yaml` sets `**http_backend**` (default origin for execution); override with `**--backend**` when using the REPL if needed.

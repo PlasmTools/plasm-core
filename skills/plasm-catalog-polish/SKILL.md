@@ -27,7 +27,7 @@ Polish operates along these dimensions. Each has a clear gate and a clear fix pa
 ### 1. CGS validation (gate)
 
 ```bash
-cargo run -p plasm-cli --bin plasm -- schema validate apis/<api>
+cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/<api>
 ```
 
 Any failure is a stop-the-loop blocker. Fix or report.
@@ -35,7 +35,7 @@ Any failure is a stop-the-loop blocker. Fix or report.
 ### 2. Mapping correctness against the spec (gate when spec exists)
 
 ```bash
-cargo run -p plasm-cli --bin plasm -- validate --schema apis/<api> --spec path/to/openapi.json
+cargo run -p plasm-cli --bin plasm-cgs -- validate --spec path/to/openapi.json apis/<api>
 ```
 
 Address every reported drift:

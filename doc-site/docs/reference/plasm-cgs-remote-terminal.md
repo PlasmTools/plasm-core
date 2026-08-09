@@ -8,7 +8,7 @@ Local schema-driven CLIs are **not** `plasm`; use **`plasm-repl`** (`--schema`),
 
 ## Client-owned symbol space
 
-The **`plasm` client owns the monotonic `e#` / `m#` / `p#` teaching table**, not the HTTP execute session:
+The **`plasm` client owns the monotonic `e#` / `m#` / `r#` teaching table** (fields/params use **wire names**; legacy `p#` is rejected), not the HTTP execute session:
 
 - **`plasm context`** fetches catalog CGS via `GET /v1/registry/{entry_id}?include_cgs=true`, builds a local [`TeachingExposureSession`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/symbol_tuning.rs), and appends teaching rows to **`teaching.tsv`**.
 - **`plasm run`** expands programs against that local symbol state, then POSTs the **expanded** surface to the server (lazy server execute binding for auth/HTTP/paging only).
@@ -91,15 +91,15 @@ plasm context -i "inspect pokemon combat data" pokeapi:Pokemon pokeapi:Move
 # mirror: …/teaching.tsv (+N rows)
 
 plasm context pokeapi:Type                    # expand same client session (after search)
-echo 'e1(p5=pikachu)[p5,p3]' | plasm run --mode plan
-echo 'e1(p5=pikachu)[p5,p3]' | plasm run
+echo 'e1(name=pikachu)[name,id]' | plasm run --mode plan
+echo 'e1(name=pikachu)[name,id]' | plasm run
 
 plasm context --new -i "github issues" github:Issue
 ```
 
-Paging: `e1[p5]` then `page(pg1)[p5]` in the same client session (server holds pagination handles).
+Paging: `e1[name]` then `page(pg1)[name]` in the same client session (server holds pagination handles).
 
-Long-running plan execute: `--mode plan` for dry-run + `plan_commit_ref`; `--wait=false` to accept `wait(oN)` and poll with `plasm run -e 'wait(o1)'` / cancel with `cancel(o1)`. See [plasm-long-operations.md](plasm-long-operations.md).
+Long-running plan execute: `--mode plan` for dry-run + `run_ref` / HTTP `plan_commit_ref`; `--wait=false` to accept `wait(oN)` and poll with `plasm run -e 'wait(o1)'` / cancel with `cancel(o1)`. See [plasm-long-operations.md](plasm-long-operations.md).
 
 **`plasm context`** always prints the new symbol wave (TSV) on stdout; **`--verbose`** adds a stderr banner before the wave.
 

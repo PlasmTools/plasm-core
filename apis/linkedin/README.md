@@ -23,8 +23,8 @@ export LINKEDIN_ACCESS_TOKEN=...
 ## Validate
 
 ```bash
-cargo run -p plasm-cli --bin plasm -- schema validate apis/linkedin
-cargo run -p plasm-cli --bin plasm -- validate --spec apis/linkedin/openapi.json apis/linkedin
+cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/linkedin
+cargo run -p plasm-cli --bin plasm-cgs -- validate --spec apis/linkedin/openapi.json apis/linkedin
 ```
 
 ## Query examples

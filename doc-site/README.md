@@ -21,18 +21,22 @@ Org-owned repos: confirm **Pages** is enabled under organization policy and that
 
 ## Doc inclusion policy
 
-Sources under `docs/` are **allowlisted**. Maintainer workflow:
+Public docs are **owned in this OSS repo**. There is no import from a private monorepo `docs/` tree.
 
-1. Edit canonical markdown under the **private monorepo** `docs/` and **`plasm-oss/skills/plasm-authoring/`** (authoring reference + SKILL) as needed.
-2. Run **`python scripts/sync_allowlisted_docs.py`** from `doc-site/` with monorepo root containing sibling `docs/` and `plasm-oss/skills/` (paths adjusted in the script).
-3. Commit updates under **`doc-site/docs/`** so the OSS repo stays self-contained for CI.
-4. Re-run **`python scripts/sync_allowlisted_docs.py`** after upstream edits; link sanitization runs automatically.
+| Surface | Canonical source | Published path |
+| --- | --- | --- |
+| Reference / operator docs | Edit **`doc-site/docs/`** directly | same paths under MkDocs |
+| Catalog authoring tutorial + reference | Edit **`skills/plasm-authoring/`** (`SKILL.md`, `reference.md`) | projected to `docs/authoring/` |
+| API catalog index (optional) | Edit **`apis/README.md`** | projected to `docs/reference/apis-readme.md` |
 
-**Allowlisted reference docs** (from monorepo `docs/`): language (`plasm-language-definition.md`, `plasm-row-compute.md`, `plasm-long-operations.md`), MCP, auth, plugins, plus **`schema-overlay.md`**, **`plasm-cgs-remote-terminal.md`**, and **`appliance-surface-inventory.md`**. The sync script sanitizes monorepo-relative links to GitHub URLs or published doc paths automatically.
+Maintainer workflow:
 
-**OSS release surface in prose:** document **`plasm-server`**, **`plasm`** (remote terminal), and dev tooling (`plasm-cgs`, `plasm-repl`). Do not teach **`plasm-mcp`** as an operator-facing product in hand-written pages; sanitize synced copies where they still mention it for historical context.
+1. Edit canonical pages under **`doc-site/docs/`** for language, MCP, appliance, auth, and other public reference.
+2. Edit authoring under **`skills/plasm-authoring/`**, then run **`python scripts/sync_allowlisted_docs.py`** from `doc-site/` (default root: parent of `doc-site/`, i.e. plasm-oss). Optionally refresh **`apis/README.md`** the same way.
+3. Commit the projected files under **`doc-site/docs/authoring/`** (and `reference/apis-readme.md` when changed).
+4. CI / local gate: **`python scripts/sync_allowlisted_docs.py --check`** — exits non-zero if projected outputs differ from committed files. Link sanitization (GitHub URL rewrite / private-link demotion) runs on every sync.
 
-Excluded from sync (never published): SaaS architecture, OSS/SaaS boundary essays, private control-plane specs, Phoenix/UI UX docs — see project IA.
+**OSS release surface in prose:** document **`plasm-server`**, **`plasm`** (remote terminal), and dev tooling (`plasm-cgs`, `plasm-repl`). Do not teach **`plasm-mcp`** as an operator-facing product in hand-written pages.
 
 ## Local build
 

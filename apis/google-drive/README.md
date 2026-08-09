@@ -6,7 +6,7 @@ Curated agent surface for the [Google Drive API](https://developers.google.com/d
 
 ```bash
 export GOOGLE_DRIVE_ACCESS_TOKEN=ya29...
-cargo run --bin plasm-repl -- --schema apis/google-drive --backend https://www.googleapis.com/drive/v3
+cargo run -p plasm-repl -- --schema apis/google-drive --backend https://www.googleapis.com/drive/v3
 ```
 
 ## Auth
@@ -18,6 +18,6 @@ OAuth 2.0 bearer token with Drive scopes appropriate to the capabilities you cal
 ## Validation
 
 ```bash
-cargo run -p plasm-cli --bin plasm -- schema validate apis/google-drive/
+cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/google-drive/
 cargo run -p plasm-eval -- coverage --schema apis/google-drive --cases apis/google-drive/eval/cases.yaml
 ```

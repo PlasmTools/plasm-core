@@ -10,7 +10,7 @@ Machine-readable specs vendored in this directory:
 ```bash
 # Live API (set GOOGLE_SHEETS_ACCESS_TOKEN to a valid OAuth access token)
 export GOOGLE_SHEETS_ACCESS_TOKEN=ya29...
-cargo run --bin plasm-repl -- --schema apis/google-sheets --backend https://sheets.googleapis.com
+cargo run -p plasm-repl -- --schema apis/google-sheets --backend https://sheets.googleapis.com
 ```
 
 ## Auth
@@ -30,10 +30,10 @@ Read-only flows can use `spreadsheets.readonly` (often with `drive.readonly`). W
 ## Validation
 
 ```bash
-cargo run -p plasm-cli --bin plasm -- schema validate apis/google-sheets/
+cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/google-sheets/
 cargo run -p plasm-eval -- coverage --schema apis/google-sheets --cases apis/google-sheets/eval/cases.yaml
 # Optional Hermit exercise (large spec):
-# cargo run -p plasm-cli --bin plasm -- validate --schema apis/google-sheets --spec apis/google-sheets/openapi.json
+# cargo run -p plasm-cli --bin plasm-cgs -- validate --spec apis/google-sheets/openapi.json apis/google-sheets
 ```
 
 Ranges in URLs may need URL-encoding when they contain `!` or other reserved characters; pass encoded range strings if the HTTP client does not encode path segments.

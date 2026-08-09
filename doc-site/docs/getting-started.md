@@ -22,7 +22,7 @@ Full walkthrough: [Appliance quick start](appliance/quickstart.md).
 ### Step 1 — Validate a catalog
 
 ```bash
-cargo run -p plasm-cli --bin plasm -- schema validate apis/dnd5e
+cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/dnd5e
 ```
 
 **Verify:** Exit code `0`. The argument is the **catalog directory** (`apis/<name>/`), not `domain.yaml` alone.
@@ -30,20 +30,17 @@ cargo run -p plasm-cli --bin plasm -- schema validate apis/dnd5e
 ### Step 2 — REPL: one live read
 
 ```bash
-cargo run -p plasm --bin plasm-repl -- \
+cargo run -p plasm-repl -- \
   --schema apis/dnd5e \
   --backend https://www.dnd5eapi.co
 ```
 
 **Verify:** Decoded rows at the `repl>` prompt (no transport errors).
 
-### Step 3 — Static CLI smoke (`plasm-cgs`)
+### Step 3 — Schema CLI smoke (`plasm-cgs`)
 
 ```bash
-cargo run -p plasm --bin plasm-cgs -- \
-  --schema apis/pokeapi \
-  --backend https://pokeapi.co \
-  pokemon pikachu
+cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/pokeapi
 ```
 
 ### Step 4 — Pack catalogs and run the appliance

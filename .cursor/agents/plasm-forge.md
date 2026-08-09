@@ -125,8 +125,8 @@ If polish reveals systemic issues with the press itself, hand off to [plasm-cata
 ## Default validation commands (from the skill; run as appropriate)
 
 ```bash
-cargo run -p plasm-cli --bin plasm -- schema validate apis/<api>
-cargo run -p plasm-cli --bin plasm -- validate --schema apis/<api> --spec path/to/openapi.json
+cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/<api>
+cargo run -p plasm-cli --bin plasm-cgs -- validate --spec path/to/openapi.json apis/<api>
 cargo run -p plasm-repl -- --schema apis/<api> --backend http://localhost:1080 --help
 cargo run -p plasm-eval -- coverage --schema apis/<api> --cases apis/<api>/eval/cases.yaml
 ```

@@ -143,7 +143,7 @@ Symbolic teaching table / TSV teaching attaches **`entities.<Name>.description`*
 
 **Lint:** `plasm-oss/scripts/check_catalog_description_hygiene.py` flags antipatterns (identity restatement, eval-key examples, field inventories in parentheses, generic get boilerplate, composed-view duplication, scoping parentheticals, tabular jargon). Use `--fail-on error` before publish; pair with `apply_description_hygiene_fixes.py` for bulk remediation then hand-edit disambiguation.
 
-**Purpose, not contents:** The type system, relations, **`provides:`**, symbolic **`e#` / `p#`** lines, parameter gloss, and **`discovery:`** already teach **shape**. **`description`** must answer **what this entity is for in agent workflow**: which goal it supports or what class of task it grounds — **without naming relations, fields, or parameters** that already appear on teaching lines.
+**Purpose, not contents:** The type system, relations, **`provides:`**, symbolic **`e#` / wire-name** lines, parameter gloss, and **`discovery:`** already teach **shape**. **`description`** must answer **what this entity is for in agent workflow**: which goal it supports or what class of task it grounds — **without naming relations, fields, or parameters** that already appear on teaching lines.
 
 | Surface | Write | Do **not** write |
 |---------|-------|-------------------|
@@ -161,7 +161,7 @@ History-browse phrases belong on the **Source** entity `names`. Materialize Quer
 
 **`views:` `description`** on a view definition should state **what composed projection** the agent gets — not list inner capability ids.
 
-**Teaching projection (default on):** For each entity with a primary Get and non-empty ordered **`F`** from `CGS::domain_projection_heading_fields` in [`crates/plasm-core/src/schema.rs`](../../../crates/plasm-core/src/schema.rs), the prompt renderer teaches **`F`** on the **projection witness row** — a validated get/query exemplar with trailing `[p#,…]` in `plasm_expr` and `· projection` in Meaning (not a separate entity heading line). Expressions still use `Entity(…)[subset]` for actual reads. **`F`** comes from that Get's explicit **`provides:`** list (order preserved); if `provides` is empty, **`F`** defaults to `id_field` first, then remaining fields lexicographically. Set **`domain_projection_examples: false`** to suppress projection brackets. Optional **`primary_read:`** names the **Get capability id** to override which Get defines **`F`**. Standalone `p#` gloss rows (including alias symbols referenced only in brackets) are emitted before the witness row uses them.
+**Teaching projection (default on):** For each entity with a primary Get and non-empty ordered **`F`** from `CGS::domain_projection_heading_fields` in [`crates/plasm-core/src/schema.rs`](../../../crates/plasm-core/src/schema.rs), the prompt renderer teaches **`F`** on the **projection witness row** — a validated get/query exemplar with trailing `[field,…]` in `plasm_expr` and `· projection` in Meaning (not a separate entity heading line). Expressions still use `Entity(…)[subset]` for actual reads. **`F`** comes from that Get's explicit **`provides:`** list (order preserved); if `provides` is empty, **`F`** defaults to `id_field` first, then remaining fields lexicographically. Set **`domain_projection_examples: false`** to suppress projection brackets. Optional **`primary_read:`** names the **Get capability id** to override which Get defines **`F`**. Standalone wire-name gloss rows (including alias symbols referenced only in brackets) are emitted before the witness row uses them.
 
 **TSV projection witness (query-only entities):** Symbolic `plasm_expr` / `Meaning` teaching uses `CGS::domain_projection_teaching_wire_fields`, which returns the same **`F`** as the heading when a primary Get exists. If there is no Get, **`F`** still comes from `effective_ordered_response_fields` on a representative read capability: the primary unscoped Query, otherwise the first Query by capability name, then Search the same way.
 
@@ -218,7 +218,7 @@ By default, each field is read from a top-level JSON key matching the field name
 
 #### Gloss: do not restate typed structure
 
-**Entity `description`** (projection banner): Same discipline as fields — never use the banner to summarize what's inside the projection (which refs, which booleans), and never repeat relation names already shown as `p#`.
+**Entity `description`** (projection banner): Same discipline as fields — never use the banner to summarize what's inside the projection (which refs, which booleans), and never repeat relation names already shown as wire names / `r#`.
 
 Entity field descriptions (and similar gloss fed from slots) must not inventory shapes the schema already teaches (e.g. "map keyed by …", "JSON containing …", repeating `select` alternatives). Prefer **omitting** the field `description` when the parent entity (or `values:` row) carries enough agent-facing meaning; use one sentence only when the slot needs workflow nuance beyond type (staleness, trust boundary, "refresh before …"). Primitive semantics stay on `values:` rows (`string_semantics`, allowed enums, date meaning).
 
@@ -314,7 +314,7 @@ entities:
 
 ### Authoring surface: Plasm expressions
 
-Validate catalogs with `plasm-repl`, MCP `execute`, or any host that evaluates Plasm programs against CGS — not by designing command-line flag matrices. Capability `parameters:`, `input_schema`, relations, and `mappings.yaml` define what the compiler and runtime wire to HTTP; teaching table teaches the `e#` / `m#` / `p#` shapes agents actually emit.
+Validate catalogs with `plasm-repl`, MCP `execute`, or any host that evaluates Plasm programs against CGS — not by designing command-line flag matrices. Capability `parameters:`, `input_schema`, relations, and `mappings.yaml` define what the compiler and runtime wire to HTTP; teaching table teaches the `e#` / `m#` / `r#` (+ wire names) shapes agents actually emit.
 
 `entity_ref` enables forward relation navigation and reverse traversal when query parameters align with FK fields (see [Foreign key fields](#foreign-key-fields-entity_ref)).
 
@@ -339,7 +339,7 @@ Wire shape for each parameter is `values[value_ref]`.
 
 **Capability-level `description:`** (the operation, not each parameter): keep short and imperative; see [Teaching-table-facing descriptions](#teaching-table-facing-descriptions-entities-and-capabilities).
 
-**`description` on capability parameters:** Optional. When the prompt uses a symbolic `PromptRenderMode` (compact or tsv, via `--symbol-tuning compact|tsv` on `plasm-mcp` / `plasm-repl` / `plasm-eval`), each parameter gets a `p#` gloss line in teaching table. The gloss shows the parameter type and, after a middle dot, either this `description` or the wire `name`. Use the same style as entity field descriptions: short domain prose. **Do not** restate `name:`, wire type, or enum members.
+**`description` on capability parameters:** Optional. When the prompt uses a symbolic `PromptRenderMode` (compact or tsv, via `--symbol-tuning compact|tsv` on `plasm-mcp` / `plasm-repl` / `plasm-eval`), each parameter gets a wire-name gloss line in teaching table. The gloss shows the parameter type and, after a middle dot, either this `description` or the wire `name`. Use the same style as entity field descriptions: short domain prose. **Do not** restate `name:`, wire type, or enum members.
 
 ### Parameter Roles
 
