@@ -334,7 +334,7 @@ See [reference.md](reference.md) for the full pattern catalogue (index-only, fil
 
 ### Scoped relation traversal (`materialize`)
 
-When an API uses sub-resource URLs (`/parent/{id}/children`), set **`materialize`** on the **many** relation so chain traversal fills the target query's scope parameter(s). See [reference.md — Scoped many-relations](reference.md#scoped-many-relations--materialize-query_scoped--query_scoped_bindings).
+When an API uses sub-resource URLs (`/parent/{id}/children`), set **`materialize`** on the **many** relation so chain traversal fills the target query's scope parameter(s). See [reference.md — Scoped many-relations](reference.md#scoped-many-relations-materialize-query_scoped-query_scoped_bindings).
 
 ### EntityRef fields
 
@@ -388,7 +388,7 @@ pet_create:
 
 ### Pagination & hydration
 
-**Pagination** — declare only in **`mappings.yaml`** (`pagination` block on **query** capabilities). Infer `style`, wire param names, and JSON paths per [reference.md — Pagination](reference.md#pagination-cml--mappingsyaml-only). The runtime merges **`pagination.params`** into follow-up HTTP requests; **`pagination:`** in CML is the single authoring surface for paging behavior.
+**Pagination** — declare only in **`mappings.yaml`** (`pagination` block on **query** capabilities). Infer `style`, wire param names, and JSON paths per [reference.md — Pagination](reference.md#pagination-cml-mappingsyaml-only). The runtime merges **`pagination.params`** into follow-up HTTP requests; **`pagination:`** in CML is the single authoring surface for paging behavior.
 
 **Hydration** — after a query, if the entity has both `query` and `get`, the runtime **by default** fetches full rows via `get` unless `QueryExpr.hydrate = Some(false)` or the engine disables hydrate. No extra CGS flag. See [reference.md — Query result hydration](reference.md#query-result-hydration-runtime).
 

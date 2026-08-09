@@ -30,7 +30,7 @@ That model breaks when:
 
 **Operational limits after rehydrate:** hot graph cache and paging resume tokens are restored from persisted session metadata. Session metadata, teaching exposure, binding maps, federated catalog hashes, and plan-commit records are persisted when Redis is configured. MCP `plasm_run` awaits server-side and returns terminal rows/snapshots; explicit `wait(oN)` / `cancel(oN)` operation continuations are HTTP / remote CLI only. Spilled graph pages reload lazily when `PLASM_GRAPH_CACHE_URL` is set. Rehydrate failures emit `plasm.execute.rehydrate.outcomes_total` metrics.
 
-**Smoke:** [`scripts/smoke/mcp-multireplica-execute-live.sh`](../../../../scripts/smoke/mcp-multireplica-execute-live.sh) (HTTP create → cross-pod GET; MCP `plasm_context` → fresh-transport `plasm` plan; token-only `plasm_run` on the reviewed `pcN`).
+**Smoke:** product-monorepo `scripts/smoke/mcp-multireplica-execute-live.sh` (HTTP create → cross-pod GET; MCP `plasm_context` → fresh-transport `plasm` plan; token-only `plasm_run` on the reviewed `pcN`).
 
 ## Related code
 
