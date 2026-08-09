@@ -2,6 +2,7 @@
 name = "plasm-otel"
 version.workspace = true
 edition.workspace = true
+license = "MIT OR Apache-2.0"
 description = "Shared OpenTelemetry OTLP bootstrap (traces, metrics, logs) from standard OTEL_* env vars"
 readme = "README.md"
 

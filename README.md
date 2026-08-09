@@ -54,6 +54,16 @@ OSS appliance and agent paths use otel + trace (+ wire). The sink is product/dep
 
 ## License
 
-Plasm is licensed under the [Business Source License 1.1](LICENSE) (`BUSL-1.1`).
-GitHub’s license API often reports `NOASSERTION` for BSL — that is a detector gap, not an
-unlicensed tree. The Change License is Apache License 2.0 on the Change Date in `LICENSE`.
+Except where otherwise noted, Plasm-authored code in **Plasm Core** is available
+under either the [MIT License](LICENSE-MIT) or the
+[Apache License, Version 2.0](LICENSE-APACHE), at your option.
+
+`crates/plasm-trace-sink` remains under the
+[Business Source License 1.1](crates/plasm-trace-sink/LICENSE). Imported source,
+data, and specifications remain under their respective terms; the repository's
+licence files do not override third-party rights.
+
+`v0.4.44` is the final BUSL release of Plasm Core. `v0.4.45` is the first
+dual-licensed release. Historical BUSL versions retain their original terms,
+including their per-version conversion on the earlier of `2030-04-24` or the
+fourth anniversary of that version's first public distribution.

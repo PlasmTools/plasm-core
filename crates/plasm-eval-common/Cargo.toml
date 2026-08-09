@@ -2,6 +2,7 @@
 name = "plasm-eval-common"
 version.workspace = true
 edition.workspace = true
+license = "MIT OR Apache-2.0"
 description = "Shared OpenRouter helpers for plasm-eval and plasm-discovery-eval"
 readme = "README.md"
 

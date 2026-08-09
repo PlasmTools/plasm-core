@@ -2,6 +2,7 @@
 name = "plasm-trace"
 version.workspace = true
 edition.workspace = true
+license = "MIT OR Apache-2.0"
 description = "MCP/execute session execution-trace model (TraceHub segments); not OTEL — see plasm-otel"
 
 [dependencies]
