@@ -2,6 +2,7 @@
 name = "plasm-discovery"
 version.workspace = true
 edition.workspace = true
+license = "MIT OR Apache-2.0"
 readme = "README.md"
 description = "Typed, graph-aware discovery over CGS catalogs"
 

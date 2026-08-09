@@ -2,6 +2,7 @@
 name = "plasm-node"
 version.workspace = true
 edition.workspace = true
+license = "MIT OR Apache-2.0"
 description = "Node.js NAPI bindings for the Plasm catalog-native agent engine"
 readme = "README.md"
 

@@ -3,7 +3,7 @@ name = "plasm-sdk-transport"
 version.workspace = true
 edition.workspace = true
 description = "Trait boundary for plugging external Rust SDKs into plasm as transport backends"
-license = "GPL-3.0-or-later"
+license = "MIT OR Apache-2.0"
 readme = "README.md"
 
 [dependencies]

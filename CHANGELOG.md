@@ -9,6 +9,17 @@ Entries before **0.4.35** live in [`CHANGELOG-ARCHIVE.md`](CHANGELOG-ARCHIVE.md)
 
 ## [Unreleased]
 
+## [0.4.45] - 2026-08-09
+
+### Changed
+
+- **Plasm Core licensing:** Plasm-authored code is now available under
+  `MIT OR Apache-2.0`, at the recipient's option. `plasm-trace-sink` remains
+  separately licensed under BUSL-1.1.
+- **Version boundary:** `v0.4.44` is the final BUSL release. Historical BUSL
+  releases retain their original per-version conversion rule: the earlier of
+  2030-04-24 or four years after that version's first public distribution.
+
 ## [0.4.44] - 2026-08-08
 
 ### Changed

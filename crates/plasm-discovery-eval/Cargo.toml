@@ -2,6 +2,7 @@
 name = "plasm-discovery-eval"
 version.workspace = true
 edition.workspace = true
+license = "MIT OR Apache-2.0"
 description = "YAML-backed eval for MCP lexicon discovery (baseline + optional LLM rerank)"
 readme = "README.md"
 

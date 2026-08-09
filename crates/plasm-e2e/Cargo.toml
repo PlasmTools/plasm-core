@@ -2,6 +2,7 @@
 name = "plasm-e2e"
 version.workspace = true
 edition.workspace = true
+license = "MIT OR Apache-2.0"
 readme = "README.md"
 
 # End-to-end integration tests using hermit (in-process OpenAPI mock server).
