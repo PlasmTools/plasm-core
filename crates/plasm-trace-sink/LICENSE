@@ -1,0 +1,219 @@
+Business Source License 1.1
+
+Licensor:             1414 Degrees Ltd
+Licensed Work:        plasm-trace-sink
+Additional Use Grant: You may make non-production use of the Licensed Work and
+                      the production uses described in the Additional Production
+                      Use Grant below.
+Change Date:          2030-04-24
+Change License:       Apache License, Version 2.0
+
+For information about alternative licensing arrangements for production use,
+contact the Licensor.
+
+Additional Production Use Grant
+
+This Additional Production Use Grant permits limited commercial production use
+of the Licensed Work, subject to the terms below. These terms define the scope
+of the Additional Use Grant and do not limit the non-production rights granted
+by this License.
+
+1. Definitions
+
+"Software" means the Licensed Work and all associated source code, components,
+and documentation licensed under this License.
+
+"Personal Use" means use of the Software by an individual solely for personal,
+educational, evaluation, research, or hobby purposes, and not for commercial
+advantage or business operations.
+
+"Permitted Product Use" means use of the Software as an embedded component
+within a software application or service provided by you, where the Software
+operates as internal execution infrastructure and is not exposed as a standalone
+or general-purpose service.
+
+"Execution Service" means any service, platform, API, or offering that enables
+third parties to execute workflows, programs, or tasks using functionality
+substantially similar to or derived from the Software.
+
+"General-Purpose Platform" means a product or service that allows third parties
+to define, configure, or execute arbitrary or broadly scoped workflows,
+integrations, or automations across multiple systems or domains, independent of
+a primary application domain.
+
+"Competing Service" means any Execution Service or General-Purpose Platform
+where the Software constitutes a material part of the functionality offered to
+third parties.
+
+"Third Party" means any individual or entity other than you and your Affiliates.
+
+"Affiliate" means any entity that directly or indirectly controls, is controlled
+by, or is under common control with you, where "control" means ownership of more
+than fifty percent (50%) of the voting interests or the power to direct
+management and policies.
+
+2. Permitted Uses
+
+Subject to the terms of this License, you may:
+
+(a) Personal Use
+
+Use, reproduce, modify, and deploy the Software for Personal Use.
+
+(b) Product Use (Commercial Allowed)
+
+Use and deploy the Software as part of a Permitted Product Use, including within
+commercial applications or services, provided that:
+
+the Software operates solely as internal execution infrastructure; and
+
+Third Parties do not access or interact with the Software as a standalone or
+general-purpose service.
+
+(c) Self-Hosting
+
+Deploy the Software in self-hosted, private cloud, or on-premises environments
+for Personal Use or Permitted Product Use.
+
+(d) User Configuration
+
+Allow end users of your product to configure workflows, automations, or
+behaviors within your application, provided such functionality remains within
+the scope of your application's primary domain and does not expose the Software
+as a General-Purpose Platform.
+
+3. Additional Production Use Restrictions
+
+Except as expressly permitted by this Additional Production Use Grant, you may
+not, and may not permit any Third Party to:
+
+(a) Competing Services
+
+Offer, operate, or make available a Competing Service.
+
+(b) Execution as a Service
+
+Provide Third Parties with access to the Software as an Execution Service or
+General-Purpose Platform.
+
+(c) Standalone Exposure
+
+Expose the Software, directly or indirectly, as a standalone service, API, or
+platform whose primary purpose is to execute workflows, automations, or tasks
+on behalf of Third Parties.
+
+(d) Platform Use
+
+Use the Software in a manner where it constitutes the primary value or
+functionality of a service offered to Third Parties, including where such
+service enables those Third Parties to execute or manage workflows or
+integrations across multiple systems independent of a primary application
+domain.
+
+(e) Resale or Sublicensing
+
+Sublicense, sell, lease, or otherwise commercialize the Software as
+infrastructure for Third Parties where the Software forms a material component
+of the offering.
+
+4. Clarifying Examples (Non-Exhaustive)
+
+Permitted Uses include:
+
+operating the Software as internal infrastructure across multiple teams;
+
+embedding the Software within a domain-specific product or service;
+
+enabling application-specific automation or workflow configuration by end users;
+
+running the Software in internal or customer-facing systems where it remains an
+implementation detail.
+
+Prohibited Uses include:
+
+offering a general-purpose automation or workflow platform powered by the
+Software;
+
+exposing a developer-facing API or service that provides execution capabilities
+based on the Software;
+
+operating a hosted or multi-tenant service where the Software is the primary
+mechanism for third-party workflow execution.
+
+Terms
+
+The Licensor hereby grants you the right to copy, modify, create derivative
+works, redistribute, and make non-production use of the Licensed Work. The
+Licensor may make an Additional Use Grant, above, permitting limited production
+use.
+
+Effective on the Change Date, or the fourth anniversary of the first publicly
+available distribution of a specific version of the Licensed Work under this
+License, whichever comes first, the Licensor hereby grants you rights under the
+terms of the Change License, and the rights granted in the paragraph above
+terminate.
+
+If your use of the Licensed Work does not comply with the requirements currently
+in effect as described in this License, you must purchase a commercial license
+from the Licensor, its affiliated entities, or authorized resellers, or you must
+refrain from using the Licensed Work.
+
+All copies of the original and modified Licensed Work, and derivative works of
+the Licensed Work, are subject to this License. This License applies separately
+for each version of the Licensed Work and the Change Date may vary for each
+version of the Licensed Work released by Licensor.
+
+You must conspicuously display this License on each original or modified copy
+of the Licensed Work. If you receive the Licensed Work in original or modified
+form from a third party, the terms and conditions set forth in this License
+apply to your use of that work.
+
+Any use of the Licensed Work in violation of this License will automatically
+terminate your rights under this License for the current and all other versions
+of the Licensed Work.
+
+This License does not grant you any right in any trademark or logo of Licensor
+or its affiliates (provided that you may use a trademark or logo of Licensor as
+expressly required by this License).
+
+TO THE EXTENT PERMITTED BY APPLICABLE LAW, THE LICENSED WORK IS PROVIDED ON AN
+"AS IS" BASIS. LICENSOR HEREBY DISCLAIMS ALL WARRANTIES AND CONDITIONS, EXPRESS
+OR IMPLIED, INCLUDING (WITHOUT LIMITATION) WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, NON-INFRINGEMENT, AND TITLE.
+
+MariaDB hereby grants you permission to use this License's text to license your
+works, and to refer to it using the trademark "Business Source License", as long
+as you comply with the Covenants of Licensor below.
+
+Covenants of Licensor
+
+In consideration of the right to use this License's text and the "Business
+Source License" name and trademark, Licensor covenants to MariaDB, and to all
+other recipients of the licensed work to be provided by Licensor:
+
+1. To specify as the Change License the Apache License, Version 2.0 or any later version,
+   or a license that is compatible with Apache License, Version 2.0 or a later version,
+   where "compatible" means that software provided under the Change License can
+   be included in a program with software provided under Apache License, Version 2.0 or a
+   later version. Licensor may specify additional Change Licenses without
+   limitation.
+
+2. To either: (a) specify an additional grant of rights to use that does not
+   impose any additional restriction on the right granted in this License, as
+   the Additional Use Grant; or (b) insert the text "None".
+
+3. To specify a Change Date.
+
+4. Not to modify this License in any other way.
+
+Notice
+
+The Business Source License (this document, or the "License") is not an Open
+Source license. However, the Licensed Work will eventually be made available
+under an Open Source License, as stated in this License.
+
+For more information on the use of the Business Source License for MariaDB
+products, please visit the MariaDB Business Source License FAQ at
+https://mariadb.com/bsl-faq-mariadb/. For more information on the use of the
+Business Source License generally, please visit the Adopting and Developing
+Business Source License FAQ at https://mariadb.com/bsl-faq-adopting/.
