@@ -48,8 +48,11 @@ Agents write **Plasm** programs against symbols exposed in **teaching table** in
 
 - **`e#`** — Entity types (nouns in the active catalog).
 - **`m#`** — Methods / capabilities (queries, gets, writes, actions).
-- **`p#`** — Fields, capability parameters, and query filters.
+- **Wire names** — Fields, capability parameters, query filters, and projections (catalog left-column names such as `name`, `id`, `title`, `owner`, `repo`).
 - **`r#`** — Relation navigation hops (fanout to related entities).
+- **`v#`** — Value-domain teaching gloss only (never emit in programs).
+
+Legacy opaque `p#` tokens for fields/params are **rejected** at parse.
 
 Expressions compose with pipes and postfix transforms. Multi-line payloads use tagged **heredocs** — see the [Language definition](reference/plasm-language-definition.md).
 

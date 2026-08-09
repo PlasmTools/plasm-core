@@ -9,7 +9,7 @@ Iteratively author, validate, and test a **typed agent surface** (path expressio
 
 The two authored files are:
 
-- **`domain.yaml`** — CGS, the semantic model. Entities, fields, relations, capability declarations (`query`, `get`, `search`, `create`, `update`, `delete`, `action`), top-level **`values:`** registry (semantic slots), and optional top-level **`views:`** composed read DAGs.
+- **`domain.yaml`** — CGS, the semantic model. Entities, fields, relations, capability declarations (`query`, `get`, `search`, `create`, `update`, `delete`, `action`), top-level **`values:`** registry (semantic slots), optional top-level **`data_classes:`** (Guardians-style information-flow labels and sink roles), and optional top-level **`views:`** composed read DAGs.
 - **`mappings.yaml`** — CML, the transport wiring. HTTP / GraphQL templates per capability, plus **`transport: view`** stubs that point at a **`views:`** key (no `method` / `path` for those rows).
 - **Runtime query semantics** (no extra YAML file). **Pagination** lives on CML query mappings (`pagination:` block). **Hydration** (default concurrent GET per query row) applies when CGS declares **both** `query` and `get` for the same entity unless execution opts out. Continuations and page sizing are expressed in **Plasm** (teaching table / `page(pg#)` / postfix limits where taught) — not by authoring synthetic CLI flags.
 
@@ -123,13 +123,13 @@ Write the domain model. No HTTP details here — only what exists and what you c
 
 - Every `apis/<api>/domain.yaml` **must** declare top-level `version: <n>` with `n > 0`.
 - **Never rely on defaults.** Omitted/zero versions are invalid for authoring and packaging.
-- When you change domain semantics (entities, fields, relations, capability signatures, parameter types/roles, auth contract, output/provides behavior), you **must increment** `version`.
+- When you change domain semantics (entities, fields, relations, capability signatures, parameter types/roles, auth contract, output/provides behavior, **information-flow annotations**), you **must increment** `version`.
 - Treat any change that can affect prompt shape, compile/decode behavior, or runtime dispatch as a version bump event.
 - If you only change prose / comments with no semantic / runtime impact, keep `version` unchanged.
 
 **`description` strings:** On entities, capabilities, and `output` for side-effect actions, write **concise language for an agentic surface**: what the **entity** or operation is **for** in the task (goal, anchor, decision), not an inventory of typed fields and relations — the schema and teaching table already show those. Avoid tabular jargon (**"row"**) in Teaching-table-facing prose. Avoid embedding REST paths, methods, status codes, bare **`http://`** / **`https://`** links, or "see GET /…" notes — those belong in **`mappings.yaml`** comments or vendor docs, not in the CGS. **`auth.token_url`** in `domain.yaml` is the intentional exception (machine OAuth endpoint string). **Do not** repeat shapes already taught by **`value_ref`**, projection **`provides:`**, **`input_schema`** unions, or parameter names — omit field / parameter descriptions when types carry the story (see [reference.md — Gloss: do not restate typed structure](reference.md#gloss-do-not-restate-typed-structure)).
 
-**Agentic teaching table copy (execute / MCP teaching):** The prompt renderer attaches **entity `description`** to the symbolic teaching table (projection witness / banner). Treat it as **imperative surface**, not a manual or vendor doc: **one or two short sentences** on **purpose** (why an agent would focus this **entity**) — **never** name **relations** or **fields** that already show up as **`p#`** arrows, bracket projections, or typed columns (that duplicates the graph and confuses "banner" with "nav map"). **Do not** summarize projection contents ("includes refs to …", "typed booleans plus …") — `p#`, relations, and types already do that. **Do not** name other capability ids, spell out call sequences ("use X then Y"), cite **`transport:`**, document HTTP error semantics, or tell agents how to seed MCP — **`discovery:`** blocks (**`operation_terms`**, **`target_terms`**, **`qualifier_terms`** on entities/capabilities), **`apis/<api>/README.md`**, and eval cases carry that operational guidance. Capability **`description:`** should state **effect** or **when to use** in domain terms; move cross-capability playbooks into **`discovery`** on the relevant capability. See [reference.md — Teaching-table-facing descriptions](reference.md#teaching-table-facing-descriptions-entities-and-capabilities).
+**Agentic teaching table copy (execute / MCP teaching):** The prompt renderer attaches **entity `description`** to the symbolic teaching table (projection witness / banner). Treat it as **imperative surface**, not a manual or vendor doc: **one or two short sentences** on **purpose** (why an agent would focus this **entity**) — **never** name **relations** or **fields** that already show up as **wire-name** columns, bracket projections, or typed columns (that duplicates the graph and confuses "banner" with "nav map"). **Do not** summarize projection contents ("includes refs to …", "typed booleans plus …") — wire names, relations, and types already do that. **Do not** name other capability ids, spell out call sequences ("use X then Y"), cite **`transport:`**, document HTTP error semantics, or tell agents how to seed MCP — **`discovery:`** blocks (**`operation_terms`**, **`target_terms`**, **`qualifier_terms`** on entities/capabilities), **`apis/<api>/README.md`**, and eval cases carry that operational guidance. Capability **`description:`** should state **effect** or **when to use** in domain terms; move cross-capability playbooks into **`discovery`** on the relevant capability. See [reference.md — Teaching-table-facing descriptions](reference.md#teaching-table-facing-descriptions-entities-and-capabilities).
 
 ```yaml
 values:
@@ -200,7 +200,7 @@ capabilities:
     entity: Pet
 ```
 
-**teaching projection (prompt teaching, not decode):** Optional per-entity **`domain_projection_examples`** (default **true**) and **`primary_read:`** select which Get capability's ordered **`provides:`** drives the canonical **`[p#,…]`** bracket on the **projection witness row** in teaching TSV (`plasm_expr` + `· projection` in Meaning). Set **`domain_projection_examples: false`** to omit that bracket. Declare explicit ordered **`provides:`** on the primary Get so the witness matches the fields you materialize (see [reference.md — Entities](reference.md#entities)).
+**teaching projection (prompt teaching, not decode):** Optional per-entity **`domain_projection_examples`** (default **true**) and **`primary_read:`** select which Get capability's ordered **`provides:`** drives the canonical **`[field,…]`** bracket on the **projection witness row** in teaching TSV (`plasm_expr` + `· projection` in Meaning). Set **`domain_projection_examples: false`** to omit that bracket. Declare explicit ordered **`provides:`** on the primary Get so the witness matches the fields you materialize (see [reference.md — Entities](reference.md#entities)).
 
 **String fields:** on the corresponding **`values:`** row with **`type: string`**, set **`string_semantics:`** for every non-trivial string (`short`, `markdown`, `document`, `html`, `json_text`, …); plain `short` is the default when omitted.
 
@@ -246,6 +246,22 @@ When the API has **workspace-defined columns** on generic rows (Fibery databases
 Authoring details, spec table, checklists, and reference catalogs: [reference.md — Runtime schema overlay](reference.md#runtime-schema-overlay-schema_overlay). Runtime behavior: monorepo [docs/schema-overlay.md](../reference/schema-overlay.md).
 
 **`kind: action` output:** Every action must declare either non-empty **`provides:`** or **`output:`** with **`type: side_effect`** and a non-empty `description:` that states **what** the operation changes. There is no `output.type: none`. See [reference.md — Action output](reference.md#action-output-provides-vs-outputside_effect).
+
+### Information-flow annotations (Guardians / plan flow typing)
+
+After the relational model is stable, annotate **data classes**, **sinks**, and **sanitizers** so the host can verify agent plans before execute (`plasm` dry-run → `verify_plan_flow`). Conformance map: monorepo `docs/guardians-alignment.md`. Full vocabulary: [reference.md — Information-flow annotations](reference.md#information-flow-annotations-guardians--plan-flow-typing).
+
+**Catalog declares facts; tenant policy enforces rules.** Register classes in **`data_classes:`**, label sensitive **entity fields** with **`data_class:`**, mark exfiltration/destructive **input_schema** params with **`sink_class:`**, and list taint breakers on **`sanitizes:`** capabilities. Output labels are **derived** from `effective_provides` × field `data_class` — do not duplicate on capabilities.
+
+**Annotation pass (minimum for mutating APIs):**
+
+1. Add `data_classes:` entries for every label and sink role you reference (`untrusted`, `pii_*`, `external_send`, `destructive_delete`, …).
+2. Label user-generated text and PII on entity fields agents read (`body`, `description`, `comment`, email fields, …).
+3. On send/publish/post/reply/share/delete capabilities, set `sink_class:` on the payload field in `input_schema`.
+4. On redact/scrub/sanitize capabilities, declare `sanitizes:` for the classes they clear.
+5. Increment `version:` when flow annotations change.
+
+Witness catalog: `plasm-oss/fixtures/schemas/flow_matrix/`. Unlabeled catalogs remain flow-permissive until tenant policy is pinned active.
 
 ### Authentication — top-level `auth:` block
 
@@ -331,10 +347,11 @@ See [reference.md](reference.md) for the full pattern catalogue (index-only, fil
 - [ ] Every list/filter agent intent has `kind: search` where the vendor supports filter DSL (not a fleet of scoped `query` caps for the same entity)
 - [ ] Human-visible keys are `id_field` where the vendor accepts them on get/create
 - [ ] Write surface uses domain verbs, not per-input-field mutation explosion
+- [ ] Mutating APIs: `data_classes:` registry + field `data_class:` on sensitive reads + `sink_class:` on outbound/destructive inputs (see [Information-flow annotations](reference.md#information-flow-annotations-guardians--plan-flow-typing))
 
 ### Scoped relation traversal (`materialize`)
 
-When an API uses sub-resource URLs (`/parent/{id}/children`), set **`materialize`** on the **many** relation so chain traversal fills the target query's scope parameter(s). See [reference.md — Scoped many-relations](reference.md#scoped-many-relations-materialize-query_scoped-query_scoped_bindings).
+When an API uses sub-resource URLs (`/parent/{id}/children`), set **`materialize`** on the **many** relation so chain traversal fills the target query's scope parameter(s). See [reference.md — Scoped many-relations](reference.md#scoped-many-relations--materialize-query_scoped--query_scoped_bindings).
 
 ### EntityRef fields
 
@@ -388,7 +405,7 @@ pet_create:
 
 ### Pagination & hydration
 
-**Pagination** — declare only in **`mappings.yaml`** (`pagination` block on **query** capabilities). Infer `style`, wire param names, and JSON paths per [reference.md — Pagination](reference.md#pagination-cml-mappingsyaml-only). The runtime merges **`pagination.params`** into follow-up HTTP requests; **`pagination:`** in CML is the single authoring surface for paging behavior.
+**Pagination** — declare only in **`mappings.yaml`** (`pagination` block on **query** capabilities). Infer `style`, wire param names, and JSON paths per [reference.md — Pagination](reference.md#pagination-cml--mappingsyaml-only). The runtime merges **`pagination.params`** into follow-up HTTP requests; **`pagination:`** in CML is the single authoring surface for paging behavior.
 
 **Hydration** — after a query, if the entity has both `query` and `get`, the runtime **by default** fetches full rows via `get` unless `QueryExpr.hydrate = Some(false)` or the engine disables hydrate. No extra CGS flag. See [reference.md — Query result hydration](reference.md#query-result-hydration-runtime).
 
@@ -398,10 +415,10 @@ For split `domain.yaml` + `mappings.yaml`, pass the **catalog directory** `apis/
 
 ```bash
 # CGS validation (catalog directory for split domain+mappings)
-cargo run -p plasm-cli --bin plasm -- schema validate apis/<api>
+cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/<api>
 
 # Optional: exhaustive mapping exercise against an OpenAPI spec
-cargo run -p plasm-cli --bin plasm -- validate --schema apis/<api> --spec path/to/openapi.json
+cargo run -p plasm-cli --bin plasm-cgs -- validate --spec path/to/openapi.json apis/<api>
 
 # Smoke-load REPL + help
 cargo run -p plasm-repl -- --schema apis/<api> --backend http://localhost:1080 --help

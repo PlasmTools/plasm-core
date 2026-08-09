@@ -13,7 +13,7 @@ Read-only mirror of the public [Hacker News API](https://github.com/HackerNews/A
 ## Try it
 
 ```bash
-cargo run --bin plasm-repl -- --schema apis/hackernews
+cargo run -p plasm-repl -- --schema apis/hackernews
 ```
 
 Eval coverage (no LLM):

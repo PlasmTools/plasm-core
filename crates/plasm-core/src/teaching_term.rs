@@ -1,7 +1,9 @@
 //! Teaching-table tokens with CGS-backed payloads and a per-session numeric [`Symbol`].
 //!
-//! Carry [`TeachingTerm`] in the parser and prompt pipeline; format to `e1` / `m2` / `p3` / `r4` only at
-//! serialization boundaries via [`Display`] (or explicit [`std::fmt::Write`]).
+//! Carry [`TeachingTerm`] in the parser and prompt pipeline. Ingress programs use `e#` / `m#` / `r#`
+//! plus **catalog wire names** for fields and params (legacy opaque `p#` tokens are rejected).
+//! [`Display`] may still format internal parameter slots as `p#` for ledger/debug boundaries —
+//! do not teach that form as agent-facing program surface; prefer wire names and `r#` for relations.
 
 use crate::identity::{
     CapabilityName, CapabilityParamName, EntityFieldName, EntityName, PathMethodSegment,
@@ -11,11 +13,12 @@ use crate::schema::{capability_path_method_segment, CapabilitySchema, CGS};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-/// Session-local index into the corresponding `e` / `m` / `p` table for this [`SymbolMap`] build.
-/// The **kind** (entity vs method vs parameter) is implied by the enclosing [`TeachingTerm`] variant,
+/// Session-local index into the corresponding `e` / `m` / `r` (or internal param) table for this [`SymbolMap`] build.
+/// The **kind** (entity vs method vs parameter/relation) is implied by the enclosing [`TeachingTerm`] variant,
 /// not by this value.
 ///
-/// [`Display`] on `Symbol` is **digits only** (1-based index). For full `e1` / `m2` / `p3` text, use [`Display`] on [`TeachingTerm`].
+/// [`Display`] on `Symbol` is **digits only** (1-based index). For full `e1` / `m2` / `r4` text, use [`Display`] on [`TeachingTerm`]
+/// (relation slots). Field/param ingress uses **wire names**, not Display `p#`.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub struct Symbol(pub u32);
 
@@ -57,7 +60,7 @@ pub struct MethodRef {
     pub path_segment: PathMethodSegment,
 }
 
-/// Which CGS table a parameter name refers to (disambiguates the flat `p#` namespace).
+/// Which CGS table a parameter/field/relation name refers to (slot kind for teaching/ledger; ingress fields use wire names).
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum ParameterSlot {
     EntityField {
@@ -95,7 +98,8 @@ impl TeachingTerm {
 }
 
 impl fmt::Display for TeachingTerm {
-    /// Symbolic form: `e1`, `m2`, `p3`, `r4` (1-based, matching [`crate::symbol_tuning::SymbolMap`]).
+    /// Symbolic form: `e1`, `m2`, `r4` for entity/method/relation; non-relation [`Parameter`] may Display as `p#`
+    /// for internal ledgers only — agent ingress uses wire names (legacy `p#` rejected at parse).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (prefix, sym) = match self {
             TeachingTerm::Entity(_, s) => ('e', s),

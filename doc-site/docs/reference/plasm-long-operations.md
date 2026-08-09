@@ -2,49 +2,61 @@
 
 Plasm uses two execution surfaces:
 
-- **MCP:** `plasm` dry-runs a program and returns `plan_commit_ref` (`pcN`); `plasm_run` executes that stored reviewed plan and awaits server-side.
-- **HTTP / remote CLI:** live execute can opt into explicit async operation continuations with `wait(oN)` / `cancel(oN)`.
+- **MCP:** `plasm` compiles and dry-runs a program. **Provably read-only** plans (plan gate `Proceed`, flow `Clean`, zero remote-mutation nodes) **auto-execute** and return rows in the same tool response. Plans that need review or contain mutations return **`run_ref`** (`pcN`); `plasm_run` executes those via **`run_ref`** only and awaits server-side.
+- **HTTP / remote CLI:** live execute can opt into explicit async operation continuations with `wait(oN)` / `cancel(oN)`. After a dry-run, live execute accepts query/body **`plan_commit_ref=pcN`** (HTTP name for the same `pcN` token).
 
-See also [plasm-language-definition.md](plasm-language-definition.md#host-continuations-page-wait-cancel) for surface syntax, [incremental-teaching-prompts.md](incremental-teaching-prompts.md) for how the teaching TSV preamble teaches continuations, and [tool-model-http.md](tool-model-http.md) for Phoenix Tool Explorer `execute` notes.
+See also [plasm-language-definition.md](plasm-language-definition.md#host-continuations-page-wait-cancel) for surface syntax, [incremental-teaching-prompts.md](incremental-teaching-prompts.md) for how the teaching TSV preamble teaches continuations, and [tool-model-http.md](tool-model-http.md) for tool-model `execute` notes.
 
 ## Handles
 
-| Handle | Expression | Resumes |
-|--------|------------|---------|
-| `l_<token>_pgN` | `page(l_<token>_pgN)` | Paginated query cursor (MCP) |
+| Handle | Expression / arg | Resumes |
+|--------|------------------|---------|
+| `l_<token>_pgN` | MCP: pass handle as **`run_ref`** on `plasm_run` | Paginated query cursor (MCP) |
 | `pgN` | `page(pgN)` | Paginated query cursor (HTTP-only execute) |
 | `oN` | `wait(oN)` | In-flight async plan execution (HTTP) |
 | `oN` | `cancel(oN)` | Cooperative cancel of that operation |
-| `pcN` | (tool/query arg) | Dry-run plan acceptance token |
+| `pcN` | MCP **`run_ref`**; HTTP query/body **`plan_commit_ref`** | Dry-run plan acceptance token |
 
-**MCP:** `plasm_run` does not accept `program`, `wait`, `cancel`, `force`, or `execute`. It accepts the reviewed `plan_commit_ref` returned by `plasm` and returns one terminal response. Legacy transport slots (`s0`, …) are rejected.
+**MCP:** `plasm_run` does not accept `program`, `wait`, `cancel`, `force`, `execute`, `plan_commit_ref`, or `page_handle`. It accepts **`run_ref`** — a `pcN` from `plasm` or a page handle from a prior result's "more pages" line — and returns one terminal response. `page(...)` is HTTP-execute program syntax only. Legacy transport slots (`s0`, …) are rejected.
 
 **HTTP execute:** long-op and paging handles are **plain** `oN` / `pgN` on the same `/execute/:prompt_hash/:session` row — no MCP `plasm_context` required for wait/cancel continuations.
 
 ## Plan commit tokens (`pcN`)
 
-Dry-run mints a **`plan_commit_ref`** (`pc0`, `pc1`, …) tied to a **content-addressed commit id** over the **semantic plan DAG** only:
+Dry-run mints a **`pcN`** acceptance token (`pc0`, `pc1`, …) tied to a **content-addressed commit id** over the **semantic plan DAG** only:
 
-- Hashed fields: `version`, `nodes`, `edges`, `topological_order`, `returns`
+- Hashed fields: `version`, `steps`, `bind`, `return`
 - **Excluded** (session-local / presentation): plan `name` (e.g. `plasm_dag_call_{n}`), dry-run `summary`
 
-The same program therefore yields the same `pcN` acceptance on MCP and HTTP even when call counters or summary metadata differ. MCP stores the reviewed comp under `pcN`; `plasm_run` consumes that token directly rather than re-accepting a program echo.
+Wire names:
+
+- **MCP:** `_meta.plasm.run_ref` / tool arg **`run_ref`**
+- **HTTP:** query or JSON body **`plan_commit_ref`**
+
+The same program therefore yields the same `pcN` acceptance on MCP and HTTP even when call counters or summary metadata differ. MCP stores the reviewed comp under `pcN`; `plasm_run` consumes that token via **`run_ref`** rather than re-accepting a program echo.
 
 Tokens expire after **10 minutes** (`PLAN_COMMIT_TTL`). Re-run plan dry-run after expiry or program change.
 
 ## Agent workflow (MCP)
 
-1. **`plasm`** — dry-run; pass `logical_session_ref` + `program`. The response returns `plan_commit_ref` (`pc0`, …) and `dry_review` / `dry_verdict` in `_meta.plasm`.
-2. **`plasm_run`** — live execute; pass `logical_session_ref` + `plan_commit_ref` only. Do not echo the program. The server awaits expensive work internally and returns terminal rows/snapshots.
-3. **`resources/read`** — full run snapshots when Markdown summarizes away fields.
+1. **`plasm`** — pass `logical_session_ref` + `program`.
+   - **Clean reads:** when the plan gate is `Proceed`, flow is `Clean`, and the DAG has **no** remote mutations, the host fuses dry-run + live execute and returns rows (same shape as a successful `plasm_run`).
+   - **Writes / review:** otherwise the response returns **`run_ref`** (`pc0`, …) and `dry_review` / `dry_verdict` in `_meta.plasm` — do **not** call `plasm_run` for clean reads.
+2. **`plasm_run`** — live execute for reviewed writes / paging; pass `logical_session_ref` + **`run_ref`** only. Do not echo the program. The server awaits expensive work internally and returns one terminal response (progress via `notifications/plasm/op`).
+3. **`resources/read`** — full run snapshots when Markdown summarizes away fields (`plasm://execute/{ph}/{sid}/run/pr{64hex}` or MCP short `plasm://session/{logical_session_ref}/run/pr{64hex}`).
 
 ### Examples
 
 ```text
+# Clean read — one call
 plasm      logical_session_ref=l_AAAAAAAAQACAAAAAAAAAAQ  program=Pokemon.filter{base_experience >= 300}
-→ dry plan · plan_commit_ref `pc0`
+→ terminal rows/table (inline when ≤25)
 
-plasm_run  logical_session_ref=l_AAAAAAAAQACAAAAAAAAAAQ  plan_commit_ref=pc0
+# Write / review — two calls
+plasm      logical_session_ref=l_AAAAAAAAQACAAAAAAAAAAQ  program=Issue.create(…)
+→ dry plan · run_ref `pc0`
+
+plasm_run  logical_session_ref=l_AAAAAAAAQACAAAAAAAAAAQ  run_ref=pc0
 → terminal rows/table or resource_link snapshots
 ```
 
@@ -56,7 +68,7 @@ Query parameters:
 
 | Param | Default | Role |
 |-------|---------|------|
-| `mode=plan` | — | Plan dry-run only (no live HTTP). Mints `plan_commit_ref` in `_meta.plasm` like MCP `plasm`. |
+| `mode=plan` | — | Plan dry-run only (no live HTTP). Mints `pcN` in `_meta.plasm` (HTTP field `plan_commit_ref`). |
 | `wait=false` | `true` | Start live execute in background; response is `wait(oN)` accept Markdown. |
 | `force=true` | `false` | Bypass **review** soft gate without `plan_commit_ref`. |
 | `plan_commit_ref=pcN` | — | Accept a matching dry-run plan after **review** verdict. |
@@ -126,7 +138,7 @@ Terminal ops store **`run_artifact_id`** only in Redis (not inline `PlasmPlanRun
 
 ## Internal observability
 
-Trace hub SSE remains for Phoenix/SRE timeline detail — separate from the compact agent lines above.
+Trace hub SSE remains for operator timeline detail — separate from the compact agent lines above.
 
 ## Tests
 

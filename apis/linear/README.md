@@ -32,7 +32,7 @@ Linear workspaces can define **issue custom fields**, but the **public GraphQL s
 ## REPL
 
 ```bash
-cargo run --bin plasm -- \
+cargo run -p plasm-repl -- \
   --schema apis/linear \
   --backend https://api.linear.app \
   --repl
@@ -80,7 +80,7 @@ plasm> Issue(ENG-42).comments
 
 ## Federated write recipe (e.g. PokeAPI → Linear)
 
-Cross-catalog goals that end in a Linear write should be **one coherent pipeline**, not parallel reads from each catalog. Shape (substitute session `e#`/`m#`/`p#` from the teaching table):
+Cross-catalog goals that end in a Linear write should be **one coherent pipeline**, not parallel reads from each catalog. Shape (substitute session `e#`/`m#`/`r#` (+ wire names) from the teaching table):
 
 ```text
 team = Team.limit(1)                       # discover a live anchor — never hardcode workspace ids

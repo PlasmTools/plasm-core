@@ -4,7 +4,7 @@ A [Plasm](../../README.md) domain model for the [Google Calendar API v3](https:/
 
 ```bash
 export GCAL_TOKEN="ya29.your_oauth_access_token"
-cargo run --bin plasm -- \
+cargo run -p plasm-repl -- \
   --schema apis/google-calendar \
   --backend https://www.googleapis.com/calendar/v3 \
   --repl

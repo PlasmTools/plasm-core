@@ -1,5 +1,5 @@
 //! In-memory execute sessions: prompt text + CGS + entity seeds, keyed by `(prompt_hash, session_id)`.
-//! Plasm instructions text is built incrementally via [`plasm_core::TeachingExposureSession`] (monotonic `e#`/`m#`/`p#`/`r#`).
+//! Plasm instructions text is built incrementally via [`plasm_core::TeachingExposureSession`] (monotonic `e#`/`m#`/`r#`; fields/params teach as wire names).
 
 pub use crate::graph_cache_guard::GraphCacheGuard;
 
@@ -263,7 +263,7 @@ impl RunArtifactHotCache {
 /// When set, [`Self::logical_session_id`] scopes reuse to one MCP agent logical session (distinct
 /// from MCP transport `MCP-Session-Id`).
 ///
-/// **Symbol numbering** (`e#` / `m#` / `p#` / `r#`) is **not** governed by this key. Append-only
+/// **Symbol numbering** (`e#` / `m#` / `r#`; wire names for fields/params) is **not** governed by this key. Append-only
 /// symbols live on the logical session ledger ([`crate::mcp_transport_store::LogicalSymbolLedgerRegistry`]).
 /// This key selects whether an existing `(prompt_hash, session_id)` transport row may be reused.
 ///

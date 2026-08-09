@@ -69,8 +69,8 @@ The CGS is the semantic domain model. It declares what entities exist, how they 
 ### CRITICAL: Versioning is mandatory
 
 - Every `apis/<api>/domain.yaml` must declare top-level `version: <n>` where `n > 0`.
-- Version defaulting is forbidden; omitted/zero versions are invalid for authoring and catalog packaging.
-- Increment `version` whenever domain semantics change (entities, fields, relations, capability signatures, parameter typing/roles, auth contract, output/provides behavior).
+- Version defaulting is forbidden; omitted/zero versions are invalid for authoring and plugin packaging.
+- Increment `version` whenever domain semantics change (entities, fields, relations, capability signatures, parameter typing/roles, auth contract, output/provides behavior, **information-flow annotations**).
 - Keep version unchanged only for non-semantic text edits (comments/prose) that do not affect runtime behavior, prompts, compile/decode, or dispatch.
 
 ### Value domains (`values:`) and `value_ref`
@@ -141,20 +141,52 @@ entities:
 
 Symbolic teaching table / TSV teaching attaches **`entities.<Name>.description`** to the **projection witness** banner line. **`capabilities.<id>.description`** feeds compact capability legends. Both must stay **agentic**: short, imperative, domain-vocabulary — not implementation manuals and not vendor documentation.
 
-**Purpose, not contents:** The type system, relations, **`provides:`**, symbolic **`e#` / `p#`** lines, parameter gloss, and **`discovery:`** already teach **shape**. **`description`** must answer **what this entity is for in agent workflow**: which goal it supports or what class of task it grounds — **without naming relations, fields, or parameters** that already appear on teaching lines.
+**Lint:** `plasm-oss/scripts/check_catalog_description_hygiene.py` flags antipatterns (identity restatement, eval-key examples, field inventories in parentheses, generic get boilerplate, composed-view duplication, scoping parentheticals, tabular jargon). Use `--fail-on error` before publish; pair with `apply_description_hygiene_fixes.py` for bulk remediation then hand-edit disambiguation.
+
+**Purpose, not contents:** The type system, relations, **`provides:`**, symbolic **`e#` / wire-name** lines, parameter gloss, and **`discovery:`** already teach **shape**. **`description`** must answer **what this entity is for in agent workflow**: which goal it supports or what class of task it grounds — **without naming relations, fields, or parameters** that already appear on teaching lines.
 
 | Surface | Write | Do **not** write |
 |---------|-------|-------------------|
 | **Entity `description`** | Role / intent only: what class of task or decision this entity grounds — no relation, field, or parameter names that teaching table already prints | Payload inventories, relation "next step" hints, lists of related entities, REST-ish tours, capability ids, step-by-step APIs, HTTP status codes, `transport:`, explicit MCP seed instructions |
 | **Capability `description`** | What this operation **does** or **when** to pick it, in user/domain terms | "Call `foo_query` first", URL paths, error-code trivia (use `discovery.target_terms` for NL hints) |
 
+**Discovery seed graph roles (semantic auto-seed):** Prefer relation-edge roles; entity class is a weak fallback. Precedence: `relations.*.discovery.seed_nav` → `entities.*.discovery.seed_class` → unset (no special prune).
+
+| Field | Values | When to author |
+|-------|--------|----------------|
+| `relations.*.discovery.seed_nav` | `attach` \| `own` \| `locate` | `attach` = decoration of source (comments/labels/reviews/pins/remote links); `own` = source owns history/collection (channel→messages) — XOR DirectCapabilities, prefer Source; `locate` = weak container (repo→issues) |
+| `entities.*.discovery.seed_class` | `primary` \| `dependent` \| `ambient` | Fallback when edges unset: list/mutate roots = `primary`; attach leaves = `dependent`; weak containers = `ambient` |
+
+History-browse phrases belong on the **Source** entity `names`. Materialize Query may still use the Target as `entity:`. Do **not** coach seed choice in descriptions. Product spine: ``docs/intent-discovery.md``. Craft rules: ``docs/research-discovery-annotation-rubric.md`` §5.3 / §5.5.
+
 **`views:` `description`** on a view definition should state **what composed projection** the agent gets — not list inner capability ids.
 
-**Teaching projection (default on):** For each entity with a primary Get and non-empty ordered **`F`** from `CGS::domain_projection_heading_fields` in [`crates/plasm-core/src/schema.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/schema.rs), the prompt renderer teaches **`F`** on the **projection witness row** — a validated get/query exemplar with trailing `[p#,…]` in `plasm_expr` and `· projection` in Meaning (not a separate entity heading line). Expressions still use `Entity(…)[subset]` for actual reads. **`F`** comes from that Get's explicit **`provides:`** list (order preserved); if `provides` is empty, **`F`** defaults to `id_field` first, then remaining fields lexicographically. Set **`domain_projection_examples: false`** to suppress projection brackets. Optional **`primary_read:`** names the **Get capability id** to override which Get defines **`F`**. Standalone `p#` gloss rows (including alias symbols referenced only in brackets) are emitted before the witness row uses them.
+**Teaching projection (default on):** For each entity with a primary Get and non-empty ordered **`F`** from `CGS::domain_projection_heading_fields` in [`crates/plasm-core/src/schema.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/schema.rs), the prompt renderer teaches **`F`** on the **projection witness row** — a validated get/query exemplar with trailing `[field,…]` in `plasm_expr` and `· projection` in Meaning (not a separate entity heading line). Expressions still use `Entity(…)[subset]` for actual reads. **`F`** comes from that Get's explicit **`provides:`** list (order preserved); if `provides` is empty, **`F`** defaults to `id_field` first, then remaining fields lexicographically. Set **`domain_projection_examples: false`** to suppress projection brackets. Optional **`primary_read:`** names the **Get capability id** to override which Get defines **`F`**. Standalone wire-name gloss rows (including alias symbols referenced only in brackets) are emitted before the witness row uses them.
 
 **TSV projection witness (query-only entities):** Symbolic `plasm_expr` / `Meaning` teaching uses `CGS::domain_projection_teaching_wire_fields`, which returns the same **`F`** as the heading when a primary Get exists. If there is no Get, **`F`** still comes from `effective_ordered_response_fields` on a representative read capability: the primary unscoped Query, otherwise the first Query by capability name, then Search the same way.
 
 **`from_parent_get` pitfall:** The JSON path must match the **parent GET response** for that relation. Array-of-ref shapes differ by API (e.g. PokéAPI Pokémon `moves[].move` vs Type `moves[]` as bare `{name,url}`). Copying one entity's `materialize.path` to another without checking the wire JSON yields empty relations at decode time.
+
+**Mutual embed pairs (CEP-10):** When both directions expose nested refs on parent GET bodies (e.g. Pokémon `types[].type` and Type `pokemon[].pokemon`), declare **one forward** edge as plain `from_parent_get` and the **inverse** as `prefer_from_parent_get`. Runtime decode is **single-hop** (no nested embed decoders), so mutual pairs do not recurse on the stack. When the inverse API has no scoped list filter (PokéAPI has no “Pokémon by type” query), use a `hydrate_from_embed_path` fallback that GET-hydrates identities extracted from the parent wire JSON:
+
+```yaml
+relations:
+  pokemon:
+    target: Pokemon
+    cardinality: many
+    materialize:
+      kind: prefer_from_parent_get
+      path:
+      - key: pokemon
+      - wildcard: true
+      - key: pokemon
+      on_embed_miss: fallback_scoped
+      fallback:
+        kind: hydrate_from_embed_path
+        get_capability: pokemon_get
+```
+
+Do **not** add a second plain `from_parent_get` on the inverse edge — entity-level cycle validation applies only to plain `from_parent_get` chains; prefer inverse edges are excluded.
 
 **Cardinality `one` + nested child:** When the child ref is not top-level `{relation_name}.name` (e.g. under `meta.ailment` on a move), declare `materialize: { kind: from_parent_get, path: [...] }` on that **one** relation. Only `from_parent_get` is allowed on cardinality `one`; query-scoped materialization remains for **many** relations.
 
@@ -180,11 +212,13 @@ By default, each field is read from a top-level JSON key matching the field name
 
 **`provides` vs full row decode:** HTTP GET responses are decoded using **all** entity fields that have `path` / `derive` wiring. Capability **`provides`** controls summary-vs-complete detection for list/search ([`CGS::effective_provides`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/schema.rs)) and teaching projection; it does not strip extra decoded fields from the cached entity row.
 
+**Search filters vs row fields (agents):** Teaching-row `inputs:` / `opt:` keys are fetch filters only. If agents should aggregate on a dimension (`group_by`, `.sort`, row `.filter`, `[fields]`) that also appears as a search filter parameter, that field must be listed in capability **`provides:`** with wire backing (entity field + decode path) — filter-only params are not row columns at plan time.
+
 **`description` on entities and capabilities:** Optional but recommended when it helps agents. Write **short domain prose** framed for agents choosing tools and traversing the graph, not for humans reading vendor API reference. The same rule applies to `output.description` for `side_effect` actions: state the **domain effect** (e.g. "message moves to Trash"), not the transport shape ("PATCH, empty body", "returns 204"). **Exception:** `auth.token_url` and similar machine OAuth fields may contain a provider token URL.
 
 #### Gloss: do not restate typed structure
 
-**Entity `description`** (projection banner): Same discipline as fields — never use the banner to summarize what's inside the projection (which refs, which booleans), and never repeat relation names already shown as `p#`.
+**Entity `description`** (projection banner): Same discipline as fields — never use the banner to summarize what's inside the projection (which refs, which booleans), and never repeat relation names already shown as wire names / `r#`.
 
 Entity field descriptions (and similar gloss fed from slots) must not inventory shapes the schema already teaches (e.g. "map keyed by …", "JSON containing …", repeating `select` alternatives). Prefer **omitting** the field `description` when the parent entity (or `values:` row) carries enough agent-facing meaning; use one sentence only when the slot needs workflow nuance beyond type (staleness, trust boundary, "refresh before …"). Primitive semantics stay on `values:` rows (`string_semantics`, allowed enums, date meaning).
 
@@ -280,7 +314,7 @@ entities:
 
 ### Authoring surface: Plasm expressions
 
-Validate catalogs with `plasm-repl`, MCP `execute`, or any host that evaluates Plasm programs against CGS — not by designing command-line flag matrices. Capability `parameters:`, `input_schema`, relations, and `mappings.yaml` define what the compiler and runtime wire to HTTP; teaching table teaches the `e#` / `m#` / `p#` shapes agents actually emit.
+Validate catalogs with `plasm-repl`, MCP `execute`, or any host that evaluates Plasm programs against CGS — not by designing command-line flag matrices. Capability `parameters:`, `input_schema`, relations, and `mappings.yaml` define what the compiler and runtime wire to HTTP; teaching table teaches the `e#` / `m#` / `r#` (+ wire names) shapes agents actually emit.
 
 `entity_ref` enables forward relation navigation and reverse traversal when query parameters align with FK fields (see [Foreign key fields](#foreign-key-fields-entity_ref)).
 
@@ -305,7 +339,7 @@ Wire shape for each parameter is `values[value_ref]`.
 
 **Capability-level `description:`** (the operation, not each parameter): keep short and imperative; see [Teaching-table-facing descriptions](#teaching-table-facing-descriptions-entities-and-capabilities).
 
-**`description` on capability parameters:** Optional. When the prompt uses a symbolic `PromptRenderMode` (compact or tsv, via `--symbol-tuning compact|tsv` on `plasm-mcp` / `plasm-repl` / `plasm-eval`), each parameter gets a `p#` gloss line in teaching table. The gloss shows the parameter type and, after a middle dot, either this `description` or the wire `name`. Use the same style as entity field descriptions: short domain prose. **Do not** restate `name:`, wire type, or enum members.
+**`description` on capability parameters:** Optional. When the prompt uses a symbolic `PromptRenderMode` (compact or tsv, via `--symbol-tuning compact|tsv` on `plasm-mcp` / `plasm-repl` / `plasm-eval`), each parameter gets a wire-name gloss line in teaching table. The gloss shows the parameter type and, after a middle dot, either this `description` or the wire `name`. Use the same style as entity field descriptions: short domain prose. **Do not** restate `name:`, wire type, or enum members.
 
 ### Parameter Roles
 
@@ -385,6 +419,35 @@ capabilities:
 | `delete` | Remove entity | Delete by id | Yes |
 | `action` | Any other operation | Method / side-effect call | Usually yes |
 
+#### Obtainability rule (every entity must be teachable)
+
+`CGS::validate` rejects any non-abstract entity that synthesizes **zero** teaching lines with `EntityExpressionIncomplete`. An entity is teachable only if an instance can be **produced** on the expression surface — through at least one of:
+
+- a `get` / `query` / `search` capability (fetch/list it directly), **or**
+- a `create` / `action` capability (construct it, or invoke it via `Entity(id).method(…)`), **or**
+- a singleton `get` (zero-arity, no key), **or**
+- being the **target of a relation** on some other teachable entity.
+
+Plasm does **not** synthesize an implicit get-by-id from `id_field` alone — obtainability must be declared. A capability graph whose only capabilities on an entity are terminal writers (`update` / `delete`) is still teachable **iff** the receiver `Entity(id).update(…)` type-checks (the writer supplies the path transport); if it cannot, add a `get` / `query` so a receiver exists first. Do not model a create-token or other ephemeral mutation output as a standalone entity — make it that capability's `output.type` instead.
+
+#### Validated inputs stay teachable (`$` placeholder is not a real value)
+
+`input_schema.validation` predicates (`min_value`, `min_length`, `pattern`, …) and cross-field rules (`at_least_one`, `exactly_one`) are enforced against **concrete** values at execute time only. During teaching-surface synthesis the fields carry the `$` prompt placeholder, and predicates on **absent** (unlisted optional) fields are vacuously satisfied — so a capability with heavy input validation is still witnessed. Note that an `at_least_one` / `exactly_one` rule makes the capability **non-zero-arity** even when every individual field is optional: its teaching line is `method(field=…)`, never a bare `method()`.
+
+#### API shape rules (vendor XOR / exclusivity)
+
+When an upstream API rejects a **static** parameter combination (GitHub `pr_create` refuses `title` together with `issue`), stamp that in the catalog — do **not** special-case it in the host.
+
+1. Keep the conflicting params on `parameters:` (both typically `required: false`).
+2. Add a sibling `input_schema:` with empty object `fields: []` (merge keeps parameter-derived fields) and `validation.cross_field_rules`:
+   - `exactly_one` — one of the listed fields must be present
+   - `mutually_exclusive` — at most one may be present
+   - `at_least_one` / `all_or_none` / `implies` as needed
+3. Put a sharp `error_message` agents can act on at dry typecheck.
+4. Gloss the params (`description:` / `values:`) so teaching TSV states which shape is which.
+
+Example (GitHub `pr_create`): `exactly_one` over `[title, issue]` — title path opens a new PR; issue path converts issue `#N` and must omit title. Dry compile fails before `run_ref` mint; live 422 for that combo is a catalog miss.
+
 ### Composed read views
 
 **Purpose:** Model a first-class read projection that corresponds to no single upstream REST/GraphQL operation, but does map cleanly onto several existing `query` / `get` capabilities. This belongs in `domain.yaml` as **`views:`** — the same layer as entities and capabilities — not as an undocumented runtime shortcut.
@@ -419,7 +482,24 @@ Expose **next hops as relations** (`relation_outputs:` → decoded `Ref` edges o
     - `kind: node_all_rows`
     - `kind: node_single_row`
 
-Inner nodes may be `query` or `get` capabilities that already have normal CML mappings; the runtime issues HTTP for those only. **`kind: action` is not supported** as a view node today — model explorer-style calls as **`kind: action`** on the target entity (e.g. datasource explorers) or as a standalone capability when a single HTTP op is enough.
+**Executable many-relations (required):** Every `entities.*.relations` edge with `cardinality: many` that agents can traverse (teaching `.r#`, discovery hints, semantic auto-seed) **must** declare `materialize:`. For view-backed hops that mirror `relation_outputs:`, use **`view_embed`** — do not rely on omitting `materialize` and hoping runtime cached embed works.
+
+```yaml
+relations:
+  issues:
+    target: Issue
+    cardinality: many
+    materialize:
+      kind: view_embed
+      view: my_work          # views: key — entity relation name must match relation_outputs.relation
+```
+
+- **`view_embed`** chains after a row produced by that view's query/get (`transport: view`); targets resolve via the view DAG's `relation_outputs` binding.
+- **`query_scoped` / `from_parent_get`** remain valid when the hop is not view-backed (scoped list APIs, GET embed arrays).
+- **Anti-pattern:** `cardinality: many` relation + `relation_outputs:` with **no** `materialize:` — load may auto-synthesize `view_embed` during migration, but new catalogs must declare it explicitly. Unavailable many-relations are rejected at `CGS::validate`.
+
+Historical incident: Linear `MyWorkSnapshot.issues` advertised without executable materialize — see `docs/linear-plasm-mcp-failures-triage.md`.
+
 
 #### View computed templates (filters and time)
 
@@ -508,7 +588,7 @@ Conformance fixture rows: `fixtures/schemas/plasm_language_matrix_views` (`lang_
 |-----------|----------------|
 | Fixed OpenAPI / GraphQL schema (GitHub, Linear core fields, Slack, …) | Static `entities:` + `path:` / `derive:` on fields |
 | Multi-hop read that does not depend on workspace schema | **`views:`** composed reads |
-| Per-contract EVM catalogs | Static **`apis/evm-*`** trees; compile stays in-tree ([`plasm-compile`](https://github.com/PlasmTools/plasm-core/tree/main/crates/plasm-compile)) |
+| Per-contract ABI (EVM, plugin generation) | **Compile plugin** pipeline |
 | You can list every column in `domain.yaml` without a runtime schema call | Static fields only |
 | Hierarchical field inheritance needs multiple schema sources merged | **`source.steps`** multi-fetch pipeline (list → scoped fetch per row → merge) |
 
@@ -610,6 +690,142 @@ capabilities:
 ```
 
 **Validation:** CGS `validate` rejects (a) `action` with neither `provides` nor `output`, and (b) `side_effect` with missing or whitespace-only `description`.
+
+### Information-flow annotations (Guardians / plan flow typing)
+
+Plasm catalogs carry **static information-flow facts** that the host uses at **plan dry-run** (`plasm` → `verify_plan_flow`) before minting a `pcN` commit. This is the catalog side of [Guardians-style](https://cacm.acm.org/research/guardians-of-the-agents-formal-verification-of-ai-workflows/) **generate → verify → execute** — see monorepo `guardians-alignment.md` and `plan-flow-typing.md`.
+
+**Catalog vs policy:** `domain.yaml` declares **what data exists** and **which inputs are sinks**; tenant **`FlowPolicy`** (pinned on `ExecuteSession` at session open) declares **which label→sink flows are forbidden** and default dispositions for remote mutations. Do **not** embed tenant policy in catalogs.
+
+| Guardians `ToolSpec` | CGS authoring surface | Where |
+|----------------------|----------------------|-------|
+| `source_labels` | Field `data_class:` | `entities.*.fields` |
+| Derived read outputs | *(computed)* | Union of `data_class` over `effective_provides(cap)` fields |
+| `sink_params` | Param `sink_class:` | `input_schema` object fields **or** capability `parameters:` rows (mutating caps) |
+| `sanitizers` | `sanitizes:` | Capability declaration |
+
+**Closed registry:** every `data_class`, every `sanitizes` entry, and every `sink_class` value must be declared under top-level **`data_classes:`**. `CGS::validate` rejects unknown keys (`UnknownDataClass`). **Sink class names use the same registry** as data labels — register sink roles (e.g. `external_send`) as `data_classes` entries with a clear `description`.
+
+```yaml
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  pii_email:
+    description: Email address treated as personally identifiable.
+    severity: sensitive
+  external_send:
+    description: Outbound message body delivered outside the tenant boundary.
+    severity: critical
+  destructive_delete:
+    description: Irreversible resource removal.
+    severity: critical
+
+entities:
+  Comment:
+    fields:
+      body:
+        value_ref: nv_comment_body
+        data_class: untrusted
+      author_email:
+        value_ref: nv_email
+        data_class: pii_email
+
+capabilities:
+  comment_reply:
+    kind: action
+    entity: Comment
+    input_schema:
+      input_type:
+        type: object
+        fields:
+          - name: body
+            value_ref: nv_comment_body
+            required: true
+            sink_class: external_send
+    output:
+      type: side_effect
+      description: Posts a reply visible outside the workspace.
+
+  redact_pii:
+    kind: action
+    entity: Comment
+    sanitizes:
+      - pii_email
+    output:
+      type: side_effect
+      description: Strips PII from comment text before downstream use.
+```
+
+#### `data_classes:` registry
+
+Each key is a stable `snake_case` **`DataClassName`**. Optional fields:
+
+| Key | Purpose |
+|-----|---------|
+| `description` | Human gloss for authors / Flow tab (not teaching-table copy). |
+| `severity` | `info` (default), `sensitive`, `untrusted`, `critical` — UI ordering and future policy defaults. |
+
+Prefer a **small shared vocabulary** per catalog (and across federation entries when semantics align). Reuse canonical names where meaning matches: `untrusted`, `pii`, `credentials`, `internal_only`, `external_send`, `external_publish`, `destructive_delete`, `permission_grant`, `payment_transfer`.
+
+#### Field `data_class:` (source labels)
+
+Attach on **entity fields** that can carry taint into plans:
+
+- User-generated text: `body`, `description`, `comment`, `message`, `content`, `notes`, `summary` (when sourced from external users).
+- PII: email, phone, legal name, address, government ids.
+- Secrets: tokens, API keys, passwords — usually `severity: critical`.
+- Attachments / blobs that may embed sensitive content: label the field; use `blob` typing separately.
+
+**Do not** label stable identifiers (`id`, `url`, `created_at`) unless they embed sensitive payloads. **Do not** label filter/query parameters on read capabilities — flow analysis derives read outputs from **entity field** labels on `effective_provides`, not from `parameters:`.
+
+When a Get/Query capability returns a **disjoint projection**, ensure `provides:` lists the labeled fields you intend to expose (defaults may include unlabeled fields and dilute precision).
+
+#### Input `sink_class:` (exfiltration / destructive sinks)
+
+Declare on **`input_schema`** object fields **or** top-level capability **`parameters:`** rows for **mutating** capabilities (`create`, `update`, `delete`, `action`) where the parameter can **export** or **destroy** data. Many catalogs model send/post bodies as `parameters:` (e.g. Slack `text`, Gmail `plainBody`) rather than a separate `input_schema` block — use whichever shape the capability already uses.
+
+| Sink class (register in `data_classes:`) | Typical capabilities |
+|------------------------------------------|----------------------|
+| `external_send` | Email, chat, SMS, webhook POST with user-visible body |
+| `external_publish` | Public issue/PR comment, blog, social post |
+| `destructive_delete` | Hard delete, purge, revoke-all |
+| `permission_grant` | Share link, add collaborator, elevate role |
+| `payment_transfer` | Charge, payout, subscription change |
+
+`sink_class` is **orthogonal** to `ParameterRole` — it does not replace `role: filter` / `scope` on queries.
+
+Nested `input_schema` objects and union variant fields may each carry `sink_class`; capability `parameters:` rows may carry `sink_class` directly. `CGS::capability_sink_params` collects them recursively.
+
+#### Capability `sanitizes:` (taint breakers)
+
+List `data_classes` keys this capability **declares** it clears before its output is observed. The flow pass removes listed labels from **read-surface output facts** for that capability. Policy may also recognize sanitizers via `FlowPolicy.sanitizers` (tenant); catalog `sanitizes:` is the portable declaration.
+
+Use for redact/scrub/sanitize/draft-to-approved capabilities where the domain semantics genuinely remove or neutralize a class.
+
+#### Derived output labels (no extra YAML)
+
+`CGS::capability_output_data_classes(cap)` = union of field `data_class` over **`effective_provides(cap)`**. Authors do not duplicate output labels on capabilities.
+
+**Conservative compute:** `Render` (Minijinja row templates) **row-joins all upstream column labels** — treat any labeled field reachable in the template as flowing into `content`. Prefer explicit `provides:` on preceding reads when teaching projection.
+
+#### Federation
+
+Each registry `entry_id` loads its own `data_classes` map (not merged across catalogs). Provenance in violations uses **`QualifiedCapabilityKey { entry_id, entity, capability }`**. When federating GitHub + Slack in one session, label both catalogs consistently but declare classes per `apis/<name>/domain.yaml`.
+
+#### Authoring checklist
+
+After semantic modeling, run a **flow annotation pass**:
+
+1. Register `data_classes:` for every label and sink role you will reference.
+2. Label **untrusted** and **PII** fields on entities agents read.
+3. Mark **send/publish/delete/grant/pay** body params with `sink_class`.
+4. Declare **`sanitizes:`** on scrub/redact capabilities.
+5. Bump `version:` when adding or changing flow annotations (prompt/validation surface).
+6. Validate: `cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/<api>` (split dir).
+7. Witness fixture: `plasm-oss/fixtures/schemas/flow_matrix/` (matrix-only, not production `apis/`).
+
+**Inactive policy default:** catalogs with **no** `data_classes` anywhere behave permissively at flow verify time (legacy compat). Once you start labeling, assume hosted tenants may pin **`FlowPolicy.forbidden`** rules that deny labeled flows to declared sinks.
 
 **`query` vs `search`**: Use `query` when the API filters by field equality/range predicates. Use `search` when the primary input is a free-text relevance query and results are ranked, not field-filtered. Search capabilities are excluded from reverse-traversal FK lookups.
 
@@ -793,6 +1009,69 @@ For `action`, if you rely on the default empty `provides`, you **must** add `out
 | `mutates:` | write set | Which entity fields this capability changes *(roadmap)* |
 
 **Recognition**: path `/resource/{id}` + `/resource/{id}/suffix`; both return same `id`; disjoint fields.
+
+### Workflow identity (PLT)
+
+Opt in per catalog with top-level `workflow_identity: true` in `domain.yaml`. When enabled, every non-idempotent mutator (`create` / `action` / `update` / `delete`) must declare `identity_key` — the natural-key parameter names that define “same resource”:
+
+```yaml
+workflow_identity: true
+
+repo_branch_create:
+  kind: action
+  entity: Branch
+  identity_key: [owner, repo, name]
+```
+
+**Idempotent reconcile** wires the existing `output.idempotent` field:
+
+```yaml
+output:
+  type: entity
+  entity_type: Branch
+  idempotent: true
+  reconcile:
+    on: resource_exists          # WorkflowConflictKind from conflict_rules
+    via: branch_get              # get capability to fetch existing row
+    bind_identity_from: params   # params | scope
+```
+
+Live execute stamps `outcome: created | reused` on entity projections. Content divergence after key match surfaces `WorkflowConflict::IdentityMismatch` — never silent reuse.
+
+**Conflict taxonomy** — catalog-local HTTP rules in `mappings.yaml`:
+
+```yaml
+conflict_rules:
+  - when: { status: 422, body_json_path: message, contains: Reference already exists }
+    kind: resource_exists
+    extract:
+      entity: Branch
+      fields: { name: $.ref }
+```
+
+**Conditional write views** extend `views:` with mutator nodes and `when:` guards:
+
+```yaml
+when:
+  kind: skip_if
+  condition:
+    kind: node_row_count_positive
+    node: check_query
+```
+
+Use `write_created` / `write_reused` / `write_skipped` output bindings for `outcome`. PLT `verify_existence_flow` expands view DAGs at dry-run: non-idempotent inner creates without a dominating read or `when:` guard → `NeedsReview` (`unguarded mutation`).
+
+**Preflight** — `existence_check` for atomic mutators:
+
+```yaml
+preflight:
+  - kind: existence_check
+    query: branch_query
+    identity_from: params
+    on_exists: fail   # fail | skip_write
+```
+
+Matrix conformance: `fixtures/schemas/workflow_matrix` (not production `apis/`).
 
 ---
 

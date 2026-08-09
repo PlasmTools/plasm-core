@@ -1,6 +1,6 @@
 # Overshow → Plasm-flavoured grammar and prompt examples
 
-This file implements the **Overshow → Plasm** teaching artifact: symbol-tuned grammar, copy-paste goal lines, and `e#` / `m#` / `p#` exemplars. It is meant for system prompts, tool descriptions, or teaching table-adjacent teaching.
+This file implements the **Overshow → Plasm** teaching artifact: symbol-tuned grammar, copy-paste goal lines, and `e#` / `m#` / `r#` + wire-name exemplars. It is meant for system prompts, tool descriptions, or teaching table-adjacent teaching.
 
 **Living schema:** The canonical CGS for this slice lives in [`domain.yaml`](domain.yaml) with stub [`mappings.yaml`](mappings.yaml). The machine-generated **teaching table** string (TSV) is [`domain_prompt.txt`](domain_prompt.txt), produced by:
 
@@ -105,7 +105,7 @@ Each line is a **goal-style** instruction an operator might send; they are tuned
 
 ## 3. Scope note
 
-This document is **pedagogy** for agents. The validated split schema (`domain.yaml` + `mappings.yaml`) in this directory is the **machine contract**; regenerate [`domain_prompt.txt`](domain_prompt.txt) after CGS changes so `e#` / `m#` / `p#` rows stay aligned.
+This document is **pedagogy** for agents. The validated split schema (`domain.yaml` + `mappings.yaml`) in this directory is the **machine contract**; regenerate [`domain_prompt.txt`](domain_prompt.txt) after CGS changes so `e#` / `m#` / `r#` and wire-name rows stay aligned.
 
 ---
 
@@ -125,9 +125,9 @@ This preserves the **Profile → scoped content** and **Meeting → prompt run**
 
 ---
 
-## 5. `e#` / `m#` / `p#` expression exemplars (Plasm micro-syntax)
+## 5. `e#` / `m#` / wire-name expression exemplars (Plasm micro-syntax)
 
-Opaque **`e#`** (entity), **`m#`** (capability / dotted method), and **`p#`** (field or parameter) glosses are assigned **monotonically** in a session; teaching table shows the map. [§5.2](#52-illustrative-entity-anchor-e--noun) uses **fixed illustrative** indices for teaching without implying a particular session—**real** prompts use the table in [`domain_prompt.txt`](domain_prompt.txt).
+Opaque **`e#`** (entity), **`m#`** (capability / dotted method), and **`r#`** (relation) are assigned **monotonically** in a session; fields/params use **catalog wire names**. Teaching table shows the map. Legacy opaque `p#` tokens are **rejected** at parse. [§5.2](#52-illustrative-entity-anchor-e--noun) uses **fixed illustrative** indices for teaching without implying a particular session—**real** prompts use the table in [`domain_prompt.txt`](domain_prompt.txt).
 
 ### 5.1 Illustrative entity anchor (`e#` → noun)
 
@@ -152,11 +152,11 @@ Opaque **`e#`** (entity), **`m#`** (capability / dotted method), and **`p#`** (f
 - **Query (scoped):** `e0{profile_id=e1(7), query="Sarah"}` — cross-entity refs use **`e1(7)`** inside predicates when the schema allows
 - **Dotted invoke (create / named capability):** `e8.create(slug="write-tldr", meeting_uuid="…")` → `PromptRun.create(…)`; profile-scoped content **`e0.query-by-profile(profile_id=7, mode=natural, query="…")`** (method segment is **kebab-case** after stripping `{entity}_` from the capability name)
 - **Singleton GET (zero-arity method):** `e5.pipeline-snapshot()` / `e6.capture-status()` — **no** id in parens; exact **`m#`** labels come from teaching table once capability names are fixed (`Entity()` empty parens are invalid for normal get—singleton uses `Entity.method()` per parser)
-- **Projection (trim payload):** `e3("…")[p12,p3,p7]` — optional **`[p#]`** lists fields after expansion
+- **Projection (trim payload):** `e3("…")[id,name,status]` — optional **`[field,…]`** lists wire fields after expansion
 
 ### 5.3 Same examples as §2, in symbolic line form
 
-Use these beside teaching table so models learn **`e#`/`m#`/`p#`** alongside English goals.
+Use these beside teaching table so models learn **`e#`/`m#`/`r#` + wire names** alongside English goals.
 
 1. `e0.search(q="quarterly revenue", content_type=audio, limit=25)`  
    *(or split: `e0~"quarterly revenue"` when only `q` matters; extra filters often go through **`search(…)`** dotted form when teaching table teaches it)*
@@ -189,7 +189,7 @@ Use these beside teaching table so models learn **`e#`/`m#`/`p#`** alongside Eng
 
 ### 5.4 Valid expressions preamble (one line for prompts)
 
-> Expressions use **`e#(id)`**, **`e#~"text"`**, **`e#{preds}`**, **`e#.method(args)`**, and **`e#(k=v,…)`** for compound keys; **`p#`** in **`[…]`** trims fields. Replace **`e#`/`m#`/`p#`** with the teaching table table for this session before execution.
+> Expressions use **`e#(id)`**, **`e#~"text"`**, **`e#{preds}`**, **`e#.method(args)`**, and **`e#(k=v,…)`** for compound keys; **wire names** in **`[…]`** trim fields. Replace **`e#`/`m#`/`r#`** and copy wire names from the teaching table for this session before execution.
 
 **Caution:** Illustrative **`e#`** indices in §5.1–5.3 are didactic. Executable rows and token numbering for **this** fixture are in [`domain_prompt.txt`](domain_prompt.txt).
 

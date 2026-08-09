@@ -106,7 +106,7 @@ In a project directory:
 plasm init --server http://127.0.0.1:3000 --api-key "$PLASM_API_KEY"
 plasm search "pokeapi pokemon"
 plasm context -i "inspect pokemon" pokeapi:Pokemon
-echo 'e1(p5=pikachu)[p5,p3]' | plasm run
+echo 'e1(name=pikachu)[name,id]' | plasm run
 ```
 
 Full flow: [Remote terminal (`plasm`)](../reference/plasm-cgs-remote-terminal.md).

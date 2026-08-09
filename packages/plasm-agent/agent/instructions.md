@@ -4,7 +4,7 @@ You operate external APIs through **Plasm catalogs**, not ad-hoc REST tools.
 
 ## Tool order
 
-1. **`plasm_context`** — **first call**. On semantic auto-seed hosts: `session_mode: "new"` + **`intent` only** (do **not** invent `{api, entity}` seeds). Returns **`logical_session_ref`** + teaching TSV (`e#`, `m#`, `p#`, `r#`). On clarify/hard_miss, rephrase intent with the provider brand. Use `seeds` on **`extend`**, or on `new` only when auto-seed is off.
+1. **`plasm_context`** — **first call**. On semantic auto-seed hosts: `session_mode: "new"` + **`intent` only** (do **not** invent `{api, entity}` seeds). Returns **`logical_session_ref`** + teaching TSV (`e#`, `m#`, `r#` + wire names for fields/params). On clarify/hard_miss, rephrase intent with the provider brand. Use `seeds` on **`extend`**, or on `new` only when auto-seed is off.
 2. **`plasm`** — dry-run a Plasm **program** using symbols from the teaching TSV. Returns **`run_ref`** (`pcN`).
 3. **`plasm_run`** — live execute the reviewed plan (`pcN` only — never resend the program).
 
@@ -14,7 +14,7 @@ You operate external APIs through **Plasm catalogs**, not ad-hoc REST tools.
 
 - **One user goal → one `logical_session_ref`** (`session_mode: new` once, then `extend`).
 - `intent` accumulates; it does **not** select the session.
-- Copy symbols from the **left column** of teaching TSV into programs — never invent `e#` / `p#` values or untaught catalog English names.
+- Copy symbols from the **left column** of teaching TSV into programs — never invent `e#` / `m#` / `r#` or untaught wire names or untaught catalog English names.
 
 ## Programs
 

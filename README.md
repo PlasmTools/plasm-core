@@ -22,7 +22,7 @@ cargo run -p plasm-server --release -- \
   --schema fixtures/schemas/capability_with_input
 ```
 
-After **`install.sh`**, run **`plasm-server`** with no flags. From a checkout with packed plugins, pass **`--plugin-dir target/plasm-plugins`** (see **[Plugins & compile pipeline](https://plasmtools.github.io/plasm-core/reference/genco-plugin-pipeline/)**). **`--no-tui`** runs headless. For `project_mcp_*` persistence run **`plasm-server mcp migrate-db`**. Details: [Appliance quick start](https://plasmtools.github.io/plasm-core/appliance/quickstart/).
+After **`install.sh`**, run **`plasm-server`** with no flags. From a checkout with packed catalogs, pass **`--catalog-dir target/plasm-catalogs`** (see **[Plugins & compile pipeline](https://plasmtools.github.io/plasm-core/reference/genco-plugin-pipeline/)**). **`--no-tui`** runs headless. For `project_mcp_*` persistence run **`plasm-server mcp migrate-db`**. Details: [Appliance quick start](https://plasmtools.github.io/plasm-core/appliance/quickstart/).
 
 **Remote client:** install **`plasm`** from [plasm.tools/get](https://plasm.tools/get/) and follow [Remote terminal](https://plasmtools.github.io/plasm-core/reference/plasm-cgs-remote-terminal/).
 

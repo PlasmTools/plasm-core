@@ -5,7 +5,7 @@ A [Plasm](../../README.md) domain model for the [ClickUp REST API v2](https://cl
 ```bash
 # Run against the live API (requires CLICKUP_API_TOKEN in env)
 export CLICKUP_API_TOKEN=pk_...
-cargo run --bin plasm -- \
+cargo run -p plasm-repl -- \
   --schema apis/clickup \
   --backend https://api.clickup.com/api \
   --repl
@@ -248,10 +248,8 @@ plasm --schema apis/clickup --backend https://api.clickup.com/api \
 Schema loads without panics. All subcommand names, typed flags, and help text verified.
 
 ```bash
-cargo run --bin plasm -- --schema apis/clickup team --help
-cargo run --bin plasm -- --schema apis/clickup task --help
-cargo run --bin plasm -- --schema apis/clickup task query --help
-cargo run --bin plasm -- --schema apis/clickup space --help
+cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/clickup
+cargo run -p plasm-repl -- --schema apis/clickup --help
 ```
 
 ### Against the live ClickUp API

@@ -3,7 +3,7 @@
 A [Plasm](../../README.md) domain model for [Open Brewery DB](https://www.openbrewerydb.org/).
 
 ```bash
-cargo run --bin plasm -- \
+cargo run -p plasm-repl -- \
   --schema apis/openbrewerydb \
   --backend https://api.openbrewerydb.org \
   --repl

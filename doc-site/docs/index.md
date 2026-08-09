@@ -24,7 +24,7 @@ Repository: **[plasm-core](https://github.com/PlasmTools/plasm-core)**.
 1. **Graph (CGS)** — Entities, fields, relations, capabilities: *what the domain is* (split catalogs: field/param **`value_ref`** into **`values:`** semantic slots).
 2. **Mappings (CML)** — Per-capability templates: *how calls hit the wire*.
 3. **Runtime** — Executes capabilities, caches rows, handles paging and effects.
-4. **Plasm language** — Path expressions and programs agents emit against a live **teaching table** table (`e#` / `m#` / `p#`).
+4. **Plasm language** — Path expressions and programs agents emit against a live **teaching table** (`e#` / `m#` / `r#` + **wire names** for fields/params; legacy `p#` rejected).
 5. **Host** — **`plasm-server`** serves MCP tools + HTTP discovery/execute; optional **`plasm`** client for transport-only remote access.
 
 Details and edge cases live in the [Reference](reference/cli-and-env.md) section and [AGENTS.md](https://github.com/PlasmTools/plasm-core/blob/main/AGENTS.md).

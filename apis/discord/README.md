@@ -17,7 +17,7 @@ OAuth2 user access tokens are **not** modeled in this schema version; add a sepa
 ## Run
 
 ```bash
-cargo run --bin plasm-repl -- --schema apis/discord --backend https://discord.com/api/v10
+cargo run -p plasm-repl -- --schema apis/discord --backend https://discord.com/api/v10
 ```
 
 Override the origin with `--backend` when using a proxy or future API version.
@@ -25,9 +25,9 @@ Override the origin with `--backend` when using a proxy or future API version.
 ## Validate
 
 ```bash
-cargo run -p plasm-cli --bin plasm -- schema validate apis/discord
-cargo run -p plasm-cli --bin plasm -- validate --spec apis/discord/openapi.json apis/discord
-cargo run --bin plasm-repl -- --schema apis/discord --help
+cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/discord
+cargo run -p plasm-cli --bin plasm-cgs -- validate --spec apis/discord/openapi.json apis/discord
+cargo run -p plasm-repl -- --schema apis/discord --help
 ```
 
 **Replies:** `message_reply` (action on a `Message` row) POSTs to `channels/{channel_id}/messages` with a `message_reference` to the target; runtime **`preflight`** runs **`message_get`** first and merges **`parent_*`** into the CML env for the reference payload.

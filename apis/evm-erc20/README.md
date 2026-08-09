@@ -7,20 +7,20 @@ The default contract address is [USDC on Ethereum mainnet](https://etherscan.io/
 ```bash
 # Read USDC balance for an address (Infura RPC)
 export ETH_RPC_URL=https://mainnet.infura.io/v3/<PROJECT_ID>
-cargo run --bin plasm -- \
+cargo run -p plasm-repl --features evm -- \
   --schema apis/evm-erc20 \
-  --backend "$ETH_RPC_URL" \
-  balance 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
-
-# Scan all Transfer events in a block range
-cargo run --bin plasm -- \
-  --schema apis/evm-erc20 \
-  --backend "$ETH_RPC_URL" \
-  transfer query --from-block 21000000 --to-block 21001000 --all
+  --backend "$ETH_RPC_URL"
 ```
 
-> **EVM feature flag** — this schema requires the `evm` Cargo feature:
-> `cargo run --features plasm/evm --bin plasm -- ...`
+Inside the REPL, use teaching-table programs (wire names + `e#` / `m#`), for example:
+
+```text
+e1(address="0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
+e2{from_block=21000000, to_block=21001000}
+```
+
+> **EVM feature flag** — this schema requires the `evm` Cargo feature on `plasm-repl`:
+> `cargo run -p plasm-repl --features evm -- --schema apis/evm-erc20 --backend "$ETH_RPC_URL"`
 
 ---
 
@@ -100,24 +100,21 @@ The `range_size` param in `mappings.yaml` controls chunk size. Increase it for l
 
 ---
 
-## CLI examples
+## REPL examples
 
 ```bash
 export RPC=https://mainnet.infura.io/v3/<PROJECT_ID>
-alias pa="cargo run --features plasm/evm --bin plasm -- --schema apis/evm-erc20 --backend $RPC"
+cargo run -p plasm-repl --features evm -- --schema apis/evm-erc20 --backend "$RPC"
+```
 
-# Balance of vitalik.eth
-pa balance 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
+Illustrative programs (substitute session symbols from teaching TSV):
 
-# Recent USDC transfers in a single block
-pa transfer query --from-block 21500000 --to-block 21500000
+```text
+# Balance of an address
+e1(address="0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
 
-# All USDC transfers in a 5 000-block window
-pa transfer query --from-block 21495000 --to-block 21500000 --all
-
-# Transfers from a specific address (client-side filter — all logs fetched then filtered)
-pa transfer query --from-block 21495000 --to-block 21500000 --all \
-  --filter 'from = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"'
+# Transfer logs over a block range (wire filter keys from teaching TSV)
+e2{from_block=21500000, to_block=21500000}
 ```
 
 ---

@@ -5,10 +5,9 @@ A [Plasm](../../README.md) domain model for the [Slack Web API](https://api.slac
 ```bash
 # Run against the live API (requires SLACK_BOT_TOKEN in env)
 export SLACK_BOT_TOKEN=xoxb-...
-cargo run -p plasm --bin plasm-cgs -- \
+cargo run -p plasm-repl -- \
   --schema apis/slack \
-  --backend https://slack.com/api \
-  --repl
+  --backend https://slack.com/api
 ```
 
 ---
@@ -206,101 +205,43 @@ When the API returns them on message objects, the domain also exposes optional *
 | `scheduledmessage_delete` | delete | `scheduledmessage <id> delete --channel <id>` | `POST /chat.deleteScheduledMessage` |
 | `bot_info` | get | `bot <id>` | `GET /bots.info` |
 
-### CLI examples
+### REPL / Plasm examples
+
+Local exploration uses **`plasm-repl`** (not entity-shaped `plasm-cgs` subcommands). Copy `e#` / `m#` / `r#` and **wire names** from `:help` / the teaching table — legacy opaque `p#` tokens are rejected.
 
 ```bash
-# List all public channels (first page, 200 per page)
-plasm-cgs --schema apis/slack --backend https://slack.com/api \
-  channel query --types public_channel
+export SLACK_BOT_TOKEN=xoxb-...
+cargo run -p plasm-repl -- --schema apis/slack --backend https://slack.com/api
+```
 
-# List all channels including private (bot must be a member)
-plasm-cgs --schema apis/slack --backend https://slack.com/api \
-  channel query --types public_channel,private_channel --all
+Illustrative programs (slot numbers shift with catalog version):
 
-# Get a specific channel by ID
-plasm-cgs --schema apis/slack --backend https://slack.com/api \
-  channel C012AB3CDX
+```text
+# List public channels (wire filters from teaching TSV)
+e1{types="public_channel"}
 
-# Read recent messages from a channel
-plasm-cgs --schema apis/slack --backend https://slack.com/api \
-  message channel-history --channel C012AB3CDX --limit 50
+# Get a channel, then fan out messages via relation
+ch = e1(id="C012AB3CDX")
+msgs = ch.r1
+msgs.limit(50)
 
-# Read all messages since a timestamp
-plasm-cgs --schema apis/slack --backend https://slack.com/api \
-  message channel-history --channel C012AB3CDX --oldest 1700000000 --all
-
-# Search messages across the workspace
-plasm-cgs --schema apis/slack --backend https://slack.com/api \
-  message search --query "deployment failed in:engineering"
-
-# Post a message
-plasm-cgs --schema apis/slack --backend https://slack.com/api \
-  message post --channel C012AB3CDX --text "Hello from Plasm!"
-
-# Reply in a thread
-plasm-cgs --schema apis/slack --backend https://slack.com/api \
-  message post --channel C012AB3CDX --text "Got it!" \
-  --thread_ts 1512085950.000216
-
-# Get thread replies
-plasm-cgs --schema apis/slack --backend https://slack.com/api \
-  message channel-replies --channel C012AB3CDX --ts 1512085950.000216
-
-# List all users (paginated)
-plasm-cgs --schema apis/slack --backend https://slack.com/api \
-  user query --all
-
-# Get a specific user
-plasm-cgs --schema apis/slack --backend https://slack.com/api \
-  user W012A3CDE
-
-# Look up a user by email
-plasm-cgs --schema apis/slack --backend https://slack.com/api \
-  user lookup-by-email --email alice@example.com
-
-# Check the bot's own identity
-plasm-cgs --schema apis/slack --backend https://slack.com/api \
-  user auth-test
-
-# Get workspace info
-plasm-cgs --schema apis/slack --backend https://slack.com/api \
-  team info
-
-# List files in a channel
-plasm-cgs --schema apis/slack --backend https://slack.com/api \
-  file query --channel C012AB3CDX --types images
-
-# List user groups
-plasm-cgs --schema apis/slack --backend https://slack.com/api \
-  usergroup query --include_count true
-
-# Navigate channel → messages (via_param traversal, auto-fills channel param)
-# plasm REPL: channel C012AB3CDX messages
+# Search / post — use taught method symbols + wire param keys
+e2~"deployment failed in:engineering"
+e2.m1(channel="C012AB3CDX", text="Hello from Plasm!")
 ```
 
 ---
 
 ## Testing status
 
-### CLI validation
-
-Schema loads without panics. All subcommand names, typed flags, and pagination controls verified.
+### Schema / REPL validation
 
 ```bash
-cargo run -p plasm --bin plasm-cgs -- --schema apis/slack --help
-cargo run -p plasm --bin plasm-cgs -- --schema apis/slack channel --help
-cargo run -p plasm --bin plasm-cgs -- --schema apis/slack channel query --help
-cargo run -p plasm --bin plasm-cgs -- --schema apis/slack message --help
-cargo run -p plasm --bin plasm-cgs -- --schema apis/slack message search --help
-cargo run -p plasm --bin plasm-cgs -- --schema apis/slack message channel-history --help
-cargo run -p plasm --bin plasm-cgs -- --schema apis/slack user --help
+cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/slack
+cargo run -p plasm-repl -- --schema apis/slack --backend https://slack.com/api --help
 ```
 
-CLI outputs verified:
-- `channel query` — `--exclude_archived`, `--types`, `--limit`, `--all`, `--cursor`
-- `message search` — `--query` (required), `--sort` (score|timestamp), `--sort_dir` (asc|desc), `--highlight`, `--limit`, `--all`, `--page`
-- `message channel-history` — `--channel` (required), `--oldest`, `--latest`, `--inclusive`, `--limit`, `--all`, `--cursor`
-- `user query` — `--include_locale`, `--limit`, `--all`, `--cursor`
+Explore with teaching-table expressions in the REPL (wire names for filters/params; `e#` / `m#` / `r#` from `:help`).
 
 ### Against the live Slack API
 
@@ -308,15 +249,7 @@ Not yet tested with live credentials. To test with a Bot Token:
 
 ```bash
 export SLACK_BOT_TOKEN=xoxb-your-token-here
-
-# Auth check
-plasm-cgs --schema apis/slack --backend https://slack.com/api user auth-test
-
-# List channels (requires channels:read scope)
-plasm-cgs --schema apis/slack --backend https://slack.com/api channel query
-
-# List users (requires users:read scope)
-plasm-cgs --schema apis/slack --backend https://slack.com/api user query --limit 10
+cargo run -p plasm-repl -- --schema apis/slack --backend https://slack.com/api
 ```
 
 ---
@@ -375,4 +308,4 @@ plasm-cgs --schema apis/slack --backend https://slack.com/api user query --limit
 
 ## CGS review and backlog
 
-For a structured completeness and ergonomics pass (toolchain results, CGS-first gap matrix, prioritized follow-ups), see [REVIEW.md](REVIEW.md). Validate the toolkit with `cargo run -p plasm-cli --bin plasm -- schema validate apis/slack` (directory, not `domain.yaml` alone). The schema-driven CLI binary is `plasm-cgs` in the `plasm` crate: `cargo run -p plasm --bin plasm-cgs -- --schema apis/slack --help`.
+For a structured completeness and ergonomics pass (toolchain results, CGS-first gap matrix, prioritized follow-ups), see [REVIEW.md](REVIEW.md). Validate the toolkit with `cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/slack` (directory, not `domain.yaml` alone). Local live reads: `cargo run -p plasm-repl -- --schema apis/slack --backend https://slack.com/api`.

@@ -77,10 +77,10 @@ Programmatic checks that help (run as needed):
 
 ```bash
 # Count capabilities, entities, relations
-cargo run -p plasm-cli --bin plasm -- schema validate apis/<api>
+cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/<api>
 
 # Spec drift signal (dimension E)
-cargo run -p plasm-cli --bin plasm -- validate --schema apis/<api> --spec path/to/openapi.json
+cargo run -p plasm-cli --bin plasm-cgs -- validate --spec path/to/openapi.json apis/<api>
 
 # Eval coverage (dimension H)
 cargo run -p plasm-eval -- coverage --schema apis/<api> --cases apis/<api>/eval/cases.yaml

@@ -87,6 +87,8 @@ nav:
       - Session reuse: reference/mcp-session-reuse.md
       - Trace correlation: reference/mcp-trace-correlation.md
       - Logical sessions: reference/mcp-logical-sessions.md
+      - Client conformance: reference/mcp-client-conformance.md
+      - Evidence bundles: reference/plasm-evidence-bundles.md
       - Incremental teaching prompts: reference/incremental-teaching-prompts.md
   - Auth:
       - Incoming auth: reference/plasm-mcp-incoming-auth.md

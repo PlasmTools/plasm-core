@@ -8,8 +8,8 @@ See also [plasm-language-definition.md](plasm-language-definition.md) for full g
 
 | Plane | Surface | When to use |
 |-------|---------|-------------|
-| **Catalog** | `e1{p71="open"}` on a query/get | Reduce data at the API; predicates become query parameters or CML filters. |
-| **Row** | `rows.filter{p71="open"}` or `rows.filter(p71="open")` | Filter, sort, group, or aggregate rows already fetched into the session artifact. |
+| **Catalog** | `e1{state="open"}` on a query/get | Reduce data at the API; predicates become query parameters or CML filters. |
+| **Row** | `rows.filter{owner="alice"}` or `rows.filter(owner="alice")` | Filter, sort, group, or aggregate rows already fetched into the session artifact. |
 
 Use catalog filters when the API supports them and you want fewer round-trips. Use row filters when refining a binding, combining results from multiple steps, or when the field is not a query parameter.
 
@@ -61,7 +61,7 @@ source → .filter{…} → .group_by(…) → .sort(…) → .limit(n) → [fie
 
 | Syntax | Meaning |
 |--------|---------|
-| `issues.labels` / `issues.r#` | Catalog **relation** hop (may fan out HTTP per source row when `issues` is plural). Use opaque **`r#`** or wire from teaching exemplars — not bare homograph `p#` in nav position. Scoped `query_scoped_bindings` map parent fields into capability params with **catalog typing** — see [Relation binding proofs](plasm-language-definition.md#typed-semantic-core-lean-oriented-sketch) (dry `plasm` on hole-IR alone is not enough for live `plasm_run`). |
+| `issues.labels` / `issues.r#` | Catalog **relation** hop (may fan out HTTP per source row when `issues` is plural). Use opaque **`r#`** or the relation **wire** from teaching exemplars — not a filter/param wire after `.` unless it is the declared relation. Scoped `query_scoped_bindings` map parent fields into capability params with **catalog typing** — see [Relation binding proofs](plasm-language-definition.md#typed-semantic-core-lean-oriented-sketch) (dry `plasm` on hole-IR alone is not enough for live `plasm_run`). |
 | Paginated parent `issues = e1{…}` | **All API pages** are materialized into the binding by default (runtime page cap). Use `.limit(n)` or `.page_size(n)` on the read to bound; MCP `page(pgN)` on a later binding only pages **that** step — not a substitute for a full-repo histogram before `group_by`. |
 | `issues.filter{owner="alice"}` | **Row compute** on materialized issue rows |
 | `issues => { … }` | **Derive map** over rows — not a relation hop |

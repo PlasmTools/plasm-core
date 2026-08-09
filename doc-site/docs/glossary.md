@@ -4,7 +4,7 @@
 |------|---------|
 | **CGS** | Capability Graph Schema — `domain.yaml` semantic model (entities, relations, capabilities; split catalogs use **`values:`** + **`value_ref`**). |
 | **CML** | Capability Mapping Language — `mappings.yaml` wire templates. |
-| **teaching table** | Symbol-tuned teaching text (`e#` / `m#` / `p#`) for agents. |
+| **teaching table** | Symbol-tuned teaching text (`e#` / `m#` / `r#` plus **wire names** for fields/params; `v#` gloss only) for agents. |
 | **view** | CGS **`views:`** entry — composed read-only DAG over existing capabilities (not MCP tenant “registry views”). |
 | **schema overlay** | **`schema_overlay:`** block — session-open merge of workspace-specific typed columns or entities. |
 | **registry `entry_id`** | Identifier for one packed catalog entry in multi-entry mode. |
@@ -13,6 +13,6 @@
 | **plasm-server** | OSS appliance binary — in-process kernel, HTTP/MCP, optional Ratatui control station. |
 | **control station** | Ratatui operator UI in **`plasm-server`** (Status · Clients · APIs · OAuth · Keys · …). |
 | **remote terminal** | The **`plasm`** CLI — HTTP discovery/execute client (`init`, `search`, `context`, `run`). |
-| **client-owned symbol space** | With **`plasm`**, monotonic `e#`/`m#`/`p#` teaching rows live in the client mirror (`.plasm/`), not on the server session alone. |
+| **client-owned symbol space** | With **`plasm`**, monotonic `e#`/`m#`/`r#` teaching rows (plus wire-name field/param gloss) live in the client mirror (`.plasm/`), not on the server session alone. |
 | **MCP transport key** | Bearer API key for Streamable HTTP when MCP configs exist. |
 | **incoming auth** | Optional JWT / API key plane for tenant-scoped execute identity. |

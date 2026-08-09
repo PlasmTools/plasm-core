@@ -70,7 +70,7 @@ NL goals live in [`eval/cases.yaml`](eval/cases.yaml). Run deterministic form co
 cargo run -p plasm-repl -- --schema apis/grafana --backend http://localhost:3000/api
 ```
 
-Examples (symbolic `e#` / `p#` from `:help` — slot numbers shift with catalog version):
+Examples (`e#` / `m#` from `:help`, **wire names** for params — slot numbers shift with catalog version):
 
 ```text
 e7("prometheus").m27(expr="up", from="now-5m", to="now")     # PromQL via /ds/query

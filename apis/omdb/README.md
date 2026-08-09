@@ -4,7 +4,7 @@ A [Plasm](../../README.md) domain model for the [OMDb API](http://www.omdbapi.co
 
 ```bash
 export OMDB_API_KEY=...
-cargo run --bin plasm -- \
+cargo run -p plasm-repl -- \
   --schema apis/omdb \
   --backend https://www.omdbapi.com \
   --repl

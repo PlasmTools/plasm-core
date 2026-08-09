@@ -4,7 +4,7 @@ A [Plasm](../../README.md) domain model for [NY Times developer APIs](https://de
 
 ```bash
 export NYT_API_KEY=...
-cargo run --bin plasm -- \
+cargo run -p plasm-repl -- \
   --schema apis/nytimes \
   --backend https://api.nytimes.com \
   --repl

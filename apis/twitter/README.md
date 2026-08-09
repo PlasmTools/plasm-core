@@ -33,8 +33,8 @@ Default scope bundles (for control-plane hints):
 ## Validate
 
 ```bash
-cargo run -p plasm-cli --bin plasm -- schema validate apis/twitter
-cargo run -p plasm-cli --bin plasm -- validate --spec apis/twitter/openapi.json apis/twitter
+cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/twitter
+cargo run -p plasm-cli --bin plasm-cgs -- validate --spec apis/twitter/openapi.json apis/twitter
 cargo run -p plasm-eval -- coverage --schema apis/twitter --cases apis/twitter/eval/cases.yaml
 ```
 

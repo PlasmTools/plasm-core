@@ -1,12 +1,11 @@
 # Appliance CLI reference
 
-Non-interactive **`plasm-server`** subcommands for MCP policy and OAuth. The Ratatui control station calls the same admin services in-process — see [TUI guide](../appliance/tui.md).
+Non-interactive **`plasm-server`** subcommands for MCP policy, discovery, and OAuth. The Ratatui control station calls the same admin services in-process — see [TUI guide](../appliance/tui.md).
 
 Apply migrations before first use:
 
 ```bash
 plasm-server mcp migrate-db
-# or legacy: plasm-server --migrate-mcp-config-db
 ```
 
 ---
@@ -22,11 +21,33 @@ plasm-server mcp migrate-db
 | `mcp apis disable <entry_id>…` | Remove from allowlist |
 | `mcp apis set <entry_id>…` | Replace allowlist |
 | `mcp keys list [--json]` | Transport API keys (hashes only) |
-| `mcp keys add [--name NAME]` | Provision new Bearer key |
+| `mcp keys add --name NAME` | Provision new Bearer key (`--name` is **required**) |
 | `mcp keys reveal <id>` | Show plaintext once |
 | `mcp keys rotate <id>` | New secret, invalidate old |
 | `mcp keys revoke <id>` | Disable key |
 | `mcp migrate-db` | Apply `project_mcp_*` sqlx migrations |
+
+Example:
+
+```bash
+plasm-server mcp keys add --name cursor
+```
+
+---
+
+## `plasm-server discovery`
+
+Semantic auto-seed (intent-only `plasm_context`) for the appliance. Persists under `{PLASM_LOCAL_STATE_DIR}/bootstrap-secrets/` (default `{appliance}/local/bootstrap-secrets/`).
+
+| Command | Role |
+|---------|------|
+| `discovery status [--json]` | Show enabled flag + whether OpenRouter key is configured |
+| `discovery enable` | Turn on semantic auto-seed |
+| `discovery disable` | Turn off semantic auto-seed |
+| `discovery set-openrouter-key [--key KEY]` | Save OpenRouter API key (`--key` or stdin) |
+| `discovery clear-openrouter-key` | Remove persisted OpenRouter key |
+
+TUI parity: [Control station (TUI)](../appliance/tui.md) — **Discovery** tab (`d`; `e` toggle, `k` set key).
 
 ---
 
@@ -48,7 +69,7 @@ TUI parity: [Control station (TUI)](../appliance/tui.md) — OAuth tab (`n`, `d`
 
 | Flag | Role |
 |------|------|
-| `--data-dir PATH` | Override appliance state root (default: `~/.plasm/appliance`) |
+| `--data-dir PATH` | Override appliance state root (default: `~/.plasm/appliance`). Sets `PLASM_LOCAL_STATE_DIR` to `{PATH}/local` when unset. |
 | `--catalog-dir PATH` | Override compiled catalog artifacts (default: `{data-dir}/catalogs` when present) |
 | `--schema PATH` | Single CGS instead of catalog dir (mutually exclusive with `--catalog-dir`) |
 | `--listen-host HOST` | Bind address (default: `127.0.0.1`, or `0.0.0.0` when `KUBERNETES_SERVICE_HOST` is set; env `PLASM_LISTEN_HOST`) |

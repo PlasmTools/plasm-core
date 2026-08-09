@@ -129,7 +129,7 @@ Write the domain model. No HTTP details here — only what exists and what you c
 
 **`description` strings:** On entities, capabilities, and `output` for side-effect actions, write **concise language for an agentic surface**: what the **entity** or operation is **for** in the task (goal, anchor, decision), not an inventory of typed fields and relations — the schema and teaching table already show those. Avoid tabular jargon (**"row"**) in Teaching-table-facing prose. Avoid embedding REST paths, methods, status codes, bare **`http://`** / **`https://`** links, or "see GET /…" notes — those belong in **`mappings.yaml`** comments or vendor docs, not in the CGS. **`auth.token_url`** in `domain.yaml` is the intentional exception (machine OAuth endpoint string). **Do not** repeat shapes already taught by **`value_ref`**, projection **`provides:`**, **`input_schema`** unions, or parameter names — omit field / parameter descriptions when types carry the story (see [reference.md — Gloss: do not restate typed structure](reference.md#gloss-do-not-restate-typed-structure)).
 
-**Agentic teaching table copy (execute / MCP teaching):** The prompt renderer attaches **entity `description`** to the symbolic teaching table (projection witness / banner). Treat it as **imperative surface**, not a manual or vendor doc: **one or two short sentences** on **purpose** (why an agent would focus this **entity**) — **never** name **relations** or **fields** that already show up as **`p#`** arrows, bracket projections, or typed columns (that duplicates the graph and confuses "banner" with "nav map"). **Do not** summarize projection contents ("includes refs to …", "typed booleans plus …") — `p#`, relations, and types already do that. **Do not** name other capability ids, spell out call sequences ("use X then Y"), cite **`transport:`**, document HTTP error semantics, or tell agents how to seed MCP — **`discovery:`** blocks (**`operation_terms`**, **`target_terms`**, **`qualifier_terms`** on entities/capabilities), **`apis/<api>/README.md`**, and eval cases carry that operational guidance. Capability **`description:`** should state **effect** or **when to use** in domain terms; move cross-capability playbooks into **`discovery`** on the relevant capability. See [reference.md — Teaching-table-facing descriptions](reference.md#teaching-table-facing-descriptions-entities-and-capabilities).
+**Agentic teaching table copy (execute / MCP teaching):** The prompt renderer attaches **entity `description`** to the symbolic teaching table (projection witness / banner). Treat it as **imperative surface**, not a manual or vendor doc: **one or two short sentences** on **purpose** (why an agent would focus this **entity**) — **never** name **relations** or **fields** that already show up as **wire-name** columns, bracket projections, or typed columns (that duplicates the graph and confuses "banner" with "nav map"). **Do not** summarize projection contents ("includes refs to …", "typed booleans plus …") — wire names, relations, and types already do that. **Do not** name other capability ids, spell out call sequences ("use X then Y"), cite **`transport:`**, document HTTP error semantics, or tell agents how to seed MCP — **`discovery:`** blocks (**`operation_terms`**, **`target_terms`**, **`qualifier_terms`** on entities/capabilities), **`apis/<api>/README.md`**, and eval cases carry that operational guidance. Capability **`description:`** should state **effect** or **when to use** in domain terms; move cross-capability playbooks into **`discovery`** on the relevant capability. See [reference.md — Teaching-table-facing descriptions](reference.md#teaching-table-facing-descriptions-entities-and-capabilities).
 
 ```yaml
 values:
@@ -200,7 +200,7 @@ capabilities:
     entity: Pet
 ```
 
-**teaching projection (prompt teaching, not decode):** Optional per-entity **`domain_projection_examples`** (default **true**) and **`primary_read:`** select which Get capability's ordered **`provides:`** drives the canonical **`[p#,…]`** bracket on the **projection witness row** in teaching TSV (`plasm_expr` + `· projection` in Meaning). Set **`domain_projection_examples: false`** to omit that bracket. Declare explicit ordered **`provides:`** on the primary Get so the witness matches the fields you materialize (see [reference.md — Entities](reference.md#entities)).
+**teaching projection (prompt teaching, not decode):** Optional per-entity **`domain_projection_examples`** (default **true**) and **`primary_read:`** select which Get capability's ordered **`provides:`** drives the canonical **`[field,…]`** bracket on the **projection witness row** in teaching TSV (`plasm_expr` + `· projection` in Meaning). Set **`domain_projection_examples: false`** to omit that bracket. Declare explicit ordered **`provides:`** on the primary Get so the witness matches the fields you materialize (see [reference.md — Entities](reference.md#entities)).
 
 **String fields:** on the corresponding **`values:`** row with **`type: string`**, set **`string_semantics:`** for every non-trivial string (`short`, `markdown`, `document`, `html`, `json_text`, …); plain `short` is the default when omitted.
 
@@ -415,10 +415,10 @@ For split `domain.yaml` + `mappings.yaml`, pass the **catalog directory** `apis/
 
 ```bash
 # CGS validation (catalog directory for split domain+mappings)
-cargo run -p plasm-cli --bin plasm -- schema validate apis/<api>
+cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/<api>
 
 # Optional: exhaustive mapping exercise against an OpenAPI spec
-cargo run -p plasm-cli --bin plasm -- validate --schema apis/<api> --spec path/to/openapi.json
+cargo run -p plasm-cli --bin plasm-cgs -- validate --spec path/to/openapi.json apis/<api>
 
 # Smoke-load REPL + help
 cargo run -p plasm-repl -- --schema apis/<api> --backend http://localhost:1080 --help

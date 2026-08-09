@@ -87,13 +87,13 @@ Plasm execute semantics already use explicit stateless handles (`plasm_context` 
 
 ## Program surface gotchas (pokeapi / language matrix)
 
-Teaching-table symbols (`e#`, `m#`, `p#`, `r#`) describe **postfix** program shape — not arbitrary function-call syntax on entity names.
+Teaching-table symbols (`e#`, `m#`, `r#`) plus **wire names** for fields/params describe **postfix** program shape — not arbitrary function-call syntax on entity names. Legacy opaque `p#` tokens are **rejected** at parse.
 
 | Mistake | Why it fails | Correct shape |
 |---------|--------------|---------------|
-| `Type(p10) \| limit(3)` | Applies `limit` before projection; may compile to get-by-name / wrong dispatch | `Type \| limit(3)(p10, p9)` — postfix projection **after** the transform chain |
-| `fire = Type \| filter(...)` then `fire(p10, p9)` | Root `fire(...)` is parsed as entity lookup, not binding projection | `fire[p10, p9]` or `fire(p10, p9)` after compiler desugar (binding field roots) |
-| Bare relation nav with `p#` after `.` | Homograph filter vs relation | Copy relation from exemplar: `issues.r#` or wire name when binding name matches |
+| `Type(name) \| limit(3)` | Applies `limit` before projection; may compile to get-by-name / wrong dispatch | `Type \| limit(3)[name, id]` — bracket projection **after** the transform chain |
+| `fire = Type \| filter(...)` then `fire(name, id)` | Root `fire(...)` is parsed as entity lookup, not binding projection | `fire[name, id]` (binding field roots) |
+| Bare filter wire after `.` for a relation hop | Homograph filter vs relation | Copy relation from exemplar: `issues.r#` or relation wire when binding name matches |
 
 These are **authoring / teaching** issues, not MCP transport bugs. Run Explorer and TSV output depend on successful terminal `plasm_run` responses and artifact hydration — graph-backed spill rehydration must populate entity rows before publish (see `graph_spill_e2e`).
 

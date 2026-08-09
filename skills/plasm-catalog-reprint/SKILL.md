@@ -106,8 +106,8 @@ Constraints during the authoring pass:
 ### Step 5: Validate and transport-test
 
 ```bash
-cargo run -p plasm-cli --bin plasm -- schema validate apis/<api>
-cargo run -p plasm-cli --bin plasm -- validate --schema apis/<api> --spec path/to/openapi.json   # when available
+cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/<api>
+cargo run -p plasm-cli --bin plasm-cgs -- validate --spec path/to/openapi.json apis/<api>   # when available
 ```
 
 Then run [plasm-catalog-e2e-test](../plasm-catalog-e2e-test/SKILL.md) at full ladder. A reprint without transport evidence is not a reprint, only a paper exercise.

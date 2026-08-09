@@ -5,7 +5,7 @@ A [Plasm](../../README.md) domain model for the [GitHub REST API](https://docs.g
 ```bash
 # Run against the live API (requires GITHUB_TOKEN in env)
 export GITHUB_TOKEN=ghp_...
-cargo run --bin plasm -- \
+cargo run -p plasm-repl -- \
   --schema apis/github \
   --backend https://api.github.com \
   --repl
@@ -291,11 +291,8 @@ plasm --schema apis/github --backend https://api.github.com \
 Schema loads and CLI generates correctly. Validated with:
 
 ```bash
-cargo run --bin plasm -- --schema apis/github --help
-cargo run --bin plasm -- --schema apis/github issue --help
-cargo run --bin plasm -- --schema apis/github issue query --help
-cargo run --bin plasm -- --schema apis/github user --help
-cargo run --bin plasm -- --schema apis/github pullrequest --help
+cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/github
+cargo run -p plasm-repl -- --schema apis/github --help
 ```
 
 All entities, subcommands, typed flags, pagination controls (`--limit`, `--all`, `--page`), and compound-key help text verified. For multi-segment URL paths, earlier segments use `--kebab` flags and the **last** segment is the positional `id`; the generated `Ref` uses structured `key_vars` (same shape as the REPL’s `Entity(k=v,…)` form).

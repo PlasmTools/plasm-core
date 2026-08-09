@@ -38,10 +38,9 @@ Docs consulted (mail):
 
 ```bash
 export MICROSOFT_GRAPH_ACCESS_TOKEN="..."
-cargo run -p plasm --bin plasm-cgs -- \
+cargo run -p plasm-repl -- \
   --schema apis/outlook \
-  --backend https://graph.microsoft.com \
-  message query
+  --backend https://graph.microsoft.com
 ```
 
 ## Entity graph
@@ -83,8 +82,8 @@ cargo run -p plasm --bin plasm-cgs -- \
 This tree was validated with:
 
 ```bash
-cargo run -p plasm-cli --bin plasm -- schema validate apis/outlook
+cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/outlook
 cargo run -p plasm-eval -- coverage --schema apis/outlook --cases apis/outlook/eval/cases.yaml
 ```
 
-`cargo run -p plasm-cli --bin plasm -- validate --schema apis/outlook --spec ...` was not run in this change because no minimal, maintainable Microsoft Graph OpenAPI slice is checked into the repo yet. A full Graph description would be disproportionately large and noisy for this wave; schema validation plus eval coverage were the clean validation path for today.
+`cargo run -p plasm-cli --bin plasm-cgs -- validate --spec ...` apis/outlook was not run in this change because no minimal, maintainable Microsoft Graph OpenAPI slice is checked into the repo yet. A full Graph description would be disproportionately large and noisy for this wave; schema validation plus eval coverage were the clean validation path for today.

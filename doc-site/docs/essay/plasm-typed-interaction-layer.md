@@ -99,37 +99,39 @@ The agent learns that compact language from a live **teaching table** table, not
 ```tsv
 plasm_expr	Meaning
 v1	string · product id
-p1	v1 · id
-p2	v1 · name
-p5	v1 · status
-e1(p1)[p1,p2]	→ [e1] · projection · product in the catalog
+id	v1 · product identity
+name	v1 · display name
+status	v1 · lifecycle
+e1(id)[id,name]	→ [e1] · projection · product in the catalog
 e1~$	→ [e1] · search
-e1{p5=$}.limit(20)	→ [e1] · inputs: p5 · optional
-e2(p3)[p3]	→ [e2] · projection · Slack channel
-e2(p3).m1(p4=$)	→ e2 · post message
+e1{status=$}.limit(20)	→ [e1] · inputs: status · optional
+e2(name)[name]	→ [e2] · projection · Slack channel
+e2(name).m1(text=$)	→ e2 · post message
 ```
 
-The left column is executable teaching material. The Meaning column is guidance only — never copy it into programs. The submitted program copies symbols from `plasm_expr`; the parser resolves opaque tokens **in-grammar** via the session symbol map.
+The left column is executable teaching material. The Meaning column is guidance only — never copy it into programs. The submitted program copies `e#` / `m#` / `r#` and **wire names** from `plasm_expr`; the parser resolves opaque tokens **in-grammar** via the session symbol map. Legacy opaque `p#` field/param tokens are **rejected** at parse.
 
 The symbols are deliberately small:
 
 - `e#` for exposed entity blocks
 - `m#` for capability labels on an entity
-- `p#` for fields, relations, parameters, and projection columns
+- `r#` for relation hops
+- **wire names** for fields, parameters, filters, and projection columns
+- `v#` for value-domain gloss only (never in programs)
 
-That looks austere, but it has a practical purpose. The prompt can teach `e1{p3="open"}.limit(20)` once, then the agent can reuse that shape without carrying `RepositoryLifecycleStateFilterInput` and a dozen vendor-specific field names through every turn. Within a logical session, symbols are append-only: if `e1` or `p3` has a meaning, later teaching waves do not reassign it.
+That looks austere, but it has a practical purpose. The prompt can teach `e1{status="open"}.limit(20)` once, then the agent can reuse that shape without carrying `RepositoryLifecycleStateFilterInput` and a dozen vendor-specific constructor types through every turn. Within a logical session, `e#` / `m#` / `r#` are append-only: if `e1` has a meaning, later teaching waves do not reassign it. Wire names stay catalog-stable.
 
-In the catalogs I am testing with, this TSV form is roughly a quarter of the token size of an equivalent JSON-schema-style tool description, and it teaches more of what the agent actually needs for the next step: valid expression shapes, return rows, projection columns, relations, and effects. Projection is not just syntax sugar. It is a context-saving measure. `search[p1,p2]` says "bring back the two columns needed for this task," not "dump the whole product object and let the model sort it out."
+In the catalogs I am testing with, this TSV form is roughly a quarter of the token size of an equivalent JSON-schema-style tool description, and it teaches more of what the agent actually needs for the next step: valid expression shapes, return rows, projection columns, relations, and effects. Projection is not just syntax sugar. It is a context-saving measure. `search[id,name]` says "bring back the two columns needed for this task," not "dump the whole product object and let the model sort it out."
 
 A Plasm program can look like this:
 
 ```text
 search = e1~"bolt hardware"
-summary = search[p1,p2]
+summary = search[id,name]
 cards = summary <<MD
-{% for r in rows %}- {{ r.p2 }} ({{ r.p1 }}){% endfor %}
+{% for r in rows %}- {{ r.name }} ({{ r.id }}){% endfor %}
 MD
-sent = e2(p3="ops").m1(p4=cards.content)
+sent = e2(name="ops").m1(text=cards.content)
 cards, sent
 ```
 
@@ -142,7 +144,7 @@ That is not meant to be a general-purpose programming language. The Plasm langua
 - call approved actions
 - return inspectable rows
 
-When `search[p1,p2]` appears in the program, the agent is not hand-parsing a vendor payload. It is projecting a typed result set using the columns taught in teaching table. When a later step calls `e2(p3="ops").m1(p4=cards.content)`, the effect is still symbol-tuned: `e2` is the channel entity, `m1` is the post-message capability, and `p4` is the message body parameter. The grammar stays small because the operational complexity lives below it.
+When `search[id,name]` appears in the program, the agent is not hand-parsing a vendor payload. It is projecting a typed result set using the columns taught in teaching table. When a later step calls `e2(name="ops").m1(text=cards.content)`, the effect is still symbol-tuned: `e2` is the channel entity, `m1` is the post-message capability, and `text` is the message body parameter. The grammar stays small because the operational complexity lives below it.
 
 The compressed program is not the final review artifact. Plasm compiles it into a plan, and that plan is sent back to the agent before live execution. The plan is deliberately more human- and agent-readable than the compact language: it can say which entities will be read, which projections will be materialized, which effects are planned, which catalog owns each step, and whether a step is likely to produce too much data. If the model asks for an unbounded result or a wide object, the plan can warn and ask for a tighter projection before anything runs.
 

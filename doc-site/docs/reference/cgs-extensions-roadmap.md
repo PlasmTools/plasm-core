@@ -9,10 +9,10 @@ Open design notes for evolving **Capability Graph Schema** and adjacent authorin
 **Problem:** teaching table lines and symbol-tuned examples are synthesized in [`plasm-oss/crates/plasm-core/src/prompt_render.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/prompt_render.rs). String parameters always use a literal `"example"` in `invoke_dotted_call_arg_example` (see `FieldType::String` branch). That is correct mechanically but weak pedagogy—e.g. `calculate` would read better as:
 
 ```text
-e6.m1(p8="1.5 + 2 * 3")  ;;  Evaluate a safe arithmetic expression
+e6.m1(expression="1.5 + 2 * 3")  ;;  Evaluate a safe arithmetic expression
 ```
 
-than `p8="example"`.
+than `expression="example"`.
 
 **Directions:**
 
@@ -25,7 +25,7 @@ than `p8="example"`.
 **Constraints to preserve:**
 
 - Examples must still **parse and type-check** through `domain_line_valid` / witness validation.
-- Symbol expansion (`p#`) must remain consistent—examples are **values**, not alternate symbol names.
+- Wire-name field/param tokens must remain consistent—examples are **values**, not alternate symbol names.
 
 **Todo (implementation when prioritized):**
 
