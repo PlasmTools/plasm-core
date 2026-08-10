@@ -9,7 +9,7 @@ Entries before **0.4.35** live in [`CHANGELOG-ARCHIVE.md`](CHANGELOG-ARCHIVE.md)
 
 ## [Unreleased]
 
-## [0.4.45] - 2026-08-09
+## [0.4.45] - 2026-08-10
 
 ### Changed
 
@@ -19,6 +19,13 @@ Entries before **0.4.35** live in [`CHANGELOG-ARCHIVE.md`](CHANGELOG-ARCHIVE.md)
 - **Version boundary:** `v0.4.44` is the final BUSL release. Historical BUSL
   releases retain their original per-version conversion rule: the earlier of
   2030-04-24 or four years after that version's first public distribution.
+- **Docs contract cutover:** public `doc-site` is the canonical OSS documentation
+  source (no private-monorepo `docs/` import). Language/MCP/CLI/appliance prose
+  aligns with wire-first ingress (`e#`/`m#`/`r#` + catalog wire names; MCP
+  `run_ref`), and CI gates forbid reintroducing removed contracts.
+- **Optional BAML:** `plasm-eval`, `plasm-repl`, and `plasm-semantic-seed` gate
+  generated `baml_client` behind a `baml` feature. `plasm-server` still defaults
+  to `semantic-auto-seed` for the appliance.
 
 ## [0.4.44] - 2026-08-08
 
