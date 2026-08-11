@@ -1,3 +1,4 @@
 *.node
+*.tgz
 node_modules/
 npm/

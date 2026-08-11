@@ -9,6 +9,13 @@ Entries before **0.4.35** live in [`CHANGELOG-ARCHIVE.md`](CHANGELOG-ARCHIVE.md)
 
 ## [Unreleased]
 
+### Changed
+
+- Drop checked-in `@plasm_lang/*` `0.3.78` npm tarballs; ignore `*.tgz` under
+  `packages/plasm-engine` and `packages/plasm-agent`. Workspace
+  `@plasm_lang/vercel-agent` depends on `file:../plasm-engine` so the lockfile
+  no longer pins registry `0.3.112` (published as GPL-3.0-or-later).
+
 ### Fixed
 
 - **In-repo overlay fixtures:** schema-overlay JSON/bootstrap trees now live under

@@ -2,3 +2,4 @@ agent/.plasm
 node_modules
 evals
 *.eval.ts
+*.tgz
