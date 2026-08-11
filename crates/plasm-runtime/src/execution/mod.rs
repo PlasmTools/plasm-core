@@ -4329,11 +4329,12 @@ mod tests {
         use plasm_core::schema_overlay::build_schema_overlay;
 
         let base_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../fixtures/schemas/fibery_schema_overlay/bootstrap");
+            .join("../../fixtures/schemas/fibery_schema_overlay/bootstrap");
         let base = load_schema_dir(&base_dir).expect("bootstrap fixture");
-        let json: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../../fixtures/schemas/fibery_schema_overlay/sample_schema_query.json"
-        ))
+        let json: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schemas/fibery_schema_overlay/sample_schema_query.json"
+        )))
         .expect("sample schema JSON");
         let spec = base.schema_overlay.as_ref().unwrap();
         let overlay = build_schema_overlay(spec, &base, &json).expect("overlay");
@@ -4357,11 +4358,12 @@ mod tests {
         use plasm_core::schema_overlay::{build_decode_scope_key, build_schema_overlay};
 
         let base_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../fixtures/schemas/fibery_schema_overlay/bootstrap");
+            .join("../../fixtures/schemas/fibery_schema_overlay/bootstrap");
         let base = load_schema_dir(&base_dir).expect("bootstrap fixture");
-        let json: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../../fixtures/schemas/fibery_schema_overlay/sample_schema_query.json"
-        ))
+        let json: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schemas/fibery_schema_overlay/sample_schema_query.json"
+        )))
         .expect("sample schema JSON");
         let spec = base.schema_overlay.as_ref().unwrap();
         let overlay = build_schema_overlay(spec, &base, &json).expect("overlay");
@@ -4393,11 +4395,12 @@ mod tests {
         use plasm_core::schema_overlay::build_schema_overlay;
 
         let base_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../fixtures/schemas/clickup_schema_overlay/bootstrap");
+            .join("../../fixtures/schemas/clickup_schema_overlay/bootstrap");
         let base = load_schema_dir(&base_dir).expect("bootstrap fixture");
-        let json: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../../fixtures/schemas/clickup_schema_overlay/sample_custom_field_query.json"
-        ))
+        let json: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schemas/clickup_schema_overlay/sample_custom_field_query.json"
+        )))
         .expect("sample custom field JSON");
         let spec = base.schema_overlay.as_ref().unwrap();
         let overlay = build_schema_overlay(spec, &base, &json).expect("overlay");
@@ -4427,9 +4430,10 @@ mod tests {
             plasm_compile::CapabilityTemplate::Http(c) => c,
             _ => panic!("expected HTTP template"),
         };
-        let json: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../../fixtures/schemas/fibery_schema_overlay/sample_schema_query.json"
-        ))
+        let json: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schemas/fibery_schema_overlay/sample_schema_query.json"
+        )))
         .expect("sample schema JSON");
         let normalized = prepare_http_query_response(json, cml, &CmlEnv::new());
         let decoder = create_entity_decoder_for_capability(
@@ -4458,9 +4462,10 @@ mod tests {
         let cap = cgs.get_capability("user_get_me").expect("user_get_me");
         let capability_template =
             parse_capability_template(&cap.mapping.template).expect("parse template");
-        let body: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../../fixtures/schemas/fibery_schema_overlay/sample_user_get_me.json"
-        ))
+        let body: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schemas/fibery_schema_overlay/sample_user_get_me.json"
+        )))
         .expect("sample user_get_me JSON");
         let narrowed = narrow_http_graphql_response_for_entity_decode(&capability_template, body)
             .expect("narrow user_get_me");
@@ -4500,9 +4505,10 @@ mod tests {
         let cap = cgs.get_capability("entity_create").expect("entity_create");
         let capability_template =
             parse_capability_template(&cap.mapping.template).expect("parse template");
-        let body: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../../fixtures/schemas/fibery_schema_overlay/sample_entity_create.json"
-        ))
+        let body: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schemas/fibery_schema_overlay/sample_entity_create.json"
+        )))
         .expect("sample entity_create JSON");
         let narrowed = narrow_http_graphql_response_for_entity_decode(&capability_template, body)
             .expect("narrow entity_create");
@@ -4644,9 +4650,10 @@ mod tests {
             plasm_compile::CapabilityTemplate::Http(c) => c,
             _ => panic!("expected HTTP template"),
         };
-        let body: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../../fixtures/schemas/fibery_schema_overlay/sample_view_query.json"
-        ))
+        let body: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schemas/fibery_schema_overlay/sample_view_query.json"
+        )))
         .expect("sample view_query JSON");
         let normalized = prepare_http_query_response(body, cml, &CmlEnv::new());
         let decoder = create_entity_decoder_for_capability(

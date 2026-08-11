@@ -1,0 +1,34 @@
+project_query:
+  method: GET
+  path:
+    - { type: literal, value: rest }
+    - { type: literal, value: api }
+    - { type: literal, value: "3" }
+    - { type: literal, value: project }
+    - { type: literal, value: search }
+  response:
+    items: values
+
+issue_createmeta_get:
+  method: GET
+  path:
+    - { type: literal, value: rest }
+    - { type: literal, value: api }
+    - { type: literal, value: "3" }
+    - { type: literal, value: issue }
+    - { type: literal, value: createmeta }
+  query:
+    type: object
+    fields:
+      - [projectKeys, { type: var, name: id }]
+  response: single
+
+issue_get:
+  method: GET
+  path:
+    - { type: literal, value: rest }
+    - { type: literal, value: api }
+    - { type: literal, value: "3" }
+    - { type: literal, value: issue }
+    - { type: var, name: issueIdOrKey }
+  response: single

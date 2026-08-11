@@ -1,0 +1,11 @@
+{
+  "jsonrpc": "2.0",
+  "result": [
+    {
+      "fibery/id": "43addb30-1fd0-11ee-9009-a7c752e861c6",
+      "fibery/public-id": "45",
+      "fibery/name": "Supa Doc",
+      "fibery/type": "document"
+    }
+  ]
+}

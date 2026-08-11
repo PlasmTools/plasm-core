@@ -1154,12 +1154,13 @@ mod tests {
 
     #[test]
     fn build_schema_overlay_from_fixture() {
-        let json: JsonValue = serde_json::from_str(include_str!(
-            "../../../../fixtures/schemas/fibery_schema_overlay/sample_schema_query.json"
-        ))
+        let json: JsonValue = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schemas/fibery_schema_overlay/sample_schema_query.json"
+        )))
         .expect("fixture JSON");
         let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../fixtures/schemas/fibery_schema_overlay/bootstrap");
+            .join("../../fixtures/schemas/fibery_schema_overlay/bootstrap");
         let base = load_schema_dir(&base_dir).expect("load bootstrap fixture");
         let spec = base.schema_overlay.as_ref().expect("schema_overlay spec");
         let overlay = build_schema_overlay(spec, &base, &json).expect("build overlay");
@@ -1212,12 +1213,13 @@ mod tests {
 
     #[test]
     fn build_schema_overlay_object_map() {
-        let json: JsonValue = serde_json::from_str(include_str!(
-            "../../../../fixtures/schemas/notion_schema_overlay/sample_database_search.json"
-        ))
+        let json: JsonValue = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schemas/notion_schema_overlay/sample_database_search.json"
+        )))
         .expect("fixture JSON");
         let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../fixtures/schemas/notion_schema_overlay/bootstrap");
+            .join("../../fixtures/schemas/notion_schema_overlay/bootstrap");
         let base = load_schema_dir(&base_dir).expect("load bootstrap fixture");
         let spec = base.schema_overlay.as_ref().expect("schema_overlay spec");
         let overlay = build_schema_overlay(spec, &base, &json).expect("build overlay");
@@ -1240,7 +1242,7 @@ mod tests {
             ]
         });
         let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../fixtures/schemas/augment_base_overlay/bootstrap");
+            .join("../../fixtures/schemas/augment_base_overlay/bootstrap");
         let base = load_schema_dir(&base_dir).expect("load bootstrap fixture");
         let spec = base.schema_overlay.as_ref().expect("schema_overlay spec");
         let overlay = build_schema_overlay(spec, &base, &json).expect("build overlay");
@@ -1259,7 +1261,7 @@ mod tests {
             ]
         });
         let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../fixtures/schemas/augment_base_overlay/bootstrap");
+            .join("../../fixtures/schemas/augment_base_overlay/bootstrap");
         let base = load_schema_dir(&base_dir).expect("load bootstrap fixture");
         let spec = base.schema_overlay.as_ref().expect("schema_overlay spec");
         let overlay = build_schema_overlay(spec, &base, &json).expect("build overlay");
@@ -1277,16 +1279,18 @@ mod tests {
 
     #[test]
     fn clickup_multi_step_pipeline_merges_fields_from_fixture_rows() {
-        let teams: JsonValue = serde_json::from_str(include_str!(
-            "../../../../fixtures/schemas/clickup_schema_overlay/sample_team_query.json"
-        ))
+        let teams: JsonValue = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schemas/clickup_schema_overlay/sample_team_query.json"
+        )))
         .expect("teams JSON");
-        let fields_a: JsonValue = serde_json::from_str(include_str!(
-            "../../../../fixtures/schemas/clickup_schema_overlay/sample_custom_field_query.json"
-        ))
+        let fields_a: JsonValue = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schemas/clickup_schema_overlay/sample_custom_field_query.json"
+        )))
         .expect("fields JSON");
         let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../fixtures/schemas/clickup_schema_overlay/bootstrap");
+            .join("../../fixtures/schemas/clickup_schema_overlay/bootstrap");
         let base = load_schema_dir(&base_dir).expect("load bootstrap fixture");
         base.validate().expect("clickup overlay fixture validates");
         let spec = base.schema_overlay.as_ref().expect("schema_overlay spec");
@@ -1315,12 +1319,13 @@ mod tests {
 
     #[test]
     fn clickup_augment_base_fixture_sanitizes_field_names() {
-        let json: JsonValue = serde_json::from_str(include_str!(
-            "../../../../fixtures/schemas/clickup_schema_overlay/sample_custom_field_query.json"
-        ))
+        let json: JsonValue = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schemas/clickup_schema_overlay/sample_custom_field_query.json"
+        )))
         .expect("fixture JSON");
         let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../fixtures/schemas/clickup_schema_overlay/bootstrap");
+            .join("../../fixtures/schemas/clickup_schema_overlay/bootstrap");
         let base = load_schema_dir(&base_dir).expect("load bootstrap fixture");
         let spec = base.schema_overlay.as_ref().expect("schema_overlay spec");
         let overlay = build_schema_overlay(spec, &base, &json).expect("build overlay");
@@ -1337,11 +1342,12 @@ mod tests {
     #[test]
     fn cgs_with_overlay_merges_and_validates() {
         let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../fixtures/schemas/fibery_schema_overlay/bootstrap");
+            .join("../../fixtures/schemas/fibery_schema_overlay/bootstrap");
         let base = load_schema_dir(&base_dir).expect("load bootstrap fixture");
-        let json: JsonValue = serde_json::from_str(include_str!(
-            "../../../../fixtures/schemas/fibery_schema_overlay/sample_schema_query.json"
-        ))
+        let json: JsonValue = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schemas/fibery_schema_overlay/sample_schema_query.json"
+        )))
         .expect("fixture JSON");
         let spec = base.schema_overlay.as_ref().unwrap();
         let overlay = build_schema_overlay(spec, &base, &json).expect("overlay");
@@ -1401,12 +1407,13 @@ mod tests {
 
     #[test]
     fn build_schema_overlay_jira_nested_createmeta() {
-        let json: JsonValue = serde_json::from_str(include_str!(
-            "../../../../fixtures/schemas/jira_schema_overlay/sample_createmeta.json"
-        ))
+        let json: JsonValue = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schemas/jira_schema_overlay/sample_createmeta.json"
+        )))
         .expect("fixture JSON");
         let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../fixtures/schemas/jira_schema_overlay/bootstrap");
+            .join("../../fixtures/schemas/jira_schema_overlay/bootstrap");
         let base = load_schema_dir(&base_dir).expect("load bootstrap fixture");
         let spec = base.schema_overlay.as_ref().expect("schema_overlay spec");
         let overlay = build_schema_overlay(spec, &base, &json).expect("build overlay");

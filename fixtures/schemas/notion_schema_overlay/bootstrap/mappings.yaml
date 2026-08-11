@@ -1,0 +1,29 @@
+database_search:
+  method: POST
+  path:
+    - type: literal
+      value: v1
+    - type: literal
+      value: search
+
+database_query:
+  method: POST
+  path:
+    - type: literal
+      value: v1
+    - type: literal
+      value: databases
+    - type: var
+      name: database_id
+    - type: literal
+      value: query
+
+page_get:
+  method: GET
+  path:
+    - type: literal
+      value: v1
+    - type: literal
+      value: pages
+    - type: var
+      name: id

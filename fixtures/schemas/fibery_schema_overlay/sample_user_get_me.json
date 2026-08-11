@@ -1,0 +1,12 @@
+{
+  "success": true,
+  "result": [
+    {
+      "fibery/id": "7dcf4730-82d2-11e9-8a28-82a9c787ee9d",
+      "user/name": "Arthur Dent",
+      "user/email": "arthur@example.com",
+      "user/role": "user",
+      "user/admin?": false
+    }
+  ]
+}

@@ -1,0 +1,159 @@
+version: 1
+http_backend: https://example.atlassian.net
+auth:
+  scheme: api_key_header
+  header: Authorization
+  env: JIRA_AUTH
+
+schema_overlay:
+  source:
+    steps:
+      - capability: project_query
+        collect: projects
+        items_path:
+          - values
+      - capability: issue_createmeta_get
+        for_each: projects
+        bind:
+          id: "{{ row.key }}"
+        merge:
+          kind: append_array
+          path:
+            - projects
+  projection:
+    mode: per_scope_entity
+    items_path:
+      - projects
+    nested_items_path:
+      - issuetypes
+  entity:
+    from_template: Issue
+    name:
+      template: "Issue__{{ parent.key | sanitize_identifier }}__{{ row.name | join_sanitize('__', ' ') }}"
+    scope_key:
+      template: "{{ parent.key }}:{{ row.name }}"
+    static_fields:
+      project_key:
+        template: "{{ parent.key }}"
+        value_ref: nv_issue_project_key
+      issuetype:
+        template: "{{ row.name }}"
+        value_ref: nv_wire_str_short
+    dynamic_fields:
+      from:
+        kind: object_map
+        path:
+          - fields
+      skip:
+        wire_name_path: []
+        values_in:
+          - summary
+          - description
+          - issuetype
+          - project
+          - reporter
+          - assignee
+          - priority
+          - labels
+          - attachment
+          - duedate
+          - components
+          - fixVersions
+          - versions
+          - environment
+          - timetracking
+          - security
+          - parent
+      wire_name_path: []
+      wire_type_path:
+        - schema
+        - type
+      name:
+        template: "{{ field_key | sanitize_identifier }}"
+      type_map:
+        string: nv_wire_str_short
+        number: nv_wire_num
+        array: nv_issue_edit_meta_fields
+        option: nv_wire_str_short
+        date: nv_wire_date_rfc3339
+        datetime: nv_wire_date_rfc3339
+        user: nv_wire_str_short
+        priority: nv_wire_str_short
+        status: nv_wire_str_short
+        issuetype: nv_wire_str_short
+        project: nv_wire_str_short
+      default: nv_issue_edit_meta_fields
+      extract:
+        kind: path_segments
+        segments:
+          - fields
+          - "{{ field_key }}"
+  decode:
+    scope:
+      params:
+        - project
+        - issuetype
+      key:
+        template: "{{ ambient.project }}:{{ ambient.issuetype }}"
+    capabilities:
+      - issue_createmeta_get
+
+entities:
+  Issue:
+    id_field: key
+    description: Jira issue (overlay adds per project/issuetype typed entities).
+    fields:
+      key:
+        required: true
+        value_ref: nv_wire_str_short
+      summary:
+        required: false
+        path: fields.summary
+        value_ref: nv_wire_str_short
+      project_key:
+        required: false
+        path: fields.project.key
+        value_ref: nv_issue_project_key
+  IssueCreateMetaBundle:
+    id_field: id
+    domain_projection_examples: false
+    description: Create form metadata bundle.
+    fields:
+      id:
+        required: true
+        value_ref: nv_wire_str_short
+      projects:
+        required: false
+        value_ref: nv_issue_edit_meta_fields
+
+capabilities:
+  project_query:
+    description: Search projects.
+    kind: query
+    entity: IssueCreateMetaBundle
+  issue_createmeta_get:
+    description: Fetch create form field metadata for a project.
+    kind: get
+    entity: IssueCreateMetaBundle
+    parameters:
+      - name: id
+        value_ref: nv_issue_project_key
+        required: true
+  issue_get:
+    kind: get
+    entity: Issue
+
+values:
+  nv_issue_project_key:
+    type: string
+    string_semantics: short
+  nv_issue_edit_meta_fields:
+    type: json
+  nv_wire_str_short:
+    type: string
+    string_semantics: short
+  nv_wire_num:
+    type: number
+  nv_wire_date_rfc3339:
+    type: date
+    value_format: rfc3339

@@ -1,0 +1,7 @@
+{
+  "fields": [
+    { "id": "a1", "name": "Priority Level", "type": "drop_down" },
+    { "id": "b2", "name": "Story Points", "type": "number" },
+    { "id": "c3", "name": "Blocked", "type": "checkbox" }
+  ]
+}

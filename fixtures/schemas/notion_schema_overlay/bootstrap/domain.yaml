@@ -1,0 +1,134 @@
+version: 1
+http_backend: https://api.notion.com
+auth:
+  scheme: bearer_token
+  env: NOTION_API_TOKEN
+
+schema_overlay:
+  source:
+    capability: database_search
+  projection:
+    mode: per_scope_entity
+    items_path:
+      - results
+  entity:
+    from_template: Page
+    name:
+      template: "{{ row.title[0].plain_text | join_sanitize('__', ' ') }}__{{ row.id | sanitize_identifier }}"
+    scope_key:
+      template: "{{ row.id }}"
+    static_fields:
+      database_id:
+        template: "{{ row.id }}"
+        value_ref: nv_notion_database_id
+    dynamic_fields:
+      from:
+        kind: object_map
+        path:
+          - properties
+      skip:
+        wire_name_path: []
+        values_in: []
+      wire_name_path: []
+      wire_type_path:
+        - type
+      name:
+        template: "{{ field_key | sanitize_identifier }}"
+      type_map:
+        title: nv_wire_str_short
+        rich_text: nv_wire_str_short
+        number: nv_wire_num
+        select: nv_wire_str_short
+        multi_select: nv_wire_str_short
+        date: nv_wire_date_rfc3339
+        checkbox: nv_wire_bool
+        url: nv_wire_str_short
+        email: nv_wire_str_short
+        phone_number: nv_wire_str_short
+      default: nv_notion_property_json
+      extract:
+        kind: path_segments
+        segments:
+          - properties
+          - "{{ field_key }}"
+  decode:
+    scope:
+      params:
+        - database_id
+      key:
+        template: "{{ ambient.database_id }}"
+    capabilities:
+      - database_query
+      - page_get
+
+entities:
+  Page:
+    id_field: id
+    description: Notion page / database row (overlay adds per-database typed entities).
+    fields:
+      id:
+        required: true
+        value_ref: nv_notion_page_id
+      database_id:
+        required: false
+        value_ref: nv_notion_database_id
+  Database:
+    id_field: id
+    description: Notion database container.
+    fields:
+      id:
+        required: true
+        value_ref: nv_notion_database_id
+      url:
+        required: false
+        value_ref: nv_wire_str_short
+
+capabilities:
+  database_search:
+    description: Search databases shared with the integration.
+    kind: search
+    entity: Database
+    provides:
+      - id
+      - url
+    parameters:
+      - name: query
+        value_ref: nv_database_search_query
+        required: false
+        role: search
+  database_query:
+    description: Query rows in a database.
+    kind: query
+    entity: Page
+    parameters:
+      - name: database_id
+        value_ref: nv_notion_database_id
+        required: true
+        role: scope
+  page_get:
+    description: Get a page by id.
+    kind: get
+    entity: Page
+
+values:
+  nv_notion_page_id:
+    type: string
+    string_semantics: short
+  nv_notion_database_id:
+    type: string
+    string_semantics: short
+  nv_database_search_query:
+    type: string
+    string_semantics: short
+  nv_notion_property_json:
+    type: json
+  nv_wire_str_short:
+    type: string
+    string_semantics: short
+  nv_wire_num:
+    type: number
+  nv_wire_bool:
+    type: boolean
+  nv_wire_date_rfc3339:
+    type: string
+    value_format: rfc3339
