@@ -1,0 +1,6 @@
+{
+  "teams": [
+    { "id": "777666555", "name": "Acme Workspace" },
+    { "id": "888777666", "name": "Beta Workspace" }
+  ]
+}

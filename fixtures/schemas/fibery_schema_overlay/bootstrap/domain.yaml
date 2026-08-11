@@ -1,0 +1,150 @@
+version: 1
+http_backend: https://example.fibery.io
+auth:
+  scheme: api_key_header
+  header: Authorization
+  hosted_kv: plasm:outbound:v1:fixture:fibery_overlay
+
+schema_overlay:
+  source:
+    capability: schema_query
+  projection:
+    mode: per_scope_entity
+    items_path:
+      - result
+      - fibery/types
+  entity:
+    from_template: Record
+    name:
+      template: "{{ row['fibery/name'] | join_sanitize('__', '/') }}"
+    expression_aliases:
+      - template: "{{ row['fibery/name'] }}"
+    scope_key:
+      template: "{{ row['fibery/name'] }}"
+    static_fields:
+      database:
+        template: "{{ row['fibery/name'] }}"
+        value_ref: nv_fibery_database_name
+    dynamic_fields:
+      from:
+        kind: array
+        path:
+          - fibery/fields
+      skip:
+        wire_name_path:
+          - fibery/name
+        values_in:
+          - fibery/id
+          - fibery/public-id
+      wire_name_path:
+        - fibery/name
+      wire_type_path:
+        - fibery/type
+      name:
+        template: "{{ field['fibery/name'] | sanitize_identifier }}"
+      type_map:
+        fibery/text: nv_wire_str_short
+        fibery/bool: nv_wire_bool
+        fibery/int: nv_wire_int
+        fibery/decimal: nv_wire_num
+        fibery/date-time: nv_wire_date_rfc3339
+        fibery/date-range: nv_fibery_payload_json
+        fibery/uuid: nv_fibery_id
+      default: nv_fibery_payload_json
+      extract:
+        kind: top_level_key
+  decode:
+    scope:
+      params:
+        - database
+      key:
+        template: "{{ ambient.database }}"
+    capabilities:
+      - entity_query
+      - entity_get
+
+entities:
+  Record:
+    id_field: id
+    key_vars:
+      - database
+      - id
+    description: Generic Fibery database row (overlay adds typed entities per database).
+    fields:
+      id:
+        required: true
+        value_ref: nv_fibery_id
+        path:
+          - fibery/id
+      public_id:
+        required: false
+        value_ref: nv_fibery_public_id
+        path:
+          - fibery/public-id
+      database:
+        required: true
+        value_ref: nv_fibery_database_name
+      payload:
+        required: false
+        value_ref: nv_fibery_payload_json
+  Database:
+    id_field: qualified_name
+    description: Fibery database (type) from workspace schema.
+    fields:
+      qualified_name:
+        required: true
+        value_ref: nv_fibery_database_name
+      type_id:
+        required: false
+        value_ref: nv_fibery_id
+capabilities:
+  schema_query:
+    description: Fetch workspace schema (fibery.schema/query).
+    kind: query
+    entity: Database
+  entity_query:
+    description: Query entities in a database.
+    kind: query
+    entity: Record
+    parameters:
+      - name: database
+        value_ref: nv_fibery_database_name
+        required: true
+        role: scope
+  entity_get:
+    description: Get one entity by fibery/id.
+    kind: get
+    entity: Record
+    provides:
+      - id
+      - public_id
+      - database
+      - payload
+values:
+  nv_fibery_id:
+    type: string
+    string_semantics: short
+    description: Fibery UUID
+  nv_fibery_public_id:
+    type: string
+    string_semantics: short
+    description: Fibery public id
+  nv_fibery_database_name:
+    type: string
+    string_semantics: short
+    description: Qualified database name Space/Name
+  nv_fibery_payload_json:
+    type: json
+    description: Unmapped Fibery fields
+  nv_wire_str_short:
+    type: string
+    string_semantics: short
+  nv_wire_int:
+    type: integer
+  nv_wire_num:
+    type: number
+  nv_wire_bool:
+    type: boolean
+  nv_wire_date_rfc3339:
+    type: string
+    value_format: rfc3339

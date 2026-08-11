@@ -9,6 +9,12 @@ Entries before **0.4.35** live in [`CHANGELOG-ARCHIVE.md`](CHANGELOG-ARCHIVE.md)
 
 ## [Unreleased]
 
+### Fixed
+
+- **In-repo overlay fixtures:** schema-overlay JSON/bootstrap trees now live under
+  `fixtures/schemas/*_overlay/` so `plasm-core` test compiles (docs CI fenced-example
+  gate) no longer `include_str!` files from the private parent monorepo.
+
 ## [0.4.45] - 2026-08-10
 
 ### Changed

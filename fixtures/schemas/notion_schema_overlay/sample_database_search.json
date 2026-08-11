@@ -1,0 +1,14 @@
+{
+  "results": [
+    {
+      "id": "db-abc123",
+      "title": [{ "plain_text": "Tasks" }],
+      "properties": {
+        "Name": { "type": "title" },
+        "Status": { "type": "select" },
+        "Due": { "type": "date" },
+        "Done": { "type": "checkbox" }
+      }
+    }
+  ]
+}

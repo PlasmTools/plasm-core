@@ -1,0 +1,31 @@
+team_query:
+  method: GET
+  path:
+    - type: literal
+      value: v2
+    - type: literal
+      value: team
+  response:
+    items: teams
+
+custom_field_query:
+  method: GET
+  path:
+    - type: literal
+      value: v2
+    - type: literal
+      value: team
+    - type: var
+      name: team_id
+    - type: literal
+      value: field
+
+task_get:
+  method: GET
+  path:
+    - type: literal
+      value: v2
+    - type: literal
+      value: task
+    - type: var
+      name: id

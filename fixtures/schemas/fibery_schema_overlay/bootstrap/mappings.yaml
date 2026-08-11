@@ -1,0 +1,78 @@
+schema_query:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: commands
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: fibery.schema/query
+  response:
+    items: result
+    items_path:
+      - result
+      - fibery/types
+
+entity_query:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: commands
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: fibery.entity/query
+      - - args
+        - type: var
+          name: input
+  response:
+    items: result
+
+entity_get:
+  method: POST
+  path:
+    - type: literal
+      value: api
+    - type: literal
+      value: commands
+  body:
+    type: object
+    fields:
+      - - command
+        - type: const
+          value: fibery.entity/query
+      - - args
+        - type: object
+          fields:
+            - - query
+              - type: object
+                fields:
+                  - - q/from
+                    - type: var
+                      name: database
+                  - - q/select
+                    - type: const
+                      value: ["fibery/id", "fibery/public-id"]
+                  - - q/where
+                    - type: const
+                      value: ["=", ["fibery/id"], "$entity-id"]
+                  - - q/limit
+                    - type: const
+                      value: 1
+            - - params
+              - type: object
+                fields:
+                  - - $entity-id
+                    - type: var
+                      name: id
+  response:
+    items: result
+    single: true

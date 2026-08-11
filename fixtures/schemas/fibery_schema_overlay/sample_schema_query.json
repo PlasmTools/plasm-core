@@ -1,0 +1,39 @@
+{
+  "success": true,
+  "result": {
+    "fibery/types": [
+      {
+        "fibery/name": "Cricket/Player",
+        "fibery/id": "2c4213ae-3839-11e9-9162-04d77e8d50cb",
+        "fibery/fields": [
+          {
+            "fibery/name": "fibery/id",
+            "fibery/type": "fibery/uuid",
+            "fibery/meta": { "fibery/readonly?": true }
+          },
+          {
+            "fibery/name": "fibery/public-id",
+            "fibery/type": "fibery/text",
+            "fibery/meta": { "fibery/readonly?": true }
+          },
+          {
+            "fibery/name": "Cricket/name",
+            "fibery/type": "fibery/text",
+            "fibery/meta": {}
+          },
+          {
+            "fibery/name": "Cricket/Height",
+            "fibery/type": "fibery/decimal",
+            "fibery/meta": {}
+          },
+          {
+            "fibery/name": "Cricket/Retired",
+            "fibery/type": "fibery/bool",
+            "fibery/meta": {}
+          }
+        ],
+        "fibery/meta": { "fibery/domain?": true }
+      }
+    ]
+  }
+}

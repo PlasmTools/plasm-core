@@ -1,0 +1,99 @@
+version: 1
+http_backend: https://api.clickup.com
+
+schema_overlay:
+  source:
+    steps:
+      - capability: team_query
+        collect: teams
+        items_path:
+          - teams
+      - capability: custom_field_query
+        for_each: teams
+        bind:
+          team_id: "{{ row.id }}"
+        merge:
+          kind: append_array
+          path:
+            - fields
+  projection:
+    mode: augment_base
+    items_path:
+      - fields
+  entity:
+    from_template: Task
+    name:
+      template: Task
+    scope_key:
+      template: global
+    dynamic_fields:
+      from:
+        kind: array
+        path: []
+      wire_name_path:
+        - name
+      wire_type_path:
+        - type
+      name:
+        template: "{{ field.name | sanitize_identifier }}"
+      type_map:
+        text: nv_wire_str_short
+        number: nv_wire_int
+        drop_down: nv_wire_str_short
+        checkbox: nv_wire_bool
+      default: nv_wire_str_short
+      extract:
+        kind: name_value_array
+        array_path:
+          - custom_fields
+        match_key_field: name
+        match_equals:
+          template: "{{ field.name }}"
+        value_field: value
+  decode:
+    scope:
+      params: []
+      key:
+        template: global
+    capabilities:
+      - task_get
+
+entities:
+  Task:
+    id_field: id
+    description: ClickUp task (overlay augments with custom fields).
+    fields:
+      id:
+        required: true
+        value_ref: nv_wire_str_short
+      name:
+        required: false
+        value_ref: nv_wire_str_short
+
+capabilities:
+  team_query:
+    description: List authorized teams.
+    kind: query
+    entity: Task
+  custom_field_query:
+    description: List workspace custom fields.
+    kind: query
+    entity: Task
+    parameters:
+    - name: team_id
+      value_ref: nv_wire_str_short
+      required: true
+      role: scope
+  task_get:
+    description: Get a task.
+    kind: get
+    entity: Task
+
+values:
+  nv_wire_str_short:
+    type: string
+    string_semantics: short
+  nv_wire_int:
+    type: integer
+  nv_wire_bool:
+    type: boolean

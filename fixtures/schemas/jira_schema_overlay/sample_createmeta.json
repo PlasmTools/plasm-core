@@ -1,0 +1,30 @@
+{
+  "projects": [
+    {
+      "key": "MYPROJ",
+      "issuetypes": [
+        {
+          "id": "10001",
+          "name": "Story",
+          "fields": {
+            "summary": {
+              "required": true,
+              "schema": { "type": "string", "system": "summary" },
+              "name": "Summary"
+            },
+            "description": {
+              "required": false,
+              "schema": { "type": "string", "system": "description" },
+              "name": "Description"
+            },
+            "customfield_10042": {
+              "required": false,
+              "schema": { "type": "string", "custom": "com.atlassian.jira.plugin.system.customfieldtypes:textfield" },
+              "name": "Epic Link"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
