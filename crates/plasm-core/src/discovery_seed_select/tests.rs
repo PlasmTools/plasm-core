@@ -26,6 +26,11 @@ fn bundle(
             capability_id: format!("{eid}:{ent}:{cap}"),
             capability_name: cap.into(),
             kind: kind.into(),
+            effect: match kind {
+                "Query" | "Search" | "Get" | "ReadAction" => crate::SemanticEffect::Read,
+                "Action" => crate::SemanticEffect::SideEffect,
+                _ => crate::SemanticEffect::Write,
+            },
             description: String::new(),
             reason_codes: vec![],
             lexical_score: 1,

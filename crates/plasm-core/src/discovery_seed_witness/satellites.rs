@@ -551,6 +551,11 @@ mod tests {
             capability_id: id.into(),
             capability_name: name.into(),
             kind: kind.into(),
+            effect: match kind {
+                "Query" | "Search" | "Get" | "ReadAction" => crate::SemanticEffect::Read,
+                "Action" => crate::SemanticEffect::SideEffect,
+                _ => crate::SemanticEffect::Write,
+            },
             description: name.into(),
             reason_codes: vec![],
             lexical_score: score,

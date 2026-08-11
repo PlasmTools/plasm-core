@@ -3281,6 +3281,7 @@ mod tests {
             name: "query_accounts".into(),
             description: String::new(),
             kind: CapabilityKind::Query,
+            effect: None,
             domain: "Account".into(),
             identity_key: None,
             mapping: CapabilityMapping {
@@ -3314,6 +3315,7 @@ mod tests {
             name: "get_account".into(),
             description: String::new(),
             kind: CapabilityKind::Get,
+            effect: None,
             domain: "Account".into(),
             identity_key: None,
             mapping: CapabilityMapping {
@@ -3401,6 +3403,7 @@ mod tests {
             name: "managed_resource_query".into(),
             description: String::new(),
             kind: CapabilityKind::Query,
+            effect: None,
             domain: "ManagedResource".into(),
             identity_key: None,
             mapping: CapabilityMapping {

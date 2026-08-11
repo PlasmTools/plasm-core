@@ -245,7 +245,7 @@ When the API has **workspace-defined columns** on generic rows (Fibery databases
 
 Authoring details, spec table, checklists, and reference catalogs: [reference.md — Runtime schema overlay](reference.md#runtime-schema-overlay-schema_overlay). Runtime behavior: monorepo [docs/schema-overlay.md](../../../docs/schema-overlay.md).
 
-**`kind: action` output:** Every action must declare either non-empty **`provides:`** or **`output:`** with **`type: side_effect`** and a non-empty `description:` that states **what** the operation changes. There is no `output.type: none`. See [reference.md — Action output](reference.md#action-output-provides-vs-outputside_effect).
+**`kind: action` effect and output:** Actions are treated as remote side effects unless a reviewed catalog explicitly declares **`effect: read`**. Use that declaration only for RPC-shaped reads; it is an author attestation, not an inference from HTTP method or idempotence. Read-actions cannot use `output.type: side_effect` or mutation sink parameters. Every action must still declare either non-empty **`provides:`** or **`output:`**. There is no `output.type: none`. See [reference.md — Action output](reference.md#action-output-provides-vs-outputside_effect).
 
 ### Information-flow annotations (Guardians / plan flow typing)
 

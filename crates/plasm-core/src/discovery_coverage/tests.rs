@@ -37,8 +37,28 @@ fn load_api_pair(a: &str, b: &str) -> Option<(IndexMap<String, crate::schema::CG
 
 #[test]
 fn selection_matches_gold_empty_acceptable_is_false() {
-    use crate::discovery_auto_seed::EntityCandidateBundle;
-    use crate::discovery_coverage::{selection_matches_gold, SeedSatisfiability};
+    use crate::discovery_auto_seed::{EntityCandidateBundle, EntityCapabilityEvidence};
+    use crate::discovery_coverage::{
+        score_satisfiability, selection_matches_gold, DiscoveryCoveragePlan, SeedSatisfiability,
+    };
+    let bundle = EntityCandidateBundle {
+        entry_id: "github".into(),
+        entity: "Issue".into(),
+        candidate_id: "github:Issue".into(),
+        entity_description: String::new(),
+        max_lexical_score: 1,
+        capabilities: vec![EntityCapabilityEvidence {
+            capability_id: "github:Issue:inspect".into(),
+            capability_name: "inspect".into(),
+            kind: "Action".into(),
+            effect: crate::SemanticEffect::Read,
+            description: String::new(),
+            reason_codes: vec![],
+            lexical_score: 1,
+        }],
+        relation_hints: String::new(),
+        catalog_route_evidence: false,
+    };
     let seed = SeedSatisfiability {
         entry_id: "github".into(),
         entity: "Issue".into(),
@@ -47,18 +67,22 @@ fn selection_matches_gold_empty_acceptable_is_false() {
         catalog_route_evidence: false,
         direct_slots: vec![0],
         via_relation_slots: vec![],
-        bundle: EntityCandidateBundle {
-            entry_id: "github".into(),
-            entity: "Issue".into(),
-            candidate_id: "github:Issue".into(),
-            entity_description: String::new(),
-            max_lexical_score: 1,
-            capabilities: vec![],
-            relation_hints: String::new(),
-            catalog_route_evidence: false,
-        },
+        bundle: bundle.clone(),
     };
     assert!(!selection_matches_gold(std::slice::from_ref(&seed), &[]));
+
+    let request = DiscoveryCoveragePlan {
+        slots: vec![RequirementSlot::ReadRoot {
+            entity_hint: Some("Issue".into()),
+        }],
+        provider_constraint: ProviderConstraint::Unbranded,
+        catalog_route: vec![],
+    };
+    let mut catalogs = IndexMap::new();
+    catalogs.insert("github".into(), crate::schema::CGS::default());
+    let scored = score_satisfiability(&request, &[bundle], &catalogs);
+    assert_eq!(scored.len(), 1);
+    assert_eq!(scored[0].direct_slots, vec![0]);
 }
 
 #[test]

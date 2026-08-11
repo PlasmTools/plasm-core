@@ -578,10 +578,7 @@ pub(crate) fn attach_flow_approval_gates(
 }
 
 pub(crate) fn remote_mutation_effect(kind: PlanNodeKind, effect_class: EffectClass) -> bool {
-    matches!(
-        kind,
-        PlanNodeKind::Create | PlanNodeKind::Update | PlanNodeKind::Delete | PlanNodeKind::Action
-    ) || matches!(effect_class, EffectClass::Write | EffectClass::SideEffect)
+    crate::plan_flow::is_remote_mutation(kind, effect_class)
 }
 
 /// Remote mutation inside a `for_each` body (fan-out / multi-write risk). Read-only bodies excluded.

@@ -855,6 +855,7 @@ mod tests {
             name: "balance_get".into(),
             description: String::new(),
             kind: CapabilityKind::Get,
+            effect: None,
             domain: "Balance".into(),
             identity_key: None,
             mapping: CapabilityMapping {
@@ -953,6 +954,7 @@ mod tests {
             name: "transfer_query".into(),
             description: String::new(),
             kind: CapabilityKind::Query,
+            effect: None,
             domain: "Transfer".into(),
             identity_key: None,
             mapping: CapabilityMapping {
@@ -1081,6 +1083,7 @@ mod tests {
             name: "issue_get".into(),
             description: String::new(),
             kind: CapabilityKind::Get,
+            effect: None,
             domain: "Issue".into(),
             identity_key: None,
             mapping: CapabilityMapping {

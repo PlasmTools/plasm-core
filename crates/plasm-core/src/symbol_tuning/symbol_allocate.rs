@@ -77,18 +77,23 @@ impl TeachingExposureSession {
                 ),
             };
             self.tables.method_segment_to_sym.insert(segment, sym);
-            let kind = self
+            let capability = self
                 .catalog_cgs
                 .get(key.entry_id.as_str())
-                .and_then(|cgs| cgs.capabilities.get(key.capability.as_str()))
+                .and_then(|cgs| cgs.capabilities.get(key.capability.as_str()));
+            let kind = capability
                 .map(|cap| cap.kind)
                 .unwrap_or(CapabilityKind::Action);
+            let effect = capability
+                .map(|cap| cap.effective_effect())
+                .unwrap_or(crate::SemanticEffect::SideEffect);
             self.record_method_binding(
                 sym,
                 key.entry_id.clone(),
                 key.domain.clone(),
                 key.capability.clone(),
                 kind,
+                effect,
             );
         }
 

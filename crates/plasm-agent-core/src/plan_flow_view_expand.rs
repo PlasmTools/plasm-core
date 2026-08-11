@@ -9,7 +9,8 @@ use crate::plan_flow_existence::{apply_unguarded_mutation_review, check_view_exi
 use crate::plan_flow_ports::FlowPolicyEvaluator;
 use crate::plan_flow_sanitizer::apply_label_clearance;
 use crate::plasm_plan::PlanResultUse;
-use plasm_core::schema::{CapabilityKind, ViewDefinition};
+use plasm_core::schema::ViewDefinition;
+use plasm_core::SemanticEffect;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) struct ViewExpandOutcome {
@@ -67,11 +68,14 @@ pub(crate) fn expand_view_inner_mutations<P: FlowPolicyEvaluator + ?Sized>(
         let Some(meta) = catalog.capability_workflow_meta(&inner_key) else {
             continue;
         };
-        if is_read_kind(meta.kind) {
+        if meta.effect == SemanticEffect::Read {
             prior_reads.insert(node.id.clone());
             continue;
         }
-        if !is_mutator_kind(meta.kind) {
+        if !matches!(
+            meta.effect,
+            SemanticEffect::Write | SemanticEffect::SideEffect
+        ) {
             continue;
         }
 
@@ -134,21 +138,4 @@ pub(crate) fn expand_view_inner_mutations<P: FlowPolicyEvaluator + ?Sized>(
     }
 
     out
-}
-
-fn is_read_kind(kind: CapabilityKind) -> bool {
-    matches!(
-        kind,
-        CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get
-    )
-}
-
-fn is_mutator_kind(kind: CapabilityKind) -> bool {
-    matches!(
-        kind,
-        CapabilityKind::Create
-            | CapabilityKind::Update
-            | CapabilityKind::Delete
-            | CapabilityKind::Action
-    )
 }

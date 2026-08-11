@@ -100,6 +100,16 @@ pub enum EffectClass {
     ArtifactRead,
 }
 
+impl From<plasm_core::SemanticEffect> for EffectClass {
+    fn from(effect: plasm_core::SemanticEffect) -> Self {
+        match effect {
+            plasm_core::SemanticEffect::Read => Self::Read,
+            plasm_core::SemanticEffect::Write => Self::Write,
+            plasm_core::SemanticEffect::SideEffect => Self::SideEffect,
+        }
+    }
+}
+
 /// Expected host result shape for dry-run / planning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1095,12 +1105,9 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
         .filter(|n| {
             matches!(
                 n.kind,
-                PlanNodeKind::Create
-                    | PlanNodeKind::Update
-                    | PlanNodeKind::Delete
-                    | PlanNodeKind::Action
-                    | PlanNodeKind::ForEach
+                PlanNodeKind::Create | PlanNodeKind::Update | PlanNodeKind::Delete
             ) || matches!(n.effect_class, EffectClass::Write | EffectClass::SideEffect)
+                || (n.kind == PlanNodeKind::Action && n.effect_class != EffectClass::Read)
         })
         .map(|n| PlanNodeId::new(n.id.clone()))
         .collect::<Result<Vec<_>, _>>()?;

@@ -173,12 +173,10 @@ fn is_relation_leaf(entry_id: &str, entity: &str, bundles: &[EntityCandidateBund
 }
 
 fn is_mutation_bundle(bundle: &EntityCandidateBundle) -> bool {
-    bundle.capabilities.iter().any(|cap| {
-        matches!(
-            cap.kind.as_str(),
-            "Create" | "Action" | "Update" | "Delete" | "Transition"
-        )
-    })
+    bundle
+        .capabilities
+        .iter()
+        .any(|capability| capability.is_remote_mutation())
 }
 
 fn is_localized_mutation_anchor(
@@ -449,6 +447,11 @@ mod tests {
                 capability_id: format!("{eid}:{ent}:cap"),
                 capability_name: "cap".into(),
                 kind: kind.into(),
+                effect: match kind {
+                    "Query" | "Search" | "Get" | "ReadAction" => crate::SemanticEffect::Read,
+                    "Action" => crate::SemanticEffect::SideEffect,
+                    _ => crate::SemanticEffect::Write,
+                },
                 description: String::new(),
                 reason_codes: vec![],
                 lexical_score: 1,

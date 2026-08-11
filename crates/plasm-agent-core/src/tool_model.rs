@@ -297,6 +297,13 @@ fn explorer_return_inferred_when_no_output_schema(
     let domain = cap.domain.to_string();
     let navigable = cgs.entities.contains_key(domain.as_str());
     match cap.kind {
+        CapabilityKind::Action if cap.is_read() && !cap.provides.is_empty() => ExplorerReturn {
+            kind: "entity".into(),
+            label: domain.clone(),
+            description: String::new(),
+            entity: Some(domain),
+            entity_navigable: navigable,
+        },
         CapabilityKind::Get => ExplorerReturn {
             kind: "entity".into(),
             label: domain.clone(),
@@ -1496,6 +1503,8 @@ fn project_entity(
             CapabilityKind::Update | CapabilityKind::Action => {
                 let k = if cap.kind == CapabilityKind::Update {
                     "update"
+                } else if cap.is_read() {
+                    "read_action"
                 } else {
                     "action"
                 };

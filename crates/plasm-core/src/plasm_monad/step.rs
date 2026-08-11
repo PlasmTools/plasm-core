@@ -10,6 +10,16 @@ pub enum EffectClass {
     ArtifactRead,
 }
 
+impl From<crate::SemanticEffect> for EffectClass {
+    fn from(effect: crate::SemanticEffect) -> Self {
+        match effect {
+            crate::SemanticEffect::Read => Self::Read,
+            crate::SemanticEffect::Write => Self::Write,
+            crate::SemanticEffect::SideEffect => Self::SideEffect,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResultShape {

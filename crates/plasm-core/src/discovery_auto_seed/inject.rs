@@ -82,8 +82,16 @@ pub(crate) fn read_capabilities_for_entity(
 
     let mut out = Vec::new();
     let mut seen = HashSet::new();
-    for kind in [CapabilityKind::Query, CapabilityKind::Get] {
+    for kind in [
+        CapabilityKind::Query,
+        CapabilityKind::Get,
+        CapabilityKind::Search,
+        CapabilityKind::Action,
+    ] {
         for cap in cgs.find_capabilities(entity, kind) {
+            if !cap.is_read() {
+                continue;
+            }
             if push_capability_evidence(&mut out, &mut seen, entry_id, entity, cap, max) {
                 return out;
             }
@@ -228,6 +236,7 @@ pub(crate) fn push_capability_evidence(
         capability_id: capability_id(entry_id, entity, cap.name.as_str()),
         capability_name: cap.name.to_string(),
         kind: format!("{:?}", cap.kind),
+        effect: cap.effective_effect(),
         description: cap.description.clone(),
         reason_codes: Vec::new(),
         lexical_score: 1,
@@ -255,6 +264,9 @@ fn select_intent_relevant_mutation_caps(
         CapabilityKind::Update,
     ] {
         for cap in cgs.find_capabilities(entity, kind) {
+            if !cap.is_remote_mutation() {
+                continue;
+            }
             let mut score = 0i32;
             if let Some(caps) = index.mutation_caps.get(entity) {
                 if let Some(meta) = caps.iter().find(|meta| meta.name == cap.name.as_str()) {
@@ -342,6 +354,9 @@ pub(crate) fn mutation_capabilities_for_entity_with_intent(
         CapabilityKind::Update,
     ] {
         for cap in cgs.find_capabilities(entity, kind) {
+            if !cap.is_remote_mutation() {
+                continue;
+            }
             if push_capability_evidence(&mut out, &mut seen, entry_id, entity, cap, max) {
                 return out;
             }
@@ -597,12 +612,15 @@ fn primary_read_entity_for_mirror(cgs: &CGS, entry_id: &str) -> Option<String> {
     let mut best: Option<(usize, String)> = None;
     for entity_name in cgs.entities.keys() {
         let entity = entity_name.as_str();
-        let has_read = cgs
-            .find_capabilities(entity, CapabilityKind::Query)
-            .into_iter()
-            .chain(cgs.find_capabilities(entity, CapabilityKind::Get))
-            .next()
-            .is_some();
+        let has_read = [
+            CapabilityKind::Query,
+            CapabilityKind::Get,
+            CapabilityKind::Search,
+            CapabilityKind::Action,
+        ]
+        .into_iter()
+        .flat_map(|kind| cgs.find_capabilities(entity, kind))
+        .any(|cap| cap.is_read());
         if !has_read {
             continue;
         }
@@ -660,22 +678,7 @@ fn inject_mirror_catalog_targets(
         if bundles.contains_key(&key) {
             continue;
         }
-        let mut capabilities = Vec::new();
-        for cap in cgs
-            .find_capabilities(entity.as_str(), crate::schema::CapabilityKind::Query)
-            .into_iter()
-            .chain(cgs.find_capabilities(entity.as_str(), crate::schema::CapabilityKind::Get))
-            .take(2)
-        {
-            capabilities.push(EntityCapabilityEvidence {
-                capability_id: capability_id(&catalog, entity.as_str(), cap.name.as_str()),
-                capability_name: cap.name.to_string(),
-                kind: format!("{:?}", cap.kind),
-                description: cap.description.clone(),
-                reason_codes: Vec::new(),
-                lexical_score: 1,
-            });
-        }
+        let capabilities = read_capabilities_for_entity(cgs.as_ref(), &catalog, entity.as_str(), 2);
         bundles.insert(
             key.clone(),
             EntityCandidateBundle {

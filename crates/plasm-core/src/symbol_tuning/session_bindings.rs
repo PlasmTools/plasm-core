@@ -2,7 +2,7 @@
 //! (`expose_entities`, method waves, [`assign_new_slot_symbols`]) — not recomputed at snapshot time.
 
 use crate::identity::{CapabilityName, EntityName, RegistryEntryId, RelationName};
-use crate::CapabilityKind;
+use crate::{CapabilityKind, SemanticEffect};
 
 use super::keys::{OpaqueESym, OpaqueMSym, OpaqueRSym};
 use super::{IdentMetadata, TeachingExposureSession};
@@ -31,6 +31,13 @@ pub struct MethodBinding {
     pub domain: EntityName,
     pub capability: CapabilityName,
     pub kind: CapabilityKind,
+    /// Derived semantic effect; method/RPC shape does not imply mutation.
+    #[serde(default = "default_method_effect")]
+    pub effect: SemanticEffect,
+}
+
+fn default_method_effect() -> SemanticEffect {
+    SemanticEffect::SideEffect
 }
 
 impl MethodBinding {
@@ -99,12 +106,14 @@ impl TeachingExposureSession {
         domain: EntityName,
         capability: CapabilityName,
         kind: CapabilityKind,
+        effect: SemanticEffect,
     ) {
         let binding = MethodBinding {
             entry_id: entry_id.clone(),
             domain: domain.clone(),
             capability: capability.clone(),
             kind,
+            effect,
         };
         self.tables.sym_to_method.insert(sym, binding);
     }

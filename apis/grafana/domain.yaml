@@ -1131,6 +1131,7 @@ capabilities:
 
   datasource_query_run:
     kind: action
+    effect: read
     entity: Datasource
     description: Run PromQL, LogQL, or other queries through the unified datasource query path.
     preflight:

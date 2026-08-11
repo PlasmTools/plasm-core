@@ -706,6 +706,7 @@ mod tests {
                 name: "note_query".into(),
                 description: String::new(),
                 kind: CapabilityKind::Query,
+                effect: None,
                 domain: "Note".into(),
                 identity_key: None,
                 mapping: CapabilityMapping {
@@ -808,6 +809,7 @@ mod tests {
             name: "spell_get".into(),
             description: String::new(),
             kind: CapabilityKind::Query,
+            effect: None,
             domain: "Spell".into(),
             identity_key: None,
             mapping: CapabilityMapping {
@@ -982,6 +984,7 @@ mod tests {
                 name: "file_get".into(),
                 description: String::new(),
                 kind: CapabilityKind::Get,
+                effect: None,
                 domain: "File".into(),
                 identity_key: None,
                 mapping: CapabilityMapping {

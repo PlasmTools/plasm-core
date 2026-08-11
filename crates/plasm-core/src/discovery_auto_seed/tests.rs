@@ -156,6 +156,7 @@ fn merge_required_adds_injected_issue_from_pool() {
                 capability_id: "jira:Issue:issue_transition".into(),
                 capability_name: "issue_transition".into(),
                 kind: "Action".into(),
+                effect: crate::SemanticEffect::SideEffect,
                 description: String::new(),
                 reason_codes: vec![],
                 lexical_score: 1,

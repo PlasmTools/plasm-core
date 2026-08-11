@@ -72,6 +72,37 @@ fn mutating_capability_admitted_requires_nonzero_score() {
 }
 
 #[test]
+fn intent_only_read_surface_excludes_unrequested_mutations() {
+    let dir =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix");
+    let cgs = load_schema_dir(&dir).expect("plasm_language_matrix");
+    let endpoints = relation_keys("matrix", &["LangItem"]);
+    let delta = derive_intent_exposure_surface_batch(
+        &cgs,
+        "matrix",
+        "browse language item inventory metadata",
+        &endpoints,
+        &["LangItem".to_string()],
+        None,
+        ExposureSurfaceOptions {
+            mutator_admit: MutatorAdmit::IntentOnly,
+        },
+    );
+    assert!(delta
+        .required
+        .capabilities
+        .iter()
+        .filter_map(|key| cgs.get_capability(key.capability.as_str()))
+        .any(crate::CapabilitySchema::is_read));
+    assert!(!delta
+        .required
+        .capabilities
+        .iter()
+        .filter_map(|key| cgs.get_capability(key.capability.as_str()))
+        .any(crate::CapabilitySchema::is_remote_mutation));
+}
+
+#[test]
 fn intent_surface_ranked_admits_seeded_mutator_at_zero_score() {
     let dir =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix");

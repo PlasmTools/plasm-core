@@ -1,7 +1,7 @@
 //! CGS-derived **evaluates-to** hints for teaching table `;;` comments (`=> [e#]` / `e#` / `=> ()`), not mixed into the expression.
 //! Relation navigation lines use the same shape: `expr  ;;  => e#` or `=> [e#]` (see [`result_gloss_for_relation_nav`]).
 
-use crate::schema::{CapabilityKind, CapabilitySchema, CGS};
+use crate::schema::{CapabilityKind, CapabilitySchema, OutputType, CGS};
 
 /// Canonical or symbolic entity name for gloss text (string is the serialization boundary).
 pub fn entity_sym_for_gloss(map: Option<&crate::symbol_tuning::SymbolMap>, entity: &str) -> String {
@@ -22,6 +22,18 @@ pub fn result_gloss_for_capability(
             return Some(collection_gloss(cap.domain.as_str(), map));
         }
         if resp.get("single").is_some() {
+            return Some(single_gloss(cap.domain.as_str(), map));
+        }
+    }
+
+    if cap.is_read() {
+        if matches!(
+            cap.output_schema.as_ref().map(|output| &output.output_type),
+            Some(OutputType::Collection { .. })
+        ) {
+            return Some(collection_gloss(cap.domain.as_str(), map));
+        }
+        if cap.kind == CapabilityKind::Action {
             return Some(single_gloss(cap.domain.as_str(), map));
         }
     }

@@ -169,6 +169,7 @@ mod tests {
             name: "thing_query".into(),
             description: String::new(),
             kind: CapabilityKind::Query,
+            effect: None,
             domain: "Thing".into(),
             identity_key: None,
             mapping: CapabilityMapping {
@@ -198,6 +199,7 @@ mod tests {
             name: "index_query".into(),
             description: String::new(),
             kind: CapabilityKind::Query,
+            effect: None,
             domain: "Thing".into(),
             identity_key: None,
             mapping: CapabilityMapping {

@@ -10,7 +10,7 @@ use crate::symbol_tuning::{
     registry_backed_compact_wire_label, CapabilityParamSurfaceFilter, ExposureCapabilityKey,
     ExposureEntityKey, SymbolMap, TeachingExposureSession,
 };
-use crate::{CapabilityKind, CGS};
+use crate::CGS;
 
 use super::{
     parse_trailing_projection_bracket, render_prompt_tsv_from_bundle,
@@ -390,10 +390,7 @@ pub(crate) fn render_mutator_recap_lines_for_caps(
         let Some(cap) = cgs.capabilities.get(cap_key.capability.as_str()) else {
             continue;
         };
-        if matches!(
-            cap.kind,
-            CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get
-        ) {
+        if cap.is_read() {
             continue;
         }
         let entity = cap_key.domain.as_str();

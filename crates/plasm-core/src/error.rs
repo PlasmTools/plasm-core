@@ -257,9 +257,24 @@ pub enum SchemaError {
     MultiSelectParamMissingAllowedValues { capability: String, param: String },
 
     #[error(
-        "Capability '{capability}' (entity '{entity}') is `kind: action` but has no modeled response: add non-empty `provides:` and/or `output:` with `type: side_effect` and a non-empty `description:` of what the operation changes, or model read-only HTTP as `get` + an entity"
+        "Capability '{capability}' (entity '{entity}') is `kind: action` but has no modeled response: add non-empty `provides:` and/or `output:`; mutations without an entity response use `type: side_effect` plus a non-empty change description, while a trusted RPC read uses `effect: read` plus a modeled response"
     )]
     ActionUntypedResponse { capability: String, entity: String },
+
+    #[error(
+        "Capability '{capability}': `effect: read` is valid only on `kind: action` (found `kind: {kind}`)"
+    )]
+    ReadEffectRequiresAction { capability: String, kind: String },
+
+    #[error(
+        "Capability '{capability}': `effect: read` cannot be combined with `output.type: side_effect`"
+    )]
+    ReadEffectWithSideEffectOutput { capability: String },
+
+    #[error(
+        "Capability '{capability}': `effect: read` cannot declare mutation sink parameter '{param}' (`sink_class` is mutation-only)"
+    )]
+    ReadEffectWithSinkParam { capability: String, param: String },
 
     #[error(
         "Capability '{capability}': `output.type: side_effect` requires non-empty `description:` (state what changes in the domain)"

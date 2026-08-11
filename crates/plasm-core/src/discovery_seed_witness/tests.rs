@@ -8,6 +8,11 @@ fn cap(id: &str, name: &str, kind: &str, score: u32) -> EntityCapabilityEvidence
         capability_id: id.into(),
         capability_name: name.into(),
         kind: kind.into(),
+        effect: match kind {
+            "Query" | "Search" | "Get" | "ReadAction" => crate::SemanticEffect::Read,
+            "Action" => crate::SemanticEffect::SideEffect,
+            _ => crate::SemanticEffect::Write,
+        },
         description: format!("{kind} {name}"),
         reason_codes: vec![],
         lexical_score: score,
@@ -491,6 +496,7 @@ fn corpus_stamps_attach_on_label_and_prune_drops_label_read() {
                 name: CapabilityName::from(name),
                 description: format!("Query {domain}"),
                 kind: CapabilityKind::Query,
+                effect: None,
                 domain: EntityName::from(domain),
                 mapping: CapabilityMapping {
                     template: CapabilityTemplateJson(serde_json::json!({ "method": "GET" })),
@@ -676,6 +682,7 @@ fn corpus_stamps_own_pair_on_both_ends_of_own_edge() {
                 name: CapabilityName::from(name),
                 description: format!("Query {domain}"),
                 kind: CapabilityKind::Query,
+                effect: None,
                 domain: EntityName::from(domain),
                 mapping: CapabilityMapping {
                     template: CapabilityTemplateJson(serde_json::json!({ "method": "GET" })),

@@ -331,6 +331,7 @@ mod tests {
                 name: CapabilityName::from("create_pull_request"),
                 description: "Open a pull request.".into(),
                 kind: CapabilityKind::Create,
+                effect: None,
                 domain: EntityName::from("PullRequest"),
                 mapping: CapabilityMapping {
                     template: CapabilityTemplateJson(serde_json::json!({ "method": "POST" })),

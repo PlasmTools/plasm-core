@@ -340,7 +340,7 @@ fn materialize_plan(
             let kinds: Vec<&str> = bundle
                 .capabilities
                 .iter()
-                .map(|c| c.kind.as_str())
+                .map(|capability| capability.witness_kind())
                 .collect();
             parts.push(format!(
                 "{}.{} ops=[{}]",

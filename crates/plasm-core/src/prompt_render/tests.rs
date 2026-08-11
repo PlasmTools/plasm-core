@@ -2619,6 +2619,7 @@ fn prompt_stats_fixture_cgs() -> CGS {
             name: name.into(),
             description: String::new(),
             kind: CapabilityKind::Query,
+            effect: None,
             domain: domain.into(),
             identity_key: None,
             mapping: CapabilityMapping {
@@ -2740,6 +2741,7 @@ fn p_slot_redefinition_fixture_cgs(id_desc_a: &str, id_desc_b: &str) -> CGS {
             name: cap_name.into(),
             description: String::new(),
             kind: CapabilityKind::Get,
+            effect: None,
             domain: name.into(),
             identity_key: None,
             mapping: CapabilityMapping {

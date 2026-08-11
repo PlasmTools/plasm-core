@@ -304,6 +304,7 @@ mod tests {
             name: CapabilityName::from("repo_branch_create"),
             description: String::new(),
             kind: CapabilityKind::Query,
+            effect: None,
             domain: EntityName::from("Repository"),
             identity_key: None,
             mapping: CapabilityMapping {

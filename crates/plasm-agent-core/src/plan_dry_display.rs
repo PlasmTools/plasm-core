@@ -131,6 +131,7 @@ pub struct PlanDryStep {
 pub enum PlanDryOp {
     Surface {
         kind: PlanNodeKind,
+        effect_class: EffectClass,
         expr: String,
     },
     Project {
@@ -308,11 +309,14 @@ pub fn render_plan_dry_compact_text(
 /// Operator-facing step title for synthetic IR nodes (not tuned `r1`/`c2` labels).
 pub(crate) fn human_ux_headline_for_op(op: &PlanDryOp) -> String {
     match op {
-        PlanDryOp::Surface { kind, .. } => match kind {
+        PlanDryOp::Surface {
+            kind, effect_class, ..
+        } => match kind {
             PlanNodeKind::Query | PlanNodeKind::Search | PlanNodeKind::Get => "Read list".into(),
             PlanNodeKind::Create => "Create".into(),
             PlanNodeKind::Update => "Update".into(),
             PlanNodeKind::Delete => "Delete".into(),
+            PlanNodeKind::Action if *effect_class == EffectClass::Read => "Read".into(),
             PlanNodeKind::Action => "Write".into(),
             _ => render_kind(*kind).to_string(),
         },
@@ -352,13 +356,20 @@ pub(crate) fn human_ux_summary_for_op(op: &PlanDryOp) -> String {
         }
         PlanDryOp::Filter { .. } => "Filter rows".into(),
         PlanDryOp::Project { fields } => format!("Fields: {}", fields.join(", ")),
-        PlanDryOp::Surface { kind, expr } => match kind {
+        PlanDryOp::Surface {
+            kind,
+            effect_class,
+            expr,
+        } => match kind {
             PlanNodeKind::Search => format!("Search · {expr}"),
             PlanNodeKind::Get => format!("Get · {expr}"),
             PlanNodeKind::Query => format!("Read · {expr}"),
             PlanNodeKind::Create => format!("Create · {expr}"),
             PlanNodeKind::Update => format!("Update · {expr}"),
             PlanNodeKind::Delete => format!("Delete · {expr}"),
+            PlanNodeKind::Action if *effect_class == EffectClass::Read => {
+                format!("Read · {expr}")
+            }
             PlanNodeKind::Action => format!("Write · {expr}"),
             _ => format!("{} · {expr}", render_kind(*kind)),
         },
@@ -390,7 +401,12 @@ pub(crate) fn human_ux_summary_for_op(op: &PlanDryOp) -> String {
 
 pub(crate) fn render_plan_dry_op(op: &PlanDryOp) -> String {
     match op {
-        PlanDryOp::Surface { kind, expr } => format!("{} {expr}", render_kind(*kind)),
+        PlanDryOp::Surface {
+            kind: PlanNodeKind::Action,
+            effect_class: EffectClass::Read,
+            expr,
+        } => format!("read {expr}"),
+        PlanDryOp::Surface { kind, expr, .. } => format!("{} {expr}", render_kind(*kind)),
         PlanDryOp::Project { fields } => format!("project {}", fields.join(", ")),
         PlanDryOp::Filter { predicates } => format!("filter {}", predicates.join(", ")),
         PlanDryOp::GroupBy { keys, aggregates } => {
@@ -441,6 +457,7 @@ fn compact_op_from_node(
     match node {
         ValidatedPlanNode::Surface(s) => PlanDryOp::Surface {
             kind: s.kind,
+            effect_class: s.effect_class,
             expr: surface_compact_expr(s, es),
         },
         ValidatedPlanNode::Data(n) => PlanDryOp::Data {
@@ -933,6 +950,18 @@ mod tests {
             }
         );
         assert_eq!(render_plan_dry_op(&op), "project identifier, title");
+    }
+
+    #[test]
+    fn read_action_is_presented_as_read_not_write() {
+        let op = PlanDryOp::Surface {
+            kind: PlanNodeKind::Action,
+            effect_class: EffectClass::Read,
+            expr: "e1.m1()".into(),
+        };
+        assert_eq!(render_plan_dry_op(&op), "read e1.m1()");
+        assert_eq!(human_ux_headline_for_op(&op), "Read");
+        assert_eq!(human_ux_summary_for_op(&op), "Read · e1.m1()");
     }
 
     #[test]

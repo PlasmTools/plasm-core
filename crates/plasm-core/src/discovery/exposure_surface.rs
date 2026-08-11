@@ -166,15 +166,14 @@ pub fn derive_intent_exposure_surface_batch(
             ) {
                 true
             } else {
-                match cap.kind {
-                    CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get => {
-                        score > 0
-                    }
-                    _ => seeded_mutating_capability_admitted(
+                if cap.is_read() {
+                    score > 0
+                } else {
+                    seeded_mutating_capability_admitted(
                         score,
                         ranked_capability_names,
                         cap.name.as_str(),
-                    ),
+                    )
                 }
             };
             if !include {
@@ -198,10 +197,7 @@ pub fn derive_intent_exposure_surface_batch(
                 }
             }
 
-            if matches!(
-                cap.kind,
-                CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get
-            ) {
+            if cap.is_read() {
                 for fk in fields_for_admitted_read_cap(cgs, cap, ename) {
                     surface.slots.insert(ExposureSlotKey::EntityField {
                         entity: ekey.clone(),
@@ -254,13 +250,7 @@ pub fn derive_intent_exposure_surface_batch(
                 let Some(cap) = cgs.capabilities.get(cap_name) else {
                     continue;
                 };
-                if !matches!(
-                    cap.kind,
-                    CapabilityKind::Create
-                        | CapabilityKind::Update
-                        | CapabilityKind::Delete
-                        | CapabilityKind::Action
-                ) {
+                if !cap.is_remote_mutation() {
                     continue;
                 }
                 let score = bm25.capability_score(cid.as_str(), cap.name.as_str(), intent);
@@ -299,13 +289,11 @@ pub fn derive_intent_exposure_surface_batch(
                 let Some(cap) = cgs.capabilities.get(cap_name) else {
                     continue;
                 };
-                let is_read = matches!(
-                    cap.kind,
-                    CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get
-                ) || target_ent
-                    .primary_read
-                    .as_deref()
-                    .is_some_and(|pr| pr == cap.name.as_str());
+                let is_read = cap.is_read()
+                    || target_ent
+                        .primary_read
+                        .as_deref()
+                        .is_some_and(|pr| pr == cap.name.as_str());
                 if !is_read {
                     continue;
                 }
@@ -315,10 +303,7 @@ pub fn derive_intent_exposure_surface_batch(
                     capability: cap.name.clone(),
                 };
                 surface.capabilities.insert(ckey);
-                if matches!(
-                    cap.kind,
-                    CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get
-                ) {
+                if cap.is_read() {
                     for fk in fields_for_admitted_read_cap(cgs, cap, target) {
                         surface.slots.insert(ExposureSlotKey::EntityField {
                             entity: tkey.clone(),
@@ -370,13 +355,7 @@ pub fn relation_target_deferred_mutator_wires(
                 let Some(cap) = cgs.capabilities.get(cap_name) else {
                     continue;
                 };
-                if !matches!(
-                    cap.kind,
-                    CapabilityKind::Create
-                        | CapabilityKind::Update
-                        | CapabilityKind::Delete
-                        | CapabilityKind::Action
-                ) {
+                if !cap.is_remote_mutation() {
                     continue;
                 }
                 let score = bm25.capability_score(cid.as_str(), cap.name.as_str(), intent);

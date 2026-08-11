@@ -21,7 +21,7 @@ pub(in crate::plasm_dag) fn infer_surface_contract(
         );
     }
 
-    let (mut kind, entity, effect, shape) = infer_surface_contract_from_expr(expr)?;
+    let (mut kind, entity, mut effect, mut shape) = infer_surface_contract_from_expr(expr)?;
     let qe = if matches!(shape, crate::plasm_plan::ResultShape::Page) {
         if let Some(qe) = expr.qualified_entity_key() {
             QualifiedEntityKey::from(qe)
@@ -80,8 +80,62 @@ pub(in crate::plasm_dag) fn infer_surface_contract(
                 }
             }
         }
+    } else if let Expr::Invoke(invoke) = expr {
+        let resolving_cgs = cgs_for_qualified_entity(session, &qe).ok_or_else(|| {
+            format!(
+                "catalog `{}` is not loaded for entity `{}`",
+                qe.entry_id, qe.entity
+            )
+        })?;
+        let cap = resolving_cgs
+            .get_capability(invoke.capability.as_str())
+            .ok_or_else(|| format!("unknown action capability `{}`", invoke.capability))?;
+        (effect, shape) = invoke_effect_and_shape(cap)?;
     }
     Ok((kind, qe, effect, shape))
+}
+
+fn invoke_effect_and_shape(
+    cap: &CapabilitySchema,
+) -> Result<(EffectClass, crate::plasm_plan::ResultShape), String> {
+    if cap.effect == Some(plasm_core::CapabilityEffect::Read)
+        && cap.output_schema.as_ref().is_some_and(|output| {
+            matches!(
+                &output.output_type,
+                plasm_core::OutputType::SideEffect { .. }
+            )
+        })
+    {
+        return Err(format!(
+            "capability `{}` cannot combine a read effect with side-effect output",
+            cap.name
+        ));
+    }
+    let effect = EffectClass::from(cap.effective_effect());
+    if effect != EffectClass::Read {
+        return Ok((effect, crate::plasm_plan::ResultShape::SideEffectAck));
+    }
+
+    let shape = match cap.output_schema.as_ref().map(|output| &output.output_type) {
+        Some(plasm_core::OutputType::Entity { .. })
+        | Some(plasm_core::OutputType::Custom { .. })
+        | Some(plasm_core::OutputType::Status { .. }) => crate::plasm_plan::ResultShape::Single,
+        Some(plasm_core::OutputType::Collection { .. }) => crate::plasm_plan::ResultShape::List,
+        Some(plasm_core::OutputType::SideEffect { .. }) => {
+            return Err(format!(
+                "capability `{}` cannot combine a read effect with side-effect output",
+                cap.name
+            ));
+        }
+        None if !cap.provides.is_empty() => crate::plasm_plan::ResultShape::Single,
+        None => {
+            return Err(format!(
+                "action capability `{}` has no modeled response",
+                cap.name
+            ));
+        }
+    };
+    Ok((effect, shape))
 }
 
 pub(in crate::plasm_dag) fn infer_surface_contract_from_expr(
@@ -223,6 +277,99 @@ pub(in crate::plasm_dag) fn single_unknown_schema(entity: &str) -> SyntheticResu
             value_kind: SyntheticValueKind::Unknown,
             source: None,
         }],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use plasm_core::{CapabilityEffect, OutputSchema, OutputType, SemanticEffect};
+
+    fn read_action(output_type: Option<OutputType>, provides: bool) -> CapabilitySchema {
+        let mut cap = CapabilitySchema::minimal_test();
+        cap.effect = Some(CapabilityEffect::Read);
+        cap.provides = provides.then(|| vec!["id".into()]).unwrap_or_default();
+        cap.output_schema = output_type.map(|output_type| OutputSchema {
+            output_type,
+            decoder: serde_json::json!({}),
+            idempotent: false,
+            reconcile: None,
+        });
+        cap
+    }
+
+    #[test]
+    fn read_action_effect_and_output_matrix_lower_without_ack_shape() {
+        let single_outputs = [
+            OutputType::Entity {
+                entity_type: "TestEntity".into(),
+            },
+            OutputType::Custom {
+                schema: serde_json::json!({"type": "array"}),
+            },
+            OutputType::Status {
+                success_indicators: vec!["ok".into()],
+            },
+        ];
+        for output in single_outputs {
+            assert_eq!(
+                invoke_effect_and_shape(&read_action(Some(output), false)).expect("lower"),
+                (EffectClass::Read, crate::plasm_plan::ResultShape::Single)
+            );
+        }
+        assert_eq!(
+            invoke_effect_and_shape(&read_action(
+                Some(OutputType::Collection {
+                    entity_type: "TestEntity".into(),
+                    max_count: None,
+                }),
+                false,
+            ))
+            .expect("lower collection"),
+            (EffectClass::Read, crate::plasm_plan::ResultShape::List)
+        );
+        assert_eq!(
+            invoke_effect_and_shape(&read_action(None, true)).expect("lower provides-only"),
+            (EffectClass::Read, crate::plasm_plan::ResultShape::Single)
+        );
+        assert!(invoke_effect_and_shape(&read_action(None, false)).is_err());
+        assert!(invoke_effect_and_shape(&read_action(
+            Some(OutputType::SideEffect {
+                description: "changes state".into(),
+            }),
+            false,
+        ))
+        .is_err());
+
+        let default_action = CapabilitySchema::minimal_test();
+        assert_eq!(
+            invoke_effect_and_shape(&default_action).expect("default action"),
+            (
+                EffectClass::SideEffect,
+                crate::plasm_plan::ResultShape::SideEffectAck
+            )
+        );
+
+        for (semantic, expected, expected_core) in [
+            (
+                SemanticEffect::Read,
+                EffectClass::Read,
+                plasm_core::EffectClass::Read,
+            ),
+            (
+                SemanticEffect::Write,
+                EffectClass::Write,
+                plasm_core::EffectClass::Write,
+            ),
+            (
+                SemanticEffect::SideEffect,
+                EffectClass::SideEffect,
+                plasm_core::EffectClass::SideEffect,
+            ),
+        ] {
+            assert_eq!(EffectClass::from(semantic), expected);
+            assert_eq!(plasm_core::EffectClass::from(semantic), expected_core);
+        }
     }
 }
 

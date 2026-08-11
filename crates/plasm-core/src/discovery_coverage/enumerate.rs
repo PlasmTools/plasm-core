@@ -163,6 +163,7 @@ fn capability_evidence(
         capability_id: format!("{entry_id}:{entity}:{}", cap.name),
         capability_name: cap.name.to_string(),
         kind: format!("{:?}", cap.kind),
+        effect: cap.effective_effect(),
         description: cap.description.clone(),
         reason_codes: Vec::new(),
         lexical_score,
@@ -550,19 +551,22 @@ fn bundle_has_read_kind(bundle: &EntityCandidateBundle) -> bool {
     bundle
         .capabilities
         .iter()
-        .any(|cap| matches!(cap.kind.as_str(), "Query" | "Search" | "Get"))
+        .any(EntityCapabilityEvidence::is_read)
 }
 
 fn bundle_has_kind(bundle: &EntityCandidateBundle, kind: CapabilityKind) -> bool {
     let label = format!("{kind:?}");
-    bundle.capabilities.iter().any(|cap| cap.kind == label)
+    bundle
+        .capabilities
+        .iter()
+        .any(|cap| cap.kind == label && cap.is_remote_mutation())
 }
 
 fn bundle_has_mutation_kind(bundle: &EntityCandidateBundle) -> bool {
     bundle
         .capabilities
         .iter()
-        .any(|cap| matches!(cap.kind.as_str(), "Create" | "Update" | "Delete" | "Action"))
+        .any(EntityCapabilityEvidence::is_remote_mutation)
 }
 
 fn entity_matches_hint(entity: &str, hint: &str) -> bool {

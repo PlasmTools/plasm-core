@@ -3,7 +3,7 @@
 //! Seeded mutators under [`MutatorAdmit::IntentOnly`]: BM25 score > 0 **or** ranked wire boost.
 //! Non-seeded relation-target mutators: score required; ranked is a whitelist when non-empty.
 
-use crate::schema::{CapabilityKind, CapabilitySchema, EntityDef};
+use crate::schema::{CapabilitySchema, EntityDef};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -100,10 +100,7 @@ pub(crate) fn seeded_entity_cap_always_includes(
     if cap.domain.as_str() != entity_name || !seeded_entities.contains(entity_name) {
         return false;
     }
-    if matches!(
-        cap.kind,
-        CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get
-    ) {
+    if cap.is_read() {
         return true;
     }
     if ent
@@ -113,12 +110,5 @@ pub(crate) fn seeded_entity_cap_always_includes(
     {
         return true;
     }
-    matches!(mutator_admit, MutatorAdmit::AlwaysOnSeeds)
-        && matches!(
-            cap.kind,
-            CapabilityKind::Create
-                | CapabilityKind::Update
-                | CapabilityKind::Delete
-                | CapabilityKind::Action
-        )
+    matches!(mutator_admit, MutatorAdmit::AlwaysOnSeeds) && cap.is_remote_mutation()
 }

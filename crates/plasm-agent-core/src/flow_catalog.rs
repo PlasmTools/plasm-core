@@ -2,7 +2,9 @@
 
 use crate::plan_flow::{QualifiedCapabilityKey, SinkParamRef};
 use plasm_core::schema::ViewDefinition;
-use plasm_core::{flow_control_param_names, CapabilityKind, CapabilitySchema, DataClassName, CGS};
+use plasm_core::{
+    flow_control_param_names, CapabilityKind, CapabilitySchema, DataClassName, SemanticEffect, CGS,
+};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -15,6 +17,7 @@ pub struct CatalogPin<'a> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CapabilityWorkflowMeta {
     pub kind: CapabilityKind,
+    pub effect: SemanticEffect,
     pub identity_key: Option<Vec<String>>,
     pub idempotent: bool,
 }
@@ -156,22 +159,13 @@ fn ingest_capability(
     let key = QualifiedCapabilityKey::from_parts(entry_id, entity_name, cap_name);
 
     let idempotent = cap.output_schema.as_ref().is_some_and(|o| o.idempotent);
-    let is_mutator = matches!(
-        cap.kind,
-        CapabilityKind::Create
-            | CapabilityKind::Update
-            | CapabilityKind::Delete
-            | CapabilityKind::Action
-    );
-    let is_read = matches!(
-        cap.kind,
-        CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get
-    );
-    if is_mutator || is_read || cap.identity_key.is_some() || idempotent {
+    let effect = cap.effective_effect();
+    if cap.is_remote_mutation() || cap.is_read() || cap.identity_key.is_some() || idempotent {
         view.capability_workflow.insert(
             key.clone(),
             CapabilityWorkflowMeta {
                 kind: cap.kind,
+                effect,
                 identity_key: cap.identity_key.clone(),
                 idempotent,
             },

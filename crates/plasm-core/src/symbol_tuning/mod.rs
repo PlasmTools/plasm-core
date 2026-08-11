@@ -4639,6 +4639,7 @@ mod tests {
             name: "widget_get".into(),
             description: String::new(),
             kind: CapabilityKind::Get,
+            effect: None,
             domain: "Widget".into(),
             identity_key: None,
             mapping: CapabilityMapping {

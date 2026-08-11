@@ -351,6 +351,9 @@ pub fn build_catalog_seed_index(entry_id: &str, cgs: &CGS) -> CatalogSeedIndex {
             CapabilityKind::Delete,
         ] {
             for cap in cgs.find_capabilities(entity_name.as_str(), kind) {
+                if !cap.is_remote_mutation() {
+                    continue;
+                }
                 caps.push(CatalogCapabilityMeta {
                     name: cap.name.to_string(),
                     kind: cap.kind,

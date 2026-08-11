@@ -15,6 +15,8 @@ pub struct EntityCapabilityEvidence {
     pub capability_id: String,
     pub capability_name: String,
     pub kind: String,
+    #[serde(default = "default_evidence_effect")]
+    pub effect: crate::SemanticEffect,
     pub description: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reason_codes: Vec<String>,
@@ -22,6 +24,31 @@ pub struct EntityCapabilityEvidence {
 }
 
 use crate::discovery_candidate_graph::TypedCandidateGraph;
+
+fn default_evidence_effect() -> crate::SemanticEffect {
+    crate::SemanticEffect::SideEffect
+}
+
+impl EntityCapabilityEvidence {
+    pub fn is_read(&self) -> bool {
+        self.effect == crate::SemanticEffect::Read
+    }
+
+    pub fn is_remote_mutation(&self) -> bool {
+        matches!(
+            self.effect,
+            crate::SemanticEffect::Write | crate::SemanticEffect::SideEffect
+        )
+    }
+
+    pub(crate) fn witness_kind(&self) -> &str {
+        if self.kind == "Action" && self.is_read() {
+            "ReadAction"
+        } else {
+            self.kind.as_str()
+        }
+    }
+}
 
 /// One entity-level candidate for seed-set selection.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

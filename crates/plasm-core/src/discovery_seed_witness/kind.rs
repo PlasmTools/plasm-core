@@ -16,6 +16,11 @@ pub enum CapBucket {
 impl CapBucket {
     /// Parse witness / evidence kind strings (`Query`, `query`, …) via [`CapabilityKind`].
     pub fn parse(kind: &str) -> Self {
+        if kind.trim().eq_ignore_ascii_case("read_action")
+            || kind.trim().eq_ignore_ascii_case("readaction")
+        {
+            return Self::Read;
+        }
         match parse_capability_kind(kind) {
             Some(CapabilityKind::Query)
             | Some(CapabilityKind::Search)
@@ -59,6 +64,11 @@ impl CapBucket {
 
     /// Lexical bias when picking a parent read Direct among Query/Search/Get.
     pub fn read_rank(kind: &str) -> u32 {
+        if kind.trim().eq_ignore_ascii_case("read_action")
+            || kind.trim().eq_ignore_ascii_case("readaction")
+        {
+            return 10;
+        }
         match parse_capability_kind(kind) {
             Some(CapabilityKind::Query) => 30,
             Some(CapabilityKind::Search) => 20,

@@ -92,6 +92,16 @@ impl ExecutionEngine {
                         let Some(cap) = cgs.get_capability(&cap_name) else {
                             continue;
                         };
+                        // Defense in depth: projection hydration is outside the agent plan gate and
+                        // therefore may invoke only catalog-classified reads.
+                        if !cap.is_read() {
+                            tracing::error!(
+                                target: "plasm_runtime::projection",
+                                capability = cap_name.as_str(),
+                                "refusing non-read projection provider"
+                            );
+                            continue;
+                        }
 
                         // Deduplicate IDs
                         let mut unique_ids = ids;

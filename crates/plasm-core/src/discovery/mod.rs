@@ -1443,6 +1443,7 @@ mod tests {
             name: CapabilityName::from("thread_list"),
             description: "List mailbox threads.".into(),
             kind: CapabilityKind::Query,
+            effect: None,
             domain: EntityName::from("Thread"),
             mapping: CapabilityMapping {
                 template: CapabilityTemplateJson(serde_json::json!({ "method": "GET" })),

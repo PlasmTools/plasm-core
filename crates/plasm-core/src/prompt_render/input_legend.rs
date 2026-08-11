@@ -30,12 +30,22 @@ impl ReturnArrow {
 
     /// Classify the return shape from the domain-line kind and result gloss.
     ///
-    /// Writes (`Method`) are terminal regardless of gloss (`e#` provides slice or `()`). Query /
-    /// search are lists. Everything else falls back to gloss shape (`[…]` list vs single).
+    /// Method rows default to terminal writes. [`Self::classify_with_effect`] exempts trusted
+    /// read-actions and derives their chainable shape from the result gloss. Query/search are lists.
     pub fn classify(kind: crate::prompt_render::DomainLineKind, gloss: &str) -> Self {
+        Self::classify_with_effect(kind, gloss, None)
+    }
+
+    /// Classify a row with the capability's derived effect when the row is method-shaped.
+    /// Read-actions remain invoke methods for dispatch but have chainable read result glyphs.
+    pub fn classify_with_effect(
+        kind: crate::prompt_render::DomainLineKind,
+        gloss: &str,
+        effect: Option<crate::SemanticEffect>,
+    ) -> Self {
         use crate::prompt_render::DomainLineKind as K;
         match kind {
-            K::Method => ReturnArrow::Terminal,
+            K::Method if effect != Some(crate::SemanticEffect::Read) => ReturnArrow::Terminal,
             K::Query | K::Search => ReturnArrow::List,
             _ if gloss.trim_start().starts_with('[') => ReturnArrow::List,
             _ => ReturnArrow::Single,

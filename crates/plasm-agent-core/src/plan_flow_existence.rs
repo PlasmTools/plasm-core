@@ -9,7 +9,7 @@ use crate::plasm_plan::{
 };
 use plasm_core::schema::{ViewDefinition, ViewNodeSpec};
 use plasm_core::{
-    schema::CapabilityKind, CompOp, EntityKey, Expr, Predicate, TypedComparisonValue, Value,
+    CompOp, EntityKey, Expr, Predicate, SemanticEffect, TypedComparisonValue, Value,
     ViewNodeCondition, ViewNodeWhen,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -91,11 +91,14 @@ pub fn check_view_existence_flow(
             }
             continue;
         };
-        if is_read_kind(meta.kind) {
+        if meta.effect == SemanticEffect::Read {
             prior_read_nodes.insert(node.id.clone());
             continue;
         }
-        if !is_mutator_kind(meta.kind) {
+        if !matches!(
+            meta.effect,
+            SemanticEffect::Write | SemanticEffect::SideEffect
+        ) {
             continue;
         }
         if meta.idempotent || view_node_guarded_by_when(node, &prior_read_nodes) {
@@ -134,7 +137,7 @@ fn is_read_capability_name(
         .capability_workflow_meta(&QualifiedCapabilityKey::from_parts(
             entry_id, entity, capability,
         ))
-        .is_some_and(|m| is_read_kind(m.kind))
+        .is_some_and(|m| m.effect == SemanticEffect::Read)
 }
 
 fn guarded_ok() -> ExistenceCheckOutcome {
@@ -401,23 +404,6 @@ fn identity_binding_from_value(v: &serde_json::Value) -> Option<IdentityBinding>
         }
     }
     None
-}
-
-fn is_read_kind(kind: CapabilityKind) -> bool {
-    matches!(
-        kind,
-        CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get
-    )
-}
-
-fn is_mutator_kind(kind: CapabilityKind) -> bool {
-    matches!(
-        kind,
-        CapabilityKind::Create
-            | CapabilityKind::Update
-            | CapabilityKind::Delete
-            | CapabilityKind::Action
-    )
 }
 
 pub(crate) fn apply_unguarded_mutation_review(

@@ -813,6 +813,9 @@ pub struct CapabilitySchema {
     #[serde(default)]
     pub description: String,
     pub kind: CapabilityKind,
+    /// Trusted catalog attestation that an RPC-shaped action is read-only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect: Option<CapabilityEffect>,
     pub domain: EntityName, // Entity this capability operates on
     pub mapping: CapabilityMapping,
     /// Input schema for invoke capabilities (optional for query/get)
@@ -894,6 +897,25 @@ impl std::fmt::Display for CapabilityKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
     }
+}
+
+/// Catalog-authorable effect attestation.
+///
+/// Only read-only actions may declare this today. Mutating actions retain their safe default
+/// without an authorable `write` spelling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityEffect {
+    Read,
+}
+
+/// Derived semantic effect used by core classifiers and converted exhaustively by plan layers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SemanticEffect {
+    Read,
+    Write,
+    SideEffect,
 }
 
 /// Semantic role of a capability parameter.
@@ -3021,9 +3043,8 @@ impl CGS {
         if !self.workflow_identity {
             return Ok(());
         }
-        use CapabilityKind::{Action, Create, Delete, Update};
         for (cap_name, cap) in &self.capabilities {
-            let is_mutator = matches!(cap.kind, Create | Update | Delete | Action);
+            let is_mutator = cap.is_remote_mutation();
             if !is_mutator {
                 continue;
             }
@@ -3395,6 +3416,33 @@ impl CGS {
                             domain_entity,
                         )?;
                     }
+                }
+            }
+        }
+
+        // Validate effect attestations before any classifier consumes them. `effect: read` is a
+        // deliberately narrow trust boundary: only actions may carry it, and a side-effect output
+        // would directly contradict it.
+        for (cap_name, cap) in &self.capabilities {
+            if cap.effect == Some(CapabilityEffect::Read) {
+                if cap.kind != CapabilityKind::Action {
+                    return Err(SchemaError::ReadEffectRequiresAction {
+                        capability: cap_name.to_string(),
+                        kind: cap.kind.to_string(),
+                    });
+                }
+                if cap.output_schema.as_ref().is_some_and(|output| {
+                    matches!(&output.output_type, OutputType::SideEffect { .. })
+                }) {
+                    return Err(SchemaError::ReadEffectWithSideEffectOutput {
+                        capability: cap_name.to_string(),
+                    });
+                }
+                if let Some(param) = self.capability_sink_params(cap).first() {
+                    return Err(SchemaError::ReadEffectWithSinkParam {
+                        capability: cap_name.to_string(),
+                        param: param.name.clone(),
+                    });
                 }
             }
         }
@@ -5370,24 +5418,25 @@ impl CGS {
     /// Used by the runtime's auto-resolution path: when a projection requests a field that
     /// is absent from the cache, the engine looks up which capability to invoke.
     ///
-    /// Result: `field_name → Vec<capability_name>` in priority order:
-    /// `Get` first (most specific), then `Action`, then `Query`/`Search` (least specific).
+    /// Result: `field_name → Vec<capability_name>` in priority order. Automatic hydration is a
+    /// read path: default actions and all write capabilities are excluded even when they declare
+    /// `provides`.
     pub fn field_providers(&self, entity: &str) -> IndexMap<String, Vec<String>> {
         let mut index: IndexMap<String, Vec<String>> = IndexMap::new();
 
-        // Priority ordering: Get > Action > Query/Search (so the most specific provider
-        // is tried first when multiple capabilities cover the same field).
+        // Keep Gets first, then trusted read-actions, then list reads.
         let priority_order = [
             CapabilityKind::Get,
             CapabilityKind::Action,
-            CapabilityKind::Create,
-            CapabilityKind::Update,
             CapabilityKind::Query,
             CapabilityKind::Search,
         ];
 
         for kind in priority_order {
             for cap in self.find_capabilities(entity, kind) {
+                if !cap.is_read() {
+                    continue;
+                }
                 let provided = self.effective_provides(cap);
                 if provided.is_empty() {
                     continue;
@@ -5403,6 +5452,44 @@ impl CGS {
 }
 
 impl CapabilitySchema {
+    /// Derive the capability's semantic effect using the catalog precedence rules.
+    ///
+    /// Loader validation rejects incoherent declarations before this is consumed. Keeping this
+    /// method total also makes hand-built test schemas fail closed: only an action carrying the
+    /// trusted `read` attestation is treated as a read action.
+    pub fn effective_effect(&self) -> SemanticEffect {
+        if self
+            .output_schema
+            .as_ref()
+            .is_some_and(|output| matches!(&output.output_type, OutputType::SideEffect { .. }))
+        {
+            return SemanticEffect::SideEffect;
+        }
+        match (self.kind, self.effect) {
+            (CapabilityKind::Action, Some(CapabilityEffect::Read)) => SemanticEffect::Read,
+            (CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get, _) => {
+                SemanticEffect::Read
+            }
+            (CapabilityKind::Create | CapabilityKind::Update | CapabilityKind::Delete, _) => {
+                SemanticEffect::Write
+            }
+            (CapabilityKind::Action, _) => SemanticEffect::SideEffect,
+        }
+    }
+
+    #[inline]
+    pub fn is_read(&self) -> bool {
+        self.effective_effect() == SemanticEffect::Read
+    }
+
+    #[inline]
+    pub fn is_remote_mutation(&self) -> bool {
+        matches!(
+            self.effective_effect(),
+            SemanticEffect::Write | SemanticEffect::SideEffect
+        )
+    }
+
     /// Whether this capability is a deterministic transform (default true when unset).
     pub fn is_deterministic(&self) -> bool {
         self.deterministic.unwrap_or(true)
@@ -5458,6 +5545,7 @@ impl CapabilitySchema {
             name: CapabilityName::from("test_cap"),
             description: String::new(),
             kind: CapabilityKind::Action,
+            effect: None,
             domain: EntityName::from("TestEntity"),
             mapping: CapabilityMapping {
                 template: CapabilityTemplateJson(serde_json::json!({ "method": "POST" })),
@@ -5536,6 +5624,72 @@ pub mod registry_test_util {
             wire_json_path: None,
             wire_array_element_key: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod capability_effect_tests {
+    use super::*;
+
+    fn capability(kind: CapabilityKind) -> CapabilitySchema {
+        CapabilitySchema {
+            kind,
+            ..CapabilitySchema::minimal_test()
+        }
+    }
+
+    #[test]
+    fn capability_effect_precedence_and_predicates_fail_closed() {
+        for kind in [
+            CapabilityKind::Query,
+            CapabilityKind::Search,
+            CapabilityKind::Get,
+        ] {
+            let cap = capability(kind);
+            assert_eq!(cap.effective_effect(), SemanticEffect::Read);
+            assert!(cap.is_read());
+            assert!(!cap.is_remote_mutation());
+        }
+        for kind in [
+            CapabilityKind::Create,
+            CapabilityKind::Update,
+            CapabilityKind::Delete,
+        ] {
+            let cap = capability(kind);
+            assert_eq!(cap.effective_effect(), SemanticEffect::Write);
+            assert!(!cap.is_read());
+            assert!(cap.is_remote_mutation());
+        }
+
+        let default_action = capability(CapabilityKind::Action);
+        assert_eq!(
+            default_action.effective_effect(),
+            SemanticEffect::SideEffect,
+            "an unattested action must retain the safe historical default"
+        );
+
+        let mut read_action = capability(CapabilityKind::Action);
+        read_action.effect = Some(CapabilityEffect::Read);
+        read_action.provides = vec!["id".into()];
+        assert_eq!(read_action.effective_effect(), SemanticEffect::Read);
+        assert!(read_action.is_read());
+        assert!(!read_action.is_remote_mutation());
+        let yaml = serde_yaml::to_string(&read_action).expect("serialize read action");
+        assert!(yaml.contains("effect: read"), "{yaml}");
+
+        read_action.output_schema = Some(OutputSchema {
+            output_type: OutputType::SideEffect {
+                description: "changes state".into(),
+            },
+            decoder: serde_json::json!({}),
+            idempotent: false,
+            reconcile: None,
+        });
+        assert_eq!(
+            read_action.effective_effect(),
+            SemanticEffect::SideEffect,
+            "side-effect output takes precedence even for a hand-built invalid schema"
+        );
     }
 }
 

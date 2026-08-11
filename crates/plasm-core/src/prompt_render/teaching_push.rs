@@ -171,10 +171,16 @@ pub(crate) fn try_push_teaching_example(
             relation_materialization: None,
         }
     };
-    // Classify the return-shape glyph from the validated domain-line kind (Method → terminal `↠`,
-    // query/search → list `↣`, else gloss shape). Relation-nav rows render their own `relation … →`
-    // atom verbatim, so the arrow only surfaces on plain `Returns` atoms.
-    teaching_line.arrow = super::ReturnArrow::classify(meta.kind, &teaching_line.result_type);
+    // Method shape controls dispatch, while the derived capability effect controls whether the
+    // result is a terminal write or a chainable read-action value.
+    let source_effect = source_capability
+        .and_then(|name| cgs.get_capability(name.as_str()))
+        .map(|cap| cap.effective_effect());
+    teaching_line.arrow = super::ReturnArrow::classify_with_effect(
+        meta.kind,
+        &teaching_line.result_type,
+        source_effect,
+    );
     teaching_rows.push(EntityTeachingExprRow {
         teaching_expr: teaching_line,
         meta,

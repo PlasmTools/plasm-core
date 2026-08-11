@@ -137,7 +137,7 @@ fn capability_kind_summary(bundle: &EntityCandidateBundle) -> String {
     let mut kinds: Vec<String> = bundle
         .capabilities
         .iter()
-        .map(|capability| capability.kind.clone())
+        .map(|capability| capability.witness_kind().to_string())
         .collect();
     kinds.sort_unstable();
     kinds.dedup();
@@ -164,6 +164,7 @@ mod tests {
                 capability_id: format!("{catalog}:{entity}:query"),
                 capability_name: "query".into(),
                 kind: "Query".into(),
+                effect: crate::SemanticEffect::Read,
                 description: String::new(),
                 reason_codes: vec![],
                 lexical_score: 1,

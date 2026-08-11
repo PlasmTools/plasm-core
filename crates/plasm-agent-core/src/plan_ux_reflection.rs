@@ -363,11 +363,15 @@ fn widget_for_node(
             crate::plan_dry_display::PlanDryOp::ForEach { .. } => PlanUxWidgetKind::ForEach,
             crate::plan_dry_display::PlanDryOp::Derive { .. } => PlanUxWidgetKind::Derive,
             crate::plan_dry_display::PlanDryOp::Data { .. } => PlanUxWidgetKind::Data,
-            crate::plan_dry_display::PlanDryOp::Surface { kind, .. } => match kind {
+            crate::plan_dry_display::PlanDryOp::Surface {
+                kind, effect_class, ..
+            } => match kind {
                 PlanNodeKind::Query | PlanNodeKind::Get | PlanNodeKind::Search => {
                     PlanUxWidgetKind::ReadSurface
                 }
-                PlanNodeKind::Action => PlanUxWidgetKind::ActionSurface,
+                PlanNodeKind::Action if *effect_class != EffectClass::Read => {
+                    PlanUxWidgetKind::ActionSurface
+                }
                 _ => PlanUxWidgetKind::ReadSurface,
             },
             _ => PlanUxWidgetKind::Compute,
@@ -375,7 +379,9 @@ fn widget_for_node(
     }
     match node {
         ValidatedPlanNode::Surface(s) => match s.kind {
-            PlanNodeKind::Action => PlanUxWidgetKind::ActionSurface,
+            PlanNodeKind::Action if s.effect_class != EffectClass::Read => {
+                PlanUxWidgetKind::ActionSurface
+            }
             _ => PlanUxWidgetKind::ReadSurface,
         },
         ValidatedPlanNode::RelationTraversal(_) => PlanUxWidgetKind::RelationHop,
@@ -501,12 +507,27 @@ mod tests {
     fn plan_ux_step_operation_is_human_not_debug() {
         let op = crate::plan_dry_display::PlanDryOp::Surface {
             kind: PlanNodeKind::Query,
+            effect_class: EffectClass::Read,
             expr: "e1.identifier".into(),
         };
         let rendered = crate::plan_dry_display::human_ux_summary_for_op(&op);
         assert!(rendered.contains("Read"));
         assert!(!rendered.contains("PlanDryOp"));
         assert!(!rendered.contains("Surface"));
+        let read_action = crate::plan_dry_display::PlanDryOp::Surface {
+            kind: PlanNodeKind::Action,
+            effect_class: EffectClass::Read,
+            expr: "e1.m1()".into(),
+        };
+        assert_eq!(
+            crate::plan_dry_display::human_ux_headline_for_op(&read_action),
+            "Read"
+        );
+        assert_eq!(
+            crate::plan_dry_display::human_ux_summary_for_op(&read_action),
+            "Read · e1.m1()"
+        );
+
         let filter = crate::plan_dry_display::PlanDryOp::Filter {
             predicates: vec!["cost<100".into()],
         };

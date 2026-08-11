@@ -325,6 +325,7 @@ mod tests {
             name: "pet_query".into(),
             description: String::new(),
             kind: CapabilityKind::Query,
+            effect: None,
             domain: "Pet".into(),
             identity_key: None,
             mapping: CapabilityMapping {
@@ -358,6 +359,7 @@ mod tests {
             name: "order_query".into(),
             description: String::new(),
             kind: CapabilityKind::Query,
+            effect: None,
             domain: "Order".into(),
             identity_key: None,
             mapping: CapabilityMapping {

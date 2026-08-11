@@ -867,6 +867,7 @@ mod tests {
             name: "query_accounts".into(),
             description: String::new(),
             kind: CapabilityKind::Query,
+            effect: None,
             domain: "Account".into(),
             identity_key: None,
             mapping: CapabilityMapping {
@@ -923,6 +924,7 @@ mod tests {
             name: "query_contacts".into(),
             description: String::new(),
             kind: CapabilityKind::Query,
+            effect: None,
             domain: "Contact".into(),
             identity_key: None,
             mapping: CapabilityMapping {
@@ -1170,6 +1172,7 @@ mod tests {
             name: "balance_get".into(),
             description: String::new(),
             kind: CapabilityKind::Get,
+            effect: None,
             domain: "Balance".into(),
             identity_key: None,
             mapping: CapabilityMapping {
@@ -1300,6 +1303,7 @@ mod tests {
             name: "order_get".into(),
             description: String::new(),
             kind: CapabilityKind::Get,
+            effect: None,
             domain: "Order".into(),
             identity_key: None,
             mapping: CapabilityMapping {
@@ -1323,6 +1327,7 @@ mod tests {
             name: "pet_get".into(),
             description: String::new(),
             kind: CapabilityKind::Get,
+            effect: None,
             domain: "Pet".into(),
             identity_key: None,
             mapping: CapabilityMapping {
@@ -1369,6 +1374,7 @@ mod tests {
             name: "order_query".into(),
             description: String::new(),
             kind: CapabilityKind::Query,
+            effect: None,
             domain: "Order".into(),
             identity_key: None,
             mapping: CapabilityMapping {

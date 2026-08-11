@@ -4140,6 +4140,7 @@ mod tests {
             name: "document_get".into(),
             description: String::new(),
             kind: CapabilityKind::Get,
+            effect: None,
             domain: "Document".into(),
             identity_key: None,
             mapping: CapabilityMapping {
@@ -4167,6 +4168,7 @@ mod tests {
             name: "document_suggest".into(),
             description: String::new(),
             kind: CapabilityKind::Action,
+            effect: None,
             domain: "Document".into(),
             identity_key: None,
             mapping: CapabilityMapping {
@@ -5090,6 +5092,7 @@ mod tests {
             name: "widget_query".into(),
             description: String::new(),
             kind: CapabilityKind::Query,
+            effect: None,
             domain: "Widget".into(),
             identity_key: None,
             mapping: CapabilityMapping {
@@ -5198,6 +5201,7 @@ mod tests {
             name: "book_query".into(),
             description: String::new(),
             kind: CapabilityKind::Query,
+            effect: None,
             domain: "Book".into(),
             identity_key: None,
             mapping: CapabilityMapping {
@@ -5220,6 +5224,7 @@ mod tests {
             name: "library_get".into(),
             description: String::new(),
             kind: CapabilityKind::Get,
+            effect: None,
             domain: "Library".into(),
             identity_key: None,
             mapping: CapabilityMapping {
@@ -5411,6 +5416,7 @@ mod tests {
             name: "ticket_get".into(),
             description: String::new(),
             kind: CapabilityKind::Get,
+            effect: None,
             domain: "Ticket".into(),
             identity_key: None,
             mapping: CapabilityMapping {
@@ -5548,6 +5554,7 @@ mod tests {
             name: "library_get_nested_fixture".into(),
             description: String::new(),
             kind: CapabilityKind::Get,
+            effect: None,
             domain: "Library".into(),
             identity_key: None,
             mapping: CapabilityMapping {
@@ -5645,6 +5652,7 @@ mod tests {
             name: "parent_get".into(),
             description: String::new(),
             kind: CapabilityKind::Get,
+            effect: None,
             domain: "Parent".into(),
             identity_key: None,
             mapping: CapabilityMapping {
@@ -5670,6 +5678,7 @@ mod tests {
             name: "child_query".into(),
             description: String::new(),
             kind: CapabilityKind::Query,
+            effect: None,
             domain: "Child".into(),
             identity_key: None,
             mapping: CapabilityMapping {
@@ -6129,6 +6138,7 @@ mod tests {
             name: "pet_get".into(),
             description: String::new(),
             kind: CapabilityKind::Get,
+            effect: None,
             domain: "Pet".into(),
             identity_key: None,
             mapping: CapabilityMapping {

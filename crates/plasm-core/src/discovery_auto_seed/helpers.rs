@@ -44,7 +44,7 @@ pub(crate) fn capability_kind_label(
     };
     cgs.capabilities
         .get(capability_name)
-        .map(|c| format!("{:?}", c.kind))
+        .map(|capability| format!("{:?}", capability.kind))
         .unwrap_or_default()
 }
 
@@ -65,6 +65,11 @@ pub(crate) fn push_capability_evidence(
         capability_id: cap_id,
         capability_name: cand.capability_name.clone(),
         kind: capability_kind_label(catalogs, &cand.entry_id, &cand.capability_name),
+        effect: catalogs
+            .get(&cand.entry_id)
+            .and_then(|cgs| cgs.capabilities.get(cand.capability_name.as_str()))
+            .map(|capability| capability.effective_effect())
+            .unwrap_or(crate::SemanticEffect::SideEffect),
         description: cand.capability_description.clone(),
         reason_codes: cand.reason_codes.clone(),
         lexical_score: cand.score,

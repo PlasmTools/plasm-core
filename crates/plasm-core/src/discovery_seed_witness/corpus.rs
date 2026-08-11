@@ -184,7 +184,7 @@ pub fn build_witness_corpus(
         for cap in &bundle.capabilities {
             let summary = format!(
                 "{} {}.{} [{}] {}",
-                cap.kind,
+                cap.witness_kind(),
                 bundle.entry_id,
                 bundle.entity,
                 cap.capability_name,
@@ -197,7 +197,7 @@ pub fn build_witness_corpus(
                     entity: bundle.entity.clone(),
                     capability_id: cap.capability_id.clone(),
                     capability_name: cap.capability_name.clone(),
-                    kind: cap.kind.clone(),
+                    kind: cap.witness_kind().to_string(),
                     description: cap.description.clone(),
                 },
                 owner_candidate_id: bundle.candidate_id.clone(),

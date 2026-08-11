@@ -84,6 +84,7 @@ mod tests {
             name: "update_account".into(),
             description: String::new(),
             kind: CapabilityKind::Update,
+            effect: None,
             domain: "Account".into(),
             identity_key: None,
             mapping: CapabilityMapping {

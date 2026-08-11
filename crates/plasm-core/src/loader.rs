@@ -280,6 +280,9 @@ pub struct DomainCapability {
     #[serde(default)]
     pub description: String,
     pub kind: String,
+    /// Trusted read-only attestation; currently valid only for `kind: action`.
+    #[serde(default)]
+    pub effect: Option<crate::CapabilityEffect>,
     pub entity: String,
     /// Policy for compound `entity_ref` scope parameters after runtime splat (`retain` default).
     #[serde(default)]
@@ -919,6 +922,7 @@ fn assemble_cgs_core(
             name: CapabilityName::from(cap_name.clone()),
             description: cap.description.clone(),
             kind,
+            effect: cap.effect,
             domain: EntityName::from(cap.entity.clone()),
             mapping: CapabilityMapping {
                 template: CapabilityTemplateJson(template),
@@ -1816,6 +1820,114 @@ capabilities:
             err.contains("overlap") && err.contains("parameters") && err.contains("input_schema"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn validates_read_effect_trust_boundary() {
+        fn load_with_capability(capability: &str) -> Result<CGS, String> {
+            let dir = tempfile::tempdir().expect("temp catalog");
+            let domain = format!(
+                r#"http_backend: http://localhost:1080
+workflow_identity: true
+data_classes:
+  external_publish:
+    description: Outbound mutation payload.
+    severity: sensitive
+values:
+  nv_id:
+    type: string
+    string_semantics: short
+  nv_payload:
+    type: string
+    string_semantics: json_text
+entities:
+  E:
+    id_field: id
+    fields:
+      id:
+        value_ref: nv_id
+        required: true
+capabilities:
+{capability}
+"#
+            );
+            std::fs::write(dir.path().join("domain.yaml"), domain).expect("write domain");
+            std::fs::write(
+                dir.path().join("mappings.yaml"),
+                r#"read_op:
+  method: POST
+  path:
+    - type: literal
+      value: e
+    - type: var
+      name: id
+    - type: literal
+      value: read
+"#,
+            )
+            .expect("write mappings");
+            load_schema_dir(dir.path())
+        }
+
+        let valid = r#"  read_op:
+    kind: action
+    effect: read
+    entity: E
+    provides: [id]"#;
+        let mut cgs = load_with_capability(valid).expect("read action must load");
+        assert!(cgs.get_capability("read_op").expect("capability").is_read());
+
+        // Projection hydration must never turn a default action's modeled response into an
+        // unreviewed transport call. Only the trusted read-action is indexed as a provider.
+        let mut default_action = cgs.get_capability("read_op").expect("capability").clone();
+        default_action.name = crate::CapabilityName::from("write_op");
+        default_action.effect = None;
+        cgs.capabilities
+            .insert(default_action.name.clone(), default_action);
+        let providers = cgs.field_providers("E");
+        assert_eq!(providers.get("id"), Some(&vec!["read_op".to_string()]));
+
+        let wrong_kind = valid.replace("kind: action", "kind: create");
+        let err = load_with_capability(&wrong_kind).expect_err("read create must fail");
+        assert!(
+            err.contains("effect: read") && err.contains("kind: action"),
+            "{err}"
+        );
+
+        let contradictory = r#"  read_op:
+    kind: action
+    effect: read
+    entity: E
+    output:
+      type: side_effect
+      description: changes state"#;
+        let err = load_with_capability(contradictory).expect_err("read side effect must fail");
+        assert!(
+            err.contains("effect: read") && err.contains("output.type: side_effect"),
+            "{err}"
+        );
+
+        let sink_read = r#"  read_op:
+    kind: action
+    effect: read
+    entity: E
+    parameters:
+      - name: payload
+        value_ref: nv_payload
+        sink_class: external_publish
+    provides: [id]"#;
+        let err = load_with_capability(sink_read).expect_err("read sink must fail");
+        assert!(
+            err.contains("effect: read") && err.contains("sink_class"),
+            "{err}"
+        );
+
+        let missing_response = r#"  read_op:
+    kind: action
+    effect: read
+    entity: E"#;
+        let err = load_with_capability(missing_response).expect_err("response model required");
+        assert!(err.contains("no modeled response"), "{err}");
     }
 
     #[test]

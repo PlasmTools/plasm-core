@@ -666,10 +666,13 @@ Ordered steps on **`create`**, **`update`**, **`action`**, and **`delete`** capa
 
 ### Action output: `provides:` vs `output.side_effect`
 
-`kind: action` must declare **how the response is modeled**:
+`kind: action` is RPC-shaped and is a remote side effect by default. A reviewed catalog may declare `effect: read` when the operation is semantically read-only despite using action/invoke grammar. This declaration is authoritative author attestation: do not infer it from POST, idempotence, response shape, or operation naming. `effect: read` is allowed only on actions and is rejected with `output.type: side_effect` or mutation sink parameters.
 
-1. **Entity projection** — non-empty `provides:` lists which entity fields the HTTP response populates.
-2. **No projection** — the call is effectful (something changes) but the response is empty, opaque, or not mapped onto entity fields. Declare `output` with `type: side_effect` and a non-empty `description:` string that states what changes in the domain (not generic "updates resource", not HTTP status or path trivia).
+Every action must declare **how the response is modeled**:
+
+1. **Entity projection** — non-empty `provides:` lists which entity fields the HTTP response populates. This is also valid for a read-action and yields a single structured result.
+2. **Typed output** — `output.type: entity | collection | status | custom` models a read-action response explicitly.
+3. **No projection** — an effectful call whose response is empty, opaque, or not mapped onto entity fields uses `output.type: side_effect` with a non-empty `description:` stating what changes in the domain.
 
 There is **no** `output.type: none` in the schema: it invited silent, incomplete modeling.
 

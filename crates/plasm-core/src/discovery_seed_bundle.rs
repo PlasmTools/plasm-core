@@ -455,6 +455,7 @@ mod tests {
                 capability_id: format!("{api}:{entity}:query"),
                 capability_name: "query".into(),
                 kind: "Query".into(),
+                effect: crate::SemanticEffect::Read,
                 description: String::new(),
                 reason_codes: vec![],
                 lexical_score: score,

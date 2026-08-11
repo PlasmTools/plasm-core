@@ -92,7 +92,6 @@ fn levenshtein(a: &str, b: &str) -> usize {
 
 /// Mutator wire names on seeded entities (full catalog, not only teaching surface).
 fn mutator_wires_on_seeded_entities(exp: &TeachingExposureSession) -> Vec<String> {
-    use crate::schema::CapabilityKind;
     let mut wires = Vec::new();
     for (entity, entry_id) in exp.entities.iter().zip(exp.entity_catalog_entry_ids.iter()) {
         let Some(cgs) = exp.catalog_cgs_for_entry(entry_id.as_str()) else {
@@ -102,13 +101,7 @@ fn mutator_wires_on_seeded_entities(exp: &TeachingExposureSession) -> Vec<String
             if cap.domain.as_str() != entity.as_str() {
                 continue;
             }
-            if matches!(
-                cap.kind,
-                CapabilityKind::Create
-                    | CapabilityKind::Update
-                    | CapabilityKind::Delete
-                    | CapabilityKind::Action
-            ) {
+            if cap.is_remote_mutation() {
                 wires.push(cap.name.as_str().to_string());
             }
         }

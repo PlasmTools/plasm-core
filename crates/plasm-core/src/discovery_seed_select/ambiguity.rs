@@ -79,7 +79,7 @@ pub fn deterministic_provider_ambiguity(
         requirements: Vec::new(),
         selected_ids: Vec::new(),
         supporting_capability_ids: Vec::new(),
-            teaching_satellites: vec![],
+        teaching_satellites: vec![],
         alternative_sets: alternatives,
         uncovered_requirements: Vec::new(),
         reasoning:
@@ -131,6 +131,7 @@ mod tests {
                 capability_id: format!("{catalog}:{entity}:query"),
                 capability_name: "query".into(),
                 kind: "Query".into(),
+                effect: crate::SemanticEffect::Read,
                 description: String::new(),
                 reason_codes: Vec::new(),
                 lexical_score: score,

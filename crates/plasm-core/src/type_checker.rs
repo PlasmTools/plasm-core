@@ -1114,6 +1114,7 @@ mod tests {
             name: "pet_get".into(),
             description: String::new(),
             kind: CapabilityKind::Get,
+            effect: None,
             domain: "Pet".into(),
             identity_key: None,
             mapping: CapabilityMapping {
@@ -1139,6 +1140,7 @@ mod tests {
             name: "order_get".into(),
             description: String::new(),
             kind: CapabilityKind::Get,
+            effect: None,
             domain: "Order".into(),
             identity_key: None,
             mapping: CapabilityMapping {

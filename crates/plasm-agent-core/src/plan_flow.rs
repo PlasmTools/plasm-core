@@ -312,7 +312,7 @@ impl<'a, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, P> {
         let id = node.id().as_str().to_string();
         match node {
             ValidatedPlanNode::Surface(surface) => {
-                if is_read_kind(surface.kind) {
+                if surface.effect_class == EffectClass::Read {
                     self.transfer_read_surface(surface);
                 } else if is_remote_mutation(surface.kind, surface.effect_class) {
                     self.transfer_mutation_surface(node, surface);
@@ -694,22 +694,16 @@ fn policy_disposition_for_node<P: FlowPolicyEvaluator + ?Sized>(
     }
 }
 
-fn is_read_kind(kind: PlanNodeKind) -> bool {
-    matches!(
-        kind,
-        PlanNodeKind::Query | PlanNodeKind::Search | PlanNodeKind::Get
-    )
-}
-
 /// Whether a node may mutate a remote system.
 ///
-/// This remains deliberately structural: callers must refuse automatic execution whenever
-/// either the declared node kind or its effect class indicates a remote mutation.
+/// Create/update/delete remain mutations regardless of a malformed plan effect. Actions default
+/// to mutation and are exempted only by the validated read effect produced from CGS semantics.
 pub(crate) fn is_remote_mutation(kind: PlanNodeKind, effect_class: EffectClass) -> bool {
     matches!(
         kind,
-        PlanNodeKind::Create | PlanNodeKind::Update | PlanNodeKind::Delete | PlanNodeKind::Action
+        PlanNodeKind::Create | PlanNodeKind::Update | PlanNodeKind::Delete
     ) || matches!(effect_class, EffectClass::Write | EffectClass::SideEffect)
+        || (kind == PlanNodeKind::Action && effect_class != EffectClass::Read)
 }
 
 /// Whether a validated plan contains any node that may mutate a remote system.

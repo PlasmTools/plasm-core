@@ -357,6 +357,7 @@ mod tests {
             name: CapabilityName::from("workitem_create_idempotent"),
             description: String::new(),
             kind: CapabilityKind::Action,
+            effect: None,
             domain: EntityName::from("WorkItem"),
             identity_key: Some(vec!["title".into()]),
             mapping: CapabilityMapping {
