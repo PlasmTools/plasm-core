@@ -1,11 +1,3 @@
-team_get:
-  method: GET
-  path:
-    - { type: literal, value: teams }
-    - { type: var, name: id }
-  response:
-    single: true
-
 datasource_get:
   method: GET
   path:

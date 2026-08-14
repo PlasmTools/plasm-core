@@ -138,7 +138,7 @@ fn preflight_compile_create(
             message: e.to_string(),
         }
     })?;
-    apply_preflight_compile_stubs(&mut env, capability, cgs)?;
+    apply_preflight_compile_stubs(&mut env, capability, cgs);
     merge_plasm_execute_session_env(&mut env);
     compile_operation_dispatch(&capability_template, &env).map(|_| ())
 }
@@ -237,7 +237,7 @@ fn preflight_compile_invoke(invoke: &InvokeExpr, cgs: &CGS) -> Result<(), Runtim
         }
     })?;
     merge_entity_id_from_into_input_env(&mut env, target_ent, capability);
-    apply_preflight_compile_stubs(&mut env, capability, cgs)?;
+    apply_preflight_compile_stubs(&mut env, capability, cgs);
     merge_plasm_execute_session_env(&mut env);
     compile_operation_dispatch(&capability_template, &env).map(|_| ())
 }

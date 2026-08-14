@@ -16,28 +16,8 @@ values:
     string_semantics: short
   nv_query_results:
     type: json
-  nv_request_id:
-    type: uuid
-  nv_observed_at:
-    type: date
-    value_format: rfc3339
-  nv_observed_at_ms:
-    type: date
-    value_format: unix_ms
-  nv_team_key:
-    type: string
-    string_semantics: short
-  nv_team_ref:
-    type: entity_ref
-    target: Team
 
 entities:
-  Team:
-    id_field: key
-    fields:
-      key:
-        required: true
-        value_ref: nv_team_key
   Datasource:
     id_field: uid
     description: Datasource used to test invoke-target preflight hydration.
@@ -51,32 +31,14 @@ entities:
       query_results:
         required: false
         value_ref: nv_query_results
-      request_id:
-        required: false
-        value_ref: nv_request_id
-      observed_at:
-        required: false
-        value_ref: nv_observed_at
-      observed_at_ms:
-        required: false
-        value_ref: nv_observed_at_ms
-      team:
-        required: false
-        value_ref: nv_team_ref
 
 capabilities:
-  team_get:
-    kind: get
-    entity: Team
-
   datasource_get:
     kind: get
     entity: Datasource
     provides:
       - uid
       # `type` is deliberately omitted: provides must not restrict decoded-row hydration.
-      # Unknown provides entries also degrade gracefully.
-      - unavailable_legacy_field
 
   datasource_run:
     kind: action
