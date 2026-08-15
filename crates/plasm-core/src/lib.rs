@@ -62,9 +62,9 @@
 //!
 //! ## Value System
 //!
-//! [`Value`] is the universal value type (Null, Bool, Number, String, Array, Object).
+//! [`Value`] is the universal value type (Null, Bool, Number, String, Array, Object, Money).
 //! [`FieldType`] defines the schema-level types (String, Number, Integer, Boolean,
-//! Select, MultiSelect, Date, Array). [`CompOp`] defines comparison operators
+//! Select, MultiSelect, Date, Array, Money). [`CompOp`] defines comparison operators
 //! (Eq, Neq, Gt, Lt, Gte, Lte, In, Contains, Exists) with per-type compatibility rules.
 //!
 //! ## Input Validation
@@ -119,6 +119,7 @@ pub mod expr_surface_render;
 pub mod identifiers;
 pub mod identity;
 pub mod loader;
+pub mod money;
 pub mod normalizer;
 pub mod paging_handle;
 pub mod phrase_ident;
@@ -291,13 +292,17 @@ pub use wire_coercion::{
     collect_relation_binding_proofs, field_type_assignable_for_relation_binding,
     identity_slot_to_json, json_value_to_plasm_value, parent_entity_field_type,
     plasm_value_to_json, relation_binding_assignable, restore_id_field_from_compound_ref,
-    RelationBindingProof,
+    try_plasm_value_to_json, RelationBindingProof,
 };
 pub mod relation_materialize;
 pub mod view_embed_proof;
 pub use expr_surface_render::{
     render_expr_surface, render_expr_surface_federated, wire_surface_from_teaching_line,
     wire_surface_from_teaching_session_line,
+};
+pub use money::{
+    json_amount_to_value, CrossCurrencyError, MoneyDecodeSpec, MoneyError, MoneyValue,
+    MoneyWireFormat,
 };
 pub use relation_materialize::{
     extract_from_parent_get_value, flatten_from_parent_get_source_rows,

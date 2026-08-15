@@ -671,6 +671,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: Some(StringSemantics::Markdown),
                 array_items: None,
+                currency: None,
             },
         );
         cgs.add_resource(ResourceSchema {
@@ -690,6 +691,7 @@ mod tests {
                 attachment_media: None,
                 wire_path: None,
                 derive: None,
+                currency_field: None,
             }],
             relations: vec![],
             expression_aliases: vec![],
@@ -741,6 +743,7 @@ mod tests {
                     allowed_values: None,
                     string_semantics: Some(sem),
                     array_items: None,
+                    currency: None,
                 },
             );
         }
@@ -764,6 +767,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    currency_field: None,
                 },
                 FieldSchema {
                     name: "name".into(),
@@ -778,6 +782,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    currency_field: None,
                 },
                 FieldSchema {
                     name: "desc".into(),
@@ -792,6 +797,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    currency_field: None,
                 },
             ],
             relations: vec![],
@@ -918,6 +924,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: Some(StringSemantics::Short),
                 array_items: None,
+                currency: None,
             },
         );
         cgs.values.insert(
@@ -929,6 +936,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         cgs.add_resource(ResourceSchema {
@@ -951,6 +959,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    currency_field: None,
                 },
                 FieldSchema {
                     name: "content".into(),
@@ -965,6 +974,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    currency_field: None,
                 },
             ],
             relations: vec![],

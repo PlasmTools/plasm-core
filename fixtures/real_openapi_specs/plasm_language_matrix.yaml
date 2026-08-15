@@ -329,6 +329,47 @@ paths:
                 - id: "l2"
                   item_id: "i1"
                   note: "line-b"
+  /language/v1/offers:
+    get:
+      summary: List priced offers (money type lock)
+      responses:
+        "200":
+          description: Offers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LangOffer"
+              example:
+                - id: "o1"
+                  price: "12.50"
+                  quote_currency: "USD"
+                - id: "o2"
+                  price: "3.00"
+                  quote_currency: "USD"
+    post:
+      summary: Create offer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LangOfferCreate"
+            example:
+              price: "12.50"
+              quote_currency: "USD"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LangOffer"
+              example:
+                id: "o-new"
+                price: "12.50"
+                quote_currency: "USD"
 components:
   schemas:
     LangItem:
@@ -376,6 +417,28 @@ components:
         item_id:
           type: string
         note:
+          type: string
+    LangOffer:
+      type: object
+      required: [id, price, quote_currency]
+      properties:
+        id:
+          type: string
+        price:
+          type: string
+        quote_currency:
+          type: string
+      example:
+        id: "o1"
+        price: "12.50"
+        quote_currency: "USD"
+    LangOfferCreate:
+      type: object
+      required: [price, quote_currency]
+      properties:
+        price:
+          type: string
+        quote_currency:
           type: string
     LangViewer:
       type: object

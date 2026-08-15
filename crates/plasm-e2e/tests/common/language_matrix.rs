@@ -56,7 +56,7 @@ pub fn matrix_execute_session(cgs: Arc<plasm_core::CGS>) -> ExecuteSession {
         MATRIX_ENTRY_ID.into(),
         Arc::new(CgsContext::entry(MATRIX_ENTRY_ID, cgs.clone())),
     );
-    let wave: &[&str] = &["LangItem", "LangLine", "LangTag"];
+    let wave: &[&str] = &["LangItem", "LangLine", "LangTag", "LangOffer"];
     let exp = TeachingExposureSession::new(cgs.as_ref(), MATRIX_ENTRY_ID, wave);
     ExecuteSession::new(
         "matrix_ph".into(),

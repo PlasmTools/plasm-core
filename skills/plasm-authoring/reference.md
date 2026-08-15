@@ -77,14 +77,15 @@ The CGS is the semantic domain model. It declares what entities exist, how they 
 
 Split **`domain.yaml`** declares a catalog-local registry of **named semantic slots** under top-level **`values:`** (stable keys, usually `snake_case`). Each row carries the **wire** `type:` and gloss-related keys — the same vocabulary as the former inline `field_type` / param `type` — but the **key** is a semantic identity for this catalog, not "dedupe by primitive wire shape alone":
 
-- **`type:`** — `string`, `integer`, `number`, `boolean`, `select`, `multi_select`, `date`, `array`, `entity_ref`, **`blob`**, `uuid`.
-- Type-specific keys on the **value row**: `target` (`entity_ref`), `allowed_values` (`select` / `multi_select`; multi_select must be non-empty), `value_format` (`date`), `string_semantics` (`string`), **`items: { value_ref: <key> }`** (`array` — element shape is another `values` row).
+- **`type:`** — `string`, `integer`, `number`, `boolean`, `select`, `multi_select`, `date`, **`money`**, `array`, `entity_ref`, **`blob`**, `uuid`.
+- Type-specific keys on the **value row**: `target` (`entity_ref`), `allowed_values` (`select` / `multi_select`; multi_select must be non-empty), `value_format` (`date` or `money`), `currency` (`money`), `string_semantics` (`string`; forbidden on `money`), **`items: { value_ref: <key> }`** (`array` — element shape is another `values` row).
 
 **Entity `fields:`** and **`capabilities.*.parameters:`** list entries declare **only** how that slot uses a shape:
 
 - **`value_ref: <key>`** — required; must exist in **`values:`**.
 - **`required`**, **`description`**, **`path`**, **`derive`** — on fields (and parameter-specific keys: **`role`**, **`description`** on parameters).
 - Presentation / attachment hints (**`agent_presentation`**, **`mime_type_hint`**, **`attachment_media`**) live on the **field slot** when they apply (not duplicated on every reuse of the same value key).
+- **`currency_field:`** on a money **field slot** names a sibling on the same entity whose string value supplies currency after decode.
 
 **Semantic slots (authoring judgement):** A **`values:`** key is not "the type `string`" or "the type `integer`" in the abstract — it is a **catalog-local semantic identity**: what teaching gloss, `string_semantics`, `description`, and validation **say** that value *means* in this API. Two different columns can share the same on-wire JSON type (`string`, RFC3339 `date`, …) yet must remain **different keys** when their **meaning** differs (e.g. `owner` vs `repo` vs `html_url`). **Sharing** one key across multiple `value_ref` sites is the same class of decision as **relation cardinality** or **whether two endpoints are one capability**: there is **no** deterministic rule from the wire alone — authors choose when two sites are intentionally **the same domain value space** (one enum, one id space, one taxonomy, aligned gloss). Prefer **distinct keys per field/param by default**; merge only when that identity story is obvious and descriptions stay compatible.
 
@@ -113,8 +114,9 @@ values:
     type: <scalar type>       # same vocabulary as Field Types below
     target: <EntityName>      # when type is entity_ref
     allowed_values: [...]     # select / multi_select (multi_select: non-empty)
-    value_format: <scalar or { temporal: ... }>   # required when type is date
-    string_semantics: <...>   # on string rows — prompts / summaries
+    value_format: <scalar or { temporal: ... } or { money: ... }>   # required when type is date or money
+    string_semantics: <...>   # on string rows — prompts / summaries; forbidden on money
+    currency: USD             # optional default unit on money values: rows
     items:
       value_ref: <element_value_key>   # when type is array
 
@@ -128,6 +130,7 @@ entities:
         required: <bool>      # default false
         path: ...             # optional wire path (see below)
         derive: ...           # optional
+        currency_field: quote_currency  # optional; sibling on this entity for money
         description: "..."  # optional
     relations:
       <relation_name>:
@@ -238,6 +241,7 @@ In split `domain.yaml`, the **`type:`** column below is the keyword you put on a
 | Select | `select` | enum token from `allowed_values` | `=`, `!=`, `in`, `exists` | Single enum. Requires `allowed_values`. |
 | MultiSelect | `multi_select` | array of enum tokens | `contains`, `in`, `exists` | Multiple enum. Requires non-empty `allowed_values`. |
 | Date | `date` | string or integer per `value_format` | `=`, `!=`, `contains`, `exists` | **Requires `value_format`:** `rfc3339`, `iso8601_date`, `unix_ms`, or `unix_sec`. Predicate inputs are normalized to the wire shape (forgiving parse, UTC). Display of API responses is not rewritten via `value_format`. |
+| **Money** | **`money`** | decimal string, JSON number, or `{amount, currency}` | `=`, `!=`, `>`, `<`, `>=`, `<=`, `exists` | Fowler amount + optional currency. **Requires `value_format`:** `{ money: decimal_string }`, `{ money: json_number }`, or `{ money: minor_units, scale: N }`. Currency may be fixed on the `values:` row (`currency: USD`) or attached from a sibling field (`currency_field:` on the entity slot). Compare is legal when either side lacks currency; both present and different is a typed error. HTTP encode emits a scalar — never `__plasm_money`. Do not use `string_semantics`. Not for oversized integer strings (e.g. EVM wei). |
 | Array | `array` | array literal / binding | `contains`, `in`, `exists` | Homogeneous list. Requires nested `items:`. |
 | EntityRef | `entity_ref` | id value or nested ref expr | `=`, `!=`, `exists` | Foreign key to another entity. Requires `target: EntityName`. |
 | **Blob** | **`blob`** | attachment-shaped value / binding | `=`, `!=`, `exists` | Opaque binary or base64-heavy payloads. Do not use `string_semantics`. |
@@ -299,6 +303,15 @@ values:
     type: array
     items:
       value_ref: instant_rfc3339
+  nv_price:
+    type: money
+    value_format:
+      money: decimal_string
+  nv_usd:
+    type: money
+    value_format:
+      money: json_number
+    currency: USD
 
 entities:
   Pet:

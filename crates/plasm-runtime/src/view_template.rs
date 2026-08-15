@@ -27,6 +27,7 @@ fn plasm_value_to_json(v: &Value) -> serde_json::Value {
             serde_json::Value::Object(map)
         }
         Value::PlasmInputRef(_) | Value::UnionCtor { .. } => serde_json::Value::Null,
+        Value::Money(m) => serde_json::Value::String(m.display()),
     }
 }
 
@@ -137,6 +138,7 @@ fn register_view_template_filters(env: &mut Environment<'_>) {
                     serde_json::to_string(&plasm_value_to_json(&out)).unwrap_or_default()
                 }
                 Value::PlasmInputRef(_) | Value::UnionCtor { .. } => String::new(),
+                Value::Money(m) => m.display(),
             })
         },
     );

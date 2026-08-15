@@ -59,6 +59,7 @@ pub use compile_preflight::preflight_compile_expr;
 pub(crate) use pagination_state::PaginationLoopState;
 #[cfg(test)]
 pub(crate) use pagination_state::{merge_pagination_into_body, pagination_context_map};
+pub(crate) use plasm_core::json_value_to_plasm_value as json_to_plasm_value;
 
 /// Resolve the capability that backs a [`QueryExpr`] (delegates to [`plasm_core::resolve_query_capability`]).
 fn resolve_query_capability<'a>(
@@ -1385,7 +1386,7 @@ impl ExecutionEngine {
                             break;
                         };
 
-                        if !client_side_predicate_matches(foreign, &cross.foreign_predicate) {
+                        if !client_side_predicate_matches(foreign, &cross.foreign_predicate)? {
                             passes = false;
                             break;
                         }
@@ -2073,70 +2074,80 @@ fn normalize_cml_scope_entity_ref_value(value: &Value, ent: &EntityDef) -> Optio
 /// Only call this with predicates that have been stripped of non-entity-field comparisons
 /// (i.e. via `entity_field_predicate`). Every comparison field is expected to be a real
 /// entity field; if a field is absent the entity does not match.
-fn client_side_predicate_matches(entity: &CachedEntity, predicate: &plasm_core::Predicate) -> bool {
+fn client_side_predicate_matches(
+    entity: &CachedEntity,
+    predicate: &plasm_core::Predicate,
+) -> Result<bool, RuntimeError> {
     use plasm_core::CompOp;
     match predicate {
-        plasm_core::Predicate::True => true,
-        plasm_core::Predicate::False => false,
+        plasm_core::Predicate::True => Ok(true),
+        plasm_core::Predicate::False => Ok(false),
         plasm_core::Predicate::Comparison { field, op, value } => {
             let rhs = value.to_value();
             let Some(actual_tf) = entity.get_field(field) else {
-                // Field genuinely absent from this entity instance — does not match.
-                // Non-entity-field predicates (scope, filter params) should have been
-                // stripped by `entity_field_predicate` before reaching here.
-                return *op == CompOp::Exists && matches!(rhs, Value::Null);
+                return Ok(*op == CompOp::Exists && matches!(rhs, Value::Null));
             };
             let actual = actual_tf.to_value();
-            match op {
-                CompOp::Eq => actual == rhs,
-                CompOp::Neq => actual != rhs,
-                CompOp::Gt => {
-                    if let (Some(a), Some(b)) = (actual.as_number(), rhs.as_number()) {
-                        a > b
-                    } else {
-                        false
-                    }
-                }
-                CompOp::Lt => {
-                    if let (Some(a), Some(b)) = (actual.as_number(), rhs.as_number()) {
-                        a < b
-                    } else {
-                        false
-                    }
-                }
-                CompOp::Gte => {
-                    if let (Some(a), Some(b)) = (actual.as_number(), rhs.as_number()) {
-                        a >= b
-                    } else {
-                        false
-                    }
-                }
-                CompOp::Lte => {
-                    if let (Some(a), Some(b)) = (actual.as_number(), rhs.as_number()) {
-                        a <= b
-                    } else {
-                        false
-                    }
-                }
+            let money_err = |e: plasm_core::CrossCurrencyError| {
+                RuntimeError::from(plasm_core::TypeError::from(e))
+            };
+            Ok(match op {
+                CompOp::Eq => plasm_core::money::values_eq(&actual, &rhs).map_err(money_err)?,
+                CompOp::Neq => !plasm_core::money::values_eq(&actual, &rhs).map_err(money_err)?,
+                CompOp::Gt => plasm_core::money::values_ord(&actual, &rhs)
+                    .map_err(money_err)?
+                    .is_some_and(|o| o.is_gt()),
+                CompOp::Lt => plasm_core::money::values_ord(&actual, &rhs)
+                    .map_err(money_err)?
+                    .is_some_and(|o| o.is_lt()),
+                CompOp::Gte => plasm_core::money::values_ord(&actual, &rhs)
+                    .map_err(money_err)?
+                    .is_some_and(|o| o.is_ge()),
+                CompOp::Lte => plasm_core::money::values_ord(&actual, &rhs)
+                    .map_err(money_err)?
+                    .is_some_and(|o| o.is_le()),
                 CompOp::Contains => actual.contains(&rhs),
                 CompOp::In => match &rhs {
                     Value::Array(arr) => arr.contains(&actual),
                     _ => false,
                 },
                 CompOp::Exists => !matches!(actual, Value::Null),
+            })
+        }
+        plasm_core::Predicate::And { args } => {
+            for a in args {
+                if !client_side_predicate_matches(entity, a)? {
+                    return Ok(false);
+                }
             }
+            Ok(true)
         }
-        plasm_core::Predicate::And { args } => args
-            .iter()
-            .all(|a| client_side_predicate_matches(entity, a)),
-        plasm_core::Predicate::Or { args } => args
-            .iter()
-            .any(|a| client_side_predicate_matches(entity, a)),
+        plasm_core::Predicate::Or { args } => {
+            for a in args {
+                if client_side_predicate_matches(entity, a)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
         plasm_core::Predicate::Not { predicate: inner } => {
-            !client_side_predicate_matches(entity, inner)
+            Ok(!client_side_predicate_matches(entity, inner)?)
         }
-        plasm_core::Predicate::ExistsRelation { .. } => true,
+        plasm_core::Predicate::ExistsRelation { .. } => Ok(true),
     }
+}
+
+fn filter_entities_by_predicate(
+    entities: Vec<CachedEntity>,
+    pred: &plasm_core::Predicate,
+) -> Result<Vec<CachedEntity>, RuntimeError> {
+    let mut out = Vec::with_capacity(entities.len());
+    for e in entities {
+        if client_side_predicate_matches(&e, pred)? {
+            out.push(e);
+        }
+    }
+    Ok(out)
 }
 
 /// Strip comparisons against non-entity fields from a predicate, returning the
@@ -3056,7 +3067,11 @@ fn value_to_ambient_string(v: &Value) -> Option<String> {
         Value::Integer(i) => Some(i.to_string()),
         Value::Float(f) => Some(f.to_string()),
         Value::Bool(b) => Some(b.to_string()),
-        Value::Null | Value::Array(_) | Value::Object(_) | Value::UnionCtor { .. } => None,
+        Value::Null
+        | Value::Array(_)
+        | Value::Object(_)
+        | Value::UnionCtor { .. }
+        | Value::Money(_) => None,
     }
 }
 
@@ -3125,35 +3140,6 @@ pub(crate) fn current_timestamp() -> u64 {
         .as_secs()
 }
 
-/// Convert serde_json::Value to plasm_core::Value
-pub(crate) fn json_to_plasm_value(json: &serde_json::Value) -> Value {
-    match json {
-        serde_json::Value::Null => Value::Null,
-        serde_json::Value::Bool(b) => Value::Bool(*b),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Value::Integer(i)
-            } else if let Some(f) = n.as_f64() {
-                Value::Float(f)
-            } else {
-                Value::Null
-            }
-        }
-        serde_json::Value::String(s) => Value::String(s.clone()),
-        serde_json::Value::Array(arr) => {
-            let values = arr.iter().map(json_to_plasm_value).collect();
-            Value::Array(values)
-        }
-        serde_json::Value::Object(obj) => {
-            let mut map = indexmap::IndexMap::new();
-            for (k, v) in obj {
-                map.insert(k.clone(), json_to_plasm_value(v));
-            }
-            Value::Object(map)
-        }
-    }
-}
-
 /// Execute Plasm [`Expr`] trees against a live or replay backend.
 ///
 /// Implemented by [`ExecutionEngine`]; implementors can stub this for tests or
@@ -3213,6 +3199,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: Some(StringSemantics::Short),
                 array_items: None,
+                currency: None,
             },
         );
         cgs.values.insert(
@@ -3224,6 +3211,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: Some(StringSemantics::Short),
                 array_items: None,
+                currency: None,
             },
         );
 
@@ -3248,6 +3236,7 @@ mod tests {
                     wire_path: None,
                     derive: None,
                     data_class: None,
+                    currency_field: None,
                 },
                 FieldSchema {
                     name: "name".into(),
@@ -3262,6 +3251,7 @@ mod tests {
                     wire_path: None,
                     derive: None,
                     data_class: None,
+                    currency_field: None,
                 },
             ],
             relations: vec![],
@@ -3354,6 +3344,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: Some(StringSemantics::Short),
                 array_items: None,
+                currency: None,
             },
         );
         cgs.values.insert(
@@ -3367,6 +3358,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         cgs.add_resource(ResourceSchema {
@@ -3386,6 +3378,7 @@ mod tests {
                 wire_path: None,
                 derive: None,
                 data_class: None,
+                currency_field: None,
             }],
             relations: vec![],
             expression_aliases: vec![],

@@ -66,6 +66,7 @@ mod property_tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         cgs.values.insert(
@@ -77,6 +78,7 @@ mod property_tests {
                 allowed_values: Some(vec!["EMEA".to_string(), "APAC".to_string()]),
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         let account = ResourceSchema {

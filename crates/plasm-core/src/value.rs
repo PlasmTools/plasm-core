@@ -145,6 +145,8 @@ pub enum Value {
         #[serde(flatten)]
         ctor_fields: indexmap::IndexMap<String, Value>,
     },
+    /// Fowler money (exact decimal + optional currency). Tagged so untagged serde does not collide with [`Value::Object`].
+    Money(crate::money::MoneyValue),
     Object(indexmap::IndexMap<String, Value>),
 }
 
@@ -227,7 +229,8 @@ impl Value {
             | Value::Bool(_)
             | Value::Integer(_)
             | Value::Float(_)
-            | Value::String(_) => {}
+            | Value::String(_)
+            | Value::Money(_) => {}
         }
     }
 
@@ -261,7 +264,8 @@ impl Value {
             | Value::Null
             | Value::Bool(_)
             | Value::Integer(_)
-            | Value::Float(_) => false,
+            | Value::Float(_)
+            | Value::Money(_) => false,
         }
     }
 
@@ -276,6 +280,7 @@ impl Value {
             Value::String(_) | Value::PhraseIdent(_) => "string",
             Value::Array(_) => "array",
             Value::UnionCtor { .. } => "union_ctor",
+            Value::Money(_) => "money",
             Value::Object(_) => "object",
         }
     }
@@ -321,6 +326,15 @@ impl Value {
             (Value::String(s) | Value::PhraseIdent(s), FieldType::Json) => {
                 parse_json_subtree_str(s).is_some()
             }
+            (
+                Value::Money(_)
+                | Value::String(_)
+                | Value::PhraseIdent(_)
+                | Value::Integer(_)
+                | Value::Float(_)
+                | Value::Object(_),
+                FieldType::Money,
+            ) => true,
             _ => false,
         }
     }
@@ -346,6 +360,7 @@ impl Value {
         match self {
             Value::Integer(i) => Some(*i as f64),
             Value::Float(f) => Some(*f),
+            Value::Money(m) => m.amount().to_string().parse().ok(),
             _ => None,
         }
     }
@@ -480,6 +495,7 @@ impl Value {
                 );
                 format!("{ctor_label}{{{inner}}}")
             }
+            Value::Money(m) => m.display(),
             Value::Object(o) => {
                 if depth >= budget.max_depth {
                     return format!("{{{} fields}}", o.len());
@@ -594,17 +610,16 @@ pub enum TemporalWireFormat {
 /// Narrowing of on-wire encoding for a field beyond its scalar [`FieldType`].
 ///
 /// Used when **coercing user/agent input** (path expressions, predicates) to the API’s expected
-/// wire shape — not for reformatting values shown for **display** after decoding.
-///
-/// This is the extension point for **deterministic** normalisation: today time is the main case
-/// ([`TemporalWireFormat`]); future variants can cover UUID layout, fixed-scale decimals, etc.
+/// wire shape — and, for [`FieldType::Money`], when decoding/encoding HTTP scalars.
 ///
 /// **YAML / JSON:** A scalar such as `rfc3339` deserialises as [`ValueWireFormat::Temporal`].
-/// An explicit map `{ temporal: rfc3339 }` is also accepted (stable once other categories exist).
+/// Money uses a map: `{ money: decimal_string }` or `{ money: minor_units, scale: 2 }`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ValueWireFormat {
     /// Date/time on the wire (see [`TemporalWireFormat`]).
     Temporal(TemporalWireFormat),
+    /// Money amount on the wire (see [`crate::MoneyWireFormat`]).
+    Money(crate::money::MoneyWireFormat),
 }
 
 impl Serialize for ValueWireFormat {
@@ -612,8 +627,25 @@ impl Serialize for ValueWireFormat {
     where
         S: Serializer,
     {
+        use serde::ser::SerializeMap;
         match self {
             ValueWireFormat::Temporal(t) => t.serialize(serializer),
+            ValueWireFormat::Money(m) => {
+                let (key, scale) = match m {
+                    crate::money::MoneyWireFormat::DecimalString => ("decimal_string", None),
+                    crate::money::MoneyWireFormat::JsonNumber => ("json_number", None),
+                    crate::money::MoneyWireFormat::MinorUnits { scale } => {
+                        ("minor_units", Some(*scale))
+                    }
+                };
+                let mut map =
+                    serializer.serialize_map(Some(if scale.is_some() { 2 } else { 1 }))?;
+                map.serialize_entry("money", key)?;
+                if let Some(scale) = scale {
+                    map.serialize_entry("scale", &scale)?;
+                }
+                map.end()
+            }
         }
     }
 }
@@ -629,7 +661,9 @@ impl<'de> Deserialize<'de> for ValueWireFormat {
             type Value = ValueWireFormat;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("value_format string or map with a `temporal` key")
+                formatter.write_str(
+                    "value_format string (temporal) or map with `temporal` or `money` key",
+                )
             }
 
             fn visit_str<E: de::Error>(self, v: &str) -> Result<ValueWireFormat, E> {
@@ -643,6 +677,8 @@ impl<'de> Deserialize<'de> for ValueWireFormat {
 
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<ValueWireFormat, A::Error> {
                 let mut temporal: Option<TemporalWireFormat> = None;
+                let mut money: Option<String> = None;
+                let mut scale: Option<u8> = None;
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
                         "temporal" => {
@@ -651,15 +687,44 @@ impl<'de> Deserialize<'de> for ValueWireFormat {
                             }
                             temporal = Some(map.next_value()?);
                         }
+                        "money" => {
+                            if money.is_some() {
+                                return Err(de::Error::duplicate_field("money"));
+                            }
+                            money = Some(map.next_value()?);
+                        }
+                        "scale" => {
+                            if scale.is_some() {
+                                return Err(de::Error::duplicate_field("scale"));
+                            }
+                            scale = Some(map.next_value()?);
+                        }
                         other => {
-                            return Err(de::Error::unknown_field(other, &["temporal"]));
+                            return Err(de::Error::unknown_field(
+                                other,
+                                &["temporal", "money", "scale"],
+                            ));
                         }
                     }
                 }
-                let t = temporal.ok_or_else(|| {
-                    de::Error::custom("value_format map requires a `temporal` field")
-                })?;
-                Ok(ValueWireFormat::Temporal(t))
+                match (temporal, money, scale) {
+                    (Some(t), None, None) => Ok(ValueWireFormat::Temporal(t)),
+                    (None, Some(encoding), scale) => {
+                        let fmt =
+                            crate::money::MoneyWireFormat::from_catalog_parts(&encoding, scale)
+                                .map_err(de::Error::custom)?;
+                        Ok(ValueWireFormat::Money(fmt))
+                    }
+                    (Some(_), Some(_), _) => Err(de::Error::custom(
+                        "value_format map cannot set both `temporal` and `money`",
+                    )),
+                    (Some(_), None, Some(_)) => Err(de::Error::custom(
+                        "value_format `scale` is only valid with money: minor_units",
+                    )),
+                    (None, None, _) => Err(de::Error::custom(
+                        "value_format map requires a `temporal` or `money` field",
+                    )),
+                }
             }
         }
 
@@ -688,6 +753,8 @@ pub enum FieldType {
     Array,
     /// Arbitrary JSON object/array subtree from the wire (not a scalar).
     Json,
+    /// Fowler money: exact decimal amount + optional currency.
+    Money,
     /// Foreign key: stores an ID referencing another entity.
     EntityRef {
         target: crate::identity::EntityName,
@@ -699,7 +766,7 @@ impl FieldType {
     pub fn compatible_operators(&self) -> &[CompOp] {
         match self {
             FieldType::Boolean => &[CompOp::Eq, CompOp::Neq, CompOp::Exists],
-            FieldType::Number | FieldType::Integer => &[
+            FieldType::Number | FieldType::Integer | FieldType::Money => &[
                 CompOp::Eq,
                 CompOp::Neq,
                 CompOp::Gt,
@@ -866,5 +933,52 @@ mod value_wire_format_tests {
         let j = serde_json::to_string(&ValueWireFormat::Temporal(TemporalWireFormat::Iso8601Date))
             .unwrap();
         assert_eq!(j, "\"iso8601_date\"");
+    }
+
+    #[test]
+    fn deserializes_money_map() {
+        let v: ValueWireFormat =
+            serde_json::from_value(serde_json::json!({ "money": "decimal_string" })).unwrap();
+        assert_eq!(
+            v,
+            ValueWireFormat::Money(crate::money::MoneyWireFormat::decimal_string())
+        );
+        let v: ValueWireFormat = serde_json::from_value(serde_json::json!({
+            "money": "minor_units",
+            "scale": 2
+        }))
+        .unwrap();
+        assert_eq!(
+            v,
+            ValueWireFormat::Money(crate::money::MoneyWireFormat::minor_units(2).unwrap())
+        );
+    }
+
+    #[test]
+    fn rejects_money_minor_units_without_scale() {
+        let err = serde_json::from_value::<ValueWireFormat>(serde_json::json!({
+            "money": "minor_units"
+        }))
+        .unwrap_err();
+        assert!(err.to_string().contains("scale"));
+    }
+
+    #[test]
+    fn rejects_scale_on_decimal_string() {
+        let err = serde_json::from_value::<ValueWireFormat>(serde_json::json!({
+            "money": "decimal_string",
+            "scale": 2
+        }))
+        .unwrap_err();
+        assert!(err.to_string().contains("minor_units"));
+    }
+
+    #[test]
+    fn serializes_money_minor_units_with_scale() {
+        let j = serde_json::to_value(ValueWireFormat::Money(
+            crate::money::MoneyWireFormat::minor_units(2).unwrap(),
+        ))
+        .unwrap();
+        assert_eq!(j, serde_json::json!({ "money": "minor_units", "scale": 2 }));
     }
 }

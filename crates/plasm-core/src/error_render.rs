@@ -2130,6 +2130,12 @@ For example: `{te}(<id>)` when you already know the id, instead of relying on `{
             }
             StepError::type_correction(correction, error)
         }
+        TypeError::CrossCurrencyCompare { left, right } => {
+            let correction = format!(
+                "Cannot compare money amounts in `{left}` with `{right}`. Use the same currency, or drop one currency so compare is amount-only."
+            );
+            StepError::type_correction(correction, error)
+        }
         TypeError::CapabilityNotFound { capability } => {
             let cap = ident_label_for_feedback(capability, &style);
             let correction = format!(

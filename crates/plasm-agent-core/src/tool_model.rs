@@ -464,16 +464,11 @@ fn type_label_from_parts(
                 "multi-select".into()
             }
         }
-        FieldType::Boolean => "boolean".into(),
-        FieldType::Number => "number · f64".into(),
-        FieldType::Integer => "integer · i64".into(),
-        FieldType::Uuid => "uuid".into(),
         FieldType::String => match string_subtype_keyword_from_semantics(string_semantics) {
             None => "string".into(),
             Some(kw) => format!("string · {kw}"),
         },
         FieldType::Blob => "blob · binary".into(),
-        FieldType::Date => "date".into(),
         FieldType::Array => {
             if let Some(items) = array_items {
                 format!("array[{}]", field_type_compact_label(&items.field_type))
@@ -481,7 +476,7 @@ fn type_label_from_parts(
                 "array".into()
             }
         }
-        FieldType::Json => "json · object".into(),
+        _ => field_type_compact_label(field_type),
     }
 }
 
@@ -569,6 +564,7 @@ fn field_type_compact_label(ft: &FieldType) -> String {
         FieldType::Select => "select".into(),
         FieldType::MultiSelect => "multi-select".into(),
         FieldType::Date => "date".into(),
+        FieldType::Money => "money".into(),
         FieldType::Array => "array".into(),
         FieldType::Json => "json · object".into(),
         FieldType::EntityRef { target } => format!("entity_ref → {target}"),

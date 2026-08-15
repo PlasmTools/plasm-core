@@ -527,6 +527,7 @@ fn field_from_value_ref(
         attachment_media: None,
         wire_path,
         derive,
+        currency_field: None,
     })
 }
 

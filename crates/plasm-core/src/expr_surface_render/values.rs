@@ -37,6 +37,7 @@ pub(crate) fn render_surface_value(v: &Value) -> String {
                 .collect();
             format!("{{{}}}", parts.join(", "))
         }
+        Value::Money(m) => m.display(),
     }
 }
 

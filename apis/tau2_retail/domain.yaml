@@ -1,4 +1,4 @@
-version: 3
+version: 4
 auth:
   scheme: none
 http_backend: http://localhost:1080
@@ -340,7 +340,9 @@ values:
   nv_variant_available:
     type: boolean
   nv_variant_price:
-    type: number
+    type: money
+    value_format:
+      money: json_number
   nv_variant_product_id:
     type: entity_ref
     target: Product

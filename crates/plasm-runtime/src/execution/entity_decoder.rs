@@ -5,7 +5,7 @@ use plasm_compile::{
     entity_decoder_for_from_parent_get_target, path_expr_from_json_segments, EntityDecoder,
     FieldDecoder, PathExpr, PathSegment, RelationDecoder,
 };
-use plasm_core::{Cardinality, RelationMaterialization, CGS};
+use plasm_core::{Cardinality, FieldType, RelationMaterialization, ValueWireFormat, CGS};
 
 pub(crate) fn create_entity_decoder_for_capability(
     declared_entity: &str,
@@ -115,7 +115,18 @@ fn create_entity_decoder_inner(
                     name: field_name.as_str().to_string(),
                 }])
             };
-            let fd = FieldDecoder::new(field_name.as_str(), from_path);
+            let mut fd = FieldDecoder::new(field_name.as_str(), from_path);
+            if let Ok(nv) = field_schema.named_value(cgs) {
+                if let (FieldType::Money, Some(ValueWireFormat::Money(fmt))) =
+                    (&nv.field_type, nv.value_format)
+                {
+                    fd = fd.with_money(plasm_core::MoneyDecodeSpec::new(
+                        fmt,
+                        nv.currency.clone(),
+                        field_schema.currency_field.clone(),
+                    ));
+                }
+            }
             field_decoders.push(match &field_schema.derive {
                 Some(d) => fd.with_derive(d.clone()),
                 None => fd,

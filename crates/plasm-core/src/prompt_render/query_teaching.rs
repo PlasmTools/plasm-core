@@ -100,7 +100,9 @@ fn query_param_slot_example(
         return format!("{n}={p}");
     }
     match &nv.field_type {
-        FieldType::Integer | FieldType::Number | FieldType::Boolean => format!("{n}={p}"),
+        FieldType::Integer | FieldType::Number | FieldType::Money | FieldType::Boolean => {
+            format!("{n}={p}")
+        }
         FieldType::String | FieldType::Blob | FieldType::Uuid => format!("{n}={p}"),
         FieldType::Date => format!("{n}={p}"),
         FieldType::Select | FieldType::MultiSelect => format!("{n}={p}"),
@@ -156,6 +158,7 @@ pub(crate) fn compound_get_expr_line(
         match &nv.field_type {
             FieldType::Integer
             | FieldType::Number
+            | FieldType::Money
             | FieldType::Boolean
             | FieldType::String
             | FieldType::Uuid

@@ -521,7 +521,7 @@ pub struct NamedValueSchema {
     pub description: String,
     #[serde(with = "serde_yaml::with::singleton_map")]
     pub field_type: FieldType,
-    /// Required when [`Self::field_type`] is [`FieldType::Date`]: wire shape for predicates / inputs.
+    /// Required when [`Self::field_type`] is [`FieldType::Date`] or [`FieldType::Money`]: wire shape for predicates / inputs / decode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value_format: Option<ValueWireFormat>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -531,6 +531,9 @@ pub struct NamedValueSchema {
     /// When [`Self::field_type`] is [`FieldType::Array`], element typing for the named array domain.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub array_items: Option<ArrayItemsSchema>,
+    /// Default currency token for [`FieldType::Money`] (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
 }
 
 /// Definition of a single field within a resource.
@@ -571,6 +574,9 @@ pub struct FieldSchema {
     /// using a transport-agnostic rule (URL path segment, name/value array lookup, object key, …).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub derive: Option<FieldDeriveRule>,
+    /// Sibling field name that supplies currency for this money amount (same entity).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub currency_field: Option<String>,
 }
 
 fn default_name_value_match_key_field() -> String {
@@ -4038,52 +4044,18 @@ impl CGS {
         match &field.wire {
             InputFieldWire::Registry(_) => {
                 let nv = field.named_value(cgs)?;
-                match &nv.field_type {
-                    FieldType::Date => match &nv.value_format {
-                        Some(ValueWireFormat::Temporal(_)) => {}
-                        None => {
-                            return Err(SchemaError::DateParamMissingValueFormat {
-                                capability: cap_name.to_string(),
-                                param: param_path,
-                            });
-                        }
-                    },
-                    FieldType::Array => {
-                        if nv.value_format.is_some() {
-                            return Err(SchemaError::ValueFormatOnNonDateParam {
-                                capability: cap_name.to_string(),
-                                param: param_path.clone(),
-                            });
-                        }
-                        if let Some(ai) = nv.array_items.as_ref() {
-                            match &ai.field_type {
-                                FieldType::Date => match &ai.value_format {
-                                    Some(ValueWireFormat::Temporal(_)) => {}
-                                    None => {
-                                        return Err(SchemaError::DateParamMissingValueFormat {
-                                            capability: cap_name.to_string(),
-                                            param: format!("{param_path}.items"),
-                                        });
-                                    }
-                                },
-                                _ => {
-                                    if ai.value_format.is_some() {
-                                        return Err(SchemaError::ValueFormatOnNonDateParam {
-                                            capability: cap_name.to_string(),
-                                            param: format!("{param_path}.items"),
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    _ => {
-                        if nv.value_format.is_some() {
-                            return Err(SchemaError::ValueFormatOnNonDateParam {
-                                capability: cap_name.to_string(),
-                                param: param_path,
-                            });
-                        }
+                leaf_format_param_error(
+                    check_leaf_value_format(&nv.field_type, nv.value_format.as_ref()),
+                    cap_name,
+                    param_path.clone(),
+                )?;
+                if matches!(nv.field_type, FieldType::Array) {
+                    if let Some(ai) = nv.array_items.as_ref() {
+                        leaf_format_param_error(
+                            check_leaf_value_format(&ai.field_type, ai.value_format.as_ref()),
+                            cap_name,
+                            format!("{param_path}.items"),
+                        )?;
                     }
                 }
                 Ok(())
@@ -4516,52 +4488,42 @@ impl CGS {
         for (entity_name, ent) in &self.entities {
             for (field_name, field) in &ent.fields {
                 let nv = field.named_value(self)?;
-                match &nv.field_type {
-                    FieldType::Date => match &nv.value_format {
-                        Some(ValueWireFormat::Temporal(_)) => {}
-                        None => {
-                            return Err(SchemaError::DateFieldMissingValueFormat {
-                                entity: entity_name.to_string(),
-                                field: field_name.to_string(),
-                            });
-                        }
-                    },
-                    FieldType::Array => {
-                        if nv.value_format.is_some() {
-                            return Err(SchemaError::ValueFormatOnNonDateField {
-                                entity: entity_name.to_string(),
-                                field: field_name.to_string(),
-                            });
-                        }
-                        if let Some(ai) = nv.array_items.as_ref() {
-                            match &ai.field_type {
-                                FieldType::Date => match &ai.value_format {
-                                    Some(ValueWireFormat::Temporal(_)) => {}
-                                    None => {
-                                        return Err(SchemaError::DateFieldMissingValueFormat {
-                                            entity: entity_name.to_string(),
-                                            field: format!("{field_name}.items"),
-                                        });
-                                    }
-                                },
-                                _ => {
-                                    if ai.value_format.is_some() {
-                                        return Err(SchemaError::ValueFormatOnNonDateField {
-                                            entity: entity_name.to_string(),
-                                            field: format!("{field_name}.items"),
-                                        });
-                                    }
-                                }
-                            }
-                        }
+                leaf_format_field_error(
+                    check_leaf_value_format(&nv.field_type, nv.value_format.as_ref()),
+                    entity_name.as_str(),
+                    field_name.to_string(),
+                )?;
+                if matches!(nv.field_type, FieldType::Array) {
+                    if let Some(ai) = nv.array_items.as_ref() {
+                        leaf_format_field_error(
+                            check_leaf_value_format(&ai.field_type, ai.value_format.as_ref()),
+                            entity_name.as_str(),
+                            format!("{field_name}.items"),
+                        )?;
                     }
-                    _ => {
-                        if nv.value_format.is_some() {
-                            return Err(SchemaError::ValueFormatOnNonDateField {
-                                entity: entity_name.to_string(),
-                                field: field_name.to_string(),
-                            });
-                        }
+                }
+                if let Some(cf) = field.currency_field.as_deref() {
+                    if !matches!(nv.field_type, FieldType::Money) {
+                        return Err(SchemaError::SchemaConstraint {
+                            message: format!(
+                                "entity '{entity_name}' field '{field_name}': `currency_field` is only valid on money fields"
+                            ),
+                        });
+                    }
+                    if !ent.fields.contains_key(cf) {
+                        return Err(SchemaError::CurrencyFieldUnknown {
+                            entity: entity_name.to_string(),
+                            field: field_name.to_string(),
+                            currency_field: cf.to_string(),
+                        });
+                    }
+                    let sibling_nv = ent.fields[cf].named_value(self)?;
+                    if !matches!(sibling_nv.field_type, FieldType::String | FieldType::Select) {
+                        return Err(SchemaError::CurrencyFieldNotString {
+                            entity: entity_name.to_string(),
+                            field: field_name.to_string(),
+                            currency_field: cf.to_string(),
+                        });
                     }
                 }
             }
@@ -5475,6 +5437,77 @@ impl CapabilitySchema {
     }
 }
 
+enum LeafValueFormat {
+    Ok,
+    MissingDate,
+    MissingMoney,
+    Unexpected,
+}
+
+fn check_leaf_value_format(ft: &FieldType, vf: Option<&ValueWireFormat>) -> LeafValueFormat {
+    match ft {
+        FieldType::Date => match vf {
+            Some(ValueWireFormat::Temporal(_)) => LeafValueFormat::Ok,
+            _ => LeafValueFormat::MissingDate,
+        },
+        FieldType::Money => match vf {
+            Some(ValueWireFormat::Money(_)) => LeafValueFormat::Ok,
+            _ => LeafValueFormat::MissingMoney,
+        },
+        _ => {
+            if vf.is_some() {
+                LeafValueFormat::Unexpected
+            } else {
+                LeafValueFormat::Ok
+            }
+        }
+    }
+}
+
+fn leaf_format_field_error(
+    check: LeafValueFormat,
+    entity: &str,
+    field: String,
+) -> Result<(), SchemaError> {
+    match check {
+        LeafValueFormat::Ok => Ok(()),
+        LeafValueFormat::MissingDate => Err(SchemaError::DateFieldMissingValueFormat {
+            entity: entity.to_string(),
+            field,
+        }),
+        LeafValueFormat::MissingMoney => Err(SchemaError::MoneyFieldMissingValueFormat {
+            entity: entity.to_string(),
+            field,
+        }),
+        LeafValueFormat::Unexpected => Err(SchemaError::ValueFormatOnIncompatibleField {
+            entity: entity.to_string(),
+            field,
+        }),
+    }
+}
+
+fn leaf_format_param_error(
+    check: LeafValueFormat,
+    capability: &str,
+    param: String,
+) -> Result<(), SchemaError> {
+    match check {
+        LeafValueFormat::Ok => Ok(()),
+        LeafValueFormat::MissingDate => Err(SchemaError::DateParamMissingValueFormat {
+            capability: capability.to_string(),
+            param,
+        }),
+        LeafValueFormat::MissingMoney => Err(SchemaError::MoneyParamMissingValueFormat {
+            capability: capability.to_string(),
+            param,
+        }),
+        LeafValueFormat::Unexpected => Err(SchemaError::ValueFormatOnIncompatibleParam {
+            capability: capability.to_string(),
+            param,
+        }),
+    }
+}
+
 impl Default for CGS {
     fn default() -> Self {
         Self::new()
@@ -5515,6 +5548,7 @@ pub mod registry_test_util {
             attachment_media: None,
             wire_path: None,
             derive: None,
+            currency_field: None,
         }
     }
 

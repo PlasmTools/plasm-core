@@ -1,4 +1,4 @@
-version: 1
+version: 2
 auth:
   scheme: none
 http_backend: http://127.0.0.1:9
@@ -186,6 +186,21 @@ entities:
           path:
           - key: children
           - wildcard: true
+  LangOffer:
+    id_field: id
+    description: Priced offer used to lock money decode, compare, and create-body encode.
+    fields:
+      id:
+        required: true
+        value_ref: nv_lang_offer_id
+      price:
+        required: true
+        value_ref: nv_lang_offer_price
+        currency_field: quote_currency
+      quote_currency:
+        required: true
+        value_ref: nv_lang_offer_currency
+    relations: {}
 capabilities:
   langitem_query:
     description: List LangItem rows (optional tags filter homographs tags relation wire)
@@ -298,6 +313,29 @@ capabilities:
     output:
       type: side_effect
       description: Records a ping against the item (matrix conformance).
+  langoffer_query:
+    description: List LangOffer rows
+    kind: query
+    entity: LangOffer
+    provides:
+    - id
+    - price
+    - quote_currency
+  langoffer_create:
+    description: Create LangOffer
+    kind: create
+    entity: LangOffer
+    parameters:
+    - name: price
+      value_ref: nv_lang_offer_price
+      required: true
+    - name: quote_currency
+      value_ref: nv_lang_offer_currency
+      required: true
+    provides:
+    - id
+    - price
+    - quote_currency
   langtag_get:
     description: Get LangTag by id (batch relation resolution for prefer_from_parent_get)
     kind: get
@@ -492,3 +530,13 @@ values:
   nv_langline_query_item_id:
     type: entity_ref
     target: LangItem
+  nv_lang_offer_id:
+    type: string
+    string_semantics: short
+  nv_lang_offer_price:
+    type: money
+    value_format:
+      money: decimal_string
+  nv_lang_offer_currency:
+    type: string
+    string_semantics: short

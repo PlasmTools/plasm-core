@@ -305,6 +305,7 @@ fn plasm_value_to_json(value: &Value) -> serde_json::Value {
             serde_json::Value::Object(map)
         }
         Value::UnionCtor { .. } => serde_json::to_value(value).unwrap_or(serde_json::Value::Null),
+        Value::Money(m) => m.encode_stored().unwrap_or(serde_json::Value::Null),
     }
 }
 

@@ -1210,15 +1210,12 @@ impl IdentMetadata {
             }
             IdentMetadata::RegistryBacked {
                 field_type,
-                array_items,
-                string_semantics,
                 allowed_values,
                 wire_name,
                 role,
                 ..
             } => {
-                let type_label =
-                    array_or_scalar_gloss_label(field_type, array_items, *string_semantics, map);
+                let type_label = registry_gloss_type_label(self, cgs, map);
                 if matches!(field_type, FieldType::Select | FieldType::MultiSelect) {
                     if let Some(ref av) = allowed_values {
                         if !av.is_empty() {
@@ -1285,8 +1282,6 @@ impl IdentMetadata {
     ) -> Option<String> {
         let IdentMetadata::RegistryBacked {
             field_type,
-            array_items,
-            string_semantics,
             allowed_values,
             ..
         } = self
@@ -1300,8 +1295,7 @@ impl IdentMetadata {
                 value_row_description,
             ));
         }
-        let type_label =
-            array_or_scalar_gloss_label(field_type, array_items, *string_semantics, map);
+        let type_label = registry_gloss_type_label(self, cgs, map);
         if matches!(field_type, FieldType::Select | FieldType::MultiSelect) {
             if let Some(ref av) = allowed_values {
                 if !av.is_empty() {
@@ -1361,6 +1355,27 @@ pub(crate) fn string_semantics_gloss_label(sem: Option<StringSemantics>) -> Stri
     s.gloss_type_keyword().unwrap_or("str").to_string()
 }
 
+fn registry_gloss_type_label(
+    meta: &IdentMetadata,
+    cgs: Option<&CGS>,
+    map: Option<&SymbolMap>,
+) -> String {
+    let IdentMetadata::RegistryBacked {
+        field_type,
+        array_items,
+        string_semantics,
+        ..
+    } = meta
+    else {
+        return "str".to_string();
+    };
+    if matches!(field_type, FieldType::Money) {
+        money_value_domain_gloss_label(meta, cgs)
+    } else {
+        array_or_scalar_gloss_label(field_type, array_items, *string_semantics, map)
+    }
+}
+
 pub(crate) fn field_type_to_gloss_label(ft: &FieldType) -> String {
     match ft {
         FieldType::Boolean => "bool".to_string(),
@@ -1372,9 +1387,30 @@ pub(crate) fn field_type_to_gloss_label(ft: &FieldType) -> String {
         FieldType::Select => "select".to_string(),
         FieldType::MultiSelect => "multiselect".to_string(),
         FieldType::Date => "date".to_string(),
+        FieldType::Money => "money".to_string(),
         FieldType::Array => "array".to_string(),
         FieldType::Json => "json".to_string(),
         FieldType::EntityRef { target } => format!("ref:{target}"),
+    }
+}
+
+fn money_value_domain_gloss_label(meta: &IdentMetadata, cgs: Option<&CGS>) -> String {
+    let IdentMetadata::RegistryBacked {
+        value_registry_key, ..
+    } = meta
+    else {
+        return "money".to_string();
+    };
+    let currency = cgs.and_then(|c| {
+        c.values
+            .get(value_registry_key.as_str())
+            .and_then(|nv| nv.currency.as_deref())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    });
+    match currency {
+        Some(ccy) => format!("money:{ccy}"),
+        None => "money".to_string(),
     }
 }
 
@@ -4565,6 +4601,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         cgs.values.insert(
@@ -4576,6 +4613,7 @@ mod tests {
                 allowed_values: Some(vec!["alpha".into(), "beta".into()]),
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         let vr = FieldValueKind::Registry(ValueDomainKey::new("shared_sel_vtest").expect("key"));
@@ -4599,6 +4637,7 @@ mod tests {
                     wire_path: None,
                     derive: None,
                     data_class: None,
+                    currency_field: None,
                 },
                 FieldSchema {
                     name: "foo".into(),
@@ -4611,6 +4650,7 @@ mod tests {
                     wire_path: None,
                     derive: None,
                     data_class: None,
+                    currency_field: None,
                 },
                 FieldSchema {
                     name: "bar".into(),
@@ -4623,6 +4663,7 @@ mod tests {
                     wire_path: None,
                     derive: None,
                     data_class: None,
+                    currency_field: None,
                 },
             ],
             relations: vec![],

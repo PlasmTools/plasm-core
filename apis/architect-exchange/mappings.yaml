@@ -1,0 +1,1169 @@
+# Architect Exchange — dual gateway on https://gateway.architect.exchange
+# User/portfolio/marketdata → /api/...
+# Order lifecycle → /orders/...
+# Auth: Bearer ARCHITECT_EXCHANGE_TOKEN (mint via POST /api/authenticate; not modeled).
+
+user_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: whoami }
+  response: single
+
+account_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: whoami }
+  response:
+    items: accounts
+
+customer_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: whoami }
+    - { type: literal, value: customer }
+  response: single
+
+api_key_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: api-keys }
+  response:
+    items: api_keys
+
+api_key_create:
+  method: POST
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: api-keys }
+  body:
+    type: object
+    fields:
+      - - account_ids
+        - type: if
+          condition: { type: exists, var: account_ids }
+          then_expr: { type: var, name: account_ids }
+          else_expr: { type: const, value: null }
+      - - allowed_ips
+        - type: if
+          condition: { type: exists, var: allowed_ips }
+          then_expr: { type: var, name: allowed_ips }
+          else_expr: { type: const, value: null }
+      - - permissions
+        - type: object
+          fields:
+            - - can_list
+              - type: if
+                condition: { type: exists, var: can_list }
+                then_expr: { type: var, name: can_list }
+                else_expr: { type: const, value: null }
+            - - can_read
+              - type: if
+                condition: { type: exists, var: can_read }
+                then_expr: { type: var, name: can_read }
+                else_expr: { type: const, value: null }
+            - - can_set_limits
+              - type: if
+                condition: { type: exists, var: can_set_limits }
+                then_expr: { type: var, name: can_set_limits }
+                else_expr: { type: const, value: null }
+            - - can_reduce_or_close
+              - type: if
+                condition: { type: exists, var: can_reduce_or_close }
+                then_expr: { type: var, name: can_reduce_or_close }
+                else_expr: { type: const, value: null }
+            - - can_trade
+              - type: if
+                condition: { type: exists, var: can_trade }
+                then_expr: { type: var, name: can_trade }
+                else_expr: { type: const, value: null }
+  response: single
+
+api_key_update:
+  method: PATCH
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: api-keys }
+    - { type: literal, value: allowed-ips }
+  body:
+    type: object
+    fields:
+      - - api_key
+        - type: var
+          name: id
+      - - allowed_ips
+        - type: var
+          name: allowed_ips
+
+api_key_delete:
+  method: DELETE
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: api-keys }
+  query:
+    type: object
+    fields:
+      - - api_key
+        - type: var
+          name: api_key
+
+balance_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: balances }
+  query:
+    type: object
+    fields:
+      - - account_id
+        - type: if
+          condition: { type: exists, var: account_id }
+          then_expr: { type: var, name: account_id }
+          else_expr: { type: const, value: null }
+  response:
+    items: balances
+
+position_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: positions }
+  query:
+    type: object
+    fields:
+      - - account_id
+        - type: if
+          condition: { type: exists, var: account_id }
+          then_expr: { type: var, name: account_id }
+          else_expr: { type: const, value: null }
+  response:
+    items: positions
+
+risk_snapshot_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: risk-snapshot }
+  query:
+    type: object
+    fields:
+      - - account_id
+        - type: if
+          condition: { type: exists, var: account_id }
+          then_expr: { type: var, name: account_id }
+          else_expr: { type: const, value: null }
+  response:
+    single: true
+    items_path: [risk_snapshot]
+
+equity_point_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: account-equity-history }
+  query:
+    type: object
+    fields:
+      - - account_id
+        - type: if
+          condition: { type: exists, var: account_id }
+          then_expr: { type: var, name: account_id }
+          else_expr: { type: const, value: null }
+      - - start_timestamp_ns
+        - type: var
+          name: start_timestamp_ns
+      - - end_timestamp_ns
+        - type: var
+          name: end_timestamp_ns
+      - - resolution_seconds
+        - type: var
+          name: resolution_seconds
+  response:
+    items: data_points
+
+deposit_address_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: blockchain-deposit-address }
+  query:
+    type: object
+    fields:
+      - - account_id
+        - type: if
+          condition: { type: exists, var: account_id }
+          then_expr: { type: var, name: account_id }
+          else_expr: { type: const, value: null }
+      - - blockchain
+        - type: var
+          name: blockchain
+      - - asset
+        - type: var
+          name: asset
+  response: single
+
+sandbox_deposit:
+  method: POST
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: sandbox }
+    - { type: literal, value: deposit }
+  body:
+    type: object
+    fields:
+      - - symbol
+        - type: var
+          name: symbol
+      - - amount
+        - type: var
+          name: amount
+      - - account_id
+        - type: if
+          condition: { type: exists, var: account_id }
+          then_expr: { type: var, name: account_id }
+          else_expr: { type: const, value: null }
+
+sandbox_withdraw:
+  method: POST
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: sandbox }
+    - { type: literal, value: withdraw }
+  body:
+    type: object
+    fields:
+      - - symbol
+        - type: var
+          name: symbol
+      - - amount
+        - type: var
+          name: amount
+      - - account_id
+        - type: if
+          condition: { type: exists, var: account_id }
+          then_expr: { type: var, name: account_id }
+          else_expr: { type: const, value: null }
+
+instrument_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: instruments }
+  response:
+    items: instruments
+
+instrument_get:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: instrument }
+  query:
+    type: object
+    fields:
+      - - symbol
+        - type: var
+          name: id
+  response: single
+
+ticker_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: tickers }
+  query:
+    type: object
+    fields:
+      - - sort
+        - type: if
+          condition: { type: exists, var: sort }
+          then_expr: { type: var, name: sort }
+          else_expr: { type: const, value: null }
+  response:
+    items: tickers
+  pagination:
+    location: query
+    params:
+      offset: { counter: 0, step: 100 }
+      limit: { fixed: 100 }
+
+ticker_for_symbol_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: ticker }
+  query:
+    type: object
+    fields:
+      - - symbol
+        - type: var
+          name: symbol
+  response:
+    single: true
+    items_path: [ticker]
+
+ticker_get:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: ticker }
+  query:
+    type: object
+    fields:
+      - - symbol
+        - type: var
+          name: id
+  response:
+    single: true
+    items_path: [ticker]
+
+order_book_for_symbol_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: book }
+  query:
+    type: object
+    fields:
+      - - symbol
+        - type: var
+          name: symbol
+      - - level
+        - type: if
+          condition: { type: exists, var: level }
+          then_expr: { type: var, name: level }
+          else_expr: { type: const, value: null }
+  response:
+    single: true
+    items_path: [book]
+
+order_book_get:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: book }
+  query:
+    type: object
+    fields:
+      - - symbol
+        - type: var
+          name: id
+      - - level
+        - type: if
+          condition: { type: exists, var: level }
+          then_expr: { type: var, name: level }
+          else_expr: { type: const, value: null }
+  response:
+    single: true
+    items_path: [book]
+
+trade_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: trades }
+  query:
+    type: object
+    fields:
+      - - symbol
+        - type: var
+          name: symbol
+  response:
+    items: trades
+  pagination:
+    location: query
+    params:
+      limit: { fixed: 100 }
+
+candle_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: candles }
+  query:
+    type: object
+    fields:
+      - - symbol
+        - type: var
+          name: symbol
+      - - start_timestamp_ns
+        - type: var
+          name: start_timestamp_ns
+      - - end_timestamp_ns
+        - type: var
+          name: end_timestamp_ns
+      - - candle_width
+        - type: var
+          name: candle_width
+  response:
+    items: candles
+
+candle_current_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: candles }
+    - { type: literal, value: current }
+  query:
+    type: object
+    fields:
+      - - symbol
+        - type: var
+          name: symbol
+      - - candle_width
+        - type: var
+          name: candle_width
+  response:
+    single: true
+    items_path: [candle]
+
+candle_last_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: candles }
+    - { type: literal, value: last }
+  query:
+    type: object
+    fields:
+      - - symbol
+        - type: var
+          name: symbol
+      - - candle_width
+        - type: var
+          name: candle_width
+  response:
+    single: true
+    items_path: [candle]
+
+bbo_candle_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: bbo-candles }
+  query:
+    type: object
+    fields:
+      - - symbol
+        - type: var
+          name: symbol
+      - - start_timestamp_ns
+        - type: var
+          name: start_timestamp_ns
+      - - end_timestamp_ns
+        - type: var
+          name: end_timestamp_ns
+      - - candle_width
+        - type: var
+          name: candle_width
+  response:
+    items: candles
+
+bbo_candle_current_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: bbo-candles }
+    - { type: literal, value: current }
+  query:
+    type: object
+    fields:
+      - - symbol
+        - type: var
+          name: symbol
+      - - candle_width
+        - type: var
+          name: candle_width
+  response:
+    single: true
+    items_path: [candle]
+
+bbo_candle_last_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: bbo-candles }
+    - { type: literal, value: last }
+  query:
+    type: object
+    fields:
+      - - symbol
+        - type: var
+          name: symbol
+      - - candle_width
+        - type: var
+          name: candle_width
+  response:
+    single: true
+    items_path: [candle]
+
+funding_rate_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: funding-rates }
+  query:
+    type: object
+    fields:
+      - - symbol
+        - type: var
+          name: symbol
+      - - start_timestamp_ns
+        - type: if
+          condition: { type: exists, var: start_timestamp_ns }
+          then_expr: { type: var, name: start_timestamp_ns }
+          else_expr: { type: const, value: null }
+      - - end_timestamp_ns
+        - type: if
+          condition: { type: exists, var: end_timestamp_ns }
+          then_expr: { type: var, name: end_timestamp_ns }
+          else_expr: { type: const, value: null }
+      - - sort_ts
+        - type: if
+          condition: { type: exists, var: sort_ts }
+          then_expr: { type: var, name: sort_ts }
+          else_expr: { type: const, value: null }
+  response:
+    items: funding_rates
+  pagination:
+    location: query
+    params:
+      cursor: { from_response: next_cursor }
+      limit: { fixed: 1000 }
+
+estimated_funding_get:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: estimated-funding-rate }
+  query:
+    type: object
+    fields:
+      - - symbol
+        - type: var
+          name: id
+  response: single
+
+funding_day_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: funding-slots }
+  query:
+    type: object
+    fields:
+      - - symbol
+        - type: var
+          name: symbol
+      - - date
+        - type: if
+          condition: { type: exists, var: date }
+          then_expr: { type: var, name: date }
+          else_expr: { type: const, value: null }
+  response: single
+
+underlying_price_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: underlying-prices }
+  query:
+    type: object
+    fields:
+      - - symbol
+        - type: var
+          name: symbol
+      - - start_timestamp_ns
+        - type: if
+          condition: { type: exists, var: start_timestamp_ns }
+          then_expr: { type: var, name: start_timestamp_ns }
+          else_expr: { type: const, value: null }
+      - - end_timestamp_ns
+        - type: if
+          condition: { type: exists, var: end_timestamp_ns }
+          then_expr: { type: var, name: end_timestamp_ns }
+          else_expr: { type: const, value: null }
+      - - sort_ts
+        - type: if
+          condition: { type: exists, var: sort_ts }
+          then_expr: { type: var, name: sort_ts }
+          else_expr: { type: const, value: null }
+  response:
+    items: underlying_prices
+  pagination:
+    location: query
+    params:
+      cursor: { from_response: next_cursor }
+      limit: { fixed: 1000 }
+
+special_settlement_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: special-settlements-pending }
+  query:
+    type: object
+    fields:
+      - - days
+        - type: if
+          condition: { type: exists, var: days }
+          then_expr: { type: var, name: days }
+          else_expr: { type: const, value: null }
+  response:
+    items: special_settlements
+
+aggressive_limit_preview:
+  method: POST
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: preview-aggressive-limit-order }
+  body:
+    type: object
+    fields:
+      - - symbol
+        - type: var
+          name: symbol
+      - - quantity
+        - type: var
+          name: quantity
+      - - side
+        - type: var
+          name: side
+  response: single
+
+order_open_query:
+  method: GET
+  path:
+    - { type: literal, value: orders }
+    - { type: literal, value: open-orders }
+  query:
+    type: object
+    fields:
+      - - account_id
+        - type: if
+          condition: { type: exists, var: account_id }
+          then_expr: { type: var, name: account_id }
+          else_expr: { type: const, value: null }
+      - - sort_ts
+        - type: if
+          condition: { type: exists, var: sort_ts }
+          then_expr: { type: var, name: sort_ts }
+          else_expr: { type: const, value: null }
+  response:
+    items: orders
+  pagination:
+    location: query
+    params:
+      offset: { counter: 0, step: 100 }
+      limit: { fixed: 100 }
+
+order_history_query:
+  method: GET
+  path:
+    - { type: literal, value: orders }
+    - { type: literal, value: orders }
+  query:
+    type: object
+    fields:
+      - - symbol
+        - type: if
+          condition: { type: exists, var: symbol }
+          then_expr: { type: var, name: symbol }
+          else_expr: { type: const, value: null }
+      - - start_timestamp_ns
+        - type: var
+          name: start_timestamp_ns
+      - - end_timestamp_ns
+        - type: var
+          name: end_timestamp_ns
+      - - sort_ts
+        - type: if
+          condition: { type: exists, var: sort_ts }
+          then_expr: { type: var, name: sort_ts }
+          else_expr: { type: const, value: null }
+      - - order_states
+        - type: if
+          condition: { type: exists, var: order_states }
+          then_expr: { type: join, sep: ",", expr: { type: var, name: order_states } }
+          else_expr: { type: const, value: null }
+      - - order_id
+        - type: if
+          condition: { type: exists, var: order_id }
+          then_expr: { type: var, name: order_id }
+          else_expr: { type: const, value: null }
+      - - order_ids
+        - type: if
+          condition: { type: exists, var: order_ids }
+          then_expr: { type: join, sep: ",", expr: { type: var, name: order_ids } }
+          else_expr: { type: const, value: null }
+      - - account_id
+        - type: if
+          condition: { type: exists, var: account_id }
+          then_expr: { type: var, name: account_id }
+          else_expr: { type: const, value: null }
+  response:
+    items: orders
+  pagination:
+    location: query
+    params:
+      cursor: { from_response: next_cursor }
+      limit: { fixed: 100 }
+
+order_status_query:
+  method: GET
+  path:
+    - { type: literal, value: orders }
+    - { type: literal, value: order-status }
+  query:
+    type: object
+    fields:
+      - - oid
+        - type: if
+          condition: { type: exists, var: order_id }
+          then_expr: { type: var, name: order_id }
+          else_expr: { type: const, value: null }
+      - - cid
+        - type: if
+          condition: { type: exists, var: client_order_id }
+          then_expr: { type: var, name: client_order_id }
+          else_expr: { type: const, value: null }
+      - - aid
+        - type: if
+          condition: { type: exists, var: account_id }
+          then_expr: { type: var, name: account_id }
+          else_expr: { type: const, value: null }
+  response:
+    single: true
+    items_path: [status]
+
+order_create:
+  method: POST
+  path:
+    - { type: literal, value: orders }
+    - { type: literal, value: place-order }
+  body:
+    type: object
+    fields:
+      - - s
+        - type: var
+          name: symbol
+      - - d
+        - type: var
+          name: side
+      - - q
+        - type: var
+          name: quantity
+      - - p
+        - type: var
+          name: price
+      - - tif
+        - type: var
+          name: time_in_force
+      - - aid
+        - type: if
+          condition: { type: exists, var: account_id }
+          then_expr: { type: var, name: account_id }
+          else_expr: { type: const, value: null }
+      - - cid
+        - type: if
+          condition: { type: exists, var: client_order_id }
+          then_expr: { type: var, name: client_order_id }
+          else_expr: { type: const, value: null }
+      - - po
+        - type: if
+          condition: { type: exists, var: post_only }
+          then_expr: { type: var, name: post_only }
+          else_expr: { type: const, value: null }
+      - - rb
+        - type: if
+          condition: { type: exists, var: reprice_behavior }
+          then_expr: { type: var, name: reprice_behavior }
+          else_expr: { type: const, value: null }
+      - - st
+        - type: if
+          condition: { type: exists, var: self_trade_behavior }
+          then_expr: { type: var, name: self_trade_behavior }
+          else_expr: { type: const, value: null }
+      - - tag
+        - type: if
+          condition: { type: exists, var: tag }
+          then_expr: { type: var, name: tag }
+          else_expr: { type: const, value: null }
+  response: single
+
+order_update:
+  method: POST
+  path:
+    - { type: literal, value: orders }
+    - { type: literal, value: replace-order }
+  body:
+    type: object
+    fields:
+      - - oid
+        - type: var
+          name: id
+      - - cid
+        - type: if
+          condition: { type: exists, var: client_order_id }
+          then_expr: { type: var, name: client_order_id }
+          else_expr: { type: const, value: null }
+      - - aid
+        - type: if
+          condition: { type: exists, var: account_id }
+          then_expr: { type: var, name: account_id }
+          else_expr: { type: const, value: null }
+      - - p
+        - type: if
+          condition: { type: exists, var: price }
+          then_expr: { type: var, name: price }
+          else_expr: { type: const, value: null }
+      - - q
+        - type: if
+          condition: { type: exists, var: quantity }
+          then_expr: { type: var, name: quantity }
+          else_expr: { type: const, value: null }
+      - - tif
+        - type: if
+          condition: { type: exists, var: time_in_force }
+          then_expr: { type: var, name: time_in_force }
+          else_expr: { type: const, value: null }
+      - - po
+        - type: if
+          condition: { type: exists, var: post_only }
+          then_expr: { type: var, name: post_only }
+          else_expr: { type: const, value: null }
+      - - rb
+        - type: if
+          condition: { type: exists, var: reprice_behavior }
+          then_expr: { type: var, name: reprice_behavior }
+          else_expr: { type: const, value: null }
+  response: single
+
+order_cancel:
+  method: POST
+  path:
+    - { type: literal, value: orders }
+    - { type: literal, value: cancel-order }
+  body:
+    type: object
+    fields:
+      - - oid
+        - type: var
+          name: id
+      - - cid
+        - type: if
+          condition: { type: exists, var: client_order_id }
+          then_expr: { type: var, name: client_order_id }
+          else_expr: { type: const, value: null }
+      - - aid
+        - type: if
+          condition: { type: exists, var: account_id }
+          then_expr: { type: var, name: account_id }
+          else_expr: { type: const, value: null }
+
+order_cancel_all:
+  method: POST
+  path:
+    - { type: literal, value: orders }
+    - { type: literal, value: cancel-all-orders }
+  body:
+    type: object
+    fields:
+      - - account_id
+        - type: if
+          condition: { type: exists, var: account_id }
+          then_expr: { type: var, name: account_id }
+          else_expr: { type: const, value: null }
+      - - symbol
+        - type: if
+          condition: { type: exists, var: symbol }
+          then_expr: { type: var, name: symbol }
+          else_expr: { type: const, value: null }
+
+order_preview:
+  method: POST
+  path:
+    - { type: literal, value: orders }
+    - { type: literal, value: preview-order }
+  body:
+    type: object
+    fields:
+      - - s
+        - type: var
+          name: symbol
+      - - d
+        - type: var
+          name: side
+      - - q
+        - type: var
+          name: quantity
+      - - p
+        - type: var
+          name: price
+      - - tif
+        - type: var
+          name: time_in_force
+      - - aid
+        - type: if
+          condition: { type: exists, var: account_id }
+          then_expr: { type: var, name: account_id }
+          else_expr: { type: const, value: null }
+      - - cid
+        - type: if
+          condition: { type: exists, var: client_order_id }
+          then_expr: { type: var, name: client_order_id }
+          else_expr: { type: const, value: null }
+      - - po
+        - type: if
+          condition: { type: exists, var: post_only }
+          then_expr: { type: var, name: post_only }
+          else_expr: { type: const, value: null }
+      - - rb
+        - type: if
+          condition: { type: exists, var: reprice_behavior }
+          then_expr: { type: var, name: reprice_behavior }
+          else_expr: { type: const, value: null }
+      - - st
+        - type: if
+          condition: { type: exists, var: self_trade_behavior }
+          then_expr: { type: var, name: self_trade_behavior }
+          else_expr: { type: const, value: null }
+      - - tag
+        - type: if
+          condition: { type: exists, var: tag }
+          then_expr: { type: var, name: tag }
+          else_expr: { type: const, value: null }
+  response: single
+
+initial_margin_quote:
+  method: POST
+  path:
+    - { type: literal, value: orders }
+    - { type: literal, value: initial-margin-requirement }
+  body:
+    type: object
+    fields:
+      - - s
+        - type: var
+          name: symbol
+      - - d
+        - type: var
+          name: side
+      - - q
+        - type: var
+          name: quantity
+      - - p
+        - type: var
+          name: price
+      - - tif
+        - type: var
+          name: time_in_force
+      - - aid
+        - type: if
+          condition: { type: exists, var: account_id }
+          then_expr: { type: var, name: account_id }
+          else_expr: { type: const, value: null }
+  response: single
+
+fill_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: fills }
+  query:
+    type: object
+    fields:
+      - - account_id
+        - type: if
+          condition: { type: exists, var: account_id }
+          then_expr: { type: var, name: account_id }
+          else_expr: { type: const, value: null }
+      - - symbol
+        - type: if
+          condition: { type: exists, var: symbol }
+          then_expr: { type: var, name: symbol }
+          else_expr: { type: const, value: null }
+      - - start_timestamp_ns
+        - type: var
+          name: start_timestamp_ns
+      - - end_timestamp_ns
+        - type: var
+          name: end_timestamp_ns
+      - - sort_ts
+        - type: if
+          condition: { type: exists, var: sort_ts }
+          then_expr: { type: var, name: sort_ts }
+          else_expr: { type: const, value: null }
+  response:
+    items: fills
+  pagination:
+    location: query
+    params:
+      cursor: { from_response: next_cursor }
+      limit: { fixed: 100 }
+
+fill_for_order_query:
+  method: GET
+  path:
+    - { type: literal, value: orders }
+    - { type: literal, value: order-fills }
+  query:
+    type: object
+    fields:
+      - - order_id
+        - type: var
+          name: order_id
+      - - aid
+        - type: if
+          condition: { type: exists, var: account_id }
+          then_expr: { type: var, name: account_id }
+          else_expr: { type: const, value: null }
+  response:
+    items: fills
+
+transaction_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: transactions }
+  query:
+    type: object
+    fields:
+      - - account_id
+        - type: if
+          condition: { type: exists, var: account_id }
+          then_expr: { type: var, name: account_id }
+          else_expr: { type: const, value: null }
+      - - transaction_types
+        - type: join
+          sep: ","
+          expr: { type: var, name: transaction_types }
+      - - start_timestamp_ns
+        - type: var
+          name: start_timestamp_ns
+      - - end_timestamp_ns
+        - type: var
+          name: end_timestamp_ns
+      - - sort_ts
+        - type: if
+          condition: { type: exists, var: sort_ts }
+          then_expr: { type: var, name: sort_ts }
+          else_expr: { type: const, value: null }
+  response:
+    items: transactions
+  pagination:
+    location: query
+    params:
+      cursor: { from_response: next_cursor }
+      limit: { fixed: 100 }
+
+funding_transaction_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: funding-transactions }
+  query:
+    type: object
+    fields:
+      - - account_id
+        - type: if
+          condition: { type: exists, var: account_id }
+          then_expr: { type: var, name: account_id }
+          else_expr: { type: const, value: null }
+      - - symbol
+        - type: if
+          condition: { type: exists, var: symbol }
+          then_expr: { type: var, name: symbol }
+          else_expr: { type: const, value: null }
+      - - start_timestamp_ns
+        - type: var
+          name: start_timestamp_ns
+      - - end_timestamp_ns
+        - type: var
+          name: end_timestamp_ns
+      - - sort_ts
+        - type: if
+          condition: { type: exists, var: sort_ts }
+          then_expr: { type: var, name: sort_ts }
+          else_expr: { type: const, value: null }
+  response:
+    items: funding_transactions
+  pagination:
+    location: query
+    params:
+      cursor: { from_response: next_cursor }
+      limit: { fixed: 100 }
+
+liquidation_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: liquidations }
+  query:
+    type: object
+    fields:
+      - - account_id
+        - type: if
+          condition: { type: exists, var: account_id }
+          then_expr: { type: var, name: account_id }
+          else_expr: { type: const, value: null }
+      - - symbol
+        - type: if
+          condition: { type: exists, var: symbol }
+          then_expr: { type: var, name: symbol }
+          else_expr: { type: const, value: null }
+      - - start_timestamp_ns
+        - type: var
+          name: start_timestamp_ns
+      - - end_timestamp_ns
+        - type: var
+          name: end_timestamp_ns
+      - - sort_ts
+        - type: if
+          condition: { type: exists, var: sort_ts }
+          then_expr: { type: var, name: sort_ts }
+          else_expr: { type: const, value: null }
+  response:
+    items: fills
+  pagination:
+    location: query
+    params:
+      cursor: { from_response: next_cursor }
+      limit: { fixed: 100 }
+
+volume_stat_query:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: user }
+    - { type: literal, value: stats }
+    - { type: literal, value: volume }
+  query:
+    type: object
+    fields:
+      - - start_timestamp_ns
+        - type: var
+          name: start_timestamp_ns
+      - - end_timestamp_ns
+        - type: var
+          name: end_timestamp_ns
+      - - account_id
+        - type: if
+          condition: { type: exists, var: account_id }
+          then_expr: { type: var, name: account_id }
+          else_expr: { type: const, value: null }
+  response: single
+
+portfolio_snapshot_query:
+  transport: view
+  view: portfolio_snapshot
+
+instrument_context_query:
+  transport: view
+  view: instrument_context
+
+order_context_query:
+  transport: view
+  view: order_context

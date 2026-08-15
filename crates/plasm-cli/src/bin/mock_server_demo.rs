@@ -22,6 +22,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 allowed_values: None,
                 string_semantics: Some(StringSemantics::Short),
                 array_items: None,
+                currency: None,
             },
         ),
         (
@@ -33,6 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 allowed_values: None,
                 string_semantics: Some(StringSemantics::Short),
                 array_items: None,
+                currency: None,
             },
         ),
         (
@@ -44,6 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         ),
         (
@@ -59,6 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ]),
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         ),
     ]);
@@ -81,6 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 wire_path: None,
                 derive: None,
                 data_class: None,
+                currency_field: None,
             },
             FieldSchema {
                 name: "name".into(),
@@ -93,6 +98,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 wire_path: None,
                 derive: None,
                 data_class: None,
+                currency_field: None,
             },
             FieldSchema {
                 name: "revenue".into(),
@@ -105,6 +111,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 wire_path: None,
                 derive: None,
                 data_class: None,
+                currency_field: None,
             },
             FieldSchema {
                 name: "region".into(),
@@ -117,6 +124,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 wire_path: None,
                 derive: None,
                 data_class: None,
+                currency_field: None,
             },
         ],
         relations: vec![],

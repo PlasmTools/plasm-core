@@ -88,7 +88,8 @@ pub(crate) fn invoke_dotted_call_arg_example(
         | FieldType::Json
         | FieldType::Uuid
         | FieldType::Integer
-        | FieldType::Number => Some(format!("{n}={p}")),
+        | FieldType::Number
+        | FieldType::Money => Some(format!("{n}={p}")),
         FieldType::Select | FieldType::MultiSelect => Some(format!("{n}={p}")),
         FieldType::EntityRef { target } => Some(format!(
             "{n}={}",

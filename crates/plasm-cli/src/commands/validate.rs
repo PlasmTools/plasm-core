@@ -3,7 +3,8 @@ use indexmap::IndexMap;
 use plasm_compile::CmlRequest;
 use plasm_core::{
     CapabilityKind, CreateExpr, DeleteExpr, Expr, FieldType, GetExpr, InputFieldSchema,
-    InputFieldWire, InputType, InvokeExpr, Predicate, QueryExpr, QueryPagination, Value, CGS,
+    InputFieldWire, InputType, InvokeExpr, MoneyWireFormat, Predicate, QueryExpr, QueryPagination,
+    Value, ValueWireFormat, CGS,
 };
 use plasm_runtime::{
     ExecuteOptions, ExecutionConfig, ExecutionEngine, ExecutionMode, SessionMaterialization,
@@ -525,6 +526,7 @@ fn fake_value_for_input_field(f: &InputFieldSchema, cgs: &CGS) -> Option<Value> 
             Some(fake_value_for_type(
                 &nv.field_type,
                 nv.allowed_values.as_deref(),
+                nv.value_format.as_ref(),
             ))
         }
         InputFieldWire::Inline(ty) => Some(fake_value_for_input_type(ty.as_ref(), cgs)),
@@ -537,7 +539,7 @@ fn fake_value_for_input_type(ty: &InputType, cgs: &CGS) -> Value {
         InputType::Value {
             field_type,
             allowed_values,
-        } => fake_value_for_type(field_type, allowed_values.as_deref()),
+        } => fake_value_for_type(field_type, allowed_values.as_deref(), None),
         InputType::Object { fields, .. } => {
             let mut m = IndexMap::new();
             for field in fields.iter().filter(|x| x.required) {
@@ -613,7 +615,11 @@ fn build_fake_input(cap: &plasm_core::CapabilitySchema, cgs: &plasm_core::CGS) -
     }
 }
 
-fn fake_value_for_type(ft: &FieldType, allowed: Option<&[String]>) -> Value {
+fn fake_value_for_type(
+    ft: &FieldType,
+    allowed: Option<&[String]>,
+    value_format: Option<&ValueWireFormat>,
+) -> Value {
     if let Some(vals) = allowed {
         if let Some(first) = vals.first() {
             return Value::String(first.clone());
@@ -622,6 +628,14 @@ fn fake_value_for_type(ft: &FieldType, allowed: Option<&[String]>) -> Value {
     match ft {
         FieldType::Integer => Value::Integer(1),
         FieldType::Number => Value::Float(1.0),
+        FieldType::Money => {
+            let fmt = match value_format {
+                Some(ValueWireFormat::Money(m)) => *m,
+                _ => MoneyWireFormat::decimal_string(),
+            };
+            plasm_core::money::normalize(Value::String("1".into()), fmt, None)
+                .unwrap_or_else(|_| Value::String("1".into()))
+        }
         FieldType::Boolean => Value::Bool(false),
         FieldType::EntityRef { .. } => Value::String("1".into()),
         _ => Value::String("plasm-test".into()),

@@ -5,6 +5,7 @@
 //! for JSON/`entity_ref`/`PlasmInputRef` shapes that do not lift cleanly.
 
 use crate::entity_ref_value::{EntityRefPayload, EntityRefValueError};
+use crate::money::MoneyValue;
 use crate::value::{PlasmInputRef, Value};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -21,6 +22,8 @@ pub enum TypedLiteral {
     EntityRef(EntityRefPayload),
     /// Compile-time plan hole (`__plasm_hole`).
     InputRef(PlasmInputRef),
+    /// Fowler money (amount + optional currency). Must not collapse to [`TypedLiteral::String`].
+    Money(MoneyValue),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -45,6 +48,7 @@ impl TypedLiteral {
             TypedLiteral::Array(items) => Value::Array(items.iter().map(Self::to_value).collect()),
             TypedLiteral::EntityRef(p) => p.to_value(),
             TypedLiteral::InputRef(r) => Value::PlasmInputRef(r.clone()),
+            TypedLiteral::Money(m) => Value::Money(m.clone()),
         }
     }
 
@@ -70,6 +74,7 @@ impl TypedLiteral {
                 Ok(p) => Ok(TypedLiteral::EntityRef(p)),
                 Err(e) => Err(TypedLiteralError::EntityRef(e)),
             },
+            Value::Money(m) => Ok(TypedLiteral::Money(m.clone())),
         }
     }
 }
@@ -217,6 +222,10 @@ mod tests {
             Value::Integer(-3),
             Value::Float(1.5),
             Value::String("x".into()),
+            Value::Money(MoneyValue::new(
+                "12.5".parse().expect("decimal"),
+                Some("USD".into()),
+            )),
         ] {
             let t = TypedLiteral::try_from_value(&v).expect("scalar");
             assert_eq!(t.to_value(), v);

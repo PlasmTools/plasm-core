@@ -10,8 +10,8 @@ use plasm_core::{Ref, RelationMaterialization, Value, CGS, MAX_FROM_PARENT_GET_E
 use std::collections::{BTreeMap, VecDeque};
 
 use crate::decoder::{
-    apply_field_derive_rule, apply_transform, extract_path, json_to_value,
-    relation_decode_path_specified, DecodedEntity, DecodedRelation, EntityDecoder,
+    apply_field_derive_rule, apply_transform, extract_path, relation_decode_path_specified,
+    DecodedEntity, DecodedRelation, EntityDecoder,
 };
 use crate::embed_target_decoder::entity_decoder_for_from_parent_get_target;
 use crate::json_path::path_expr_from_json_segments;
@@ -120,6 +120,7 @@ fn value_to_key_slot(v: &Value) -> Option<String> {
             }
         }
         Value::Bool(b) => Some(b.to_string()),
+        Value::Money(m) => m.to_wire_text().ok(),
         Value::Null | Value::Array(_) | Value::Object(_) | Value::UnionCtor { .. } => None,
     }
 }
@@ -150,10 +151,12 @@ fn decode_entity_fields_and_ref(
                 if let Some(ref dr) = field_decoder.derive {
                     raw = apply_field_derive_rule(dr, &raw)?;
                 }
-                let decoded_value = if let Some(transform) = &field_decoder.transform {
+                let decoded_value = if field_decoder.money.is_some() {
+                    plasm_core::json_amount_to_value(&raw)
+                } else if let Some(transform) = &field_decoder.transform {
                     apply_transform(transform, &raw)?
                 } else {
-                    json_to_value(&raw)
+                    plasm_core::json_value_to_plasm_value(&raw)
                 };
                 fields.insert(field_decoder.field.clone(), decoded_value);
             }
@@ -170,7 +173,7 @@ fn decode_entity_fields_and_ref(
         serde_json::Value::String(_) | serde_json::Value::Number(_)
     ) {
         if let Some(ref name) = decoder.id_field {
-            fields.insert(name.clone(), json_to_value(source));
+            fields.insert(name.clone(), plasm_core::json_value_to_plasm_value(source));
         }
     } else {
         return Err(DecodeError::InvalidStructure {
@@ -185,6 +188,16 @@ fn decode_entity_fields_and_ref(
                 fields.insert(name.clone(), Value::String(id_value.clone()));
             }
         }
+    }
+
+    let money_specs: Vec<_> = decoder
+        .fields
+        .iter()
+        .filter_map(|fd| fd.money.clone().map(|spec| (fd.field.clone(), spec)))
+        .collect();
+    if !money_specs.is_empty() {
+        plasm_core::money::coerce_decoded_fields(&mut fields, money_specs)
+            .map_err(|e| DecodeError::InvalidStructure { message: e.into() })?;
     }
 
     let reference = build_decoded_reference(decoder, &fields, &id_value)?;

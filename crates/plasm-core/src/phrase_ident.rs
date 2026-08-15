@@ -161,7 +161,8 @@ fn validate_value_phrase_idents(
         | Value::Bool(_)
         | Value::Integer(_)
         | Value::Float(_)
-        | Value::String(_) => Ok(()),
+        | Value::String(_)
+        | Value::Money(_) => Ok(()),
     }
 }
 

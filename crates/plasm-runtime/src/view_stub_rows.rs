@@ -21,6 +21,12 @@ fn placeholder_value(field_type: &FieldType) -> Value {
         | FieldType::Date => Value::String(String::new()),
         FieldType::MultiSelect | FieldType::Array => Value::Array(vec![]),
         FieldType::Json => Value::Object(IndexMap::new()),
+        FieldType::Money => plasm_core::money::normalize(
+            Value::String("0".into()),
+            plasm_core::MoneyWireFormat::decimal_string(),
+            None,
+        )
+        .unwrap_or_else(|_| Value::String("0".into())),
         FieldType::EntityRef { target } => Value::String(format!("stub-{target}")),
     }
 }

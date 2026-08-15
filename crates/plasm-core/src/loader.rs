@@ -187,6 +187,9 @@ pub struct DomainNamedValue {
     pub items: Option<DomainItems>,
     #[serde(default)]
     pub string_semantics: Option<StringSemantics>,
+    /// Default ISO-like currency token for [`FieldType::Money`] rows.
+    #[serde(default)]
+    pub currency: Option<String>,
 }
 
 fn deserialize_optional_id_from<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
@@ -255,6 +258,9 @@ pub struct DomainField {
     /// Optional information-flow label for this field (must exist in top-level `data_classes:`).
     #[serde(default)]
     pub data_class: Option<crate::DataClassName>,
+    /// Sibling field that supplies currency for a money amount on the same entity.
+    #[serde(default)]
+    pub currency_field: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -618,6 +624,26 @@ fn compile_one_named_value(
         None
     };
     let (field_type, string_semantics) = normalize_blob_field_type(field_type, d.string_semantics);
+    if matches!(field_type, FieldType::Money) {
+        if string_semantics.is_some() {
+            return Err(format!(
+                "{ctx}: `string_semantics` is not allowed on type 'money'"
+            ));
+        }
+        match &d.value_format {
+            Some(ValueWireFormat::Money(_)) => {}
+            Some(_) => {
+                return Err(format!(
+                    "{ctx}: type 'money' requires `value_format: {{ money: … }}`"
+                ));
+            }
+            None => {
+                return Err(format!(
+                    "{ctx}: type 'money' requires `value_format: {{ money: decimal_string | json_number | minor_units }}`"
+                ));
+            }
+        }
+    }
     Ok(NamedValueSchema {
         description: d.description.clone(),
         field_type,
@@ -625,6 +651,11 @@ fn compile_one_named_value(
         allowed_values: d.allowed_values.clone(),
         string_semantics,
         array_items,
+        currency: d
+            .currency
+            .as_ref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
     })
 }
 
@@ -661,6 +692,11 @@ fn field_schema_from_domain_field(
         attachment_media: f.attachment_media,
         wire_path: f.path.clone(),
         derive: f.derive.clone(),
+        currency_field: f
+            .currency_field
+            .as_ref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
     })
 }
 
@@ -991,6 +1027,7 @@ fn parse_field_type_strict(s: &str, ctx: &str) -> Result<FieldType, String> {
         "date" | "datetime" => Ok(FieldType::Date),
         "array" => Ok(FieldType::Array),
         "json" => Ok(FieldType::Json),
+        "money" => Ok(FieldType::Money),
         "" => Err(format!("{ctx}: empty field type")),
         _ => Err(format!("{ctx}: unknown field type {t:?}")),
     }
@@ -1199,6 +1236,20 @@ mod tests {
     }
 
     #[test]
+    fn language_matrix_loads_money_offer() {
+        let dir = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).expect("language matrix with money");
+        let offer = cgs.get_entity("LangOffer").expect("LangOffer");
+        let price = offer.fields.get("price").expect("price");
+        assert_eq!(price.currency_field.as_deref(), Some("quote_currency"));
+        let nv = price.named_value(&cgs).expect("price nv");
+        assert_eq!(nv.field_type, FieldType::Money);
+    }
+
+    #[test]
     fn parse_field_type_uuid() {
         assert_eq!(
             parse_field_type_strict("uuid", "ctx").unwrap(),
@@ -1211,6 +1262,176 @@ mod tests {
         assert_eq!(
             parse_field_type_strict("blob", "ctx").unwrap(),
             FieldType::Blob
+        );
+    }
+
+    #[test]
+    fn parse_field_type_money() {
+        assert_eq!(
+            parse_field_type_strict("money", "ctx").unwrap(),
+            FieldType::Money
+        );
+    }
+
+    #[test]
+    fn rejects_money_without_value_format() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("domain.yaml"),
+            r#"http_backend: http://localhost:1080
+values:
+  nv_id:
+    type: string
+    string_semantics: short
+  nv_price:
+    type: money
+entities:
+  Offer:
+    id_field: id
+    fields:
+      id:
+        value_ref: nv_id
+        required: true
+      price:
+        value_ref: nv_price
+        required: true
+capabilities:
+  q:
+    kind: query
+    entity: Offer
+"#,
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
+        let err = load_schema_dir(dir.path()).unwrap_err();
+        assert!(
+            err.contains("money") && err.contains("value_format"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_string_semantics_on_money() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("domain.yaml"),
+            r#"http_backend: http://localhost:1080
+values:
+  nv_id:
+    type: string
+    string_semantics: short
+  nv_price:
+    type: money
+    value_format:
+      money: decimal_string
+    string_semantics: short
+entities:
+  Offer:
+    id_field: id
+    fields:
+      id:
+        value_ref: nv_id
+        required: true
+      price:
+        value_ref: nv_price
+        required: true
+capabilities:
+  q:
+    kind: query
+    entity: Offer
+"#,
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
+        let err = load_schema_dir(dir.path()).unwrap_err();
+        assert!(
+            err.contains("string_semantics") && err.contains("money"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_dangling_currency_field() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("domain.yaml"),
+            r#"http_backend: http://localhost:1080
+values:
+  nv_id:
+    type: string
+    string_semantics: short
+  nv_price:
+    type: money
+    value_format:
+      money: decimal_string
+entities:
+  Offer:
+    id_field: id
+    fields:
+      id:
+        value_ref: nv_id
+        required: true
+      price:
+        value_ref: nv_price
+        required: true
+        currency_field: quote_currency
+capabilities:
+  q:
+    kind: query
+    entity: Offer
+"#,
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
+        let err = load_schema_dir(dir.path()).unwrap_err();
+        assert!(
+            err.contains("quote_currency") && err.contains("currency_field"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_non_string_currency_field() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("domain.yaml"),
+            r#"http_backend: http://localhost:1080
+values:
+  nv_id:
+    type: string
+    string_semantics: short
+  nv_qty:
+    type: integer
+  nv_price:
+    type: money
+    value_format:
+      money: decimal_string
+entities:
+  Offer:
+    id_field: id
+    fields:
+      id:
+        value_ref: nv_id
+        required: true
+      qty:
+        value_ref: nv_qty
+        required: true
+      price:
+        value_ref: nv_price
+        required: true
+        currency_field: qty
+capabilities:
+  q:
+    kind: query
+    entity: Offer
+"#,
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
+        let err = load_schema_dir(dir.path()).unwrap_err();
+        assert!(
+            err.contains("qty") && err.contains("string"),
+            "unexpected error: {err}"
         );
     }
 
