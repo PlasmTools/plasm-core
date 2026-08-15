@@ -712,13 +712,16 @@ pub fn eval_cml(expr: &CmlExpr, env: &CmlEnv) -> Result<Value, CmlError> {
                     let joined = arr
                         .iter()
                         .map(|v| match v {
-                            Value::String(s) => s.clone(),
-                            Value::Integer(i) => i.to_string(),
-                            Value::Float(f) => f.to_string(),
-                            Value::Bool(b) => b.to_string(),
-                            other => format!("{:?}", other),
+                            Value::String(s) => Ok(s.clone()),
+                            Value::Integer(i) => Ok(i.to_string()),
+                            Value::Float(f) => Ok(f.to_string()),
+                            Value::Bool(b) => Ok(b.to_string()),
+                            Value::Money(m) => m
+                                .to_wire_text()
+                                .map_err(|e| CmlError::SerializationError { message: e.into() }),
+                            other => Ok(format!("{:?}", other)),
                         })
-                        .collect::<Vec<_>>()
+                        .collect::<Result<Vec<_>, _>>()?
                         .join(sep);
                     Ok(Value::String(joined))
                 }
@@ -743,7 +746,7 @@ pub fn eval_cml(expr: &CmlExpr, env: &CmlEnv) -> Result<Value, CmlError> {
                     message: format!("missing format var '{name}' for template '{template}'"),
                 })?;
                 let value = eval_cml(expr, env)?;
-                let replacement = value_to_string(&value);
+                let replacement = value_to_string(&value)?;
                 rendered = rendered.replace(&format!("{{{name}}}"), &replacement);
             }
             Ok(Value::String(rendered))
@@ -758,7 +761,7 @@ pub fn eval_cml(expr: &CmlExpr, env: &CmlEnv) -> Result<Value, CmlError> {
             let inner = eval_cml(value, env)?;
             let text = match inner {
                 Value::String(s) => s,
-                other => value_to_string(&other),
+                other => value_to_string(&other)?,
             };
             use base64::Engine;
             Ok(Value::String(
@@ -768,15 +771,18 @@ pub fn eval_cml(expr: &CmlExpr, env: &CmlEnv) -> Result<Value, CmlError> {
     }
 }
 
-fn value_to_string(value: &Value) -> String {
+fn value_to_string(value: &Value) -> Result<String, CmlError> {
     match value {
-        Value::PlasmInputRef(_) => format!("{value:?}"),
-        Value::String(s) | Value::PhraseIdent(s) => s.clone(),
-        Value::Integer(i) => i.to_string(),
-        Value::Float(f) => f.to_string(),
-        Value::Bool(b) => b.to_string(),
-        Value::Null => "null".to_string(),
-        Value::Array(_) | Value::Object(_) | Value::UnionCtor { .. } => format!("{:?}", value),
+        Value::PlasmInputRef(_) => Ok(format!("{value:?}")),
+        Value::String(s) | Value::PhraseIdent(s) => Ok(s.clone()),
+        Value::Integer(i) => Ok(i.to_string()),
+        Value::Float(f) => Ok(f.to_string()),
+        Value::Bool(b) => Ok(b.to_string()),
+        Value::Null => Ok("null".to_string()),
+        Value::Money(m) => m
+            .to_wire_text()
+            .map_err(|e| CmlError::SerializationError { message: e.into() }),
+        Value::Array(_) | Value::Object(_) | Value::UnionCtor { .. } => Ok(format!("{:?}", value)),
     }
 }
 

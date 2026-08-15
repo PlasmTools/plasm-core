@@ -20,7 +20,7 @@ fn expected_type_phrase_for_placeholder(field_type: &FieldType) -> String {
             "a base64 or attachment-shaped value for this slot — never the literal `$`".into()
         }
         FieldType::Integer => "a concrete integer — never the literal `$`".into(),
-        FieldType::Number => "a concrete number — never the literal `$`".into(),
+        FieldType::Number | FieldType::Money => "a concrete number — never the literal `$`".into(),
         FieldType::Boolean => "`true` or `false` — never `$`".into(),
         FieldType::Select => {
             "one of the allowed values the schema lists for this field — never `$`".into()

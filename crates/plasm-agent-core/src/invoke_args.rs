@@ -52,6 +52,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: Some(StringSemantics::Short),
                 array_items: None,
+                currency: None,
             },
         );
         cgs.values.insert(
@@ -63,6 +64,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         cgs.values.insert(
@@ -74,6 +76,7 @@ mod tests {
                 allowed_values: Some(vec!["low".into(), "medium".into(), "high".into()]),
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         cgs

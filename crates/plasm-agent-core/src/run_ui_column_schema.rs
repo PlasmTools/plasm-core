@@ -125,6 +125,7 @@ fn field_type_wire_label(ft: &FieldType) -> &'static str {
         FieldType::Select => "select",
         FieldType::MultiSelect => "multi_select",
         FieldType::Date => "date",
+        FieldType::Money => "money",
         FieldType::Array => "array",
         FieldType::Json => "json",
         FieldType::EntityRef { .. } => "entity_ref",

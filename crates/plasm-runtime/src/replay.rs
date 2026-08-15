@@ -343,6 +343,7 @@ fn value_to_json_value(value: &Value) -> serde_json::Value {
             serde_json::Value::Object(map)
         }
         Value::UnionCtor { .. } => serde_json::to_value(value).unwrap_or(serde_json::Value::Null),
+        Value::Money(m) => m.encode_stored().unwrap_or(serde_json::Value::Null),
     }
 }
 
@@ -630,6 +631,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: Some(StringSemantics::Short),
                 array_items: None,
+                currency: None,
             },
         );
         let input_type = InputType::Object {

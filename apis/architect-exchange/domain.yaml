@@ -1,0 +1,2805 @@
+version: 6
+http_backend: https://gateway.architect.exchange
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  pii:
+    description: Person or customer profile data treated as personally identifiable.
+    severity: sensitive
+  secrets:
+    description: API credentials and secrets that must not leak into later writes.
+    severity: critical
+  external_send:
+    description: Order or transfer submitted to the matching engine or ledger.
+    severity: critical
+  destructive_cancel:
+    description: Cancels working interest in the book.
+    severity: critical
+  destructive_delete:
+    description: Irreversible credential or resource removal.
+    severity: critical
+  sandbox_withdraw:
+    description: Sandbox-only withdrawal of test balances.
+    severity: critical
+  market_data:
+    description: Public market or risk JSON blobs that are not PII.
+    severity: info
+
+entities:
+  User:
+    id_field: id
+    description: Authenticated exchange principal and the accounts they may trade.
+    discovery:
+      names:
+      - user
+      - whoami
+      - me
+      seed_class: primary
+    fields:
+      id:
+        required: true
+        value_ref: nv_user_id
+      username:
+        required: true
+        value_ref: nv_username
+        data_class: pii
+      pseudonym:
+        required: true
+        value_ref: nv_pseudonym
+        data_class: pii
+      created_at:
+        required: true
+        value_ref: nv_created_at
+      is_onboarded:
+        required: true
+        value_ref: nv_wire_bool
+      is_frozen:
+        required: true
+        value_ref: nv_wire_bool
+      is_admin:
+        required: true
+        value_ref: nv_wire_bool
+      require_2fa:
+        required: true
+        value_ref: nv_wire_bool
+      fiat_deposit_code:
+        required: true
+        value_ref: nv_fiat_deposit_code
+        data_class: pii
+    relations:
+      accounts:
+        target: Account
+        cardinality: many
+        discovery:
+          seed_nav: own
+          qualifier_terms:
+          - accounts
+          - trading accounts
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: accounts
+          - wildcard: true
+
+  Account:
+    id_field: id
+    description: Trading account that owns balances, positions, risk, and orders.
+    discovery:
+      names:
+      - account
+      - trading account
+      seed_class: primary
+    fields:
+      id:
+        required: true
+        value_ref: nv_account_id
+      name:
+        required: false
+        value_ref: nv_account_name
+      is_close_only:
+        required: true
+        value_ref: nv_wire_bool
+      maker_fee:
+        required: true
+        value_ref: nv_decimal_fee
+      taker_fee:
+        required: true
+        value_ref: nv_decimal_fee
+      can_list:
+        required: true
+        value_ref: nv_wire_bool
+      can_read:
+        required: true
+        value_ref: nv_wire_bool
+      can_set_limits:
+        required: true
+        value_ref: nv_wire_bool
+      can_reduce_or_close:
+        required: true
+        value_ref: nv_wire_bool
+      can_trade:
+        required: true
+        value_ref: nv_wire_bool
+    relations:
+      balances:
+        target: Balance
+        cardinality: many
+        discovery:
+          seed_nav: own
+          qualifier_terms:
+          - balances
+          - collateral
+        materialize:
+          kind: query_scoped
+          capability: balance_query
+          param: account_id
+      positions:
+        target: Position
+        cardinality: many
+        discovery:
+          seed_nav: own
+          qualifier_terms:
+          - positions
+          - exposure
+        materialize:
+          kind: query_scoped
+          capability: position_query
+          param: account_id
+      risk:
+        target: RiskSnapshot
+        cardinality: many
+        discovery:
+          seed_nav: own
+          qualifier_terms:
+          - risk
+          - margin
+          - equity
+        materialize:
+          kind: query_scoped
+          capability: risk_snapshot_query
+          param: account_id
+      orders:
+        target: Order
+        cardinality: many
+        discovery:
+          seed_nav: own
+          qualifier_terms:
+          - open orders
+          - working orders
+        materialize:
+          kind: query_scoped
+          capability: order_open_query
+          param: account_id
+      fills:
+        target: Fill
+        cardinality: many
+        discovery:
+          seed_nav: own
+          qualifier_terms:
+          - fills
+          - executions
+        materialize:
+          kind: query_scoped
+          capability: fill_query
+          param: account_id
+
+  Customer:
+    id_field: business_name
+    implicit_request_identity: true
+    description: KYC customer profile for the authenticated user.
+    discovery:
+      names:
+      - customer
+      - kyc
+      seed_class: dependent
+    fields:
+      business_name:
+        required: false
+        value_ref: nv_business_name
+        data_class: pii
+      doing_business_as:
+        required: false
+        value_ref: nv_doing_business_as
+        data_class: pii
+
+  ApiKey:
+    id_field: api_key
+    description: Programmatic credential that can act on selected accounts.
+    discovery:
+      names:
+      - api key
+      - credential
+      seed_class: dependent
+    fields:
+      api_key:
+        required: true
+        value_ref: nv_api_key
+        data_class: secrets
+      api_secret:
+        required: false
+        value_ref: nv_api_secret
+        data_class: secrets
+      created_at:
+        required: true
+        value_ref: nv_created_at
+      allowed_ips:
+        required: false
+        value_ref: nv_ip_list
+      account_ids:
+        required: false
+        value_ref: nv_account_id_list
+      can_list:
+        required: false
+        path: permissions.can_list
+        value_ref: nv_wire_bool
+      can_read:
+        required: false
+        path: permissions.can_read
+        value_ref: nv_wire_bool
+      can_set_limits:
+        required: false
+        path: permissions.can_set_limits
+        value_ref: nv_wire_bool
+      can_reduce_or_close:
+        required: false
+        path: permissions.can_reduce_or_close
+        value_ref: nv_wire_bool
+      can_trade:
+        required: false
+        path: permissions.can_trade
+        value_ref: nv_wire_bool
+
+  Balance:
+    id_field: symbol
+    id_from:
+    - account_id
+    - symbol
+    description: Collateral balance for one asset in an account.
+    discovery:
+      names:
+      - balance
+      - collateral
+      seed_class: dependent
+    fields:
+      account_id:
+        required: true
+        value_ref: nv_account_id
+      symbol:
+        required: true
+        value_ref: nv_asset_symbol
+      amount:
+        required: true
+        value_ref: nv_decimal_amount
+
+  Position:
+    id_field: symbol
+    id_from:
+    - account_id
+    - symbol
+    description: Signed derivative exposure for one instrument in an account.
+    discovery:
+      names:
+      - position
+      - exposure
+      seed_class: dependent
+    fields:
+      account_id:
+        required: true
+        value_ref: nv_account_id
+      symbol:
+        required: true
+        value_ref: nv_instrument_symbol
+      signed_quantity:
+        required: true
+        value_ref: nv_signed_quantity
+      signed_notional:
+        required: true
+        value_ref: nv_decimal_notional
+      realized_pnl:
+        required: true
+        value_ref: nv_decimal_pnl
+      timestamp:
+        required: true
+        value_ref: nv_created_at
+
+  RiskSnapshot:
+    id_field: account_id
+    description: Margin, equity, and per-symbol risk for one account at a moment.
+    discovery:
+      names:
+      - risk snapshot
+      - margin
+      - equity
+      seed_class: dependent
+    fields:
+      account_id:
+        required: true
+        value_ref: nv_account_id
+      timestamp_ns:
+        required: true
+        value_ref: nv_created_at
+      equity:
+        required: true
+        value_ref: nv_decimal_equity
+      balance_usd:
+        required: true
+        value_ref: nv_decimal_equity
+      unrealized_pnl:
+        required: true
+        value_ref: nv_decimal_pnl
+      initial_margin_required_for_positions:
+        required: true
+        value_ref: nv_decimal_margin
+      initial_margin_required_for_open_orders:
+        required: true
+        value_ref: nv_decimal_margin
+      initial_margin_required_total:
+        required: true
+        value_ref: nv_decimal_margin
+      maintenance_margin_required:
+        required: true
+        value_ref: nv_decimal_margin
+      initial_margin_available:
+        required: true
+        value_ref: nv_decimal_margin
+      maintenance_margin_available:
+        required: true
+        value_ref: nv_decimal_margin
+      per_symbol:
+        required: false
+        value_ref: nv_json_object
+        data_class: market_data
+
+  EquityPoint:
+    id_field: t
+    id_from:
+    - t
+    description: One point on an account equity timeseries.
+    discovery:
+      names:
+      - equity history
+      seed_class: dependent
+    fields:
+      t:
+        required: true
+        value_ref: nv_timestamp_ns
+      v:
+        required: true
+        value_ref: nv_decimal_equity
+
+  DepositAddress:
+    id_field: address
+    description: Blockchain address for depositing an asset into an account.
+    discovery:
+      names:
+      - deposit address
+      seed_class: dependent
+    fields:
+      blockchain:
+        required: true
+        value_ref: nv_blockchain
+      asset:
+        required: true
+        value_ref: nv_asset_symbol
+      address:
+        required: true
+        value_ref: nv_chain_address
+
+  Instrument:
+    id_field: symbol
+    description: Listable contract identified by its human symbol.
+    discovery:
+      names:
+      - instrument
+      - contract
+      - symbol
+      - perpetual
+      seed_class: primary
+    fields:
+      symbol:
+        required: true
+        value_ref: nv_instrument_symbol
+      product:
+        required: false
+        value_ref: nv_product
+      description:
+        required: false
+        value_ref: nv_instrument_description
+      category:
+        required: true
+        value_ref: nv_instrument_category
+      quote_currency:
+        required: true
+        value_ref: nv_currency
+      funding_settlement_currency:
+        required: true
+        value_ref: nv_currency
+      multiplier:
+        required: true
+        value_ref: nv_decimal_multiplier
+      price_scale:
+        required: true
+        value_ref: nv_price_scale
+      minimum_order_size:
+        required: true
+        value_ref: nv_decimal_size
+      tick_size:
+        required: true
+        value_ref: nv_decimal_price
+        currency_field: quote_currency
+      maintenance_margin_pct:
+        required: true
+        value_ref: nv_decimal_pct
+      initial_margin_pct:
+        required: true
+        value_ref: nv_decimal_pct
+      expiration:
+        required: false
+        value_ref: nv_created_at
+      estimated_funding_supported:
+        required: false
+        value_ref: nv_wire_bool
+      contract_mark_price:
+        required: false
+        value_ref: nv_decimal_price
+        currency_field: quote_currency
+      contract_size:
+        required: false
+        value_ref: nv_decimal_size
+    relations:
+      ticker:
+        target: Ticker
+        cardinality: many
+        discovery:
+          seed_nav: locate
+          qualifier_terms:
+          - ticker
+          - mark
+        materialize:
+          kind: query_scoped
+          capability: ticker_for_symbol_query
+          param: symbol
+      book:
+        target: OrderBook
+        cardinality: many
+        discovery:
+          seed_nav: locate
+          qualifier_terms:
+          - order book
+          - depth
+        materialize:
+          kind: query_scoped
+          capability: order_book_for_symbol_query
+          param: symbol
+      candles:
+        target: Candle
+        cardinality: many
+        discovery:
+          seed_nav: locate
+          qualifier_terms:
+          - candles
+          - ohlc
+        materialize:
+          kind: query_scoped
+          capability: candle_query
+          param: symbol
+      trades:
+        target: Trade
+        cardinality: many
+        discovery:
+          seed_nav: locate
+          qualifier_terms:
+          - public trades
+          - tape
+        materialize:
+          kind: query_scoped
+          capability: trade_query
+          param: symbol
+      funding_rates:
+        target: FundingRate
+        cardinality: many
+        discovery:
+          seed_nav: locate
+          qualifier_terms:
+          - funding
+          - funding rate
+        materialize:
+          kind: query_scoped
+          capability: funding_rate_query
+          param: symbol
+
+  Ticker:
+    id_field: symbol
+    id_from:
+    - s
+    description: Low-frequency mark, last, and session stats for one symbol.
+    discovery:
+      names:
+      - ticker
+      - mark price
+      seed_class: dependent
+    fields:
+      symbol:
+        required: true
+        path: s
+        value_ref: nv_instrument_symbol
+      mark_price:
+        required: true
+        path: m
+        value_ref: nv_decimal_price
+      last_price:
+        required: false
+        path: p
+        value_ref: nv_decimal_price
+      last_quantity:
+        required: true
+        path: q
+        value_ref: nv_quantity
+      volume:
+        required: true
+        path: v
+        value_ref: nv_quantity
+      open_interest:
+        required: true
+        path: oi
+        value_ref: nv_quantity
+      bid_price:
+        required: false
+        path: bp
+        value_ref: nv_decimal_price
+      ask_price:
+        required: false
+        path: ap
+        value_ref: nv_decimal_price
+      session_open:
+        required: false
+        path: o
+        value_ref: nv_decimal_price
+      session_high:
+        required: false
+        path: h
+        value_ref: nv_decimal_price
+      session_low:
+        required: false
+        path: l
+        value_ref: nv_decimal_price
+      last_settlement_price:
+        required: false
+        path: lsp
+        value_ref: nv_decimal_price
+      last_settlement_time:
+        required: false
+        path: lst
+        value_ref: nv_epoch_sec
+      instrument_state:
+        required: false
+        path: i
+        value_ref: nv_instrument_state
+      timestamp_sec:
+        required: false
+        path: ts
+        value_ref: nv_epoch_sec
+      timestamp_nano:
+        required: false
+        path: tn
+        value_ref: nv_epoch_nano
+
+  OrderBook:
+    id_field: symbol
+    id_from:
+    - s
+    description: Depth snapshot for one symbol.
+    discovery:
+      names:
+      - order book
+      - book
+      - depth
+      seed_class: dependent
+    fields:
+      symbol:
+        required: true
+        path: s
+        value_ref: nv_instrument_symbol
+      bids:
+        required: true
+        path: b
+        value_ref: nv_json_object
+        data_class: market_data
+      asks:
+        required: true
+        path: a
+        value_ref: nv_json_object
+        data_class: market_data
+      timestamp_sec:
+        required: false
+        path: ts
+        value_ref: nv_epoch_sec
+      timestamp_nano:
+        required: false
+        path: tn
+        value_ref: nv_epoch_nano
+
+  Trade:
+    id_field: symbol
+    id_from:
+    - s
+    - ts
+    - tn
+    - p
+    - q
+    - d
+    description: Public tape print for one symbol.
+    discovery:
+      names:
+      - public trade
+      - tape
+      seed_class: dependent
+    fields:
+      symbol:
+        required: true
+        path: s
+        value_ref: nv_instrument_symbol
+      price:
+        required: true
+        path: p
+        value_ref: nv_decimal_price
+      quantity:
+        required: true
+        path: q
+        value_ref: nv_quantity
+      side:
+        required: true
+        path: d
+        value_ref: nv_side
+      timestamp_sec:
+        required: false
+        path: ts
+        value_ref: nv_epoch_sec
+      timestamp_nano:
+        required: false
+        path: tn
+        value_ref: nv_epoch_nano
+
+  Candle:
+    id_field: ts
+    id_from:
+    - symbol
+    - ts
+    - width
+    description: OHLCV bar for one symbol and width.
+    discovery:
+      names:
+      - candle
+      - ohlc
+      seed_class: dependent
+    fields:
+      symbol:
+        required: true
+        value_ref: nv_instrument_symbol
+      ts:
+        required: true
+        value_ref: nv_created_at
+      width:
+        required: true
+        value_ref: nv_candle_width
+      open:
+        required: true
+        value_ref: nv_decimal_price
+      high:
+        required: true
+        value_ref: nv_decimal_price
+      low:
+        required: true
+        value_ref: nv_decimal_price
+      close:
+        required: true
+        value_ref: nv_decimal_price
+      volume:
+        required: true
+        value_ref: nv_quantity
+      buy_volume:
+        required: true
+        value_ref: nv_quantity
+      sell_volume:
+        required: true
+        value_ref: nv_quantity
+
+  BboCandle:
+    id_field: ts
+    id_from:
+    - symbol
+    - ts
+    - width
+    description: Best-bid/offer and mid bar for one symbol and width.
+    discovery:
+      names:
+      - bbo candle
+      - mid candle
+      seed_class: dependent
+    fields:
+      symbol:
+        required: true
+        value_ref: nv_instrument_symbol
+      ts:
+        required: true
+        value_ref: nv_created_at
+      width:
+        required: true
+        value_ref: nv_candle_width
+      bid_open:
+        required: false
+        value_ref: nv_decimal_price
+      bid_high:
+        required: false
+        value_ref: nv_decimal_price
+      bid_low:
+        required: false
+        value_ref: nv_decimal_price
+      bid_close:
+        required: false
+        value_ref: nv_decimal_price
+      ask_open:
+        required: false
+        value_ref: nv_decimal_price
+      ask_high:
+        required: false
+        value_ref: nv_decimal_price
+      ask_low:
+        required: false
+        value_ref: nv_decimal_price
+      ask_close:
+        required: false
+        value_ref: nv_decimal_price
+      mid_open:
+        required: false
+        value_ref: nv_decimal_price
+      mid_high:
+        required: false
+        value_ref: nv_decimal_price
+      mid_low:
+        required: false
+        value_ref: nv_decimal_price
+      mid_close:
+        required: false
+        value_ref: nv_decimal_price
+
+  FundingRate:
+    id_field: timestamp_ns
+    id_from:
+    - symbol
+    - timestamp_ns
+    description: Realized funding print for one symbol.
+    discovery:
+      names:
+      - funding rate
+      seed_class: dependent
+    fields:
+      symbol:
+        required: true
+        value_ref: nv_instrument_symbol
+      timestamp_ns:
+        required: true
+        value_ref: nv_timestamp_ns
+      funding_rate:
+        required: true
+        value_ref: nv_decimal_rate
+      settlement_price:
+        required: true
+        value_ref: nv_decimal_price
+      benchmark_price:
+        required: false
+        value_ref: nv_decimal_price
+      funding_amount:
+        required: false
+        value_ref: nv_decimal_amount
+
+  EstimatedFunding:
+    id_field: symbol
+    description: Live estimated funding for a symbol when the index feed is ready.
+    discovery:
+      names:
+      - estimated funding
+      seed_class: dependent
+    fields:
+      symbol:
+        required: true
+        value_ref: nv_instrument_symbol
+      status:
+        required: true
+        value_ref: nv_estimated_funding_status
+      timestamp:
+        required: true
+        value_ref: nv_created_at
+      funding_rate:
+        required: false
+        value_ref: nv_decimal_rate
+      settlement_price:
+        required: false
+        value_ref: nv_decimal_price
+      benchmark_price:
+        required: false
+        value_ref: nv_decimal_price
+      funding_amount:
+        required: false
+        value_ref: nv_decimal_amount
+      reason:
+        required: false
+        value_ref: nv_wire_str_short
+
+  FundingDay:
+    id_field: date
+    id_from:
+    - symbol
+    - date
+    description: Scheduled funding slots and realized totals for one symbol on a date.
+    discovery:
+      names:
+      - funding slots
+      - funding schedule
+      seed_class: dependent
+    fields:
+      symbol:
+        required: true
+        value_ref: nv_instrument_symbol
+      date:
+        required: true
+        value_ref: nv_calendar_date
+      timezone:
+        required: true
+        value_ref: nv_timezone
+      variant:
+        required: true
+        value_ref: nv_funding_variant
+      interval_count:
+        required: true
+        value_ref: nv_wire_int
+      realized_sum_bps:
+        required: true
+        value_ref: nv_decimal_bps
+      projected_eod_bps:
+        required: true
+        value_ref: nv_decimal_bps
+      cap_bps:
+        required: false
+        value_ref: nv_decimal_bps
+      slots:
+        required: false
+        value_ref: nv_json_object
+        data_class: market_data
+
+  UnderlyingPrice:
+    id_field: timestamp
+    id_from:
+    - symbol
+    - timestamp
+    description: Underlying benchmark print used for funding and settlement.
+    discovery:
+      names:
+      - underlying price
+      - index price
+      seed_class: dependent
+    fields:
+      symbol:
+        required: true
+        value_ref: nv_instrument_symbol
+      timestamp:
+        required: true
+        value_ref: nv_created_at
+      price:
+        required: true
+        value_ref: nv_decimal_price
+
+  SpecialSettlement:
+    id_field: settlement_ts
+    id_from:
+    - symbol
+    - settlement_ts
+    description: Upcoming special settlement that credits longs and debits shorts.
+    discovery:
+      names:
+      - special settlement
+      seed_class: dependent
+    fields:
+      symbol:
+        required: true
+        value_ref: nv_instrument_symbol
+      settlement_ts:
+        required: true
+        value_ref: nv_created_at
+      long_holder_extra_funding_amount:
+        required: true
+        value_ref: nv_decimal_amount
+
+  AggressiveLimitPreview:
+    abstract: true
+    implicit_request_identity: true
+    id_field: symbol
+    description: Market-impact preview for sweeping the book with an aggressive limit.
+    discovery:
+      names:
+      - aggressive limit preview
+      - market impact
+      seed_class: dependent
+    fields:
+      symbol:
+        required: false
+        value_ref: nv_instrument_symbol
+      filled_quantity:
+        required: true
+        value_ref: nv_quantity
+      remaining_quantity:
+        required: true
+        value_ref: nv_quantity
+      limit_price:
+        required: false
+        value_ref: nv_decimal_price
+      vwap:
+        required: false
+        value_ref: nv_decimal_price
+
+  Fill:
+    id_field: trade_id
+    description: Private execution against an account, including fees and side.
+    discovery:
+      names:
+      - fill
+      - execution
+      seed_class: dependent
+    fields:
+      trade_id:
+        required: true
+        value_ref: nv_trade_id
+      account_id:
+        required: true
+        value_ref: nv_account_id
+      order_id:
+        required: false
+        value_ref: nv_order_id
+      symbol:
+        required: true
+        value_ref: nv_instrument_symbol
+      timestamp:
+        required: true
+        value_ref: nv_created_at
+      price:
+        required: true
+        value_ref: nv_decimal_price
+      quantity:
+        required: true
+        value_ref: nv_quantity
+      side:
+        required: true
+        value_ref: nv_side
+      is_taker:
+        required: true
+        value_ref: nv_wire_bool
+      fee:
+        required: true
+        value_ref: nv_decimal_fee
+      realized_pnl:
+        required: false
+        value_ref: nv_decimal_pnl
+      is_block_trade:
+        required: false
+        value_ref: nv_wire_bool
+      is_final_settlement:
+        required: false
+        value_ref: nv_wire_bool
+
+  Transaction:
+    id_field: event_id
+    description: Ledger movement for deposits, withdrawals, fees, or pnl.
+    discovery:
+      names:
+      - transaction
+      - ledger
+      seed_class: dependent
+    fields:
+      event_id:
+        required: true
+        value_ref: nv_event_id
+      account_id:
+        required: true
+        value_ref: nv_account_id
+      symbol:
+        required: true
+        value_ref: nv_asset_symbol
+      timestamp:
+        required: true
+        value_ref: nv_created_at
+      amount:
+        required: true
+        value_ref: nv_decimal_amount
+      transaction_type:
+        required: true
+        value_ref: nv_transaction_type
+      reference_id:
+        required: false
+        value_ref: nv_wire_str_short
+      initiated_by_user_id:
+        required: false
+        value_ref: nv_user_id
+
+  FundingTransaction:
+    id_field: event_id
+    description: Funding or mark-to-market settlement posted to an account.
+    discovery:
+      names:
+      - funding transaction
+      seed_class: dependent
+    fields:
+      event_id:
+        required: true
+        value_ref: nv_event_id
+      account_id:
+        required: true
+        value_ref: nv_account_id
+      symbol:
+        required: true
+        value_ref: nv_instrument_symbol
+      currency:
+        required: true
+        value_ref: nv_currency
+      timestamp:
+        required: true
+        value_ref: nv_created_at
+      transaction_type:
+        required: true
+        value_ref: nv_settlement_kind
+      amount:
+        required: true
+        value_ref: nv_decimal_amount
+        currency_field: currency
+      sequence_number:
+        required: true
+        value_ref: nv_wire_int
+      settlement_price:
+        required: true
+        value_ref: nv_decimal_price
+        currency_field: currency
+      funding_rate:
+        required: false
+        value_ref: nv_decimal_rate
+      funding_amount:
+        required: false
+        value_ref: nv_decimal_amount
+        currency_field: currency
+      benchmark_price:
+        required: false
+        value_ref: nv_decimal_price
+        currency_field: currency
+      reference_id:
+        required: false
+        value_ref: nv_wire_str_short
+
+  Liquidation:
+    id_field: trade_id
+    description: Liquidation fill booked against an account.
+    discovery:
+      names:
+      - liquidation
+      seed_class: dependent
+    fields:
+      trade_id:
+        required: true
+        value_ref: nv_trade_id
+      account_id:
+        required: true
+        value_ref: nv_account_id
+      order_id:
+        required: false
+        value_ref: nv_order_id
+      symbol:
+        required: true
+        value_ref: nv_instrument_symbol
+      timestamp:
+        required: true
+        value_ref: nv_created_at
+      price:
+        required: true
+        value_ref: nv_decimal_price
+      quantity:
+        required: true
+        value_ref: nv_quantity
+      side:
+        required: true
+        value_ref: nv_side
+      is_taker:
+        required: true
+        value_ref: nv_wire_bool
+      fee:
+        required: true
+        value_ref: nv_decimal_fee
+      realized_pnl:
+        required: false
+        value_ref: nv_decimal_pnl
+
+  VolumeStat:
+    abstract: true
+    implicit_request_identity: true
+    id_field: volume
+    description: Traded contract volume for a user or account over a time range.
+    discovery:
+      names:
+      - volume
+      - volume stats
+      seed_class: dependent
+    fields:
+      volume:
+        required: true
+        value_ref: nv_decimal_amount
+
+  Order:
+    id_field: order_id
+    id_from:
+    - oid
+    description: Working or historical order on the matching engine.
+    discovery:
+      names:
+      - order
+      seed_class: primary
+    fields:
+      order_id:
+        required: true
+        path: oid
+        value_ref: nv_order_id
+      client_order_id:
+        required: false
+        path: cid
+        value_ref: nv_client_order_id
+      account_id:
+        required: true
+        path: aid
+        value_ref: nv_account_id
+      user_id:
+        required: false
+        path: u
+        value_ref: nv_user_id
+      symbol:
+        required: true
+        path: s
+        value_ref: nv_instrument_symbol
+      side:
+        required: true
+        path: d
+        value_ref: nv_side
+      price:
+        required: true
+        path: p
+        value_ref: nv_decimal_price
+      quantity:
+        required: true
+        path: q
+        value_ref: nv_quantity
+      executed_quantity:
+        required: false
+        path: xq
+        value_ref: nv_quantity
+      remaining_quantity:
+        required: false
+        path: rq
+        value_ref: nv_quantity
+      state:
+        required: true
+        path: o
+        value_ref: nv_order_state
+      time_in_force:
+        required: true
+        path: tif
+        value_ref: nv_time_in_force
+      post_only:
+        required: false
+        path: po
+        value_ref: nv_wire_bool
+      reject_reason:
+        required: false
+        path: r
+        value_ref: nv_order_reject_reason
+      tag:
+        required: false
+        value_ref: nv_order_tag
+      text:
+        required: false
+        path: txt
+        value_ref: nv_wire_str_short
+      timestamp_sec:
+        required: false
+        path: ts
+        value_ref: nv_epoch_sec
+      timestamp_nano:
+        required: false
+        path: tn
+        value_ref: nv_epoch_nano
+    relations:
+      fills:
+        target: Fill
+        cardinality: many
+        discovery:
+          seed_nav: own
+          qualifier_terms:
+          - order fills
+        materialize:
+          kind: query_scoped
+          capability: fill_for_order_query
+          param: order_id
+
+  OrderPreview:
+    abstract: true
+    implicit_request_identity: true
+    id_field: symbol
+    description: Margin impact of an order that has not been placed.
+    discovery:
+      names:
+      - order preview
+      - margin preview
+      seed_class: dependent
+    fields:
+      symbol:
+        required: false
+        value_ref: nv_instrument_symbol
+      im_pct:
+        required: true
+        value_ref: nv_decimal_pct
+      im:
+        required: true
+        value_ref: nv_decimal_margin
+      pos_before:
+        required: true
+        value_ref: nv_signed_quantity
+      pos_after:
+        required: true
+        value_ref: nv_signed_quantity
+      liq:
+        required: false
+        value_ref: nv_decimal_price
+
+  InitialMarginQuote:
+    abstract: true
+    implicit_request_identity: true
+    id_field: im
+    description: Initial margin that would be reserved if the order were accepted.
+    discovery:
+      names:
+      - initial margin
+      seed_class: dependent
+    fields:
+      im_pct:
+        required: true
+        value_ref: nv_decimal_pct
+      im:
+        required: true
+        value_ref: nv_decimal_margin
+      pos:
+        required: true
+        value_ref: nv_signed_quantity
+      mult:
+        required: true
+        value_ref: nv_decimal_multiplier
+
+  OrderStatus:
+    id_field: order_id
+    description: Compact live status for one order by server or client id.
+    discovery:
+      names:
+      - order status
+      seed_class: dependent
+    fields:
+      order_id:
+        required: true
+        value_ref: nv_order_id
+      symbol:
+        required: true
+        value_ref: nv_instrument_symbol
+      state:
+        required: true
+        value_ref: nv_order_state
+      clord_id:
+        required: false
+        value_ref: nv_client_order_id
+      filled_quantity:
+        required: false
+        value_ref: nv_quantity
+      remaining_quantity:
+        required: false
+        value_ref: nv_quantity
+      reject_reason:
+        required: false
+        value_ref: nv_order_reject_reason
+      reject_message:
+        required: false
+        value_ref: nv_wire_str_short
+
+  PortfolioSnapshot:
+    abstract: true
+    implicit_request_identity: true
+    id_field: account_id
+    description: Whoami plus balances, positions, and risk for one account.
+    discovery:
+      names:
+      - portfolio
+      - portfolio snapshot
+      seed_class: primary
+    fields:
+      account_id:
+        required: true
+        value_ref: nv_account_id
+      username:
+        required: false
+        value_ref: nv_username
+        data_class: pii
+      equity:
+        required: false
+        value_ref: nv_decimal_equity
+      balance_count:
+        required: false
+        value_ref: nv_wire_int
+      position_count:
+        required: false
+        value_ref: nv_wire_int
+    relations:
+      user:
+        target: User
+        cardinality: one
+      balances:
+        target: Balance
+        cardinality: many
+        materialize:
+          kind: view_embed
+          view: portfolio_snapshot
+      positions:
+        target: Position
+        cardinality: many
+        materialize:
+          kind: view_embed
+          view: portfolio_snapshot
+      risk:
+        target: RiskSnapshot
+        cardinality: one
+
+  InstrumentContext:
+    abstract: true
+    implicit_request_identity: true
+    id_field: symbol
+    description: Contract, ticker, and book for one symbol in a single read.
+    discovery:
+      names:
+      - instrument context
+      seed_class: primary
+    fields:
+      symbol:
+        required: true
+        value_ref: nv_instrument_symbol
+      category:
+        required: false
+        value_ref: nv_instrument_category
+      mark_price:
+        required: false
+        value_ref: nv_decimal_price
+      instrument_state:
+        required: false
+        value_ref: nv_instrument_state
+    relations:
+      instrument:
+        target: Instrument
+        cardinality: one
+      ticker:
+        target: Ticker
+        cardinality: one
+      book:
+        target: OrderBook
+        cardinality: one
+
+  OrderContext:
+    abstract: true
+    implicit_request_identity: true
+    id_field: order_id
+    description: Live status plus fills for one order.
+    discovery:
+      names:
+      - order context
+      seed_class: primary
+    fields:
+      order_id:
+        required: true
+        value_ref: nv_order_id
+      state:
+        required: false
+        value_ref: nv_order_state
+      fill_count:
+        required: false
+        value_ref: nv_wire_int
+    relations:
+      status:
+        target: OrderStatus
+        cardinality: one
+      fills:
+        target: Fill
+        cardinality: many
+        materialize:
+          kind: view_embed
+          view: order_context
+
+capabilities:
+  user_query:
+    kind: query
+    entity: User
+    description: Load the authenticated user and nested trading accounts.
+    provides:
+    - id
+    - username
+    - pseudonym
+    - created_at
+    - is_onboarded
+    - is_frozen
+    - is_admin
+    - require_2fa
+    - fiat_deposit_code
+
+  account_query:
+    kind: query
+    entity: Account
+    description: List trading accounts on the authenticated user.
+
+  customer_query:
+    kind: query
+    entity: Customer
+    description: Load the KYC customer profile for the authenticated user.
+
+  api_key_query:
+    kind: query
+    entity: ApiKey
+    description: List API keys owned by the authenticated user.
+
+  api_key_create:
+    kind: create
+    entity: ApiKey
+    description: Mint a new API key and secret.
+    discovery:
+      operation_terms:
+      - create api key
+      - mint key
+    provides:
+    - api_key
+    - api_secret
+    parameters:
+    - name: account_ids
+      value_ref: nv_account_id_list
+      required: false
+    - name: allowed_ips
+      value_ref: nv_ip_list
+      required: false
+    - name: can_list
+      value_ref: nv_wire_bool
+      required: false
+    - name: can_read
+      value_ref: nv_wire_bool
+      required: false
+    - name: can_set_limits
+      value_ref: nv_wire_bool
+      required: false
+    - name: can_reduce_or_close
+      value_ref: nv_wire_bool
+      required: false
+    - name: can_trade
+      value_ref: nv_wire_bool
+      required: false
+
+  api_key_update:
+    kind: update
+    entity: ApiKey
+    description: Replace the allowlisted IPs for an API key.
+    discovery:
+      operation_terms:
+      - update allowed ips
+    parameters:
+    - name: allowed_ips
+      value_ref: nv_ip_list
+      required: true
+
+  api_key_delete:
+    kind: delete
+    entity: ApiKey
+    description: Revoke an API key so it can no longer authenticate.
+    discovery:
+      operation_terms:
+      - revoke api key
+    parameters:
+    - name: api_key
+      value_ref: nv_api_key
+      required: true
+      sink_class: destructive_delete
+
+  balance_query:
+    kind: query
+    entity: Balance
+    description: List collateral balances for an account.
+    parameters:
+    - name: account_id
+      value_ref: nv_account_id
+      required: false
+      role: scope
+
+  position_query:
+    kind: query
+    entity: Position
+    description: List open positions for an account.
+    parameters:
+    - name: account_id
+      value_ref: nv_account_id
+      required: false
+      role: scope
+
+  risk_snapshot_query:
+    kind: query
+    entity: RiskSnapshot
+    description: Load the current margin and equity snapshot for an account.
+    parameters:
+    - name: account_id
+      value_ref: nv_account_id
+      required: false
+      role: scope
+
+  equity_point_query:
+    kind: query
+    entity: EquityPoint
+    description: Equity history for an account over a required time range and resolution.
+    parameters:
+    - name: account_id
+      value_ref: nv_account_id
+      required: false
+      role: scope
+    - name: start_timestamp_ns
+      value_ref: nv_timestamp_ns
+      required: true
+    - name: end_timestamp_ns
+      value_ref: nv_timestamp_ns
+      required: true
+    - name: resolution_seconds
+      value_ref: nv_resolution_seconds
+      required: true
+
+  deposit_address_query:
+    kind: query
+    entity: DepositAddress
+    description: Resolve the on-chain deposit address for an asset.
+    parameters:
+    - name: account_id
+      value_ref: nv_account_id
+      required: false
+      role: scope
+    - name: blockchain
+      value_ref: nv_blockchain
+      required: true
+    - name: asset
+      value_ref: nv_asset_symbol
+      required: true
+
+  sandbox_deposit:
+    kind: action
+    entity: Balance
+    description: Credit a sandbox balance for testing.
+    discovery:
+      operation_terms:
+      - sandbox deposit
+    parameters:
+    - name: symbol
+      value_ref: nv_asset_symbol
+      required: true
+      sink_class: external_send
+    - name: amount
+      value_ref: nv_decimal_amount
+      required: true
+      sink_class: external_send
+    - name: account_id
+      value_ref: nv_account_id
+      required: false
+    output:
+      type: side_effect
+      description: Credits the sandbox account; no production funds move.
+
+  sandbox_withdraw:
+    kind: action
+    entity: Balance
+    description: Debit a sandbox balance for testing.
+    discovery:
+      operation_terms:
+      - sandbox withdraw
+    parameters:
+    - name: symbol
+      value_ref: nv_asset_symbol
+      required: true
+      sink_class: sandbox_withdraw
+    - name: amount
+      value_ref: nv_decimal_amount
+      required: true
+      sink_class: sandbox_withdraw
+    - name: account_id
+      value_ref: nv_account_id
+      required: false
+    output:
+      type: side_effect
+      description: Debits the sandbox account; production withdrawals are out of scope.
+
+  instrument_query:
+    kind: query
+    entity: Instrument
+    description: List every listable instrument.
+
+  instrument_get:
+    kind: get
+    entity: Instrument
+    description: Resolve a contract from its human symbol.
+    provides:
+    - symbol
+    - product
+    - description
+    - category
+    - quote_currency
+    - funding_settlement_currency
+    - multiplier
+    - price_scale
+    - minimum_order_size
+    - tick_size
+    - maintenance_margin_pct
+    - initial_margin_pct
+    - expiration
+    - estimated_funding_supported
+    - contract_mark_price
+    - contract_size
+
+  ticker_query:
+    kind: query
+    entity: Ticker
+    description: Page through tickers.
+    parameters:
+    - name: sort
+      value_ref: nv_wire_str_short
+      required: false
+      role: sort
+
+  ticker_for_symbol_query:
+    kind: query
+    entity: Ticker
+    description: Ticker for one symbol.
+    parameters:
+    - name: symbol
+      value_ref: nv_instrument_symbol
+      required: true
+      role: scope
+
+  ticker_get:
+    kind: get
+    entity: Ticker
+    description: Load the ticker for one symbol.
+    provides:
+    - symbol
+    - mark_price
+    - last_price
+    - last_quantity
+    - volume
+    - open_interest
+    - bid_price
+    - ask_price
+    - session_open
+    - session_high
+    - session_low
+    - last_settlement_price
+    - last_settlement_time
+    - instrument_state
+
+  order_book_for_symbol_query:
+    kind: query
+    entity: OrderBook
+    description: Depth snapshot for one symbol.
+    parameters:
+    - name: symbol
+      value_ref: nv_instrument_symbol
+      required: true
+      role: scope
+    - name: level
+      value_ref: nv_book_level
+      required: false
+      role: response_control
+
+  order_book_get:
+    kind: get
+    entity: OrderBook
+    description: Load the depth snapshot for one symbol.
+    parameters:
+    - name: level
+      value_ref: nv_book_level
+      required: false
+      role: response_control
+    provides:
+    - symbol
+    - bids
+    - asks
+
+  trade_query:
+    kind: query
+    entity: Trade
+    description: Recent public trades for a symbol.
+    parameters:
+    - name: symbol
+      value_ref: nv_instrument_symbol
+      required: true
+      role: scope
+
+  candle_query:
+    kind: query
+    entity: Candle
+    description: Historical OHLCV bars for a symbol, width, and time range.
+    parameters:
+    - name: symbol
+      value_ref: nv_instrument_symbol
+      required: true
+      role: scope
+    - name: start_timestamp_ns
+      value_ref: nv_timestamp_ns
+      required: true
+    - name: end_timestamp_ns
+      value_ref: nv_timestamp_ns
+      required: true
+    - name: candle_width
+      value_ref: nv_candle_width
+      required: true
+
+  candle_current_query:
+    kind: query
+    entity: Candle
+    description: The in-progress candle for a symbol and width.
+    parameters:
+    - name: symbol
+      value_ref: nv_instrument_symbol
+      required: true
+      role: scope
+    - name: candle_width
+      value_ref: nv_candle_width
+      required: true
+
+  candle_last_query:
+    kind: query
+    entity: Candle
+    description: The most recently closed candle for a symbol and width.
+    parameters:
+    - name: symbol
+      value_ref: nv_instrument_symbol
+      required: true
+      role: scope
+    - name: candle_width
+      value_ref: nv_candle_width
+      required: true
+
+  bbo_candle_query:
+    kind: query
+    entity: BboCandle
+    description: Historical BBO/mid bars for a symbol, width, and time range.
+    parameters:
+    - name: symbol
+      value_ref: nv_instrument_symbol
+      required: true
+      role: scope
+    - name: start_timestamp_ns
+      value_ref: nv_timestamp_ns
+      required: true
+    - name: end_timestamp_ns
+      value_ref: nv_timestamp_ns
+      required: true
+    - name: candle_width
+      value_ref: nv_candle_width
+      required: true
+
+  bbo_candle_current_query:
+    kind: query
+    entity: BboCandle
+    description: The in-progress BBO/mid bar for a symbol and width.
+    parameters:
+    - name: symbol
+      value_ref: nv_instrument_symbol
+      required: true
+      role: scope
+    - name: candle_width
+      value_ref: nv_candle_width
+      required: true
+
+  bbo_candle_last_query:
+    kind: query
+    entity: BboCandle
+    description: The most recently closed BBO/mid bar for a symbol and width.
+    parameters:
+    - name: symbol
+      value_ref: nv_instrument_symbol
+      required: true
+      role: scope
+    - name: candle_width
+      value_ref: nv_candle_width
+      required: true
+
+  funding_rate_query:
+    kind: query
+    entity: FundingRate
+    description: Historical funding prints for a symbol.
+    parameters:
+    - name: symbol
+      value_ref: nv_instrument_symbol
+      required: true
+      role: scope
+    - name: start_timestamp_ns
+      value_ref: nv_timestamp_ns
+      required: false
+    - name: end_timestamp_ns
+      value_ref: nv_timestamp_ns
+      required: false
+    - name: sort_ts
+      value_ref: nv_sort_direction
+      required: false
+      role: sort_direction
+
+  estimated_funding_get:
+    kind: get
+    entity: EstimatedFunding
+    description: Live estimated funding for one symbol.
+
+  funding_day_query:
+    kind: query
+    entity: FundingDay
+    description: Funding slots and totals for a symbol on a calendar date.
+    parameters:
+    - name: symbol
+      value_ref: nv_instrument_symbol
+      required: true
+      role: scope
+    - name: date
+      value_ref: nv_calendar_date
+      required: false
+
+  underlying_price_query:
+    kind: query
+    entity: UnderlyingPrice
+    description: Underlying benchmark prints for a symbol.
+    parameters:
+    - name: symbol
+      value_ref: nv_instrument_symbol
+      required: true
+      role: scope
+    - name: start_timestamp_ns
+      value_ref: nv_timestamp_ns
+      required: false
+    - name: end_timestamp_ns
+      value_ref: nv_timestamp_ns
+      required: false
+    - name: sort_ts
+      value_ref: nv_sort_direction
+      required: false
+      role: sort_direction
+
+  special_settlement_query:
+    kind: query
+    entity: SpecialSettlement
+    description: Upcoming special settlements.
+    parameters:
+    - name: days
+      value_ref: nv_wire_int
+      required: false
+
+  aggressive_limit_preview:
+    kind: action
+    entity: AggressiveLimitPreview
+    description: Preview how an aggressive limit would sweep the book without placing it.
+    discovery:
+      operation_terms:
+      - preview aggressive
+      - market impact
+    provides:
+    - filled_quantity
+    - remaining_quantity
+    - limit_price
+    - vwap
+    parameters:
+    - name: symbol
+      value_ref: nv_instrument_symbol
+      required: true
+    - name: quantity
+      value_ref: nv_quantity
+      required: true
+    - name: side
+      value_ref: nv_side
+      required: true
+
+  order_open_query:
+    kind: query
+    entity: Order
+    description: Working orders for an account.
+    parameters:
+    - name: account_id
+      value_ref: nv_account_id
+      required: false
+      role: scope
+    - name: sort_ts
+      value_ref: nv_sort_direction
+      required: false
+      role: sort_direction
+
+  order_history_query:
+    kind: query
+    entity: Order
+    description: Historical orders in a required nanosecond time range.
+    parameters:
+    - name: account_id
+      value_ref: nv_account_id
+      required: false
+      role: scope
+    - name: symbol
+      value_ref: nv_instrument_symbol
+      required: false
+    - name: start_timestamp_ns
+      value_ref: nv_timestamp_ns
+      required: true
+    - name: end_timestamp_ns
+      value_ref: nv_timestamp_ns
+      required: true
+    - name: sort_ts
+      value_ref: nv_sort_direction
+      required: false
+      role: sort_direction
+    - name: order_states
+      value_ref: nv_order_state_list
+      required: false
+    - name: order_id
+      value_ref: nv_order_id
+      required: false
+    - name: order_ids
+      value_ref: nv_order_id_list
+      required: false
+
+  order_status_query:
+    kind: query
+    entity: OrderStatus
+    description: Live status for one order by server id or client id.
+    parameters:
+    - name: order_id
+      value_ref: nv_order_id
+      required: false
+    - name: client_order_id
+      value_ref: nv_client_order_id
+      required: false
+    - name: account_id
+      value_ref: nv_account_id
+      required: false
+      role: scope
+
+  order_create:
+    kind: create
+    entity: Order
+    description: Place a limit order on the matching engine.
+    discovery:
+      operation_terms:
+      - place order
+      - submit order
+    provides:
+    - order_id
+    parameters:
+    - name: symbol
+      value_ref: nv_instrument_symbol
+      required: true
+      sink_class: external_send
+    - name: side
+      value_ref: nv_side
+      required: true
+      sink_class: external_send
+    - name: quantity
+      value_ref: nv_quantity
+      required: true
+      sink_class: external_send
+    - name: price
+      value_ref: nv_decimal_price
+      required: true
+      sink_class: external_send
+    - name: time_in_force
+      value_ref: nv_time_in_force
+      required: true
+    - name: account_id
+      value_ref: nv_account_id
+      required: false
+    - name: client_order_id
+      value_ref: nv_client_order_id
+      required: false
+    - name: post_only
+      value_ref: nv_wire_bool
+      required: false
+    - name: reprice_behavior
+      value_ref: nv_reprice_behavior
+      required: false
+    - name: self_trade_behavior
+      value_ref: nv_self_trade_behavior
+      required: false
+    - name: tag
+      value_ref: nv_order_tag
+      required: false
+
+  order_update:
+    kind: update
+    entity: Order
+    description: Replace a working order's price, quantity, or time in force.
+    discovery:
+      operation_terms:
+      - replace order
+      - amend order
+    provides:
+    - order_id
+    parameters:
+    - name: client_order_id
+      value_ref: nv_client_order_id
+      required: false
+    - name: account_id
+      value_ref: nv_account_id
+      required: false
+    - name: price
+      value_ref: nv_decimal_price
+      required: false
+      sink_class: external_send
+    - name: quantity
+      value_ref: nv_quantity
+      required: false
+      sink_class: external_send
+    - name: time_in_force
+      value_ref: nv_time_in_force
+      required: false
+    - name: post_only
+      value_ref: nv_wire_bool
+      required: false
+    - name: reprice_behavior
+      value_ref: nv_reprice_behavior
+      required: false
+
+  order_cancel:
+    kind: delete
+    entity: Order
+    description: Cancel one working order by server id or client id.
+    discovery:
+      operation_terms:
+      - cancel order
+    parameters:
+    - name: client_order_id
+      value_ref: nv_client_order_id
+      required: false
+      sink_class: destructive_cancel
+    - name: account_id
+      value_ref: nv_account_id
+      required: false
+
+  order_cancel_all:
+    kind: action
+    entity: Order
+    description: Cancel every working order, optionally limited to one symbol or account.
+    discovery:
+      operation_terms:
+      - cancel all
+      - flatten orders
+    parameters:
+    - name: account_id
+      value_ref: nv_account_id
+      required: false
+    - name: symbol
+      value_ref: nv_instrument_symbol
+      required: false
+      sink_class: destructive_cancel
+    output:
+      type: side_effect
+      description: Cancels matching working orders; positions are unchanged.
+
+  order_preview:
+    kind: action
+    entity: OrderPreview
+    description: Preview margin impact of an order without placing it.
+    discovery:
+      operation_terms:
+      - preview order
+      - margin check
+    provides:
+    - im_pct
+    - im
+    - pos_before
+    - pos_after
+    - liq
+    parameters:
+    - name: symbol
+      value_ref: nv_instrument_symbol
+      required: true
+    - name: side
+      value_ref: nv_side
+      required: true
+    - name: quantity
+      value_ref: nv_quantity
+      required: true
+    - name: price
+      value_ref: nv_decimal_price
+      required: true
+    - name: time_in_force
+      value_ref: nv_time_in_force
+      required: true
+    - name: account_id
+      value_ref: nv_account_id
+      required: false
+    - name: client_order_id
+      value_ref: nv_client_order_id
+      required: false
+    - name: post_only
+      value_ref: nv_wire_bool
+      required: false
+    - name: reprice_behavior
+      value_ref: nv_reprice_behavior
+      required: false
+    - name: self_trade_behavior
+      value_ref: nv_self_trade_behavior
+      required: false
+    - name: tag
+      value_ref: nv_order_tag
+      required: false
+
+  initial_margin_quote:
+    kind: action
+    entity: InitialMarginQuote
+    description: Quote initial margin for a prospective order without placing it.
+    provides:
+    - im_pct
+    - im
+    - pos
+    - mult
+    parameters:
+    - name: symbol
+      value_ref: nv_instrument_symbol
+      required: true
+    - name: side
+      value_ref: nv_side
+      required: true
+    - name: quantity
+      value_ref: nv_quantity
+      required: true
+    - name: price
+      value_ref: nv_decimal_price
+      required: true
+    - name: time_in_force
+      value_ref: nv_time_in_force
+      required: true
+    - name: account_id
+      value_ref: nv_account_id
+      required: false
+
+  fill_query:
+    kind: query
+    entity: Fill
+    description: Historical private fills. Keep the time range within seven days.
+    parameters:
+    - name: account_id
+      value_ref: nv_account_id
+      required: false
+      role: scope
+    - name: symbol
+      value_ref: nv_instrument_symbol
+      required: false
+    - name: start_timestamp_ns
+      value_ref: nv_timestamp_ns
+      required: true
+    - name: end_timestamp_ns
+      value_ref: nv_timestamp_ns
+      required: true
+    - name: sort_ts
+      value_ref: nv_sort_direction
+      required: false
+      role: sort_direction
+
+  fill_for_order_query:
+    kind: query
+    entity: Fill
+    description: Fills for one order.
+    parameters:
+    - name: order_id
+      value_ref: nv_order_id
+      required: true
+      role: scope
+    - name: account_id
+      value_ref: nv_account_id
+      required: false
+      role: scope
+
+  transaction_query:
+    kind: query
+    entity: Transaction
+    description: Ledger transactions in a time range, filtered by type.
+    parameters:
+    - name: account_id
+      value_ref: nv_account_id
+      required: false
+      role: scope
+    - name: transaction_types
+      value_ref: nv_transaction_type_list
+      required: true
+    - name: start_timestamp_ns
+      value_ref: nv_timestamp_ns
+      required: true
+    - name: end_timestamp_ns
+      value_ref: nv_timestamp_ns
+      required: true
+    - name: sort_ts
+      value_ref: nv_sort_direction
+      required: false
+      role: sort_direction
+
+  funding_transaction_query:
+    kind: query
+    entity: FundingTransaction
+    description: Funding and mark-to-market postings in a time range.
+    parameters:
+    - name: account_id
+      value_ref: nv_account_id
+      required: false
+      role: scope
+    - name: symbol
+      value_ref: nv_instrument_symbol
+      required: false
+    - name: start_timestamp_ns
+      value_ref: nv_timestamp_ns
+      required: true
+    - name: end_timestamp_ns
+      value_ref: nv_timestamp_ns
+      required: true
+    - name: sort_ts
+      value_ref: nv_sort_direction
+      required: false
+      role: sort_direction
+
+  liquidation_query:
+    kind: query
+    entity: Liquidation
+    description: Liquidation fills in a time range.
+    parameters:
+    - name: account_id
+      value_ref: nv_account_id
+      required: false
+      role: scope
+    - name: symbol
+      value_ref: nv_instrument_symbol
+      required: false
+    - name: start_timestamp_ns
+      value_ref: nv_timestamp_ns
+      required: true
+    - name: end_timestamp_ns
+      value_ref: nv_timestamp_ns
+      required: true
+    - name: sort_ts
+      value_ref: nv_sort_direction
+      required: false
+      role: sort_direction
+
+  volume_stat_query:
+    kind: query
+    entity: VolumeStat
+    description: Contract volume over a required time range.
+    parameters:
+    - name: start_timestamp_ns
+      value_ref: nv_timestamp_ns
+      required: true
+    - name: end_timestamp_ns
+      value_ref: nv_timestamp_ns
+      required: true
+    - name: account_id
+      value_ref: nv_account_id
+      required: false
+      role: scope
+
+  portfolio_snapshot_query:
+    kind: query
+    entity: PortfolioSnapshot
+    description: Composed portfolio read for one account.
+    parameters:
+    - name: account_id
+      value_ref: nv_account_id
+      required: true
+      role: scope
+
+  instrument_context_query:
+    kind: query
+    entity: InstrumentContext
+    description: Composed contract, ticker, and book read for one symbol.
+    parameters:
+    - name: symbol
+      value_ref: nv_instrument_symbol
+      required: true
+      role: scope
+
+  order_context_query:
+    kind: query
+    entity: OrderContext
+    description: Composed status and fills for one order.
+    parameters:
+    - name: order_id
+      value_ref: nv_order_id
+      required: true
+      role: scope
+
+views:
+  portfolio_snapshot:
+    description: Authenticated user plus balances, positions, and risk for one account.
+    capability: portfolio_snapshot_query
+    entity: PortfolioSnapshot
+    scope:
+    - name: account_id
+      value_ref: nv_account_id
+    nodes:
+    - id: user_row
+      capability: user_query
+      bind: {}
+    - id: balances
+      capability: balance_query
+      bind:
+        account_id:
+          kind: scope
+          param: account_id
+    - id: positions
+      capability: position_query
+      bind:
+        account_id:
+          kind: scope
+          param: account_id
+    - id: risk
+      capability: risk_snapshot_query
+      bind:
+        account_id:
+          kind: scope
+          param: account_id
+    output:
+      account_id:
+        kind: scope
+        param: account_id
+      username:
+        kind: node_field
+        node: user_row
+        field: username
+      equity:
+        kind: node_field
+        node: risk
+        field: equity
+      balance_count:
+        kind: node_row_count
+        node: balances
+      position_count:
+        kind: node_row_count
+        node: positions
+    relation_outputs:
+    - relation: user
+      target: User
+      cardinality: one
+      binding:
+        kind: node_single_row
+        node: user_row
+    - relation: balances
+      target: Balance
+      cardinality: many
+      binding:
+        kind: node_all_rows
+        node: balances
+    - relation: positions
+      target: Position
+      cardinality: many
+      binding:
+        kind: node_all_rows
+        node: positions
+    - relation: risk
+      target: RiskSnapshot
+      cardinality: one
+      binding:
+        kind: node_single_row
+        node: risk
+
+  instrument_context:
+    description: Contract, ticker, and book for one symbol.
+    capability: instrument_context_query
+    entity: InstrumentContext
+    scope:
+    - name: symbol
+      value_ref: nv_instrument_symbol
+    nodes:
+    - id: instrument_row
+      capability: instrument_get
+      bind:
+        id:
+          kind: scope
+          param: symbol
+    - id: ticker_row
+      capability: ticker_get
+      bind:
+        id:
+          kind: scope
+          param: symbol
+    - id: book_row
+      capability: order_book_get
+      bind:
+        id:
+          kind: scope
+          param: symbol
+    output:
+      symbol:
+        kind: scope
+        param: symbol
+      category:
+        kind: node_field
+        node: instrument_row
+        field: category
+      mark_price:
+        kind: node_field
+        node: ticker_row
+        field: mark_price
+      instrument_state:
+        kind: node_field
+        node: ticker_row
+        field: instrument_state
+    relation_outputs:
+    - relation: instrument
+      target: Instrument
+      cardinality: one
+      binding:
+        kind: node_single_row
+        node: instrument_row
+    - relation: ticker
+      target: Ticker
+      cardinality: one
+      binding:
+        kind: node_single_row
+        node: ticker_row
+    - relation: book
+      target: OrderBook
+      cardinality: one
+      binding:
+        kind: node_single_row
+        node: book_row
+
+  order_context:
+    description: Live status plus fills for one order.
+    capability: order_context_query
+    entity: OrderContext
+    scope:
+    - name: order_id
+      value_ref: nv_order_id
+    nodes:
+    - id: status_row
+      capability: order_status_query
+      bind:
+        order_id:
+          kind: scope
+          param: order_id
+    - id: fills
+      capability: fill_for_order_query
+      bind:
+        order_id:
+          kind: scope
+          param: order_id
+    output:
+      order_id:
+        kind: scope
+        param: order_id
+      state:
+        kind: node_field
+        node: status_row
+        field: state
+      fill_count:
+        kind: node_row_count
+        node: fills
+    relation_outputs:
+    - relation: status
+      target: OrderStatus
+      cardinality: one
+      binding:
+        kind: node_single_row
+        node: status_row
+    - relation: fills
+      target: Fill
+      cardinality: many
+      binding:
+        kind: node_all_rows
+        node: fills
+
+auth:
+  scheme: bearer_token
+  env: ARCHITECT_EXCHANGE_TOKEN
+
+values:
+  nv_wire_bool:
+    type: boolean
+  nv_wire_int:
+    type: integer
+  nv_wire_str_short:
+    type: string
+    string_semantics: short
+  nv_user_id:
+    type: string
+    string_semantics: short
+  nv_username:
+    type: string
+    string_semantics: short
+    description: Login name for the authenticated user.
+  nv_pseudonym:
+    type: string
+    string_semantics: short
+  nv_created_at:
+    type: date
+    value_format: rfc3339
+  nv_fiat_deposit_code:
+    type: string
+    string_semantics: short
+  nv_account_id:
+    type: entity_ref
+    target: Account
+  nv_account_name:
+    type: string
+    string_semantics: short
+  nv_decimal_fee:
+    type: money
+    value_format:
+      money: decimal_string
+  nv_business_name:
+    type: string
+    string_semantics: short
+  nv_doing_business_as:
+    type: string
+    string_semantics: short
+  nv_api_key:
+    type: string
+    string_semantics: short
+  nv_api_secret:
+    type: string
+    string_semantics: short
+  nv_ip:
+    type: string
+    string_semantics: short
+  nv_ip_list:
+    type: array
+    items:
+      value_ref: nv_ip
+  nv_account_id_elem:
+    type: string
+    string_semantics: short
+  nv_account_id_list:
+    type: array
+    items:
+      value_ref: nv_account_id_elem
+  nv_asset_symbol:
+    type: string
+    string_semantics: short
+  nv_instrument_symbol:
+    type: entity_ref
+    target: Instrument
+  nv_decimal_amount:
+    type: money
+    value_format:
+      money: decimal_string
+  nv_signed_quantity:
+    type: integer
+  nv_decimal_notional:
+    type: money
+    value_format:
+      money: decimal_string
+  nv_decimal_pnl:
+    type: money
+    value_format:
+      money: decimal_string
+  nv_decimal_equity:
+    type: money
+    value_format:
+      money: decimal_string
+  nv_decimal_margin:
+    type: money
+    value_format:
+      money: decimal_string
+  nv_json_object:
+    type: string
+    string_semantics: json_text
+  nv_timestamp_ns:
+    type: integer
+    description: Unix timestamp in nanoseconds.
+  nv_blockchain:
+    type: string
+    string_semantics: short
+  nv_chain_address:
+    type: string
+    string_semantics: short
+  nv_product:
+    type: string
+    string_semantics: short
+  nv_instrument_description:
+    type: string
+    string_semantics: short
+  nv_instrument_category:
+    type: select
+    allowed_values:
+    - compute
+    - crypto
+    - energy
+    - energy_etfs
+    - equities
+    - fx
+    - metals
+    - treasuries
+  nv_currency:
+    type: string
+    string_semantics: short
+  nv_decimal_multiplier:
+    type: number
+  nv_price_scale:
+    type: integer
+  nv_decimal_size:
+    type: number
+  nv_decimal_price:
+    type: money
+    value_format:
+      money: decimal_string
+  nv_decimal_pct:
+    type: number
+  nv_quantity:
+    type: integer
+  nv_epoch_sec:
+    type: integer
+  nv_epoch_nano:
+    type: integer
+  nv_instrument_state:
+    type: select
+    allowed_values:
+    - CLOSED_FROZEN
+    - PRE_OPEN
+    - OPEN
+    - CLOSED
+    - DELISTED
+    - HALTED
+    - MATCH_AND_CLOSE_AUCTION
+    - UNKNOWN
+  nv_side:
+    type: select
+    allowed_values:
+    - B
+    - S
+  nv_candle_width:
+    type: select
+    allowed_values:
+    - 1s
+    - 5s
+    - 1m
+    - 5m
+    - 15m
+    - 1h
+    - 1d
+  nv_decimal_rate:
+    type: number
+  nv_estimated_funding_status:
+    type: select
+    allowed_values:
+    - ready
+    - settlement_pending
+    - unavailable
+  nv_calendar_date:
+    type: date
+    value_format: iso8601_date
+  nv_timezone:
+    type: string
+    string_semantics: short
+  nv_funding_variant:
+    type: select
+    allowed_values:
+    - daily_close
+    - intraday_twap
+  nv_decimal_bps:
+    type: number
+  nv_trade_id:
+    type: string
+    string_semantics: short
+  nv_order_id:
+    type: entity_ref
+    target: Order
+  nv_event_id:
+    type: string
+    string_semantics: short
+  nv_transaction_type:
+    type: select
+    allowed_values:
+    - deposit
+    - withdrawal
+    - funding
+    - fee
+    - pnl
+    - lending_credit
+    - lending_debit
+  nv_transaction_type_list:
+    type: multi_select
+    allowed_values:
+    - deposit
+    - withdrawal
+    - funding
+    - fee
+    - pnl
+    - lending_credit
+    - lending_debit
+  nv_settlement_kind:
+    type: select
+    allowed_values:
+    - funding
+    - mark_to_market
+    - final_settlement
+  nv_client_order_id:
+    type: integer
+  nv_order_state:
+    type: select
+    allowed_values:
+    - PENDING
+    - ACCEPTED
+    - PARTIALLY_FILLED
+    - FILLED
+    - CANCELED
+    - REJECTED
+    - EXPIRED
+    - REPLACED
+    - DONE_FOR_DAY
+    - UNKNOWN
+  nv_order_state_list:
+    type: multi_select
+    allowed_values:
+    - PENDING
+    - ACCEPTED
+    - PARTIALLY_FILLED
+    - FILLED
+    - CANCELED
+    - REJECTED
+    - EXPIRED
+    - REPLACED
+    - DONE_FOR_DAY
+    - UNKNOWN
+  nv_time_in_force:
+    type: string
+    string_semantics: short
+  nv_order_reject_reason:
+    type: select
+    allowed_values:
+    - CLOSE_ONLY
+    - INSUFFICIENT_MARGIN
+    - MAX_OPEN_ORDERS_EXCEEDED
+    - UNKNOWN_SYMBOL
+    - EXCHANGE_CLOSED
+    - INCORRECT_QUANTITY
+    - INVALID_PRICE_INCREMENT
+    - INCORRECT_ORDER_TYPE
+    - PRICE_OUT_OF_BOUNDS
+    - NO_LIQUIDITY
+    - INSUFFICIENT_CREDIT_LIMIT
+    - ORIGINAL_ORDER_TERMINATED
+    - DUPLICATE_CLIENT_ORDER_ID
+    - UNKNOWN
+  nv_order_tag:
+    type: string
+    string_semantics: short
+  nv_reprice_behavior:
+    type: select
+    allowed_values:
+    - rej
+    - bo
+    - tbl
+  nv_self_trade_behavior:
+    type: select
+    allowed_values:
+    - CancelIncoming
+    - CancelResting
+    - CancelBoth
+  nv_order_id_elem:
+    type: string
+    string_semantics: short
+  nv_order_id_list:
+    type: array
+    items:
+      value_ref: nv_order_id_elem
+  nv_sort_direction:
+    type: select
+    allowed_values:
+    - asc
+    - desc
+  nv_resolution_seconds:
+    type: integer
+  nv_book_level:
+    type: integer

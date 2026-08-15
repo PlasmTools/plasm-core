@@ -71,6 +71,7 @@ mod tests {
                 allowed_values: Some(vec!["available".into(), "pending".into(), "sold".into()]),
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         add(
@@ -82,6 +83,7 @@ mod tests {
                 allowed_values: Some(vec!["available".into()]),
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         add(
@@ -93,6 +95,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: Some(StringSemantics::Short),
                 array_items: None,
+                currency: None,
             },
         );
         add(
@@ -104,6 +107,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: Some(StringSemantics::Short),
                 array_items: None,
+                currency: None,
             },
         );
         add(
@@ -115,6 +119,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         add(
@@ -126,6 +131,7 @@ mod tests {
                 allowed_values: Some(vec!["available".into()]),
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         add(
@@ -137,6 +143,7 @@ mod tests {
                 allowed_values: Some(vec!["EMEA".into(), "APAC".into(), "AMER".into()]),
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         add(
@@ -148,6 +155,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         add(
@@ -159,6 +167,7 @@ mod tests {
                 allowed_values: Some(vec!["EMEA".into()]),
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         cgs

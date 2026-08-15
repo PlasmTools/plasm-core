@@ -378,6 +378,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: Some(StringSemantics::Short),
                 array_items: None,
+                currency: None,
             },
         );
         cgs.values.insert(
@@ -389,6 +390,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: Some(StringSemantics::Short),
                 array_items: None,
+                currency: None,
             },
         );
         cgs.values.insert(
@@ -400,6 +402,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
 
@@ -423,6 +426,7 @@ mod tests {
                     wire_path: None,
                     derive: None,
                     data_class: None,
+                    currency_field: None,
                 },
                 FieldSchema {
                     name: "name".into(),
@@ -437,6 +441,7 @@ mod tests {
                     wire_path: None,
                     derive: None,
                     data_class: None,
+                    currency_field: None,
                 },
                 FieldSchema {
                     name: "revenue".into(),
@@ -451,6 +456,7 @@ mod tests {
                     wire_path: None,
                     derive: None,
                     data_class: None,
+                    currency_field: None,
                 },
             ],
             relations: vec![RelationSchema {
@@ -490,6 +496,7 @@ mod tests {
                     wire_path: None,
                     derive: None,
                     data_class: None,
+                    currency_field: None,
                 },
                 FieldSchema {
                     name: "name".into(),
@@ -504,6 +511,7 @@ mod tests {
                     wire_path: None,
                     derive: None,
                     data_class: None,
+                    currency_field: None,
                 },
             ],
             relations: vec![],

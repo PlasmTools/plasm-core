@@ -101,6 +101,7 @@ fn field_type_mermaid(ft: &FieldType) -> String {
         FieldType::Blob => "blob".to_string(),
         FieldType::Json => "json".to_string(),
         FieldType::Date => "date".to_string(),
+        FieldType::Money => "money".to_string(),
         FieldType::Array => "string".to_string(),
         FieldType::EntityRef { target } => {
             format!("ref_{}", sanitize_type_prefix(target.as_str()))

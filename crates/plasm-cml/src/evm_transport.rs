@@ -279,11 +279,13 @@ pub fn coerce_dyn_value(value: &Value, ty: &DynSolType) -> Result<DynSolValue, C
         Value::Null => Err(CmlError::EvaluationError {
             message: format!("cannot coerce null to solidity type '{ty}'"),
         }),
-        Value::Array(_) | Value::Object(_) | Value::UnionCtor { .. } => Err(CmlError::TypeError {
-            message: format!(
-                "complex CML values are not yet supported for solidity type coercion ('{ty}')"
-            ),
-        }),
+        Value::Array(_) | Value::Object(_) | Value::UnionCtor { .. } | Value::Money(_) => {
+            Err(CmlError::TypeError {
+                message: format!(
+                    "complex CML values are not yet supported for solidity type coercion ('{ty}')"
+                ),
+            })
+        }
     }
 }
 

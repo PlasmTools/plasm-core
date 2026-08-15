@@ -682,6 +682,7 @@ mod relation_intent_rank_tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         let id_key = ValueDomainKey::new("tid").unwrap();
@@ -696,6 +697,7 @@ mod relation_intent_rank_tests {
             wire_path: None,
             derive: None,
             data_class: None,
+            currency_field: None,
         };
         cgs.add_resource(ResourceSchema {
             name: EntityName::from("Parent"),

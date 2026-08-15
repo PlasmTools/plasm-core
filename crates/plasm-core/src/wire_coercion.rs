@@ -280,7 +280,9 @@ pub fn coerce_value_for_field_type_with_policy(
             Some(ValueWireFormat::Temporal(fmt)) => {
                 crate::temporal::normalize_temporal_value(val, fmt)
             }
-            None => Err("Date field missing value_format in schema".to_string()),
+            None | Some(ValueWireFormat::Money(_)) => {
+                Err("Date field missing value_format in schema".to_string())
+            }
         },
         FieldType::String | FieldType::Uuid | FieldType::Select | FieldType::MultiSelect => {
             Ok(match val {
@@ -317,6 +319,13 @@ pub fn coerce_value_for_field_type_with_policy(
             }),
             other => Ok(other),
         },
+        FieldType::Money => {
+            let fmt = match value_format {
+                Some(ValueWireFormat::Money(f)) => f,
+                _ => return Err("Money field missing value_format in schema".to_string()),
+            };
+            crate::money::normalize(val, fmt, None).map_err(String::from)
+        }
         _ => Ok(val),
     }
 }
@@ -328,9 +337,12 @@ pub fn coerce_json_value_for_field_type(
     array_items: Option<&ArrayItemsSchema>,
     value: serde_json::Value,
 ) -> serde_json::Value {
-    let plasm = json_value_to_plasm_value(&value);
+    let plasm = json_to_plasm_for_field(ft, &value);
     match coerce_value_for_field_type(ft, value_format, array_items, plasm) {
-        Ok(v) => plasm_value_to_json(&v),
+        Ok(v) => match try_plasm_value_to_json(&v) {
+            Ok(j) => j,
+            Err(_) => value,
+        },
         Err(_) => value,
     }
 }
@@ -340,7 +352,7 @@ pub fn binding_value_as_plasm_value(
     raw: &serde_json::Value,
     target_nv: &NamedValueSchema,
 ) -> Value {
-    let plasm = json_value_to_plasm_value(raw);
+    let plasm = json_to_plasm_for_field(&target_nv.field_type, raw);
     coerce_value_for_field_type(
         &target_nv.field_type,
         target_nv.value_format,
@@ -348,6 +360,14 @@ pub fn binding_value_as_plasm_value(
         plasm.clone(),
     )
     .unwrap_or(plasm)
+}
+
+fn json_to_plasm_for_field(ft: &FieldType, value: &serde_json::Value) -> Value {
+    if matches!(ft, FieldType::Money) {
+        crate::money::json_amount_to_value(value)
+    } else {
+        json_value_to_plasm_value(value)
+    }
 }
 
 pub fn json_value_to_plasm_value(v: &serde_json::Value) -> Value {
@@ -367,38 +387,52 @@ pub fn json_value_to_plasm_value(v: &serde_json::Value) -> Value {
         serde_json::Value::Array(items) => {
             Value::Array(items.iter().map(json_value_to_plasm_value).collect())
         }
-        serde_json::Value::Object(map) => Value::Object(
+        serde_json::Value::Object(map) => {
+            if let Some(m) = crate::money::try_from_json_object(map) {
+                Value::Money(m)
+            } else {
+                Value::Object(
+                    map.iter()
+                        .map(|(k, v)| (k.clone(), json_value_to_plasm_value(v)))
+                        .collect(),
+                )
+            }
+        }
+    }
+}
+
+pub fn try_plasm_value_to_json(v: &Value) -> Result<serde_json::Value, String> {
+    if let Some(s) = v.as_string_or_phrase() {
+        return Ok(serde_json::Value::String(s.to_string()));
+    }
+    match v {
+        Value::Null => Ok(serde_json::Value::Null),
+        Value::Bool(b) => Ok(serde_json::Value::Bool(*b)),
+        Value::Integer(i) => Ok(serde_json::json!(i)),
+        Value::Float(f) => Ok(serde_json::Number::from_f64(*f)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null)),
+        Value::Array(items) => Ok(serde_json::Value::Array(
+            items
+                .iter()
+                .map(try_plasm_value_to_json)
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
+        Value::Object(map) => Ok(serde_json::Value::Object(
             map.iter()
-                .map(|(k, v)| (k.clone(), json_value_to_plasm_value(v)))
-                .collect(),
-        ),
+                .map(|(k, v)| Ok((k.clone(), try_plasm_value_to_json(v)?)))
+                .collect::<Result<_, String>>()?,
+        )),
+        Value::PlasmInputRef(_)
+        | Value::UnionCtor { .. }
+        | Value::String(_)
+        | Value::PhraseIdent(_) => Ok(serde_json::Value::Null),
+        Value::Money(m) => m.encode_stored().map_err(String::from),
     }
 }
 
 pub fn plasm_value_to_json(v: &Value) -> serde_json::Value {
-    if let Some(s) = v.as_string_or_phrase() {
-        return serde_json::Value::String(s.to_string());
-    }
-    match v {
-        Value::Null => serde_json::Value::Null,
-        Value::Bool(b) => serde_json::Value::Bool(*b),
-        Value::Integer(i) => serde_json::json!(i),
-        Value::Float(f) => serde_json::Number::from_f64(*f)
-            .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null),
-        Value::Array(items) => {
-            serde_json::Value::Array(items.iter().map(plasm_value_to_json).collect())
-        }
-        Value::Object(map) => serde_json::Value::Object(
-            map.iter()
-                .map(|(k, v)| (k.clone(), plasm_value_to_json(v)))
-                .collect(),
-        ),
-        Value::PlasmInputRef(_)
-        | Value::UnionCtor { .. }
-        | Value::String(_)
-        | Value::PhraseIdent(_) => serde_json::Value::Null,
-    }
+    try_plasm_value_to_json(v).unwrap_or(serde_json::Value::Null)
 }
 
 fn normalize_numeric_id_float(f: f64) -> String {

@@ -41,7 +41,7 @@ fn scope_param_encodable(cgs: &CGS, f: &InputFieldSchema) -> bool {
     match &nv.field_type {
         FieldType::EntityRef { .. } => true,
         FieldType::String | FieldType::Uuid => true,
-        FieldType::Integer | FieldType::Number => true,
+        FieldType::Integer | FieldType::Number | FieldType::Money => true,
         FieldType::Boolean => true,
         FieldType::Select | FieldType::MultiSelect => {
             nv.allowed_values.as_ref().is_some_and(|v| !v.is_empty())

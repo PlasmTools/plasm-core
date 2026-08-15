@@ -21,6 +21,7 @@ fn ticket_query_fixture_cgs() -> CGS {
             allowed_values: None,
             string_semantics: None,
             array_items: None,
+            currency: None,
         },
     );
     let f = |n: &str| registry_test_util::entity_field_from_values(&cgs, "fx_str", n, true, "");

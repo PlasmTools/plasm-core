@@ -49,7 +49,10 @@ fn append_compiled_query_pairs(url: &mut String, query: Option<&Value>) {
     let Some(query) = query else {
         return;
     };
-    let json_val = plasm_value_to_json(query);
+    let json_val = match plasm_value_to_json(query) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
     let Some(obj) = json_val.as_object() else {
         return;
     };
@@ -218,7 +221,7 @@ fn build_compiled_reqwest(
     } else if let Some(body) = &request.body {
         match request.body_format {
             HttpBodyFormat::Json => {
-                let json_body = plasm_value_to_json(body);
+                let json_body = plasm_value_to_json(body)?;
                 let stripped = strip_null_fields(json_body);
                 let bytes = serde_json::to_vec(&stripped).map_err(|e| {
                     RuntimeError::SerializationError {
@@ -250,7 +253,7 @@ fn build_compiled_reqwest(
     }
 
     if let Some(query) = &request.query {
-        let json_val = plasm_value_to_json(query);
+        let json_val = plasm_value_to_json(query)?;
         if let Some(obj) = json_val.as_object() {
             for (key, value) in obj {
                 match value {
@@ -286,7 +289,7 @@ fn build_compiled_reqwest(
     req_builder = apply_resolved_auth(req_builder, auth);
 
     if let Some(headers) = &request.headers {
-        let json_val = plasm_value_to_json(headers);
+        let json_val = plasm_value_to_json(headers)?;
         if let Some(obj) = json_val.as_object() {
             for (key, value) in obj {
                 let header_val = match value {
@@ -438,7 +441,7 @@ fn add_multipart_part(
     }
 
     if matches!(&spec.content, Value::Object(_) | Value::Array(_)) {
-        let vec = serde_json::to_vec(&plasm_value_to_json(&spec.content)).map_err(|e| {
+        let vec = serde_json::to_vec(&plasm_value_to_json(&spec.content)?).map_err(|e| {
             RuntimeError::SerializationError {
                 message: format!("multipart JSON encode for `{}`: {e}", spec.name),
             }
@@ -490,6 +493,9 @@ fn add_multipart_part(
             });
         }
         Value::Object(_) | Value::Array(_) => unreachable!("handled above"),
+        Value::Money(m) => m
+            .to_wire_text()
+            .map_err(|e| RuntimeError::SerializationError { message: e.into() })?,
         Value::UnionCtor { .. } => {
             return Err(RuntimeError::ConfigurationError {
                 message: format!(
@@ -590,6 +596,9 @@ fn plasm_value_to_form_urlencoded(body: &Value) -> Result<String, RuntimeError> 
             Value::Bool(b) => b.to_string(),
             Value::Integer(i) => i.to_string(),
             Value::Float(f) => f.to_string(),
+            Value::Money(m) => m
+                .to_wire_text()
+                .map_err(|e| RuntimeError::SerializationError { message: e.into() })?,
             _ => {
                 return Err(RuntimeError::ConfigurationError {
                     message: format!(
@@ -1030,27 +1039,36 @@ fn strip_null_fields(value: serde_json::Value) -> serde_json::Value {
     }
 }
 
-fn plasm_value_to_json(value: &Value) -> serde_json::Value {
+fn plasm_value_to_json(value: &Value) -> Result<serde_json::Value, RuntimeError> {
     match value {
-        Value::PlasmInputRef(_) => serde_json::to_value(value).unwrap_or(serde_json::Value::Null),
-        Value::Null => serde_json::Value::Null,
-        Value::Bool(b) => serde_json::Value::Bool(*b),
-        Value::Integer(i) => serde_json::Value::Number((*i).into()),
-        Value::Float(f) => serde_json::Number::from_f64(*f)
-            .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null),
-        Value::String(s) | Value::PhraseIdent(s) => serde_json::Value::String(s.clone()),
-        Value::Array(arr) => {
-            serde_json::Value::Array(arr.iter().map(plasm_value_to_json).collect())
+        Value::PlasmInputRef(_) => {
+            Ok(serde_json::to_value(value).unwrap_or(serde_json::Value::Null))
         }
+        Value::Null => Ok(serde_json::Value::Null),
+        Value::Bool(b) => Ok(serde_json::Value::Bool(*b)),
+        Value::Integer(i) => Ok(serde_json::Value::Number((*i).into())),
+        Value::Float(f) => Ok(serde_json::Number::from_f64(*f)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null)),
+        Value::String(s) | Value::PhraseIdent(s) => Ok(serde_json::Value::String(s.clone())),
+        Value::Array(arr) => Ok(serde_json::Value::Array(
+            arr.iter()
+                .map(plasm_value_to_json)
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
         Value::Object(obj) => {
             let mut map = serde_json::Map::new();
             for (k, v) in obj {
-                map.insert(k.clone(), plasm_value_to_json(v));
+                map.insert(k.clone(), plasm_value_to_json(v)?);
             }
-            serde_json::Value::Object(map)
+            Ok(serde_json::Value::Object(map))
         }
-        Value::UnionCtor { .. } => serde_json::to_value(value).unwrap_or(serde_json::Value::Null),
+        Value::UnionCtor { .. } => {
+            Ok(serde_json::to_value(value).unwrap_or(serde_json::Value::Null))
+        }
+        Value::Money(m) => m
+            .encode_stored()
+            .map_err(|e| RuntimeError::SerializationError { message: e.into() }),
     }
 }
 

@@ -107,6 +107,7 @@ impl From<Value> for TypedFieldValue {
             Value::Float(f) => TypedFieldValue::Float(f),
             Value::String(s) | Value::PhraseIdent(s) => TypedFieldValue::String(s),
             Value::Array(a) => TypedFieldValue::Array(a.into_iter().map(Self::from).collect()),
+            Value::Money(_) => TypedFieldValue::Json(v),
             Value::Object(m) => {
                 TypedFieldValue::Object(m.into_iter().map(|(k, v)| (k, Self::from(v))).collect())
             }

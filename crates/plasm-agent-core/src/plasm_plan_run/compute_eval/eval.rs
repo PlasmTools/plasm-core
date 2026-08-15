@@ -553,26 +553,8 @@ pub(crate) fn resolve_template_path<'a>(
         .and_then(|input| value_at_dotted(&input.row, rest))
 }
 
-pub(crate) fn json_to_plasm_value(v: &serde_json::Value) -> Value {
-    match v {
-        serde_json::Value::Null => Value::Null,
-        serde_json::Value::Bool(b) => Value::Bool(*b),
-        serde_json::Value::Number(n) => n
-            .as_i64()
-            .map(Value::Integer)
-            .or_else(|| n.as_f64().map(Value::Float))
-            .unwrap_or(Value::Null),
-        serde_json::Value::String(s) => Value::String(s.clone()),
-        serde_json::Value::Array(items) => {
-            Value::Array(items.iter().map(json_to_plasm_value).collect())
-        }
-        serde_json::Value::Object(obj) => Value::Object(
-            obj.iter()
-                .map(|(k, v)| (k.clone(), json_to_plasm_value(v)))
-                .collect::<IndexMap<_, _>>(),
-        ),
-    }
-}
+pub(crate) use plasm_core::json_value_to_plasm_value as json_to_plasm_value;
+
 pub(crate) fn synthetic_projection(node: &ValidatedPlanNode) -> Option<Vec<String>> {
     match node {
         ValidatedPlanNode::Compute(compute) => Some(

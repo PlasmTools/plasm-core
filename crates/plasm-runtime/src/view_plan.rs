@@ -10,8 +10,9 @@ use plasm_core::schema::{
     ViewRelationBinding, ViewScopeInject,
 };
 use plasm_core::{
-    CapabilityKind, CapabilitySchema, Cardinality, CreateExpr, GetExpr, Predicate, QueryExpr, Ref,
-    TypedFieldValue, Value, ViewNodeCondition, ViewNodeWhen, WriteOutcome, CGS,
+    json_value_to_plasm_value as json_to_plasm_value, CapabilityKind, CapabilitySchema,
+    Cardinality, CreateExpr, GetExpr, Predicate, QueryExpr, Ref, TypedFieldValue, Value,
+    ViewNodeCondition, ViewNodeWhen, WriteOutcome, CGS,
 };
 
 use crate::cache::CachedEntity;
@@ -141,34 +142,6 @@ pub(crate) trait ViewNodeRunnerAsync {
 
 /// First-row field snapshots from prior view DAG nodes (for param bind resolution).
 pub type ViewNodeFieldMap = IndexMap<String, IndexMap<String, Value>>;
-
-pub(crate) fn json_to_plasm_value(json: &serde_json::Value) -> Value {
-    match json {
-        serde_json::Value::Null => Value::Null,
-        serde_json::Value::Bool(b) => Value::Bool(*b),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Value::Integer(i)
-            } else if let Some(f) = n.as_f64() {
-                Value::Float(f)
-            } else {
-                Value::Null
-            }
-        }
-        serde_json::Value::String(s) => Value::String(s.clone()),
-        serde_json::Value::Array(arr) => {
-            let values = arr.iter().map(json_to_plasm_value).collect();
-            Value::Array(values)
-        }
-        serde_json::Value::Object(obj) => {
-            let mut map = IndexMap::new();
-            for (k, v) in obj {
-                map.insert(k.clone(), json_to_plasm_value(v));
-            }
-            Value::Object(map)
-        }
-    }
-}
 
 pub fn view_node_should_run(
     when: Option<&ViewNodeWhen>,

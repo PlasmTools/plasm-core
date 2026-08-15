@@ -1,0 +1,247 @@
+# Architect Exchange — task goals plus adversarial coverage.
+# CGS buckets: chain, create, delete, get, invoke, multi_step, page_next,
+# projection, query_all, query_filtered, reverse, update
+- id: ax-01
+  schema: architect-exchange
+  goal: Who am I and which accounts can I trade?
+  tags: [query_all]
+  covers: [query_all]
+  expect:
+    entities_any: [User, Account]
+
+- id: ax-02
+  schema: architect-exchange
+  goal: Show my KYC customer profile
+  tags: [query_all]
+  covers: [query_all]
+  expect:
+    entities_any: [Customer]
+
+- id: ax-03
+  schema: architect-exchange
+  goal: List my API keys, mint a new key, then revoke it
+  tags: [query, create, delete]
+  covers: [query_all, create, delete]
+  expect:
+    entities_any: [ApiKey]
+
+- id: ax-04
+  schema: architect-exchange
+  goal: Update allowed IPs on an existing API key
+  tags: [update]
+  covers: [update]
+  expect:
+    entities_any: [ApiKey]
+
+- id: ax-05
+  schema: architect-exchange
+  goal: Show balances, positions, and risk for one account as a portfolio snapshot
+  tags: [multi_step, query_filtered]
+  covers: [query_filtered, multi_step, reverse]
+  expect:
+    entities_any: [Balance, Position, RiskSnapshot, PortfolioSnapshot]
+
+- id: ax-06
+  schema: architect-exchange
+  goal: Equity history for my account from 1710000000000000000 to 1710003600000000000 ns at 60s resolution
+  tags: [query_filtered]
+  covers: [query_filtered]
+  expect:
+    entities_any: [EquityPoint]
+
+- id: ax-07
+  schema: architect-exchange
+  goal: Blockchain deposit address for USD on ethereum
+  tags: [query_filtered]
+  covers: [query_filtered]
+  expect:
+    entities_any: [DepositAddress]
+
+- id: ax-08
+  schema: architect-exchange
+  goal: List every instrument, then resolve XAU-PERP by symbol with only symbol and category
+  tags: [query_all, get, projection]
+  covers: [query_all, get, projection]
+  expect:
+    entities_any: [Instrument]
+
+- id: ax-09
+  schema: architect-exchange
+  goal: Load the contract, ticker, and book for XAU-PERP
+  tags: [get, chain]
+  covers: [get, chain]
+  expect:
+    entities_any: [Instrument, Ticker, OrderBook, InstrumentContext]
+
+- id: ax-10
+  schema: architect-exchange
+  goal: Page through tickers then continue with the next page handle
+  tags: [page_next]
+  covers: [page_next]
+  expect:
+    entities_any: [Ticker]
+
+- id: ax-11
+  schema: architect-exchange
+  goal: Recent public trades for XAU-PERP
+  tags: [query_filtered]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Trade]
+
+- id: ax-12
+  schema: architect-exchange
+  goal: 1h candles for XAU-PERP from 1710000000000000000 to 1710003600000000000 ns
+  tags: [query_filtered]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Candle]
+
+- id: ax-13
+  schema: architect-exchange
+  goal: Current BBO candle for XAU-PERP at 1m width
+  tags: [query_filtered]
+  covers: [query_filtered]
+  expect:
+    entities_any: [BboCandle]
+
+- id: ax-14
+  schema: architect-exchange
+  goal: Funding rates, estimated funding, and today's funding slots for XAU-PERP
+  tags: [query_filtered, get]
+  covers: [query_filtered, get]
+  expect:
+    entities_any: [FundingRate, EstimatedFunding, FundingDay]
+
+- id: ax-15
+  schema: architect-exchange
+  goal: Underlying prices and upcoming special settlements for XAU-PERP
+  tags: [query_filtered]
+  covers: [query_filtered]
+  expect:
+    entities_any: [UnderlyingPrice, SpecialSettlement]
+
+- id: ax-16
+  schema: architect-exchange
+  goal: Preview sweeping the XAU-PERP book with an aggressive buy of 10
+  tags: [invoke]
+  covers: [invoke]
+  expect:
+    entities_any: [AggressiveLimitPreview]
+
+- id: ax-17
+  schema: architect-exchange
+  goal: Place a GTC buy of 1 XAU-PERP at 2400.5
+  tags: [create]
+  covers: [create]
+  expect:
+    entities_any: [Order]
+
+- id: ax-18
+  schema: architect-exchange
+  goal: Preview that order's margin impact without placing it, then quote initial margin
+  tags: [invoke]
+  covers: [invoke]
+  expect:
+    entities_any: [OrderPreview, InitialMarginQuote]
+
+- id: ax-19
+  schema: architect-exchange
+  goal: List open orders, replace one price, then cancel all XAU-PERP working orders
+  tags: [query_filtered, update, invoke]
+  covers: [query_filtered, update, invoke]
+  expect:
+    entities_any: [Order]
+
+- id: ax-20
+  schema: architect-exchange
+  goal: Status and fills for order O-01HXYZ
+  tags: [query_filtered, chain]
+  covers: [query_filtered, chain, reverse]
+  expect:
+    entities_any: [OrderStatus, Fill, OrderContext]
+
+- id: ax-21
+  schema: architect-exchange
+  goal: Historical fills for my account from 1710000000000000000 to 1710604800000000000 ns
+  tags: [query_filtered]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Fill]
+
+- id: ax-22
+  schema: architect-exchange
+  goal: Ledger deposits and withdrawals in that same nanosecond window
+  tags: [query_filtered]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Transaction]
+
+- id: ax-23
+  schema: architect-exchange
+  goal: Funding transactions and liquidations in that window
+  tags: [query_filtered]
+  covers: [query_filtered]
+  expect:
+    entities_any: [FundingTransaction, Liquidation]
+
+- id: ax-24
+  schema: architect-exchange
+  goal: My traded volume over that window
+  tags: [query_filtered]
+  covers: [query_filtered]
+  expect:
+    entities_any: [VolumeStat]
+
+- id: ax-25
+  schema: architect-exchange
+  goal: Sandbox deposit 1000 USD into my test account
+  tags: [invoke]
+  covers: [invoke]
+  expect:
+    entities_any: [Balance]
+
+- id: ax-adv-01
+  schema: architect-exchange
+  goal: Get the user by id usr_123
+  tags: [adversarial]
+  covers: [query_all]
+  expect:
+    entities_any: [User]
+    notes: User is singleton whoami only; there is no get-by-id.
+
+- id: ax-adv-02
+  schema: architect-exchange
+  goal: List fills with no time range
+  tags: [adversarial]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Fill]
+    notes: Fills require start_timestamp_ns and end_timestamp_ns (max seven days).
+
+- id: ax-adv-03
+  schema: architect-exchange
+  goal: Use index prices instead of underlying prices for XAU-PERP
+  tags: [adversarial]
+  covers: [query_filtered]
+  expect:
+    entities_any: [UnderlyingPrice]
+    notes: Deprecated index prices are out of catalog.
+
+- id: ax-adv-04
+  schema: architect-exchange
+  goal: Authenticate with my api_key and api_secret inside the program
+  tags: [adversarial]
+  covers: [query_all]
+  expect:
+    entities_any: [User]
+    notes: Token minting is not a capability.
+
+- id: ax-adv-05
+  schema: architect-exchange
+  goal: Treat BBO mid candles as regular OHLCV candles
+  tags: [adversarial]
+  covers: [query_filtered]
+  expect:
+    entities_any: [BboCandle]
+    notes: BboCandle is a distinct shape with mid fields.

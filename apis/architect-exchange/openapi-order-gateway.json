@@ -1,0 +1,1347 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ax-order-gateway",
+    "description": "",
+    "license": {
+      "name": ""
+    },
+    "version": "15.24.0"
+  },
+  "servers": [
+    {
+      "url": "https://gateway.architect.exchange/orders"
+    }
+  ],
+  "paths": {
+    "/cancel-all-orders": {
+      "post": {
+        "tags": [
+          "order-gateway"
+        ],
+        "operationId": "cancel_all_orders",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelAllOrdersRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "All orders canceled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancelAllOrdersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown instrument symbol"
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/cancel-order": {
+      "post": {
+        "tags": [
+          "order-gateway"
+        ],
+        "operationId": "cancel_order",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelOrderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Order cancel requested",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancelOrderResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "order-gateway"
+        ],
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Health check",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/initial-margin-requirement": {
+      "post": {
+        "tags": [
+          "order-gateway"
+        ],
+        "operationId": "initial_margin_requirement",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaceOrderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Initial margin requirement preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InitialMarginRequirementResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/open-orders": {
+      "get": {
+        "tags": [
+          "order-gateway"
+        ],
+        "operationId": "open_orders",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "query",
+            "description": "Optional account ID. If omitted, default (primary) user account is used.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size. Defaults to 100.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Number of rows to skip. Defaults to 0.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort_ts",
+            "in": "query",
+            "description": "Timestamp sort direction. Defaults to desc.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortDirection"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of open orders",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetOpenOrdersRestResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/order-fills": {
+      "get": {
+        "tags": [
+          "order-gateway"
+        ],
+        "operationId": "get_order_fills",
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/OrderId"
+            }
+          },
+          {
+            "name": "aid",
+            "in": "query",
+            "description": "Optional account ID, selecting which account's fills to return for the\norder. If omitted, the user's default (primary) account is used.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of fills associated with an order ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetOrderFillsResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/order-status": {
+      "get": {
+        "tags": [
+          "order-gateway"
+        ],
+        "operationId": "get_order_status",
+        "parameters": [
+          {
+            "name": "oid",
+            "in": "query",
+            "description": "Server order ID to query; e.g. \"ORD-1234567890\". Mutually exclusive with cid.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cid",
+            "in": "query",
+            "description": "Client order ID to query. Mutually exclusive with oid.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ClientOrderId"
+            }
+          },
+          {
+            "name": "aid",
+            "in": "query",
+            "description": "Optional account ID selecting which account's cid namespace to resolve against. Defaults to the primary account.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Status of requested order",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetOrderStatusResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - exactly one of oid or cid must be provided",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/orders": {
+      "get": {
+        "tags": [
+          "order-gateway"
+        ],
+        "description": "Returns historical orders for the authenticated user, newest first by default, paged via the response cursor. The time range is optional and unbounded; an inverted range (`end_timestamp_ns` <= `start_timestamp_ns`) is rejected with a 400. Optionally narrow the result to specific orders via `order_id` and/or `order_ids`. Pages may be returned partial.",
+        "operationId": "get_orders",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "timeseries",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/TimeseriesPagination"
+            }
+          },
+          {
+            "name": "order_states",
+            "in": "query",
+            "description": "Optional comma-separated order state filter, e.g. `FILLED,CANCELED,REPLACED`",
+            "required": false,
+            "schema": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/components/schemas/OrderState"
+              }
+            }
+          },
+          {
+            "name": "order_id",
+            "in": "query",
+            "description": "Optional single order ID filter, e.g. `ORD-1234567890`. Convenience alias\nfor a one-element `order_ids`; combined with `order_ids` if both are set.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "order_ids",
+            "in": "query",
+            "description": "Optional comma-separated order ID filter, e.g. `ORD-1,ORD-2`. Combined\nwith `order_id` if both are set.",
+            "required": false,
+            "schema": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "account_id",
+            "in": "query",
+            "description": "Optional account ID. If omitted, the user's default (primary) account is used.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of orders",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetOrdersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid historical order query",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/place-order": {
+      "post": {
+        "tags": [
+          "order-gateway"
+        ],
+        "operationId": "place_order",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaceOrderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Order placed successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaceOrderResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/preview-order": {
+      "post": {
+        "tags": [
+          "order-gateway"
+        ],
+        "operationId": "preview_order",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaceOrderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Order preview with margin and liquidation estimate",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewOrderResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/replace-order": {
+      "post": {
+        "tags": [
+          "order-gateway"
+        ],
+        "operationId": "replace_order",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplaceOrderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Order replaced successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplaceOrderResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CancelAllOrdersRequest": {
+        "type": "object",
+        "description": "Request to cancel all orders for the authenticated user.",
+        "properties": {
+          "account_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional account ID. If omitted, the account is inferred from the connection: the\nuser's default account, or the session account for an account-scoped session."
+          },
+          "symbol": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional symbol filter. If provided, only orders for this symbol will be canceled."
+          }
+        }
+      },
+      "CancelAllOrdersResponse": {
+        "type": "object",
+        "description": "Response for canceling all orders."
+      },
+      "CancelOrderRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/OrderReference",
+            "description": "Identifier of the order to cancel; either `oid` (server order id) or\n`cid` (client order id)."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "aid": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Optional account ID, selecting which account's `cid` namespace the\nreference resolves against. Only meaningful when the order is given by\n`cid` — a `cid` is unique per account, not globally — and superfluous\nwhen `oid` is supplied (server order ids are globally unique). If\nomitted, the account is inferred from the connection: the user's default\naccount, or the session account for an account-scoped session."
+              }
+            }
+          }
+        ]
+      },
+      "CancelOrderResponse": {
+        "type": "object",
+        "required": [
+          "cxl_rx"
+        ],
+        "properties": {
+          "cxl_rx": {
+            "type": "boolean",
+            "description": "Whether the cancel request has been accepted; e.g. true, false"
+          }
+        }
+      },
+      "ClientOrderId": {
+        "type": "integer",
+        "format": "int64",
+        "minimum": 0
+      },
+      "CursorPage": {
+        "type": "object",
+        "description": "Page metadata for cursor-paged responses.\n\nThis is intended for response bodies (not query params).",
+        "properties": {
+          "limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "description": "Standard error response format",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "Fill": {
+        "type": "object",
+        "required": [
+          "trade_id",
+          "account_id",
+          "timestamp",
+          "symbol",
+          "price",
+          "quantity",
+          "is_taker",
+          "fee",
+          "side"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "fee": {
+            "type": "string"
+          },
+          "is_block_trade": {
+            "type": "boolean",
+            "description": "True if this fill was generated by a block trade — a privately\nnegotiated trade booked away from the order book."
+          },
+          "is_final_settlement": {
+            "type": "boolean",
+            "description": "True if this fill was generated by final settlement of a delisted or\nexpired contract at the final settlement price; the counterparty is the\nexchange settlement account. Implies `is_block_trade`."
+          },
+          "is_taker": {
+            "type": "boolean"
+          },
+          "order_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "price": {
+            "type": "string"
+          },
+          "quantity": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "realized_pnl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "side": {
+            "$ref": "#/components/schemas/Side"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "trade_id": {
+            "type": "string"
+          }
+        }
+      },
+      "GetOpenOrdersRestResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/LimitOffsetPage"
+          },
+          {
+            "type": "object",
+            "required": [
+              "orders"
+            ],
+            "properties": {
+              "orders": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/OrderDetails"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "GetOrderFillsResponse": {
+        "type": "object",
+        "required": [
+          "fills"
+        ],
+        "properties": {
+          "fills": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Fill"
+            }
+          }
+        }
+      },
+      "GetOrderStatusResponse": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/OrderStatus"
+          }
+        }
+      },
+      "GetOrdersResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/CursorPage"
+          },
+          {
+            "type": "object",
+            "required": [
+              "orders"
+            ],
+            "properties": {
+              "orders": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/OrderDetails"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "HealthResponse": {
+        "type": "object",
+        "description": "Service health response",
+        "required": [
+          "status",
+          "timestamp"
+        ],
+        "properties": {
+          "environment": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "InitialMarginRequirementResponse": {
+        "type": "object",
+        "required": [
+          "im_pct",
+          "im",
+          "pos",
+          "mult"
+        ],
+        "properties": {
+          "im": {
+            "type": "string",
+            "description": "Initial margin requirement for the order; e.g. \"1000.00\""
+          },
+          "im_pct": {
+            "type": "string",
+            "description": "Initial margin percentage for the order symbol"
+          },
+          "mult": {
+            "type": "string",
+            "description": "Multiplier for the order symbol"
+          },
+          "pos": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Current signed position in the order symbol"
+          }
+        }
+      },
+      "LimitOffsetPage": {
+        "type": "object",
+        "description": "Page metadata for limit/offset paged responses.\n\nThis is intended for response bodies (not query params).",
+        "required": [
+          "total_count",
+          "limit",
+          "offset"
+        ],
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "total_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "OrderDetails": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          {
+            "type": "object",
+            "required": [
+              "oid",
+              "u",
+              "aid",
+              "s",
+              "p",
+              "q",
+              "xq",
+              "rq",
+              "o",
+              "d",
+              "tif"
+            ],
+            "properties": {
+              "aid": {
+                "type": "string",
+                "description": "Owning account — whose positions, balance, and risk this order moves."
+              },
+              "cid": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ClientOrderId"
+                  }
+                ]
+              },
+              "d": {
+                "$ref": "#/components/schemas/Side"
+              },
+              "o": {
+                "$ref": "#/components/schemas/OrderState"
+              },
+              "oid": {
+                "$ref": "#/components/schemas/OrderId"
+              },
+              "p": {
+                "type": "string"
+              },
+              "po": {
+                "type": "boolean"
+              },
+              "q": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "r": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/OrderRejectReason"
+                  }
+                ]
+              },
+              "rq": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "s": {
+                "type": "string"
+              },
+              "tag": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "tif": {
+                "type": "string"
+              },
+              "txt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "u": {
+                "type": "string",
+                "description": "Actor of record — the authenticated user who *placed* this order. This\nis distinct from the owning `account_id`: a user may place orders on an\naccount they do not own (e.g. a proxy or algo acting for another party)."
+              },
+              "xq": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              }
+            }
+          }
+        ]
+      },
+      "OrderId": {
+        "type": "string",
+        "description": "Strong type for Order IDs to prevent mixing with other string values\n\nOrder IDs are ULIDs with a prefix:\n\n- Regular orders: O-<ULID>\n- Liquidation orders: L-<ULID>"
+      },
+      "OrderReference": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "oid"
+            ],
+            "properties": {
+              "oid": {
+                "$ref": "#/components/schemas/OrderId"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "cid"
+            ],
+            "properties": {
+              "cid": {
+                "$ref": "#/components/schemas/ClientOrderId"
+              }
+            }
+          }
+        ]
+      },
+      "OrderRejectReason": {
+        "type": "string",
+        "enum": [
+          "CLOSE_ONLY",
+          "INSUFFICIENT_MARGIN",
+          "MAX_OPEN_ORDERS_EXCEEDED",
+          "UNKNOWN_SYMBOL",
+          "EXCHANGE_CLOSED",
+          "INCORRECT_QUANTITY",
+          "INVALID_PRICE_INCREMENT",
+          "INCORRECT_ORDER_TYPE",
+          "PRICE_OUT_OF_BOUNDS",
+          "NO_LIQUIDITY",
+          "INSUFFICIENT_CREDIT_LIMIT",
+          "ORIGINAL_ORDER_TERMINATED",
+          "DUPLICATE_CLIENT_ORDER_ID",
+          "UNKNOWN"
+        ]
+      },
+      "OrderState": {
+        "type": "string",
+        "enum": [
+          "PENDING",
+          "ACCEPTED",
+          "PARTIALLY_FILLED",
+          "FILLED",
+          "CANCELED",
+          "REJECTED",
+          "EXPIRED",
+          "REPLACED",
+          "DONE_FOR_DAY",
+          "UNKNOWN"
+        ]
+      },
+      "OrderStatus": {
+        "type": "object",
+        "required": [
+          "symbol",
+          "order_id",
+          "state"
+        ],
+        "properties": {
+          "clord_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ClientOrderId"
+              }
+            ]
+          },
+          "filled_quantity": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "order_id": {
+            "type": "string"
+          },
+          "reject_message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reject_reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/OrderRejectReason"
+              }
+            ]
+          },
+          "remaining_quantity": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "state": {
+            "$ref": "#/components/schemas/OrderState"
+          },
+          "symbol": {
+            "type": "string"
+          }
+        }
+      },
+      "PlaceOrderRequest": {
+        "type": "object",
+        "required": [
+          "s",
+          "d",
+          "q",
+          "p",
+          "tif"
+        ],
+        "properties": {
+          "aid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional account ID. If omitted, the account is inferred from the connection: the\nuser's default account, or the session account for an account-scoped session."
+          },
+          "cid": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ClientOrderId",
+                "description": "Optional client order ID; 64 bit integer"
+              }
+            ]
+          },
+          "d": {
+            "$ref": "#/components/schemas/Side",
+            "description": "Order side; buying (\"B\") or selling (\"S\")"
+          },
+          "p": {
+            "type": "string",
+            "description": "Order price in USD as decimal string; e.g. \"1.2345\""
+          },
+          "po": {
+            "type": "boolean",
+            "description": "Post-only (\"maker-or-cancel\"): `false` (default) lets the order take;\n`true` makes it maker-only. When post-only, `reprice_behavior` selects\nwhat happens if the order would cross on entry (default: reject)."
+          },
+          "q": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Order quantity in contracts; e.g. 100, 1000",
+            "minimum": 0
+          },
+          "rb": {
+            "$ref": "#/components/schemas/RepriceBehavior",
+            "description": "Reprice behavior for an aggressive post-only order. Meaningful only when\n`post_only` is `true`; ignored otherwise. Defaults to `Reject` (the order\nis rejected if it would cross on entry)."
+          },
+          "s": {
+            "type": "string",
+            "description": "Order symbol; e.g. XAU-PERP, EURUSD-PERP"
+          },
+          "st": {
+            "$ref": "#/components/schemas/SelfTradeBehavior",
+            "description": "Self-trade prevention behavior. Defaults to `CancelIncoming`.\n\nThe short aliases `xi`, `xr`, and `xb` are also accepted for `CancelIncoming`,\n`CancelResting`, and `CancelBoth`, respectively.\n\n- `CancelIncoming`: cancel the incoming aggressor order; resting orders remain on the book.\n- `CancelResting`: cancel resting orders that would self-match; allow the incoming aggressor order.\n- `CancelBoth`: cancel both the resting orders and the incoming aggressor order."
+          },
+          "tag": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional order tag; maximum 10 alphanumeric characters"
+          },
+          "tif": {
+            "type": "string",
+            "description": "Order time in force; e.g. \"GTC\", \"IOC\".\n\"DAY\" is accepted but deprecated and will be removed in a future release — use \"GTC\" instead."
+          }
+        }
+      },
+      "PlaceOrderResponse": {
+        "type": "object",
+        "required": [
+          "oid"
+        ],
+        "properties": {
+          "oid": {
+            "type": "string",
+            "description": "Order ID of the placed order; e.g. \"ORD-1234567890\""
+          }
+        }
+      },
+      "PreviewOrderResponse": {
+        "type": "object",
+        "required": [
+          "im_pct",
+          "im",
+          "pos_before",
+          "pos_after"
+        ],
+        "properties": {
+          "im": {
+            "type": "string",
+            "description": "Additional initial margin required to place this order; zero if the\norder would reduce the overall margin requirement (e.g. a closing trade)"
+          },
+          "im_pct": {
+            "type": "string",
+            "description": "Initial margin percentage for the instrument (e.g. 10 means 10% IM)"
+          },
+          "liq": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Estimated liquidation price after the order fills, based on current\nequity and maintenance margin; None if the resulting position is flat"
+          },
+          "pos_after": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Projected signed position in the symbol after the order fills"
+          },
+          "pos_before": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Current signed position in the symbol before the order fills"
+          }
+        }
+      },
+      "ReplaceOrderRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/OrderReference",
+            "description": "Identifier of the order to replace; either `oid` (server order id) or\n`cid` (client order id)."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "aid": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Optional account ID, selecting which account's `cid` namespace the\nreference resolves against. Only meaningful when the order is given by\n`cid` — a `cid` is unique per account, not globally — and superfluous\nwhen `oid` is supplied (server order ids are globally unique). If\nomitted, the account is inferred from the connection: the user's default\naccount, or the session account for an account-scoped session."
+              },
+              "p": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "New price for the replacement order (optional, inherits from original if not provided)"
+              },
+              "po": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "description": "Post-only flag for the replacement order (optional, inherits from\noriginal if not provided). When set, `reprice_behavior` selects the\ncross-on-entry behavior just as on a place."
+              },
+              "q": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "New quantity for the replacement order (optional, inherits from original if not provided)",
+                "minimum": 0
+              },
+              "rb": {
+                "$ref": "#/components/schemas/RepriceBehavior",
+                "description": "Reprice behavior for the replacement order. Applied only when `post_only`\nis explicitly set to `true`; ignored otherwise. Defaults to `Reject`."
+              },
+              "tif": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "New time in force for the replacement order (optional, inherits from original if not provided)"
+              }
+            }
+          }
+        ]
+      },
+      "ReplaceOrderResponse": {
+        "type": "object",
+        "required": [
+          "oid"
+        ],
+        "properties": {
+          "oid": {
+            "$ref": "#/components/schemas/OrderId",
+            "description": "Order ID of the new replacement order; e.g. \"ORD-1234567890\""
+          }
+        }
+      },
+      "RepriceBehavior": {
+        "type": "string",
+        "description": "Reprice behavior for an aggressive post-only order — the wire `rb` field,\nmeaningful only alongside `po = true`. Defaults to `Reject`.",
+        "enum": [
+          "rej",
+          "bo",
+          "tbl"
+        ]
+      },
+      "SelfTradeBehavior": {
+        "type": "string",
+        "description": "Controls how the matching engine handles an order that would trade against the\nsubmitter's own resting orders. Defaults to `CancelIncoming`.",
+        "enum": [
+          "CancelIncoming",
+          "CancelResting",
+          "CancelBoth"
+        ]
+      },
+      "Side": {
+        "type": "string",
+        "enum": [
+          "B",
+          "S"
+        ]
+      },
+      "Timestamp": {
+        "type": "object",
+        "required": [
+          "ts",
+          "tn"
+        ],
+        "properties": {
+          "tn": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "ts": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "admin_session_token": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Admin session token"
+      },
+      "admin_token": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Admin token"
+      },
+      "session_token": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "User session token"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "order-gateway",
+      "description": "Order gateway"
+    }
+  ]
+}

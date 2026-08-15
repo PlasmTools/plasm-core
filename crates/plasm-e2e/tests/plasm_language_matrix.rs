@@ -134,6 +134,8 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "utf8_dollar_interpolate",
     "host_wait_cancel",
     "monadic_comp_witness",
+    "money_predicate",
+    "money_create_body",
 ];
 
 struct MatrixRow {
@@ -254,6 +256,16 @@ fn json_value_contains_substring(v: &serde_json::Value, needle: &str) -> bool {
             o.values().any(|x| json_value_contains_substring(x, needle))
         }
         _ => false,
+    }
+}
+
+fn tcv_money_amount(v: &TypedComparisonValue) -> Option<String> {
+    match v.to_value() {
+        Value::Money(m) => Some(m.amount().to_string()),
+        Value::Integer(n) => Some(n.to_string()),
+        Value::Float(f) => Some(f.to_string()),
+        Value::String(s) => Some(s),
+        _ => None,
     }
 }
 
@@ -1392,6 +1404,35 @@ fn assert_planning_ir(
                 return Err(format!("unexpected create: {:?}", c.capability));
             }
         }
+        "lang_money_predicate_gt" => {
+            let q = first_query(&surfaces)?;
+            if q.entity != "LangOffer" {
+                return Err(format!("expected LangOffer query, got {:?}", q.entity));
+            }
+            let Some(pred) = q.predicate.as_ref() else {
+                return Err("expected money comparison predicate".into());
+            };
+            let Predicate::Comparison {
+                field,
+                op: CompOp::Gt,
+                value,
+            } = pred
+            else {
+                return Err(format!("expected price gt, got {pred:?}"));
+            };
+            if field != "price" || tcv_money_amount(value).as_deref() != Some("10") {
+                return Err(format!("unexpected money predicate: {pred:?}"));
+            }
+        }
+        "lang_money_create_body" => {
+            let Some(Expr::Create(c)) = surfaces.iter().find(|e| matches!(e, Expr::Create(_)))
+            else {
+                return Err(format!("expected Create, got {:?}", surfaces));
+            };
+            if c.capability.as_str() != "langoffer_create" || c.entity != "LangOffer" {
+                return Err(format!("unexpected create: {:?}", c.capability));
+            }
+        }
         "lang_effect_update" => {
             let Some(Expr::Invoke(InvokeExpr { capability, .. })) =
                 surfaces.iter().find(|e| matches!(e, Expr::Invoke(_)))
@@ -2205,6 +2246,24 @@ tags"#,
         features: &["effect_create"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "MatrixCreated"],
+    },
+    MatrixRow {
+        id: "lang_money_predicate_gt",
+        program: r#"LangOffer{price>10}"#,
+        surface_line: false,
+        federated: false,
+        features: &["money_predicate", "predicate_brace_comparison"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "price", "12.5 USD"],
+    },
+    MatrixRow {
+        id: "lang_money_create_body",
+        program: r#"LangOffer.create(price="9.25", quote_currency="USD")"#,
+        surface_line: false,
+        federated: false,
+        features: &["money_create_body", "effect_create"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv"],
     },
     MatrixRow {
         id: "lang_effect_update",

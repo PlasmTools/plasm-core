@@ -233,6 +233,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         cgs.values.insert(
@@ -244,6 +245,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         cgs.values.insert(
@@ -255,6 +257,7 @@ mod tests {
                 allowed_values: Some(vec!["available".into(), "pending".into(), "sold".into()]),
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         cgs.values.insert(
@@ -268,6 +271,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
 

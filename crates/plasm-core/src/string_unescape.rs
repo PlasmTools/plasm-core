@@ -188,6 +188,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: Some(StringSemantics::Markdown),
                 array_items: None,
+                currency: None,
             },
         );
         let input_type = InputType::Object {
@@ -233,6 +234,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: Some(StringSemantics::Short),
                 array_items: None,
+                currency: None,
             },
         );
         let input_type = InputType::Object {
@@ -280,6 +282,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         let input_type = InputType::Object {

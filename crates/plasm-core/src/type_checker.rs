@@ -9,7 +9,7 @@ use crate::scope_entity_ref_infer::{
 use crate::{
     CapabilityKind, ChainExpr, ChainStep, CompOp, CreateExpr, DeleteExpr, EntityDef, EntityKey,
     Expr, FieldType, GetExpr, InputFieldSchema, InvokeExpr, PageExpr, Predicate, QueryExpr,
-    RelationSchema, TypeError, Value, CGS,
+    RelationSchema, TypeError, Value, ValueWireFormat, CGS,
 };
 use std::collections::HashSet;
 
@@ -751,6 +751,9 @@ fn type_check_comparison(
                 },
             });
         }
+        if matches!(pnv.field_type, FieldType::Money) {
+            validate_money_compare_value(field_name, &value, pnv)?;
+        }
         return Ok(());
     }
 
@@ -817,6 +820,10 @@ fn type_check_comparison(
             }
         }
 
+        if matches!(fnv.field_type, FieldType::Money) {
+            validate_money_compare_value(field_name, &value, fnv)?;
+        }
+
         return Ok(());
     }
 
@@ -825,6 +832,35 @@ fn type_check_comparison(
         field: field_name.to_string(),
         entity: entity.name.to_string(),
     })
+}
+
+fn validate_money_compare_value(
+    field_name: &str,
+    value: &Value,
+    nv: &crate::NamedValueSchema,
+) -> Result<(), TypeError> {
+    let fmt = match nv.value_format {
+        Some(ValueWireFormat::Money(f)) => f,
+        _ => {
+            return Err(TypeError::IncompatibleValue {
+                field: field_name.to_string(),
+                value_type: value.type_name().to_string(),
+                field_type: "money (missing value_format)".to_string(),
+            });
+        }
+    };
+    let coerced =
+        crate::money::normalize(value.clone(), fmt, nv.currency.as_deref()).map_err(|message| {
+            TypeError::IncompatibleValue {
+                field: field_name.to_string(),
+                value_type: format!("{} ({message})", value.type_name()),
+                field_type: "money".to_string(),
+            }
+        })?;
+    let Value::Money(m) = coerced else {
+        return Ok(());
+    };
+    crate::money::currency_conflict(nv.currency.as_deref(), m.currency()).map_err(TypeError::from)
 }
 
 /// Type-check a relation predicate.
@@ -888,6 +924,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         cgs.values.insert(
@@ -899,6 +936,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         cgs.values.insert(
@@ -914,6 +952,7 @@ mod tests {
                 ]),
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         cgs.values.insert(
@@ -925,6 +964,7 @@ mod tests {
                 allowed_values: Some(vec!["Manager".to_string(), "Employee".to_string()]),
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
     }
@@ -1017,6 +1057,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         cgs.values.insert(
@@ -1028,6 +1069,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         cgs.values.insert(
@@ -1041,6 +1083,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
     }
@@ -1256,6 +1299,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         cgs.values.insert(
@@ -1267,6 +1311,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         cgs.add_resource(ResourceSchema {
@@ -1389,6 +1434,7 @@ mod tests {
                     allowed_values: None,
                     string_semantics: None,
                     array_items: None,
+                    currency: None,
                 },
             );
         }
@@ -1407,6 +1453,7 @@ mod tests {
                 wire_path: None,
                 derive: None,
                 data_class: None,
+                currency_field: None,
             },
         );
         let entity = EntityDef {
@@ -1461,6 +1508,7 @@ mod tests {
                 allowed_values: Some(ent_allowed),
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         cgs.values.insert(
@@ -1472,6 +1520,7 @@ mod tests {
                 allowed_values: Some(cap_allowed),
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
 
@@ -1491,6 +1540,7 @@ mod tests {
                 wire_path: None,
                 derive: None,
                 data_class: None,
+                currency_field: None,
             },
         );
         let entity = EntityDef {
@@ -1571,6 +1621,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         let err = type_check_predicate(&pred, &entity, &cap_params, &cgs).unwrap_err();
@@ -1627,6 +1678,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         let err = type_check_predicate(&pred, &entity, &cap_params, &cgs).unwrap_err();
@@ -1681,6 +1733,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         let err = type_check_predicate(&pred, &entity, &cap_params, &cgs).unwrap_err();
@@ -1702,6 +1755,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         cgs.values.insert(
@@ -1715,6 +1769,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         let str_id = |c: &CGS, name: &str| {
@@ -1790,6 +1845,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         cgs.values.insert(
@@ -1803,6 +1859,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         let str_id = |c: &CGS, name: &str| {

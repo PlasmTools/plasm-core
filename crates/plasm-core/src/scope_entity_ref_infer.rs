@@ -250,6 +250,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: Some(crate::StringSemantics::Short),
                 array_items: None,
+                currency: None,
             },
         );
         cgs.values.insert(
@@ -263,6 +264,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
     }

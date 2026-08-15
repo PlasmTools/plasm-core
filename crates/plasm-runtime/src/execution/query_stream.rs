@@ -230,8 +230,8 @@ impl ExecutionEngine {
                     if let Some(entity_pred) =
                         entity_field_predicate(pred, entity_def, Some(&cap_params))
                     {
-                        res.entities
-                            .retain(|e| client_side_predicate_matches(e, &entity_pred));
+                        res.entities =
+                            filter_entities_by_predicate(res.entities, &entity_pred)?;
                         res.count = res.entities.len();
                     }
                 }
@@ -416,10 +416,9 @@ impl ExecutionEngine {
                     cgs.get_entity(&query.entity)
                         .and_then(|e| entity_field_predicate(pred, e, Some(&cap_params)))
                 }) {
-                    Some(entity_pred) => hydrated
-                        .into_iter()
-                        .filter(|e| client_side_predicate_matches(e, &entity_pred))
-                        .collect(),
+                    Some(entity_pred) => {
+                        filter_entities_by_predicate(hydrated, &entity_pred)?
+                    }
                     None => hydrated,
                 };
 

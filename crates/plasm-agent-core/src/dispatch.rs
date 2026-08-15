@@ -802,6 +802,7 @@ mod tests {
                     allowed_values: None,
                     string_semantics: sem,
                     array_items: None,
+                    currency: None,
                 },
             );
         }
@@ -825,6 +826,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    currency_field: None,
                 },
                 FieldSchema {
                     name: "balance".into(),
@@ -839,6 +841,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    currency_field: None,
                 },
             ],
             relations: vec![],
@@ -917,6 +920,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: Some(StringSemantics::Short),
                 array_items: None,
+                currency: None,
             },
         );
         cgs.add_resource(ResourceSchema {
@@ -938,6 +942,7 @@ mod tests {
                 attachment_media: None,
                 wire_path: None,
                 derive: None,
+                currency_field: None,
             }],
             relations: vec![],
             expression_aliases: vec![],
@@ -1018,6 +1023,7 @@ mod tests {
                     allowed_values: None,
                     string_semantics: Some(StringSemantics::Short),
                     array_items: None,
+                    currency: None,
                 },
             );
         }
@@ -1030,6 +1036,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
         let mk = |n: &str, vk: &str| FieldSchema {
@@ -1043,6 +1050,7 @@ mod tests {
             attachment_media: None,
             wire_path: None,
             derive: None,
+            currency_field: None,
         };
         let mk_int = |n: &str, vk: &str| FieldSchema {
             name: n.into(),
@@ -1055,6 +1063,7 @@ mod tests {
             attachment_media: None,
             wire_path: None,
             derive: None,
+            currency_field: None,
         };
         cgs.add_resource(ResourceSchema {
             name: "Issue".into(),

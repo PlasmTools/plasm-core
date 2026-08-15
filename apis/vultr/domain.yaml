@@ -1,4 +1,4 @@
-version: 19
+version: 20
 http_backend: https://api.vultr.com
 data_classes:
   pii_email:
@@ -30,13 +30,13 @@ entities:
         value_ref: nv_wire_str_short
       balance:
         required: false
-        value_ref: nv_wire_num
+        value_ref: nv_money_usd
       pending_charges:
         required: false
-        value_ref: nv_wire_num
+        value_ref: nv_money_usd
       last_payment_amount:
         required: false
-        value_ref: nv_wire_num
+        value_ref: nv_money_usd
       last_payment_date:
         required: false
         value_ref: nv_wire_date_rfc3339
@@ -131,10 +131,10 @@ entities:
         value_ref: nv_plan_locations
       monthly_cost:
         required: false
-        value_ref: nv_wire_num
+        value_ref: nv_money_usd
       hourly_cost:
         required: false
-        value_ref: nv_wire_num
+        value_ref: nv_money_usd
     relations: {}
   BareMetalPlan:
     id_field: id
@@ -229,10 +229,10 @@ entities:
         value_ref: nv_wire_str_short
       amount:
         required: false
-        value_ref: nv_wire_num
+        value_ref: nv_money_usd
       balance:
         required: false
-        value_ref: nv_wire_num
+        value_ref: nv_money_usd
       date:
         required: false
         value_ref: nv_wire_date_rfc3339
@@ -249,7 +249,7 @@ entities:
         value_ref: nv_wire_str_short
       amount:
         required: false
-        value_ref: nv_wire_num
+        value_ref: nv_money_usd
       date:
         required: false
         value_ref: nv_wire_date_rfc3339
@@ -548,7 +548,7 @@ entities:
         value_ref: nv_wire_int
       pending_charges:
         required: false
-        value_ref: nv_wire_num
+        value_ref: nv_money_usd
       firewall_group_id:
         required: false
         value_ref: nv_instance_firewall_group_id
@@ -615,7 +615,7 @@ entities:
         value_ref: nv_wire_date_rfc3339
       pending_charges:
         required: false
-        value_ref: nv_wire_num
+        value_ref: nv_money_usd
       has_ssl:
         required: false
         value_ref: nv_wire_bool
@@ -731,7 +731,7 @@ entities:
         value_ref: nv_wire_date_rfc3339
       cost:
         required: false
-        value_ref: nv_wire_num
+        value_ref: nv_money_usd
       status:
         required: false
         value_ref: nv_wire_sel_302f7ca29e8dda16
@@ -912,7 +912,7 @@ entities:
         data_class: credentials
       pending_charges:
         required: false
-        value_ref: nv_wire_num
+        value_ref: nv_money_usd
     relations: {}
   ManagedDatabase:
     id_field: id
@@ -993,7 +993,7 @@ entities:
         value_ref: nv_wire_str_short
       pending_charges:
         required: false
-        value_ref: nv_wire_num
+        value_ref: nv_money_usd
     relations: {}
   KubernetesCluster:
     id_field: id
@@ -3230,6 +3230,11 @@ values:
     value_format: rfc3339
   nv_wire_int:
     type: integer
+  nv_money_usd:
+    type: money
+    value_format:
+      money: json_number
+    currency: USD
   nv_wire_num:
     type: number
   nv_wire_sel_0780285c9fcb6c03:

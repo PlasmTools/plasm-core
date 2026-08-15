@@ -150,7 +150,7 @@ pub fn temporal_encoded_as_wire_string(encoded: &Value) -> String {
         Value::Array(_) | Value::Object(_) => {
             serde_json::to_string(&plasm_value_to_json_temporal(encoded)).unwrap_or_default()
         }
-        Value::PlasmInputRef(_) | Value::UnionCtor { .. } => String::new(),
+        Value::PlasmInputRef(_) | Value::UnionCtor { .. } | Value::Money(_) => String::new(),
     }
 }
 
@@ -171,7 +171,9 @@ fn plasm_value_to_json_temporal(v: &Value) -> serde_json::Value {
             }
             serde_json::Value::Object(map)
         }
-        Value::PlasmInputRef(_) | Value::UnionCtor { .. } => serde_json::Value::Null,
+        Value::PlasmInputRef(_) | Value::UnionCtor { .. } | Value::Money(_) => {
+            serde_json::Value::Null
+        }
     }
 }
 

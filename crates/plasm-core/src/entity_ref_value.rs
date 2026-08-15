@@ -54,6 +54,7 @@ impl EntityRefPayload {
                 Ok(Self::Atom(EntityRefAtom::String(s.clone())))
             }
             Value::Array(_) => Err(EntityRefValueError::Array),
+            Value::Money(_) => Err(EntityRefValueError::Unsupported),
             Value::Object(m) => {
                 if m.is_empty() {
                     return Err(EntityRefValueError::EmptyCompound);

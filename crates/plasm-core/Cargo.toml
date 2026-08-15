@@ -20,6 +20,7 @@ thiserror = { workspace = true }
 indexmap = { workspace = true }
 chrono = { workspace = true }
 chrono-english = { workspace = true }
+rust_decimal = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 sha2 = { workspace = true }

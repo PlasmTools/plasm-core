@@ -2556,6 +2556,7 @@ fn prompt_stats_fixture_cgs() -> CGS {
             allowed_values: None,
             string_semantics: None,
             array_items: None,
+            currency: None,
         },
     );
     let id_field = FieldSchema {
@@ -2569,6 +2570,7 @@ fn prompt_stats_fixture_cgs() -> CGS {
         wire_path: None,
         derive: None,
         data_class: None,
+        currency_field: None,
     };
     cgs.add_resource(ResourceSchema {
         name: "Book".into(),
@@ -2699,6 +2701,7 @@ fn string_id_field(description: &str) -> FieldSchema {
         wire_path: None,
         derive: None,
         data_class: None,
+        currency_field: None,
     }
 }
 
@@ -2715,6 +2718,7 @@ fn p_slot_redefinition_fixture_cgs(id_desc_a: &str, id_desc_b: &str) -> CGS {
             allowed_values: None,
             string_semantics: None,
             array_items: None,
+            currency: None,
         },
     );
     for (name, desc) in [("Anvil", id_desc_a), ("Beryl", id_desc_b)] {

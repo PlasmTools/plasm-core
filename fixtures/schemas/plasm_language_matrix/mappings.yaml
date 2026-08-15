@@ -252,3 +252,28 @@ homographrowb_query:
     value: v1
   - type: literal
     value: homograph-b
+
+langoffer_query:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: offers
+
+langoffer_create:
+  method: POST
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: offers
+  body:
+    type: object
+    fields:
+    - ["price", { type: var, name: price }]
+    - ["quote_currency", { type: var, name: quote_currency }]

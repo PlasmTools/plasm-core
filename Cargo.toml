@@ -164,6 +164,7 @@ tower-http = { version = "0.6", features = ["cors", "trace"] }
 tempfile = "3.0"
 chrono = { version = "0.4.44", default-features = false, features = ["clock", "serde"] }
 chrono-english = "0.1.8"
+rust_decimal = { version = "1.37", default-features = false, features = ["std", "serde", "serde-with-str"] }
 toon = "0.1"
 
 # LLM / REPL

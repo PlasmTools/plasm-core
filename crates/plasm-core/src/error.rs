@@ -29,6 +29,9 @@ pub enum TypeError {
         description: Option<String>,
     },
 
+    #[error("Cannot compare money in '{left}' with money in '{right}'")]
+    CrossCurrencyCompare { left: String, right: String },
+
     #[error("Relation '{relation}' not found in entity '{entity}'")]
     RelationNotFound { relation: String, entity: String },
 
@@ -59,6 +62,15 @@ pub enum TypeError {
         #[source]
         source: Box<TypeError>,
     },
+}
+
+impl From<crate::money::CrossCurrencyError> for TypeError {
+    fn from(e: crate::money::CrossCurrencyError) -> Self {
+        TypeError::CrossCurrencyCompare {
+            left: e.left().to_string(),
+            right: e.right().to_string(),
+        }
+    }
 }
 
 #[derive(Error, Debug, Clone)]
@@ -164,9 +176,14 @@ pub enum SchemaError {
     DateFieldMissingValueFormat { entity: String, field: String },
 
     #[error(
-        "Entity '{entity}' field '{field}': `value_format` is only allowed for `Date` / `datetime` fields"
+        "Entity '{entity}' field '{field}': field_type `money` requires `value_format` with `money:` (decimal_string, json_number, or minor_units)"
     )]
-    ValueFormatOnNonDateField { entity: String, field: String },
+    MoneyFieldMissingValueFormat { entity: String, field: String },
+
+    #[error(
+        "Entity '{entity}' field '{field}': `value_format` is only allowed for `Date` / `datetime` or `money` fields"
+    )]
+    ValueFormatOnIncompatibleField { entity: String, field: String },
 
     #[error(
         "Entity '{entity}' field '{field}': `string_semantics` is only allowed for `string` fields"
@@ -194,9 +211,32 @@ pub enum SchemaError {
     DateParamMissingValueFormat { capability: String, param: String },
 
     #[error(
-        "Capability '{capability}' parameter '{param}': `value_format` is only allowed for `Date` / `datetime` parameters"
+        "Capability '{capability}' parameter '{param}': field_type `money` requires `value_format` with `money:`"
     )]
-    ValueFormatOnNonDateParam { capability: String, param: String },
+    MoneyParamMissingValueFormat { capability: String, param: String },
+
+    #[error(
+        "Capability '{capability}' parameter '{param}': `value_format` is only allowed for `Date` / `datetime` or `money` parameters"
+    )]
+    ValueFormatOnIncompatibleParam { capability: String, param: String },
+
+    #[error(
+        "Entity '{entity}' field '{field}': `currency_field` '{currency_field}' is not a field on this entity"
+    )]
+    CurrencyFieldUnknown {
+        entity: String,
+        field: String,
+        currency_field: String,
+    },
+
+    #[error(
+        "Entity '{entity}' field '{field}': `currency_field` '{currency_field}' must be a string or select field"
+    )]
+    CurrencyFieldNotString {
+        entity: String,
+        field: String,
+        currency_field: String,
+    },
 
     #[error(
         "Entity '{entity}' field '{field}': field_type `array` requires non-empty `items:` describing element types"
@@ -563,6 +603,9 @@ pub enum SchemaError {
 
     #[error("View '{view}': node '{node}' computed bind template must be non-empty")]
     ViewNodeBindEmptyTemplate { view: String, node: String },
+
+    #[error("{message}")]
+    SchemaConstraint { message: String },
 
     #[error("schema_overlay: {detail}")]
     SchemaOverlayInvalid { detail: String },

@@ -1,0 +1,4838 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ax-api-gateway",
+    "description": "",
+    "license": {
+      "name": ""
+    },
+    "version": "15.24.0"
+  },
+  "servers": [
+    {
+      "url": "https://gateway.architect.exchange/api"
+    }
+  ],
+  "paths": {
+    "/account-equity-history": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "get_equity_history",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "query",
+            "description": "Optional account ID. If omitted, default (primary) user account is used.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "start_timestamp_ns",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "end_timestamp_ns",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "resolution_seconds",
+            "in": "query",
+            "description": "Desired duration between returned points.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Equity history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetAccountEquityHistoryResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/api-keys": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "get_api_keys",
+        "responses": {
+          "200": {
+            "description": "List of API keys",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetApiKeysResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "create_api_key",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateApiKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "API key created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateApiKeyResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials"
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "revoke_api_key",
+        "parameters": [
+          {
+            "name": "api_key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "API key revoked successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevokeApiKeyResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden"
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/api-keys/allowed-ips": {
+      "patch": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "update_api_key_allowed_ips",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateApiKeyAllowedIpsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "API key allowed IPs updated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateApiKeyAllowedIpsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Invalid password"
+          },
+          "403": {
+            "description": "Forbidden"
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/authenticate": {
+      "post": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "get_user_token",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthenticateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Token generated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthenticateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "2FA required but not provided"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/balances": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "get_balances",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "query",
+            "description": "Optional account ID. If omitted, default (primary) user account is used.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of balances",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetBalancesResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/bbo-candles": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "get_bbo_candles",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "description": "Instrument symbol (e.g. \"XAU-PERP\")",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "start_timestamp_ns",
+            "in": "query",
+            "description": "Start of the time range (nanoseconds since epoch, inclusive)",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "end_timestamp_ns",
+            "in": "query",
+            "description": "End of the time range (nanoseconds since epoch, inclusive)",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "candle_width",
+            "in": "query",
+            "description": "Candle width (e.g. \"1s\", \"1m\", \"1h\", \"1d\")",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of BBO candles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetBboCandlesResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/bbo-candles/current": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "get_current_bbo_candle",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "description": "Instrument symbol (e.g. \"XAU-PERP\")",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "candle_width",
+            "in": "query",
+            "description": "Candle width (e.g. \"1s\", \"1m\", \"1h\", \"1d\")",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current BBO candle",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetBboCandleResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/bbo-candles/last": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "get_last_bbo_candle",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "description": "Instrument symbol (e.g. \"XAU-PERP\")",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "candle_width",
+            "in": "query",
+            "description": "Candle width (e.g. \"1s\", \"1m\", \"1h\", \"1d\")",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Latest BBO candle",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetBboCandleResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/blockchain-deposit-address": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "get_blockchain_deposit_address_route",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "query",
+            "description": "Optional account ID. If set, returns the address for this account;\notherwise falls back to the caller's default account.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "blockchain",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "asset",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Blockchain deposit address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetBlockchainDepositAddressResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Address not found"
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/book": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "get_book",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "level",
+            "in": "query",
+            "description": "Orderbook depth level (2 or 3). Defaults to 2 if not specified.\n- 2: Returns aggregated quantity per price level\n- 3: Returns individual order quantities per price level",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Orderbook snapshot for a symbol. Level 3 includes individual order quantities; Level 2 returns only aggregated quantities.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetBookResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid level parameter"
+          },
+          "404": {
+            "description": "Symbol not found"
+          },
+          "503": {
+            "description": "MdPub not available"
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/candles": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "get_candles",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "start_timestamp_ns",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "end_timestamp_ns",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "candle_width",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of candles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetCandlesResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/candles/current": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "get_current_candle",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "candle_width",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current candle",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetCandleResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/candles/last": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "get_last_candle",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "candle_width",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Latest candle",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetCandleResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/estimated-funding-rate": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "get_estimated_funding_rate",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Estimated intraday funding rate; `status` is `unavailable` when no estimate is computed yet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetEstimatedFundingRateResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown symbol, or the symbol has no configured index source",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/fills": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "description": "Returns historical fills for the authenticated user. Requires an explicit time range: both `start_timestamp_ns` and `end_timestamp_ns` must be provided and span no more than 7 days. Missing, inverted, or wider ranges are rejected with a 400.",
+        "operationId": "get_fills",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "query",
+            "description": "Optional account ID. If omitted, default (primary) user account is used.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "symbol",
+            "in": "query",
+            "description": "Optional symbol filter. If provided, only fills for this symbol will be returned.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "end_timestamp_ns",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "start_timestamp_ns",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort_ts",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/components/schemas/SortDirection",
+                  "description": "Timestamp sort direction (defaults to `desc`)."
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of fills",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetFillsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Time range missing or wider than the 7-day maximum",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/funding-rates": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "get_funding_rates",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end_timestamp_ns",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "start_timestamp_ns",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort_ts",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/components/schemas/SortDirection",
+                  "description": "Timestamp sort direction (defaults to `desc`)."
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of funding rates",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetFundingRatesResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/funding-slots": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "description": "Returns a full trading day of funding slots for a symbol — realized, projected, skipped, and pending — with running realized and projected end-of-day totals. Symbols funded once daily report a single slot.",
+        "operationId": "get_funding_slots",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "description": "Trading date, interpreted in the symbol's funding schedule timezone.\nDefaults to the current date there.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The day's funding slots with rollups",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetFundingSlotsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown symbol, or the symbol has no funding schedule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/funding-transactions": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "description": "Returns historical funding transactions for the authenticated user, newest first by default, paged via the response cursor. The time range is optional and unbounded; an inverted range (`end_timestamp_ns` <= `start_timestamp_ns`) is rejected with a 400. A query too expensive to serve is also rejected with a 400 asking the caller to narrow the range. Pages may be returned partial.",
+        "operationId": "get_funding_transactions",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "query",
+            "description": "Optional account ID. If omitted, default (primary) user account is used.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "end_timestamp_ns",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "start_timestamp_ns",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort_ts",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/components/schemas/SortDirection",
+                  "description": "Timestamp sort direction (defaults to `desc`)."
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of funding transactions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetFundingTransactionsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or too-expensive funding-transactions query"
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Query the current health status of the service",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/index-prices": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "summary": "Deprecated alias of `/underlying-prices`.",
+        "operationId": "get_index_prices",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end_timestamp_ns",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "start_timestamp_ns",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort_ts",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/components/schemas/SortDirection",
+                  "description": "Timestamp sort direction (defaults to `desc`)."
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of underlying prices",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetIndexPricesResponse"
+                }
+              }
+            }
+          }
+        },
+        "deprecated": true,
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/instrument": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "get_instrument",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Instrument details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetInstrumentResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Instrument not found"
+          }
+        }
+      }
+    },
+    "/instruments": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "get_instruments",
+        "responses": {
+          "200": {
+            "description": "List of instruments",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetInstrumentsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/leaderboard": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "leaderboard",
+        "parameters": [
+          {
+            "name": "metric",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/LeaderboardMetric"
+            }
+          },
+          {
+            "name": "cadence",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/LeaderboardCadence"
+            }
+          },
+          {
+            "name": "period_offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Leaderboard for the requested metric/cadence/period",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LeaderboardResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/liquidations": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "description": "Returns historical liquidations for the authenticated user. Requires an explicit time range: both `start_timestamp_ns` and `end_timestamp_ns` must be provided and span no more than 7 days. Missing, inverted, or wider ranges are rejected with a 400.",
+        "operationId": "get_liquidations",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "query",
+            "description": "Optional account ID. If omitted, default (primary) user account is used.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "symbol",
+            "in": "query",
+            "description": "Optional symbol filter. If provided, only fills for this symbol will be returned.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "end_timestamp_ns",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "start_timestamp_ns",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort_ts",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/components/schemas/SortDirection",
+                  "description": "Timestamp sort direction (defaults to `desc`)."
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of liquidations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetFillsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Time range missing or wider than the 7-day maximum",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/login/clerk": {
+      "post": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "clerk_login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClerkLoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Token generated successfully, session cookie set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthenticateResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid Clerk session token"
+          },
+          "403": {
+            "description": "Clerk user has no verified email address"
+          },
+          "503": {
+            "description": "Clerk is not configured or unreachable"
+          }
+        }
+      }
+    },
+    "/logout": {
+      "post": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "logout",
+        "responses": {
+          "200": {
+            "description": "Logout successful, session cookie cleared"
+          }
+        }
+      }
+    },
+    "/positions": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "get_positions",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "query",
+            "description": "Optional account ID. If omitted, default (primary) user account is used.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of positions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetPositionsResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/preview-aggressive-limit-order": {
+      "post": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "preview_aggressive_limit_order",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewAggressiveLimitOrderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Aggressive limit order preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewAggressiveLimitOrderResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Symbol not found"
+          },
+          "503": {
+            "description": "MdPub not available"
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/risk-snapshot": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "get_risk_snapshot",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "query",
+            "description": "Optional account ID. If omitted, default (primary) user account is used.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Risk snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetRiskSnapshotResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/sandbox/deposit": {
+      "post": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "sandbox_deposit",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SandboxDepositRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Deposit successful"
+          },
+          "400": {
+            "description": "Invalid symbol or amount"
+          },
+          "403": {
+            "description": "Not a sandbox environment or monthly limit exceeded"
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/sandbox/withdraw": {
+      "post": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "sandbox_withdraw",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SandboxWithdrawalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Withdrawal successful"
+          },
+          "400": {
+            "description": "Invalid symbol or amount"
+          },
+          "403": {
+            "description": "Not a sandbox environment"
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/special-settlements-pending": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "get_upcoming_special_settlements",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "description": "Number of days ahead to include. Defaults to 7; capped at 365.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Upcoming special settlements",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetUpcomingSpecialSettlementsResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/ticker": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "get_ticker",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ticker details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetTickerResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No ticker available for the symbol"
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/tickers": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "get_tickers",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of tickers to return; defaults to 100",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Number of sorted tickers to skip; defaults to 0",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Sort order. Only `symbol` is supported; defaults to `symbol:asc`",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of tickers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetTickersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid sort field",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/trades": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "get_trades",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "The maximum number of trades to return, up to 100 trades. Defaults to 10.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of trades",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetTradesResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/transactions": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "description": "Returns historical transactions for the authenticated user. An optional time range may be supplied via `start_timestamp_ns` / `end_timestamp_ns`; when both bounds are given, `end_timestamp_ns` must be greater than `start_timestamp_ns`. Inverted ranges are rejected with a 400.",
+        "operationId": "get_transactions",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "query",
+            "description": "Optional account ID. If omitted, default (primary) user account is used.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "transaction_types",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/TransactionType"
+              },
+              "description": "Transaction types to include, as a single comma-separated value\n(`transaction_types=deposit,withdrawal`). Repeating the parameter is\nrejected; an empty value includes every type. Values not listed here\nmatch nothing rather than erroring."
+            },
+            "style": "form",
+            "explode": false
+          },
+          {
+            "name": "end_timestamp_ns",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "start_timestamp_ns",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort_ts",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/components/schemas/SortDirection",
+                  "description": "Timestamp sort direction (defaults to `desc`)."
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of transactions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetTransactionsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Time range inverted (end_timestamp_ns <= start_timestamp_ns)"
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/underlying-prices": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "get_underlying_prices",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end_timestamp_ns",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "start_timestamp_ns",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort_ts",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/components/schemas/SortDirection",
+                  "description": "Timestamp sort direction (defaults to `desc`)."
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of underlying prices",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetUnderlyingPricesResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/user/stats/volume": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "get_volume",
+        "parameters": [
+          {
+            "name": "start_timestamp_ns",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "end_timestamp_ns",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "account_id",
+            "in": "query",
+            "description": "Optional account ID. If omitted, default (primary) user account is used.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Traded volume",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetVolumeResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/whoami": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "whoami",
+        "responses": {
+          "200": {
+            "description": "Current user information",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WhoAmIResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    },
+    "/whoami/customer": {
+      "get": {
+        "tags": [
+          "api-gateway"
+        ],
+        "operationId": "whoami_customer",
+        "responses": {
+          "200": {
+            "description": "Customer information for the current user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetCustomerResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_token": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AccountEquityPoint": {
+        "type": "object",
+        "required": [
+          "t",
+          "v"
+        ],
+        "properties": {
+          "t": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "v": {
+            "type": "string"
+          }
+        }
+      },
+      "AccountRiskSnapshot": {
+        "type": "object",
+        "required": [
+          "account_id",
+          "timestamp_ns",
+          "per_symbol",
+          "initial_margin_required_for_positions",
+          "initial_margin_required_for_open_orders",
+          "initial_margin_required_total",
+          "maintenance_margin_required",
+          "unrealized_pnl",
+          "equity",
+          "initial_margin_available",
+          "maintenance_margin_available",
+          "balance_usd"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "balance_usd": {
+            "type": "string"
+          },
+          "equity": {
+            "type": "string"
+          },
+          "initial_margin_available": {
+            "type": "string"
+          },
+          "initial_margin_required_for_open_orders": {
+            "type": "string"
+          },
+          "initial_margin_required_for_positions": {
+            "type": "string"
+          },
+          "initial_margin_required_total": {
+            "type": "string"
+          },
+          "maintenance_margin_available": {
+            "type": "string"
+          },
+          "maintenance_margin_required": {
+            "type": "string"
+          },
+          "per_symbol": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/SymbolRiskSnapshot"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "timestamp_ns": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "unrealized_pnl": {
+            "type": "string"
+          }
+        }
+      },
+      "ApiKeyInfo": {
+        "type": "object",
+        "required": [
+          "api_key",
+          "created_at",
+          "permissions"
+        ],
+        "properties": {
+          "account_ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Accounts this key may act on. `null` means every account the owner can\naccess; otherwise the key is restricted to exactly these accounts."
+          },
+          "allowed_ips": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "api_key": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "permissions": {
+            "$ref": "#/components/schemas/ApiKeyPermissions",
+            "description": "The key's granted permissions."
+          }
+        }
+      },
+      "ApiKeyPermissions": {
+        "type": "object",
+        "description": "Per-key permission flags, scoping what an API key may do on the accounts it\ntargets. Mirrors the granular account permissions: the effective authority on\na request is these flags intersected with the user's current permissions on\nthe requested account, so a key can never out-rank its owner.",
+        "required": [
+          "can_list",
+          "can_read",
+          "can_set_limits",
+          "can_reduce_or_close",
+          "can_trade"
+        ],
+        "properties": {
+          "can_list": {
+            "type": "boolean"
+          },
+          "can_read": {
+            "type": "boolean"
+          },
+          "can_reduce_or_close": {
+            "type": "boolean"
+          },
+          "can_set_limits": {
+            "type": "boolean"
+          },
+          "can_trade": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AuthenticateRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/AuthenticationMethod"
+          },
+          {
+            "type": "object",
+            "required": [
+              "expiration_seconds"
+            ],
+            "properties": {
+              "expiration_seconds": {
+                "type": "integer",
+                "format": "int32"
+              }
+            }
+          }
+        ],
+        "description": "Exchange an API key and secret for a bearer token."
+      },
+      "AuthenticateResponse": {
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "$ref": "#/components/schemas/Token"
+          }
+        }
+      },
+      "AuthenticationMethod": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "api_key",
+              "api_secret"
+            ],
+            "properties": {
+              "api_key": {
+                "type": "string"
+              },
+              "api_secret": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "Balance": {
+        "type": "object",
+        "required": [
+          "account_id",
+          "symbol",
+          "amount"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "amount": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          }
+        }
+      },
+      "BboCandle": {
+        "type": "object",
+        "required": [
+          "symbol",
+          "ts",
+          "width"
+        ],
+        "properties": {
+          "ask_close": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Best ask price at the end of the interval"
+          },
+          "ask_high": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Highest best ask price during the interval"
+          },
+          "ask_low": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Lowest best ask price during the interval"
+          },
+          "ask_open": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Best ask price at the start of the interval"
+          },
+          "bid_close": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Best bid price at the end of the interval"
+          },
+          "bid_high": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Highest best bid price during the interval"
+          },
+          "bid_low": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Lowest best bid price during the interval"
+          },
+          "bid_open": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Best bid price at the start of the interval"
+          },
+          "mid_close": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Mid-price at the end of the interval"
+          },
+          "mid_high": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Highest mid-price during the interval"
+          },
+          "mid_low": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Lowest mid-price during the interval"
+          },
+          "mid_open": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Mid-price ((bid + ask) / 2) at the start of the interval"
+          },
+          "symbol": {
+            "type": "string",
+            "description": "Instrument symbol (e.g. \"XAU-PERP\")"
+          },
+          "ts": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Start timestamp of the candle interval (epoch seconds)"
+          },
+          "width": {
+            "$ref": "#/components/schemas/CandleWidth",
+            "description": "Duration of the candle interval"
+          }
+        }
+      },
+      "Candle": {
+        "type": "object",
+        "required": [
+          "symbol",
+          "ts",
+          "open",
+          "high",
+          "low",
+          "close",
+          "buy_volume",
+          "sell_volume",
+          "volume",
+          "width"
+        ],
+        "properties": {
+          "buy_volume": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "close": {
+            "type": "string"
+          },
+          "high": {
+            "type": "string"
+          },
+          "low": {
+            "type": "string"
+          },
+          "open": {
+            "type": "string"
+          },
+          "sell_volume": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "ts": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "volume": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "width": {
+            "$ref": "#/components/schemas/CandleWidth"
+          }
+        }
+      },
+      "CandleWidth": {
+        "type": "string",
+        "enum": [
+          "1s",
+          "5s",
+          "1m",
+          "5m",
+          "15m",
+          "1h",
+          "1d"
+        ]
+      },
+      "ClerkLoginRequest": {
+        "type": "object",
+        "description": "Log in with a Clerk session token, exchanging it for an AX session token.",
+        "required": [
+          "clerk_token",
+          "expiration_seconds"
+        ],
+        "properties": {
+          "clerk_token": {
+            "type": "string",
+            "description": "Session JWT obtained from Clerk after completing sign-in."
+          },
+          "expiration_seconds": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "CreateApiKeyRequest": {
+        "type": "object",
+        "properties": {
+          "account_ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Accounts the key may act on. Each must be one the caller has access to.\nWhen omitted, the key covers every account the caller can access. When\nprovided, the key is restricted to exactly those accounts."
+          },
+          "allowed_ips": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "permissions": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ApiKeyPermissions",
+                "description": "Permissions to grant the key, intersected per request with the caller's\ncurrent permissions on the requested account (so a key can never\nout-rank its owner). When omitted, the key is granted full permissions\nand behaves as the user."
+              }
+            ]
+          }
+        }
+      },
+      "CreateApiKeyResponse": {
+        "type": "object",
+        "required": [
+          "api_key",
+          "api_secret"
+        ],
+        "properties": {
+          "api_key": {
+            "type": "string"
+          },
+          "api_secret": {
+            "type": "string"
+          }
+        }
+      },
+      "CursorPage": {
+        "type": "object",
+        "description": "Page metadata for cursor-paged responses.\n\nThis is intended for response bodies (not query params).",
+        "properties": {
+          "limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "CursorPagination": {
+        "type": "object",
+        "description": "Cursor-based paging.\n\nPass `cursor` from a previous response to get the next page. Set `limit` to control\npage size (accepts number or string).",
+        "properties": {
+          "cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "DaysOfWeek": {
+        "type": "array",
+        "items": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 0
+        },
+        "description": "Days of week using ISO 8601 numbering (1=Monday, 7=Sunday).\n\nThis type ensures that all day values are in the valid range [1, 7].\nIt is serialized as a JSON array of numbers for API compatibility."
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "description": "Standard error response format",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "EstimatedFundingRateStatus": {
+        "type": "string",
+        "enum": [
+          "ready",
+          "settlement_pending",
+          "unavailable"
+        ]
+      },
+      "Fill": {
+        "type": "object",
+        "required": [
+          "trade_id",
+          "account_id",
+          "timestamp",
+          "symbol",
+          "price",
+          "quantity",
+          "is_taker",
+          "fee",
+          "side"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "fee": {
+            "type": "string"
+          },
+          "is_block_trade": {
+            "type": "boolean",
+            "description": "True if this fill was generated by a block trade — a privately\nnegotiated trade booked away from the order book."
+          },
+          "is_final_settlement": {
+            "type": "boolean",
+            "description": "True if this fill was generated by final settlement of a delisted or\nexpired contract at the final settlement price; the counterparty is the\nexchange settlement account. Implies `is_block_trade`."
+          },
+          "is_taker": {
+            "type": "boolean"
+          },
+          "order_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "price": {
+            "type": "string"
+          },
+          "quantity": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "realized_pnl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "side": {
+            "$ref": "#/components/schemas/Side"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "trade_id": {
+            "type": "string"
+          }
+        }
+      },
+      "FundingException": {
+        "type": "object",
+        "required": [
+          "date",
+          "times"
+        ],
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date",
+            "description": "The date this exception applies to"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Human-readable reason"
+          },
+          "times": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TimeOfDay"
+            },
+            "description": "Replacement times for this date"
+          }
+        }
+      },
+      "FundingRate": {
+        "type": "object",
+        "required": [
+          "symbol",
+          "timestamp_ns",
+          "funding_rate",
+          "settlement_price"
+        ],
+        "properties": {
+          "benchmark_price": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "funding_amount": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "funding_rate": {
+            "type": "string"
+          },
+          "settlement_price": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "timestamp_ns": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "FundingRateSchedule": {
+        "type": "object",
+        "description": "Machine-readable funding rate schedule for perpetual contracts",
+        "required": [
+          "timezone",
+          "times",
+          "exceptions"
+        ],
+        "properties": {
+          "exceptions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FundingException"
+            },
+            "description": "Dates with modified schedules (e.g., half-days, special times, or holidays).\n\nNote: Exception dates are interpreted in the schedule's timezone (the benchmark timezone),\nnot UTC. For example, if the timezone is \"America/New_York\" and an exception date is\n\"2025-12-25\", it refers to December 25th in New York time."
+          },
+          "times": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FundingTime"
+            },
+            "description": "Recurring funding times"
+          },
+          "timezone": {
+            "type": "string",
+            "description": "Timezone for all times (chrono_tz::Tz, serializes as IANA string)",
+            "example": "Europe/London"
+          }
+        }
+      },
+      "FundingSlot": {
+        "type": "object",
+        "description": "One funding slot of a trading day.",
+        "required": [
+          "index",
+          "funding_time",
+          "status",
+          "capped"
+        ],
+        "properties": {
+          "capped": {
+            "type": "boolean",
+            "description": "True when the rate was clamped by the symbol's funding rate cap."
+          },
+          "funding_rate_bps": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The slot's funding rate in basis points; positive means longs pay\nshorts."
+          },
+          "funding_time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "index": {
+            "type": "integer",
+            "format": "int32",
+            "description": "1-based position within the day's schedule.",
+            "minimum": 0
+          },
+          "mark_twap": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "premium_bps": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Premium of the mark TWAP over the underlying TWAP, in basis points."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the slot was skipped; present only on skipped slots."
+          },
+          "status": {
+            "$ref": "#/components/schemas/FundingSlotStatus"
+          },
+          "underlying_twap": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "FundingSlotStatus": {
+        "type": "string",
+        "enum": [
+          "realized",
+          "projected",
+          "skipped",
+          "pending"
+        ]
+      },
+      "FundingTime": {
+        "type": "object",
+        "required": [
+          "days_of_week",
+          "time_of_day"
+        ],
+        "properties": {
+          "days_of_week": {
+            "$ref": "#/components/schemas/DaysOfWeek",
+            "description": "Days of week (1=Monday, 7=Sunday)"
+          },
+          "time_of_day": {
+            "$ref": "#/components/schemas/TimeOfDay",
+            "description": "Funding time"
+          }
+        }
+      },
+      "FundingTransaction": {
+        "type": "object",
+        "description": "A cash leg booked against a position-bearing account by a settlement\nevent. Covers perpetual funding-rate payments, daily mark-to-market on\nany position-bearing contract, and the one-time final settlement at a\ndated contract's expiration — discriminated by `transaction_type`.\n\n`funding_rate`, `funding_amount`, and `benchmark_price` are populated\nonly for `Funding` and absent for the other kinds. `settlement_price`\nand `amount` apply to every kind.",
+        "required": [
+          "account_id",
+          "currency",
+          "timestamp",
+          "transaction_type",
+          "amount",
+          "event_id",
+          "sequence_number",
+          "symbol",
+          "settlement_price"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "amount": {
+            "type": "string"
+          },
+          "benchmark_price": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "currency": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "funding_amount": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Per-contract funding cash for this event — same for every user on\nthe same `(symbol, timestamp)`. Multiply by signed position to\nreconstruct the per-user `amount`. (`amount` is the actual cash\nbooked to *this* account; `funding_amount` is the per-contract\nquantity that drove the calculation.)"
+          },
+          "funding_rate": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reference_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sequence_number": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "settlement_price": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "transaction_type": {
+            "$ref": "#/components/schemas/SettlementKind"
+          }
+        }
+      },
+      "FundingVariant": {
+        "type": "string",
+        "description": "How a symbol's funding accrues over a trading day.",
+        "enum": [
+          "daily_close",
+          "intraday_twap"
+        ]
+      },
+      "GetAccountEquityHistoryResponse": {
+        "type": "object",
+        "required": [
+          "data_points"
+        ],
+        "properties": {
+          "data_points": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccountEquityPoint"
+            }
+          }
+        }
+      },
+      "GetApiKeysResponse": {
+        "type": "object",
+        "required": [
+          "api_keys"
+        ],
+        "properties": {
+          "api_keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApiKeyInfo"
+            }
+          }
+        }
+      },
+      "GetBalancesResponse": {
+        "type": "object",
+        "required": [
+          "balances"
+        ],
+        "properties": {
+          "balances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Balance"
+            }
+          },
+          "usd_borrow": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "GetBboCandleResponse": {
+        "type": "object",
+        "required": [
+          "candle"
+        ],
+        "properties": {
+          "candle": {
+            "$ref": "#/components/schemas/BboCandle"
+          }
+        }
+      },
+      "GetBboCandlesResponse": {
+        "type": "object",
+        "required": [
+          "candles"
+        ],
+        "properties": {
+          "candles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BboCandle"
+            }
+          }
+        }
+      },
+      "GetBlockchainDepositAddressResponse": {
+        "type": "object",
+        "required": [
+          "blockchain",
+          "asset",
+          "address"
+        ],
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "asset": {
+            "type": "string"
+          },
+          "blockchain": {
+            "type": "string"
+          }
+        }
+      },
+      "GetBookResponse": {
+        "type": "object",
+        "required": [
+          "book"
+        ],
+        "properties": {
+          "book": {
+            "$ref": "#/components/schemas/GetBookResponseBook"
+          }
+        }
+      },
+      "GetBookResponseBook": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          {
+            "type": "object",
+            "required": [
+              "s",
+              "b",
+              "a"
+            ],
+            "properties": {
+              "a": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/GetBookResponseBookLevel"
+                }
+              },
+              "b": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/GetBookResponseBookLevel"
+                }
+              },
+              "s": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "GetBookResponseBookLevel": {
+        "type": "object",
+        "required": [
+          "p",
+          "q"
+        ],
+        "properties": {
+          "o": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          "p": {
+            "type": "string"
+          },
+          "q": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "GetCandleResponse": {
+        "type": "object",
+        "required": [
+          "candle"
+        ],
+        "properties": {
+          "candle": {
+            "$ref": "#/components/schemas/Candle"
+          }
+        }
+      },
+      "GetCandlesResponse": {
+        "type": "object",
+        "required": [
+          "candles"
+        ],
+        "properties": {
+          "candles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Candle"
+            }
+          }
+        }
+      },
+      "GetCustomerResponse": {
+        "type": "object",
+        "properties": {
+          "business_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "doing_business_as": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "GetEstimatedFundingRateResponse": {
+        "type": "object",
+        "description": "Live estimated funding rate for a symbol, served verbatim from the cached\nestimate the settlement runner publishes.",
+        "required": [
+          "symbol",
+          "status",
+          "timestamp"
+        ],
+        "properties": {
+          "benchmark_price": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "funding_amount": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "funding_rate": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "settlement_price": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/EstimatedFundingRateStatus"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "GetFillsResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/CursorPage"
+          },
+          {
+            "type": "object",
+            "required": [
+              "fills"
+            ],
+            "properties": {
+              "fills": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Fill"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "GetFundingRatesResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/CursorPage"
+          },
+          {
+            "type": "object",
+            "required": [
+              "funding_rates"
+            ],
+            "properties": {
+              "funding_rates": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/FundingRate"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "GetFundingSlotsResponse": {
+        "type": "object",
+        "description": "A full trading day of funding slots — realized, projected, skipped, and\npending — with running totals. One surface for both funding variants:\n`daily_close` symbols report a single slot.",
+        "required": [
+          "symbol",
+          "date",
+          "timezone",
+          "variant",
+          "interval_count",
+          "slots",
+          "realized_sum_bps",
+          "projected_eod_bps"
+        ],
+        "properties": {
+          "cap_bps": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Per-slot cap on the funding rate in basis points, if configured."
+          },
+          "date": {
+            "type": "string",
+            "format": "date"
+          },
+          "interval_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Number of funding slots scheduled on `date`; 0 on holidays and\nweekends.",
+            "minimum": 0
+          },
+          "projected_eod_bps": {
+            "type": "string",
+            "description": "Projected end-of-day total in basis points: realized so far plus the\nprojection for the remaining slots."
+          },
+          "realized_sum_bps": {
+            "type": "string",
+            "description": "Sum of realized slot rates so far, in basis points."
+          },
+          "slots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FundingSlot"
+            }
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": "string",
+            "description": "IANA name of the funding schedule's timezone."
+          },
+          "variant": {
+            "$ref": "#/components/schemas/FundingVariant"
+          }
+        }
+      },
+      "GetFundingTransactionsResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/CursorPage"
+          },
+          {
+            "type": "object",
+            "required": [
+              "funding_transactions"
+            ],
+            "properties": {
+              "funding_transactions": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/FundingTransaction"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "GetIndexPricesResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/CursorPage"
+          },
+          {
+            "type": "object",
+            "required": [
+              "index_prices"
+            ],
+            "properties": {
+              "index_prices": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/UnderlyingPrice"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "GetInstrumentResponse": {
+        "$ref": "#/components/schemas/Instrument"
+      },
+      "GetInstrumentsResponse": {
+        "type": "object",
+        "required": [
+          "instruments"
+        ],
+        "properties": {
+          "instruments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GetInstrumentResponse"
+            }
+          }
+        }
+      },
+      "GetPositionsResponse": {
+        "type": "object",
+        "required": [
+          "positions"
+        ],
+        "properties": {
+          "positions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Position"
+            }
+          }
+        }
+      },
+      "GetRiskSnapshotResponse": {
+        "type": "object",
+        "required": [
+          "risk_snapshot"
+        ],
+        "properties": {
+          "risk_snapshot": {
+            "$ref": "#/components/schemas/AccountRiskSnapshot"
+          }
+        }
+      },
+      "GetTickerResponse": {
+        "type": "object",
+        "required": [
+          "ticker"
+        ],
+        "properties": {
+          "ticker": {
+            "$ref": "#/components/schemas/Ticker"
+          }
+        }
+      },
+      "GetTickersResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/LimitOffsetPage"
+          },
+          {
+            "type": "object",
+            "required": [
+              "tickers"
+            ],
+            "properties": {
+              "tickers": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Ticker"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "GetTradesResponse": {
+        "type": "object",
+        "required": [
+          "trades"
+        ],
+        "properties": {
+          "trades": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Trade"
+            }
+          }
+        }
+      },
+      "GetTransactionsRequest": {
+        "type": "object",
+        "required": [
+          "transaction_types"
+        ],
+        "properties": {
+          "transaction_types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TransactionType"
+            },
+            "description": "Transaction types to include, as a single comma-separated value\n(`transaction_types=deposit,withdrawal`). Repeating the parameter is\nrejected; an empty value includes every type. Values not listed here\nmatch nothing rather than erroring."
+          }
+        }
+      },
+      "GetTransactionsResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/CursorPage"
+          },
+          {
+            "type": "object",
+            "required": [
+              "transactions"
+            ],
+            "properties": {
+              "transactions": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Transaction"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "GetUnderlyingPricesResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/CursorPage"
+          },
+          {
+            "type": "object",
+            "required": [
+              "underlying_prices"
+            ],
+            "properties": {
+              "underlying_prices": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/UnderlyingPrice"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "GetUpcomingSpecialSettlementsResponse": {
+        "type": "object",
+        "required": [
+          "special_settlements"
+        ],
+        "properties": {
+          "special_settlements": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UpcomingSpecialSettlement"
+            },
+            "description": "Upcoming special settlements, ordered by settlement time."
+          }
+        }
+      },
+      "GetVolumeResponse": {
+        "type": "object",
+        "required": [
+          "volume"
+        ],
+        "properties": {
+          "volume": {
+            "type": "string"
+          }
+        }
+      },
+      "HealthResponse": {
+        "type": "object",
+        "description": "Service health response",
+        "required": [
+          "status",
+          "timestamp"
+        ],
+        "properties": {
+          "environment": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Instrument": {
+        "type": "object",
+        "required": [
+          "symbol",
+          "multiplier",
+          "price_scale",
+          "minimum_order_size",
+          "tick_size",
+          "quote_currency",
+          "funding_settlement_currency",
+          "maintenance_margin_pct",
+          "initial_margin_pct",
+          "category",
+          "additional_product_specs"
+        ],
+        "properties": {
+          "additional_product_specs": {
+            "type": "object"
+          },
+          "category": {
+            "$ref": "#/components/schemas/InstrumentCategory"
+          },
+          "contract_mark_price": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "contract_size": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "estimated_funding_supported": {
+            "type": "boolean",
+            "description": "Whether a live index feed is configured for this instrument, so an\nintraday funding-rate estimate can be produced. When `false`, the\nestimated-funding endpoint reports the symbol as unsupported and\nclients should not surface an estimate for it."
+          },
+          "expiration": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Absolute expiration time for dated contracts. `None` for perpetuals.\nPresence of a value is the discriminator between dated and perpetual contracts."
+          },
+          "funding_rate_cap_lower_pct": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "funding_rate_cap_upper_pct": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "funding_schedule": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/FundingRateSchedule"
+              }
+            ]
+          },
+          "funding_schedule_calendar_description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "funding_schedule_time_description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "funding_settlement_currency": {
+            "type": "string"
+          },
+          "initial_margin_pct": {
+            "type": "string"
+          },
+          "maintenance_margin_pct": {
+            "type": "string"
+          },
+          "minimum_order_size": {
+            "type": "string"
+          },
+          "multiplier": {
+            "type": "string"
+          },
+          "price_band_lower_deviation_pct": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "price_band_upper_deviation_pct": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "price_bands": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "price_quotation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "price_scale": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "product": {
+            "type": "string",
+            "description": "Umbrella product this instrument belongs to (e.g. `XAU` for `XAU-PERP`,\n`XAU-2026-SEP`, `XAU-2026-DEC`). Instruments that share a `product` are the\nsame underlying and can be grouped together in a product list."
+          },
+          "quote_currency": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "tick_size": {
+            "type": "string"
+          },
+          "trading_schedule": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TradingSchedule"
+              }
+            ]
+          },
+          "underlying_benchmark_price": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "InstrumentCategory": {
+        "type": "string",
+        "enum": [
+          "compute",
+          "crypto",
+          "energy",
+          "energy_etfs",
+          "equities",
+          "fx",
+          "metals",
+          "treasuries"
+        ]
+      },
+      "InstrumentState": {
+        "type": "string",
+        "enum": [
+          "CLOSED_FROZEN",
+          "PRE_OPEN",
+          "OPEN",
+          "CLOSED",
+          "DELISTED",
+          "HALTED",
+          "MATCH_AND_CLOSE_AUCTION",
+          "UNKNOWN"
+        ]
+      },
+      "LeaderboardCadence": {
+        "type": "string",
+        "enum": [
+          "monthly"
+        ]
+      },
+      "LeaderboardEntry": {
+        "type": "object",
+        "required": [
+          "rank",
+          "pseudonym",
+          "score"
+        ],
+        "properties": {
+          "pseudonym": {
+            "type": "string"
+          },
+          "rank": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "score": {
+            "type": "string"
+          }
+        }
+      },
+      "LeaderboardMetric": {
+        "type": "string",
+        "enum": [
+          "volume"
+        ]
+      },
+      "LeaderboardResponse": {
+        "type": "object",
+        "required": [
+          "metric",
+          "cadence",
+          "period_start",
+          "period_end",
+          "updated_at",
+          "entries"
+        ],
+        "properties": {
+          "cadence": {
+            "$ref": "#/components/schemas/LeaderboardCadence"
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LeaderboardEntry"
+            }
+          },
+          "metric": {
+            "$ref": "#/components/schemas/LeaderboardMetric"
+          },
+          "period_end": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "period_start": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "your_entry": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LeaderboardEntry"
+              }
+            ]
+          }
+        }
+      },
+      "LimitOffsetPage": {
+        "type": "object",
+        "description": "Page metadata for limit/offset paged responses.\n\nThis is intended for response bodies (not query params).",
+        "required": [
+          "total_count",
+          "limit",
+          "offset"
+        ],
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "total_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "Position": {
+        "type": "object",
+        "required": [
+          "account_id",
+          "symbol",
+          "signed_quantity",
+          "signed_notional",
+          "timestamp",
+          "realized_pnl"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "realized_pnl": {
+            "type": "string"
+          },
+          "signed_notional": {
+            "type": "string"
+          },
+          "signed_quantity": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "PreviewAggressiveLimitOrderRequest": {
+        "type": "object",
+        "required": [
+          "symbol",
+          "quantity",
+          "side"
+        ],
+        "properties": {
+          "quantity": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "side": {
+            "$ref": "#/components/schemas/Side"
+          },
+          "symbol": {
+            "type": "string"
+          }
+        }
+      },
+      "PreviewAggressiveLimitOrderResponse": {
+        "type": "object",
+        "required": [
+          "filled_quantity",
+          "remaining_quantity"
+        ],
+        "properties": {
+          "filled_quantity": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "limit_price": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "remaining_quantity": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "vwap": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "RevokeApiKeyResponse": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "SandboxDepositRequest": {
+        "type": "object",
+        "required": [
+          "symbol",
+          "amount"
+        ],
+        "properties": {
+          "account_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional account ID. If omitted, default (primary) user account is used."
+          },
+          "amount": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          }
+        }
+      },
+      "SandboxWithdrawalRequest": {
+        "type": "object",
+        "required": [
+          "symbol",
+          "amount"
+        ],
+        "properties": {
+          "account_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional account ID. If omitted, default (primary) user account is used."
+          },
+          "amount": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          }
+        }
+      },
+      "SettlementKind": {
+        "type": "string",
+        "description": "Discriminator for `FundingTransaction`. All variants are a cash leg\nbooked at a settlement price against a position; only the trigger\ndiffers.",
+        "enum": [
+          "funding",
+          "mark_to_market",
+          "final_settlement"
+        ]
+      },
+      "Side": {
+        "type": "string",
+        "enum": [
+          "B",
+          "S"
+        ]
+      },
+      "SortDirection": {
+        "type": "string",
+        "description": "Sort order/direction.\n\n- `asc`: ascending order per field type (e.g. lexicographic, numeric, etc.)\n- `desc`: descending order per field type",
+        "enum": [
+          "asc",
+          "desc"
+        ]
+      },
+      "SymbolRiskSnapshot": {
+        "type": "object",
+        "required": [
+          "signed_quantity",
+          "signed_notional",
+          "initial_margin_required_position",
+          "initial_margin_required_open_orders",
+          "initial_margin_required_total",
+          "maintenance_margin_required",
+          "unrealized_pnl"
+        ],
+        "properties": {
+          "average_price": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "initial_margin_required_open_orders": {
+            "type": "string"
+          },
+          "initial_margin_required_position": {
+            "type": "string"
+          },
+          "initial_margin_required_total": {
+            "type": "string"
+          },
+          "liquidation_price": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "maintenance_margin_required": {
+            "type": "string"
+          },
+          "signed_notional": {
+            "type": "string"
+          },
+          "signed_quantity": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "unrealized_pnl": {
+            "type": "string"
+          }
+        }
+      },
+      "Ticker": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          {
+            "type": "object",
+            "required": [
+              "s",
+              "q",
+              "v",
+              "oi",
+              "m"
+            ],
+            "properties": {
+              "ap": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "bp": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "ef": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/GetEstimatedFundingRateResponse",
+                    "description": "Live estimated funding rate, when available for this symbol."
+                  }
+                ]
+              },
+              "h": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Session high price in USD"
+              },
+              "i": {
+                "$ref": "#/components/schemas/InstrumentState",
+                "description": "Instrument state"
+              },
+              "l": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Session low price in USD"
+              },
+              "lsp": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Last settlement price in USD"
+              },
+              "lst": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32",
+                "description": "Last settlement time as epoch seconds"
+              },
+              "m": {
+                "type": "string"
+              },
+              "o": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Session open price in USD"
+              },
+              "oi": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Open interest in contracts",
+                "minimum": 0
+              },
+              "p": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Last trade price in USD"
+              },
+              "pl": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Price band lower limit in USD: the absolute lower bound of the price band that orders are checked against"
+              },
+              "pu": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Price band upper limit in USD: the absolute upper bound of the price band that orders are checked against"
+              },
+              "q": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Last trade quantity in contracts",
+                "minimum": 0
+              },
+              "s": {
+                "type": "string",
+                "description": "Instrument symbol; e.g. XAU-PERP, EURUSD-PERP"
+              },
+              "v": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Total 24h volume in contracts (quantity traded, not notional value)",
+                "minimum": 0
+              }
+            }
+          }
+        ],
+        "description": "Low frequency (e.g. ~1s or ~5s) stats update for a symbol."
+      },
+      "TimeOfDay": {
+        "type": "object",
+        "description": "Time of day representation",
+        "required": [
+          "hours",
+          "minutes"
+        ],
+        "properties": {
+          "hours": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "minutes": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "seconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "TimeRangeNs": {
+        "type": "object",
+        "description": "Time range params for API endpoints.\n\nBoth fields are optional nanosecond timestamps (UNIX epoch):\n- `start_timestamp_ns`: inclusive lower bound\n- `end_timestamp_ns`: exclusive upper bound\n\nLeave either field unset to query from the start (-∞) or through the end (+∞).",
+        "properties": {
+          "end_timestamp_ns": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "start_timestamp_ns": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "TimeseriesPagination": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/TimeRangeNs"
+          },
+          {
+            "$ref": "#/components/schemas/CursorPagination"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "sort_ts": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SortDirection",
+                    "description": "Timestamp sort direction (defaults to `desc`)."
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Query timeseries data with time range, sort, and paging.\n\nCombines time filtering, sort direction, and cursor paging. Set time bounds and\ncontrol result order."
+      },
+      "Timestamp": {
+        "type": "object",
+        "required": [
+          "ts",
+          "tn"
+        ],
+        "properties": {
+          "tn": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "ts": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "Token": {
+        "type": "string",
+        "description": "Strong type for Token with validation"
+      },
+      "Trade": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          {
+            "type": "object",
+            "required": [
+              "p",
+              "q",
+              "s",
+              "d"
+            ],
+            "properties": {
+              "d": {
+                "$ref": "#/components/schemas/Side"
+              },
+              "p": {
+                "type": "string"
+              },
+              "q": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "s": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "TradingHoursSegment": {
+        "type": "object",
+        "description": "A single trading hours segment with specific days, times, and state",
+        "required": [
+          "days_of_week",
+          "time_of_day",
+          "duration_seconds",
+          "state",
+          "hide_market_data",
+          "expire_all_orders"
+        ],
+        "properties": {
+          "days_of_week": {
+            "$ref": "#/components/schemas/DaysOfWeek",
+            "description": "Days of the week (1=Monday, 2=Tuesday, ..., 7=Sunday)"
+          },
+          "duration_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Duration of this segment in seconds",
+            "minimum": 0
+          },
+          "expire_all_orders": {
+            "type": "boolean",
+            "description": "Whether to expire all orders during this segment"
+          },
+          "hide_market_data": {
+            "type": "boolean",
+            "description": "Whether to hide market data during this segment"
+          },
+          "state": {
+            "$ref": "#/components/schemas/InstrumentState",
+            "description": "Trading state during this segment"
+          },
+          "time_of_day": {
+            "$ref": "#/components/schemas/TimeOfDay",
+            "description": "Time of day when this segment starts"
+          }
+        }
+      },
+      "TradingSchedule": {
+        "type": "object",
+        "description": "Trading schedule for an instrument, containing multiple trading hour segments",
+        "required": [
+          "segments"
+        ],
+        "properties": {
+          "segments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TradingHoursSegment"
+            }
+          }
+        }
+      },
+      "Transaction": {
+        "type": "object",
+        "required": [
+          "account_id",
+          "event_id",
+          "symbol",
+          "timestamp",
+          "amount",
+          "transaction_type"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "amount": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "initiated_by_user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Actor of record — the user who initiated the transaction. Present only\nfor directly-initiated kinds (`deposit`, `withdrawal`); `None` for\norder-derived and system-generated transactions."
+          },
+          "reference_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "transaction_type": {
+            "type": "string"
+          }
+        }
+      },
+      "TransactionType": {
+        "type": "string",
+        "description": "Kinds of ledger entry that can appear as a `Transaction::transaction_type`.",
+        "enum": [
+          "deposit",
+          "withdrawal",
+          "funding",
+          "fee",
+          "pnl",
+          "lending_credit",
+          "lending_debit"
+        ]
+      },
+      "UnderlyingPrice": {
+        "type": "object",
+        "required": [
+          "symbol",
+          "timestamp",
+          "price"
+        ],
+        "properties": {
+          "price": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "UpcomingSpecialSettlement": {
+        "type": "object",
+        "description": "Public, user-facing view of an upcoming special settlement. Deliberately\nomits internal/operational fields (notes, retry bookkeeping).",
+        "required": [
+          "symbol",
+          "settlement_ts",
+          "long_holder_extra_funding_amount"
+        ],
+        "properties": {
+          "long_holder_extra_funding_amount": {
+            "type": "string",
+            "description": "Per-contract amount credited to long holders (and debited from short\nholders) when the settlement executes. Always non-negative."
+          },
+          "settlement_ts": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time at which the settlement will be applied. Positions held in the\nsymbol at this instant determine who is credited or debited."
+          },
+          "symbol": {
+            "type": "string",
+            "description": "Symbol the settlement applies to."
+          }
+        }
+      },
+      "UpdateApiKeyAllowedIpsRequest": {
+        "type": "object",
+        "required": [
+          "api_key"
+        ],
+        "properties": {
+          "allowed_ips": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "api_key": {
+            "type": "string"
+          }
+        }
+      },
+      "UpdateApiKeyAllowedIpsResponse": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "WhoAmIAccount": {
+        "type": "object",
+        "required": [
+          "id",
+          "is_close_only",
+          "maker_fee",
+          "taker_fee",
+          "can_list",
+          "can_read",
+          "can_set_limits",
+          "can_reduce_or_close",
+          "can_trade"
+        ],
+        "properties": {
+          "can_list": {
+            "type": "boolean"
+          },
+          "can_read": {
+            "type": "boolean"
+          },
+          "can_reduce_or_close": {
+            "type": "boolean"
+          },
+          "can_set_limits": {
+            "type": "boolean"
+          },
+          "can_trade": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "is_close_only": {
+            "type": "boolean"
+          },
+          "maker_fee": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional, owner-facing nickname for the account."
+          },
+          "taker_fee": {
+            "type": "string"
+          }
+        }
+      },
+      "WhoAmIResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "username",
+          "pseudonym",
+          "created_at",
+          "is_onboarded",
+          "is_frozen",
+          "is_admin",
+          "require_2fa",
+          "fiat_deposit_code"
+        ],
+        "properties": {
+          "accounts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WhoAmIAccount"
+            }
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "fiat_deposit_code": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "is_admin": {
+            "type": "boolean"
+          },
+          "is_frozen": {
+            "type": "boolean"
+          },
+          "is_onboarded": {
+            "type": "boolean"
+          },
+          "pseudonym": {
+            "type": "string"
+          },
+          "require_2fa": {
+            "type": "boolean"
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "admin_session_token": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Admin session token"
+      },
+      "admin_token": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Admin token"
+      },
+      "session_token": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "User session token"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "api-gateway",
+      "description": "API gateway"
+    }
+  ]
+}

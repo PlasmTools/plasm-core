@@ -639,6 +639,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: Some(StringSemantics::Short),
                 array_items: None,
+                currency: None,
             },
         );
     }
@@ -652,6 +653,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
     }
@@ -665,6 +667,7 @@ mod tests {
                 allowed_values: Some(allowed),
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
     }
@@ -678,6 +681,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
     }
@@ -691,6 +695,7 @@ mod tests {
                 allowed_values: None,
                 string_semantics: None,
                 array_items: None,
+                currency: None,
             },
         );
     }
@@ -739,6 +744,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    currency_field: None,
                 },
                 FieldSchema {
                     name: "name".into(),
@@ -753,6 +759,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    currency_field: None,
                 },
                 FieldSchema {
                     name: "revenue".into(),
@@ -767,6 +774,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    currency_field: None,
                 },
                 FieldSchema {
                     name: "region".into(),
@@ -781,6 +789,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    currency_field: None,
                 },
             ],
             relations: vec![RelationSchema {
@@ -821,6 +830,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    currency_field: None,
                 },
                 FieldSchema {
                     name: "name".into(),
@@ -835,6 +845,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    currency_field: None,
                 },
                 FieldSchema {
                     name: "role".into(),
@@ -849,6 +860,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    currency_field: None,
                 },
             ],
             relations: vec![],
@@ -1139,6 +1151,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    currency_field: None,
                 },
                 FieldSchema {
                     name: "balance".into(),
@@ -1153,6 +1166,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    currency_field: None,
                 },
             ],
             relations: vec![],
@@ -1224,6 +1238,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    currency_field: None,
                 },
                 FieldSchema {
                     name: "petId".into(),
@@ -1238,6 +1253,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    currency_field: None,
                 },
             ],
             relations: vec![],
@@ -1269,6 +1285,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    currency_field: None,
                 },
                 FieldSchema {
                     name: "name".into(),
@@ -1283,6 +1300,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    currency_field: None,
                 },
             ],
             relations: vec![],
