@@ -1,0 +1,95 @@
+version: 1
+http_backend: http://localhost:1080
+
+values:
+  nv_datasource_uid:
+    type: string
+    string_semantics: short
+  nv_datasource_type:
+    type: string
+    string_semantics: short
+  nv_query_expr:
+    type: string
+    string_semantics: short
+  nv_query_time:
+    type: string
+    string_semantics: short
+  nv_query_results:
+    type: json
+
+entities:
+  Datasource:
+    id_field: uid
+    description: Datasource used to test invoke-target preflight hydration.
+    fields:
+      uid:
+        required: true
+        value_ref: nv_datasource_uid
+      type:
+        required: true
+        value_ref: nv_datasource_type
+      query_results:
+        required: false
+        value_ref: nv_query_results
+
+capabilities:
+  datasource_get:
+    kind: get
+    entity: Datasource
+    provides:
+      - uid
+      # `type` is deliberately omitted: provides must not restrict decoded-row hydration.
+
+  datasource_run:
+    kind: action
+    entity: Datasource
+    preflight:
+      - kind: hydrate_invoke_target
+        get: datasource_get
+        prefix: ds
+    parameters:
+      - name: expr
+        value_ref: nv_query_expr
+        required: true
+      - name: from
+        value_ref: nv_query_time
+        required: true
+      - name: to
+        value_ref: nv_query_time
+        required: true
+    provides:
+      - uid
+      - query_results
+
+  datasource_run_typo:
+    kind: action
+    entity: Datasource
+    preflight:
+      - kind: hydrate_invoke_target
+        get: datasource_get
+        prefix: ds
+    parameters:
+      - name: expr
+        value_ref: nv_query_expr
+        required: true
+    provides:
+      - uid
+      - query_results
+
+  datasource_run_source_prefix:
+    kind: action
+    entity: Datasource
+    preflight:
+      - kind: hydrate_invoke_target
+        get: datasource_get
+        prefix: source
+    parameters:
+      - name: expr
+        value_ref: nv_query_expr
+        required: true
+    provides:
+      - uid
+      - query_results
+
+auth:
+  scheme: none

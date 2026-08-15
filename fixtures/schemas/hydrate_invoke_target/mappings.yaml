@@ -1,0 +1,60 @@
+datasource_get:
+  method: GET
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: datasources }
+    - { type: literal, value: uid }
+    - { type: var, name: id }
+  response:
+    single: true
+
+datasource_run:
+  method: POST
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: ds }
+    - { type: literal, value: query }
+  body:
+    type: object
+    fields:
+      - [queries, { type: array, elements: [
+          { type: object, fields: [
+            [datasource, { type: object, fields: [
+              [type, { type: var, name: ds_type }],
+              [uid, { type: var, name: id }]
+            ]}],
+            [expr, { type: var, name: expr }]
+          ]}
+        ]}]
+      - [from, { type: var, name: from }]
+      - [to, { type: var, name: to }]
+  response:
+    single: true
+
+datasource_run_typo:
+  method: POST
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: ds }
+    - { type: literal, value: query }
+  body:
+    type: object
+    fields:
+      - [datasourceType, { type: var, name: ds_typo }]
+      - [expr, { type: var, name: expr }]
+  response:
+    single: true
+
+datasource_run_source_prefix:
+  method: POST
+  path:
+    - { type: literal, value: api }
+    - { type: literal, value: ds }
+    - { type: literal, value: query }
+  body:
+    type: object
+    fields:
+      - [datasourceType, { type: var, name: source_type }]
+      - [expr, { type: var, name: expr }]
+  response:
+    single: true

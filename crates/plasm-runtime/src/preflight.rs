@@ -121,7 +121,11 @@ pub(crate) async fn apply_preflight_steps(
 }
 
 /// Compile-only preflight: inject stub merge keys so CML templates compile without HTTP hydration.
-pub(crate) fn apply_preflight_compile_stubs(env: &mut CmlEnv, capability: &CapabilitySchema) {
+pub(crate) fn apply_preflight_compile_stubs(
+    env: &mut CmlEnv,
+    capability: &CapabilitySchema,
+    cgs: &CGS,
+) {
     let Some(PreflightPlan(steps)) = capability.preflight.as_ref() else {
         return;
     };
@@ -133,7 +137,10 @@ pub(crate) fn apply_preflight_compile_stubs(env: &mut CmlEnv, capability: &Capab
                 }
                 for wire_key in merge.keys() {
                     if env.get(wire_key).is_none() {
-                        env.insert(wire_key.clone(), preflight_compile_stub_value(wire_key));
+                        env.insert(
+                            wire_key.clone(),
+                            preflight_wire_key_compile_stub_value(wire_key),
+                        );
                     }
                 }
             }
@@ -145,7 +152,10 @@ pub(crate) fn apply_preflight_compile_stubs(env: &mut CmlEnv, capability: &Capab
                 }
                 for wire_key in merge.keys() {
                     if env.get(wire_key).is_none() {
-                        env.insert(wire_key.clone(), preflight_compile_stub_value(wire_key));
+                        env.insert(
+                            wire_key.clone(),
+                            preflight_wire_key_compile_stub_value(wire_key),
+                        );
                     }
                 }
             }
@@ -161,13 +171,24 @@ pub(crate) fn apply_preflight_compile_stubs(env: &mut CmlEnv, capability: &Capab
                     env.insert(merge.clone(), Value::Array(Vec::new()));
                 }
             }
-            PreflightStep::HydrateInvokeTarget { .. } => {}
+            PreflightStep::HydrateInvokeTarget { get, prefix } => {
+                let Some(get_cap) = cgs.get_capability(get) else {
+                    continue;
+                };
+                let Some(entity) = cgs.get_entity(get_cap.domain.as_str()) else {
+                    continue;
+                };
+                for field_name in entity.fields.keys() {
+                    let key = format!("{prefix}_{field_name}");
+                    env.insert(key.clone(), preflight_wire_key_compile_stub_value(&key));
+                }
+            }
             PreflightStep::ExistenceCheck { .. } => {}
         }
     }
 }
 
-fn preflight_compile_stub_value(wire_key: &str) -> Value {
+fn preflight_wire_key_compile_stub_value(wire_key: &str) -> Value {
     if wire_key.ends_with("Id")
         || wire_key.ends_with("_id")
         || wire_key == "id"
