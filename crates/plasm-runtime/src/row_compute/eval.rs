@@ -686,6 +686,7 @@ fn infer_with_kind(expr: &WithExpr, state: &FrameState) -> ColKind {
 mod tests {
     use super::*;
     use plasm_core::parse_with_body;
+    use std::str::FromStr;
 
     #[test]
     fn filter_sort_limit_roundtrip() {
