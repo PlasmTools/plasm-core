@@ -257,7 +257,7 @@ Binding forms:
 | Form | Example | Lowers to |
 |------|---------|-----------|
 | Surface + postfix | `issues = e1{…}.page_size(100)` | Query / get + compute |
-| Derived columns | `stale = issues.with{age_days: (now - updated_at)}` | Row compute [`ComputeOp::With`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/plasm_monad/payload/with_expr.rs) — preserves entity identity |
+| Derived columns | `stale = issues.with{age_days: (now - updated_at)}` or chained `issues.with{…}.filter{…}` | Row compute [`ComputeOp::With`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/plasm_monad/payload/with_expr.rs) — preserves RowIdentity; see [row compute — `.with`](plasm-row-compute.md#derived-columns-with) for continuation rules |
 | Relation hop | `labels = issues.labels` or `labels = issues.r#` | `RelationTraversal` (per-row fanout when parent is plural) |
 | Method invoke | `out = repo.m#(…)` when `repo = e#(…)` | Same invoke IR as `e#(…).m#(…)` |
 | Derive map | `cards = rows => { t: _.title }` | `Derive` (`value_or_template` only) |
