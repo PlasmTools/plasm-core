@@ -47,7 +47,7 @@ by_team = LangItem.group_by(owner, team, n=count, total=sum(score))
 
 ## Derived columns (`.with`)
 
-Add computed columns to each row while keeping the upstream **entity identity** (relation-dot continuation still works on the binding):
+Add computed columns to each row while preserving upstream **RowIdentity** (qualified entity + ref). Relation hops and further postfix compose in the **same RHS** (`issues.with{…}.filter{…}`, `issues.with{…}.r#`) or via a follow-on binding whose RHS **starts with the prior label** plus postfix (`sorted = filtered.sort(field)`). A binding whose RHS ends on `.with{…}` alone is **terminal** for bare relation-dot (`stale.labels`) — chain on one line or bind from an earlier surface anchor.
 
 ```text
 stale = issues.with{age_days: (now - updated_at)}

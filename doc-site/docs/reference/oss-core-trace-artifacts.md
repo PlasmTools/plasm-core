@@ -35,3 +35,4 @@ Durable filesystem / object-store blob filenames use the **full 32-byte digest**
 
 - Document these vars in any **core** onboarding path (README / desktop installer), separate from Helm/object-store guides.
 - Operator UIs that list traces expect agent `/v1/traces*`; durable list/detail requires local archive or sink — see [`http_traces.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-agent-core/src/http_traces.rs).
+- **OTLP export** (optional): when `OTEL_*` collectors are configured, application spans use stable semantic names (`plasm_agent.*`, `plasm_core.*`, `plasm_runtime.*`) — not Rust module paths. Contract and dashboard guidance: [`plasm-otel` README — Semantic span names](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-otel/README.md#semantic-span-names-stable-contract).
