@@ -5,7 +5,10 @@
 
 mod adapter;
 mod eval;
+mod expressions;
 mod json_frame;
+mod money;
+mod nodes;
 
 pub use adapter::PolarsAdapter;
 pub use eval::{eval_compute_ops, ComputeEvalOutcome};
