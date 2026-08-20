@@ -45,6 +45,24 @@ by_team = LangItem.group_by(owner, team, n=count, total=sum(score))
 
 **aggregate** without a key applies functions over all rows: `all = items.aggregate(n=count)`.
 
+## dedupe and distinct
+
+Drop duplicate rows while preserving entity identity (relation-dot continuation still works):
+
+```text
+unique = items.dedupe(owner)
+all_unique = items.distinct()
+by_pair = items.distinct(owner, id)
+```
+
+| Surface | Meaning |
+|---------|---------|
+| `.dedupe(field, …)` | Keep the **first** row per distinct key tuple (requires at least one key). |
+| `.distinct()` | Dedupe on the **full row** (all visible columns). |
+| `.distinct(field, …)` | Same as `.dedupe(field, …)` at lowering time. |
+
+Keys use catalog **field wire names** (same validation as `.sort` / `.filter`). Empty `.dedupe()` is rejected at compile time.
+
 ## Derived columns (`.with`)
 
 Add computed columns to each row while keeping the upstream **entity identity** (relation-dot continuation still works on the binding):
@@ -69,6 +87,8 @@ labeled = items.with{label: when(len(owner)>0, owner, title)}
 | `len(field)` | String length |
 | `when(lhs op rhs, then, else)` | Conditional; `op` is `=`, `!=`, `>`, `<`, `>=`, `<=` |
 
+**Precedence:** `*` and `/` bind tighter than `+` and `-` (standard arithmetic). Parentheses override.
+
 **Temporal subtraction:** `(now - updated_at)` or `(updated_at - created_at)` yields a non-negative **integer day count** when operands are temporal fields or `now`. Use these in filters or further `.with` columns (e.g. `when(now - updated_at > 14, 1, 0)`).
 
 **Money:** `*` / `/` / `+` / `-` on money columns follow catalog money typing (same-currency rules; cross-currency arithmetic fails at runtime).
@@ -80,7 +100,7 @@ labeled = items.with{label: when(len(owner)>0, owner, title)}
 Postfix applies left-to-right on the written expression (`a.limit(10).sort(x)` → sort after limit). Recommended SQL mental model:
 
 ```text
-source → .filter{…} → .with{…} → .group_by(…) → .sort(…) → .limit(n) → [fields] → <<TAG
+source → .filter{…} → .with{…} → .dedupe(…) → .group_by(…) → .sort(…) → .limit(n) → [fields] → <<TAG
 ```
 
 `group_by` and `aggregate` change the row schema (terminal for relation-dot continuation on that label). After `group_by`, output columns are the **group keys** plus aggregate names (`n`, `total`, …). A chained `.sort(n, desc)` sorts on those aggregate columns — not on fields of the original catalog entity.

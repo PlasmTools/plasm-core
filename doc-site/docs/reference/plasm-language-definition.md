@@ -232,6 +232,7 @@ Cross-binding references (`${stats.content}`, `body=report.content`) are also su
 - **Bare `.filter` in paths:** without `{` or `(` after `.filter`, the segment is a **relation** name, not row compute.
 - **`group_by`:** primary `group_by(p_key).aggregate(n=count)` (keys-only `.group_by` then `.aggregate`); bare `group_by(p_key)` is sugar for `count=count`; comma form `group_by(k1, k2, n=count)` remains sugar for fused keys+specs.
 - **`.with`:** `.with{col: expr}` adds derived columns per row; expression language is documented in [plasm-row-compute.md](plasm-row-compute.md#derived-columns-with). `.with{` / `.with(` is row compute — not a relation hop. Path segments like `.join(…)` without `{`/`(` after a known postfix verb are not row compute.
+- **`.dedupe` / `.distinct`:** key-based or full-row deduplication on materialized bindings — see [plasm-row-compute.md](plasm-row-compute.md#dedupe-and-distinct). `.dedupe(...)` requires at least one key; bare `.distinct()` dedupes on all columns.
 - **`=>` on bindings (two uses only):** `source => { k: _.field }` (derive map) or `source => e1(…).update(…)` (for_each). There is no `.derive(…)` surface. Row-to-text uses postfix `rows <<TAG`, not `=>`.
 - **Relation fanout:** `labels = issues.labels` **or** `labels = issues.r#` (opaque relation symbol from teaching TSV) — never `issues => e2.r#` or `source => binding.r#` (compile rejects relation hops on `=>`). A **filter wire after `.`** on a receiver is not a relation hop (use `.r#` or the relation wire). The RHS of `=>` is not `plasm_expr`; entity calls there stringify or fail compile.
 - **Homograph wires:** query filters and relation hops may share a wire name (e.g. `labels`). In-grammar resolution at the nav position disambiguates: `receiver.r#` / `receiver.labels` is a relation hop; the same wire in `{…}` is a filter/param. Teaching exemplars prefer `.r#` or wire names in relation position.
@@ -498,6 +499,8 @@ Free-form text **without** loops works only where the body does **not** accident
 ## Chaining order
 
 Postfix operators apply **left-to-right** on the primary: `a.limit(10).sort(x)` means *sort(limit(a))* — peel from the **right** when reconstructing the primary, then apply collected ops from inner to outer (limit then sort).
+
+For the recommended row-compute pipeline (`.filter` → `.with` → `.dedupe` → `.group_by` → …), entity-identity rules, and `.with` expression semantics, see [Row compute](plasm-row-compute.md) — that page is the canonical user guide; this spec owns grammar (EBNF above) and monadic lowering.
 
 ---
 

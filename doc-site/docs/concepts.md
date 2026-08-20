@@ -54,7 +54,7 @@ Agents write **Plasm** programs against symbols exposed in **teaching table** in
 
 Legacy opaque `p#` tokens for fields/params are **rejected** at parse.
 
-Expressions compose with pipes and postfix transforms (`.filter`, `.with`, `.sort`, `.group_by`, …). Multi-line payloads use tagged **heredocs** — see the [Language definition](reference/plasm-language-definition.md).
+Expressions compose with pipes and postfix transforms (`.filter`, `.with`, `.sort`, `.group_by`, …). Row-level transforms (filters, derived columns, aggregates) are documented in [Row compute](reference/plasm-row-compute.md); full grammar and binding rules live in the [Language definition](reference/plasm-language-definition.md).
 
 With the **`plasm`** remote client, the **client owns the monotonic symbol table** locally; the server executes expanded programs over HTTP. See [Remote terminal](reference/plasm-cgs-remote-terminal.md).
 
