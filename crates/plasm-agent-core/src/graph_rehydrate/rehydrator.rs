@@ -13,9 +13,9 @@ use crate::execute_session::ExecuteSession;
 use crate::server_state::PlasmHostState;
 
 use super::ctx::GraphSurfaceWalkCtx;
-use super::walk::{collect_entities, collect_row_json, snapshot_hot_entities};
 #[cfg(test)]
 use super::walk::stream_rows;
+use super::walk::{collect_entities, collect_row_json, snapshot_hot_entities};
 
 /// Hot-cache snapshot + target count for spill rehydrate after the graph lock is released.
 pub(crate) struct GraphSpillSyncPlan {

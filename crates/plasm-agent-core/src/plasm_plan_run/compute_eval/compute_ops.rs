@@ -210,6 +210,17 @@ pub(crate) fn binding_rows_for_render(
     Ok(out)
 }
 
+pub(crate) fn json_scalar_display(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn json_plasm_literal_display(v: &serde_json::Value) -> String {
     match v {
         serde_json::Value::String(s) => serde_json::to_string(s)
