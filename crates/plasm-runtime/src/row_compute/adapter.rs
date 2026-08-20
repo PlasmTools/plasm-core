@@ -1,7 +1,7 @@
 //! Three sync engine ports. Polars types do not escape this module.
 
-use super::eval::apply_stored_plan;
 use super::json_frame::{collect_json, ingest_json_rows, FrameState};
+use super::plan_apply::apply_stored_plan;
 use indexmap::IndexMap;
 use plasm_core::{
     CollectReason, CollectRows, CollectedFrame, CompileRowPlan, EnginePlanId, FrameId, IngestBatch,

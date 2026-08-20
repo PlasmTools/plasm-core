@@ -4,8 +4,12 @@
 //! this module is the only physical engine.
 
 mod adapter;
+mod aggregates;
 mod eval;
 mod json_frame;
+mod plan_apply;
+mod predicates;
+mod with_expr;
 
 pub use adapter::PolarsAdapter;
 pub use eval::{eval_compute_ops, ComputeEvalOutcome};

@@ -1,7 +1,6 @@
 //! Live MCP `plasm_run` — reviewed commits (`pcN`) and paging continuations via unified `run_ref`.
 
 use std::sync::Arc;
-use tracing::Instrument;
 
 use plasm_core::{PagingHandle, PlanCommitRef, PromptPipelineConfig, SymbolMapCrossRequestCache};
 
@@ -216,9 +215,7 @@ fn prepare_live_dry(
 }
 
 pub async fn execute_mcp_live_run(run: ExecuteMcpLiveRun) -> Result<PlasmPlanRunResult, String> {
-    execute_mcp_live_run_inner(run)
-        .instrument(crate::spans::plan_live_run())
-        .await
+    execute_mcp_live_run_inner(run).await
 }
 
 async fn execute_mcp_live_run_inner(run: ExecuteMcpLiveRun) -> Result<PlasmPlanRunResult, String> {

@@ -375,6 +375,10 @@ pub(crate) async fn run_executable_plan_phased(
                     &executable.bind,
                     &materialized,
                 ))
+                .instrument(crate::spans::plan_step_materialize(
+                    &tracing::Span::current(),
+                    step_id.as_str(),
+                ))
                 .await?;
                 apply_step_materialize_outcomes(
                     &mut materialized,

@@ -111,7 +111,7 @@ pub(crate) fn render_compute(
         .get_template("plan_render")
         .map_err(|e| format!("Plan.render template load error: {e}"))?;
     let alias_name = input.collection_alias.map(|a| a.as_str());
-    let rows_val = minijinja::Value::from_serialize(&projected);
+    let rows_val = template_json_value(&serde_json::Value::Array(projected));
     let mut ctx: BTreeMap<String, minijinja::Value> =
         BTreeMap::from([("rows".to_string(), rows_val)]);
     for label in effective_render_binding_labels(input.render_bindings, input.collection_alias) {
@@ -148,6 +148,23 @@ pub(crate) fn render_compute(
 /// convenience `{{ items.title }}` still resolves. This resolves the prior collapse where a 1-row
 /// binding bound as a scalar object and `{% for r in items %}` iterated an object (undefined value).
 #[derive(Debug)]
+struct TemplateNull;
+
+impl Object for TemplateNull {
+    fn repr(self: &Arc<Self>) -> ObjectRepr {
+        ObjectRepr::Plain
+    }
+
+    fn is_true(self: &Arc<Self>) -> bool {
+        false
+    }
+
+    fn render(self: &Arc<Self>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("none")
+    }
+}
+
+#[derive(Debug)]
 struct RenderBindingValue {
     rows: Vec<minijinja::Value>,
 }
@@ -176,8 +193,39 @@ impl Object for RenderBindingValue {
 }
 
 fn template_binding_value(rows: &[serde_json::Value]) -> minijinja::Value {
-    let rows: Vec<minijinja::Value> = rows.iter().map(minijinja::Value::from_serialize).collect();
+    let rows: Vec<minijinja::Value> = rows.iter().map(template_json_value).collect();
     minijinja::Value::from_object(RenderBindingValue { rows })
+}
+
+fn template_json_value(value: &serde_json::Value) -> minijinja::Value {
+    match value {
+        serde_json::Value::Null => minijinja::Value::from_object(TemplateNull),
+        serde_json::Value::Bool(value) => minijinja::Value::from(*value),
+        serde_json::Value::Number(value) => {
+            if let Some(value) = value.as_i64() {
+                minijinja::Value::from(value)
+            } else if let Some(value) = value.as_u64() {
+                minijinja::Value::from(value)
+            } else if let Some(value) = value.as_f64() {
+                minijinja::Value::from(value)
+            } else {
+                minijinja::Value::from(value.to_string())
+            }
+        }
+        serde_json::Value::String(value) => minijinja::Value::from(value.as_str()),
+        serde_json::Value::Array(values) => minijinja::Value::from(
+            values
+                .iter()
+                .map(template_json_value)
+                .collect::<Vec<minijinja::Value>>(),
+        ),
+        serde_json::Value::Object(values) => minijinja::Value::from(
+            values
+                .iter()
+                .map(|(key, value)| (key.clone(), template_json_value(value)))
+                .collect::<BTreeMap<String, minijinja::Value>>(),
+        ),
+    }
 }
 
 pub(crate) fn binding_rows_for_render(
