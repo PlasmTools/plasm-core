@@ -25,9 +25,8 @@
 //! OpenAPI `example` literals. **Live `run_markdown`** is fenced TSV for row-shaped HTTP results
 //! ([`mcp_format_execute_result_table_or_tsv`](../../plasm-agent-core/src/mcp_run_markdown.rs));
 //! operation display strings (`Query(…)`, `Get(…)`) are asserted on dry-run IR in [`assert_planning_ir`].
-//! Multi-digit **numeric** `.sort` ordering is covered in
-//! `plasm-agent-core` (`plan_sort_compute_orders_integer_scores_numerically`) because Hermit list
-//! payloads are not example-stable.
+//! Multi-digit **numeric** `.sort` ordering is covered in `plasm-runtime` row-compute tests because
+//! Hermit list payloads are not example-stable.
 //!
 //! **Planning:** dry-run [`DryPlasmPlanEvaluation::node_results`] `ir.expr` JSON is deserialized into
 //! typed [`plasm_core::Expr`]; compute stages deserialize into [`plasm_agent::plasm_plan::ComputeOp`].

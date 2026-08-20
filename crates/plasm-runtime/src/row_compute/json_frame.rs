@@ -32,6 +32,34 @@ pub(super) struct FrameState {
     pub money_sum_names: Vec<String>,
 }
 
+impl FrameState {
+    pub(super) fn ensure_visible_kind(&mut self, name: String, kind: ColKind) {
+        if !self.visible.iter().any(|visible| visible == &name) {
+            self.visible.push(name.clone());
+        }
+        self.kinds.entry(name).or_insert(kind);
+    }
+
+    pub(super) fn add_output_column(&mut self, name: String, kind: ColKind) {
+        if !self.visible.iter().any(|visible| visible == &name) {
+            self.visible.push(name.clone());
+        }
+        self.kinds.insert(name, kind);
+    }
+
+    pub(super) fn replace_output_columns(&mut self, columns: Vec<(String, ColKind)>) {
+        self.visible.clear();
+        for (name, kind) in columns {
+            self.visible.push(name.clone());
+            self.kinds.insert(name, kind);
+        }
+    }
+
+    pub(super) fn register_money_sum(&mut self, name: &str) {
+        self.money_sum_names.push(name.to_string());
+    }
+}
+
 pub(super) fn ingest_json_rows(rows: &[serde_json::Value]) -> PolarsResult<FrameState> {
     let mut visible = Vec::new();
     let mut seen = std::collections::HashSet::new();

@@ -32,12 +32,7 @@ pub fn eval_compute_ops(
     ops: &[ComputeOp],
     rows: &[serde_json::Value],
 ) -> Result<ComputeEvalOutcome, String> {
-    let step = StepId::new("row").map_err(|e| e.to_string())?;
-    let plan = fold_compute_ops(ops, FrameId::new(1), step, CollectCardinality::List)
-        .map_err(|e| e.to_string())?;
-    let mut state = ingest_json_rows(rows).map_err(|e| e.to_string())?;
-    apply_stored_plan(&plan, &mut state).map_err(|e| e.to_string())?;
-    let collected = collect_json(&state).map_err(|e| e.to_string())?;
+    let (plan, collected) = collect_ops_rows(ops, rows)?;
     match plan.collect() {
         CollectReason::Render { spec, .. } => Ok(ComputeEvalOutcome::Render {
             rows: collected,
@@ -49,6 +44,27 @@ pub fn eval_compute_ops(
         }),
         _ => Ok(ComputeEvalOutcome::Rows(collected)),
     }
+}
+
+fn collect_ops_rows(
+    ops: &[ComputeOp],
+    rows: &[serde_json::Value],
+) -> Result<(RowPlan, Vec<serde_json::Value>), String> {
+    let step = StepId::new("row").map_err(|e| e.to_string())?;
+    let plan = fold_compute_ops(ops, FrameId::new(1), step, CollectCardinality::List)
+        .map_err(|e| e.to_string())?;
+    let state = ingest_json_rows(rows).map_err(|e| e.to_string())?;
+    let collected = collect_plan_rows(&plan, &state).map_err(|e| e.to_string())?;
+    Ok((plan, collected))
+}
+
+pub(super) fn collect_plan_rows(
+    plan: &RowPlan,
+    initial_state: &FrameState,
+) -> PolarsResult<Vec<serde_json::Value>> {
+    let mut state = initial_state.clone();
+    apply_stored_plan(plan, &mut state)?;
+    collect_json(&state)
 }
 
 pub(super) fn apply_stored_plan(plan: &RowPlan, state: &mut FrameState) -> PolarsResult<()> {
@@ -75,10 +91,7 @@ fn ensure_plan_columns(plan: &RowPlan, state: &mut FrameState) -> PolarsResult<(
         }
         let series = Series::full_null(PlSmallStr::from_str(&name), height, &DataType::Null);
         state.df.with_column(series)?;
-        if !state.visible.iter().any(|v| v == &name) {
-            state.visible.push(name.clone());
-        }
-        state.kinds.entry(name).or_insert(ColKind::Json);
+        state.ensure_visible_kind(name, ColKind::Json);
     }
     Ok(())
 }
@@ -275,15 +288,17 @@ fn apply_node(
         }
         PlanNode::Project(spec) => {
             let mut exprs = vec![col(IDX_COL)];
-            let mut visible = Vec::new();
+            let mut output_columns = Vec::new();
             for (name, path) in &spec.fields {
                 exprs.push(col_expr(path).alias(name.as_str()));
-                visible.push(name.as_str().to_string());
-                if let Some(k) = state.kinds.get(&path.dotted()).copied() {
-                    state.kinds.insert(name.as_str().to_string(), k);
-                }
+                let kind = state
+                    .kinds
+                    .get(&path.dotted())
+                    .copied()
+                    .unwrap_or(ColKind::Json);
+                output_columns.push((name.as_str().to_string(), kind));
             }
-            state.visible = visible;
+            state.replace_output_columns(output_columns);
             Ok(lf.select(exprs))
         }
         PlanNode::With { columns } => {
@@ -291,10 +306,8 @@ fn apply_node(
             for col_def in columns {
                 let e = with_expr(&col_def.expr, state, now)?;
                 let name = col_def.name.as_str();
-                state.visible.push(name.to_string());
-                state
-                    .kinds
-                    .insert(name.to_string(), infer_with_kind(&col_def.expr, state));
+                let kind = infer_with_kind(&col_def.expr, state);
+                state.add_output_column(name.to_string(), kind);
                 exprs.push(e.alias(name));
             }
             Ok(lf.with_columns(exprs))
@@ -377,23 +390,13 @@ fn push_money_sum(
     agg_exprs.push(amount.sum().alias(name));
     visible.push(name.to_string());
     state.kinds.insert(name.to_string(), ColKind::Money);
-    state.money_sum_names.push(name.to_string());
+    state.register_money_sum(name);
 }
 
 fn pred_expr(p: &PlanPredicate) -> PolarsResult<Expr> {
     let lhs = col_expr(&p.field_path);
     let rhs = data_lit(&p.value)?;
-    Ok(match p.op {
-        PlanPredicateOp::Eq => lhs.eq(rhs),
-        PlanPredicateOp::Ne => lhs.neq(rhs),
-        PlanPredicateOp::Lt => lhs.lt(rhs),
-        PlanPredicateOp::Lte => lhs.lt_eq(rhs),
-        PlanPredicateOp::Gt => lhs.gt(rhs),
-        PlanPredicateOp::Gte => lhs.gt_eq(rhs),
-        PlanPredicateOp::Contains => lhs.cast(DataType::String).str().contains(rhs, false),
-        PlanPredicateOp::In => lhs.is_in(rhs),
-        PlanPredicateOp::Exists => lhs.is_not_null(),
-    })
+    Ok(predicate_op_expr(p.op, lhs, rhs))
 }
 
 fn data_lit(v: &PlasmDataValue) -> PolarsResult<Expr> {
@@ -566,6 +569,10 @@ fn temporal_sub_days(now: DateTime<Utc>, lhs: &WithExpr, rhs: &WithExpr) -> Pola
 }
 
 fn cmp_exprs(op: PlanPredicateOp, l: Expr, r: Expr) -> Expr {
+    predicate_op_expr(op, l, r)
+}
+
+fn predicate_op_expr(op: PlanPredicateOp, l: Expr, r: Expr) -> Expr {
     match op {
         PlanPredicateOp::Eq => l.eq(r),
         PlanPredicateOp::Ne => l.neq(r),
@@ -717,6 +724,25 @@ mod tests {
         };
         assert_eq!(out.len(), 1);
         assert_eq!(out[0]["score"], serde_json::json!(20));
+    }
+
+    #[test]
+    fn sort_orders_multi_digit_numbers_numerically() {
+        let rows = vec![
+            serde_json::json!({"score": 87}),
+            serde_json::json!({"score": 300}),
+        ];
+        let ops = vec![ComputeOp::Sort {
+            key: FieldPath::from_dotted("score").unwrap(),
+            descending: true,
+        }];
+
+        let ComputeEvalOutcome::Rows(out) = eval_compute_ops(&ops, &rows).unwrap() else {
+            panic!("rows");
+        };
+
+        assert_eq!(out[0]["score"], serde_json::json!(300));
+        assert_eq!(out[1]["score"], serde_json::json!(87));
     }
 
     #[test]

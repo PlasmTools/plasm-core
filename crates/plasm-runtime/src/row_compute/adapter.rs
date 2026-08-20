@@ -1,7 +1,7 @@
 //! Three sync engine ports. Polars types do not escape this module.
 
-use super::eval::apply_stored_plan;
-use super::json_frame::{collect_json, ingest_json_rows, FrameState};
+use super::eval::collect_plan_rows;
+use super::json_frame::{ingest_json_rows, FrameState};
 use indexmap::IndexMap;
 use plasm_core::{
     CollectReason, CollectRows, CollectedFrame, CompileRowPlan, EnginePlanId, FrameId, IngestBatch,
@@ -81,13 +81,12 @@ impl CollectRows for PolarsAdapter {
         let plans = self.plans.borrow();
         let plan = plans.get(&id).ok_or(ScanError::UnboundFrame)?;
         let frames = self.frames.borrow();
-        let mut state = frames
+        let state = frames
             .get(&plan.source())
             .cloned()
             .ok_or(ScanError::UnboundFrame)?;
         drop(frames);
-        apply_stored_plan(plan, &mut state).map_err(|_| ScanError::UnboundFrame)?;
-        let rows_json = collect_json(&state).map_err(|_| ScanError::UnboundFrame)?;
+        let rows_json = collect_plan_rows(plan, &state).map_err(|_| ScanError::UnboundFrame)?;
         let rows = rows_json
             .into_iter()
             .map(|v| match v {
