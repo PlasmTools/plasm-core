@@ -150,6 +150,8 @@ pub use view_preflight::{
 mod cancel_signal;
 mod live_run_telemetry;
 mod runtime_metrics;
+#[cfg(test)]
+mod span_graph_tests;
 mod spans;
 
 pub use api_error_detail::{

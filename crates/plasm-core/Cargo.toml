@@ -34,6 +34,7 @@ rayon = { workspace = true }
 minijinja = { version = "2.19.0", default-features = false, features = ["builtins", "serde"] }
 
 [dev-dependencies]
+plasm-otel = { path = "../plasm-otel", features = ["testing"] }
 insta = { workspace = true }
 proptest = { workspace = true }
 tempfile = { workspace = true }

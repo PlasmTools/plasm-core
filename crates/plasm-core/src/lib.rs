@@ -164,6 +164,8 @@ pub mod comp_canonical;
 mod o200k_token_count;
 mod operation_handle;
 mod plan_commit;
+#[cfg(test)]
+mod span_graph_tests;
 mod spans;
 mod utf8_trunc;
 mod wire_coercion;

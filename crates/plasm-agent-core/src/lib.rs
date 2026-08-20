@@ -110,6 +110,7 @@ mod plan_dry_compact;
 mod plan_dry_display;
 pub mod release_version;
 pub(crate) mod tool_model_service;
+pub mod traced_pg;
 pub use plan_dry_display::PlanDryVerdict;
 mod approval_gate;
 mod flow_catalog;
@@ -195,6 +196,8 @@ pub mod terminal_plan_run;
 pub use graph_page_spill_host::graph_page_spill_for_execute;
 pub mod mcp_logical_ref;
 pub mod session_identity;
+#[cfg(test)]
+mod span_graph_tests;
 pub mod spans;
 mod stream_consume;
 pub mod subcommand_util;

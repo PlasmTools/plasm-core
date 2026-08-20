@@ -39,6 +39,7 @@ chrono = { workspace = true }
 rust_decimal = { workspace = true }
 
 [dev-dependencies]
+plasm-otel = { path = "../plasm-otel", features = ["testing"] }
 proptest = { workspace = true }
 insta = { workspace = true }
 tempfile = { workspace = true }

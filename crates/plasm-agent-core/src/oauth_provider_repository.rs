@@ -1,6 +1,7 @@
 //! sqlx persistence for `oauth_provider_apps` (outbound OAuth provider registry).
 
-use sqlx::{PgPool, Row};
+use crate::traced_pg::PgPool;
+use sqlx::Row;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct OauthProviderAppRow {

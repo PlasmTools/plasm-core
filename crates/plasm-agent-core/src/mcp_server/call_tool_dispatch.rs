@@ -10,8 +10,20 @@ use rust_mcp_sdk::McpServer;
 use super::discover::mcp_call_tool_error_class;
 use super::schema::args_value;
 use super::{mcp_key, PlasmMcpHandler};
+use tracing::Instrument;
 
 pub(crate) async fn dispatch_plasm_mcp_call_tool_request(
+    handler: &PlasmMcpHandler,
+    params: CallToolRequestParams,
+    runtime: Arc<dyn McpServer>,
+) -> Result<CallToolResult, CallToolError> {
+    let tool_name = params.name.clone();
+    dispatch_plasm_mcp_call_tool_request_inner(handler, params, runtime)
+        .instrument(crate::spans::mcp_call_tool(tool_name.as_str()))
+        .await
+}
+
+async fn dispatch_plasm_mcp_call_tool_request_inner(
     handler: &PlasmMcpHandler,
     params: CallToolRequestParams,
     runtime: Arc<dyn McpServer>,
@@ -205,7 +217,7 @@ pub(crate) async fn dispatch_plasm_mcp_call_tool_request(
                 "unknown_tool",
                 Duration::from_secs(0),
             );
-            Err(CallToolError::unknown_tool(params.name))
+            Err(CallToolError::unknown_tool(params.name.clone()))
         }
     }
 }

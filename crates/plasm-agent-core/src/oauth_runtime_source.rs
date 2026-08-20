@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 
-use sqlx::{PgPool, Row};
+use crate::traced_pg::PgPool;
+use sqlx::Row;
 use thiserror::Error;
 
 use crate::oauth_link_catalog::OauthLinkCatalog;

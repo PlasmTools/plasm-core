@@ -436,6 +436,8 @@ pub fn load_schema_dir_unvalidated(dir: &Path) -> Result<CGS, String> {
 
 /// Run post-assemble normalization, validation, and string-semantics checks.
 pub fn finalize_cgs_load(cgs: &mut CGS) -> Result<(), String> {
+    let span = crate::spans::schema_validate(cgs.entities.len(), cgs.capabilities.len());
+    let _guard = span.enter();
     let legacy_via_param = std::mem::take(&mut cgs.pending_legacy_via_param_patches);
     cgs.normalize_relation_materialization(&legacy_via_param);
     debug!(
