@@ -19,7 +19,7 @@ pub fn parse_with_body(body: &str) -> Result<Vec<WithColumn>, WithExprError> {
             )));
         };
         let name =
-            OutputName::new(name.trim().to_string()).map_err(|e| WithExprError::BadColumn(e))?;
+            OutputName::new(name.trim().to_string()).map_err(WithExprError::BadColumn)?;
         let expr = parse_with_expr(expr.trim())?;
         columns.push(WithColumn { name, expr });
     }
@@ -133,7 +133,7 @@ fn parse_atom(s: &str) -> Result<WithExpr, WithExprError> {
     }
     if let Some(rest) = s.strip_prefix("len(").and_then(|t| t.strip_suffix(')')) {
         return Ok(WithExpr::Len {
-            field: FieldPath::from_dotted(rest.trim()).map_err(|e| WithExprError::Parse(e))?,
+            field: FieldPath::from_dotted(rest.trim()).map_err(WithExprError::Parse)?,
         });
     }
     if let Some(rest) = s.strip_prefix("when(").and_then(|t| t.strip_suffix(')')) {
@@ -155,7 +155,7 @@ fn parse_atom(s: &str) -> Result<WithExpr, WithExprError> {
     }
     FieldPath::from_dotted(s)
         .map(WithExpr::Field)
-        .map_err(|e| WithExprError::Parse(e))
+        .map_err(WithExprError::Parse)
 }
 
 /// Outer `(`…`)` only when that pair wraps the whole atom (`(now - t)`, not `(a)+(b)`).

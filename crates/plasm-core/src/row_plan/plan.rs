@@ -91,7 +91,6 @@ impl Pipeline {
         self.0.len()
     }
 
-    #[must_use]
     pub fn iter(&self) -> impl Iterator<Item = &(RowNodeId, PlanNode)> {
         self.0.iter()
     }
