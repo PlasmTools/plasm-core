@@ -40,6 +40,7 @@ Details and edge cases live in the [Reference](reference/cli-and-env.md) section
 | First commands from source | [Start here](getting-started.md) |
 | Mental model + vocabulary | [Concepts](concepts.md) |
 | Language + heredocs | [Language definition](reference/plasm-language-definition.md) |
+| Row compute (`.filter`, `.with`, …) | [Row compute](reference/plasm-row-compute.md) |
 | MCP sessions and `intent` | [MCP session reuse](reference/mcp-session-reuse.md) |
 | Full CLI/env index | [CLI & environment](reference/cli-and-env.md) |
 

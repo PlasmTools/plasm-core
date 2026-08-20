@@ -69,6 +69,8 @@ labeled = items.with{label: when(len(owner)>0, owner, title)}
 | `len(field)` | String length |
 | `when(lhs op rhs, then, else)` | Conditional; `op` is `=`, `!=`, `>`, `<`, `>=`, `<=` |
 
+**Precedence:** `*` and `/` bind tighter than `+` and `-`; use parentheses to override (e.g. `score * 2 + 1` vs `(score + 1) * 2`).
+
 **Temporal subtraction:** `(now - updated_at)` or `(updated_at - created_at)` yields a non-negative **integer day count** when operands are temporal fields or `now`. Use these in filters or further `.with` columns (e.g. `when(now - updated_at > 14, 1, 0)`).
 
 **Money:** `*` / `/` / `+` / `-` on money columns follow catalog money typing (same-currency rules; cross-currency arithmetic fails at runtime).

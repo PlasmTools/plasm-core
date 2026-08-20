@@ -5,7 +5,7 @@ Symbols from the `plasm_context` teaching TSV: `e#` entity, `m#` method, `r#` re
 Shape:
 - Get by identity: `e#(id)` (parens). Query/filter: `e#{field="val"}` (braces). Relation nav: `producer.r#`.
 - Search when taught: `e#~"text"` or `e#~$` (bare `e#~` is a parse error).
-- Postfix from the TSV left column: `.filter{…}` `.sort(field,desc)` `.limit(n)` `.group_by` `.aggregate`; `[field,…]` projects.
+- Postfix from the TSV left column: `.filter{…}` `.sort(field,desc)` `.limit(n)` `.group_by` `.aggregate` `.with{k: expr}`; `[field,…]` projects.
 - Write: `source => e#.m#(param=…)`; create: `e#.m#(param=…)`. Prior write **`provides`** fields usable as later args; `[field,…]` on creates projects them.
 - After `repo = e#(…)`, prefer **`repo.m#(…)`** / **`repo.r#`**.
 - Multi-write / batch-read shape: see the `plasm` tool description.

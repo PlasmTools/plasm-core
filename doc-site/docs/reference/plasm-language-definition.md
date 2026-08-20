@@ -248,7 +248,7 @@ A binding `label = E` names the plan node produced by `E`. **`label` and `E` are
 
 - `label.r#` ≡ `E.r#` (relation hop)
 - **`label.m#(…)` / `label.<method>(…)` ≡ `E.m#(…)`** (method invoke on the bound row)
-- Postfix on row lists (`label.filter{…}`, `[field,…]`) when row-preserving
+- Postfix on row lists (`label.filter{…}`, `label.with{…}`, `[field,…]`) when row-preserving
 
 Side-effect invokes on **plural** bindings are rejected — use `rows => e#.m#(param=_.…)` or `.limit(1)` / `.singleton()` first. **`.content`** applies only to row-to-text **Render** bindings, not plain string/data bindings.
 
@@ -256,7 +256,7 @@ Binding forms:
 
 | Form | Example | Lowers to |
 |------|---------|-----------|
-| Surface + postfix | `issues = e1{…}.page_size(100)` | Query / get + compute |
+| Surface + postfix | `issues = e1{…}.page_size(100)` or `stale = issues.with{age_days: (now - updated_at)}` | Query / get + compute |
 | Relation hop | `labels = issues.labels` or `labels = issues.r#` | `RelationTraversal` (per-row fanout when parent is plural) |
 | Method invoke | `out = repo.m#(…)` when `repo = e#(…)` | Same invoke IR as `e#(…).m#(…)` |
 | Derive map | `cards = rows => { t: _.title }` | `Derive` (`value_or_template` only) |
@@ -572,7 +572,7 @@ Plan relation nodes may carry serialized `binding_proofs` (param ← parent fiel
 
 **Row identity (`RowIdentity`)** — every row-producing plan node carries a canonical identity handle (qualified entity + [`Ref`] + ambient scope slots) in materialization, not only JSON payload. Projection and `.limit(1)` preserve identity when the suffix pipeline folds [`RowSuffix`] segments; [`PlasmInputRef::NodeInput`] holes resolve via identity, not stripped JSON paths.
 
-**Suffix pipeline** — after the path head (Get/Query/label), dot/bracket segments classify as [`RowSuffix`] (relation, limit, project, sort, …) and lower through one fold (`lower_suffix_stream`), including interleaved forms such as `repo.commits.limit(1).author`.
+**Suffix pipeline** — after the path head (Get/Query/label), dot/bracket segments classify as [`RowSuffix`] (relation, limit, project, sort, filter, `.with`, dedupe, …) and lower through one fold (`lower_suffix_stream`), including interleaved forms such as `repo.commits.limit(1).author`.
 
 **Dry-live parity (invariants 6–10)**
 
