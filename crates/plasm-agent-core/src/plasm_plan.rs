@@ -1660,7 +1660,8 @@ fn analyze_static_cardinality(
                     ComputeOp::Project { .. }
                     | ComputeOp::Filter { .. }
                     | ComputeOp::Sort { .. }
-                    | ComputeOp::DedupeBy { .. } => inner(plan, by_id, &compute.source, memo),
+                    | ComputeOp::DedupeBy { .. }
+                    | ComputeOp::With { .. } => inner(plan, by_id, &compute.source, memo),
                     ComputeOp::Limit { count } if *count <= 1 => {
                         CardinalityAnalysis::StaticSingleton
                     }
@@ -1755,7 +1756,8 @@ fn validated_analyze_static_cardinality(
                 ComputeOp::Project { .. }
                 | ComputeOp::Filter { .. }
                 | ComputeOp::Sort { .. }
-                | ComputeOp::DedupeBy { .. } => inner(plan, by_id, c.compute.source.as_str(), memo),
+                | ComputeOp::DedupeBy { .. }
+                | ComputeOp::With { .. } => inner(plan, by_id, c.compute.source.as_str(), memo),
                 ComputeOp::Limit { count } if *count <= 1 => CardinalityAnalysis::StaticSingleton,
                 ComputeOp::Limit { .. } | ComputeOp::GroupBy { .. } => {
                     CardinalityAnalysis::PluralOrUnknown
@@ -1824,6 +1826,11 @@ fn validate_compute_template(
             for (j, p) in predicates.iter().enumerate() {
                 validate_predicate(p, node_index, j)?;
             }
+        }
+        ComputeOp::With { columns } if columns.is_empty() => {
+            return Err(format!(
+                "plan.nodes[{node_index}].compute.with.columns must be non-empty"
+            ));
         }
         ComputeOp::GroupBy { aggregates, .. } | ComputeOp::Aggregate { aggregates } => {
             if aggregates.is_empty() {

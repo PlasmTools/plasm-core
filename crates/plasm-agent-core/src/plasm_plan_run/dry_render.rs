@@ -173,6 +173,15 @@ pub(crate) fn render_compute_template(compute: &ComputeTemplate) -> String {
                 )
             }
         }
+        ComputeOp::With { columns } => format!(
+            "with {} [{}]",
+            compute.source,
+            columns
+                .iter()
+                .map(|c| c.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         ComputeOp::Render {
             columns, template, ..
         } => format!(

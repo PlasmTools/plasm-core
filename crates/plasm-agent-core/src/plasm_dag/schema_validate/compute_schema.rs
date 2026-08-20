@@ -36,21 +36,16 @@ pub(in crate::plasm_dag) fn infer_render_columns_for_node(
                 cols.extend(aggregates.iter().map(|a| a.name.clone()));
                 Ok(cols)
             }
-            ComputeOp::Sort { .. } | ComputeOp::Limit { .. } | ComputeOp::DedupeBy { .. } => {
+            ComputeOp::Sort { .. } | ComputeOp::Limit { .. } | ComputeOp::DedupeBy { .. } | ComputeOp::Filter { .. } => {
                 let parent = lookup_dag_node(state, staged, parent_id.as_str()).ok_or_else(|| {
                     format!("template column inference: missing upstream node `{parent_id}`")
                 })?;
                 infer_render_columns_for_node(session, state, staged, parent)
             }
+            ComputeOp::With { .. } => Ok(schema.fields.iter().map(|f| f.name.clone()).collect()),
             ComputeOp::Render { .. } => Err(
                 "cannot infer columns from a row-to-text template result; bind a row-producing query/relation/projection, or write explicit `[field,...] <<TAG` columns before the template".into(),
             ),
-            ComputeOp::Filter { .. } => {
-                let parent = lookup_dag_node(state, staged, parent_id.as_str()).ok_or_else(|| {
-                    format!("template column inference: missing upstream node `{parent_id}`")
-                })?;
-                infer_render_columns_for_node(session, state, staged, parent)
-            }
         },
         DagNodeSource::Surface {
             qualified_entity, ..

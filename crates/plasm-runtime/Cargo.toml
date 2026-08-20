@@ -34,6 +34,9 @@ oauth2 = { workspace = true }
 url = { workspace = true }
 opentelemetry = { workspace = true }
 minijinja = { version = "2.19.0", default-features = false, features = ["builtins", "serde"] }
+polars = { workspace = true }
+chrono = { workspace = true }
+rust_decimal = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

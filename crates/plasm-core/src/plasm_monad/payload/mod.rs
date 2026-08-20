@@ -5,6 +5,7 @@ mod relation;
 mod step_payload;
 mod templates;
 mod value;
+mod with_expr;
 
 pub use crate::identity::RelationName;
 pub use atoms::{BindingName, FieldPath, OutputName, PlanQualifiedEntityKey};
@@ -23,3 +24,4 @@ pub use value::{
     InputCardinality, PlanDataInput, PlanInputBinding, PlanPredicate, PlanPredicateOp,
     PlanResultUse, PlasmDataValue,
 };
+pub use with_expr::{ArithOp, WithColumn, WithExpr, WithExprError, WithLiteral};

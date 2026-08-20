@@ -21,12 +21,13 @@ pub use operators::{
     plasm_parallel_return, plasm_pure_step,
 };
 pub use payload::{
-    AggregateFunction, AggregateSpec, BindingName, ComputeOp, ComputeTemplate, DeriveKind,
+    AggregateFunction, AggregateSpec, ArithOp, BindingName, ComputeOp, ComputeTemplate, DeriveKind,
     DerivePayload, DeriveTemplate, EffectTemplate, FieldPath, FlatMapEffectPayload,
     FlatMapRelationPayload, InputCardinality, InvokePayload, MapPayload, OutputName, PlanDataInput,
     PlanExprIr, PlanExprTemplate, PlanInputBinding, PlanPredicate, PlanPredicateOp,
     PlanQualifiedEntityKey, PlanRelationTraversal, PlanResultUse, PlasmDataValue, PlasmStepPayload,
     PurePayload, RelationCardinality, RelationName, RelationSourceCardinality,
-    SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind,
+    SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind, WithColumn, WithExpr,
+    WithExprError, WithLiteral,
 };
 pub use step::{EffectBarrier, EffectClass, PlasmStep, PlasmStepKind, ResultShape, SurfaceKind};
