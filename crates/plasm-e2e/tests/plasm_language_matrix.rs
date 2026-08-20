@@ -6,7 +6,7 @@
 //! ## Coverage contract (keep in sync when extending the language)
 //!
 //! Each [`MatrixRow`] should exercise a **distinct** user-visible construct or sugar called out in
-//! [`docs/plasm-language-definition.md`](../../../../docs/plasm-language-definition.md):
+//! [`doc-site/docs/reference/plasm-language-definition.md`](../../../../doc-site/docs/reference/plasm-language-definition.md):
 //!
 //! - Entity roots: bare query, search `~`, get `(id)`, brace predicates `{field=value}`, comparisons.
 //! - Postfix: `.limit`, `.sort(field[, dir])` including `asc`/`desc`, `.aggregate` (named + sugar),

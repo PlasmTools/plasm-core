@@ -75,12 +75,30 @@ labeled = items.with{label: when(len(owner)>0, owner, title)}
 
 **Disambiguation:** `.with{` / `.with(` is row compute. Identifiers such as `.join(…)` or `.open(…)` without a leading row-compute verb are **not** postfix operators — they remain path/relation surface and fail row-compute lowering.
 
+**Operator precedence (v1):** inside each expression, `*` and `/` bind tighter than `+` and `-` (e.g. `score * 2 + 1` is `(score * 2) + 1`). Parentheses override.
+
+## Dedupe and distinct
+
+Remove duplicate rows while preserving order (first occurrence wins):
+
+```text
+unique = items.dedupe(owner)
+unique_by_pair = items.dedupe(owner, team)
+all_distinct = items.distinct()
+```
+
+- **`.dedupe(field, …)`** — unique on the listed key columns (catalog wire names).
+- **`.distinct()`** — unique on the **full row** (all visible columns).
+- **`.distinct(field, …)`** — same as `.dedupe(field, …)` (alias sugar).
+
+Both forms lower to the same Polars `unique_stable(…, First)` path. Like `.sort`, dedupe/distinct are **terminal** for relation-dot continuation on that label.
+
 ## Chaining order
 
 Postfix applies left-to-right on the written expression (`a.limit(10).sort(x)` → sort after limit). Recommended SQL mental model:
 
 ```text
-source → .filter{…} → .with{…} → .group_by(…) → .sort(…) → .limit(n) → [fields] → <<TAG
+source → .filter{…} → .with{…} → .dedupe(…) → .group_by(…) → .sort(…) → .limit(n) → [fields] → <<TAG
 ```
 
 `group_by` and `aggregate` change the row schema (terminal for relation-dot continuation on that label). After `group_by`, output columns are the **group keys** plus aggregate names (`n`, `total`, …). A chained `.sort(n, desc)` sorts on those aggregate columns — not on fields of the original catalog entity.

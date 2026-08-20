@@ -248,7 +248,7 @@ A binding `label = E` names the plan node produced by `E`. **`label` and `E` are
 
 - `label.r#` ≡ `E.r#` (relation hop)
 - **`label.m#(…)` / `label.<method>(…)` ≡ `E.m#(…)`** (method invoke on the bound row)
-- Postfix on row lists (`label.filter{…}`, `[field,…]`) when row-preserving
+- Postfix on row lists (`label.filter{…}`, `label.with{…}`, `[field,…]`) when row-preserving
 
 Side-effect invokes on **plural** bindings are rejected — use `rows => e#.m#(param=_.…)` or `.limit(1)` / `.singleton()` first. **`.content`** applies only to row-to-text **Render** bindings, not plain string/data bindings.
 
@@ -257,6 +257,7 @@ Binding forms:
 | Form | Example | Lowers to |
 |------|---------|-----------|
 | Surface + postfix | `issues = e1{…}.page_size(100)` | Query / get + compute |
+| Derived columns | `stale = issues.with{age_days: (now - updated_at)}` | Row compute [`ComputeOp::With`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/plasm_monad/payload/with_expr.rs) — preserves entity identity |
 | Relation hop | `labels = issues.labels` or `labels = issues.r#` | `RelationTraversal` (per-row fanout when parent is plural) |
 | Method invoke | `out = repo.m#(…)` when `repo = e#(…)` | Same invoke IR as `e#(…).m#(…)` |
 | Derive map | `cards = rows => { t: _.title }` | `Derive` (`value_or_template` only) |
@@ -322,7 +323,8 @@ Surface scanning lives in **`plasm-oss/crates/plasm-core/src/expr_parser/`**:
 | [`program_surface.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/program_surface.rs) | Physical-line merging across heredocs (`collect_program_statement_lines`), `;;` stripping, top-level comma/`=>` splitting (`split_top_level`, `split_token_top_level`), binding `=` splitting (`split_assignment_at_top_level` / `split_assignment_for_binding`), program label validation. |
 | [`predicate_surface.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/predicate_surface.rs) | Query `{…}` predicate list: same comma splitting as `split_top_level`, plus quote/heredoc-aware comparison-operator scan for [`expr_correction`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_correction/mod.rs) (no duplicate lexer). |
 | [`program.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/program.rs) | Optional shape AST: bindings + postfix-peeled primaries (`parse_program_shape`). Does not attach CGS typing. |
-| [`postfix.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/postfix.rs) | Postfix peel (`.limit`, `.sort`, `[projection]`, row-to-text `<<TAG`). |
+| [`postfix.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/postfix.rs) | Postfix peel (`.limit`, `.sort`, `.with`, `.dedupe`, `[projection]`, row-to-text `<<TAG`). |
+| [`row_plan/with_parse.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/row_plan/with_parse.rs) | `.with{col: expr}` body parse (`WithExpr` AST — see [plasm-row-compute.md](plasm-row-compute.md#derived-columns-with)). |
 | [`mod.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/mod.rs) (path parser) | CGS-aware **path expression** → [`Expr`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr.rs) + optional trailing `[projection]`. |
 | [`entity_ref_parse.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/entity_ref_parse.rs) | Session `e#` + wire entity constructor head resolution (referential transparency across value positions). |
 | [`value.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/value.rs) | Scalar/collection literals, strict vs lenient RHS, structured heredocs, `PlasmInputRef` holes when program context is enabled. |
@@ -572,7 +574,7 @@ Plan relation nodes may carry serialized `binding_proofs` (param ← parent fiel
 
 **Row identity (`RowIdentity`)** — every row-producing plan node carries a canonical identity handle (qualified entity + [`Ref`] + ambient scope slots) in materialization, not only JSON payload. Projection and `.limit(1)` preserve identity when the suffix pipeline folds [`RowSuffix`] segments; [`PlasmInputRef::NodeInput`] holes resolve via identity, not stripped JSON paths.
 
-**Suffix pipeline** — after the path head (Get/Query/label), dot/bracket segments classify as [`RowSuffix`] (relation, limit, project, sort, …) and lower through one fold (`lower_suffix_stream`), including interleaved forms such as `repo.commits.limit(1).author`.
+**Suffix pipeline** — after the path head (Get/Query/label), dot/bracket segments classify as [`RowSuffix`] (relation, limit, project, filter, with, sort, dedupe, distinct, group_by, …) and lower through one fold (`lower_suffix_stream`), including interleaved forms such as `repo.commits.limit(1).author` or `issues.with{age_days: (now - updated_at)}.filter{age_days>14}`.
 
 **Dry-live parity (invariants 6–10)**
 
