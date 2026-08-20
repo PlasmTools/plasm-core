@@ -27,7 +27,7 @@ use crate::http_execute::{
 use crate::plan_dry_display;
 pub use crate::plan_dry_display::PlanDryReview;
 use crate::plasm_plan::{
-    BindingName, ComputeOp, ComputeTemplate, EffectClass, FieldPath, InputAlias, Plan,
+    BindingName, ComputeOp, ComputeTemplate, EffectClass, InputAlias, Plan,
     PlanExprTemplate, PlanNodeId, PlanNodeKind, PlanResultUse, PlanValue, QualifiedEntityKey,
     RelationSourceCardinality, ValidatedForEachNode, ValidatedPlan, ValidatedPlanDataInput,
     ValidatedPlanExprTemplate, ValidatedPlanNode, ValidatedPlanState,
@@ -102,8 +102,7 @@ pub(crate) use parse::{
     entry_scoped_execute_session, propagate_row_identities, row_identities_from_entities,
 };
 pub(crate) use row_json::{
-    cached_entity_row_json, predicate_matches, value_at_dotted, value_at_field_path,
-    value_at_segments,
+    cached_entity_row_json, predicate_matches, value_at_dotted, value_at_segments,
 };
 
 #[cfg(test)]

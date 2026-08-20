@@ -18,8 +18,7 @@ pub fn parse_with_body(body: &str) -> Result<Vec<WithColumn>, WithExprError> {
                 "expected `name: expr`, got `{part}`"
             )));
         };
-        let name =
-            OutputName::new(name.trim().to_string()).map_err(WithExprError::BadColumn)?;
+        let name = OutputName::new(name.trim().to_string()).map_err(WithExprError::BadColumn)?;
         let expr = parse_with_expr(expr.trim())?;
         columns.push(WithColumn { name, expr });
     }

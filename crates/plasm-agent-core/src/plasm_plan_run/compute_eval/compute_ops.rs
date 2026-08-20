@@ -210,21 +210,6 @@ pub(crate) fn binding_rows_for_render(
     Ok(out)
 }
 
-pub(crate) fn json_number(v: &serde_json::Value) -> Option<f64> {
-    v.as_f64().or_else(|| v.as_i64().map(|n| n as f64))
-}
-
-pub(crate) fn json_scalar_display(v: &serde_json::Value) -> String {
-    match v {
-        serde_json::Value::String(s) => s.clone(),
-        serde_json::Value::Number(n) => n.to_string(),
-        serde_json::Value::Bool(b) => b.to_string(),
-        serde_json::Value::Null => String::new(),
-        other => other.to_string(),
-    }
-}
-
-#[cfg(test)]
 pub(crate) fn json_plasm_literal_display(v: &serde_json::Value) -> String {
     match v {
         serde_json::Value::String(s) => serde_json::to_string(s)
@@ -233,38 +218,6 @@ pub(crate) fn json_plasm_literal_display(v: &serde_json::Value) -> String {
         serde_json::Value::Bool(b) => b.to_string(),
         serde_json::Value::Null => "null".to_string(),
         other => other.to_string(),
-    }
-}
-
-pub(crate) fn sort_display_key(v: Option<&serde_json::Value>) -> String {
-    v.map(json_scalar_display).unwrap_or_default()
-}
-
-/// Compare two JSON cell values for deterministic `.sort(...)` ordering.
-///
-/// When both values are numeric (JSON numbers or strings that parse as integers/floats), ordering is
-/// numeric so multi-digit values sort correctly (`87` before `300`). Otherwise ordering follows the
-/// legacy string collation used by [`sort_display_key`] (including missing/`null` → empty string).
-pub(crate) fn cmp_json_sort_values(
-    a: Option<&serde_json::Value>,
-    b: Option<&serde_json::Value>,
-) -> std::cmp::Ordering {
-    match (a, b) {
-        (Some(va), Some(vb)) => {
-            if let (Some(na), Some(nb)) = (json_number(va), json_number(vb)) {
-                return na.total_cmp(&nb);
-            }
-            if let (Some(sa), Some(sb)) = (va.as_str(), vb.as_str()) {
-                if let (Ok(ia), Ok(ib)) = (sa.parse::<i64>(), sb.parse::<i64>()) {
-                    return ia.cmp(&ib);
-                }
-                if let (Ok(fa), Ok(fb)) = (sa.parse::<f64>(), sb.parse::<f64>()) {
-                    return fa.total_cmp(&fb);
-                }
-            }
-            sort_display_key(Some(va)).cmp(&sort_display_key(Some(vb)))
-        }
-        _ => sort_display_key(a).cmp(&sort_display_key(b)),
     }
 }
 

@@ -13,7 +13,9 @@ use crate::execute_session::ExecuteSession;
 use crate::server_state::PlasmHostState;
 
 use super::ctx::GraphSurfaceWalkCtx;
-use super::walk::{collect_entities, collect_row_json, snapshot_hot_entities, stream_rows};
+use super::walk::{collect_entities, collect_row_json, snapshot_hot_entities};
+#[cfg(test)]
+use super::walk::stream_rows;
 
 /// Hot-cache snapshot + target count for spill rehydrate after the graph lock is released.
 pub(crate) struct GraphSpillSyncPlan {
@@ -233,6 +235,7 @@ impl<'a> GraphSurfaceRehydrator<'a> {
         self.rehydrate_rows(hot, entity_type, logical_count).await
     }
 
+    #[cfg(test)]
     pub(crate) async fn stream_entity_rows<F>(
         &self,
         hot_snapshot: Arc<[CachedEntity]>,
