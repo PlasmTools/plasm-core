@@ -161,8 +161,7 @@ fn money_any(m: &MoneyValue) -> AnyValue<'static> {
         vec![
             Field::new(PlSmallStr::from_static(MONEY_AMOUNT), DataType::String),
             Field::new(PlSmallStr::from_static(MONEY_CCY), DataType::String),
-        ]
-        .into(),
+        ],
     )))
 }
 

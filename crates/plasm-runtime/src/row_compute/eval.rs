@@ -13,7 +13,6 @@ use plasm_core::{
 };
 use polars::prelude::*;
 use rust_decimal::Decimal;
-use std::str::FromStr;
 
 /// Engine collect before host Minijinja (Render is not a PlanNode).
 #[derive(Debug, Clone)]
