@@ -123,6 +123,11 @@ langtag_query:
     type: object
     fields:
     - ["item_id", { type: var, name: item_id }]
+    - - label
+      - name: label
+        type: var
+        if:
+          exists: label
 
 langline_query:
   method: GET
@@ -181,6 +186,14 @@ lang_owner_filter_demo_query:
 lang_owner_filter_demo_get:
   transport: view
   view: lang_owner_filter_demo
+
+lang_tag_filter_demo_query:
+  transport: view
+  view: lang_tag_filter_demo
+
+lang_tag_filter_demo_get:
+  transport: view
+  view: lang_tag_filter_demo
 
 langviewer_get:
   method: GET

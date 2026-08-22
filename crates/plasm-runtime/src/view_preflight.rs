@@ -73,7 +73,14 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
         node_fields: &ViewNodeFieldMap,
     ) -> Result<ExecutionResult, RuntimeError> {
         let q = QueryExpr::filtered(cap.domain.as_str(), pred.clone());
-        preflight_compile_expr(&plasm_core::Expr::Query(q), self.cgs, self.ambient)?;
+        preflight_compile_expr(&plasm_core::Expr::Query(q), self.cgs, self.ambient).map_err(
+            |e| RuntimeError::ConfigurationError {
+                message: format!(
+                    "view `{}` node `{}` (capability `{}`): {e}",
+                    ctx.view_name, node.id, node.capability
+                ),
+            },
+        )?;
         let mut bound_values = IndexMap::with_capacity(node.bind.len());
         for (param, bspec) in &node.bind {
             bound_values.insert(
@@ -86,20 +93,27 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
 
     fn run_get_node(
         &self,
-        _ctx: &ViewRunContext<'_>,
-        _node: &plasm_core::schema::ViewNodeSpec,
+        ctx: &ViewRunContext<'_>,
+        node: &plasm_core::schema::ViewNodeSpec,
         cap: &plasm_core::CapabilitySchema,
         get: &GetExpr,
         bound: &BTreeMap<String, String>,
     ) -> Result<ExecutionResult, RuntimeError> {
-        preflight_compile_expr(&plasm_core::Expr::Get(get.clone()), self.cgs, self.ambient)?;
+        preflight_compile_expr(&plasm_core::Expr::Get(get.clone()), self.cgs, self.ambient).map_err(
+            |e| RuntimeError::ConfigurationError {
+                message: format!(
+                    "view `{}` node `{}` (capability `{}`): {e}",
+                    ctx.view_name, node.id, node.capability
+                ),
+            },
+        )?;
         stub_get_result(cap, self.cgs, bound)
     }
 
     fn run_create_node(
         &self,
-        _ctx: &ViewRunContext<'_>,
-        _node: &plasm_core::schema::ViewNodeSpec,
+        ctx: &ViewRunContext<'_>,
+        node: &plasm_core::schema::ViewNodeSpec,
         cap: &plasm_core::CapabilitySchema,
         create: &plasm_core::CreateExpr,
     ) -> Result<ExecutionResult, RuntimeError> {
@@ -107,7 +121,13 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
             &plasm_core::Expr::Create(create.clone()),
             self.cgs,
             self.ambient,
-        )?;
+        )
+        .map_err(|e| RuntimeError::ConfigurationError {
+            message: format!(
+                "view `{}` node `{}` (capability `{}`): {e}",
+                ctx.view_name, node.id, node.capability
+            ),
+        })?;
         stub_query_result(cap, self.cgs, &IndexMap::new())
     }
 }

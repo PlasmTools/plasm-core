@@ -4,6 +4,7 @@ pub mod cml;
 pub mod error;
 pub(crate) mod gmail_send_body;
 pub mod transport;
+pub(crate) mod wire_normalize;
 
 #[cfg(feature = "evm")]
 pub mod evm_transport;
