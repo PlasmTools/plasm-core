@@ -117,6 +117,18 @@ entities:
       tags:
         target: LangTag
         cardinality: many
+  LangTagFilterDemo:
+    id_field: item_id
+    primary_read: lang_tag_filter_demo_get
+    description: View-backed tag list with literal label filter (optional CML if-exists conformance).
+    fields:
+      item_id:
+        required: true
+        value_ref: nv_lang_digest_item_id
+      tag_count:
+        required: false
+        value_ref: nv_wire_int
+    relations: {}
   LangItemLink:
     id_field: item_id
     primary_read: lang_item_link_get
@@ -313,6 +325,10 @@ capabilities:
       value_ref: nv_langtag_query_item_id
       required: true
       role: scope
+    - name: label
+      value_ref: nv_lang_tag_label
+      required: false
+      role: filter
     provides:
     - id
     - item_id
@@ -444,6 +460,30 @@ capabilities:
     - item_id
     - owner
     - matching_item_count
+  lang_tag_filter_demo_query:
+    kind: query
+    entity: LangTagFilterDemo
+    description: Query tag filter demo by item id (literal label bind in view DAG).
+    parameters:
+    - name: item_id
+      value_ref: nv_lang_digest_scope_item_id
+      required: true
+      role: filter
+    provides:
+    - item_id
+    - tag_count
+  lang_tag_filter_demo_get:
+    kind: get
+    entity: LangTagFilterDemo
+    description: Get tag filter demo by item id.
+    parameters:
+    - name: item_id
+      value_ref: nv_lang_digest_get_item_id
+      required: true
+      role: scope
+    provides:
+    - item_id
+    - tag_count
   langviewer_get:
     kind: get
     entity: LangViewer
@@ -724,6 +764,30 @@ views:
       binding:
         kind: node_single_row
         node: item_node
+  lang_tag_filter_demo:
+    description: Count LangTags for one item with a fixed label filter (literal view bind).
+    capability: lang_tag_filter_demo_query
+    entity: LangTagFilterDemo
+    scope:
+    - name: item_id
+      value_ref: nv_lang_digest_scope_item_id
+    nodes:
+    - id: tagged_rows
+      capability: langtag_query
+      bind:
+        item_id:
+          kind: scope
+          param: item_id
+        label:
+          kind: literal
+          value: urgent
+    output:
+      item_id:
+        kind: scope
+        param: item_id
+      tag_count:
+        kind: node_row_count
+        node: tagged_rows
   lang_work_snapshot:
     description: Parameterless dashboard snapshot with assigned LangItems (MyWorkSnapshot pattern).
     capability: lang_work_snapshot_query

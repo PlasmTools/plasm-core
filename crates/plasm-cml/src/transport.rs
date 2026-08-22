@@ -71,6 +71,7 @@ pub enum CompiledOperation {
 pub fn parse_capability_template(
     template: &serde_json::Value,
 ) -> Result<CapabilityTemplate, CmlError> {
+    let template = &crate::wire_normalize::normalize_wire_cml_template(template.clone());
     let transport = template
         .get("transport")
         .and_then(|v| v.as_str())
@@ -424,3 +425,4 @@ mod tests {
         );
     }
 }
+
