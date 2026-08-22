@@ -15,6 +15,7 @@ pub const MATRIX_VIEW_PREFLIGHT_CASES: &[(&str, &str)] = &[
     ("lang_triage_context", "LangTriageContext"),
     ("lang_item_link", "LangItemLink"),
     ("lang_owner_filter_demo", "LangOwnerFilterDemo"),
+    ("lang_tag_filter_demo", "LangTagFilterDemo"),
     ("lang_work_snapshot", "LangWorkSnapshot"),
     ("lang_work_snapshot_empty", "LangWorkSnapshotEmpty"),
 ];
