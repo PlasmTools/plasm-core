@@ -1,5 +1,6 @@
 use super::atoms::{FieldPath, OutputName};
 use super::value::PlanPredicate;
+use super::with_expr::WithColumn;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,6 +47,9 @@ pub enum ComputeOp {
     DedupeBy {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         keys: Vec<FieldPath>,
+    },
+    With {
+        columns: Vec<WithColumn>,
     },
     Render {
         columns: Vec<OutputName>,
@@ -109,6 +113,10 @@ pub enum SyntheticValueKind {
     String,
     Array,
     Object,
+    Money,
+    Temporal,
+    EntityRef,
+    Duration,
     Unknown,
 }
 

@@ -71,6 +71,7 @@ pub enum RowSuffix {
     GroupBy { args: String },
     Dedupe { keys: String },
     Distinct { keys: Option<String> },
+    With { body: String },
     Singleton,
     PageSize { n: u32 },
 }
@@ -92,6 +93,7 @@ impl RowSuffix {
             PlasmPostfixOp::GroupBy { args } => Ok(Self::GroupBy { args: args.clone() }),
             PlasmPostfixOp::Dedupe { keys } => Ok(Self::Dedupe { keys: keys.clone() }),
             PlasmPostfixOp::Distinct { keys } => Ok(Self::Distinct { keys: keys.clone() }),
+            PlasmPostfixOp::With { body } => Ok(Self::With { body: body.clone() }),
             PlasmPostfixOp::Singleton => Ok(Self::Singleton),
             PlasmPostfixOp::PageSize(n) => Ok(Self::PageSize { n: *n as u32 }),
         }

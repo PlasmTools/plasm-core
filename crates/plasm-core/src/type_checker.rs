@@ -74,6 +74,8 @@ fn union_query_and_search_params(cgs: &CGS, entity: &str) -> Vec<InputFieldSchem
 
 /// Type-check an expression against a CGS schema.
 pub fn type_check_expr(expr: &Expr, cgs: &CGS) -> Result<(), TypeError> {
+    let span = crate::spans::typecheck_expr();
+    let _guard = span.enter();
     match expr {
         Expr::Query(query) => type_check_query(query, cgs),
         Expr::Get(get) => type_check_get(get, cgs),

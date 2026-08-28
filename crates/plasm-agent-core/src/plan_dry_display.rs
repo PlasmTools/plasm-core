@@ -156,6 +156,9 @@ pub enum PlanDryOp {
     Dedupe {
         keys: Vec<String>,
     },
+    With {
+        columns: Vec<String>,
+    },
     Render {
         columns: Vec<String>,
         template_chars: usize,
@@ -336,6 +339,7 @@ pub(crate) fn human_ux_headline_for_op(op: &PlanDryOp) -> String {
         PlanDryOp::Limit { count } => format!("Take first {count}"),
         PlanDryOp::Dedupe { keys } if keys.is_empty() => "Distinct rows".into(),
         PlanDryOp::Dedupe { keys } => format!("Dedupe on {}", keys.join(", ")),
+        PlanDryOp::With { columns } => format!("Add columns {}", columns.join(", ")),
         PlanDryOp::Render { .. } => "Render text".into(),
         PlanDryOp::ForEach { .. } => "For each row".into(),
         PlanDryOp::Relation { .. } => "Follow relation".into(),
@@ -374,6 +378,7 @@ pub(crate) fn human_ux_summary_for_op(op: &PlanDryOp) -> String {
         PlanDryOp::Aggregate { .. } => "Summarize".into(),
         PlanDryOp::Dedupe { keys } if keys.is_empty() => "Distinct rows".into(),
         PlanDryOp::Dedupe { keys } => format!("Dedupe on {}", keys.join(", ")),
+        PlanDryOp::With { columns } => format!("Add {}", columns.join(", ")),
         PlanDryOp::Render { columns, .. } => format!("Render {}", columns.join(", ")),
         PlanDryOp::Relation {
             relation, target, ..
@@ -408,6 +413,7 @@ pub(crate) fn render_plan_dry_op(op: &PlanDryOp) -> String {
                 format!("dedupe {}", keys.join(", "))
             }
         }
+        PlanDryOp::With { columns } => format!("with {}", columns.join(", ")),
         PlanDryOp::Render {
             columns,
             template_chars,
@@ -498,6 +504,12 @@ fn compact_op_from_compute(
         ComputeOp::Limit { count } => PlanDryOp::Limit { count: *count },
         ComputeOp::DedupeBy { keys } => PlanDryOp::Dedupe {
             keys: keys.iter().map(|k| k.dotted()).collect(),
+        },
+        ComputeOp::With { columns } => PlanDryOp::With {
+            columns: columns
+                .iter()
+                .map(|c| c.name.as_str().to_string())
+                .collect(),
         },
         ComputeOp::Render {
             columns, template, ..

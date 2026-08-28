@@ -9,6 +9,8 @@ readme = "README.md"
 default = ["ranked_capability_gate"]
 # Non-read capabilities also require membership in an optional sorted capability-name list when that list is non-empty.
 ranked_capability_gate = []
+# Subscriber for the `dump_prompt` binary only — library code must not own a global subscriber.
+dump-prompt = ["dep:tracing-subscriber"]
 
 [dependencies]
 bm25 = { workspace = true }
@@ -22,7 +24,7 @@ chrono = { workspace = true }
 chrono-english = { workspace = true }
 rust_decimal = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true, features = ["env-filter"] }
+tracing-subscriber = { workspace = true, features = ["env-filter"], optional = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 base64 = { workspace = true }
@@ -30,13 +32,21 @@ rustc-hash = "2"
 riptoken = "0.3.0"
 rayon = { workspace = true }
 minijinja = { version = "2.19.0", default-features = false, features = ["builtins", "serde"] }
+
 [dev-dependencies]
+plasm-otel = { path = "../plasm-otel", features = ["testing"] }
 insta = { workspace = true }
 proptest = { workspace = true }
 tempfile = { workspace = true }
 criterion = { workspace = true }
 plasm-discovery = { path = "../plasm-discovery" }
 plasm-discovery-eval = { path = "../plasm-discovery-eval" }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+[[bin]]
+name = "dump_prompt"
+path = "src/bin/dump_prompt.rs"
+required-features = ["dump-prompt"]
 
 [[bench]]
 name = "schema_load"

@@ -624,7 +624,8 @@ impl<'a, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, P> {
             ComputeOp::Filter { .. }
             | ComputeOp::Sort { .. }
             | ComputeOp::Limit { .. }
-            | ComputeOp::DedupeBy { .. } => {
+            | ComputeOp::DedupeBy { .. }
+            | ComputeOp::With { .. } => {
                 out = source_facts.clone();
             }
             ComputeOp::GroupBy { aggregates, .. } | ComputeOp::Aggregate { aggregates, .. } => {

@@ -1,5 +1,7 @@
 //! POST run execute session.
 
+use tracing::Instrument;
+
 use super::super::super::*;
 
 use super::plan_run_response::respond_plan_run_live_result;
@@ -12,6 +14,20 @@ pub(crate) async fn post_run_execute_session(
         session_id,
     }: ExecutePath,
     Query(run_q): Query<ExecuteRunQuery>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    post_run_execute_session_inner(st, principal, prompt_hash, session_id, run_q, headers, body)
+        .instrument(crate::spans::execute_run_post())
+        .await
+}
+
+pub(crate) async fn post_run_execute_session_inner(
+    st: PlasmHostState,
+    principal: Option<crate::incoming_auth::TenantPrincipal>,
+    prompt_hash: PromptHashHex,
+    session_id: ExecuteSessionId,
+    run_q: ExecuteRunQuery,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
@@ -49,15 +65,15 @@ pub(crate) async fn post_run_execute_session(
         Ok(k) => k,
         Err(AcceptNegotiationError::NoSupportedMediaType) => {
             return problem_response(
-                Problem::custom(
-                    ProblemStatus::NOT_ACCEPTABLE,
-                    Uri::from_static(problem_types::EXECUTE_UNSUPPORTED_ACCEPT),
-                )
-                .with_title("Not Acceptable")
-                .with_detail(
-                    "supported Accept values include application/json, application/x-ndjson, text/plain, text/toon (default when Accept is omitted: text/toon)",
-                ),
-            );
+            Problem::custom(
+                ProblemStatus::NOT_ACCEPTABLE,
+                Uri::from_static(problem_types::EXECUTE_UNSUPPORTED_ACCEPT),
+            )
+            .with_title("Not Acceptable")
+            .with_detail(
+                "supported Accept values include application/json, application/x-ndjson, text/plain, text/toon (default when Accept is omitted: text/toon)",
+            ),
+        );
         }
     };
 
@@ -320,15 +336,15 @@ pub(crate) async fn post_run_execute_session(
         crate::PlanGateDecision::Proceed(_) => {}
         crate::PlanGateDecision::NeedsReview => {
             return problem_response(
-                Problem::custom(
-                    ProblemStatus::BAD_REQUEST,
-                    Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
-                )
-                .with_title("Bad Request")
-                .with_detail(
-                    "plan_requires_review: call plan dry-run first, then pass plan_commit_ref or force=true",
-                ),
-            );
+            Problem::custom(
+                ProblemStatus::BAD_REQUEST,
+                Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+            )
+            .with_title("Bad Request")
+            .with_detail(
+                "plan_requires_review: call plan dry-run first, then pass plan_commit_ref or force=true",
+            ),
+        );
         }
         crate::PlanGateDecision::Denied(denial) => {
             return problem_response(

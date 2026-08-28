@@ -173,7 +173,7 @@ pub async fn run_mcp_server(host: &str, port: u16, plasm: Arc<PlasmHostState>) -
         let listener = tokio::net::TcpListener::bind(&addr)
             .await
             .map_err(|e| SdkError::internal_error().with_message(&format!("bind {addr}: {e}")))?;
-        tracing::info!("MCP stateless HTTP listening on http://{addr}");
+        tracing::info!(%addr, "MCP stateless HTTP listening");
         axum::serve(listener, router)
             .await
             .map_err(|e| SdkError::internal_error().with_message(&e.to_string()))?;

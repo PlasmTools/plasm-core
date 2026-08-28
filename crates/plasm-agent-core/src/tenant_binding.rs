@@ -1,8 +1,9 @@
 //! Postgres-backed mapping from incoming-auth `subject` (e.g. `github:<uid>`) to tenant + shell slugs.
 
+use crate::traced_pg::PgPool;
 use sha2::{Digest, Sha256};
 use sqlx::postgres::PgPoolOptions;
-use sqlx::{PgPool, Row};
+use sqlx::Row;
 
 /// Same URL resolution as outbound OAuth provider pull (Phoenix `DATABASE_URL` in k8s).
 pub fn tenant_binding_database_url() -> Option<String> {
@@ -114,10 +115,11 @@ impl TenantBindingStore {
             .connect(database_url)
             .await?;
         Self::ensure_schema(&pool).await?;
+        let pool = crate::traced_pg::wrap(pool);
         Ok(Self { pool })
     }
 
-    async fn ensure_schema(pool: &PgPool) -> Result<(), sqlx::Error> {
+    async fn ensure_schema(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
 CREATE TABLE IF NOT EXISTS plasm_incoming_subject_binding (

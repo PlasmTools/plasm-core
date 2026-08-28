@@ -12,6 +12,7 @@ use plasm_core::plasm_monad::{PlasmStepPayload, StepId};
 use plasm_core::PlasmReturn;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
+use tracing::Instrument;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run_plasm_comp(
@@ -57,6 +58,7 @@ pub async fn run_plasm_comp(
         execution_scope,
         mcp_result_policy,
     ))
+    .instrument(crate::spans::plan_live_run())
     .await
 }
 
@@ -313,7 +315,10 @@ pub(crate) async fn run_executable_plan_phased(
                 let bind = Arc::clone(&bind);
                 let rows_progress_step = rows_progress_parallel.clone();
                 let execution_scope_step = execution_scope_parallel.clone();
+                let parent_span = tracing::Span::current();
                 joins.push(async move {
+                    let step_span =
+                        crate::spans::plan_step_materialize(&parent_span, step_id.as_str());
                     let mat_ctx = PlanStepMaterializeCtx {
                         es: &es,
                         st: &st,
@@ -336,6 +341,7 @@ pub(crate) async fn run_executable_plan_phased(
                         bind.as_ref(),
                         &materialized_snap,
                     ))
+                    .instrument(step_span)
                     .await
                 });
             }
