@@ -1,6 +1,7 @@
 //! Catalog-driven wire value coercion and relation-binding type assignability.
 
 use crate::array_field_policy::{invoke_array_scalar_error, ArrayFieldCoercionPolicy};
+use crate::capability_input::validate_named_value_domain_value;
 use crate::{
     ArrayItemsSchema, EntityDef, FieldType, NamedValueSchema, RelationMaterialization,
     RelationSchema, Value, ValueWireFormat, CGS,
@@ -218,7 +219,29 @@ fn parent_scalar_field_supplies_entity_ref_scope(
     crate::entity_ref_value::normalize_entity_ref_value_for_target(&row, parent_entity).is_some()
 }
 
+/// Unquoted program tokens ([`Value::PhraseIdent`]) and quoted/plain strings share the same
+/// stringish coerce path — used by **both** query predicates (`QueryFilter`) and invoke/create
+/// args (`InvokeArg`). Divergent handling here is what made `archived=false` work on reads while
+/// `contacted_merchant=true` failed on writes.
+fn stringish<'a>(val: &'a Value) -> Option<&'a str> {
+    match val {
+        Value::String(s) | Value::PhraseIdent(s) => Some(s.as_str()),
+        _ => None,
+    }
+}
+
+fn phrase_ident_to_string(val: Value) -> Value {
+    match val {
+        Value::PhraseIdent(s) => Value::String(s),
+        other => other,
+    }
+}
+
 /// Coerce a parsed predicate / env token for typecheck and downstream HTTP binding.
+///
+/// Same entry point for **read** filters (`{field=…}`) and (via
+/// [`coerce_value_for_field_type_with_policy`]) **write** capability inputs — do not add
+/// read-only or write-only scalar coercions outside this module.
 pub fn coerce_value_for_field_type(
     ft: &FieldType,
     value_format: Option<ValueWireFormat>,
@@ -235,6 +258,9 @@ pub fn coerce_value_for_field_type(
 }
 
 /// Coerce with explicit array policy (invoke args use [`ArrayFieldCoercionPolicy::InvokeArg`]).
+///
+/// Scalar / typed literal rules are **identical** for query and invoke; only array scalar-wrap
+/// differs by [`ArrayFieldCoercionPolicy`].
 pub fn coerce_value_for_field_type_with_policy(
     ft: &FieldType,
     value_format: Option<ValueWireFormat>,
@@ -276,40 +302,62 @@ pub fn coerce_value_for_field_type_with_policy(
                 other => Err(invoke_array_scalar_error(other.type_name())),
             }
         }
-        FieldType::Date => match value_format {
-            Some(ValueWireFormat::Temporal(fmt)) => {
-                crate::temporal::normalize_temporal_value(val, fmt)
+        FieldType::Date => {
+            // Relative tokens (`now`, `now-1h`) often arrive as PhraseIdent in program mode.
+            let val = phrase_ident_to_string(val);
+            match value_format {
+                Some(ValueWireFormat::Temporal(fmt)) => {
+                    crate::temporal::normalize_temporal_value(val, fmt)
+                }
+                None | Some(ValueWireFormat::Money(_)) => {
+                    Err("Date field missing value_format in schema".to_string())
+                }
             }
-            None | Some(ValueWireFormat::Money(_)) => {
-                Err("Date field missing value_format in schema".to_string())
-            }
-        },
+        }
         FieldType::String | FieldType::Uuid | FieldType::Select | FieldType::MultiSelect => {
             Ok(match val {
                 Value::Integer(n) => Value::String(n.to_string()),
                 Value::Float(f) => Value::String(normalize_numeric_id_float(f)),
-                _ => val,
+                Value::PhraseIdent(s) => Value::String(s),
+                other => other,
             })
         }
-        FieldType::Integer => Ok(match val {
-            Value::String(ref s) => s.parse::<i64>().map(Value::Integer).unwrap_or(val),
-            Value::Float(f) if f.fract() == 0.0 && f.is_finite() => Value::Integer(f as i64),
-            _ => val,
-        }),
-        FieldType::Number => Ok(match val {
-            Value::String(ref s) => s.parse::<f64>().map(Value::Float).unwrap_or(val),
-            Value::Integer(n) => Value::Float(n as f64),
-            _ => val,
-        }),
-        FieldType::EntityRef { .. } => Ok(match val {
+        FieldType::Integer => {
+            if let Some(s) = stringish(&val) {
+                return Ok(s
+                    .parse::<i64>()
+                    .map(Value::Integer)
+                    .unwrap_or_else(|_| phrase_ident_to_string(val)));
+            }
+            Ok(match val {
+                Value::Float(f) if f.fract() == 0.0 && f.is_finite() => Value::Integer(f as i64),
+                other => other,
+            })
+        }
+        FieldType::Number => {
+            if let Some(s) = stringish(&val) {
+                return Ok(s
+                    .parse::<f64>()
+                    .map(Value::Float)
+                    .unwrap_or_else(|_| phrase_ident_to_string(val)));
+            }
+            Ok(match val {
+                Value::Integer(n) => Value::Float(n as f64),
+                other => other,
+            })
+        }        FieldType::EntityRef { .. } => Ok(match val {
             Value::Integer(n) => Value::String(n.to_string()),
             Value::Float(f) => Value::String(normalize_numeric_id_float(f)),
-            _ => val,
+            Value::PhraseIdent(s) => Value::String(s),
+            other => other,
         }),
-        FieldType::Boolean => Ok(match val {
-            Value::String(s) if s.eq_ignore_ascii_case("true") => Value::Bool(true),
-            Value::String(s) if s.eq_ignore_ascii_case("false") => Value::Bool(false),
-            _ => val,
+        FieldType::Boolean => Ok(match stringish(&val) {
+            Some(s) if s.eq_ignore_ascii_case("true") => Value::Bool(true),
+            Some(s) if s.eq_ignore_ascii_case("false") => Value::Bool(false),
+            _ => match val {
+                Value::Bool(b) => Value::Bool(b),
+                other => other,
+            },
         }),
         FieldType::Json => match val {
             Value::String(ref s) if s.as_str() == "$" => Ok(val),
@@ -317,13 +365,16 @@ pub fn coerce_value_for_field_type_with_policy(
                 "Json parameter: string must be valid JSON with a top-level object or array"
                     .to_string()
             }),
+            Value::PhraseIdent(s) => crate::value::parse_json_subtree_str(&s).ok_or_else(|| {
+                "Json parameter: string must be valid JSON with a top-level object or array"
+                    .to_string()
+            }),
             other => Ok(other),
         },
         FieldType::Money => {
-            let fmt = match value_format {
-                Some(ValueWireFormat::Money(f)) => f,
-                _ => return Err("Money field missing value_format in schema".to_string()),
-            };
+            // Doctrine: money wire is decimal string only.
+            let fmt = crate::money::MoneyWireFormat::DecimalString;
+            let val = phrase_ident_to_string(val);
             crate::money::normalize(val, fmt, None).map_err(String::from)
         }
         _ => Ok(val),
@@ -482,6 +533,113 @@ pub fn parent_entity_field_type(
     ))
 }
 
+/// Structured soft-fail diagnostic when decode-time shape coerce or domain validation rejects a field.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DecodeFieldDiagnostic {
+    pub field: String,
+    pub message: String,
+}
+
+/// Shape-coerce a decoded wire scalar, then validate profile/constraints.
+///
+/// On failure the returned value is [`Value::Null`] and a diagnostic is emitted; the row decode continues.
+pub fn decode_coerce_and_validate_field(
+    field_name: &str,
+    nv: &NamedValueSchema,
+    val: Value,
+) -> (Value, Option<DecodeFieldDiagnostic>) {
+    let fail = |message: String| {
+        (
+            Value::Null,
+            Some(DecodeFieldDiagnostic {
+                field: field_name.to_string(),
+                message,
+            }),
+        )
+    };
+
+    if matches!(nv.field_type, FieldType::Money) {
+        let val = phrase_ident_to_string(val);
+        match crate::money::normalize(
+            val,
+            crate::money::MoneyWireFormat::DecimalString,
+            nv.currency.as_deref(),
+        ) {
+            Ok(coerced) => match validate_named_value_domain_value(&coerced, nv) {
+                Ok(()) => (coerced, None),
+                Err(msg) => fail(msg),
+            },
+            Err(e) => fail(e.to_string()),
+        }
+    } else {
+        match coerce_value_for_field_type(
+            &nv.field_type,
+            nv.value_format,
+            nv.array_items.as_ref(),
+            val,
+        ) {
+            Ok(coerced) => {
+                // Enum membership / profile / constraints are all owned by `domain`.
+                if let Err(msg) = validate_named_value_domain_value(&coerced, nv) {
+                    return fail(msg);
+                }
+                (coerced, None)
+            }
+            Err(msg) => fail(msg),
+        }
+    }
+}
+
+/// Attach sibling currency to decoded money fields; soft-fail normalize and currency slot shape errors.
+pub fn decode_coerce_money_fields(
+    fields: &mut IndexMap<String, Value>,
+    specs: impl IntoIterator<Item = (String, crate::MoneyDecodeSpec)>,
+    diagnostics: &mut Vec<DecodeFieldDiagnostic>,
+) {
+    for (field, spec) in specs {
+        let Some(raw) = fields.get(&field).cloned() else {
+            continue;
+        };
+        if matches!(raw, Value::Null) {
+            continue;
+        }
+        let fmt = crate::money::MoneyWireFormat::DecimalString;
+        match crate::money::normalize(raw, fmt, spec.default_currency()) {
+            Ok(mut coerced) => {
+                if let Value::Money(ref mut m) = coerced {
+                    if let Some(cf) = spec.currency_field() {
+                        match fields.get(cf) {
+                            None | Some(Value::Null) => {}
+                            Some(sibling) => {
+                                let Some(s) = sibling.as_str() else {
+                                    diagnostics.push(DecodeFieldDiagnostic {
+                                        field: field.clone(),
+                                        message: format!(
+                                            "money currency field `{cf}` must be a string (got {})",
+                                            sibling.type_name()
+                                        ),
+                                    });
+                                    fields.insert(field, Value::Null);
+                                    continue;
+                                };
+                                m.attach_currency_if_absent(Some(s));
+                            }
+                        }
+                    }
+                }
+                fields.insert(field, coerced);
+            }
+            Err(e) => {
+                diagnostics.push(DecodeFieldDiagnostic {
+                    field: field.clone(),
+                    message: e.to_string(),
+                });
+                fields.insert(field, Value::Null);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -626,6 +784,66 @@ mod tests {
     }
 
     #[test]
+    fn boolean_coerces_string_and_phrase_ident_for_query_and_invoke() {
+        for policy in [
+            ArrayFieldCoercionPolicy::QueryFilter,
+            ArrayFieldCoercionPolicy::InvokeArg,
+        ] {
+            for (raw, expect) in [("true", true), ("false", false), ("TRUE", true)] {
+                let from_string = coerce_value_for_field_type_with_policy(
+                    &FieldType::Boolean,
+                    None,
+                    None,
+                    Value::String(raw.into()),
+                    policy,
+                )
+                .expect("string bool");
+                let from_phrase = coerce_value_for_field_type_with_policy(
+                    &FieldType::Boolean,
+                    None,
+                    None,
+                    Value::PhraseIdent(raw.into()),
+                    policy,
+                )
+                .expect("phrase bool");
+                assert_eq!(from_string, Value::Bool(expect), "policy={policy:?} string");
+                assert_eq!(from_phrase, Value::Bool(expect), "policy={policy:?} phrase");
+                assert_eq!(
+                    from_string, from_phrase,
+                    "read/write coerce must agree for `{raw}`"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn integer_coerces_phrase_ident_same_as_string_for_invoke_and_query() {
+        for policy in [
+            ArrayFieldCoercionPolicy::QueryFilter,
+            ArrayFieldCoercionPolicy::InvokeArg,
+        ] {
+            let from_string = coerce_value_for_field_type_with_policy(
+                &FieldType::Integer,
+                None,
+                None,
+                Value::String("42".into()),
+                policy,
+            )
+            .unwrap();
+            let from_phrase = coerce_value_for_field_type_with_policy(
+                &FieldType::Integer,
+                None,
+                None,
+                Value::PhraseIdent("42".into()),
+                policy,
+            )
+            .unwrap();
+            assert_eq!(from_string, Value::Integer(42));
+            assert_eq!(from_phrase, from_string);
+        }
+    }
+
+    #[test]
     fn array_field_passes_plasm_input_ref_for_invoke_args() {
         use crate::PlasmInputRef;
         let out = coerce_value_for_field_type_with_policy(
@@ -663,5 +881,33 @@ mod tests {
             Value::Array(vec![Value::String("tag".into())]),
             "predicate coercion may still wrap single scalar"
         );
+    }
+
+    #[test]
+    fn decode_invalid_profile_string_becomes_null_with_diagnostic() {
+        use crate::schema::NamedValueSchema;
+        use crate::value_domain::{Constraints, KernelKind, ProfileId, ValueDomain};
+
+        let nv = NamedValueSchema::from_domain(
+            String::new(),
+            ValueDomain::new(
+                KernelKind::String,
+                Some(ProfileId::Email),
+                Constraints::default(),
+                None,
+                None,
+            )
+            .expect("email domain"),
+            None,
+        );
+        let (value, diag) = decode_coerce_and_validate_field(
+            "email",
+            &nv,
+            Value::String("not-an-email".into()),
+        );
+        assert!(matches!(value, Value::Null));
+        let d = diag.expect("diagnostic");
+        assert_eq!(d.field, "email");
+        assert!(d.message.contains("email") || d.message.contains("invalid"));
     }
 }

@@ -189,4 +189,3 @@ values:
     type: boolean
   nv_wire_str_short:
     type: string
-    string_semantics: short

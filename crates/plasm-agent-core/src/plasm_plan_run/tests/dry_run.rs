@@ -986,12 +986,13 @@ fn dry_run_text_renders_dependency_dag_snapshot() {
     insta::assert_snapshot!(
         text,
         @"
-        plan ok · 3n 1r → returns: summary, cards · p7
+    plan review · 3n 1r → returns: summary, cards · p7
+    warn: unbounded read
 
-        01 products     query Query(Product all)
-        02 summary      project name, sku ← products
-        03 cards        derive map summary as product → {1} ← summary
-        "
+    01 products     query Query(Product all)
+    02 summary      project name, sku ← products
+    03 cards        derive map summary as product → {1} ← summary
+    "
     );
     assert!(!text.contains("node_results"));
     assert!(!text.contains("\"dry_run\""));

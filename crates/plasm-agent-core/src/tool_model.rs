@@ -12,9 +12,9 @@ use plasm_core::prompt_render::{
 };
 use plasm_core::schema::{
     input_variant_body_type, AuthScheme, EntityDef, FieldSchema, InputFieldSchema, InputFieldWire,
-    InputType, OauthExtension, OutputType, RelationMaterialization, RelationSchema,
-    StringSemantics, CGS,
+    InputType, OauthExtension, OutputType, RelationMaterialization, RelationSchema, CGS,
 };
+use plasm_core::value_domain::ProfileId;
 use plasm_core::symbol_tuning::FocusSpec;
 use plasm_core::{capability_method_label_kebab, CapabilityKind, CapabilitySchema, FieldType};
 use plasm_core::{catalog_connect_profile, CatalogConnectProfile};
@@ -430,18 +430,10 @@ fn format_allowed_domain(values: &[String], max_visible: usize) -> String {
     )
 }
 
-/// Returns `None` for plain short strings (default semantics).
-fn string_subtype_keyword_from_semantics(sem: StringSemantics) -> Option<&'static str> {
-    match sem {
-        StringSemantics::Short => None,
-        sem => sem.gloss_type_keyword(),
-    }
-}
-
 fn type_label_from_parts(
     field_type: &FieldType,
     allowed_values: Option<&[String]>,
-    string_semantics: StringSemantics,
+    profile: Option<ProfileId>,
     array_items: Option<&plasm_core::schema::ArrayItemsSchema>,
 ) -> String {
     match field_type {
@@ -464,9 +456,9 @@ fn type_label_from_parts(
                 "multi-select".into()
             }
         }
-        FieldType::String => match string_subtype_keyword_from_semantics(string_semantics) {
+        FieldType::String => match profile {
             None => "string".into(),
-            Some(kw) => format!("string · {kw}"),
+            Some(p) => format!("string · {}", p.type_name()),
         },
         FieldType::Blob => "blob · binary".into(),
         FieldType::Array => {
@@ -486,12 +478,7 @@ fn input_type_tool_label(ty: &InputType, _cgs: &CGS) -> String {
         InputType::Value {
             field_type,
             allowed_values,
-        } => type_label_from_parts(
-            field_type,
-            allowed_values.as_deref(),
-            StringSemantics::Short,
-            None,
-        ),
+        } => type_label_from_parts(field_type, allowed_values.as_deref(), None, None),
         InputType::Object { .. } => "object".into(),
         InputType::Array { element_type, .. } => {
             format!("array[{}]", input_type_tool_label(element_type, _cgs))
@@ -527,7 +514,7 @@ fn input_field_type_label(field: &InputFieldSchema, cgs: &CGS) -> String {
             type_label_from_parts(
                 &nv.field_type,
                 nv.allowed_values.as_deref(),
-                field.effective_string_semantics(cgs),
+                nv.domain.profile,
                 field.resolved_array_items(cgs),
             )
         }
@@ -578,7 +565,7 @@ fn schema_field_type_label(field: &FieldSchema, cgs: &CGS) -> String {
     type_label_from_parts(
         &nv.field_type,
         nv.allowed_values.as_deref(),
-        field.effective_string_semantics(cgs),
+        nv.domain.profile,
         field.resolved_array_items(cgs),
     )
 }

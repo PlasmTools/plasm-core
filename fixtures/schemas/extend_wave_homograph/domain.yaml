@@ -54,7 +54,6 @@ values:
     description: Integer id shared structural slot across wave entities
   nv_wave_shared_name:
     type: string
-    string_semantics: short
     description: Shared name slot fingerprint (Language.name / Pokemon.name homograph)
   nv_wave_lang_official:
     type: boolean

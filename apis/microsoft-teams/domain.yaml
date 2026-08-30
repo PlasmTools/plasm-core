@@ -446,20 +446,17 @@ auth:
   hosted_kv: plasm:outbound:v1:catalog:microsoft-teams
 values:
   nv_channel_message_body_content:
-    type: string
-    string_semantics: markdown
+    type: markdown
   nv_channel_message_body_content_type:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - text
     - html
   nv_channel_message_from_display_name:
     type: string
-    string_semantics: short
     description: Sender display name on the channel message.
   nv_channel_message_from_user_id:
     type: string
-    string_semantics: short
     description: Directory object id of the sender when present.
   nv_channel_message_get_channel_id:
     type: entity_ref
@@ -470,8 +467,8 @@ values:
     target: Team
     description: Team that owns the channel.
   nv_channel_message_importance:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - normal
     - high
     - urgent
@@ -485,12 +482,11 @@ values:
     target: Team
     description: Team that owns the channel.
   nv_channel_message_send_body_content:
-    type: string
-    string_semantics: markdown
+    type: markdown
     description: Message body to post into the channel.
   nv_channel_message_send_body_content_type:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - text
     - html
     description: Body format for the channel message.
@@ -504,31 +500,26 @@ values:
     description: Team that owns the channel.
   nv_channel_message_type:
     type: string
-    string_semantics: short
     description: Message classification from the service.
   nv_channel_message_web_url:
     type: string
-    string_semantics: short
     description: Client URL that opens the channel message in Teams when available.
   nv_channel_description:
-    type: string
-    string_semantics: markdown
+    type: markdown
     description: Channel purpose text when the service returns one.
   nv_channel_display_name:
     type: string
-    string_semantics: short
     description: Human-facing channel label in Teams.
   nv_channel_email:
     type: string
-    string_semantics: short
     description: SMTP address for the channel when provisioned.
   nv_channel_get_team_id:
     type: entity_ref
     target: Team
     description: Team that owns the channel.
   nv_channel_membership_type:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - standard
     - private
     - unknownFutureValue
@@ -539,15 +530,13 @@ values:
     description: Team whose channels should be listed.
   nv_channel_web_url:
     type: string
-    string_semantics: short
     description: Client URL that opens the channel in Teams when available.
   nv_chat_message_send_body_content:
-    type: string
-    string_semantics: markdown
+    type: markdown
     description: Message body to send into the chat.
   nv_chat_message_send_body_content_type:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - text
     - html
     description: Body format for the chat message.
@@ -556,28 +545,25 @@ values:
     target: Chat
     description: Chat that should receive the message.
   nv_chat_message_body_content:
-    type: string
-    string_semantics: markdown
+    type: markdown
   nv_chat_message_body_content_type:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - text
     - html
   nv_chat_message_from_display_name:
     type: string
-    string_semantics: short
     description: Sender display name on the chat message.
   nv_chat_message_from_user_id:
     type: string
-    string_semantics: short
     description: Directory object id of the sender when present.
   nv_chat_message_get_chat_id:
     type: entity_ref
     target: Chat
     description: Chat that owns the message.
   nv_chat_message_importance:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - normal
     - high
     - urgent
@@ -588,19 +574,16 @@ values:
     description: Chat whose messages should be listed.
   nv_chat_message_type:
     type: string
-    string_semantics: short
     description: Message classification from the service (message, systemEventMessage, etc.).
   nv_chat_message_web_url:
     type: string
-    string_semantics: short
     description: Client URL that opens the message in Teams when available.
   nv_chat_topic:
     type: string
-    string_semantics: short
     description: Chat title for group chats; often empty for one-on-one chats.
   nv_chat_type:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - oneOnOne
     - group
     - meeting
@@ -608,15 +591,12 @@ values:
     description: Whether the chat is one-on-one, a group, or meeting-backed.
   nv_chat_web_url:
     type: string
-    string_semantics: short
     description: Client URL that opens the chat in Teams when available.
   nv_team_display_name:
     type: string
-    string_semantics: short
     description: Human-facing label shown in the Teams client.
   nv_team_description:
-    type: string
-    string_semantics: markdown
+    type: markdown
     description: Longer narrative summary of the team’s purpose when one exists.
   nv_team_id:
     type: uuid
@@ -625,21 +605,18 @@ values:
     type: boolean
     description: Whether the team is frozen for most member activity.
   nv_team_visibility:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - private
     - public
     - hiddenMembership
     description: Who may discover or join the team when the directory exposes this classification.
   nv_team_web_url:
     type: string
-    string_semantics: short
     description: Client URL that opens this team in Microsoft Teams when available.
   nv_wire_bool:
     type: boolean
   nv_wire_date_rfc3339:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
   nv_wire_str_short:
     type: string
-    string_semantics: short

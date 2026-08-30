@@ -10,6 +10,8 @@ readme = "README.md"
 default = []
 # Local-only: allow bootstrap secrets from process env when `PLASM_SECRETS_DIR` is unset (never enable for k8s images).
 local_env_bootstrap_secrets = ["plasm-agent-core/local_env_bootstrap_secrets"]
+# Intent-only plasm_context seed selection (OpenRouter).
+semantic-auto-seed = ["plasm-agent-core/semantic-auto-seed"]
 # Forward to plasm-compile for EVM-backed schemas (e.g. apis/evm-erc20).
 evm = ["plasm-agent-core/evm"]
 # OSS appliance: bundle pg-embed; autostart unless `PLASM_EMBEDDED_POSTGRES=0` or external Postgres URLs (see `embedded_postgres`).

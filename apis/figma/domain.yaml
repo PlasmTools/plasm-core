@@ -460,8 +460,7 @@ values:
     type: entity_ref
     target: File
   nv_comment_message:
-    type: string
-    string_semantics: markdown
+    type: markdown
   nv_comment_query_as_md:
     type: boolean
     description: Return comment text in markdown form when available.
@@ -499,8 +498,6 @@ values:
     target: Team
     description: Team whose projects to list.
   nv_wire_date_rfc3339:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
   nv_wire_str_short:
     type: string
-    string_semantics: short

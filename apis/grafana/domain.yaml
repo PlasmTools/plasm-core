@@ -23,60 +23,47 @@ data_classes:
 values:
   nv_wire_str_short:
     type: string
-    string_semantics: short
   nv_wire_str_markdown:
-    type: string
-    string_semantics: markdown
+    type: markdown
   nv_wire_int:
     type: integer
   nv_wire_bool:
     type: boolean
   nv_grafana_uid:
     type: string
-    string_semantics: short
   nv_grafana_title:
     type: string
-    string_semantics: short
   nv_grafana_description:
-    type: string
-    string_semantics: markdown
+    type: markdown
   nv_grafana_url:
     type: string
-    string_semantics: short
   nv_grafana_tags:
     type: array
     items:
       value_ref: nv_wire_str_short
   nv_grafana_search_type:
-    type: select
-    allowed_values: [dash-db, dash-folder]
+    type: enum
+    enum: [dash-db, dash-folder]
   nv_grafana_int_id:
     type: integer
   nv_grafana_bool:
     type: boolean
   nv_grafana_datasource_type:
     type: string
-    string_semantics: short
   nv_grafana_datasource_name:
     type: string
-    string_semantics: short
   nv_grafana_time_range:
     type: string
-    string_semantics: short
   nv_grafana_annotation_text:
-    type: string
-    string_semantics: markdown
+    type: markdown
   nv_grafana_json_text:
-    type: string
-    string_semantics: json_text
+    type: json_text
   nv_grafana_json_value:
     type: json
   nv_grafana_alert_state:
     type: string
-    string_semantics: short
   nv_grafana_duration:
     type: string
-    string_semantics: short
   nv_grafana_folder_uid:
     type: entity_ref
     target: Folder
@@ -92,28 +79,22 @@ values:
     type: integer
   nv_grafana_email:
     type: string
-    string_semantics: short
   nv_grafana_login:
     type: string
-    string_semantics: short
   nv_grafana_org_role:
-    type: select
-    allowed_values: [Admin, Editor, Viewer]
+    type: enum
+    enum: [Admin, Editor, Viewer]
   nv_grafana_team_name:
     type: string
-    string_semantics: short
   nv_grafana_contact_point_type:
     type: string
-    string_semantics: short
   nv_grafana_mute_timing_name:
     type: string
-    string_semantics: short
   nv_grafana_silence_id:
     type: string
-    string_semantics: short
   nv_grafana_library_kind:
-    type: select
-    allowed_values: ["1", "2"]
+    type: enum
+    enum: ["1", "2"]
   nv_grafana_team_ref:
     type: entity_ref
     target: Team
@@ -134,37 +115,29 @@ values:
     target: Silence
   nv_grafana_role_uid:
     type: string
-    string_semantics: short
   nv_grafana_resource_type:
-    type: select
-    allowed_values: [dashboards, datasources, folders, teams, users, serviceaccounts]
+    type: enum
+    enum: [dashboards, datasources, folders, teams, users, serviceaccounts]
   nv_grafana_deeplink_type:
-    type: select
-    allowed_values: [dashboard, panel, explore]
+    type: enum
+    enum: [dashboard, panel, explore]
   nv_grafana_uuid:
     type: string
-    string_semantics: short
   nv_grafana_label_name:
     type: string
-    string_semantics: short
   nv_grafana_logql:
     type: string
-    string_semantics: short
   nv_grafana_sql:
     type: string
-    string_semantics: short
   nv_grafana_oncall_state:
-    type: select
-    allowed_values: [new, acknowledged, resolved, silenced]
+    type: enum
+    enum: [new, acknowledged, resolved, silenced]
   nv_grafana_oncall_id:
     type: string
-    string_semantics: short
   nv_grafana_incident_severity:
     type: string
-    string_semantics: short
   nv_grafana_sift_status:
     type: string
-    string_semantics: short
   nv_grafana_role_ref:
     type: entity_ref
     target: RbacRole

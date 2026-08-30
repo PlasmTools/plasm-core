@@ -472,11 +472,11 @@ mod tests {
         );
     }
 
-    /// WS-R3′ end-to-end: a capability whose `input_schema` carries validation predicates
-    /// (`min_value` / `min_length` / `at_least_one`) must remain **teachable** — the teaching-surface
-    /// `$` placeholders and unlisted optional fields no longer trip predicate enforcement — so the
+    /// WS-R3′ end-to-end: a capability whose inputs carry `values:` constraints and cross-field rules
+    /// (`min` / `min_length` / `at_least_one`) must remain **teachable** — the teaching-surface
+    /// `$` placeholders and unlisted optional fields no longer trip scalar constraint enforcement — so the
     /// fixture validates and `account_update` is witnessed. This locks the reconciliation: the
-    /// empty-teaching-block panic was rooted in placeholder-blind predicate enforcement, not
+    /// empty-teaching-block panic was rooted in placeholder-blind constraint enforcement, not
     /// unobtainability.
     #[test]
     fn validated_input_update_is_teachable_and_covered() {

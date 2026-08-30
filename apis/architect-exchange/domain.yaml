@@ -2511,108 +2511,77 @@ values:
     type: integer
   nv_wire_str_short:
     type: string
-    string_semantics: short
   nv_user_id:
     type: string
-    string_semantics: short
   nv_username:
     type: string
-    string_semantics: short
     description: Login name for the authenticated user.
   nv_pseudonym:
     type: string
-    string_semantics: short
   nv_created_at:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
   nv_fiat_deposit_code:
     type: string
-    string_semantics: short
   nv_account_id:
     type: entity_ref
     target: Account
   nv_account_name:
     type: string
-    string_semantics: short
   nv_decimal_fee:
     type: money
-    value_format:
-      money: decimal_string
   nv_business_name:
     type: string
-    string_semantics: short
   nv_doing_business_as:
     type: string
-    string_semantics: short
   nv_api_key:
     type: string
-    string_semantics: short
   nv_api_secret:
     type: string
-    string_semantics: short
   nv_ip:
     type: string
-    string_semantics: short
   nv_ip_list:
     type: array
     items:
       value_ref: nv_ip
   nv_account_id_elem:
     type: string
-    string_semantics: short
   nv_account_id_list:
     type: array
     items:
       value_ref: nv_account_id_elem
   nv_asset_symbol:
     type: string
-    string_semantics: short
   nv_instrument_symbol:
     type: entity_ref
     target: Instrument
   nv_decimal_amount:
     type: money
-    value_format:
-      money: decimal_string
   nv_signed_quantity:
     type: integer
   nv_decimal_notional:
     type: money
-    value_format:
-      money: decimal_string
   nv_decimal_pnl:
     type: money
-    value_format:
-      money: decimal_string
   nv_decimal_equity:
     type: money
-    value_format:
-      money: decimal_string
   nv_decimal_margin:
     type: money
-    value_format:
-      money: decimal_string
   nv_json_object:
-    type: string
-    string_semantics: json_text
+    type: json_text
   nv_timestamp_ns:
     type: integer
     description: Unix timestamp in nanoseconds.
   nv_blockchain:
     type: string
-    string_semantics: short
   nv_chain_address:
     type: string
-    string_semantics: short
   nv_product:
     type: string
-    string_semantics: short
   nv_instrument_description:
     type: string
-    string_semantics: short
   nv_instrument_category:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - compute
     - crypto
     - energy
@@ -2623,7 +2592,6 @@ values:
     - treasuries
   nv_currency:
     type: string
-    string_semantics: short
   nv_decimal_multiplier:
     type: number
   nv_price_scale:
@@ -2632,8 +2600,6 @@ values:
     type: number
   nv_decimal_price:
     type: money
-    value_format:
-      money: decimal_string
   nv_decimal_pct:
     type: number
   nv_quantity:
@@ -2643,8 +2609,8 @@ values:
   nv_epoch_nano:
     type: integer
   nv_instrument_state:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - CLOSED_FROZEN
     - PRE_OPEN
     - OPEN
@@ -2654,13 +2620,13 @@ values:
     - MATCH_AND_CLOSE_AUCTION
     - UNKNOWN
   nv_side:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - B
     - S
   nv_candle_width:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - 1s
     - 5s
     - 1m
@@ -2671,36 +2637,32 @@ values:
   nv_decimal_rate:
     type: number
   nv_estimated_funding_status:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - ready
     - settlement_pending
     - unavailable
   nv_calendar_date:
-    type: date
-    value_format: iso8601_date
+    type: iso8601_date
   nv_timezone:
     type: string
-    string_semantics: short
   nv_funding_variant:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - daily_close
     - intraday_twap
   nv_decimal_bps:
     type: number
   nv_trade_id:
     type: string
-    string_semantics: short
   nv_order_id:
     type: entity_ref
     target: Order
   nv_event_id:
     type: string
-    string_semantics: short
   nv_transaction_type:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - deposit
     - withdrawal
     - funding
@@ -2709,8 +2671,8 @@ values:
     - lending_credit
     - lending_debit
   nv_transaction_type_list:
-    type: multi_select
-    allowed_values:
+    type: multi_enum
+    enum:
     - deposit
     - withdrawal
     - funding
@@ -2719,16 +2681,16 @@ values:
     - lending_credit
     - lending_debit
   nv_settlement_kind:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - funding
     - mark_to_market
     - final_settlement
   nv_client_order_id:
     type: integer
   nv_order_state:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - PENDING
     - ACCEPTED
     - PARTIALLY_FILLED
@@ -2740,8 +2702,8 @@ values:
     - DONE_FOR_DAY
     - UNKNOWN
   nv_order_state_list:
-    type: multi_select
-    allowed_values:
+    type: multi_enum
+    enum:
     - PENDING
     - ACCEPTED
     - PARTIALLY_FILLED
@@ -2754,10 +2716,9 @@ values:
     - UNKNOWN
   nv_time_in_force:
     type: string
-    string_semantics: short
   nv_order_reject_reason:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - CLOSE_ONLY
     - INSUFFICIENT_MARGIN
     - MAX_OPEN_ORDERS_EXCEEDED
@@ -2774,29 +2735,27 @@ values:
     - UNKNOWN
   nv_order_tag:
     type: string
-    string_semantics: short
   nv_reprice_behavior:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - rej
     - bo
     - tbl
   nv_self_trade_behavior:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - CancelIncoming
     - CancelResting
     - CancelBoth
   nv_order_id_elem:
     type: string
-    string_semantics: short
   nv_order_id_list:
     type: array
     items:
       value_ref: nv_order_id_elem
   nv_sort_direction:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - asc
     - desc
   nv_resolution_seconds:

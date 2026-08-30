@@ -779,31 +779,25 @@ fn find_capability<'a>(
 
 #[cfg(test)]
 mod tests {
+    use plasm_core::value_domain::ValueDomain;
     use super::*;
     use crate::cli_builder::build_app;
     use plasm_core::{
         CapabilityKind, CapabilityMapping, CapabilitySchema, EntityKey, Expr, FieldSchema,
-        FieldType, FieldValueKind, NamedValueSchema, ResourceSchema, StringSemantics,
+        FieldType, FieldValueKind, NamedValueSchema, ResourceSchema,
         ValueDomainKey,
     };
 
     fn evm_get_cgs() -> CGS {
         let mut cgs = CGS::new();
-        for (k, sem) in [
-            ("dp_evm_account", Some(StringSemantics::Short)),
-            ("dp_evm_balance", Some(StringSemantics::Short)),
-        ] {
+        for k in ["dp_evm_account", "dp_evm_balance"] {
             cgs.values.insert(
                 k.into(),
-                NamedValueSchema {
-                    description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
-                    string_semantics: sem,
-                    array_items: None,
-                    currency: None,
-                },
+                NamedValueSchema::from_domain(
+                    String::new(),
+                    ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                    None,
+                ),
             );
         }
         cgs.add_resource(ResourceSchema {
@@ -860,6 +854,7 @@ mod tests {
             kind: CapabilityKind::Get,
             domain: "Balance".into(),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "transport": "evm_call",
@@ -913,15 +908,11 @@ mod tests {
         let mut cgs = CGS::new();
         cgs.values.insert(
             "dp_transfer_event_id".into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: Some(StringSemantics::Short),
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                None,
+            ),
         );
         cgs.add_resource(ResourceSchema {
             name: "Transfer".into(),
@@ -960,6 +951,7 @@ mod tests {
             kind: CapabilityKind::Query,
             domain: "Transfer".into(),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "transport": "evm_logs",
@@ -1016,28 +1008,20 @@ mod tests {
         for k in ["dp_issue_owner", "dp_issue_repo"] {
             cgs.values.insert(
                 k.into(),
-                NamedValueSchema {
-                    description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
-                    string_semantics: Some(StringSemantics::Short),
-                    array_items: None,
-                    currency: None,
-                },
+                NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                None,
+            ),
             );
         }
         cgs.values.insert(
             "dp_issue_number".into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Integer,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::Integer, None, None, None, None),
+                None,
+            ),
         );
         let mk = |n: &str, vk: &str| FieldSchema {
             name: n.into(),
@@ -1092,6 +1076,7 @@ mod tests {
             kind: CapabilityKind::Get,
             domain: "Issue".into(),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",

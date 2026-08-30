@@ -6,7 +6,7 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
-use crate::schema::{DiscoverySeedClass, DiscoverySeedNav};
+use crate::schema::{DiscoveryCoSeedWith, DiscoverySeedClass, DiscoverySeedNav};
 
 /// Authored entity `discovery.seed_class`, or unset when absent from the catalog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -41,6 +41,58 @@ impl SeedClassStamp {
 }
 
 impl fmt::Display for SeedClassStamp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Authored entity `discovery.co_seed_with`, or unset when absent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SeedCoSeedStamp {
+    Authored(DiscoveryCoSeedWith),
+    Unset,
+}
+
+impl SeedCoSeedStamp {
+    pub fn from_catalog(policy: Option<DiscoveryCoSeedWith>) -> Self {
+        policy.map(Self::Authored).unwrap_or(Self::Unset)
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Authored(p) => p.as_str(),
+            Self::Unset => "unset",
+        }
+    }
+
+    pub fn is_unset(self) -> bool {
+        matches!(self, Self::Unset)
+    }
+
+    pub fn admits_on_catalog_primary(self) -> bool {
+        matches!(self, Self::Authored(p) if p.admits_on_catalog_primary())
+    }
+
+    pub fn admits_on_federated_primary(self) -> bool {
+        matches!(self, Self::Authored(p) if p.admits_on_federated_primary())
+    }
+
+    /// Selected seat is a catalog-primary co-seed and does not trigger further catalog co-seeds.
+    pub fn is_catalog_primary_seat(self) -> bool {
+        matches!(self, Self::Authored(DiscoveryCoSeedWith::CatalogPrimary))
+    }
+
+    /// Selected seat is a federated/session co-seed and does not trigger federated co-seeds.
+    pub fn is_federated_primary_seat(self) -> bool {
+        matches!(
+            self,
+            Self::Authored(DiscoveryCoSeedWith::FederatedPrimary)
+                | Self::Authored(DiscoveryCoSeedWith::SessionPrimary)
+        )
+    }
+}
+
+impl fmt::Display for SeedCoSeedStamp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }

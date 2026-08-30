@@ -45,10 +45,12 @@ pub use plans::{
 };
 pub use prune::{prune_witness_selection, IntentGate};
 pub use role_index::CorpusRoleIndex;
-pub use roles::{OwnEdge, OwnEnd, OwnPairs, PoolChild, PoolLinks, SeedClassStamp, SeedNavStamp};
+pub use roles::{
+    OwnEdge, OwnEnd, OwnPairs, PoolChild, PoolLinks, SeedClassStamp, SeedCoSeedStamp, SeedNavStamp,
+};
 pub use satellites::{
-    admit_teaching_satellites, apply_teaching_satellites_to_ready, candidates_covering_for_plan,
-    candidates_covering_with_satellites, dependent_action_shadowed_by_peer_primary,
-    is_attach_or_dependent_leaf, seed_candidate_is_teaching_leaf, SatelliteAdmission,
-    MAX_TEACHING_SATELLITES,
+    admit_co_seed_teaching_seats, admit_teaching_satellites, apply_teaching_satellites_to_ready,
+    candidates_covering_for_plan, candidates_covering_with_satellites,
+    dependent_action_shadowed_by_peer_primary, is_attach_or_dependent_leaf,
+    seed_candidate_is_teaching_leaf, SatelliteAdmission, MAX_TEACHING_SATELLITES,
 };

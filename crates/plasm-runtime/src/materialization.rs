@@ -182,6 +182,9 @@ pub struct SessionMaterialization {
     pub graph: GraphCache,
     pub responses: SessionResponseStore,
     pub query_index: QueryIndex,
+    /// Set when a mutating execute poisons scoped read consults on this materialization.
+    /// Branch commit replaces session auxiliary caches (and graph) when true.
+    pub(crate) read_cache_invalidated: bool,
 }
 
 impl SessionMaterialization {
@@ -206,8 +209,60 @@ impl SessionMaterialization {
         self.responses.invalidate_entity_type(entity_type);
     }
 
+    /// After any mutation, composed views must not consult pre-write scoped caches.
+    pub fn poison_read_caches_after_mutation(&mut self) {
+        self.read_cache_invalidated = true;
+        self.query_index = QueryIndex::default();
+        self.responses = SessionResponseStore::default();
+    }
+
+    /// Mirror mutation fields onto invalidated read-model entities, evict stale graph rows,
+    /// and drop scoped query-index entries so composed views refetch live data.
+    pub fn apply_post_mutation_cache_effects(
+        &mut self,
+        capability: &plasm_core::schema::CapabilitySchema,
+        merged_entities: &[crate::cache::CachedEntity],
+        cgs: &plasm_core::CGS,
+    ) -> Result<(), crate::RuntimeError> {
+        use std::collections::HashSet;
+
+        if capability.invalidates_entities.is_empty() {
+            return Ok(());
+        }
+
+        for target_type in &capability.invalidates_entities {
+            let Some(ent_def) = cgs.get_entity(target_type.as_str()) else {
+                continue;
+            };
+            let mut target_ids = HashSet::new();
+            for source in merged_entities {
+                if let Some(id) = entity_id_for_target(source, ent_def) {
+                    target_ids.insert(id);
+                }
+            }
+            for id in &target_ids {
+                let target_ref = Ref::new(target_type.as_str(), id);
+                self.graph.remove(&target_ref);
+            }
+            self.invalidate_after_mutation(target_type.as_str());
+        }
+        Ok(())
+    }
+
     /// Merge fanout branch materialization back into the session (graph + response + query index).
+    ///
+    /// When the branch recorded a mutation (`read_cache_invalidated`), the branch graph is the
+    /// authoritative post-write read model — replace session stores wholesale instead of union-merge,
+    /// which would resurrect evicted query-index entries and HTTP response fingerprints.
     pub fn absorb_branch(&mut self, branch: SessionMaterialization) -> Result<usize, RuntimeError> {
+        if branch.read_cache_invalidated {
+            let merged = branch.graph.stats().total_entities;
+            self.graph = branch.graph;
+            self.query_index = branch.query_index;
+            self.responses = branch.responses;
+            self.read_cache_invalidated = true;
+            return Ok(merged);
+        }
         let merged = self.graph.merge_from_graph(&branch.graph)?;
         self.responses.merge_from(branch.responses);
         self.query_index.merge_from(branch.query_index);
@@ -350,6 +405,32 @@ impl ExecutionCacheConsult {
     }
 }
 
+fn entity_id_string(entity: &crate::cache::CachedEntity, field: &str) -> Option<String> {
+    use plasm_core::Value;
+    entity.get_field(field).and_then(|v| match v.to_value() {
+        Value::String(s) => Some(s),
+        Value::Integer(i) => Some(i.to_string()),
+        _ => None,
+    })
+}
+
+fn entity_id_for_target(
+    entity: &crate::cache::CachedEntity,
+    target: &plasm_core::schema::EntityDef,
+) -> Option<String> {
+    let id_field = target.id_field.as_str();
+    if let Some(id) = entity_id_string(entity, id_field) {
+        return Some(id);
+    }
+    if id_field == "credit_card_account_id" {
+        return entity_id_string(entity, "account_id");
+    }
+    if id_field == "account_id" {
+        return entity_id_string(entity, "credit_card_account_id");
+    }
+    None
+}
+
 #[allow(clippy::only_used_in_recursion)]
 fn client_side_predicate_matches_entity(
     entity: &CachedEntity,
@@ -413,6 +494,72 @@ mod tests {
     use super::*;
     use crate::execution::ExecutionStats;
     use plasm_core::{EntityName, Predicate, QueryExpr, Value};
+
+    #[test]
+    fn post_mutation_evicts_stale_read_model_graph_rows() {
+        use crate::cache::EntityCompleteness;
+        use plasm_core::schema::{CapabilityKind, CapabilityMapping, CapabilitySchema, CapabilityTemplateJson};
+        use plasm_core::{CapabilityName, EntityName, Ref};
+
+        let domain = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../apis/tau3_banking/domain.yaml");
+        let mappings = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../apis/tau3_banking/mappings.yaml");
+        let cgs = plasm_core::loader::load_split_schema(&domain, &mappings).expect("cgs");
+
+        let cap = CapabilitySchema {
+            name: CapabilityName::from("CreditCardAccountLocked_pay_from_checking"),
+            description: String::new(),
+            kind: CapabilityKind::Action,
+            domain: EntityName::from("CreditCardAccountLocked"),
+            mapping: CapabilityMapping {
+                template: CapabilityTemplateJson(serde_json::json!({ "method": "POST" })),
+            },
+            input_schema: None,
+            output_schema: None,
+            provides: vec![],
+            sanitizes: vec![],
+            deterministic: None,
+            scope_aggregate_key_policy: Default::default(),
+            preflight: None,
+            discovery: None,
+            identity_key: None,
+            invalidates_entities: vec!["CreditCardAccount".to_string()],
+        };
+
+        let mut mat = SessionMaterialization::new();
+        mat.insert(CachedEntity::from_decoded(
+            Ref::new("CreditCardAccount", "cc1"),
+            [("account_id".into(), Value::String("cc1".into())), ("balance".into(), Value::Integer(3000))]
+                .into_iter()
+                .collect(),
+            indexmap::IndexMap::new(),
+            1,
+            EntityCompleteness::Complete,
+        ))
+        .unwrap();
+        let key = QueryCacheKey::test("CreditCardAccount\0get\0user_id=u1");
+        mat.query_index
+            .insert(key.clone(), vec![Ref::new("CreditCardAccount", "cc1")]);
+
+        let locked = CachedEntity::from_decoded(
+            Ref::new("CreditCardAccountLocked", "cc1"),
+            [
+                ("account_id".into(), Value::String("cc1".into())),
+                ("balance".into(), Value::Integer(0)),
+            ]
+            .into_iter()
+            .collect(),
+            indexmap::IndexMap::new(),
+            2,
+            EntityCompleteness::Complete,
+        );
+        mat.apply_post_mutation_cache_effects(&cap, &[locked], &cgs)
+            .unwrap();
+
+        assert!(mat.get(&Ref::new("CreditCardAccount", "cc1")).is_none());
+        assert!(mat.query_index.get(&key).is_none());
+    }
 
     #[test]
     fn cache_telemetry_legacy_hits_aggregate_consult_counters() {

@@ -124,6 +124,7 @@ impl ExecutionEngine {
                                 graph: snap.into_graph(),
                                 responses: mat.responses.clone(),
                                 query_index: mat.query_index.clone(),
+                                ..SessionMaterialization::default()
                             }
                         };
 

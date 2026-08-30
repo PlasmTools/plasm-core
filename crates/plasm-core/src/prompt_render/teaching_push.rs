@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use crate::cross_entity::{choose_strategy, extract_cross_entity_predicates};
-use crate::schema::{RelationMaterialization, RelationSchema};
+use crate::schema::{CapabilityKind, RelationMaterialization, RelationSchema};
 use crate::symbol_tuning::SymbolMap;
 use crate::{CapabilityName, Expr, CGS};
 
@@ -179,7 +179,18 @@ pub(crate) fn try_push_teaching_example(
     // Sparse exception (entity-semantics A+B): nullary method calls that yield a singleton entity
     // row are materializers (`→ e · materialize`), not terminal writes — override Method→Terminal.
     teaching_line.arrow = super::ReturnArrow::classify(meta.kind, &teaching_line.result_type);
-    if teaching_expr_is_nullary_method_call(&teaching_line.expression)
+    let cap_is_mutating = meta
+        .source_capability
+        .as_ref()
+        .and_then(|n| cgs.capabilities.get(n.as_str()))
+        .is_some_and(|cap| {
+            matches!(
+                cap.kind,
+                CapabilityKind::Create | CapabilityKind::Update | CapabilityKind::Delete
+            )
+        });
+    if !cap_is_mutating
+        && teaching_expr_is_nullary_method_call(&teaching_line.expression)
         && teaching_result_is_singleton_entity_gloss(&teaching_line.result_type)
     {
         teaching_line.is_nullary_materialize = true;

@@ -322,6 +322,7 @@ mod tests {
                     names: vec!["pull request".into(), "pr".into()],
                     qualifier_names: vec![],
                     seed_class: None,
+                    co_seed_with: None,
                 }),
             },
         );
@@ -347,6 +348,7 @@ mod tests {
                     target_terms: vec![],
                 }),
                 identity_key: None,
+            invalidates_entities: vec![],
             },
         );
         cgs

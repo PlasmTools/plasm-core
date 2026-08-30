@@ -52,6 +52,40 @@ impl DiscoverySeedClass {
     }
 }
 
+/// Force-admit this entity into the seed set when peer primaries are already selected.
+///
+/// Catalog-authored only — the core never keys off entity or entry English names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiscoveryCoSeedWith {
+    /// Admit when any other primary DirectCapability in the **same catalog** is selected
+    /// (selected seats that themselves declare `catalog_primary` do not count as triggers).
+    CatalogPrimary,
+    /// Admit when any primary DirectCapability in a **different catalog** is selected
+    /// (selected seats that declare `federated_primary` / `session_primary` do not count).
+    FederatedPrimary,
+    /// `catalog_primary` ∪ `federated_primary`.
+    SessionPrimary,
+}
+
+impl DiscoveryCoSeedWith {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::CatalogPrimary => "catalog_primary",
+            Self::FederatedPrimary => "federated_primary",
+            Self::SessionPrimary => "session_primary",
+        }
+    }
+
+    pub fn admits_on_catalog_primary(self) -> bool {
+        matches!(self, Self::CatalogPrimary | Self::SessionPrimary)
+    }
+
+    pub fn admits_on_federated_primary(self) -> bool {
+        matches!(self, Self::FederatedPrimary | Self::SessionPrimary)
+    }
+}
+
 /// Relation-edge seed navigation semantics (primary lever for graph+role witness prune).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -88,6 +122,9 @@ pub struct DiscoveryEntityHints {
     /// Optional seed participation default when this entity is selected alone / without a governing edge role.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed_class: Option<DiscoverySeedClass>,
+    /// Optional force-admit when peer primaries are selected (login gates, shared credential stores, …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub co_seed_with: Option<DiscoveryCoSeedWith>,
 }
 
 /// Optional capability-level vocabulary for operation vs target wording in natural language.
@@ -441,19 +478,6 @@ pub enum IdFormat {
     Other,
 }
 
-/// Declared on-rails meaning of a `string` field for authoring and agent output policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum StringSemantics {
-    Short,
-    Markdown,
-    Document,
-    Html,
-    #[serde(rename = "json_text")]
-    JsonText,
-    Blob,
-}
-
 /// Optional media classification for [`FieldType::Blob`] fields (prompt/tool hints; wire shape unchanged).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -463,28 +487,6 @@ pub enum AttachmentMediaKind {
     Audio,
     Video,
     Document,
-}
-
-impl StringSemantics {
-    /// Keyword used in teaching table `p#` gloss for `string` fields/parameters when semantics are set.
-    /// [`StringSemantics::Short`] maps to the generic `str` label via [`None`].
-    pub fn gloss_type_keyword(self) -> Option<&'static str> {
-        match self {
-            StringSemantics::Short => None,
-            StringSemantics::Markdown => Some("markdown"),
-            StringSemantics::Document => Some("document"),
-            StringSemantics::Html => Some("html"),
-            StringSemantics::JsonText => Some("json_text"),
-            StringSemantics::Blob => Some("blob"),
-        }
-    }
-
-    /// True for semantics beyond plain short strings: markdown, HTML, documents, JSON text, blobs, etc.
-    /// Drives prompts and diagnostics when multiline or structured payloads are expected.
-    #[inline]
-    pub fn is_structured_or_multiline(self) -> bool {
-        !matches!(self, StringSemantics::Short)
-    }
 }
 
 /// How agents should surface a string field in summaries (table/compact); JSON bodies stay full-fidelity.
@@ -519,15 +521,16 @@ pub struct NamedValueSchema {
     /// What this value space represents (authoring / tooling; not agent teaching table vocabulary).
     #[serde(default)]
     pub description: String,
+    /// Kernel + profile + constraints (source of truth for `values:` typing).
+    #[serde(default)]
+    pub domain: crate::value_domain::ValueDomain,
     #[serde(with = "serde_yaml::with::singleton_map")]
     pub field_type: FieldType,
-    /// Required when [`Self::field_type`] is [`FieldType::Date`] or [`FieldType::Money`]: wire shape for predicates / inputs / decode.
+    /// Wire format derived from temporal / money profiles on [`Self::domain`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value_format: Option<ValueWireFormat>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed_values: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub string_semantics: Option<StringSemantics>,
     /// When [`Self::field_type`] is [`FieldType::Array`], element typing for the named array domain.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub array_items: Option<ArrayItemsSchema>,
@@ -536,10 +539,33 @@ pub struct NamedValueSchema {
     pub currency: Option<String>,
 }
 
+impl NamedValueSchema {
+    /// Build from resolved domain + array items (loader path).
+    pub fn from_domain(
+        description: String,
+        domain: crate::value_domain::ValueDomain,
+        array_items: Option<ArrayItemsSchema>,
+    ) -> Self {
+        let field_type = domain.to_field_type();
+        let value_format = domain.to_value_format();
+        let allowed_values = domain.enum_values.clone();
+        let currency = domain.currency.clone();
+        Self {
+            description,
+            domain,
+            field_type,
+            value_format,
+            allowed_values,
+            array_items,
+            currency,
+        }
+    }
+}
+
 /// Definition of a single field within a resource.
 ///
 /// `field_type`, `allowed_values`, and related keys mirror [`CGS::values`][`NamedValueSchema`] for interchange;
-/// `string_semantics` / `array_items` live only on the registry row — use [`CGS::named_value_for_slot`].
+/// `array_items` live only on the registry row — use [`CGS::named_value_for_slot`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FieldSchema {
     pub name: EntityFieldName,
@@ -652,14 +678,6 @@ impl FieldSchema {
         cgs.named_value_for_slot(self)
     }
 
-    /// [`NamedValueSchema::string_semantics`] for this slot's `value_ref` (defaults to [`StringSemantics::Short`]).
-    pub fn effective_string_semantics(&self, cgs: &CGS) -> StringSemantics {
-        match cgs.named_value_for_slot(self) {
-            Ok(nv) => nv.string_semantics.unwrap_or(StringSemantics::Short),
-            Err(_) => StringSemantics::Short,
-        }
-    }
-
     /// Element typing when this slot's wire type is [`FieldType::Array`], from [`CGS::values`].
     pub fn resolved_array_items<'a>(&self, cgs: &'a CGS) -> Option<&'a ArrayItemsSchema> {
         cgs.named_value_for_slot(self)
@@ -667,8 +685,8 @@ impl FieldSchema {
             .and_then(|nv| nv.array_items.as_ref())
     }
 
-    /// When unset: [`StringSemantics::Short`] → [`AgentPresentation::Default`]; any other semantics → [`AgentPresentation::ReferenceOnly`].
-    /// [`FieldType::Blob`] defaults to [`AgentPresentation::ReferenceOnly`] (same as non-`short` strings).
+    /// When unset: plain `string` → [`AgentPresentation::Default`]; presentation profiles and blobs → [`AgentPresentation::ReferenceOnly`].
+    /// [`FieldType::Blob`] defaults to [`AgentPresentation::ReferenceOnly`].
     pub fn effective_agent_presentation(&self, cgs: &CGS) -> AgentPresentation {
         if let Some(p) = self.agent_presentation {
             return p;
@@ -676,14 +694,18 @@ impl FieldSchema {
         let Ok(nv) = cgs.named_value_for_slot(self) else {
             return AgentPresentation::Default;
         };
-        match &nv.field_type {
-            FieldType::Blob => AgentPresentation::ReferenceOnly,
-            FieldType::String => match self.effective_string_semantics(cgs) {
-                StringSemantics::Short => AgentPresentation::Default,
-                _ => AgentPresentation::ReferenceOnly,
-            },
-            _ => AgentPresentation::Default,
+        if nv.domain.is_structured_or_multiline() {
+            AgentPresentation::ReferenceOnly
+        } else {
+            AgentPresentation::Default
         }
+    }
+
+    /// Whether this slot expects structured or multiline string payloads (presentation profile or blob).
+    pub fn is_structured_or_multiline(&self, cgs: &CGS) -> bool {
+        cgs.named_value_for_slot(self)
+            .map(|nv| nv.domain.is_structured_or_multiline())
+            .unwrap_or(false)
     }
 }
 
@@ -861,6 +883,10 @@ pub struct CapabilitySchema {
     /// Natural-key parameter names defining workflow identity for PLT / reconcile.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity_key: Option<Vec<String>>,
+    /// Entity types whose session graph rows and query index entries should refresh after a
+    /// successful mutating response (e.g. pay on a mutation shell updating read-model cards).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub invalidates_entities: Vec<String>,
 }
 
 /// The type of operation this capability performs.
@@ -1392,24 +1418,6 @@ fn is_default_role(r: &Option<ParameterRole>) -> bool {
     matches!(r, None | Some(ParameterRole::Filter))
 }
 
-fn effective_string_semantics_of_input_type(ty: &InputType, cgs: &CGS) -> StringSemantics {
-    match ty {
-        InputType::None | InputType::Value { .. } => StringSemantics::Short,
-        InputType::Object { fields, .. } => fields
-            .first()
-            .map(|f| f.effective_string_semantics(cgs))
-            .unwrap_or(StringSemantics::Short),
-        InputType::Array { element_type, .. } => {
-            effective_string_semantics_of_input_type(element_type.as_ref(), cgs)
-        }
-        InputType::Union { variants } => variants
-            .first()
-            .and_then(|v| v.fields.first())
-            .map(|f| f.effective_string_semantics(cgs))
-            .unwrap_or(StringSemantics::Short),
-    }
-}
-
 /// [`InputType::Object`] view of a union variant payload (no wire discriminator in the surface form).
 #[inline]
 pub fn input_variant_body_type(v: &InputVariantSchema) -> InputType {
@@ -1538,22 +1546,37 @@ impl InputFieldSchema {
         }
     }
 
-    pub fn effective_string_semantics(&self, cgs: &CGS) -> StringSemantics {
-        match &self.wire {
-            InputFieldWire::Registry(_) => match self.named_value(cgs) {
-                Ok(nv) => nv.string_semantics.unwrap_or(StringSemantics::Short),
-                Err(_) => StringSemantics::Short,
-            },
-            InputFieldWire::Inline(ty) => {
-                effective_string_semantics_of_input_type(ty.as_ref(), cgs)
-            }
-        }
-    }
-
     pub fn resolved_array_items<'a>(&self, cgs: &'a CGS) -> Option<&'a ArrayItemsSchema> {
         self.named_value(cgs)
             .ok()
             .and_then(|nv| nv.array_items.as_ref())
+    }
+
+    /// Whether this input slot expects structured or multiline string payloads.
+    pub fn is_structured_or_multiline(&self, cgs: &CGS) -> bool {
+        match &self.wire {
+            InputFieldWire::Registry(_) => self
+                .named_value(cgs)
+                .map(|nv| nv.domain.is_structured_or_multiline())
+                .unwrap_or(false),
+            InputFieldWire::Inline(ty) => input_type_is_structured_or_multiline(ty.as_ref(), cgs),
+        }
+    }
+}
+
+fn input_type_is_structured_or_multiline(ty: &InputType, cgs: &CGS) -> bool {
+    match ty {
+        InputType::None | InputType::Value { .. } => false,
+        InputType::Object { fields, .. } => fields
+            .iter()
+            .any(|f| f.is_structured_or_multiline(cgs)),
+        InputType::Array { element_type, .. } => {
+            input_type_is_structured_or_multiline(element_type.as_ref(), cgs)
+        }
+        InputType::Union { variants } => variants
+            .iter()
+            .flat_map(|v| v.fields.iter())
+            .any(|f| f.is_structured_or_multiline(cgs)),
     }
 }
 
@@ -1571,12 +1594,11 @@ impl ValueDomainSlot for ArrayItemsSchema {
     }
 }
 
-/// Validation constraints for inputs
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+const INPUT_VALIDATION_PREDICATES_REMOVED: &str = "input_schema.validation.predicates is removed: declare scalar constraints (min, max, min_length, max_length, pattern, …) on the corresponding `values:` row via value_ref; keep only cross_field_rules and allow_null under validation";
+
+/// Cross-field validation for capability inputs (`allow_null`, `cross_field_rules` only).
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct InputValidation {
-    /// Custom validation predicates that must be satisfied
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub predicates: Vec<ValidationPredicate>,
     /// Whether null/undefined inputs are allowed
     #[serde(default)]
     pub allow_null: bool,
@@ -1585,37 +1607,40 @@ pub struct InputValidation {
     pub cross_field_rules: Vec<CrossFieldRule>,
 }
 
-/// A validation predicate for input values
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ValidationPredicate {
-    /// Field path this predicate applies to (dot notation: "user.email")
-    pub field_path: String,
-    /// The validation operator
-    pub operator: ValidationOp,
-    /// The value to validate against
-    pub value: crate::Value,
-    /// Error message if validation fails
-    pub error_message: String,
+impl Default for InputValidation {
+    fn default() -> Self {
+        Self {
+            allow_null: false,
+            cross_field_rules: Vec::new(),
+        }
+    }
 }
 
-/// Validation operators for input constraints
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ValidationOp {
-    /// Minimum length for strings/arrays
-    MinLength,
-    /// Maximum length for strings/arrays
-    MaxLength,
-    /// Minimum value for numbers
-    MinValue,
-    /// Maximum value for numbers
-    MaxValue,
-    /// Regular expression pattern for strings
-    Pattern,
-    /// Custom validation function reference
-    CustomFunction,
-    /// Dependency on another field
-    DependsOn,
+impl<'de> Deserialize<'de> for InputValidation {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Raw {
+            #[serde(default)]
+            predicates: Option<serde_yaml::Value>,
+            #[serde(default)]
+            allow_null: bool,
+            #[serde(default)]
+            cross_field_rules: Vec<CrossFieldRule>,
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        if raw.predicates.is_some() {
+            return Err(SerdeDeError::custom(
+                INPUT_VALIDATION_PREDICATES_REMOVED,
+            ));
+        }
+        Ok(Self {
+            allow_null: raw.allow_null,
+            cross_field_rules: raw.cross_field_rules,
+        })
+    }
 }
 
 /// Cross-field validation rules
@@ -2560,7 +2585,7 @@ impl CGS {
 
     /// Canonical [`NamedValueSchema`] row for a registry-backed slot (`FieldSchema`, [`InputFieldSchema`], [`ArrayItemsSchema`]).
     ///
-    /// Wire shape (`field_type`, `value_format`, `allowed_values`) and `string_semantics` / `array_items`
+    /// Wire shape (`field_type`, `value_format`, `allowed_values`) and `array_items`
     /// live on the registry row — slots carry only `value_ref` plus use-site fields.
     pub fn named_value_for_slot(
         &self,
@@ -3310,18 +3335,7 @@ impl CGS {
         for (entity_name, entity) in &self.entities {
             for (field_name, field) in &entity.fields {
                 let nv = field.named_value(self)?;
-                if matches!(nv.field_type, FieldType::Blob) && nv.string_semantics.is_some() {
-                    return Err(SchemaError::StringSemanticsOnNonString {
-                        entity: entity_name.to_string(),
-                        field: field_name.to_string(),
-                    });
-                } else if !matches!(nv.field_type, FieldType::String | FieldType::Blob) {
-                    if nv.string_semantics.is_some() {
-                        return Err(SchemaError::StringSemanticsOnNonString {
-                            entity: entity_name.to_string(),
-                            field: field_name.to_string(),
-                        });
-                    }
+                if !matches!(nv.field_type, FieldType::String | FieldType::Blob) {
                     if field.agent_presentation.is_some() {
                         return Err(SchemaError::AgentPresentationOnNonString {
                             entity: entity_name.to_string(),
@@ -3657,44 +3671,6 @@ impl CGS {
         Ok(())
     }
 
-    fn for_each_registry_input_field_in_field(
-        cgs: &CGS,
-        field: &InputFieldSchema,
-        f: &mut impl FnMut(&InputFieldSchema),
-    ) {
-        match &field.wire {
-            InputFieldWire::Inline(ty) => {
-                Self::for_each_registry_input_field_in_type(cgs, ty.as_ref(), f);
-            }
-            InputFieldWire::Registry(_) => f(field),
-        }
-    }
-
-    fn for_each_registry_input_field_in_type(
-        cgs: &CGS,
-        input_type: &InputType,
-        f: &mut impl FnMut(&InputFieldSchema),
-    ) {
-        match input_type {
-            InputType::Object { fields, .. } => {
-                for field in fields {
-                    Self::for_each_registry_input_field_in_field(cgs, field, f);
-                }
-            }
-            InputType::Array { element_type, .. } => {
-                Self::for_each_registry_input_field_in_type(cgs, element_type.as_ref(), f);
-            }
-            InputType::Union { variants } => {
-                for v in variants {
-                    for field in &v.fields {
-                        Self::for_each_registry_input_field_in_field(cgs, field, f);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
     /// Warnings for read-provided structured/multiline string fields that omit `data_class`.
     ///
     /// Only runs when the catalog declares a non-empty `data_classes:` registry (opt-in to
@@ -3736,56 +3712,13 @@ impl CGS {
             if !matches!(nv.field_type, FieldType::String) {
                 continue;
             }
-            let sem = field.effective_string_semantics(self);
-            if !sem.is_structured_or_multiline() {
+            if !field.is_structured_or_multiline(self) {
                 continue;
             }
-            let sem_label = sem.gloss_type_keyword().unwrap_or("structured");
+            let sem_label = nv.domain.gloss_type_keyword();
             out.push(format!(
                 "entity '{entity_name}', field '{field_name}': read-provided {sem_label} string has no data_class — plan-flow treats this output as unlabeled (set data_class: to a key under data_classes:)"
             ));
-        }
-        out
-    }
-
-    /// Violations when a `string` entity field or capability parameter omits `string_semantics` (required at load).
-    pub fn string_semantics_violations(&self) -> Vec<String> {
-        let mut out = Vec::new();
-        for (entity_name, entity) in &self.entities {
-            for (field_name, field) in &entity.fields {
-                let key = field.kind.registry_key().as_str();
-                let Some(nv) = self.values.get(key) else {
-                    continue;
-                };
-                if !matches!(nv.field_type, FieldType::String) {
-                    continue;
-                }
-                if nv.string_semantics.is_none() {
-                    out.push(format!(
-                        "entity '{}', field '{}': string field must declare string_semantics (short, markdown, document, html, json_text, or blob); use field_type: blob for opaque binary instead of string_semantics: blob",
-                        entity_name, field_name
-                    ));
-                }
-            }
-        }
-        for (cap_name, cap) in &self.capabilities {
-            let Some(input) = cap.input_schema.as_ref() else {
-                continue;
-            };
-            Self::for_each_registry_input_field_in_type(self, &input.input_type, &mut |param| {
-                let Ok(nv) = param.named_value(self) else {
-                    return;
-                };
-                if !matches!(nv.field_type, FieldType::String) {
-                    return;
-                }
-                if nv.string_semantics.is_none() {
-                    out.push(format!(
-                        "capability '{}', parameter '{}': string parameter must declare string_semantics (short, markdown, document, html, json_text, or blob)",
-                        cap_name, param.name
-                    ));
-                }
-            });
         }
         out
     }
@@ -4074,12 +4007,6 @@ impl CGS {
         domain_entity: Option<&EntityDef>,
     ) -> Result<(), SchemaError> {
         let nv = param.named_value(cgs)?;
-        if !matches!(nv.field_type, FieldType::String) && nv.string_semantics.is_some() {
-            return Err(SchemaError::StringSemanticsOnNonStringParam {
-                capability: cap_name.to_string(),
-                param: param.name.clone(),
-            });
-        }
         if let FieldType::EntityRef { target } = &nv.field_type {
             if !cgs.entities.contains_key(target) {
                 return Err(SchemaError::EntityRefUnknownTarget {
@@ -5433,6 +5360,7 @@ impl CapabilitySchema {
             preflight: None,
             discovery: None,
             identity_key: None,
+            invalidates_entities: vec![],
         }
     }
 }

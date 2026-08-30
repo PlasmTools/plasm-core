@@ -114,7 +114,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n🏆 Input validation system fully operational!");
     println!("   ✓ Type checking works");
-    println!("   ✓ Validation predicates work");
+    println!("   ✓ Value domain constraints work");
     println!("   ✓ Enum constraints work");
     println!("   ✓ Cross-field rules work");
 

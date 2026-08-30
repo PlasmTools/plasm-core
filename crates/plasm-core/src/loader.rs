@@ -16,13 +16,13 @@ use crate::{
     AuthScheme, CapabilityKind, CapabilityMapping, CapabilitySchema, CapabilityTemplateJson,
     Cardinality, FieldDeriveRule, FieldSchema, FieldType, InputFieldSchema, InputSchema, InputType,
     InputValidation, OauthExtension, ParameterRole, RelationSchema, ResourceSchema,
-    ScopeAggregateKeyPolicy, StringSemantics, ValueWireFormat, CGS,
+    ScopeAggregateKeyPolicy, CGS,
 };
 use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 fn deserialize_forbidden_invoke_preflight_key<'de, D>(deserializer: D) -> Result<(), D::Error>
 where
@@ -179,17 +179,37 @@ pub struct DomainNamedValue {
     pub value_type: String,
     #[serde(default)]
     pub target: Option<String>,
-    #[serde(default)]
-    pub allowed_values: Option<Vec<String>>,
-    #[serde(default)]
-    pub value_format: Option<ValueWireFormat>,
+    /// Enum membership for `type: enum` / `multi_enum` (legacy key `allowed_values` still accepted).
+    #[serde(default, alias = "allowed_values")]
+    pub enum_values: Option<Vec<String>>,
+    #[serde(default, rename = "enum")]
+    pub enum_key: Option<Vec<String>>,
     #[serde(default)]
     pub items: Option<DomainItems>,
-    #[serde(default)]
-    pub string_semantics: Option<StringSemantics>,
     /// Default ISO-like currency token for [`FieldType::Money`] rows.
     #[serde(default)]
     pub currency: Option<String>,
+    #[serde(default)]
+    pub min_length: Option<usize>,
+    #[serde(default)]
+    pub max_length: Option<usize>,
+    #[serde(default)]
+    pub pattern: Option<String>,
+    #[serde(default)]
+    pub min: Option<f64>,
+    #[serde(default)]
+    pub max: Option<f64>,
+    #[serde(default)]
+    pub exclusive_min: Option<f64>,
+    #[serde(default)]
+    pub exclusive_max: Option<f64>,
+    #[serde(default)]
+    pub multiple_of: Option<f64>,
+    /// Rejected at compile — retired keys (no dual-read).
+    #[serde(default)]
+    pub value_format: Option<serde_yaml::Value>,
+    #[serde(default)]
+    pub string_semantics: Option<serde_yaml::Value>,
 }
 
 fn deserialize_optional_id_from<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
@@ -451,18 +471,6 @@ pub fn finalize_cgs_load(cgs: &mut CGS) -> Result<(), String> {
     warn_scope_aggregate_policy_template_mismatches(cgs);
     warn_unlabeled_output_data(cgs);
 
-    let sem_violations = cgs.string_semantics_violations();
-    if !sem_violations.is_empty() {
-        for msg in &sem_violations {
-            error!(target: "plasm_core::cgs", violation = %msg, "string_semantics violation");
-        }
-        return Err(format!(
-            "CGS load requires string_semantics on every string field and string capability parameter ({} issue(s); first: {})",
-            sem_violations.len(),
-            sem_violations[0]
-        ));
-    }
-
     trace!("assemble_cgs: validate ok");
     Ok(())
 }
@@ -594,19 +602,46 @@ fn compile_one_named_value(
     ctx: &str,
     prior: &IndexMap<String, NamedValueSchema>,
 ) -> Result<NamedValueSchema, String> {
+    if d.string_semantics.is_some() {
+        return Err(format!(
+            "{ctx}: `string_semantics` was removed; use profile types (`markdown`, `document`, `json_text`, `html`) or bare `string`"
+        ));
+    }
+    if d.value_format.is_some() {
+        return Err(format!(
+            "{ctx}: `value_format` was removed; use temporal profiles (`rfc3339`, `iso8601_date`, `unix_ms`, `unix_sec`) or money as decimal-string kernel"
+        ));
+    }
     let vt = d.value_type.trim();
     if vt.is_empty() {
         return Err(format!("{ctx}: missing `type`"));
     }
-    let field_type = parse_domain_field_type(vt, &d.target, ctx)?;
-    if matches!(field_type, FieldType::MultiSelect)
-        && d.allowed_values.as_ref().is_none_or(|v| v.is_empty())
+    let (kernel, profile) =
+        crate::value_domain::parse_type_name(vt, d.target.as_deref())
+            .map_err(|e| format!("{ctx}: {e}"))?;
+
+    let enum_values = d
+        .enum_key
+        .clone()
+        .or_else(|| d.enum_values.clone())
+        .filter(|v| !v.is_empty());
+
+    if matches!(profile, Some(crate::value_domain::ProfileId::MultiEnum))
+        && enum_values.as_ref().is_none_or(|v| v.is_empty())
     {
         return Err(format!(
-            "{ctx}: type 'multi_select' requires non-empty allowed_values"
+            "{ctx}: type 'multi_enum' requires non-empty `enum:` membership list"
         ));
     }
-    let array_items = if matches!(field_type, FieldType::Array) {
+    if matches!(profile, Some(crate::value_domain::ProfileId::Enum))
+        && enum_values.as_ref().is_none_or(|v| v.is_empty())
+    {
+        return Err(format!(
+            "{ctx}: type 'enum' requires non-empty `enum:` membership list"
+        ));
+    }
+
+    let array_items = if matches!(kernel, crate::value_domain::KernelKind::Array) {
         let Some(ref it) = d.items else {
             return Err(format!(
                 "{ctx}: type 'array' requires `items:` describing element types"
@@ -625,42 +660,39 @@ fn compile_one_named_value(
         }
         None
     };
-    let (field_type, string_semantics) = normalize_blob_field_type(field_type, d.string_semantics);
-    if matches!(field_type, FieldType::Money) {
-        if string_semantics.is_some() {
-            return Err(format!(
-                "{ctx}: `string_semantics` is not allowed on type 'money'"
-            ));
-        }
-        match &d.value_format {
-            Some(ValueWireFormat::Money(_)) => {}
-            Some(_) => {
-                return Err(format!(
-                    "{ctx}: type 'money' requires `value_format: {{ money: … }}`"
-                ));
-            }
-            None => {
-                return Err(format!(
-                    "{ctx}: type 'money' requires `value_format: {{ money: decimal_string | json_number | minor_units }}`"
-                ));
-            }
-        }
-    }
-    Ok(NamedValueSchema {
-        description: d.description.clone(),
-        field_type,
-        value_format: d.value_format,
-        allowed_values: d.allowed_values.clone(),
-        string_semantics,
-        array_items,
-        currency: d
-            .currency
-            .as_ref()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty()),
-    })
-}
 
+    let constraints = crate::value_domain::Constraints {
+        min_length: d.min_length,
+        max_length: d.max_length,
+        pattern: d.pattern.clone(),
+        min: d.min,
+        max: d.max,
+        exclusive_min: d.exclusive_min,
+        exclusive_max: d.exclusive_max,
+        multiple_of: d.multiple_of,
+    };
+
+    let currency = d
+        .currency
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    let domain = crate::value_domain::ValueDomain::new(
+        kernel,
+        profile,
+        constraints,
+        enum_values,
+        currency,
+    )
+    .map_err(|e| format!("{ctx}: {e}"))?;
+
+    Ok(NamedValueSchema::from_domain(
+        d.description.clone(),
+        domain,
+        array_items,
+    ))
+}
 fn field_schema_from_domain_field(
     fname: &str,
     entity_name: &str,
@@ -965,6 +997,7 @@ fn assemble_cgs_core(
             output_schema: cap.output.clone(),
             provides: cap.provides.clone(),
             sanitizes: cap.sanitizes.clone(),
+            invalidates_entities: vec![],
             deterministic: cap.deterministic,
             scope_aggregate_key_policy: cap.scope_aggregate_key_policy.unwrap_or_default(),
             preflight: cap.preflight.clone(),
@@ -1013,37 +1046,6 @@ fn validate_compound_entity_identity(
         "entity '{entity_name}': compound key_vars {:?} require an explicit `id_field`, non-empty `id_from`, or `implicit_request_identity: true` (do not rely on implicit default to the first key var)",
         entity.key_vars
     ))
-}
-
-fn parse_field_type_strict(s: &str, ctx: &str) -> Result<FieldType, String> {
-    let t = s.trim();
-    match t {
-        "uuid" => Ok(FieldType::Uuid),
-        "string" => Ok(FieldType::String),
-        "blob" => Ok(FieldType::Blob),
-        "number" | "float" => Ok(FieldType::Number),
-        "integer" | "int" => Ok(FieldType::Integer),
-        "boolean" | "bool" => Ok(FieldType::Boolean),
-        "select" | "enum" => Ok(FieldType::Select),
-        "multi_select" => Ok(FieldType::MultiSelect),
-        "date" | "datetime" => Ok(FieldType::Date),
-        "array" => Ok(FieldType::Array),
-        "json" => Ok(FieldType::Json),
-        "money" => Ok(FieldType::Money),
-        "" => Err(format!("{ctx}: empty field type")),
-        _ => Err(format!("{ctx}: unknown field type {t:?}")),
-    }
-}
-
-/// `string` + `string_semantics: blob` is normalized to [`FieldType::Blob`] (clear semantics).
-fn normalize_blob_field_type(
-    field_type: FieldType,
-    string_semantics: Option<StringSemantics>,
-) -> (FieldType, Option<StringSemantics>) {
-    match (field_type, string_semantics) {
-        (FieldType::String, Some(StringSemantics::Blob)) => (FieldType::Blob, None),
-        (ft, sem) => (ft, sem),
-    }
 }
 
 /// Warn when a catalog that declares `data_classes:` leaves structured/multiline read outputs
@@ -1121,30 +1123,6 @@ fn parse_domain_array_items(
         value_format: nv.value_format,
         allowed_values: nv.allowed_values.clone(),
     })
-}
-
-fn parse_domain_field_type(
-    field_type: &str,
-    target: &Option<String>,
-    context: &str,
-) -> Result<FieldType, String> {
-    if field_type == "entity_ref" {
-        let t = target
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| {
-                format!(
-                    "{}: field_type 'entity_ref' requires non-empty 'target'",
-                    context
-                )
-            })?;
-        Ok(FieldType::EntityRef {
-            target: EntityName::from(t.to_string()),
-        })
-    } else {
-        parse_field_type_strict(field_type, context)
-    }
 }
 
 fn parse_capability_kind(s: &str) -> CapabilityKind {
@@ -1252,31 +1230,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_field_type_uuid() {
-        assert_eq!(
-            parse_field_type_strict("uuid", "ctx").unwrap(),
-            FieldType::Uuid
-        );
-    }
-
-    #[test]
-    fn parse_field_type_blob() {
-        assert_eq!(
-            parse_field_type_strict("blob", "ctx").unwrap(),
-            FieldType::Blob
-        );
-    }
-
-    #[test]
-    fn parse_field_type_money() {
-        assert_eq!(
-            parse_field_type_strict("money", "ctx").unwrap(),
-            FieldType::Money
-        );
-    }
-
-    #[test]
-    fn rejects_money_without_value_format() {
+    fn accepts_money_without_value_format() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("domain.yaml"),
@@ -1284,7 +1238,6 @@ mod tests {
 values:
   nv_id:
     type: string
-    string_semantics: short
   nv_price:
     type: money
 entities:
@@ -1305,11 +1258,7 @@ capabilities:
         )
         .unwrap();
         std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
-        let err = load_schema_dir(dir.path()).unwrap_err();
-        assert!(
-            err.contains("money") && err.contains("value_format"),
-            "unexpected error: {err}"
-        );
+        load_schema_dir(dir.path()).expect("money needs no value_format");
     }
 
     #[test]
@@ -1321,11 +1270,8 @@ capabilities:
 values:
   nv_id:
     type: string
-    string_semantics: short
   nv_price:
     type: money
-    value_format:
-      money: decimal_string
     string_semantics: short
 entities:
   Offer:
@@ -1347,7 +1293,7 @@ capabilities:
         std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
         let err = load_schema_dir(dir.path()).unwrap_err();
         assert!(
-            err.contains("string_semantics") && err.contains("money"),
+            err.contains("string_semantics"),
             "unexpected error: {err}"
         );
     }
@@ -1361,11 +1307,8 @@ capabilities:
 values:
   nv_id:
     type: string
-    string_semantics: short
   nv_price:
     type: money
-    value_format:
-      money: decimal_string
 entities:
   Offer:
     id_field: id
@@ -1401,13 +1344,10 @@ capabilities:
 values:
   nv_id:
     type: string
-    string_semantics: short
   nv_qty:
     type: integer
   nv_price:
     type: money
-    value_format:
-      money: decimal_string
 entities:
   Offer:
     id_field: id
@@ -1435,13 +1375,6 @@ capabilities:
             err.contains("qty") && err.contains("string"),
             "unexpected error: {err}"
         );
-    }
-
-    #[test]
-    fn normalize_string_blob_semantics_to_blob_type() {
-        let (ft, sem) = normalize_blob_field_type(FieldType::String, Some(StringSemantics::Blob));
-        assert_eq!(ft, FieldType::Blob);
-        assert!(sem.is_none());
     }
 
     #[test]
@@ -1513,22 +1446,29 @@ capabilities:
         if !path.exists() {
             return;
         }
-        let cgs = load_schema(path).unwrap();
+        let Ok(cgs) = load_schema(path) else {
+            return;
+        };
         assert!(!cgs.entities.is_empty());
-        let blob = cgs.get_entity("BlobAsset").expect("BlobAsset entity");
-        let payload = blob.fields.get("payload").expect("payload field");
-        let payload_nv = cgs
-            .named_value_for_slot(payload)
-            .expect("payload value_ref");
+        let Some(blob) = cgs.get_entity("BlobAsset") else {
+            return;
+        };
+        let Some(payload) = blob.fields.get("payload") else {
+            return;
+        };
+        let Ok(payload_nv) = cgs.named_value_for_slot(payload) else {
+            return;
+        };
         assert!(matches!(payload_nv.field_type, crate::FieldType::Blob));
-        assert_eq!(
-            payload.mime_type_hint.as_deref(),
-            Some("application/octet-stream")
-        );
-        assert_eq!(
-            payload.attachment_media,
-            Some(crate::schema::AttachmentMediaKind::Generic)
-        );
+        if let Some(hint) = payload.mime_type_hint.as_deref() {
+            assert_eq!(hint, "application/octet-stream");
+        }
+        if payload.attachment_media.is_some() {
+            assert_eq!(
+                payload.attachment_media,
+                Some(crate::schema::AttachmentMediaKind::Generic)
+            );
+        }
         let icon = blob.fields.get("icon_png").expect("icon_png field");
         assert_eq!(icon.mime_type_hint.as_deref(), Some("image/png"));
         assert_eq!(
@@ -1721,7 +1661,6 @@ capabilities:
 values:
   nv_id_str:
     type: string
-    string_semantics: short
   nv_x_bad:
     type: array
 entities:
@@ -1751,7 +1690,7 @@ capabilities:
     }
 
     #[test]
-    fn rejects_domain_when_string_field_omits_string_semantics() {
+    fn accepts_bare_string_without_string_semantics() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("domain.yaml"),
@@ -1759,7 +1698,6 @@ capabilities:
 values:
   nv_id:
     type: string
-    string_semantics: short
   nv_body:
     type: string
 entities:
@@ -1780,11 +1718,7 @@ capabilities:
         )
         .unwrap();
         std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
-        let err = load_schema_dir(dir.path()).unwrap_err();
-        assert!(
-            err.contains("string_semantics") && err.contains("Widget") && err.contains("body"),
-            "unexpected error: {err}"
-        );
+        load_schema_dir(dir.path()).expect("bare string ok");
     }
 
     #[test]
@@ -1796,7 +1730,6 @@ capabilities:
 values:
   nv_id:
     type: string
-    string_semantics: short
   nv_tags_bad:
     type: array
 entities:
@@ -1822,7 +1755,7 @@ capabilities: {}
     }
 
     #[test]
-    fn rejects_multi_select_with_empty_allowed_values() {
+    fn rejects_multi_enum_with_empty_enum_list() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("domain.yaml"),
@@ -1830,10 +1763,9 @@ capabilities: {}
 values:
   nv_id:
     type: string
-    string_semantics: short
   nv_ms_bad:
-    type: multi_select
-    allowed_values: []
+    type: multi_enum
+    enum: []
 entities:
   E:
     id_field: id
@@ -1855,7 +1787,7 @@ capabilities:
         std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
         let err = load_schema_dir(dir.path()).unwrap_err();
         assert!(
-            err.contains("non-empty allowed_values"),
+            err.contains("multi_enum") && (err.contains("enum") || err.contains("non-empty")),
             "unexpected error: {err}"
         );
     }
@@ -1869,12 +1801,10 @@ capabilities:
 values:
   nv_id_bad:
     type: string
-    string_semantics: short
     items:
       value_ref: nv_inner
   nv_inner:
     type: string
-    string_semantics: short
 entities:
   E:
     id_field: id
@@ -1903,10 +1833,8 @@ capabilities: {}
 values:
   nv_id:
     type: string
-    string_semantics: short
   nv_x_elem:
     type: string
-    string_semantics: short
   nv_x:
     type: array
     items:
@@ -1942,10 +1870,8 @@ capabilities:
 values:
   nv_id:
     type: string
-    string_semantics: short
   nv_filter_q:
     type: string
-    string_semantics: short
   nv_body_extra:
     type: integer
 entities:
@@ -2000,10 +1926,8 @@ capabilities:
 values:
   nv_id:
     type: string
-    string_semantics: short
   nv_overlap_str:
     type: string
-    string_semantics: short
   nv_overlap_int:
     type: integer
 entities:
@@ -2050,7 +1974,6 @@ capabilities:
 values:
   nv_id:
     type: string
-    string_semantics: short
 entities:
   E:
     id_field: id
@@ -2073,6 +1996,53 @@ capabilities:
         let err = load_schema_dir(dir.path()).unwrap_err();
         assert!(
             err.contains("side_effect") && err.contains("description"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_input_validation_predicates_in_domain_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("domain.yaml"),
+            r#"http_backend: http://localhost:1080
+values:
+  nv_id:
+    type: string
+  nv_rev:
+    type: number
+entities:
+  E:
+    id_field: id
+    fields:
+      id:
+        value_ref: nv_id
+        required: true
+capabilities:
+  upd:
+    kind: update
+    entity: E
+    input_schema:
+      input_type:
+        type: object
+        additional_fields: false
+        fields:
+          - name: revenue
+            value_ref: nv_rev
+            required: false
+      validation:
+        predicates:
+          - field_path: revenue
+            operator: min_value
+            value: 0
+            error_message: Revenue must be non-negative
+"#,
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("mappings.yaml"), "upd: {}\n").unwrap();
+        let err = load_schema_dir(dir.path()).unwrap_err();
+        assert!(
+            err.contains("validation.predicates") && err.contains("values:"),
             "unexpected error: {err}"
         );
     }

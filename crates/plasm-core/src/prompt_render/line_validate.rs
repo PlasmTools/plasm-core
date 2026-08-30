@@ -31,13 +31,7 @@ fn domain_line_cache_key(
     stripped_expr.hash(&mut h);
     map_arc.is_some().hash(&mut h);
     if let Some(arc) = map_arc {
-        let rows = arc.exposed_entity_symbol_rows();
-        rows.len().hash(&mut h);
-        for row in rows.iter().take(8) {
-            row.entry_id.hash(&mut h);
-            row.entity.hash(&mut h);
-            row.symbol.hash(&mut h);
-        }
+        arc.line_valid_cache_symbol_fingerprint(&mut h);
     }
     h.finish()
 }
@@ -108,14 +102,14 @@ pub(crate) fn domain_line_validate_cached(
     cgs: &CGS,
     expr: &str,
     map_arc: Option<&Arc<SymbolMap>>,
-) -> Option<(crate::expr_parser::ParsedExpr, String)> {
+) -> Option<(Arc<crate::expr_parser::ParsedExpr>, String)> {
     let stripped = strip_prompt_expression_annotations(expr);
     let key = domain_line_cache_key(cache_seed, &stripped, map_arc);
     if let Some(entry) = cache.get(&key) {
         return match entry {
             DomainLineValidEntry::Invalid => None,
             DomainLineValidEntry::Valid { parsed, wire } => {
-                Some((parsed.as_ref().clone(), wire.clone()))
+                Some((Arc::clone(parsed), wire.clone()))
             }
         };
     }
@@ -127,9 +121,7 @@ pub(crate) fn domain_line_validate_cached(
         None => DomainLineValidEntry::Invalid,
     };
     let out = match &entry {
-        DomainLineValidEntry::Valid { parsed, wire } => {
-            Some((parsed.as_ref().clone(), wire.clone()))
-        }
+        DomainLineValidEntry::Valid { parsed, wire } => Some((Arc::clone(parsed), wire.clone())),
         DomainLineValidEntry::Invalid => None,
     };
     // Only memoize successes — a failed receiver probe for one suffix must not poison later witnesses.

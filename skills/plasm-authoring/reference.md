@@ -49,7 +49,8 @@ Reference: [Linear #1035](https://github.com/linear/linear/issues/1035) (task-sh
 | **`output.type: none`** | Removed — actions need **`provides:`** and/or **`output: { type: side_effect, description: … }`**. |
 | **CGS as `.json`** | **Not loaded** — `load_schema` rejects JSON paths; use a directory with **`domain.yaml` + `mappings.yaml`**, a combined authoring **`.yaml`**, or **`.cgs.yaml`** interchange. |
 | **`apis/<api>/eval/coverage.yaml` `exclude:`** | **Not implemented** — only **`required_extra`** exists in `plasm-eval` coverage overrides. |
-| **`string` + `string_semantics: blob`** | **Legacy** — the loader normalizes this to **`blob`** in the resolved CGS and clears blob string semantics. Prefer a **`values:`** row with **`type: blob`**. |
+| **`string` + `string_semantics: blob`** | **Rejected** — use **`type: blob`**. |
+| **`string_semantics` / `value_format` / `allowed_values` / `type: select\|date\|multi_select`** | **Rejected** — use kernel or profile `type:` names plus `enum:` / `constraints:` (see [Field Types](#field-types)). |
 | **Inline `field_type:` / `type:` on entity `fields:` or on `parameters:` rows** | **Removed from split `domain.yaml` authoring** — wire shapes live only under top-level **`values:`**; slots use **`value_ref:`**. Exception: **`input_schema.input_type.fields`** remain full **`InputFieldSchema`** rows (**`value_ref` + `field_type`** mirrors); they must agree with **`values[value_ref]`** (see [Value domains](#value-domains-values-and-value_ref)). |
 
 ## How CGS, CML, and runtime fit together
@@ -77,8 +78,8 @@ The CGS is the semantic domain model. It declares what entities exist, how they 
 
 Split **`domain.yaml`** declares a catalog-local registry of **named semantic slots** under top-level **`values:`** (stable keys, usually `snake_case`). Each row carries the **wire** `type:` and gloss-related keys — the same vocabulary as the former inline `field_type` / param `type` — but the **key** is a semantic identity for this catalog, not "dedupe by primitive wire shape alone":
 
-- **`type:`** — `string`, `integer`, `number`, `boolean`, `select`, `multi_select`, `date`, **`money`**, `array`, `entity_ref`, **`blob`**, `uuid`.
-- Type-specific keys on the **value row**: `target` (`entity_ref`), `allowed_values` (`select` / `multi_select`; multi_select must be non-empty), `value_format` (`date` or `money`), `currency` (`money`), `string_semantics` (`string`; forbidden on `money`), **`items: { value_ref: <key> }`** (`array` — element shape is another `values` row).
+- **`type:`** — a **kernel** name (`string`, `integer`, `number`, `boolean`, `array`, `json`, `entity_ref`, `blob`, `money`) or a **core profile** name (`markdown`, `document`, `html`, `json_text`, `uuid`, `email`, `url`, `http_url`, `hostname`, `e164`, `ipv4`, `ipv6`, `hex`, `base64`, `base64url`, `rfc3339`, `iso8601_date`, `unix_ms`, `unix_sec`, `enum`, `multi_enum`). See [Field Types](#field-types).
+- Type-specific keys on the **value row**: `target` (`entity_ref`), **`enum:`** (`enum` / `multi_enum`; multi_enum must be non-empty), **`constraints:`** (length, pattern, min/max — see Field Types), `currency` (`money`), **`items: { value_ref: <key> }`** (`array` — element shape is another `values` row).
 
 **Entity `fields:`** and **`capabilities.*.parameters:`** list entries declare **only** how that slot uses a shape:
 
@@ -87,18 +88,18 @@ Split **`domain.yaml`** declares a catalog-local registry of **named semantic sl
 - Presentation / attachment hints (**`agent_presentation`**, **`mime_type_hint`**, **`attachment_media`**) live on the **field slot** when they apply (not duplicated on every reuse of the same value key).
 - **`currency_field:`** on a money **field slot** names a sibling on the same entity whose string value supplies currency after decode.
 
-**Semantic slots (authoring judgement):** A **`values:`** key is not "the type `string`" or "the type `integer`" in the abstract — it is a **catalog-local semantic identity**: what teaching gloss, `string_semantics`, `description`, and validation **say** that value *means* in this API. Two different columns can share the same on-wire JSON type (`string`, RFC3339 `date`, …) yet must remain **different keys** when their **meaning** differs (e.g. `owner` vs `repo` vs `html_url`). **Sharing** one key across multiple `value_ref` sites is the same class of decision as **relation cardinality** or **whether two endpoints are one capability**: there is **no** deterministic rule from the wire alone — authors choose when two sites are intentionally **the same domain value space** (one enum, one id space, one taxonomy, aligned gloss). Prefer **distinct keys per field/param by default**; merge only when that identity story is obvious and descriptions stay compatible.
+**Semantic slots (authoring judgement):** A **`values:`** key is not "the type `string`" or "the type `integer`" in the abstract — it is a **catalog-local semantic identity**: what teaching gloss, profile `type:`, `description`, and `constraints` **say** that value *means* in this API. Two different columns can share the same on-wire JSON type (`string`, `rfc3339`, …) yet must remain **different keys** when their **meaning** differs (e.g. `owner` vs `repo` vs `html_url`). **Sharing** one key across multiple `value_ref` sites is the same class of decision as **relation cardinality** or **whether two endpoints are one capability**: there is **no** deterministic rule from the wire alone — authors choose when two sites are intentionally **the same domain value space** (one enum, one id space, one taxonomy, aligned gloss). Prefer **distinct keys per field/param by default**; merge only when that identity story is obvious and descriptions stay compatible.
 
-**Sharing `values` keys:** Only point multiple slots at the **same** `values` key when they are intentionally the same domain concept (e.g. one shared enum, or the same `entity_ref` target meaning the same id space) **and** gloss text is compatible. **Never** merge unrelated strings, integers, or dates solely because the wire type matches — use distinct keys per slot (`nv_<entity>_<field>`, `nv_<capability>_<param>`) so `description` / `string_semantics` stay truthful.
+**Sharing `values` keys:** Only point multiple slots at the **same** `values` key when they are intentionally the same domain concept (e.g. one shared enum, or the same `entity_ref` target meaning the same id space) **and** gloss text is compatible. **Never** merge unrelated strings, integers, or timestamps solely because the wire type matches — use distinct keys per slot (`nv_<entity>_<field>`, `nv_<capability>_<param>`) so `description` / profile choice stay truthful. **Login ids vs addresses:** a login `username` parameter must not share a `value_ref` with counterparty / profile email fields — use a dedicated slot (e.g. `nv_login_username`) even when both are on-wire strings that look like emails.
 
 **Canonical `values:` keys (optional entropy control):** the monorepo carries an optional `scripts/dedupe_primitive_domain_values.py` helper (outside this OSS submodule) whose `--canonicalize-primitives` mode collapses duplicate anonymous rows in the same `domain.yaml` when two or more keys share the same normalized body:
 
-- **Primitives** → fixed names: `nv_wire_str_short`, `nv_wire_str_markdown`, `nv_wire_int`, `nv_wire_num`, `nv_wire_bool`, `nv_wire_date_rfc3339` (empty `values:` `description`; no `items` / `target`; `allowed_values` absent or `[]`; only the scalar keys required for that shape).
-- **Closed sets** → `nv_wire_sel_<16hex>` / `nv_wire_msel_<16hex>` from a SHA-256 of the normalized `{ type, allowed_values }` body (`allowed_values` sorted and deduped for fingerprinting).
+- **Primitives** → fixed names: `nv_wire_str`, `nv_wire_str_markdown`, `nv_wire_int`, `nv_wire_num`, `nv_wire_bool`, `nv_wire_rfc3339` (empty `values:` `description`; no `items` / `target`; `enum` absent or `[]`; only the scalar keys required for that shape).
+- **Closed sets** → `nv_wire_enum_<16hex>` / `nv_wire_menum_<16hex>` from a SHA-256 of the normalized `{ type, enum }` body (`enum` sorted and deduped for fingerprinting).
 
 **`--write`** rewrites every `value_ref` (including nested `items.value_ref`), removes merged keys, bumps `version:`, and reorders `values:` **topologically** so `items.value_ref` targets appear before parents (required by `load_schema`). Re-run `cargo test -p plasm-core` on touched catalogs before committing. Rows with non-empty `description`, arrays, entity refs, or extra YAML keys stay bespoke.
 
-**`input_schema` (create / update / action body):** YAML uses full **`InputFieldSchema`** interchange: each object field has **`name`**, **`value_ref`**, **`field_type:`** (singleton map), plus mirrors (`value_format`, `allowed_values`, `array_items`, `string_semantics`, …). Those mirrors must match **`CGS::values[value_ref]`** — `CGS::validate` / registry denormalization rejects drift. Prefer defining the shape once under **`values:`** and copying the mirrored keys from that row.
+**`input_schema` (create / update / action body):** YAML uses full **`InputFieldSchema`** interchange: each object field has **`name`**, **`value_ref`**, **`field_type:`** (singleton map), plus mirrors (`enum`, `array_items`, profile/kernel `type`, …). Those mirrors must match **`CGS::values[value_ref]`** — `CGS::validate` / registry denormalization rejects drift. Prefer defining the shape once under **`values:`** and copying the mirrored keys from that row.
 
 Combined **`.cgs.yaml`** interchange may still show denormalized **`field_type`** on entity fields for serde round-trips; **authoring** new split domains should use **`values:` + `value_ref`**.
 
@@ -111,12 +112,12 @@ An entity is a typed domain object with a primary key, fields, and relations.
 ```yaml
 values:
   <value_key>:
-    type: <scalar type>       # same vocabulary as Field Types below
+    type: <kernel or profile>   # see Field Types
     target: <EntityName>      # when type is entity_ref
-    allowed_values: [...]     # select / multi_select (multi_select: non-empty)
-    value_format: <scalar or { temporal: ... } or { money: ... }>   # required when type is date or money
-    string_semantics: <...>   # on string rows — prompts / summaries; forbidden on money
-    currency: USD             # optional default unit on money values: rows
+    enum: [...]                 # enum / multi_enum (multi_enum: non-empty)
+    constraints:                # optional — min_length, max_length, pattern, min, max, …
+      max_length: 256
+    currency: USD             # optional default unit on money rows
     items:
       value_ref: <element_value_key>   # when type is array
 
@@ -150,8 +151,10 @@ Symbolic teaching table / TSV teaching attaches **`entities.<Name>.description`*
 
 | Surface | Write | Do **not** write |
 |---------|-------|-------------------|
-| **Entity `description`** | Role / intent only: what class of task or decision this entity grounds — no relation, field, or parameter names that teaching table already prints | Payload inventories, relation "next step" hints, lists of related entities, REST-ish tours, capability ids, step-by-step APIs, HTTP status codes, `transport:`, explicit MCP seed instructions |
-| **Capability `description`** | What this operation **does** or **when** to pick it, in user/domain terms | "Call `foo_query` first", URL paths, error-code trivia (use `discovery.target_terms` for NL hints) |
+| **Entity `description`** | Role / intent only: what class of task or decision this entity grounds — no relation, field, or parameter names that teaching table already prints | Payload inventories, relation "next step" hints, lists of related entities, REST-ish tours, capability ids, step-by-step APIs, HTTP status codes, `transport:`, explicit MCP seed instructions, **other catalogs / `entry_id`s / foreign entity names** |
+| **Capability `description`** | What this operation **does** or **when** to pick it, in user/domain terms (roles: account holder vs recipient, public vs private, …) | "Call `foo_query` first", URL paths, error-code trivia (use `discovery.target_terms` for NL hints), **cross-catalog playbooks** (“get X from catalog Y then call this”) |
+
+**Compositional catalogs — never cross-annotate:** CGS strings are **local** to this `entry_id`. Federation stitches catalogs at session time; authors must **not** hard-wire foreign catalog or entity names into `description` / value glosses / instructional discovery prose. Teach **semantic roles** this surface owns (“login username is the account holder’s email, never a payment counterparty”; “`account_name` is an app key, not a login id”). Product docs may describe multi-catalog rites; **`domain.yaml` must not**.
 
 **Discovery seed graph roles (semantic auto-seed):** Prefer relation-edge roles; entity class is a weak fallback. Precedence: `relations.*.discovery.seed_nav` → `entities.*.discovery.seed_class` → unset (no special prune).
 
@@ -159,6 +162,7 @@ Symbolic teaching table / TSV teaching attaches **`entities.<Name>.description`*
 |-------|--------|----------------|
 | `relations.*.discovery.seed_nav` | `attach` \| `own` \| `locate` | `attach` = decoration of source (comments/labels/reviews/pins/remote links); `own` = source owns history/collection (channel→messages) — XOR DirectCapabilities, prefer Source; `locate` = weak container (repo→issues) |
 | `entities.*.discovery.seed_class` | `primary` \| `dependent` \| `ambient` | Fallback when edges unset: list/mutate roots = `primary`; attach leaves = `dependent`; weak containers = `ambient` |
+| `entities.*.discovery.co_seed_with` | `catalog_primary` \| `federated_primary` \| `session_primary` | Force-teach this entity when peer primaries are workflow-seeded: same catalog (`catalog_primary`), another catalog (`federated_primary`), or either (`session_primary`). Seats are **teaching extras** (outside the ≤3 FO-minimal seed budget) — never hardcode entity names in core |
 
 History-browse phrases belong on the **Source** entity `names`. Materialize Query may still use the Target as `entity:`. Do **not** coach seed choice in descriptions. Product spine: [`docs/intent-discovery.md`](../../../docs/intent-discovery.md). Craft rules: [`docs/research-discovery-annotation-rubric.md`](../../../docs/research-discovery-annotation-rubric.md) §5.3 / §5.5.
 
@@ -223,28 +227,51 @@ By default, each field is read from a top-level JSON key matching the field name
 
 **Entity `description`** (projection banner): Same discipline as fields — never use the banner to summarize what's inside the projection (which refs, which booleans), and never repeat relation names already shown as wire names / `r#`.
 
-Entity field descriptions (and similar gloss fed from slots) must not inventory shapes the schema already teaches (e.g. "map keyed by …", "JSON containing …", repeating `select` alternatives). Prefer **omitting** the field `description` when the parent entity (or `values:` row) carries enough agent-facing meaning; use one sentence only when the slot needs workflow nuance beyond type (staleness, trust boundary, "refresh before …"). Primitive semantics stay on `values:` rows (`string_semantics`, allowed enums, date meaning).
+Entity field descriptions (and similar gloss fed from slots) must not inventory shapes the schema already teaches (e.g. "map keyed by …", "JSON containing …", repeating enum alternatives). Prefer **omitting** the field `description` when the parent entity (or `values:` row) carries enough agent-facing meaning; use one sentence only when the slot needs workflow nuance beyond type (staleness, trust boundary, "refresh before …"). Primitive semantics stay on `values:` rows (profile `type:`, `enum:`, temporal profiles).
 
 **Prompt-facing copy (symbolic TSV / MCP teaching table):** Treat `description` on entities, read capabilities (`query` / `get` / `search`), and `values:` slots as **agent selection hints only**. Do not explain list-vs-detail payload shapes, cursor/page mechanics, request-body JSON shapes, "full vs summary" list entries, or `provides:` behavior there. `create` / `update` / `delete` / `action` capability descriptions may stay richer where they disambiguate `m#` choice.
 
 ### Field Types
 
-In split `domain.yaml`, the **`type:`** column below is the keyword you put on a **`values:`** row. Entity fields and capability parameters resolve that type via **`value_ref`**. Runtime `FieldType` / operator tables are unchanged.
+In split `domain.yaml`, the **`type:`** on a **`values:`** row is either a **kernel** name or a **core profile** name. Entity fields and capability parameters resolve that shape via **`value_ref`**. Runtime `FieldType` / operator tables are unchanged — profiles compile to the same wire kernels the runtime already understands.
 
-| Type | YAML value | Typical expression input | Operators | Description |
-|------|------------|---------------------------|-----------|-------------|
-| String | `string` | string literal / variable | `=`, `!=`, `contains`, `exists` | Free text |
-| UUID | `uuid` | string | `=`, `!=`, `contains`, `exists` | Canonical UUID primary keys — wire values are strings; use for stable opaque ids (e.g. Linear `id`). No `string_semantics`. |
+**Kernels** (wire storage class):
+
+| Kernel | YAML `type:` | Typical input | Operators | Notes |
+|--------|--------------|---------------|-----------|-------|
+| String | `string` | string literal / variable | `=`, `!=`, `contains`, `exists` | Plain text; no profile |
 | Integer | `integer` | number literal | `=`, `!=`, `>`, `<`, `>=`, `<=`, `exists` | 64-bit integer |
 | Number | `number` | number literal | `=`, `!=`, `>`, `<`, `>=`, `<=`, `exists` | Floating point |
-| Boolean | `boolean` | `true` / `false` | `=`, `!=`, `exists` | True/false |
-| Select | `select` | enum token from `allowed_values` | `=`, `!=`, `in`, `exists` | Single enum. Requires `allowed_values`. |
-| MultiSelect | `multi_select` | array of enum tokens | `contains`, `in`, `exists` | Multiple enum. Requires non-empty `allowed_values`. |
-| Date | `date` | string or integer per `value_format` | `=`, `!=`, `contains`, `exists` | **Requires `value_format`:** `rfc3339`, `iso8601_date`, `unix_ms`, or `unix_sec`. Predicate inputs are normalized to the wire shape (forgiving parse, UTC). Display of API responses is not rewritten via `value_format`. |
-| **Money** | **`money`** | decimal string, JSON number, or `{amount, currency}` | `=`, `!=`, `>`, `<`, `>=`, `<=`, `exists` | Fowler amount + optional currency. **Requires `value_format`:** `{ money: decimal_string }`, `{ money: json_number }`, or `{ money: minor_units, scale: N }`. Currency may be fixed on the `values:` row (`currency: USD`) or attached from a sibling field (`currency_field:` on the entity slot). Compare is legal when either side lacks currency; both present and different is a typed error. HTTP encode emits a scalar — never `__plasm_money`. Do not use `string_semantics`. Not for oversized integer strings (e.g. EVM wei). |
-| Array | `array` | array literal / binding | `contains`, `in`, `exists` | Homogeneous list. Requires nested `items:`. |
-| EntityRef | `entity_ref` | id value or nested ref expr | `=`, `!=`, `exists` | Foreign key to another entity. Requires `target: EntityName`. |
-| **Blob** | **`blob`** | attachment-shaped value / binding | `=`, `!=`, `exists` | Opaque binary or base64-heavy payloads. Do not use `string_semantics`. |
+| Boolean | `boolean` | `true` / `false` | `=`, `!=`, `exists` | |
+| Array | `array` | array literal / binding | `contains`, `in`, `exists` | Requires `items: { value_ref: … }` |
+| Json | `json` | object literal / binding | `=`, `!=`, `exists` | Structured JSON object |
+| EntityRef | `entity_ref` | id value or nested ref expr | `=`, `!=`, `exists` | Requires `target: EntityName` |
+| Blob | `blob` | attachment-shaped value | `=`, `!=`, `exists` | Opaque binary / base64 |
+| Money | `money` | decimal string or `{amount, currency}` | `=`, `!=`, `>`, `<`, `>=`, `<=`, `exists` | Decimal-string kernel; optional `currency:` on row or `currency_field:` on slot |
+
+**Profiles** (named `type:` — compile to a kernel + validation/gloss overlay):
+
+| Category | YAML `type:` | Typical input | Notes |
+|----------|--------------|---------------|-------|
+| Presentation | `markdown`, `document`, `html`, `json_text` | string / heredoc | Multiline or structured text — not `blob` |
+| Canned string | `uuid`, `email`, `url`, `http_url`, `hostname`, `e164`, `ipv4`, `ipv6`, `hex`, `base64`, `base64url` | string | Validated string shapes |
+| Temporal | `rfc3339`, `iso8601_date`, `unix_ms`, `unix_sec` | string or integer per profile | Predicate inputs normalize to wire shape (UTC) |
+| Enum | `enum`, `multi_enum` | enum token(s) | Requires non-empty **`enum:`** list |
+
+**Author constraints** — optional on any `values:` row (loader rejects retired keys):
+
+```yaml
+constraints:
+  min_length: 1
+  max_length: 4096
+  pattern: '^[a-z0-9_-]+$'
+  min: 0
+  max: 100
+```
+
+**Rejected authoring keys:** `string_semantics`, `value_format`, `allowed_values`, `type: select`, `type: date`, `type: multi_select`, `type: datetime`. The loader fails closed with a migration hint.
+
+**Money note:** use `type: money` (decimal-string kernel). JSON-number amounts belong on `type: number`, not money + format hacks.
 
 ### Blob / binary (`values:` row `type: blob`)
 
@@ -253,7 +280,7 @@ Use **`type: blob`** when the wire value is **not** human prose (base64/base64ur
 - Entity fields populated from APIs that return base64 attachment bodies, binary-safe strings, or a JSON object with reserved **`__plasm_attachment`** metadata (`uri`, `mime_type` / `media_type`, optional `bytes_base64`).
 - Capability parameters with the same shape (e.g. Gmail `raw`, GitHub Contents `content` as base64 in JSON).
 
-**Do not** use `blob` for HTML/markdown message bodies meant to be read as text (keep `string` + `string_semantics: markdown` or `document`).
+**Do not** use `blob` for HTML/markdown message bodies meant to be read as text (use `type: markdown` or `type: document`).
 
 **Authoring knobs (entity field slots — alongside `value_ref`):**
 
@@ -277,7 +304,6 @@ Every `values:` row with `type: array` must include `items: { value_ref: <key> }
 values:
   url_string:
     type: string
-    string_semantics: short
   photo_urls:
     type: array
     items:
@@ -290,27 +316,22 @@ values:
     items:
       value_ref: user_ref
   flag_enum:
-    type: select
-    allowed_values: [a, b]
+    type: enum
+    enum: [a, b]
   flags_arr:
     type: array
     items:
       value_ref: flag_enum
   instant_rfc3339:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
   dates_arr:
     type: array
     items:
       value_ref: instant_rfc3339
   nv_price:
     type: money
-    value_format:
-      money: decimal_string
   nv_usd:
     type: money
-    value_format:
-      money: json_number
     currency: USD
 
 entities:
@@ -321,9 +342,9 @@ entities:
         required: true
 ```
 
-**Loader constraints:** the element `values:` row must not be `type: array` or `multi_select`. For element `type: select`, `allowed_values` on that row is required and non-empty. For element `type: date`, `value_format` belongs on the element value row.
+**Loader constraints:** the element `values:` row must not be `type: array` or `multi_enum`. For element `type: enum`, `enum:` on that row is required and non-empty. Temporal profiles (`rfc3339`, `iso8601_date`, `unix_ms`, `unix_sec`) are self-contained — no separate format key.
 
-**`multi_select`:** on the `values:` row itself, `allowed_values` is required and must be non-empty (this is not the same as `array` of `select`).
+**`multi_enum`:** on the `values:` row itself, `enum:` is required and must be non-empty (distinct from `array` of `enum`).
 
 ### Authoring surface: Plasm expressions
 
@@ -445,7 +466,7 @@ Plasm does **not** synthesize an implicit get-by-id from `id_field` alone — ob
 
 #### Validated inputs stay teachable (`$` placeholder is not a real value)
 
-`input_schema.validation` predicates (`min_value`, `min_length`, `pattern`, …) and cross-field rules (`at_least_one`, `exactly_one`) are enforced against **concrete** values at execute time only. During teaching-surface synthesis the fields carry the `$` prompt placeholder, and predicates on **absent** (unlisted optional) fields are vacuously satisfied — so a capability with heavy input validation is still witnessed. Note that an `at_least_one` / `exactly_one` rule makes the capability **non-zero-arity** even when every individual field is optional: its teaching line is `method(field=…)`, never a bare `method()`.
+`values:` constraints (`min`, `max`, `min_length`, `pattern`, … on the `value_ref` row) and `input_schema.validation` cross-field rules (`at_least_one`, `exactly_one`) are enforced against **concrete** values at execute time only. During teaching-surface synthesis the fields carry the `$` prompt placeholder, and constraints on **absent** (unlisted optional) fields are vacuously satisfied — so a capability with heavy input validation is still witnessed. Note that an `at_least_one` / `exactly_one` rule makes the capability **non-zero-arity** even when every individual field is optional: its teaching line is `method(field=…)`, never a bare `method()`.
 
 #### API shape rules (vendor XOR / exclusivity)
 
@@ -856,13 +877,13 @@ Among non-scoped caps, at most one may be parameterless (validation rule).
 
 ### Required Parameters
 
-When a capability declares `required: true` on a parameter, Plasm expressions must supply that predicate key (or the planner rejects). Types must match the `value_ref` slot (`select` values must be members of `allowed_values`, etc.).
+When a capability declares `required: true` on a parameter, Plasm expressions must supply that predicate key (or the planner rejects). Types must match the `value_ref` slot (`enum` values must be members of `enum:`, etc.).
 
 ```yaml
 values:
   pet_status:
-    type: select
-    allowed_values: [available, pending, sold]
+    type: enum
+    enum: [available, pending, sold]
 
 capabilities:
   pet_findByStatus:
@@ -882,7 +903,6 @@ Relations declare how to traverse from one entity to related rows. The target en
 values:
   tag_name:
     type: string
-    string_semantics: short
 
 entities:
   Pet:
@@ -952,15 +972,12 @@ When multiple API endpoints return disjoint field subsets of the same logical re
 values:
   nv_page_url:
     type: string
-    string_semantics: short
   nv_page_created_time:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
   nv_page_in_trash:
     type: boolean
   nv_page_markdown:
-    type: string
-    string_semantics: markdown
+    type: markdown
   nv_page_truncated:
     type: boolean
 

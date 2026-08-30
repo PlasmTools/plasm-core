@@ -1757,6 +1757,11 @@ impl ExecuteSessionStore {
         self.symbol_map_cross_cache.as_ref()
     }
 
+    /// Owned handle for `'static` offload (live-plan / blocking pools).
+    pub fn symbol_map_cross_cache_arc(&self) -> Arc<plasm_core::SymbolMapCrossRequestCache> {
+        Arc::clone(&self.symbol_map_cross_cache)
+    }
+
     /// Clears process-wide caches derived from loaded [`CGS`](plasm_core::schema::CGS) (symbol-map LRU).
     /// Call after catalog-dir catalog reload when the API schema set changed so no snapshot from a prior `.so` remains.
     pub fn invalidate_cgs_derived_caches(&self) {

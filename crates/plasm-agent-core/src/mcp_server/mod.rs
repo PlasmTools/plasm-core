@@ -99,6 +99,10 @@ mod tools;
 mod trace;
 mod transport;
 mod ui_read;
+#[cfg(test)]
+mod future_size_probe;
+#[cfg(test)]
+mod stack_budget_test;
 
 pub(crate) use initialize::mcp_stateless_server_details;
 pub use initialize::{

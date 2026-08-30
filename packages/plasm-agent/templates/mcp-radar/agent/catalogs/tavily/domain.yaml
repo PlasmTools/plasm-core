@@ -233,106 +233,94 @@ auth:
 values:
   nv_extract_result_favicon:
     type: string
-    string_semantics: short
     description: Favicon URL for the page's domain.
   nv_extract_result_raw_content:
-    type: string
-    string_semantics: markdown
+    type: markdown
     description: Full extracted page content (markdown or plain text).
   nv_extract_result_url:
     type: string
-    string_semantics: short
     description: URL of the extracted page.
   nv_research_create_citation_format:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - numbered
     - mla
     - apa
     - chicago
   nv_research_create_model:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - mini
     - pro
     - auto
   nv_research_task_content:
-    type: string
-    string_semantics: markdown
+    type: markdown
     description: Full research content/report (populated when status=completed).
   nv_research_task_created_at:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
     description: Timestamp when the task was created.
   nv_research_task_input:
     type: string
-    string_semantics: short
     description: The research question submitted.
   nv_research_task_model:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - mini
     - pro
     - auto
     description: Research agent model used.
   nv_research_task_request_id:
     type: string
-    string_semantics: short
     description: Unique identifier for the research task (use to poll status).
   nv_research_task_response_time:
     type: number
     description: Time in seconds for the research task to complete.
   nv_research_task_status:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - pending
     - running
     - completed
     - failed
     description: Current execution status of the task.
   nv_search_result_content:
-    type: string
-    string_semantics: markdown
+    type: markdown
     description: Relevance snippet or chunked content from the page.
   nv_search_result_favicon:
     type: string
-    string_semantics: short
     description: Favicon URL for the result's domain.
   nv_search_result_raw_content:
-    type: string
-    string_semantics: markdown
+    type: markdown
     description: Full cleaned page content (only when include_raw_content=true).
   nv_search_result_score:
     type: number
     description: Relevance score (0–1).
   nv_search_result_title:
     type: string
-    string_semantics: short
     description: Title of the source page.
   nv_search_result_url:
     type: string
-    string_semantics: short
     description: URL of the source page.
   nv_url_extract_extract_depth:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - basic
     - advanced
   nv_url_extract_format:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - markdown
     - text
   nv_web_search_search_depth:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - basic
     - fast
     - ultra-fast
     - advanced
   nv_web_search_time_range:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - day
     - week
     - month
@@ -342,8 +330,8 @@ values:
     - m
     - y
   nv_web_search_topic:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - general
     - news
     - finance
@@ -353,7 +341,6 @@ values:
     type: integer
   nv_wire_str_short:
     type: string
-    string_semantics: short
   nv_research_task_sources:
     type: array
     items:

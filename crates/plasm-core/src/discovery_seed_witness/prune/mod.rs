@@ -1,6 +1,8 @@
 //! Graph+role witness prune — catalog-authored `seed_nav` / `seed_class` only.
 //!
 //! Passes are pure `Selected → Selected` stages over a shared corpus (roles precomputed).
+//! Authored `co_seed_with` seats are teaching extras ([`super::satellites`]), not plan-cover
+//! witnesses — they must not inflate the ≤3 FO-minimal seed budget.
 
 mod lone_attach;
 mod support;

@@ -597,13 +597,13 @@ values:
     type: entity_ref
     target: User
   nv_tweet_search_sort_order:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - recency
     - relevancy
   nv_tweet_timeline_query_exclude:
-    type: multi_select
-    allowed_values:
+    type: multi_enum
+    enum:
     - replies
     - retweets
   nv_tweet_timeline_query_id:
@@ -618,16 +618,13 @@ values:
   nv_wire_bool:
     type: boolean
   nv_wire_date_rfc3339:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
   nv_wire_int:
     type: integer
   nv_wire_str_markdown:
-    type: string
-    string_semantics: markdown
+    type: markdown
   nv_wire_str_short:
     type: string
-    string_semantics: short
   nv_tweet_lookup_query_ids:
     type: array
     items:

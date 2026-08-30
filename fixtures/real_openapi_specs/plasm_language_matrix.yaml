@@ -383,12 +383,16 @@ components:
       properties:
         id:
           type: string
+          example: "i1"
         title:
           type: string
+          example: "Alpha"
         score:
           type: integer
+          example: 10
         owner:
           type: string
+          example: "alice"
     LangItemCreate:
       type: object
       required: [title]
@@ -467,6 +471,41 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/LangItem"
+      example:
+        id: "i1"
+        title: "Alpha"
+        score: 10
+        owner: "alice"
+        summary:
+          id: "sum-i1"
+          headline: "Alpha summary"
+          detail:
+            id: "det-i1"
+            body: "nested detail"
+        lines:
+          - id: "l1"
+            item_id: "i1"
+            note: "line-a"
+          - id: "l2"
+            item_id: "i1"
+            note: "line-b"
+        tags:
+          - id: "t1"
+            item_id: "i1"
+            label: "urgent"
+          - id: "t2"
+            item_id: "i1"
+            label: "review"
+        children:
+          - id: "i1-child-a"
+            title: "Child A"
+            score: 1
+            owner: "alice"
+          - id: "i1-child-b"
+            title: "Child B"
+            score: 2
+            owner: "alice"
+    LangSummary:
       type: object
       required: [id, headline]
       properties:

@@ -436,61 +436,123 @@ fn seeded_pokemon_teaching_includes_bare_query_row() {
     );
 }
 
-/// B2 — simple string-id entities teach positional literals (e.g. `e#(pikachu)`), not `e#(p#)`.
+/// B2 — simple string-id entities teach positional `$` hole, not sample ids / `apis/` coupling.
 #[test]
-fn seeded_pokemon_identity_row_uses_positional_literal() {
-    use crate::discovery::{
-        derive_intent_exposure_surface_batch, ExposureSurfaceOptions, MutatorAdmit,
+fn simple_string_id_identity_row_uses_dollar_placeholder() {
+    use crate::schema::{
+        CapabilityKind, CapabilityMapping, CapabilitySchema, FieldSchema, FieldValueKind,
+        NamedValueSchema, ResourceSchema, ValueDomainKey, CGS,
     };
+    use crate::FieldType;
 
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
-    if !dir.is_dir() {
-        return;
-    }
-    let mut cgs = load_schema_dir(&dir).expect("pokeapi");
-    cgs.entry_id = Some("pokeapi".into());
-    let endpoints = crate::relation_endpoint_keys("pokeapi", &["Pokemon".to_string()]);
-    let delta = derive_intent_exposure_surface_batch(
-        &cgs,
-        "pokeapi",
-        "electric type pokemon chart",
-        &endpoints,
-        &["Pokemon".to_string()],
-        None,
-        ExposureSurfaceOptions {
-            mutator_admit: MutatorAdmit::AlwaysOnSeeds,
+    let mut cgs = CGS::new();
+    cgs.values.insert(
+        "nv_str".into(),
+        NamedValueSchema {
+            domain: Default::default(),
+            description: String::new(),
+            field_type: FieldType::String,
+            value_format: None,
+            allowed_values: None,
+            array_items: None,
+            currency: None,
         },
     );
-    let map =
-        symbol_map_for_prompt(&cgs, FocusSpec::SeedsExact(&["Pokemon"]), true).expect("symbol map");
-    let pokemon_es = map.entity_sym_for("", "Pokemon");
+    let str_field = |name: &str| FieldSchema {
+        name: name.into(),
+        kind: FieldValueKind::Registry(ValueDomainKey::new("nv_str").expect("key")),
+        description: String::new(),
+        required: true,
+        agent_presentation: None,
+        mime_type_hint: None,
+        attachment_media: None,
+        wire_path: None,
+        derive: None,
+        data_class: None,
+        currency_field: None,
+    };
+    cgs.add_resource(ResourceSchema {
+        name: "Specimen".into(),
+        description: "Simple string-id entity".into(),
+        id_field: "name".into(),
+        id_format: None,
+        id_from: None,
+        fields: vec![str_field("name")],
+        relations: vec![],
+        expression_aliases: vec![],
+        implicit_request_identity: false,
+        key_vars: vec![],
+        abstract_entity: false,
+        domain_projection_examples: true,
+        primary_read: None,
+        discovery: None,
+    })
+    .unwrap();
+    let tmpl = serde_json::json!({
+        "method": "GET",
+        "path": [
+            {"type": "literal", "value": "specimens"},
+            {"type": "param", "name": "name"}
+        ]
+    });
+    cgs.add_capability(CapabilitySchema {
+        name: "specimen_get".into(),
+        description: "Fetch one specimen by name".into(),
+        kind: CapabilityKind::Get,
+        domain: "Specimen".into(),
+        identity_key: None,
+        invalidates_entities: vec![],
+        mapping: CapabilityMapping {
+            template: tmpl.into(),
+        },
+        input_schema: None,
+        output_schema: None,
+        provides: vec!["name".into()],
+        scope_aggregate_key_policy: Default::default(),
+        preflight: None,
+        discovery: None,
+        sanitizes: vec![],
+        deterministic: None,
+    })
+    .unwrap();
+    cgs.validate().unwrap();
+
+    let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
+    let es = map.entity_sym_for("", "Specimen");
     let mut line_valid_cache = HashMap::new();
     let mut gloss_emit_none = None;
     let block = collect_entity_teaching_block(
         &cgs,
-        "Pokemon",
+        "Specimen",
         Some(&map),
         None,
         false,
         &mut line_valid_cache,
         prompt_line_valid_cache_seed_cgs(&cgs),
         &mut gloss_emit_none,
-        Some(&delta.required),
-        Some("pokeapi"),
+        None,
+        None,
     );
-    let identity = block.teaching_rows.iter().find(|r| {
-        r.teaching_expr
-            .expression
-            .contains(&format!("{pokemon_es}(pikachu)"))
-    });
+    let want = format!("{es}($)");
+    let identity = block
+        .teaching_rows
+        .iter()
+        .find(|r| r.teaching_expr.expression.contains(&want));
     assert!(
         identity.is_some(),
-        "Pokemon identity row must teach positional literal `{pokemon_es}(pikachu)`, rows={:?}",
+        "string-id identity must teach `{want}`, rows={:?}",
         block
             .teaching_rows
             .iter()
             .map(|r| r.teaching_expr.expression.as_str())
             .collect::<Vec<_>>()
+    );
+    assert!(
+        !block.teaching_rows.iter().any(|r| {
+            let e = &r.teaching_expr.expression;
+            e.contains("example-") || e.contains("pikachu") || e.contains("@example")
+        }),
+        "must not emit sample-id exemplars"
     );
 }
 

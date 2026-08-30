@@ -29,6 +29,7 @@ use crate::discovery_seed_catalog::CatalogWorkflowContext;
 use helpers::ArcCgs;
 use inject::inject_retrieval_targets;
 use inject::inject_workflow_mutation_targets;
+use inject::{co_seed_bundle, inject_co_seed_with_primary};
 use pool::{
     boost_zero_score_phrase_hit_leaves, group_candidates_by_entity, merge_required_entity_bundles,
     readmit_scored_entity_drops,
@@ -206,6 +207,33 @@ where
             diversified = merge_required_entity_bundles(diversified, &seats, config);
         }
     }
+    // Co-seed after diversify: catalog-authored `co_seed_with` seats with peer primaries.
+    {
+        let mut pool: IndexMap<(String, String), types::EntityCandidateBundle> = diversified
+            .iter()
+            .map(|b| ((b.entry_id.clone(), b.entity.clone()), b.clone()))
+            .collect();
+        let before: HashSet<_> = pool.keys().cloned().collect();
+        inject_co_seed_with_primary(&mut pool, &catalogs, &discovery);
+        let seats: Vec<types::EntityCandidateBundle> = pool
+            .iter()
+            .filter(|(key, bundle)| {
+                !before.contains(key) || co_seed_bundle(&catalogs, bundle)
+            })
+            .map(|(_, bundle)| bundle.clone())
+            .collect();
+        for bundle in &mut diversified {
+            let key = (bundle.entry_id.clone(), bundle.entity.clone());
+            if let Some(updated) = pool.get(&key) {
+                if co_seed_bundle(&catalogs, updated) {
+                    *bundle = updated.clone();
+                }
+            }
+        }
+        if !seats.is_empty() {
+            diversified = merge_required_entity_bundles(diversified, &seats, config);
+        }
+    }
     let candidate_graph =
         crate::discovery_candidate_graph::TypedCandidateGraph::build(&diversified, &catalogs);
     Ok(EntityCandidateRetrieveResult {
@@ -297,6 +325,14 @@ where
             catalogs.insert(entry_id.clone(), ctx.cgs);
         }
     }
+    // Load catalogs that author `co_seed_with: federated_primary|session_primary` whenever
+    // any other catalog is already in the session (allowlist / registry scan — no entry names).
+    ensure_federated_co_seed_catalogs(
+        &mut catalogs,
+        catalog,
+        named_catalogs,
+        allowed_entry_ids,
+    );
     if let Some(ids) = allowed_entry_ids {
         for entry_id in ids {
             if catalogs.contains_key(entry_id) {
@@ -313,6 +349,63 @@ where
         }
     }
     Ok(catalogs)
+}
+
+fn cgs_has_federated_co_seed(cgs: &crate::schema::CGS) -> bool {
+    use crate::schema::DiscoveryCoSeedWith;
+    cgs.entities.values().any(|e| {
+        matches!(
+            e.discovery.as_ref().and_then(|d| d.co_seed_with),
+            Some(DiscoveryCoSeedWith::FederatedPrimary)
+                | Some(DiscoveryCoSeedWith::SessionPrimary)
+        )
+    })
+}
+
+fn ensure_federated_co_seed_catalogs<C>(
+    catalogs: &mut IndexMap<String, ArcCgs>,
+    catalog: &C,
+    named_catalogs: &[String],
+    allowed_entry_ids: Option<&[String]>,
+) where
+    C: CgsCatalog,
+{
+    if catalogs.is_empty() {
+        return;
+    }
+    let mut candidates: Vec<String> = catalog
+        .list_entries()
+        .into_iter()
+        .map(|e| e.entry_id)
+        .collect();
+    if let Some(ids) = allowed_entry_ids {
+        for id in ids {
+            if !candidates.iter().any(|c| c == id) {
+                candidates.push(id.clone());
+            }
+        }
+    }
+    for id in named_catalogs {
+        if !candidates.iter().any(|c| c == id) {
+            candidates.push(id.clone());
+        }
+    }
+    for entry_id in candidates {
+        if catalogs.contains_key(&entry_id) {
+            continue;
+        }
+        if allowed_entry_ids
+            .is_some_and(|ids| !ids.is_empty() && !ids.iter().any(|id| id == &entry_id))
+        {
+            continue;
+        }
+        let Ok(ctx) = catalog.load_context(&entry_id) else {
+            continue;
+        };
+        if cgs_has_federated_co_seed(&ctx.cgs) {
+            catalogs.insert(entry_id, ctx.cgs);
+        }
+    }
 }
 
 /// Build intent phrase query (exported for eval harness).

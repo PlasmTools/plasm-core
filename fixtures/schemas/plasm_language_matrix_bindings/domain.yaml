@@ -14,7 +14,6 @@ capabilities:
 values:
   nv_binding_probe_id:
     type: string
-    string_semantics: short
 entities:
   BindingProbe:
     id_field: id

@@ -909,33 +909,27 @@ values:
 
   nv_proof_event_id:
     type: string
-    string_semantics: short
     description: Event id from the pending collaboration stream—use for after= and ack up_to_id only.
 
   nv_proof_base_token:
     type: string
-    string_semantics: short
     description: mt1 precondition string exposed on EditorState (wire baseToken or derived from block refs); host stores it after editor_state_get—pass only to override
 
   nv_proof_block_ref:
     type: string
-    string_semantics: short
     description: >
       Block id from your current snapshot. Refresh the snapshot after others edit before you reuse ids.
 
   nv_proof_agent_id:
     type: string
-    string_semantics: short
     description: Stable name for this agent on edits (shows in attribution).
 
   nv_proof_str:
     type: string
-    string_semantics: short
     description: Short text.
 
   nv_proof_markdown:
-    type: string
-    string_semantics: markdown
+    type: markdown
 
   nv_proof_json:
     type: json
@@ -954,8 +948,8 @@ values:
     description: Optional idempotency key so you can retry the same edit batch safely.
 
   nv_proof_occurrence:
-    type: select
-    allowed_values: [first, all]
+    type: enum
+    enum: [first, all]
     description: Replace only the first match or every match in range.
 
   nv_proof_insert_blocks_markdown:

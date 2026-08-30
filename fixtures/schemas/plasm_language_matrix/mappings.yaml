@@ -97,6 +97,9 @@ langitem_update:
     - ["title", { type: var, name: title }]
     - ["score", { type: var, name: score }]
     - ["owner", { type: var, name: owner }]
+    - [active, { type: if, condition: { type: exists, var: active },
+               then_expr: { type: var, name: active },
+               else_expr: { type: const, value: null } }]
     - [tags, { type: if, condition: { type: exists, var: tags },
                then_expr: { type: var, name: tags },
                else_expr: { type: const, value: null } }]

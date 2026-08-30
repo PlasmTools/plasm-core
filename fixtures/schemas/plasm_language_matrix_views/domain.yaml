@@ -529,55 +529,42 @@ capabilities:
 values:
   nv_lang_tag_id:
     type: string
-    string_semantics: short
   nv_lang_tag_item_id:
     type: entity_ref
     target: LangItem
   nv_lang_tag_label:
     type: string
-    string_semantics: short
   nv_lang_line_id:
     type: string
-    string_semantics: short
   nv_lang_line_item_id:
     type: entity_ref
     target: LangItem
   nv_lang_line_note:
     type: string
-    string_semantics: short
   nv_lang_item_id:
     type: string
-    string_semantics: short
   nv_lang_item_title:
     type: string
-    string_semantics: short
   nv_lang_item_score:
     type: integer
   nv_lang_item_owner:
     type: string
-    string_semantics: short
   nv_langitem_query_owner_owner:
     type: string
-    string_semantics: short
   nv_langitem_search_q:
     type: string
-    string_semantics: short
   nv_langitem_create_title:
     type: string
-    string_semantics: short
   nv_langitem_create_score:
     type: integer
   nv_langitem_create_owner:
     type: string
-    string_semantics: short
   nv_langitem_update_title:
     type: string
-    string_semantics: short
   nv_langitem_update_score:
     type: integer
   nv_langitem_update_owner:
     type: string
-    string_semantics: short
   nv_langtag_query_item_id:
     type: entity_ref
     target: LangItem
@@ -586,13 +573,10 @@ values:
     target: LangItem
   nv_lang_digest_item_id:
     type: string
-    string_semantics: short
   nv_lang_digest_echo_title:
     type: string
-    string_semantics: short
   nv_lang_digest_echo_slug:
     type: string
-    string_semantics: short
   nv_lang_digest_scope_item_id:
     type: entity_ref
     target: LangItem
@@ -601,13 +585,10 @@ values:
     target: LangItem
   nv_lang_item_link_url:
     type: string
-    string_semantics: short
   nv_lang_viewer_id:
     type: string
-    string_semantics: short
   nv_lang_viewer_display_name:
     type: string
-    string_semantics: short
   nv_wire_bool:
     type: boolean
   nv_wire_int:

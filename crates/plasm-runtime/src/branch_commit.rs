@@ -46,6 +46,7 @@ impl BranchMaterializationBase {
             graph: hot.graph.fork_for_branch(),
             responses: hot.responses.clone(),
             query_index: hot.query_index.clone(),
+            read_cache_invalidated: false,
         };
         (branch, base)
     }

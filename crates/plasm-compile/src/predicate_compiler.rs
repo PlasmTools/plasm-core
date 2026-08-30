@@ -192,10 +192,11 @@ pub fn compile_query(
 
 #[cfg(test)]
 mod tests {
+    use plasm_core::value_domain::ValueDomain;
     use super::*;
     use plasm_core::{
         Cardinality, FieldSchema, FieldType, FieldValueKind, NamedValueSchema, Predicate,
-        QueryExpr, RelationSchema, ResourceSchema, StringSemantics, Value, ValueDomainKey,
+        QueryExpr, RelationSchema, ResourceSchema, Value, ValueDomainKey,
     };
 
     fn registry_field(wire_name: &str, values_key: &str, required: bool) -> FieldSchema {
@@ -221,91 +222,63 @@ mod tests {
 
         cgs.values.insert(
             "nv_pred_account_id".to_string(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: Some(StringSemantics::Short),
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                None,
+            ),
         );
         cgs.values.insert(
             "nv_pred_account_name".to_string(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: Some(StringSemantics::Short),
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                None,
+            ),
         );
         cgs.values.insert(
             "nv_pred_account_revenue".to_string(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Number,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::Number, None, None, None, None),
+                None,
+            ),
         );
         cgs.values.insert(
             "nv_pred_account_region".to_string(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Select,
-                value_format: None,
-                allowed_values: Some(vec![
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::Select, None, None, Some(vec![
                     "EMEA".to_string(),
                     "APAC".to_string(),
                     "AMER".to_string(),
-                ]),
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+                ]).clone(), None),
+                None,
+            ),
         );
         cgs.values.insert(
             "nv_pred_contact_id".to_string(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: Some(StringSemantics::Short),
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                None,
+            ),
         );
         cgs.values.insert(
             "nv_pred_contact_name".to_string(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: Some(StringSemantics::Short),
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                None,
+            ),
         );
         cgs.values.insert(
             "nv_pred_contact_role".to_string(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Select,
-                value_format: None,
-                allowed_values: Some(vec!["Manager".to_string(), "Employee".to_string()]),
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::Select, None, None, Some(vec!["Manager".to_string(), "Employee".to_string()]).clone(), None),
+                None,
+            ),
         );
 
         // Account entity

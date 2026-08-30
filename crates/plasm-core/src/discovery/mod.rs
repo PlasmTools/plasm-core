@@ -1441,6 +1441,7 @@ mod tests {
                     names: vec!["conversation thread".into(), "email thread".into()],
                     qualifier_names: vec![],
                     seed_class: None,
+                    co_seed_with: None,
                 }),
             },
         );
@@ -1464,6 +1465,7 @@ mod tests {
                 target_terms: vec!["conversation thread".into(), "discussion".into()],
             }),
             identity_key: None,
+            invalidates_entities: vec![],
         };
         cgs.capabilities
             .insert(CapabilityName::from("thread_list"), cap.clone());

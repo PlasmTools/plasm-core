@@ -123,22 +123,18 @@ capabilities:
 values:
   nv_fibery_id:
     type: string
-    string_semantics: short
     description: Fibery UUID
   nv_fibery_public_id:
     type: string
-    string_semantics: short
     description: Fibery public id
   nv_fibery_database_name:
     type: string
-    string_semantics: short
     description: Qualified database name Space/Name
   nv_fibery_payload_json:
     type: json
     description: Unmapped Fibery fields
   nv_wire_str_short:
     type: string
-    string_semantics: short
   nv_wire_int:
     type: integer
   nv_wire_num:
@@ -147,4 +143,3 @@ values:
     type: boolean
   nv_wire_date_rfc3339:
     type: string
-    value_format: rfc3339

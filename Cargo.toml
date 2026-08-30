@@ -151,6 +151,7 @@ oxc = { version = "0.127.0", default-features = false, features = [
 rquickjs = { version = "0.6", default-features = true }
 
 # Utility crates
+regex = { version = "1", default-features = false, features = ["std"] }
 unicode-width = "0.2"
 strip-ansi-escapes = "0.2"
 arc-swap = "1.7"

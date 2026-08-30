@@ -659,6 +659,7 @@ mod relation_intent_rank_tests {
         CapabilityMapping, CapabilitySchema, Cardinality, DiscoveryCapabilityHints, FieldSchema,
         FieldValueKind, NamedValueSchema, RelationSchema, ResourceSchema, ValueDomainKey,
     };
+    use plasm_core::value_domain::ValueDomain;
     use plasm_core::{CapabilityName, EntityFieldName, EntityName, FieldType, RelationName};
 
     fn query_mapping_body() -> serde_json::Value {
@@ -675,15 +676,11 @@ mod relation_intent_rank_tests {
         let mut cgs = CGS::new();
         cgs.values.insert(
             "tid".to_string(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                None,
+            ),
         );
         let id_key = ValueDomainKey::new("tid").unwrap();
         let id_field = FieldSchema {
@@ -724,6 +721,7 @@ mod relation_intent_rank_tests {
                 names: vec!["thing".into()],
                 qualifier_names: vec![],
                 seed_class: None,
+                co_seed_with: None,
             }),
         })
         .unwrap();
@@ -754,6 +752,7 @@ mod relation_intent_rank_tests {
             kind: CapabilityKind::Query,
             domain: EntityName::from("Parent"),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: tmpl.clone(),
             input_schema: None,
             output_schema: None,
@@ -772,6 +771,7 @@ mod relation_intent_rank_tests {
             kind: CapabilityKind::Query,
             domain: EntityName::from("Child"),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: tmpl,
             input_schema: None,
             output_schema: None,

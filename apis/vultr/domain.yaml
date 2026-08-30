@@ -2885,8 +2885,8 @@ values:
   nv_account_bandwidth_usage:
     type: json
   nv_application_query_type:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - all
     - marketplace
     - one-click
@@ -2976,8 +2976,8 @@ values:
     type: entity_ref
     target: BareMetal
   nv_baremetalupgradecatalog_get_type:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - all
     - applications
     - os
@@ -3003,8 +3003,8 @@ values:
     type: entity_ref
     target: Region
   nv_cdn_pull_zone_origin_scheme:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - http
     - https
   nv_cdn_push_zone_file_content:
@@ -3226,20 +3226,17 @@ values:
   nv_wire_bool:
     type: boolean
   nv_wire_date_rfc3339:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
   nv_wire_int:
     type: integer
   nv_money_usd:
-    type: money
-    value_format:
-      money: json_number
+    type: number
     currency: USD
   nv_wire_num:
     type: number
   nv_wire_sel_0780285c9fcb6c03:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - friday
     - monday
     - saturday
@@ -3248,18 +3245,18 @@ values:
     - tuesday
     - wednesday
   nv_wire_sel_302f7ca29e8dda16:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - active
     - pending
   nv_wire_sel_3165a4e18b8315ed:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - v4
     - v6
   nv_wire_sel_3fe4d4fac1a8e87f:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - ah
     - esp
     - gre
@@ -3267,18 +3264,18 @@ values:
     - tcp
     - udp
   nv_wire_sel_529cf443139f2286:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - boot
     - pxe
   nv_wire_sel_72fd39fb1f8b8f2f:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - high_perf
     - storage_opt
   nv_wire_sel_c7fc16b95f0ae0a7:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - A
     - AAAA
     - CAA
@@ -3290,7 +3287,6 @@ values:
     - TXT
   nv_wire_str_short:
     type: string
-    string_semantics: short
   nv_baremetals_bulk_halt_bare_metal_ids:
     type: array
     items:

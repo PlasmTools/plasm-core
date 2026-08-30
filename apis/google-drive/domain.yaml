@@ -1210,11 +1210,9 @@ values:
     target: File
   nv_comments_update_anchor:
     type: string
-    string_semantics: short
     description: Anchor JSON override (defaults to preflight parent anchor).
   nv_comments_update_content:
-    type: string
-    string_semantics: markdown
+    type: markdown
     description: New plain-text body (defaults to preflight parent content).
   nv_comments_update_quoted_file_content:
     type: json
@@ -1223,7 +1221,6 @@ values:
     type: json
   nv_drive_comment_anchor:
     type: string
-    string_semantics: short
     description: Document anchor JSON string (patchable on update).
   nv_drive_comment_file_id:
     type: entity_ref
@@ -1242,7 +1239,6 @@ values:
     target: File
   nv_drive_reply_action:
     type: string
-    string_semantics: short
     description: Reply action on the parent comment (e.g. resolve, reopen); patchable on update.
   nv_drive_reply_file_id:
     type: entity_ref
@@ -1269,7 +1265,6 @@ values:
     description: Shortcut target metadata when this file is a shortcut.
   nv_file_size:
     type: string
-    string_semantics: short
     description: Size in bytes as returned by the API (string on wire).
   nv_files_copy_input:
     type: json
@@ -1306,11 +1301,9 @@ values:
     target: File
   nv_replies_update_action:
     type: string
-    string_semantics: short
     description: Optional resolve or reopen action (defaults to preflight parent action).
   nv_replies_update_content:
-    type: string
-    string_semantics: markdown
+    type: markdown
     description: New plain-text body (defaults to preflight parent content).
   nv_revisions_list_file_id:
     type: entity_ref
@@ -1335,11 +1328,9 @@ values:
   nv_wire_int:
     type: integer
   nv_wire_str_markdown:
-    type: string
-    string_semantics: markdown
+    type: markdown
   nv_wire_str_short:
     type: string
-    string_semantics: short
   nv_file_parents:
     type: array
     items:

@@ -1375,17 +1375,14 @@ auth:
 values:
   nv_issue_search_q:
     type: string
-    string_semantics: short
     description: Title/description text filter.
   nv_team_key:
     type: string
-    string_semantics: short
     description: Team short key.
   nv_team_id:
     type: uuid
   nv_issue_identifier:
     type: string
-    string_semantics: short
     description: Human-visible issue key.
   nv_issue_ref:
     type: entity_ref
@@ -1395,14 +1392,11 @@ values:
     type: uuid
   nv_state_name:
     type: string
-    string_semantics: short
     description: Workflow column name (e.g. In Progress).
   nv_label_name:
     type: string
-    string_semantics: short
   nv_assignee_name:
     type: string
-    string_semantics: short
   nv_issue_priority:
     type: integer
     description: Linear priority 0–4 (1 urgent, 4 low).
@@ -1421,22 +1415,18 @@ values:
     type: number
   nv_cycle_starts_at:
     type: string
-    string_semantics: short
   nv_cycle_ends_at:
     type: string
-    string_semantics: short
   nv_project_id:
     type: uuid
   nv_project_slug_id:
     type: string
-    string_semantics: short
   nv_user_id:
     type: uuid
   nv_workflow_state_id:
     type: uuid
   nv_workflow_state_type:
     type: string
-    string_semantics: short
   nv_document_id:
     type: uuid
   nv_initiative_id:
@@ -1446,18 +1436,15 @@ values:
   nv_project_update_id:
     type: uuid
   nv_project_update_health:
-    type: select
-    allowed_values: [onTrack, atRisk, offTrack]
+    type: enum
+    enum: [onTrack, atRisk, offTrack]
   nv_linear_issue_url:
     type: string
-    string_semantics: short
   nv_wire_int:
     type: integer
   nv_wire_num:
     type: number
   nv_wire_str_short:
     type: string
-    string_semantics: short
   nv_wire_str_markdown:
-    type: string
-    string_semantics: markdown
+    type: markdown

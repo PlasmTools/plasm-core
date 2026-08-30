@@ -86,9 +86,10 @@ pub async fn start_server_with_config(
 
 #[cfg(test)]
 mod tests {
+    use plasm_core::value_domain::ValueDomain;
     use super::*;
     use plasm_core::{
-        FieldSchema, FieldType, FieldValueKind, NamedValueSchema, ResourceSchema, StringSemantics,
+        FieldSchema, FieldType, FieldValueKind, NamedValueSchema, ResourceSchema,
         ValueDomainKey, CGS,
     };
 
@@ -97,15 +98,11 @@ mod tests {
         for k in ["mock_srv_str_id", "mock_srv_str_name"] {
             schema.values.insert(
                 k.into(),
-                NamedValueSchema {
-                    description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
-                    string_semantics: Some(StringSemantics::Short),
-                    array_items: None,
-                    currency: None,
-                },
+                NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                None,
+            ),
             );
         }
         let account = ResourceSchema {

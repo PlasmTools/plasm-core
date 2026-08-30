@@ -57,15 +57,6 @@ capabilities:
             required: false
             description: Optional opaque attachment bytes
       validation:
-        predicates:
-          - field_path: revenue
-            operator: min_value
-            value: 0
-            error_message: Revenue must be non-negative
-          - field_path: name
-            operator: min_length
-            value: 2
-            error_message: Name must be at least 2 characters
         allow_null: false
         cross_field_rules:
           - rule_type: at_least_one
@@ -84,20 +75,19 @@ capabilities:
 values:
   nv_account_id:
     type: string
-    string_semantics: short
   nv_account_name:
     type: string
-    string_semantics: short
   nv_account_revenue:
     type: number
   nv_update_name:
     type: string
-    string_semantics: short
+    min_length: 2
   nv_update_revenue:
     type: number
+    min: 0
   nv_update_priority:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
       - low
       - medium
       - high

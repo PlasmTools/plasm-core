@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use super::IdentRegistryRole;
 use crate::identity::{CapabilityName, EntityName};
-use crate::schema::{ArrayItemsSchema, FieldValueKind, StringSemantics, ValueDomainKey};
+use crate::schema::{ArrayItemsSchema, FieldValueKind, ValueDomainKey};
+use crate::value_domain::ProfileId;
 use crate::FieldType;
 use crate::ValueWireFormat;
 
@@ -32,7 +33,7 @@ pub enum PersistedIdentMetadata {
         role: PersistedIdentRegistryRole,
         value_registry_key: String,
         field_type: FieldType,
-        string_semantics: Option<StringSemantics>,
+        profile: Option<ProfileId>,
         array_items: Option<PersistedArrayItemsSchema>,
         allowed_values: Option<Vec<String>>,
         wire_name: String,
@@ -93,7 +94,7 @@ impl From<&IdentMetadata> for PersistedIdentMetadata {
                 role,
                 value_registry_key,
                 field_type,
-                string_semantics,
+                profile,
                 array_items,
                 allowed_values,
                 wire_name,
@@ -111,7 +112,7 @@ impl From<&IdentMetadata> for PersistedIdentMetadata {
                 },
                 value_registry_key: value_registry_key.as_str().to_string(),
                 field_type: field_type.clone(),
-                string_semantics: *string_semantics,
+                profile: *profile,
                 array_items: array_items
                     .as_ref()
                     .map(PersistedArrayItemsSchema::from_schema),
@@ -169,7 +170,7 @@ impl PersistedIdentMetadata {
                 role,
                 value_registry_key,
                 field_type,
-                string_semantics,
+                profile,
                 array_items,
                 allowed_values,
                 wire_name,
@@ -187,7 +188,7 @@ impl PersistedIdentMetadata {
                 },
                 value_registry_key: ValueDomainKey::new(value_registry_key)?,
                 field_type,
-                string_semantics,
+                profile,
                 array_items: array_items
                     .map(PersistedArrayItemsSchema::into_schema)
                     .transpose()?,

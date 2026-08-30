@@ -146,14 +146,11 @@ capabilities:
 values:
   nv_issue_project_key:
     type: string
-    string_semantics: short
   nv_issue_edit_meta_fields:
     type: json
   nv_wire_str_short:
     type: string
-    string_semantics: short
   nv_wire_num:
     type: number
   nv_wire_date_rfc3339:
-    type: date
-    value_format: rfc3339
+    type: rfc3339

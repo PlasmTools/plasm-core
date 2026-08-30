@@ -4603,11 +4603,10 @@ auth:
 values:
   nv_auth_user_repos_query_affiliation:
     type: string
-    string_semantics: short
     description: 'Comma list: owner, collaborator, organization_member.'
   nv_auth_user_repos_query_visibility:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - all
     - public
     - private
@@ -4616,59 +4615,46 @@ values:
     description: Count anonymous contributions too.
   nv_github_account_login:
     type: string
-    string_semantics: short
     description: GitHub user or organization login.
   nv_github_branch_name:
     type: string
-    string_semantics: short
     description: Git branch name or ref to read or write (e.g. main, feature/docs).
   nv_github_closed_at:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
     description: Timestamp when a GitHub issue, pull request, or milestone was closed.
   nv_github_created_at:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
     description: Timestamp when a GitHub resource was created.
   nv_github_git_sha:
     type: string
-    string_semantics: short
     description: Git object SHA, such as a commit, tree, or blob identifier.
   nv_github_html_url:
     type: string
-    string_semantics: short
     description: Browser URL for a GitHub resource.
   nv_github_repository_full_name:
     type: string
-    string_semantics: short
     description: Repository identifier in owner/name form.
   nv_github_repository_name:
     type: string
-    string_semantics: short
     description: Repository name within a GitHub owner account.
   nv_github_scope_repository:
     type: entity_ref
     target: Repository
     description: Repository owner/name used as HTTP scope for repository-scoped capabilities.
   nv_github_updated_at:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
     description: Timestamp when a GitHub resource was last updated.
   nv_issue_assign_copilot_custom_agent:
     type: string
-    string_semantics: short
     description: Custom Copilot coding agent name, when configured.
   nv_issue_assign_copilot_custom_instructions:
-    type: string
-    string_semantics: markdown
+    type: markdown
     description: Additional instructions for Copilot.
   nv_issue_assign_copilot_model:
     type: string
-    string_semantics: short
     description: Model name for Copilot to use, when supported.
   nv_issue_assign_copilot_target_repo:
     type: string
-    string_semantics: short
     description: Target repository (owner/name).
   nv_issue_assignees_add_assignees_item:
     type: entity_ref
@@ -4677,8 +4663,7 @@ values:
     type: entity_ref
     target: User
   nv_issue_comment_query_since:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
     description: Only comments updated at or after this time.
   nv_issue_assignee_item:
     type: entity_ref
@@ -4694,18 +4679,17 @@ values:
     target: User
     description: Filter by assignee login (omit for any assignee).
   nv_issue_query_since:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
     description: Only issues updated at or after this time (ISO 8601).
   nv_issue_query_sort:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - created
     - updated
     - comments
   nv_issue_state_reason:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - completed
     - reopened
     - not_planned
@@ -4734,8 +4718,8 @@ values:
     type: boolean
     description: Lock or unlock conversation on the issue.
   nv_issue_update_state_reason:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - completed
     - reopened
     - not_planned
@@ -4743,48 +4727,43 @@ values:
     description: State-change reason; ignored if state unchanged.
   nv_label_create_color:
     type: string
-    string_semantics: short
     description: Hex color without leading.
   nv_label_update_color:
     type: string
-    string_semantics: short
     description: Hex color without leading.
   nv_label_update_new_name:
     type: string
-    string_semantics: short
     description: New label name (GitHub JSON field new_name).
   nv_milestone_query_sort:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - due_on
     - completeness
   nv_notification_query_before:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
     description: Only notifications updated before this time.
   nv_notification_query_since:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
     description: Only notifications updated at or after this time.
   nv_org_members_query_filter:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - 2fa_disabled
     - 2fa_insecure
     - all
   nv_org_members_query_role:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - all
     - admin
     - member
   nv_org_public_repos_query_visibility:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - public
   nv_org_repos_query_type:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - all
     - public
     - private
@@ -4793,11 +4772,9 @@ values:
     - member
   nv_pr_create_base:
     type: string
-    string_semantics: short
     description: Base branch to merge into (target branch, usually main or master).
   nv_pr_create_head:
     type: string
-    string_semantics: short
     description: Head branch for the PR (same-repo branch name or owner:branch for a fork).
   nv_pr_create_issue:
     type: integer
@@ -4806,25 +4783,23 @@ values:
     type: boolean
     description: Allow base maintainers to push to head.
   nv_pr_merge_merge_method:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - merge
     - squash
     - rebase
   nv_pr_update_base:
     type: string
-    string_semantics: short
     description: Base branch to retarget the pull request onto.
   nv_pr_query_sort:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - created
     - updated
     - popularity
     - long-running
   nv_pr_review_comment_create_commit_id:
     type: string
-    string_semantics: short
     description: Commit SHA to comment on for a new inline comment.
   nv_pr_review_comment_create_in_reply_to:
     type: integer
@@ -4834,11 +4809,10 @@ values:
     description: Diff line for a new inline comment.
   nv_pr_review_comment_create_path:
     type: string
-    string_semantics: short
     description: File path in repo for a new inline comment.
   nv_pr_review_comment_create_side:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - LEFT
     - RIGHT
     description: Side of the diff for the line.
@@ -4846,57 +4820,53 @@ values:
     type: integer
     description: First diff line for a multi-line comment.
   nv_pr_review_comment_create_start_side:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - LEFT
     - RIGHT
     description: Side of the diff for start_line.
   nv_pr_review_comment_create_subject_type:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - line
     - file
     description: Comment on a diff line vs whole file.
   nv_pr_review_comment_query_since:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
     description: Only comments updated at or after this time.
   nv_pr_review_create_commit_id:
     type: string
-    string_semantics: short
     description: Commit SHA to review; omit for the PR head.
   nv_pr_review_create_event:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - APPROVE
     - REQUEST_CHANGES
     - COMMENT
     description: Omit to create a pending review.
   nv_pr_review_submit_event:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - APPROVE
     - REQUEST_CHANGES
     - COMMENT
   nv_pr_touching_path_search_q:
     type: string
-    string_semantics: short
     description: Path or file name fragment to search for.
   nv_pr_update_branch_expected_head_sha:
     type: string
-    string_semantics: short
     description: Only if PR head still matches this SHA.
   nv_pull_request_number:
     type: integer
     description: Repository-local pull request number.
   nv_pull_request_review_comment_subject_type:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - line
     - file
   nv_pull_request_review_state:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - APPROVED
     - CHANGES_REQUESTED
     - COMMENTED
@@ -4907,86 +4877,81 @@ values:
     description: Auto release notes from merged PRs (if supported).
   nv_release_create_target_commitish:
     type: string
-    string_semantics: short
     description: Branch or commit SHA the release tag points at.
   nv_repo_collaborators_query_affiliation:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - outside
     - direct
     - all
   nv_repo_comment_query_since:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
     description: Only comments updated at or after this time.
   nv_repo_comment_query_sort:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - created
     - updated
   nv_repo_content_put_content:
     type: blob
     description: Raw file content as returned by GitHub (base64).
   nv_repo_content_write_text:
-    type: string
-    string_semantics: document
+    type: document
     description: UTF-8 plaintext; runtime base64s for GitHub — never pre-encode.
   nv_repo_forks_query_sort:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - newest
     - oldest
     - stargazers
   nv_repo_search_q:
     type: string
-    string_semantics: short
     description: GitHub repository search query, not natural language. Use valid qualifiers such as "org:rust-lang rust in:name".
       or "plasm-core in:name not:fork"; invalid qualifier syntax may be rejected by GitHub.
   nv_repo_search_sort:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - stars
     - forks
     - help-wanted-issues
     - updated
   nv_repository_visibility:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - public
     - private
     - internal
   nv_user_repos_query_type:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - all
     - owner
     - member
   nv_user_search_sort:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - followers
     - repositories
     - joined
   nv_wire_bool:
     type: boolean
   nv_wire_date_rfc3339:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
   nv_wire_int:
     type: integer
   nv_wire_sel_1b3907e07c1297e8:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - asc
     - desc
   nv_wire_sel_668f8e38fed376e3:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - closed
     - open
   nv_wire_sel_801aab563793550a:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - added
     - changed
     - copied
@@ -4995,15 +4960,15 @@ values:
     - renamed
     - unchanged
   nv_wire_sel_8f80b338e6b66401:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - created
     - full_name
     - pushed
     - updated
   nv_wire_sel_9a078639e0272e4d:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - blue
     - gray
     - green
@@ -5013,27 +4978,27 @@ values:
     - red
     - yellow
   nv_wire_sel_c5a1665707ce30ae:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - all
     - closed
     - open
   nv_wire_sel_cecfba3d4d1c9fbf:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - comments
     - created
     - interactions
     - reactions
     - updated
   nv_wire_sel_e53c76c5bba3a0f0:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - LEFT
     - RIGHT
   nv_wire_sel_ecdb4e0a7d7f72ae:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - completed
     - in_progress
     - pending
@@ -5041,8 +5006,8 @@ values:
     - requested
     - waiting
   nv_wire_sel_f9da2eb819f6e623:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - action_required
     - cancelled
     - failure
@@ -5053,40 +5018,33 @@ values:
     - success
     - timed_out
   nv_wire_str_markdown:
-    type: string
-    string_semantics: markdown
+    type: markdown
   nv_wire_str_short:
     type: string
-    string_semantics: short
   nv_github_commit_path_filter:
     type: string
-    string_semantics: short
     description: Limit commits to those touching this repository path.
   nv_github_commit_author_filter:
     type: string
-    string_semantics: short
     description: Filter commits by author login or email.
   nv_github_commit_committer_filter:
     type: string
-    string_semantics: short
     description: Filter commits by committer login or email.
   nv_workflow_dispatch_ref:
     type: string
-    string_semantics: short
     description: Branch, tag, or commit SHA ref to run the workflow on (e.g. main, v1.0.0).
   nv_workflow_job_query_filter:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - latest
     - all
     description: Only latest-attempt jobs vs all attempts.
   nv_workflow_run_by_workflow_query_event:
     type: string
-    string_semantics: short
     description: Event type that triggered the workflow.
   nv_workflow_run_by_workflow_query_status:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - completed
     - action_required
     - cancelled
@@ -5105,8 +5063,8 @@ values:
     target: User
     description: User who triggered the run.
   nv_workflow_run_query_event:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - check_run
     - check_suite
     - create
@@ -5142,8 +5100,8 @@ values:
     - workflow_run
     description: Event type that triggered the run.
   nv_workflow_run_query_status:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - completed
     - action_required
     - cancelled
@@ -5159,8 +5117,8 @@ values:
     - waiting
     description: Workflow run status.
   nv_workflow_state:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - active
     - deleted
     - disabled_fork

@@ -199,6 +199,7 @@ impl ExecutionEngine {
 
                 // Remove from cache if present
                 mat.remove(&delete.target);
+                mat.poison_read_caches_after_mutation();
 
                 Ok(ExecutionResult {
                     entities: vec![],
@@ -385,6 +386,8 @@ impl ExecutionEngine {
 
                 if count > 0 {
                     mat.merge(entities.clone())?;
+                    mat.apply_post_mutation_cache_effects(capability, &entities, cgs)?;
+                    mat.poison_read_caches_after_mutation();
                 }
 
                 Ok(ExecutionResult {

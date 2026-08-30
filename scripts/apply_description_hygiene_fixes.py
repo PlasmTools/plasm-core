@@ -93,6 +93,20 @@ def repo_apis_root(script_path: Path) -> Path:
     return script_path.resolve().parent.parent / "apis"
 
 
+def discover_catalogs(apis_root: Path) -> list[str]:
+    catalogs: list[str] = []
+    for p in sorted(apis_root.iterdir()):
+        if not p.is_dir() or p.name.startswith("."):
+            continue
+        if (p / "domain.yaml").is_file():
+            catalogs.append(p.name)
+            continue
+        for child in sorted(p.iterdir()):
+            if child.is_dir() and (child / "domain.yaml").is_file():
+                catalogs.append(f"{p.name}/{child.name}")
+    return catalogs
+
+
 def clean_value(raw: str) -> str | None:
     val = raw.strip()
     if val in VALUE_REPLACEMENTS:
@@ -187,23 +201,24 @@ def process_file(path: Path, dry_run: bool) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--catalog", action="append", dest="catalogs")
+    parser.add_argument(
+        "--catalog",
+        action="append",
+        dest="catalogs",
+        help="Only apply to apis/NAME or nested apis/appworld/NAME as appworld/NAME",
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--apis-root", type=Path, default=None)
     args = parser.parse_args()
 
     apis_root = args.apis_root or repo_apis_root(Path(__file__))
-    catalogs = sorted(
-        p.name
-        for p in apis_root.iterdir()
-        if p.is_dir() and (p / "domain.yaml").is_file()
-    )
+    catalogs = discover_catalogs(apis_root)
     if args.catalogs:
         catalogs = [c for c in catalogs if c in set(args.catalogs)]
 
     total = 0
     for catalog in catalogs:
-        n = process_file(apis_root / catalog / "domain.yaml", args.dry_run)
+        n = process_file(apis_root.joinpath(*catalog.split("/")) / "domain.yaml", args.dry_run)
         if n:
             print(f"{catalog}: {n} description(s) updated")
             total += n

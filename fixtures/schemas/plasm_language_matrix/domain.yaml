@@ -120,6 +120,27 @@ entities:
       owner:
         required: false
         value_ref: nv_lang_item_owner
+      active:
+        required: false
+        value_ref: nv_lang_item_active
+      contact_email:
+        required: false
+        value_ref: nv_lang_item_contact_email
+      trace_id:
+        required: false
+        value_ref: nv_lang_item_trace_id
+      status:
+        required: false
+        value_ref: nv_lang_item_status
+      tag_labels:
+        required: false
+        value_ref: nv_lang_item_tag_labels
+      recorded_at:
+        required: false
+        value_ref: nv_lang_item_recorded_at
+      code:
+        required: false
+        value_ref: nv_lang_item_code
       team_key:
         required: false
         value_ref: nv_langitem_search_team_key
@@ -294,6 +315,9 @@ capabilities:
     - name: owner
       value_ref: nv_langitem_update_owner
       required: false
+    - name: active
+      value_ref: nv_langitem_update_active
+      required: false
     - name: tags
       value_ref: nv_langitem_create_tags
       required: false
@@ -302,6 +326,7 @@ capabilities:
     - title
     - score
     - owner
+    - active
   langitem_delete:
     description: Delete LangItem
     kind: delete
@@ -435,68 +460,74 @@ capabilities:
 values:
   nv_lang_detail_id:
     type: string
-    string_semantics: short
   nv_lang_detail_body:
     type: string
-    string_semantics: short
   nv_lang_summary_id:
     type: string
-    string_semantics: short
   nv_lang_summary_headline:
     type: string
-    string_semantics: short
   nv_lang_tag_id:
     type: string
-    string_semantics: short
   nv_lang_tag_item_id:
     type: entity_ref
     target: LangItem
   nv_lang_tag_label:
     type: string
-    string_semantics: short
   nv_lang_line_id:
     type: string
-    string_semantics: short
   nv_lang_line_item_id:
     type: entity_ref
     target: LangItem
   nv_lang_line_note:
     type: string
-    string_semantics: short
   nv_lang_item_id:
     type: string
-    string_semantics: short
   nv_lang_item_title:
     type: string
-    string_semantics: short
   nv_lang_item_score:
     type: integer
   nv_lang_item_owner:
     type: string
-    string_semantics: short
+  nv_lang_item_active:
+    type: boolean
+  nv_lang_item_contact_email:
+    type: email
+  nv_lang_item_trace_id:
+    type: uuid
+  nv_lang_item_status:
+    type: enum
+    enum:
+    - draft
+    - published
+    - archived
+  nv_lang_item_tag_labels:
+    type: multi_enum
+    enum:
+    - alpha
+    - beta
+    - gamma
+  nv_lang_item_recorded_at:
+    type: rfc3339
+  nv_lang_item_code:
+    type: string
+    min_length: 3
+    pattern: '^[A-Z]{3}$'
   nv_langitem_query_owner_owner:
     type: string
-    string_semantics: short
   nv_langitem_query_tags:
     type: string
-    string_semantics: short
   nv_langitem_search_q:
     type: string
-    string_semantics: short
   nv_langitem_search_team_key:
     type: string
-    string_semantics: short
   nv_langitem_create_title:
     type: string
-    string_semantics: short
   nv_langitem_create_score:
     type: integer
   nv_langitem_create_owner:
     type: string
-    string_semantics: short
   nv_langitem_create_tags_item:
     type: string
-    string_semantics: short
   nv_langitem_create_tags:
     type: array
     items:
@@ -504,15 +535,14 @@ values:
     description: Tag names to apply when creating a LangItem (array invoke param homograph regression).
   nv_langitem_update_title:
     type: string
-    string_semantics: short
   nv_langitem_update_score:
     type: integer
   nv_langitem_update_owner:
     type: string
-    string_semantics: short
+  nv_langitem_update_active:
+    type: boolean
   nv_homograph_shared_short:
     type: string
-    string_semantics: short
   nv_langtag_query_item_id:
     type: entity_ref
     target: LangItem
@@ -520,23 +550,16 @@ values:
     type: integer
   nv_compound_branch_owner:
     type: string
-    string_semantics: short
   nv_compound_branch_name:
     type: string
-    string_semantics: short
   nv_compound_branch_color:
     type: string
-    string_semantics: short
   nv_langline_query_item_id:
     type: entity_ref
     target: LangItem
   nv_lang_offer_id:
     type: string
-    string_semantics: short
   nv_lang_offer_price:
     type: money
-    value_format:
-      money: decimal_string
   nv_lang_offer_currency:
     type: string
-    string_semantics: short

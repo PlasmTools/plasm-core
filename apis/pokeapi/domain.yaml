@@ -1786,11 +1786,9 @@ values:
     description: Numeric ability identifier.
   nv_ability_name:
     type: string
-    string_semantics: short
     description: Ability name (unique key).
   nv_ability_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_ability_is_main_series:
     type: boolean
@@ -1800,11 +1798,9 @@ values:
     description: Numeric berry identifier.
   nv_berry_name:
     type: string
-    string_semantics: short
     description: Berry name (unique key).
   nv_berry_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_berry_growth_time:
     type: integer
@@ -1829,29 +1825,24 @@ values:
     description: Numeric firmness identifier.
   nv_berry_firmness_name:
     type: string
-    string_semantics: short
     description: Firmness name (unique key).
   nv_berry_firmness_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_berry_flavor_id:
     type: integer
     description: Numeric flavor identifier.
   nv_berry_flavor_name:
     type: string
-    string_semantics: short
     description: Flavor name (unique key).
   nv_berry_flavor_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_characteristic_id:
     type: integer
     description: Numeric characteristic identifier.
   nv_characteristic_url:
     type: string
-    string_semantics: short
     description: API resource URL (unique key).
   nv_characteristic_gene_modulo:
     type: integer
@@ -1868,18 +1859,15 @@ values:
     description: Numeric contest type identifier.
   nv_contest_type_name:
     type: string
-    string_semantics: short
     description: Contest type name (unique key).
   nv_contest_type_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_contest_effect_id:
     type: integer
     description: Numeric contest effect identifier.
   nv_contest_effect_url:
     type: string
-    string_semantics: short
     description: API resource URL (unique key).
   nv_contest_effect_appeal:
     type: integer
@@ -1892,22 +1880,18 @@ values:
     description: Numeric egg group identifier.
   nv_egg_group_name:
     type: string
-    string_semantics: short
     description: Egg group name (unique key).
   nv_egg_group_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_encounter_method_id:
     type: integer
     description: Numeric encounter method identifier.
   nv_encounter_method_name:
     type: string
-    string_semantics: short
     description: Method name (unique key).
   nv_encounter_method_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_encounter_method_order:
     type: integer
@@ -1917,88 +1901,72 @@ values:
     description: Numeric condition identifier.
   nv_encounter_condition_name:
     type: string
-    string_semantics: short
     description: Condition name (unique key).
   nv_encounter_condition_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_encounter_condition_value_id:
     type: integer
     description: Numeric condition value identifier.
   nv_encounter_condition_value_name:
     type: string
-    string_semantics: short
     description: Value name (unique key).
   nv_encounter_condition_value_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_evolution_chain_id:
     type: integer
     description: Numeric evolution chain identifier.
   nv_evolution_chain_url:
     type: string
-    string_semantics: short
     description: API resource URL (unique key).
   nv_evolution_trigger_id:
     type: integer
     description: Numeric trigger identifier.
   nv_evolution_trigger_name:
     type: string
-    string_semantics: short
     description: Trigger name (unique key).
   nv_evolution_trigger_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_generation_id:
     type: integer
     description: Numeric generation identifier.
   nv_generation_name:
     type: string
-    string_semantics: short
     description: Generation name (unique key).
   nv_generation_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_gender_id:
     type: integer
     description: Numeric gender identifier.
   nv_gender_name:
     type: string
-    string_semantics: short
     description: Gender name (unique key).
   nv_gender_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_growth_rate_id:
     type: integer
     description: Numeric growth rate identifier.
   nv_growth_rate_name:
     type: string
-    string_semantics: short
     description: Growth rate name (unique key).
   nv_growth_rate_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_growth_rate_formula:
     type: string
-    string_semantics: short
     description: Mathematical formula for leveling.
   nv_item_id:
     type: integer
     description: Numeric item identifier.
   nv_item_name:
     type: string
-    string_semantics: short
     description: Item name (unique key).
   nv_item_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_item_cost:
     type: integer
@@ -2011,88 +1979,72 @@ values:
     description: Numeric category identifier.
   nv_item_category_name:
     type: string
-    string_semantics: short
     description: Category name (unique key).
   nv_item_category_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_item_attribute_id:
     type: integer
     description: Numeric attribute identifier.
   nv_item_attribute_name:
     type: string
-    string_semantics: short
     description: Attribute name (unique key).
   nv_item_attribute_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_item_fling_effect_id:
     type: integer
     description: Numeric fling effect identifier.
   nv_item_fling_effect_name:
     type: string
-    string_semantics: short
     description: Fling effect name (unique key).
   nv_item_fling_effect_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_item_pocket_id:
     type: integer
     description: Numeric pocket identifier.
   nv_item_pocket_name:
     type: string
-    string_semantics: short
     description: Pocket name (unique key).
   nv_item_pocket_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_language_id:
     type: integer
     description: Numeric language identifier.
   nv_language_name:
     type: string
-    string_semantics: short
     description: Language name (unique key).
   nv_language_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_language_official:
     type: boolean
     description: Whether this is an official game language.
   nv_language_iso639:
     type: string
-    string_semantics: short
     description: ISO 639 language code.
   nv_language_iso3166:
     type: string
-    string_semantics: short
     description: ISO 3166 country code.
   nv_location_id:
     type: integer
     description: Numeric location identifier.
   nv_location_name:
     type: string
-    string_semantics: short
     description: Location name (unique key).
   nv_location_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_location_area_id:
     type: integer
     description: Numeric area identifier.
   nv_location_area_name:
     type: string
-    string_semantics: short
     description: Area name (unique key).
   nv_location_area_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_location_area_game_index:
     type: integer
@@ -2102,18 +2054,15 @@ values:
     description: Numeric machine identifier.
   nv_machine_url:
     type: string
-    string_semantics: short
     description: API resource URL (unique key).
   nv_move_id:
     type: integer
     description: Numeric move identifier.
   nv_move_name:
     type: string
-    string_semantics: short
     description: Move name (unique key).
   nv_move_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_move_accuracy:
     type: integer
@@ -2135,99 +2084,81 @@ values:
     description: Numeric ailment identifier.
   nv_move_ailment_name:
     type: string
-    string_semantics: short
     description: Ailment name (unique key).
   nv_move_ailment_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_move_battle_style_id:
     type: integer
     description: Numeric battle style identifier.
   nv_move_battle_style_name:
     type: string
-    string_semantics: short
     description: Battle style name (unique key).
   nv_move_battle_style_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_move_category_id:
     type: integer
     description: Numeric category identifier.
   nv_move_category_name:
     type: string
-    string_semantics: short
     description: Category name (unique key).
   nv_move_category_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_move_damage_class_id:
     type: integer
     description: Numeric damage class identifier.
   nv_move_damage_class_name:
     type: string
-    string_semantics: short
     description: Damage class name (unique key).
   nv_move_damage_class_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_move_learn_method_id:
     type: integer
     description: Numeric learn method identifier.
   nv_move_learn_method_name:
     type: string
-    string_semantics: short
     description: Learn method name (unique key).
   nv_move_learn_method_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_move_target_id:
     type: integer
     description: Numeric target identifier.
   nv_move_target_name:
     type: string
-    string_semantics: short
     description: Target name (unique key).
   nv_move_target_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_nature_id:
     type: integer
     description: Numeric nature identifier.
   nv_nature_name:
     type: string
-    string_semantics: short
     description: Nature name (unique key).
   nv_nature_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_pal_park_area_id:
     type: integer
     description: Numeric Pal Park area identifier.
   nv_pal_park_area_name:
     type: string
-    string_semantics: short
     description: Area name (unique key).
   nv_pal_park_area_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_pokedex_id:
     type: integer
     description: Numeric Pokédex identifier.
   nv_pokedex_name:
     type: string
-    string_semantics: short
     description: Pokédex name (unique key).
   nv_pokedex_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_pokedex_is_main_series:
     type: boolean
@@ -2237,11 +2168,9 @@ values:
     description: National Pokédex number.
   nv_pokemon_name:
     type: string
-    string_semantics: short
     description: Pokémon name (unique key).
   nv_pokemon_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_pokemon_base_experience:
     type: integer
@@ -2263,11 +2192,9 @@ values:
     description: Numeric color identifier.
   nv_pokemon_color_name:
     type: string
-    string_semantics: short
     description: Color name (unique key).
   nv_pokemon_color_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_pokemon_encounter_pokemon_id:
     type: entity_ref
@@ -2278,11 +2205,9 @@ values:
     description: Numeric form identifier.
   nv_pokemon_form_name:
     type: string
-    string_semantics: short
     description: Form name (unique key).
   nv_pokemon_form_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_pokemon_form_order:
     type: integer
@@ -2301,40 +2226,33 @@ values:
     description: Whether this is a Mega Evolution form.
   nv_pokemon_form_form_name:
     type: string
-    string_semantics: short
     description: Name of this specific form.
   nv_pokemon_habitat_id:
     type: integer
     description: Numeric habitat identifier.
   nv_pokemon_habitat_name:
     type: string
-    string_semantics: short
     description: Habitat name (unique key).
   nv_pokemon_habitat_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_pokemon_shape_id:
     type: integer
     description: Numeric shape identifier.
   nv_pokemon_shape_name:
     type: string
-    string_semantics: short
     description: Shape name (unique key).
   nv_pokemon_shape_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_pokemon_species_id:
     type: integer
     description: National Pokédex species number.
   nv_pokemon_species_name:
     type: string
-    string_semantics: short
     description: Species name (unique key).
   nv_pokemon_species_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_pokemon_species_order:
     type: integer
@@ -2371,33 +2289,27 @@ values:
     description: Numeric Pokéathlon stat identifier.
   nv_pokeathlon_stat_name:
     type: string
-    string_semantics: short
     description: Stat name (unique key).
   nv_pokeathlon_stat_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_region_id:
     type: integer
     description: Numeric region identifier.
   nv_region_name:
     type: string
-    string_semantics: short
     description: Region name (unique key).
   nv_region_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_stat_id:
     type: integer
     description: Numeric stat identifier.
   nv_stat_name:
     type: string
-    string_semantics: short
     description: Stat name (unique key).
   nv_stat_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_stat_game_index:
     type: integer
@@ -2410,7 +2322,6 @@ values:
     description: Numeric super contest effect identifier.
   nv_super_contest_effect_url:
     type: string
-    string_semantics: short
     description: API resource URL (unique key).
   nv_super_contest_effect_appeal:
     type: integer
@@ -2420,33 +2331,27 @@ values:
     description: Numeric type identifier.
   nv_type_name:
     type: string
-    string_semantics: short
     description: Type name (unique key).
   nv_type_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_version_id:
     type: integer
     description: Numeric version identifier.
   nv_version_name:
     type: string
-    string_semantics: short
     description: Version name (unique key).
   nv_version_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_version_group_id:
     type: integer
     description: Numeric version group identifier.
   nv_version_group_name:
     type: string
-    string_semantics: short
     description: Version group name (unique key).
   nv_version_group_url:
     type: string
-    string_semantics: short
     description: API resource URL.
   nv_version_group_order:
     type: integer

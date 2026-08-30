@@ -1012,15 +1012,12 @@ views:
 values:
   nv_fibery_id:
     type: string
-    string_semantics: short
     description: Fibery UUID identifier.
   nv_fibery_public_id:
     type: string
-    string_semantics: short
     description: Fibery public id (numeric string in UI).
   nv_fibery_database_name:
     type: string
-    string_semantics: short
     description: Qualified database name Space/Name.
   nv_fibery_payload_json:
     type: json
@@ -1030,94 +1027,73 @@ values:
     description: Passthrough command args or request body fragment.
   nv_fibery_space_name:
     type: string
-    string_semantics: short
     description: Fibery space (API app) name.
   nv_fibery_field_name:
     type: string
-    string_semantics: short
     description: Fibery field wire name.
   nv_fibery_field_type:
     type: string
-    string_semantics: short
     description: Fibery field type id.
   nv_fibery_user_name:
     type: string
-    string_semantics: short
     description: User display name.
   nv_fibery_user_email:
     type: string
-    string_semantics: short
     description: User email address.
   nv_fibery_file_name:
     type: string
-    string_semantics: short
     description: File display name.
   nv_fibery_file_secret:
     type: string
-    string_semantics: short
     description: File storage secret (fibery/secret).
   nv_fibery_file_content_type:
     type: string
-    string_semantics: short
     description: MIME content type.
   nv_fibery_file_content_length:
     type: integer
     description: File size in bytes.
   nv_fibery_file_source_url:
     type: string
-    string_semantics: short
     description: Remote URL to import as a Fibery file.
   nv_fibery_view_name:
     type: string
-    string_semantics: short
     description: Saved view title.
   nv_fibery_view_type:
     type: string
-    string_semantics: short
     description: View layout type (board, grid, document, etc.).
   nv_fibery_webhook_id:
     type: string
-    string_semantics: short
     description: Webhook subscription id (integer on wire, string in expressions).
   nv_fibery_webhook_url:
     type: string
-    string_semantics: short
     description: Webhook callback URL.
   nv_fibery_webhook_state:
     type: string
-    string_semantics: short
     description: Webhook lifecycle state.
   nv_fibery_search_query:
     type: string
-    string_semantics: short
     description: Full-text search query string.
   nv_fibery_search_kind:
     type: string
-    string_semantics: short
     description: Search hit kind (entity or view).
   nv_fibery_history_id:
     type: string
-    string_semantics: short
     description: History entry id.
   nv_fibery_history_action:
     type: string
-    string_semantics: short
     description: History action name.
   nv_fibery_document_secret:
     type: string
-    string_semantics: short
     description: Collaborative document secret UUID.
   nv_fibery_document_format:
-    type: select
-    allowed_values: [md, html, json]
+    type: enum
+    enum: [md, html, json]
     description: Document wire format.
   nv_fibery_document_markdown:
-    type: string
-    string_semantics: markdown
+    type: markdown
     description: Rich-text document body.
   nv_wire_str_short:
     type: string
-    string_semantics: short
   nv_wire_int:
     type: integer
   nv_wire_num:
@@ -1125,5 +1101,4 @@ values:
   nv_wire_bool:
     type: boolean
   nv_wire_date_rfc3339:
-    type: date
-    value_format: rfc3339
+    type: rfc3339

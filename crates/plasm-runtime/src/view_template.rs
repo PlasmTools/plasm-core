@@ -9,6 +9,21 @@ use crate::RuntimeError;
 
 const VIEW_TEMPLATE_MAX_CHARS: usize = 32_768;
 
+/// Locked banking_knowledge scenario date (matches tau2-bench `get_today()`).
+fn banking_domain_today() -> chrono::NaiveDate {
+    chrono::NaiveDate::from_ymd_opt(2025, 11, 14).expect("valid banking domain today")
+}
+
+fn parse_wire_date(s: &str) -> Option<chrono::NaiveDate> {
+    let t = s.trim();
+    if t.is_empty() || t.eq_ignore_ascii_case("null") {
+        return None;
+    }
+    chrono::NaiveDate::parse_from_str(t, "%m/%d/%Y")
+        .ok()
+        .or_else(|| chrono::NaiveDate::parse_from_str(t, "%Y-%m-%d").ok())
+}
+
 fn plasm_value_to_json(v: &Value) -> serde_json::Value {
     match v {
         Value::Null => serde_json::Value::Null,
@@ -28,6 +43,36 @@ fn plasm_value_to_json(v: &Value) -> serde_json::Value {
         }
         Value::PlasmInputRef(_) | Value::UnionCtor { .. } => serde_json::Value::Null,
         Value::Money(m) => serde_json::Value::String(m.display()),
+    }
+}
+
+fn parse_wire_num_value(v: minijinja::Value) -> Result<f64, String> {
+    match v.kind() {
+        ValueKind::Number => {
+            if let Some(i) = v.as_i64() {
+                return Ok(i as f64);
+            }
+            v.to_string()
+                .parse::<f64>()
+                .map_err(|e| format!("wire_num: {e}"))
+        }
+        ValueKind::String => {
+            let mut s = v.as_str().unwrap_or_default().trim().to_string();
+            s = s.replace('$', "").replace(',', "");
+            for suffix in [" points", " point", " pts", " pt"] {
+                if s.to_ascii_lowercase().ends_with(suffix) {
+                    s.truncate(s.len() - suffix.len());
+                    s = s.trim().to_string();
+                    break;
+                }
+            }
+            if s.is_empty() {
+                return Ok(0.0);
+            }
+            s.parse::<f64>().map_err(|e| format!("wire_num: {e}"))
+        }
+        ValueKind::None | ValueKind::Undefined => Ok(0.0),
+        _ => Err(format!("wire_num: unsupported value kind {:?}", v.kind())),
     }
 }
 
@@ -118,6 +163,25 @@ fn register_view_template_filters(env: &mut Environment<'_>) {
             }
             let idx = usize::try_from(index.max(0)).unwrap_or(0);
             Ok(s.split(&sep).nth(idx).unwrap_or("").to_string())
+        },
+    );
+    env.add_filter("wire_num", |v: minijinja::Value| -> Result<f64, minijinja::Error> {
+        parse_wire_num_value(v).map_err(|e| {
+            minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, e)
+        })
+    });
+    env.add_filter(
+        "wire_days_since",
+        |v: minijinja::Value| -> Result<f64, minijinja::Error> {
+            let Some(s) = v.as_str() else {
+                return Ok(f64::MAX);
+            };
+            let Some(d) = parse_wire_date(s) else {
+                return Ok(f64::MAX);
+            };
+            let today = banking_domain_today();
+            let days = (today - d).num_days();
+            Ok(if days < 0 { 0.0 } else { days as f64 })
         },
     );
     env.add_filter(
@@ -332,6 +396,36 @@ fn render_view_template_with_nodes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn wire_days_since_uses_banking_domain_today() {
+        let mut fields = IndexMap::new();
+        fields.insert(
+            "submitted".to_string(),
+            Value::String("2025-09-15".into()),
+        );
+        let out = render_view_computed_template(
+            "{{ submitted | wire_days_since | int }}",
+            &IndexMap::new(),
+            &fields,
+        )
+        .unwrap();
+        assert_eq!(out, Value::String("60".into()));
+    }
+
+    #[test]
+    fn wire_num_parses_money_strings() {
+        let mut fields = IndexMap::new();
+        fields.insert("balance".to_string(), Value::String("$3,000.00".into()));
+        fields.insert("limit".to_string(), Value::Float(4000.0));
+        let out = render_view_computed_template(
+            "{%- if limit | wire_num > 0 -%}{{ ((balance | wire_num / limit | wire_num) * 100) | round(1) }}{%- else -%}0{%- endif -%}",
+            &IndexMap::new(),
+            &fields,
+        )
+        .unwrap();
+        assert_eq!(out, Value::String("75.0".into()));
+    }
+
     #[test]
     fn wire_time_filter_in_template() {
         let mut scope = IndexMap::new();

@@ -472,18 +472,17 @@ values:
     type: entity_ref
     target: Spreadsheet
   nv_developer_metadata_visibility:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - DEVELOPER_METADATA_VISIBILITY_UNSPECIFIED
     - DOCUMENT
     - PROJECT
   nv_sheet_copy_to_destination_spreadsheet_id:
     type: string
-    string_semantics: short
     description: Destination spreadsheet ID to receive the copied sheet.
   nv_sheet_sheet_type:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - GRID
     - OBJECT
     - DATA_SOURCE
@@ -497,37 +496,32 @@ values:
       or a fuller payload).
   nv_spreadsheet_create_locale:
     type: string
-    string_semantics: short
     description: BCP 47 locale (SpreadsheetProperties.locale).
   nv_spreadsheet_create_sheets_item:
     type: entity_ref
     target: Sheet
   nv_spreadsheet_create_time_zone:
     type: string
-    string_semantics: short
     description: IANA time zone (SpreadsheetProperties.timeZone).
   nv_spreadsheet_create_title:
     type: string
-    string_semantics: short
     description: Spreadsheet title (SpreadsheetProperties.title).
   nv_value_range_append_insert_data_option:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - OVERWRITE
     - INSERT_ROWS
   nv_value_range_append_range:
     type: string
-    string_semantics: short
     description: A1 range used to locate the logical table for appending (for example `Sheet1!A1:C10`).
   nv_value_range_append_value_input_option:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - INPUT_VALUE_OPTION_UNSPECIFIED
     - RAW
     - USER_ENTERED
   nv_value_range_range:
     type: string
-    string_semantics: short
     description: Range identifier (for example `Sheet1!A1:C10` or `R1C1:R10C3`).
   nv_value_range_spreadsheet_id:
     type: entity_ref
@@ -540,25 +534,24 @@ values:
   nv_wire_int:
     type: integer
   nv_wire_sel_579cc5cb5a6acde5:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - COLUMNS
     - DIMENSION_UNSPECIFIED
     - ROWS
   nv_wire_sel_c895667a13ce733e:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - FORMATTED_STRING
     - SERIAL_NUMBER
   nv_wire_sel_fddbc0a3265eeefc:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - FORMATTED_VALUE
     - FORMULA
     - UNFORMATTED_VALUE
   nv_wire_str_short:
     type: string
-    string_semantics: short
   nv_spreadsheet_create_sheets:
     type: array
     items:

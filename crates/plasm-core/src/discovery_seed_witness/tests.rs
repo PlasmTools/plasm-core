@@ -453,6 +453,7 @@ fn corpus_stamps_attach_on_label_and_prune_drops_label_read() {
                 names: vec!["issue".into()],
                 qualifier_names: vec![],
                 seed_class: Some(DiscoverySeedClass::Primary),
+                co_seed_with: None,
             }),
         },
     );
@@ -476,6 +477,7 @@ fn corpus_stamps_attach_on_label_and_prune_drops_label_read() {
                 names: vec!["label".into()],
                 qualifier_names: vec![],
                 seed_class: Some(DiscoverySeedClass::Dependent),
+                co_seed_with: None,
             }),
         },
     );
@@ -504,6 +506,7 @@ fn corpus_stamps_attach_on_label_and_prune_drops_label_read() {
                 preflight: None,
                 discovery: None,
                 identity_key: None,
+            invalidates_entities: vec![],
             },
         );
     }
@@ -638,6 +641,7 @@ fn corpus_stamps_own_pair_on_both_ends_of_own_edge() {
                 names: vec!["thread".into()],
                 qualifier_names: vec![],
                 seed_class: Some(DiscoverySeedClass::Primary),
+                co_seed_with: None,
             }),
         },
     );
@@ -661,6 +665,7 @@ fn corpus_stamps_own_pair_on_both_ends_of_own_edge() {
                 names: vec!["message".into()],
                 qualifier_names: vec![],
                 seed_class: Some(DiscoverySeedClass::Primary),
+                co_seed_with: None,
             }),
         },
     );
@@ -689,6 +694,7 @@ fn corpus_stamps_own_pair_on_both_ends_of_own_edge() {
                 preflight: None,
                 discovery: None,
                 identity_key: None,
+            invalidates_entities: vec![],
             },
         );
     }

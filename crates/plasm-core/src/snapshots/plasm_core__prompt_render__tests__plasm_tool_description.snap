@@ -1,6 +1,5 @@
 ---
 source: crates/plasm-core/src/prompt_render/tests.rs
-assertion_line: 1972
 expression: "super::PLASM_TOOL_DESCRIPTION"
 ---
 **Plasm** — **`logical_session_ref`** + **`program`**. Clean read-only plans execute inline (rows in tool **`content`**). Plans with any mutation / review gate return a **`run_ref`** (`pcN`, 10 min TTL) for **`plasm_run`**; do **not** echo the program.
@@ -9,7 +8,7 @@ expression: "super::PLASM_TOOL_DESCRIPTION"
 
 **Program shape:** one `plasm_expr`, or `label = …` bindings then **one** final return line (comma-separated roots on that line only). No prose, `return`, fences, or table rows. A plan that merely echoes an object/array/string literal is a **literal no-op**.
 
-**Entity heads vs rows:** Bare `eN` = query-all (**plural**), not “current/self”. `eN(id)` = get (**singleton**). `eN{…}` / `eN~"q"` = filtered/search (**plural**). When TSV teaches nullary `eN.mK()` providing a row, call `eN.mK()` — do not invent `eN.field` as a fetch or bind `me = eN` for that singular row. `[field,…]` keeps row shape; scalar params need `label.wire` from a bound row. After `label = eN.mK()` / `eN(id)`, use `label.wire` / `label.mK(…)`.
+**Entity heads vs rows:** Bare `eN` = query-all (**plural**), not “current/self”. `eN(id)` = get (**singleton**). `eN{…}` / `eN~"q"` = filtered/search (**plural**). When TSV teaches nullary `eN.mK()` providing a row, call `eN.mK()` — do not invent `eN.field` as a fetch or bind `me = eN` for that singular row. `[field,…]` keeps row shape; scalar params need `label.wire` from a **singleton** row (get / `eN.mK()` / filter+`.limit(1)`), not bare query-all. Array params may take plural `rows.wire`. After `label = eN.mK()` / `eN(id)`, use `label.wire` / `label.mK(…)`.
 
 **Strings:** JSON escapes in quotes (`\n` `\t` `\\` `\"`); unknown `\x` errors. Prefer tagged `<<TAG` … `TAG` heredocs for long bodies (real newlines).
 

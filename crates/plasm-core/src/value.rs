@@ -775,9 +775,18 @@ impl FieldType {
                 CompOp::Lte,
                 CompOp::Exists,
             ],
-            FieldType::String | FieldType::Blob | FieldType::Uuid | FieldType::Date => {
+            FieldType::String | FieldType::Blob | FieldType::Uuid => {
                 &[CompOp::Eq, CompOp::Neq, CompOp::Contains, CompOp::Exists]
             }
+            FieldType::Date => &[
+                CompOp::Eq,
+                CompOp::Neq,
+                CompOp::Gt,
+                CompOp::Lt,
+                CompOp::Gte,
+                CompOp::Lte,
+                CompOp::Exists,
+            ],
             FieldType::Select => &[CompOp::Eq, CompOp::Neq, CompOp::In, CompOp::Exists],
             FieldType::MultiSelect | FieldType::Array => {
                 &[CompOp::Contains, CompOp::In, CompOp::Exists]

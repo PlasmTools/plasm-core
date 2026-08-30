@@ -44,9 +44,10 @@ fn decode_single_entity(
     source: &serde_json::Value,
     cgs: Option<&CGS>,
 ) -> Result<DecodedEntity, DecodeError> {
-    let core = decode_entity_fields_and_ref(decoder, source)?;
+    let core = decode_entity_fields_and_ref(decoder, source, cgs)?;
     let mut relations = IndexMap::new();
     let mut embedded_entities = Vec::new();
+    let field_diagnostics = core.field_diagnostics;
 
     for relation_decoder in &decoder.relations {
         if !relation_decode_path_specified(source, &relation_decoder.decoder.source) {
@@ -68,7 +69,7 @@ fn decode_single_entity(
         let child_sources = extract_path(&child_decoder.source, source)?;
         let mut refs = Vec::new();
         for child_source in child_sources {
-            let related = decode_entity_fields_and_ref(&child_decoder, &child_source)?;
+            let related = decode_entity_fields_and_ref(&child_decoder, &child_source, cgs)?;
             let reference = related.reference;
             refs.push(reference.clone());
             let mut child_entity = DecodedEntity {
@@ -76,6 +77,7 @@ fn decode_single_entity(
                 fields: related.fields,
                 relations: IndexMap::new(),
                 embedded_entities: Vec::new(),
+                field_diagnostics: related.field_diagnostics,
             };
             if let Some(cgs) = cgs {
                 expand_transitive_from_parent_get_embeds(
@@ -99,12 +101,14 @@ fn decode_single_entity(
         fields: core.fields,
         relations,
         embedded_entities,
+        field_diagnostics,
     })
 }
 
 struct DecodedEntityCore {
     reference: Ref,
     fields: IndexMap<String, Value>,
+    field_diagnostics: Vec<plasm_core::DecodeFieldDiagnostic>,
 }
 
 fn value_to_key_slot(v: &Value) -> Option<String> {
@@ -128,8 +132,11 @@ fn value_to_key_slot(v: &Value) -> Option<String> {
 fn decode_entity_fields_and_ref(
     decoder: &EntityDecoder,
     source: &serde_json::Value,
+    cgs: Option<&CGS>,
 ) -> Result<DecodedEntityCore, DecodeError> {
     let mut fields = IndexMap::new();
+    let mut field_diagnostics = Vec::new();
+    let entity_def = cgs.and_then(|c| c.get_entity(decoder.entity.as_str()));
 
     let id_value = if let Some(ref rid) = decoder.request_identity_override {
         rid.clone()
@@ -151,13 +158,30 @@ fn decode_entity_fields_and_ref(
                 if let Some(ref dr) = field_decoder.derive {
                     raw = apply_field_derive_rule(dr, &raw)?;
                 }
-                let decoded_value = if field_decoder.money.is_some() {
+                let mut decoded_value = if field_decoder.money.is_some() {
                     plasm_core::json_amount_to_value(&raw)
                 } else if let Some(transform) = &field_decoder.transform {
                     apply_transform(transform, &raw)?
                 } else {
                     plasm_core::json_value_to_plasm_value(&raw)
                 };
+                if field_decoder.money.is_none() {
+                    if let (Some(cgs), Some(ent)) = (cgs, entity_def) {
+                        if let Some(fs) = ent.fields.get(field_decoder.field.as_str()) {
+                            if let Ok(nv) = fs.named_value(cgs) {
+                                let (v, diag) = plasm_core::decode_coerce_and_validate_field(
+                                    field_decoder.field.as_str(),
+                                    &nv,
+                                    decoded_value,
+                                );
+                                decoded_value = v;
+                                if let Some(d) = diag {
+                                    field_diagnostics.push(d);
+                                }
+                            }
+                        }
+                    }
+                }
                 fields.insert(field_decoder.field.clone(), decoded_value);
             }
         }
@@ -196,12 +220,15 @@ fn decode_entity_fields_and_ref(
         .filter_map(|fd| fd.money.clone().map(|spec| (fd.field.clone(), spec)))
         .collect();
     if !money_specs.is_empty() {
-        plasm_core::money::coerce_decoded_fields(&mut fields, money_specs)
-            .map_err(|e| DecodeError::InvalidStructure { message: e.into() })?;
+        plasm_core::decode_coerce_money_fields(&mut fields, money_specs, &mut field_diagnostics);
     }
 
     let reference = build_decoded_reference(decoder, &fields, &id_value)?;
-    Ok(DecodedEntityCore { reference, fields })
+    Ok(DecodedEntityCore {
+        reference,
+        fields,
+        field_diagnostics,
+    })
 }
 
 fn build_decoded_reference(
@@ -352,7 +379,8 @@ fn expand_transitive_from_parent_get_embeds(
             let child_sources = extract_path(&rel_path, &wire)?;
             let mut refs = Vec::new();
             for child_wire in child_sources {
-                let related = decode_entity_fields_and_ref(&child_decoder, &child_wire)?;
+                let related =
+                    decode_entity_fields_and_ref(&child_decoder, &child_wire, Some(cgs))?;
                 let reference = related.reference;
                 refs.push(reference.clone());
                 let child_idx = entity.embedded_entities.len();
@@ -361,6 +389,7 @@ fn expand_transitive_from_parent_get_embeds(
                     fields: related.fields,
                     relations: IndexMap::new(),
                     embedded_entities: Vec::new(),
+                    field_diagnostics: related.field_diagnostics,
                 });
                 let mut child_path = path.clone();
                 child_path.push(child_idx);
@@ -602,7 +631,7 @@ mod tests {
         });
         let child_decoder = super::child_decoder_with_parent_ambient(&parent, &base_decoder);
         let file_source = &parent["files"][0];
-        let file = super::decode_entity_fields_and_ref(&child_decoder, file_source)
+        let file = super::decode_entity_fields_and_ref(&child_decoder, file_source, None)
             .expect("decode embedded CommitFile");
         let parts = file
             .reference

@@ -49,11 +49,12 @@ pub fn args_to_query_predicate(
 
 #[cfg(test)]
 mod tests {
+    use plasm_core::value_domain::ValueDomain;
     use super::*;
     use clap::Command;
     use plasm_core::{
         CapabilityKind, CapabilityMapping, CompOp, FieldType, InputFieldSchema, InputFieldWire,
-        InputSchema, InputType, InputValidation, NamedValueSchema, StringSemantics, Value,
+        InputSchema, InputType, InputValidation, NamedValueSchema, Value,
         ValueDomainKey, CGS,
     };
 
@@ -64,111 +65,75 @@ mod tests {
         };
         add(
             "qa_status_req",
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Select,
-                value_format: None,
-                allowed_values: Some(vec!["available".into(), "pending".into(), "sold".into()]),
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::Select, None, None, Some(vec!["available".into(), "pending".into(), "sold".into()]).clone(), None),
+                None,
+            ),
         );
         add(
             "qa_status_rej",
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Select,
-                value_format: None,
-                allowed_values: Some(vec!["available".into()]),
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::Select, None, None, Some(vec!["available".into()]).clone(), None),
+                None,
+            ),
         );
         add(
             "qa_team_id",
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: Some(StringSemantics::Short),
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                None,
+            ),
         );
         add(
             "qa_team_id_multi",
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: Some(StringSemantics::Short),
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                None,
+            ),
         );
         add(
             "qa_archived",
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Boolean,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::Boolean, None, None, None, None),
+                None,
+            ),
         );
         add(
             "qa_status_none",
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Select,
-                value_format: None,
-                allowed_values: Some(vec!["available".into()]),
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::Select, None, None, Some(vec!["available".into()]).clone(), None),
+                None,
+            ),
         );
         add(
             "qa_region_gen",
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Select,
-                value_format: None,
-                allowed_values: Some(vec!["EMEA".into(), "APAC".into(), "AMER".into()]),
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::Select, None, None, Some(vec!["EMEA".into(), "APAC".into(), "AMER".into()]).clone(), None),
+                None,
+            ),
         );
         add(
             "qa_revenue",
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Number,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::Number, None, None, None, None),
+                None,
+            ),
         );
         add(
             "qa_region_nf",
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Select,
-                value_format: None,
-                allowed_values: Some(vec!["EMEA".into()]),
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::Select, None, None, Some(vec!["EMEA".into()]).clone(), None),
+                None,
+            ),
         );
         cgs
     }
@@ -180,6 +145,7 @@ mod tests {
             kind: CapabilityKind::Query,
             domain: "Thing".into(),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: CapabilityMapping {
                 template: serde_json::json!({}).into(),
             },
@@ -209,6 +175,7 @@ mod tests {
             kind: CapabilityKind::Query,
             domain: "Thing".into(),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: CapabilityMapping {
                 template: serde_json::json!({}).into(),
             },

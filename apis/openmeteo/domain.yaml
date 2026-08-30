@@ -67,23 +67,21 @@ values:
     description: Decimal longitude of the forecast location.
   nv_forecast_timezone:
     type: string
-    string_semantics: short
     description: IANA timezone name for the location.
   nv_weather_forecast_current_weather:
     type: boolean
   nv_weather_forecast_past_days:
     type: integer
   nv_weather_forecast_temperature_unit:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - celsius
     - fahrenheit
   nv_weather_forecast_timezone:
     type: string
-    string_semantics: short
   nv_weather_forecast_wind_speed_unit:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - kmh
     - ms
     - mph

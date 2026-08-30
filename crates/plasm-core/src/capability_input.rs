@@ -183,6 +183,68 @@ pub(crate) fn validate_multiselect_value(
     }
     Ok(())
 }
+
+/// Validate a concrete value against a resolved [`NamedValueSchema`] (invoke params + predicates).
+pub(crate) fn validate_concrete_named_value(
+    value: &Value,
+    nv: &crate::NamedValueSchema,
+    field_path: &str,
+    cgs: &CGS,
+) -> Result<(), TypeError> {
+    match &nv.field_type {
+        FieldType::Array => {
+            let spec = nv.array_items.as_ref().ok_or_else(|| TypeError::IncompatibleValue {
+                field: field_path.to_string(),
+                value_type: value.type_name().to_string(),
+                field_type: "array (missing items schema)".to_string(),
+            })?;
+            validate_typed_array_value(value, spec, field_path, cgs)
+        }
+        FieldType::MultiSelect => {
+            let allowed = nv.allowed_values.as_deref().unwrap_or(&[]);
+            validate_multiselect_value(value, allowed, field_path)
+        }
+        _ => {
+            if !value_fits_field_type_entity_ref_aware(value, &nv.field_type, cgs) {
+                return Err(match &nv.field_type {
+                    FieldType::EntityRef { target } => {
+                        entity_ref_incompatible_value(field_path, target.as_str(), value, cgs)
+                    }
+                    _ => TypeError::IncompatibleValue {
+                        field: field_path.to_string(),
+                        value_type: value.type_name().to_string(),
+                        field_type: format!("{:?}", nv.field_type),
+                    },
+                });
+            }
+            if matches!(nv.field_type, FieldType::Money) {
+                validate_money_named_value(field_path, value, nv)?;
+            }
+            validate_named_value_domain(value, nv, field_path)
+        }
+    }
+}
+
+fn validate_money_named_value(
+    field_path: &str,
+    value: &Value,
+    nv: &crate::NamedValueSchema,
+) -> Result<(), TypeError> {
+    let fmt = crate::money::MoneyWireFormat::DecimalString;
+    let coerced =
+        crate::money::normalize(value.clone(), fmt, nv.currency.as_deref()).map_err(|message| {
+            TypeError::IncompatibleValue {
+                field: field_path.to_string(),
+                value_type: format!("{} ({message})", value.type_name()),
+                field_type: "money".to_string(),
+            }
+        })?;
+    let Value::Money(m) = coerced else {
+        return Ok(());
+    };
+    crate::money::currency_conflict(nv.currency.as_deref(), m.currency()).map_err(TypeError::from)
+}
+
 /// Validate input against capability input schema
 pub(crate) fn validate_capability_input(
     input: &Value,
@@ -315,77 +377,12 @@ pub(crate) fn validate_input_type(
                                             entity: "input object".to_string(),
                                         }
                                     })?;
-                                    match &fnv.field_type {
-                                        FieldType::Array => {
-                                            let spec = fnv.array_items.as_ref();
-                                            let Some(spec) = spec else {
-                                                return Err(TypeError::IncompatibleValue {
-                                                    field: field_path.clone(),
-                                                    value_type: field_value.type_name().to_string(),
-                                                    field_type: "array (missing items schema)"
-                                                        .to_string(),
-                                                });
-                                            };
-                                            validate_typed_array_value(
-                                                field_value,
-                                                spec,
-                                                &field_path,
-                                                cgs,
-                                            )?;
-                                        }
-                                        FieldType::MultiSelect => {
-                                            let allowed =
-                                                fnv.allowed_values.as_deref().unwrap_or(&[]);
-                                            validate_multiselect_value(
-                                                field_value,
-                                                allowed,
-                                                &field_path,
-                                            )?;
-                                        }
-                                        _ => {
-                                            if !value_fits_field_type_entity_ref_aware(
-                                                field_value,
-                                                &fnv.field_type,
-                                                cgs,
-                                            ) {
-                                                return Err(match &fnv.field_type {
-                                                    FieldType::EntityRef { target } => {
-                                                        entity_ref_incompatible_value(
-                                                            &field_path,
-                                                            target.as_str(),
-                                                            field_value,
-                                                            cgs,
-                                                        )
-                                                    }
-                                                    _ => TypeError::IncompatibleValue {
-                                                        field: field_path.clone(),
-                                                        value_type: field_value
-                                                            .type_name()
-                                                            .to_string(),
-                                                        field_type: format!("{:?}", fnv.field_type),
-                                                    },
-                                                });
-                                            }
-
-                                            if let (Some(allowed), Some(str_val)) =
-                                                (&fnv.allowed_values, field_value.as_str())
-                                            {
-                                                if !allowed.contains(&str_val.to_string()) {
-                                                    return Err(TypeError::IncompatibleValue {
-                                                        field: field_path,
-                                                        value_type: format!(
-                                                            "'{}' (not in allowed values)",
-                                                            str_val
-                                                        ),
-                                                        field_type: format!(
-                                                            "select with values: {:?}",
-                                                            allowed
-                                                        ),
-                                                    });
-                                                }
-                                            }
-                                        }
-                                    }
+                                    validate_concrete_named_value(
+                                        field_value,
+                                        &fnv,
+                                        &field_path,
+                                        cgs,
+                                    )?;
                                 }
                             }
                         }
@@ -538,6 +535,45 @@ pub(crate) fn validate_input_type(
     Ok(())
 }
 
+/// Validate profile + constraints on a concrete scalar value (shared by compile and decode).
+pub(crate) fn validate_named_value_domain_value(
+    value: &Value,
+    nv: &crate::NamedValueSchema,
+) -> Result<(), String> {
+    if value.is_domain_example_placeholder() {
+        return Ok(());
+    }
+    if let Some(s) = value.as_str() {
+        nv.domain.validate_string_value(s)
+    } else if let Some(n) = value.as_number() {
+        nv.domain.validate_number_value(n)
+    } else {
+        Ok(())
+    }
+}
+
+/// Validate profile + constraints on a concrete invoke/compile value.
+pub(crate) fn validate_named_value_domain(
+    value: &Value,
+    nv: &crate::NamedValueSchema,
+    field_path: &str,
+) -> Result<(), TypeError> {
+    validate_named_value_domain_value(value, nv).map_err(|msg| {
+        let value_type = if let Some(s) = value.as_str() {
+            format!("'{s}'")
+        } else if let Some(n) = value.as_number() {
+            n.to_string()
+        } else {
+            value.type_name().to_string()
+        };
+        TypeError::IncompatibleValue {
+            field: field_path.to_string(),
+            value_type,
+            field_type: msg,
+        }
+    })
+}
+
 /// Validate input constraints
 fn validate_input_constraints(
     input: &Value,
@@ -552,11 +588,6 @@ fn validate_input_constraints(
         });
     }
 
-    // Apply validation predicates
-    for predicate in &validation.predicates {
-        validate_input_predicate(input, predicate)?;
-    }
-
     // Apply cross-field rules for object inputs
     if let Value::Object(obj) = input {
         for rule in &validation.cross_field_rules {
@@ -567,110 +598,13 @@ fn validate_input_constraints(
     Ok(())
 }
 
-/// Validate a specific input predicate
-fn validate_input_predicate(
-    input: &Value,
-    predicate: &crate::ValidationPredicate,
-) -> Result<(), TypeError> {
-    // A predicate on a field that was not supplied is vacuously satisfied — a constraint cannot bind
-    // a value that is absent (real omitted optional fields, and every field the teaching surface
-    // simply did not list). The concrete value, if any, is validated at real execute time.
-    let Some(value) = lookup_field_by_path(input, &predicate.field_path) else {
-        return Ok(());
-    };
-    // Teaching-surface `$` fill-ins are prompt placeholders, not real API values (see
-    // `Value::is_domain_example_placeholder`); enforce constraints against them only at execute time.
-    if value.is_domain_example_placeholder() {
-        return Ok(());
-    }
-    let value = value.clone();
-
-    let valid = match predicate.operator {
-        crate::ValidationOp::MinLength => {
-            let min = predicate.value.as_number().unwrap_or(0.0) as usize;
-            match &value {
-                Value::String(s) => s.len() >= min,
-                Value::Array(a) => a.len() >= min,
-                _ => false,
-            }
-        }
-
-        crate::ValidationOp::MaxLength => {
-            let max = predicate.value.as_number().unwrap_or(f64::MAX) as usize;
-            match &value {
-                Value::String(s) => s.len() <= max,
-                Value::Array(a) => a.len() <= max,
-                _ => false,
-            }
-        }
-
-        crate::ValidationOp::MinValue => {
-            if let (Some(n), Some(min)) = (value.as_number(), predicate.value.as_number()) {
-                n >= min
-            } else {
-                false
-            }
-        }
-
-        crate::ValidationOp::MaxValue => {
-            if let (Some(n), Some(max)) = (value.as_number(), predicate.value.as_number()) {
-                n <= max
-            } else {
-                false
-            }
-        }
-
-        crate::ValidationOp::Pattern => {
-            // Simplified pattern matching - would use regex in full implementation
-            match (&value, &predicate.value) {
-                (Value::String(s), Value::String(pattern)) => s.contains(pattern),
-                _ => false,
-            }
-        }
-
-        crate::ValidationOp::CustomFunction => {
-            // Custom functions would be implemented in full system
-            true // Always pass for POC
-        }
-
-        crate::ValidationOp::DependsOn => {
-            // Dependency validation would check related fields
-            true // Always pass for POC
-        }
-    };
-
-    if !valid {
-        return Err(TypeError::IncompatibleValue {
-            field: predicate.field_path.clone(),
-            value_type: value.type_name().to_string(),
-            field_type: predicate.error_message.clone(),
-        });
-    }
-
-    Ok(())
-}
-
-/// Resolve a dot-notation field path, returning `None` when any segment is missing (or a non-object
-/// is traversed). Absence is a *skip* signal for [`validate_input_predicate`], not a hard error: a
-/// constraint on an omitted field is vacuously satisfied.
-fn lookup_field_by_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
-    let mut current = value;
-    for part in path.split('.') {
-        match current {
-            Value::Object(obj) => current = obj.get(part)?,
-            _ => return None,
-        }
-    }
-    Some(current)
-}
-
 /// Validate cross-field rules
 fn validate_cross_field_rule(
     object: &indexmap::IndexMap<String, Value>,
     rule: &crate::CrossFieldRule,
 ) -> Result<(), TypeError> {
-    // Teaching-surface `$` placeholders count as absent (same spirit as predicates). When every
-    // listed field is absent or still a placeholder, defer the rule to execute time.
+    // Teaching-surface `$` placeholders count as absent (same spirit as value-domain constraints).
+    // When every listed field is absent or still a placeholder, defer the rule to execute time.
     let concretely_present: Vec<_> = rule
         .fields
         .iter()
@@ -723,16 +657,26 @@ fn validate_cross_field_rule(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ValidationOp, ValidationPredicate, Value};
+    use crate::value_domain::{Constraints, KernelKind, ValueDomain};
+    use crate::Value;
     use indexmap::IndexMap;
 
-    fn min_value_revenue() -> ValidationPredicate {
-        ValidationPredicate {
-            field_path: "revenue".to_string(),
-            operator: ValidationOp::MinValue,
-            value: Value::Integer(0),
-            error_message: "Revenue must be non-negative".to_string(),
-        }
+    fn revenue_nv_min_zero() -> crate::NamedValueSchema {
+        crate::NamedValueSchema::from_domain(
+            String::new(),
+            ValueDomain::new(
+                KernelKind::Number,
+                None,
+                Constraints {
+                    min: Some(0.0),
+                    ..Default::default()
+                },
+                None,
+                None,
+            )
+            .expect("number domain"),
+            None,
+        )
     }
 
     fn obj(entries: &[(&str, Value)]) -> Value {
@@ -743,30 +687,21 @@ mod tests {
         Value::Object(m)
     }
 
-    /// WS-R3′: a predicate on an **omitted** field is vacuously satisfied (constraint cannot bind an
-    /// absent value); its real value, if supplied, is validated at execute time.
-    #[test]
-    fn predicate_on_absent_field_is_vacuously_satisfied() {
-        let input = obj(&[("name", Value::String("Ada".to_string()))]);
-        validate_input_predicate(&input, &min_value_revenue())
-            .expect("absent optional field must skip the predicate");
-    }
-
-    /// WS-R3′: the teaching-surface `$` fill-in is not a real API value; predicate enforcement is
+    /// WS-R3′: the teaching-surface `$` fill-in is not a real API value; value-domain enforcement is
     /// deferred to execute time rather than rejecting the teaching line.
     #[test]
-    fn predicate_on_domain_placeholder_is_deferred() {
-        let input = obj(&[("revenue", Value::String("$".to_string()))]);
-        validate_input_predicate(&input, &min_value_revenue())
-            .expect("`$` placeholder must skip the predicate");
+    fn value_domain_on_domain_placeholder_is_deferred() {
+        let nv = revenue_nv_min_zero();
+        validate_named_value_domain(&Value::String("$".to_string()), &nv, "revenue")
+            .expect("`$` placeholder must skip value-domain constraints");
     }
 
-    /// A concrete violating value is still rejected (the fix must not blanket-disable predicates).
+    /// A concrete violating value is still rejected via `values:` constraints.
     #[test]
-    fn predicate_on_concrete_violation_still_fails() {
-        let input = obj(&[("revenue", Value::Integer(-5))]);
-        validate_input_predicate(&input, &min_value_revenue())
-            .expect_err("a real negative revenue must still fail min_value");
+    fn value_domain_on_concrete_violation_still_fails() {
+        let nv = revenue_nv_min_zero();
+        validate_named_value_domain(&Value::Integer(-5), &nv, "revenue")
+            .expect_err("a real negative revenue must still fail min constraint");
     }
 
     /// GitHub FO: `pr_create` ExactlyOne(title, issue) — title+issue must fail at plan/typecheck.

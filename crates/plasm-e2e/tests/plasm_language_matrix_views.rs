@@ -27,6 +27,27 @@ use language_matrix_views::{
     views_matrix_host_state, VIEWS_MATRIX_ENTRY_ID,
 };
 
+
+fn block_on_views_live<F>(fut: F) -> F::Output
+where
+    F: std::future::Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("views live runtime");
+            rt.block_on(fut)
+        })
+        .expect("spawn views live harness")
+        .join()
+        .expect("join views live harness")
+}
+
+
 #[test]
 fn matrix_views_catalog_passes_static_validation() {
     let cgs = matrix_views_cgs();
@@ -57,8 +78,9 @@ fn matrix_views_missing_scope_preflight_errors() {
 /// Row-to-text render must persist wire-name column aliases in the comp wire. Fields bind by wire
 /// name — the former `p#` field-symbol scheme was removed, so teaching tokens for fields ARE the
 /// wire names and the alias keys must be those wire names.
-#[tokio::test]
-async fn matrix_views_row_to_text_wire_column_aliases() {
+#[test]
+fn matrix_views_row_to_text_wire_column_aliases() {
+    block_on_views_live(async {
     let base = hermit_lang_matrix::language_matrix_hermit_base_url()
         .await
         .clone();
@@ -142,10 +164,12 @@ async fn matrix_views_row_to_text_wire_column_aliases() {
         "expected render + return nodes, got {}",
         live.node_results.len()
     );
+    });
 }
 
-#[tokio::test]
-async fn matrix_views_row_to_text_source_alias_iteration() {
+#[test]
+fn matrix_views_row_to_text_source_alias_iteration() {
+    block_on_views_live(async {
     let base = hermit_lang_matrix::language_matrix_hermit_base_url()
         .await
         .clone();
@@ -212,14 +236,16 @@ async fn matrix_views_row_to_text_source_alias_iteration() {
         md.contains("avalanche fracture") || md.contains("score:"),
         "source-alias iteration should render item row: {md}"
     );
+    });
 }
 
 /// Regression (WS1): a `{% for <cursor> in rows %}` loop must accept ANY cursor name, not only the
 /// special `r`. Before the fix, the render-source validator classified `{{ entry.field }}` as a
 /// cross-binding reference to a binding named `entry` and rejected it as "not among render sources".
 /// Fields bind by wire name (the `p#` field-symbol scheme was removed).
-#[tokio::test]
-async fn matrix_views_row_to_text_named_loop_cursor() {
+#[test]
+fn matrix_views_row_to_text_named_loop_cursor() {
+    block_on_views_live(async {
     let base = hermit_lang_matrix::language_matrix_hermit_base_url()
         .await
         .clone();
@@ -267,11 +293,13 @@ async fn matrix_views_row_to_text_named_loop_cursor() {
         md.contains("i1"),
         "named loop cursor `entry` should render item id: {md}"
     );
+    });
 }
 
 /// View-backed many-relations must execute via `view_embed` (not Unavailable cached-embed side door).
-#[tokio::test]
-async fn matrix_views_view_embed_relation_traversal() {
+#[test]
+fn matrix_views_view_embed_relation_traversal() {
+    block_on_views_live(async {
     let base = hermit_lang_matrix::language_matrix_hermit_base_url()
         .await
         .clone();
@@ -328,11 +356,13 @@ async fn matrix_views_view_embed_relation_traversal() {
         md.contains("label") || md.contains("tag") || md.contains("i1"),
         "expected LangTag rows in markdown from view_embed hop: {md}"
     );
+    });
 }
 
 /// Parameterless dashboard view: nonempty assigned items via view_embed.
-#[tokio::test]
-async fn matrix_views_parameterless_dashboard_view_embed_nonempty() {
+#[test]
+fn matrix_views_parameterless_dashboard_view_embed_nonempty() {
+    block_on_views_live(async {
     let base = hermit_lang_matrix::language_matrix_hermit_base_url()
         .await
         .clone();
@@ -386,11 +416,13 @@ async fn matrix_views_parameterless_dashboard_view_embed_nonempty() {
         md.contains("i1") || md.contains("Alpha"),
         "expected assigned LangItem rows: {md}"
     );
+    });
 }
 
 /// Parameterless dashboard view: zero assigned items still succeeds via present-empty provenance.
-#[tokio::test]
-async fn matrix_views_parameterless_dashboard_view_embed_empty() {
+#[test]
+fn matrix_views_parameterless_dashboard_view_embed_empty() {
+    block_on_views_live(async {
     let base = hermit_lang_matrix::language_matrix_hermit_base_url()
         .await
         .clone();
@@ -440,6 +472,7 @@ async fn matrix_views_parameterless_dashboard_view_embed_empty() {
         "expected view root + relation nodes, got {}",
         live.node_results.len()
     );
+    });
 }
 
 /// Scoped view with zero tag children: dry plan accepts present-empty provenance.

@@ -4,7 +4,7 @@ use std::collections::{BTreeSet, HashMap};
 use crate::discovery_seed_witness::corpus::{RequirementWitness, WitnessCorpus, WitnessKind};
 use crate::discovery_seed_witness::role_index::CorpusRoleIndex;
 use crate::discovery_seed_witness::roles::{
-    OwnEdge, OwnPairs, PoolChild, PoolLinks, SeedClassStamp, SeedNavStamp,
+    OwnEdge, OwnPairs, PoolChild, PoolLinks, SeedClassStamp, SeedCoSeedStamp, SeedNavStamp,
 };
 use crate::schema::{DiscoverySeedClass, DiscoverySeedNav};
 
@@ -105,6 +105,7 @@ fn direct_with_own(
         aliases: entity.to_ascii_lowercase(),
         pool: pool_from_note(graph_note),
         seed_class: class(seed_class),
+        co_seed_with: SeedCoSeedStamp::Unset,
         seed_nav: nav(seed_nav),
         own_pairs: own_from_label(own_pair),
     }
@@ -1047,3 +1048,32 @@ fn prefer_lone_still_demotes_when_leaf_named_in_intent() {
     );
     assert_eq!(pruned, vec![1], "named leaf Create still demotes parent");
 }
+
+#[test]
+fn prune_does_not_inflate_selection_with_co_seed_seats() {
+    use crate::schema::DiscoveryCoSeedWith;
+
+    let payment = direct(
+        "payapp",
+        "PaymentRequest",
+        "Create",
+        "primary",
+        "unset",
+        "",
+        90,
+    );
+    let mut login = direct("payapp", "LoginGate", "Action", "primary", "unset", "", 10);
+    login.co_seed_with = SeedCoSeedStamp::Authored(DiscoveryCoSeedWith::CatalogPrimary);
+    let mut profile = direct("creds", "Profile", "Query", "primary", "unset", "", 5);
+    profile.co_seed_with = SeedCoSeedStamp::Authored(DiscoveryCoSeedWith::FederatedPrimary);
+    let mut secret = direct("creds", "Secret", "Query", "primary", "unset", "", 5);
+    secret.co_seed_with = SeedCoSeedStamp::Authored(DiscoveryCoSeedWith::SessionPrimary);
+    let corpus = corpus(vec![payment, login, profile, secret]);
+    let pruned = prune_witness_selection(&corpus, &[0], IntentGate::Ungated);
+    assert_eq!(
+        pruned,
+        vec![0],
+        "co_seed seats are teaching extras, not plan-cover witnesses; got {pruned:?}"
+    );
+}
+

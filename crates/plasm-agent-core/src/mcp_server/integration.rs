@@ -1468,3 +1468,49 @@ async fn plasm_read_run_artifact_matches_resources_read() {
         std::env::remove_var("PLASM_MCP_ARTIFACT_ACCESS");
     }
 }
+
+/// Regression: `dry_workflow` MUST verify tenant scope on the caller-supplied
+/// `logical_session_ref` before resolving an execute binding.
+///
+/// `resolve_binding_for_logical` falls back to the process-wide
+/// `logical_execute_bindings` map, which is keyed on the logical UUID alone with no
+/// tenant scoping. Without this gate, a caller who has learned another tenant's
+/// `logical_session_ref` reaches that tenant's execute binding.
+///
+/// A well-formed but never-minted ref exercises the gate without needing incoming-auth
+/// scaffolding: `verify_tenant` returns false for unknown sessions, so the tenant error
+/// must surface *before* the workflow-id lookup. Remove the gate and this test fails with
+/// `unknown workflow` instead.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dry_workflow_rejects_ref_outside_tenant_scope() {
+    use super::PlasmMcpHandler;
+    use rust_mcp_sdk::ToMcpServerHandler;
+    use serde_json::json;
+
+    let st = Arc::new(matrix_federated_host());
+    let handler = PlasmMcpHandler::new(Arc::clone(&st));
+    let mcp_handler = PlasmMcpHandler::new(Arc::clone(&st)).to_mcp_server_handler();
+    let mcp_key = "mcp-dry-workflow-tenant-gate";
+    let runtime = test_mcp_runtime(mcp_handler, mcp_key);
+
+    // Valid wire format, never minted in this registry -> not in any tenant scope.
+    let foreign_ref = crate::mcp_logical_ref::format_logical_session_wire_ref_from_uuid(
+        uuid::Uuid::new_v4(),
+    );
+
+    let res = handler
+        .handle_mcp_tool_dry_workflow(
+            mcp_key,
+            &runtime,
+            &json!({ "id": "any-workflow", "logical_session_ref": foreign_ref }),
+        )
+        .await
+        .expect("handler returns Ok with an error CallToolResult");
+
+    assert_eq!(res.is_error, Some(true), "expected an error result: {res:?}");
+    let text = call_tool_result_markdown(&res);
+    assert!(
+        text.contains("does not belong to this tenant scope"),
+        "expected tenant-scope rejection before workflow lookup, got: {text}"
+    );
+}

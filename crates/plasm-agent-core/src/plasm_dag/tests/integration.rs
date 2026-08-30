@@ -22,6 +22,8 @@
 
     mod homograph_matrix;
 
+    mod tau3_cli_chain;
+
     fn test_session() -> ExecuteSession {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let cgs = Arc::new(
@@ -3151,6 +3153,40 @@ report"#;
         }
         let rewritten = rewrite_binding_field_projection_root("pick(id, title)", &state);
         assert_eq!(rewritten.as_deref(), Some("pick[id, title]"));
+    }
+
+    #[test]
+    fn invoke_rejects_bare_query_all_field_into_string_param() {
+        let session = test_session();
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "plural-field-into-string",
+            r#"items = LangItem
+bad = LangItem("i1").update(title=items.title, score=1, owner="a")
+bad"#,
+        )
+        .expect_err("bare query-all `.title` must not fill string param");
+        assert!(
+            err.contains("plural") || err.contains("query-all") || err.contains("scalar"),
+            "expected plural→scalar gate, got: {err}"
+        );
+    }
+
+    #[test]
+    fn invoke_allows_filtered_query_field_into_string_param() {
+        let session = test_session();
+        compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "filtered-field-into-string",
+            r#"items = LangItem{owner="alice"}
+ok = LangItem("i1").update(title=items.title, score=1, owner="a")
+ok"#,
+        )
+        .expect("filtered query field extract into string may compile (runtime-checked)");
     }
 
     #[test]

@@ -96,7 +96,6 @@ auth:
 values:
   nv_game_background_image:
     type: string
-    string_semantics: short
     description: URL of the game's background image.
   nv_game_id:
     type: integer
@@ -106,7 +105,6 @@ values:
     description: Metacritic aggregated score.
   nv_game_name:
     type: string
-    string_semantics: short
     description: Game title.
   nv_game_playtime:
     type: integer
@@ -115,16 +113,13 @@ values:
     type: number
     description: Average user rating.
   nv_game_released:
-    type: date
-    value_format: iso8601_date
+    type: iso8601_date
     description: Game release date (RAWG returns YYYY-MM-DD or null).
   nv_game_slug:
     type: string
-    string_semantics: short
     description: URL-friendly game identifier.
   nv_game_tba:
     type: boolean
     description: Whether the release date is to be announced.
   nv_wire_str_short:
     type: string
-    string_semantics: short

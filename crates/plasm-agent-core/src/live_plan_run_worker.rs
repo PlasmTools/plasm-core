@@ -73,6 +73,27 @@ impl LivePlanRunPool {
         Fut: Future<Output = Result<T, String>> + Send,
         T: Send + 'static,
     {
+        self.run_impl(f).await
+    }
+
+    /// Like [`Self::run`], but the future may be `!Send` (created and polled only on the worker).
+    ///
+    /// Use for MCP tool handlers whose error type is `Box<dyn Error>` (`CallToolError`).
+    pub async fn run_local<F, Fut, T>(&self, f: F) -> Result<T, String>
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = Result<T, String>>,
+        T: Send + 'static,
+    {
+        self.run_impl(f).await
+    }
+
+    async fn run_impl<F, Fut, T>(&self, f: F) -> Result<T, String>
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = Result<T, String>>,
+        T: Send + 'static,
+    {
         let permit = self
             .permits
             .clone()

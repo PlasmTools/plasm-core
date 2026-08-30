@@ -14,8 +14,8 @@ use super::line_validate::{
     DomainLineValidEntry,
 };
 use super::query_teaching::{
-    compound_get_expr_line, query_expr_filters_only, query_expr_maximal, query_expr_scope_only,
-    unary_entity_id_teaching_expr_line,
+    compound_get_expr_line, query_expr_filters_only, query_expr_id_field_row_filter,
+    query_expr_maximal, query_expr_scope_only, unary_entity_id_teaching_expr_line,
 };
 use super::surface_filter::{surface_allows_relation_nav, surface_includes_exposed_entity};
 use super::symbol_tokens::{ent_sym, id_sym_entity, id_sym_rel};
@@ -253,10 +253,8 @@ pub(crate) fn try_push_projection_witness_row(
     let mut seen_bases: HashSet<String> = HashSet::new();
     let mut attempts: Vec<(String, Option<&crate::CapabilitySchema>)> = Vec::new();
 
-    let bare = es.to_string();
-    if seen_bases.insert(bare.clone()) {
-        attempts.push((bare, None));
-    }
+    // Prefer brace/filter bases before bare `e#` so query-backed projection witnesses teach
+    // row narrowing (`e#{…}[…]`) instead of query-all (`e#[…]`) when both validate.
     for cap in query_caps {
         for qline in [
             query_expr_maximal(cap, es, cgs, map, catalog_entry_id),
@@ -266,10 +264,32 @@ pub(crate) fn try_push_projection_witness_row(
         .into_iter()
         .flatten()
         {
+            // `query_expr_maximal` returns bare `es` when the cap has no filter/scope slots —
+            // skip that here; bare is appended after synthetic id_field filters.
+            if qline == es {
+                continue;
+            }
             if seen_bases.insert(qline.clone()) {
                 attempts.push((qline, Some(cap)));
             }
         }
+    }
+    if !query_caps.is_empty()
+        && !attempts
+            .iter()
+            .any(|(base, _)| base.contains('{') || base.contains('~'))
+    {
+        if let Some(id_filter) =
+            query_expr_id_field_row_filter(es, ent, cgs, map, catalog_entry_id)
+        {
+            if seen_bases.insert(id_filter.clone()) {
+                attempts.push((id_filter, query_caps.first().copied()));
+            }
+        }
+    }
+    let bare = es.to_string();
+    if seen_bases.insert(bare.clone()) {
+        attempts.push((bare, None));
     }
     if let Some(cmp) = compound_get_expr_line(es, ent, cgs, map, catalog_entry_id) {
         if seen_bases.insert(cmp.clone()) {

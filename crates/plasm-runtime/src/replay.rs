@@ -349,6 +349,7 @@ fn value_to_json_value(value: &Value) -> serde_json::Value {
 
 #[cfg(test)]
 mod tests {
+    use plasm_core::value_domain::ValueDomain;
     use super::*;
     use alloy_json_abi::{Event, Function};
     use alloy_primitives::Address;
@@ -615,7 +616,7 @@ mod tests {
     #[test]
     fn invoke_input_payload_lift_preserves_http_fingerprint() {
         use plasm_core::schema::{
-            InputFieldSchema, InputFieldWire, InputType, NamedValueSchema, StringSemantics,
+            InputFieldSchema, InputFieldWire, InputType, NamedValueSchema,
             ValueDomainKey, CGS,
         };
         use plasm_core::typed_invoke::InvokeInputPayload;
@@ -624,15 +625,11 @@ mod tests {
         let mut cgs = CGS::new();
         cgs.values.insert(
             "replay_title".into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: Some(StringSemantics::Short),
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                None,
+            ),
         );
         let input_type = InputType::Object {
             fields: vec![InputFieldSchema {

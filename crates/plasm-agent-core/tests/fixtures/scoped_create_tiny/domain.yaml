@@ -134,10 +134,8 @@ capabilities:
 values:
   nv_product_id:
     type: string
-    string_semantics: short
   nv_product_name:
     type: string
-    string_semantics: short
   nv_product_category_id:
     type: entity_ref
     target: Category
@@ -145,37 +143,27 @@ values:
     type: blob
   nv_category_id:
     type: string
-    string_semantics: short
   nv_category_name:
     type: string
-    string_semantics: short
   nv_product_query_owner:
     type: string
-    string_semantics: short
   nv_product_query_repo:
     type: string
-    string_semantics: short
   nv_product_query_active:
     type: boolean
   nv_product_search_q:
     type: string
-    string_semantics: short
   nv_product_search_active:
     type: boolean
   nv_product_create_name:
     type: string
-    string_semantics: short
   nv_product_create_category_id:
     type: string
-    string_semantics: short
   nv_product_label_label:
     type: string
-    string_semantics: short
   nv_product_label_notify:
     type: boolean
   nv_product_update_category_id:
     type: string
-    string_semantics: short
   nv_product_add_support_reply_message:
-    type: string
-    string_semantics: markdown
+    type: markdown

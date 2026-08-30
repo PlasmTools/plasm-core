@@ -1,6 +1,7 @@
 //! CGS-informed column metadata for Run Explorer UI (`_meta.plasm.steps[].column_schema`).
 
-use plasm_core::{Cardinality, EntityDef, FieldType, RelationSchema, StringSemantics, CGS};
+use plasm_core::value_domain::ProfileId;
+use plasm_core::{Cardinality, EntityDef, FieldType, RelationSchema, CGS};
 use plasm_runtime::{CachedEntity, ExecutionResult};
 use serde_json::{json, Value};
 
@@ -73,7 +74,7 @@ fn column_meta_for_name(
         return Some(json!({
             "name": name,
             "kind": "field",
-            "wire_type": field_wire_type(&nv.field_type, nv.string_semantics),
+            "wire_type": field_wire_type(&nv.field_type, nv.domain.profile),
         }));
     }
     if let Some(rel) = ent.relations.get(name) {
@@ -99,15 +100,15 @@ fn relation_column_meta(name: &str, rel: &RelationSchema) -> Value {
     })
 }
 
-fn field_wire_type(ft: &FieldType, semantics: Option<StringSemantics>) -> &'static str {
+fn field_wire_type(ft: &FieldType, profile: Option<ProfileId>) -> &'static str {
     if matches!(ft, FieldType::String) {
-        if semantics == Some(StringSemantics::Markdown) {
+        if profile == Some(ProfileId::Markdown) {
             return "markdown";
         }
-        if semantics == Some(StringSemantics::Html) {
+        if profile == Some(ProfileId::Html) {
             return "html";
         }
-        if semantics == Some(StringSemantics::Document) {
+        if profile == Some(ProfileId::Document) {
             return "document";
         }
     }
@@ -145,13 +146,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn field_wire_type_markdown_from_semantics() {
+    fn field_wire_type_markdown_from_profile() {
         assert_eq!(
-            field_wire_type(&FieldType::String, Some(StringSemantics::Markdown)),
+            field_wire_type(&FieldType::String, Some(ProfileId::Markdown)),
             "markdown"
         );
         assert_eq!(
-            field_wire_type(&FieldType::String, Some(StringSemantics::Short)),
+            field_wire_type(&FieldType::String, None),
             "string"
         );
     }

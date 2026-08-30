@@ -581,7 +581,9 @@ fn plasm_language_contract_is_tsv_first_and_avoids_legacy_terms() {
     );
     assert!(
         contract.contains("Replace teaching placeholders")
-            || contract.contains("substitute placeholders"),
+            || contract.contains("substitute placeholders")
+            || contract.contains("substitute session symbols")
+            || contract.contains("fill with real values"),
         "symbolic contract must teach placeholder substitution"
     );
     assert!(
@@ -1485,7 +1487,7 @@ fn plasm_language_contract_defines_ref_meaning_prefix() {
     let cgs = load_schema_dir(&dir).unwrap();
     let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
     assert!(
-        prompt.contains("ref:Zone") && prompt.contains("str · Zone identifier"),
+        prompt.contains("ref:Zone") && prompt.contains("string · Zone identifier"),
         "teaching TSV must include entity-ref value-domain gloss with canonical entity (not e#):\n{prompt}"
     );
 }
@@ -1529,8 +1531,8 @@ fn prompt_matrix_zone_entity_ref_value_domain_gloss_includes_id_primitive() {
         .value_domain_gloss_for_v_sym(&v)
         .expect("value-domain gloss");
     assert!(
-        g.starts_with("ref:Zone · str ·"),
-        "expected ref:Zone · str · … value-domain gloss, got {g:?}"
+        g.starts_with("ref:Zone · string ·"),
+        "expected ref:Zone · string · … value-domain gloss, got {g:?}"
     );
 }
 
@@ -2373,12 +2375,12 @@ fn nullary_materialize_tsv_meaning_is_sparse_not_chain_hint() {
 
 #[test]
 fn teaching_prompt_bundle_tags_relation_nav_materialization() {
-    let dir = apis_dir("pokeapi");
+    let dir = fixtures_schemas_dir("plasm_language_matrix");
     if !dir.exists() {
         return;
     }
     let cgs = load_schema_dir(&dir).unwrap();
-    let bundle = render_teaching_prompt_bundle(&cgs, RenderConfig::for_eval_seeds(&["Type"]));
+    let bundle = render_teaching_prompt_bundle(&cgs, RenderConfig::for_eval_seeds(&["LangItem"]));
     let found = bundle
         .model
         .entities
@@ -2649,11 +2651,11 @@ fn prompt_stats_fixture_cgs() -> CGS {
     cgs.values.insert(
         "fixture_str".into(),
         NamedValueSchema {
+            domain: Default::default(),
             description: String::new(),
             field_type: FieldType::String,
             value_format: None,
             allowed_values: None,
-            string_semantics: None,
             array_items: None,
             currency: None,
         },
@@ -2812,11 +2814,11 @@ fn p_slot_redefinition_fixture_cgs(id_desc_a: &str, id_desc_b: &str) -> CGS {
     cgs.values.insert(
         "fixture_str".into(),
         NamedValueSchema {
+            domain: Default::default(),
             description: String::new(),
             field_type: FieldType::String,
             value_format: None,
             allowed_values: None,
-            string_semantics: None,
             array_items: None,
             currency: None,
         },

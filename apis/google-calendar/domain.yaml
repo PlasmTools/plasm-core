@@ -413,16 +413,16 @@ auth:
   hosted_kv: plasm:outbound:v1:catalog:google-calendar
 values:
   nv_calendar_access_role:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - none
     - freeBusyReader
     - reader
     - writer
     - owner
   nv_calendar_list_min_access_role:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - freeBusyReader
     - reader
     - writer
@@ -436,8 +436,8 @@ values:
   nv_event_conference_data:
     type: json
   nv_event_event_type:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - birthday
     - default
     - focusTime
@@ -450,39 +450,36 @@ values:
     type: entity_ref
     target: Calendar
   nv_event_list_order_by:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - startTime
     - updated
   nv_event_list_sync_token:
     type: string
-    string_semantics: short
     description: Incremental sync token from a prior list response; cannot combine with several other filters (see API sync.
       guide).
   nv_event_list_time_zone:
     type: string
-    string_semantics: short
     description: IANA time zone used when interpreting and returning event times in the response.
   nv_event_list_updated_min:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
     description: Lower bound (exclusive) on event updated time; enables incremental sync style filters.
   nv_event_reminders:
     type: json
   nv_event_status:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - confirmed
     - tentative
     - cancelled
   nv_event_transparency:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - opaque
     - transparent
   nv_event_visibility:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - default
     - public
     - private
@@ -490,16 +487,13 @@ values:
   nv_wire_bool:
     type: boolean
   nv_wire_date_rfc3339:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
   nv_wire_int:
     type: integer
   nv_wire_str_markdown:
-    type: string
-    string_semantics: markdown
+    type: markdown
   nv_wire_str_short:
     type: string
-    string_semantics: short
   nv_event_list_event_types:
     type: array
     items:

@@ -2552,6 +2552,10 @@ fn matrix_program_for_row(
             let e_poke = map.entity_sym_for("pokeapi", "LangItem");
             format!("item = {e_poke}(\"i1\")\nsummary = item.summary\nsummary")
         }
+        "lang_federated_duplicate_entity_e2_search" => r#"e2~"Alpha""#.to_string(),
+        "lang_federated_parallel_roots" => {
+            r#"e1{owner="alice"}, e2~"Alpha""#.to_string()
+        }
         "lang_bind_template_inline_on_e1" => r#"report = e1{owner="alice"}[title] <<INLINE_E1
 # {{ rows | length }} row(s)
 INLINE_E1

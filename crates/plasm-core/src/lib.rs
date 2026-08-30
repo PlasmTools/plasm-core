@@ -70,7 +70,7 @@
 //! ## Input Validation
 //!
 //! Capabilities can declare an [`InputSchema`] with typed fields ([`InputFieldSchema`]),
-//! validation predicates, and cross-field rules. The type checker validates invoke
+//! `values:` scalar constraints (via `value_ref`), and cross-field rules. The type checker validates invoke
 //! inputs against this schema, including enum value constraints and required field checks.
 //!
 //! ## Identity newtypes
@@ -157,6 +157,7 @@ pub mod typed_invoke;
 pub mod typed_literal;
 pub mod typed_row;
 pub mod value;
+pub mod value_domain;
 pub mod workflow_identity;
 
 mod capability_input;
@@ -300,10 +301,11 @@ pub use teaching_term::{
 pub use wire_coercion::{
     apply_identity_slots_to_row, binding_value_as_plasm_value, coerce_json_value_for_field_type,
     coerce_value_for_field_type, coerce_value_for_field_type_with_policy,
-    collect_relation_binding_proofs, field_type_assignable_for_relation_binding,
-    identity_slot_to_json, json_value_to_plasm_value, parent_entity_field_type,
-    plasm_value_to_json, relation_binding_assignable, restore_id_field_from_compound_ref,
-    try_plasm_value_to_json, RelationBindingProof,
+    collect_relation_binding_proofs, decode_coerce_and_validate_field, decode_coerce_money_fields,
+    field_type_assignable_for_relation_binding, identity_slot_to_json, json_value_to_plasm_value,
+    parent_entity_field_type, plasm_value_to_json, relation_binding_assignable,
+    restore_id_field_from_compound_ref, try_plasm_value_to_json, DecodeFieldDiagnostic,
+    RelationBindingProof,
 };
 pub mod relation_materialize;
 pub mod view_embed_proof;
@@ -334,14 +336,14 @@ pub use schema::{
     AttachmentMediaKind, AuthScheme, CapabilityKind, CapabilityManifest, CapabilityMapping,
     CapabilitySchema, CapabilityTemplateJson, Cardinality, CgsCapabilityIndex, CrossFieldRule,
     CrossFieldRuleType, DataClassDimension, DataClassName, DataClassSchema, DataClassSeverity,
-    DiscoveryCapabilityHints, DiscoveryEntityHints, DiscoveryRelationHints, DiscoverySeedClass,
+    DiscoveryCapabilityHints, DiscoveryEntityHints, DiscoveryRelationHints, DiscoveryCoSeedWith,
+    DiscoverySeedClass,
     DiscoverySeedNav, EmbedOnMissPolicy, EntityDef, FieldDeriveRule, FieldSchema, FieldValueKind,
     IdFormat, InputFieldSchema, InputFieldWire, InputSchema, InputType, InputValidation,
     InputVariantSchema, JsonPathSegment, NamedValueSchema, OauthDefaultScopeSet, OauthExtension,
     OauthRequirements, OauthScopeEntry, OutputSchema, OutputType, ParameterRole,
     RelationMaterialization, RelationSchema, RelationScopedFallback, ResourceSchema,
-    ScopeAggregateKeyPolicy, ScopeRequirement, SinkClassName, StringSemantics, ValidationOp,
-    ValidationPredicate, ValueDomainKey, ValueDomainSlot, ViewDefinition, ViewNodeSpec,
+    ScopeAggregateKeyPolicy, ScopeRequirement, SinkClassName, ValueDomainKey, ValueDomainSlot, ViewDefinition, ViewNodeSpec,
     ViewOutputBinding, ViewParamBinding, ViewRelationBinding, ViewRelationOutputSpec,
     ViewScopeInject, ViewScopeParam, WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
 };
@@ -395,6 +397,11 @@ pub use typed_row::TypedFieldValue;
 pub use value::{
     CompOp, FieldType, PlasmInputRef, TemporalWireFormat, Value, ValueTableCellBudget,
     ValueWireFormat, PLASM_ATTACHMENT_KEY,
+};
+pub use value_domain::{
+    compile_pattern, parse_type_name, validate_constraints_on_number,
+    validate_constraints_on_string, validate_number_constraints, validate_string_constraints,
+    validate_string_profile, Constraints, KernelKind, ProfileId, ValueDomain,
 };
 pub use view_embed_proof::ValidatedViewEmbedProof;
 pub use workflow_identity::{

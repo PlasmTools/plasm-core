@@ -197,3 +197,6 @@ pub(crate) use teaching_legend::teaching_expr_line_from_layers;
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod stack_budget_test;

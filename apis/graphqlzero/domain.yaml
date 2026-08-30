@@ -276,17 +276,13 @@ capabilities:
 values:
   nv_post_id:
     type: string
-    string_semantics: short
     description: Post identifier.
   nv_todo_completed:
     type: boolean
   nv_user_id:
     type: string
-    string_semantics: short
     description: User identifier.
   nv_wire_str_markdown:
-    type: string
-    string_semantics: markdown
+    type: markdown
   nv_wire_str_short:
     type: string
-    string_semantics: short

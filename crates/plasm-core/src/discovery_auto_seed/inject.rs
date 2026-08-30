@@ -713,3 +713,190 @@ pub(crate) fn inject_retrieval_targets(
     inject_relation_parent_bundles(grouped, catalogs, discovery);
     inject_mirror_catalog_targets(grouped, catalogs, intent, discovery, named_catalogs);
 }
+
+/// When peer primaries are pooled, force-inject entities that author
+/// `discovery.co_seed_with` (catalog / federated / session).
+pub(crate) fn inject_co_seed_with_primary(
+    bundles: &mut IndexMap<(String, String), EntityCandidateBundle>,
+    catalogs: &IndexMap<String, ArcCgs>,
+    discovery: &DiscoveryResult,
+) {
+    use crate::schema::DiscoveryCoSeedWith;
+
+    let route_set: HashSet<&str> = discovery
+        .catalog_route
+        .as_slice()
+        .iter()
+        .map(|s| s.as_str())
+        .collect();
+
+    let mut score_floor_by_entry: IndexMap<String, u32> = IndexMap::new();
+    let mut catalog_triggers: HashSet<String> = HashSet::new();
+    let mut federated_trigger = false;
+    for ((entry_id, entity), bundle) in bundles.iter() {
+        let floor = score_floor_by_entry.entry(entry_id.clone()).or_insert(1);
+        *floor = (*floor).max(bundle.max_lexical_score.saturating_add(1));
+        let policy = catalogs
+            .get(entry_id)
+            .and_then(|cgs| cgs.get_entity(entity.as_str()))
+            .and_then(|e| e.discovery.as_ref())
+            .and_then(|d| d.co_seed_with);
+        let is_catalog_seat = matches!(policy, Some(DiscoveryCoSeedWith::CatalogPrimary));
+        let is_federated_seat = matches!(
+            policy,
+            Some(DiscoveryCoSeedWith::FederatedPrimary)
+                | Some(DiscoveryCoSeedWith::SessionPrimary)
+        );
+        if !is_catalog_seat {
+            catalog_triggers.insert(entry_id.clone());
+        }
+        if !is_federated_seat {
+            federated_trigger = true;
+        }
+    }
+    if catalog_triggers.is_empty() && !federated_trigger {
+        return;
+    }
+
+    let mut inject_targets: Vec<(String, String, u32)> = Vec::new();
+    for (entry_id, cgs) in catalogs.iter() {
+        for (entity_name, entity) in &cgs.entities {
+            let Some(policy) = entity.discovery.as_ref().and_then(|d| d.co_seed_with) else {
+                continue;
+            };
+            let admit = (policy.admits_on_catalog_primary()
+                && catalog_triggers.contains(entry_id))
+                || (policy.admits_on_federated_primary()
+                    && federated_trigger
+                    && !catalog_triggers.contains(entry_id));
+            if !admit {
+                continue;
+            }
+            let floor = if policy.admits_on_catalog_primary() {
+                score_floor_by_entry.get(entry_id).copied().unwrap_or(2)
+            } else {
+                score_floor_by_entry
+                    .values()
+                    .copied()
+                    .max()
+                    .unwrap_or(2)
+                    .saturating_add(1)
+            };
+            inject_targets.push((entry_id.clone(), entity_name.to_string(), floor));
+        }
+    }
+
+    for (entry_id, entity, floor) in inject_targets {
+        let Some(cgs) = catalogs.get(&entry_id) else {
+            continue;
+        };
+        upsert_co_seed_bundle(
+            bundles,
+            cgs,
+            &entry_id,
+            &entity,
+            floor,
+            route_set.contains(entry_id.as_str()),
+            discovery,
+        );
+    }
+}
+
+fn upsert_co_seed_bundle(
+    bundles: &mut IndexMap<(String, String), EntityCandidateBundle>,
+    cgs: &ArcCgs,
+    entry_id: &str,
+    entity: &str,
+    score_floor: u32,
+    catalog_route_evidence: bool,
+    discovery: &DiscoveryResult,
+) {
+    use crate::schema::CapabilityKind;
+
+    let key = (entry_id.to_string(), entity.to_string());
+    let mut capabilities = Vec::new();
+    let mut seen = HashSet::new();
+    const MAX_CAPS: usize = 6;
+    for kind in [
+        CapabilityKind::Action,
+        CapabilityKind::Create,
+        CapabilityKind::Query,
+        CapabilityKind::Get,
+        CapabilityKind::Search,
+    ] {
+        for cap in cgs.find_capabilities(entity, kind) {
+            if push_capability_evidence(
+                &mut capabilities,
+                &mut seen,
+                entry_id,
+                entity,
+                cap,
+                MAX_CAPS,
+            ) {
+                break;
+            }
+        }
+        if capabilities.len() >= MAX_CAPS {
+            break;
+        }
+    }
+    if capabilities.is_empty() {
+        return;
+    }
+    for cap in &mut capabilities {
+        cap.lexical_score = cap.lexical_score.max(score_floor);
+    }
+
+    let desc = entity_description_for(
+        &discovery.entity_summaries,
+        entry_id,
+        entity,
+        Some(cgs.as_ref()),
+    );
+    bundles
+        .entry(key)
+        .and_modify(|existing| {
+            existing.max_lexical_score = existing.max_lexical_score.max(score_floor);
+            if existing.capabilities.is_empty() {
+                existing.capabilities = capabilities.clone();
+            } else {
+                for cap in &capabilities {
+                    if !existing
+                        .capabilities
+                        .iter()
+                        .any(|e| e.capability_name == cap.capability_name)
+                    {
+                        existing.capabilities.push(cap.clone());
+                    }
+                }
+            }
+            existing.catalog_route_evidence |= catalog_route_evidence;
+        })
+        .or_insert_with(|| EntityCandidateBundle {
+            candidate_id: candidate_id(entry_id, entity),
+            entry_id: entry_id.to_string(),
+            entity: entity.to_string(),
+            entity_description: desc,
+            max_lexical_score: score_floor,
+            capabilities,
+            relation_hints: outgoing_relation_hints_for_entity(
+                cgs.as_ref(),
+                entity,
+                crate::discovery::DISCOVERY_OUTGOING_RELATIONS_MAX,
+            ),
+            catalog_route_evidence,
+        });
+}
+
+/// Reserved-seat filter for authored `co_seed_with` bundles after diversify.
+pub(crate) fn co_seed_bundle(
+    catalogs: &IndexMap<String, ArcCgs>,
+    bundle: &EntityCandidateBundle,
+) -> bool {
+    catalogs
+        .get(&bundle.entry_id)
+        .and_then(|cgs| cgs.get_entity(bundle.entity.as_str()))
+        .and_then(|e| e.discovery.as_ref())
+        .and_then(|d| d.co_seed_with)
+        .is_some()
+}

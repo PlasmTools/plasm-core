@@ -626,86 +626,61 @@ pub fn build_app(cgs: &CGS, surface: AgentCliSurface) -> Command {
 
 #[cfg(test)]
 mod tests {
+    use plasm_core::value_domain::ValueDomain;
     use super::*;
     use plasm_core::*;
 
     fn nv_string(cgs: &mut CGS, key: &str) {
         cgs.values.insert(
             key.into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: Some(StringSemantics::Short),
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                None,
+            ),
         );
     }
     fn nv_number(cgs: &mut CGS, key: &str) {
         cgs.values.insert(
             key.into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Number,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::Number, None, None, None, None),
+                None,
+            ),
         );
     }
     fn nv_select(cgs: &mut CGS, key: &str, allowed: Vec<String>) {
         cgs.values.insert(
             key.into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Select,
-                value_format: None,
-                allowed_values: Some(allowed),
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::Select, None, None, Some(allowed.clone()), None),
+                None,
+            ),
         );
     }
     fn nv_integer(cgs: &mut CGS, key: &str) {
         cgs.values.insert(
             key.into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Integer,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::Integer, None, None, None, None),
+                None,
+            ),
         );
     }
     fn nv_entity_ref(cgs: &mut CGS, key: &str, target: EntityName) {
         cgs.values.insert(
             key.into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::EntityRef { target },
-                value_format: None,
-                allowed_values: None,
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::EntityRef { target }, None, None, None, None),
+                None,
+            ),
         );
     }
 
-    /// Build a test CGS with:
-    /// - Account entity (fields: id, name, revenue, region)
-    /// - Contact entity (fields: id, name, role)
-    /// - Account → Contact relation (contacts)
-    /// - query_accounts: paginated, declares `region` as a query filter parameter
-    /// - query_contacts: declares `role` as a query filter parameter (so relation filter works)
     fn test_cgs() -> CGS {
         let mut cgs = CGS::new();
         nv_string(&mut cgs, "cb_account_id");
@@ -881,6 +856,7 @@ mod tests {
             kind: CapabilityKind::Query,
             domain: "Account".into(),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
@@ -937,6 +913,7 @@ mod tests {
             kind: CapabilityKind::Query,
             domain: "Contact".into(),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
@@ -1186,6 +1163,7 @@ mod tests {
             kind: CapabilityKind::Get,
             domain: "Balance".into(),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "transport": "evm_call",
@@ -1320,6 +1298,7 @@ mod tests {
             kind: CapabilityKind::Get,
             domain: "Order".into(),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
@@ -1343,6 +1322,7 @@ mod tests {
             kind: CapabilityKind::Get,
             domain: "Pet".into(),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
@@ -1389,6 +1369,7 @@ mod tests {
             kind: CapabilityKind::Query,
             domain: "Order".into(),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",

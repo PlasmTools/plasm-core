@@ -1,18 +1,19 @@
 //! Structural allocation fingerprints for value domains and inline capability slots.
 
-use crate::schema::{ArrayItemsSchema, StringSemantics};
+use crate::schema::ArrayItemsSchema;
+use crate::value_domain::ProfileId;
 use crate::FieldType;
 
 pub(crate) fn structural_value_domain_allocation_fp(
     catalog_entry_id: &str,
     field_type: &FieldType,
-    string_semantics: Option<StringSemantics>,
+    profile: Option<ProfileId>,
     array_items: Option<&ArrayItemsSchema>,
     allowed_values: Option<&Vec<String>>,
 ) -> String {
     let type_fp = structural_field_type_fp(catalog_entry_id, field_type);
-    let sem = string_semantics
-        .map(|s| serde_json::to_string(&s).unwrap_or_else(|_| "\"?\"".to_string()))
+    let prof = profile
+        .map(|p| serde_json::to_string(&p).unwrap_or_else(|_| "\"?\"".to_string()))
         .unwrap_or_else(|| "null".to_string());
     let array = array_items
         .map(|items| structural_array_items_fp(catalog_entry_id, items))
@@ -24,7 +25,7 @@ pub(crate) fn structural_value_domain_allocation_fp(
             serde_json::to_string(&values).unwrap_or_else(|_| "[]".to_string())
         })
         .unwrap_or_else(|| "null".to_string());
-    format!("vc|{type_fp}|sem:{sem}|items:{array}|allowed:{allowed}")
+    format!("vc|{type_fp}|profile:{prof}|items:{array}|allowed:{allowed}")
 }
 
 pub(crate) fn structural_field_type_fp(catalog_entry_id: &str, field_type: &FieldType) -> String {

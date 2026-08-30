@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::discovery_intent_class::DiscoveryIntentClass;
 use crate::discovery_intent_signals::intent_mentions_repo_path;
-use crate::schema::{CapabilityKind, CapabilitySchema, DiscoverySeedClass, DiscoverySeedNav, CGS};
+use crate::schema::{CapabilityKind, CapabilitySchema, DiscoveryCoSeedWith, DiscoverySeedClass, DiscoverySeedNav, CGS};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CatalogCapabilityMeta {
@@ -25,6 +25,8 @@ pub struct CatalogSeedIndex {
     key_var_counts: HashMap<String, usize>,
     /// Authored `entities.*.discovery.seed_class`.
     entity_seed_class: HashMap<String, DiscoverySeedClass>,
+    /// Authored `entities.*.discovery.co_seed_with`.
+    entity_co_seed_with: HashMap<String, DiscoveryCoSeedWith>,
     /// Authored `relations.*.discovery.seed_nav` keyed by (from_entity, target_entity).
     relation_seed_nav: HashMap<(String, String), DiscoverySeedNav>,
 }
@@ -158,6 +160,17 @@ impl CatalogWorkflowContext {
         self.indexes
             .get(entry_id)
             .and_then(|idx| idx.entity_seed_class.get(entity).copied())
+    }
+
+    /// Authored entity `discovery.co_seed_with`, if any.
+    pub fn entity_co_seed_with(
+        &self,
+        entry_id: &str,
+        entity: &str,
+    ) -> Option<DiscoveryCoSeedWith> {
+        self.indexes
+            .get(entry_id)
+            .and_then(|idx| idx.entity_co_seed_with.get(entity).copied())
     }
 
     /// Authored relation `discovery.seed_nav` for an in-catalog edge (from → target).
@@ -312,6 +325,7 @@ pub fn build_catalog_seed_index(entry_id: &str, cgs: &CGS) -> CatalogSeedIndex {
     let mut compound_key_entities = HashSet::new();
     let mut key_var_counts = HashMap::new();
     let mut entity_seed_class = HashMap::new();
+    let mut entity_co_seed_with = HashMap::new();
     let mut relation_seed_nav = HashMap::new();
 
     for (entity_name, entity) in &cgs.entities {
@@ -326,6 +340,9 @@ pub fn build_catalog_seed_index(entry_id: &str, cgs: &CGS) -> CatalogSeedIndex {
         }
         if let Some(class) = entity.discovery.as_ref().and_then(|d| d.seed_class) {
             entity_seed_class.insert(entity_key.clone(), class);
+        }
+        if let Some(policy) = entity.discovery.as_ref().and_then(|d| d.co_seed_with) {
+            entity_co_seed_with.insert(entity_key.clone(), policy);
         }
         let mut targets = HashSet::new();
         for rel in entity.relations.values() {
@@ -373,6 +390,7 @@ pub fn build_catalog_seed_index(entry_id: &str, cgs: &CGS) -> CatalogSeedIndex {
         compound_key_entities,
         key_var_counts,
         entity_seed_class,
+        entity_co_seed_with,
         relation_seed_nav,
     }
 }

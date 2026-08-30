@@ -65,7 +65,7 @@ pub(crate) struct TeachingSynthesisSession<'a> {
     line_valid_cache_seed: u64,
     gloss_emit_state: GlossEmitLedger,
     map_arc: Option<std::sync::Arc<SymbolMap>>,
-    ident_meta: Option<HashMap<crate::symbol_tuning::IdentMetaKey, IdentMetadata>>,
+    ident_meta: Option<Box<HashMap<crate::symbol_tuning::IdentMetaKey, IdentMetadata>>>,
     surface_filter: Option<&'a ExposureSurface>,
     entity_catalog_ids: IndexMap<(&'a str, &'a str), ()>,
     collect_meta: bool,
@@ -81,7 +81,7 @@ impl<'a> TeachingSynthesisSession<'a> {
     fn new(
         line_valid_cache_seed: u64,
         map_arc: Option<std::sync::Arc<SymbolMap>>,
-        ident_meta: Option<HashMap<crate::symbol_tuning::IdentMetaKey, IdentMetadata>>,
+        ident_meta: Option<Box<HashMap<crate::symbol_tuning::IdentMetaKey, IdentMetadata>>>,
         surface_filter: Option<&'a ExposureSurface>,
         entity_catalog_ids: IndexMap<(&'a str, &'a str), ()>,
         collect_meta: bool,
@@ -195,22 +195,23 @@ pub(crate) fn render_teaching_table_resolved<'b, F>(
         .map(exposure_qualified_catalog_ids)
         .unwrap_or_default();
     let surface_filter = exposure_for_ident.map(|e| &e.surface);
-    let ident_meta = match (map_arc.as_deref(), exposure_for_ident) {
-        (Some(_), Some(exposure)) => {
-            Some(exposure.ident_metadata_for_exposure_entities(full_entities))
-        }
-        (Some(_), None) => {
-            let mut acc = HashMap::new();
-            for &e in full_entities {
-                let cgs = resolve(e);
-                acc.extend(crate::symbol_tuning::build_ident_metadata(cgs, &[e]));
+    let ident_meta: Option<Box<HashMap<crate::symbol_tuning::IdentMetaKey, IdentMetadata>>> =
+        match (map_arc.as_deref(), exposure_for_ident) {
+            (Some(_), Some(exposure)) => Some(Box::new(
+                exposure.ident_metadata_for_exposure_entities(full_entities),
+            )),
+            (Some(_), None) => {
+                let mut acc = HashMap::new();
+                for &e in full_entities {
+                    let cgs = resolve(e);
+                    acc.extend(crate::symbol_tuning::build_ident_metadata(cgs, &[e]));
+                }
+                Some(Box::new(acc))
             }
-            Some(acc)
-        }
-        _ => None,
-    };
+            _ => None,
+        };
 
-    let mut session = TeachingSynthesisSession::new(
+    let mut session = Box::new(TeachingSynthesisSession::new(
         line_valid_cache_seed,
         map_arc,
         ident_meta,
@@ -218,7 +219,7 @@ pub(crate) fn render_teaching_table_resolved<'b, F>(
         entity_catalog_ids,
         fill_model,
         !validation_probe,
-    );
+    ));
 
     let render_one = |session: &mut TeachingSynthesisSession<'_>,
                       cgs: &CGS,
@@ -235,7 +236,7 @@ pub(crate) fn render_teaching_table_resolved<'b, F>(
         let mut field_gloss_accum = Vec::new();
         let session_map = session.map_arc.as_ref().map(|a| a.as_ref());
         let mut gloss_emit: Option<GlossScratch<'_>> =
-            match (session_map, session.ident_meta.as_ref()) {
+            match (session_map, session.ident_meta.as_deref()) {
                 (Some(m), Some(meta)) => Some(GlossScratch {
                     field_gloss: &mut field_gloss_accum,
                     state: &mut session.gloss_emit_state,
@@ -251,7 +252,7 @@ pub(crate) fn render_teaching_table_resolved<'b, F>(
             cgs,
             ename,
             session.map_arc.as_ref(),
-            session.ident_meta.as_ref(),
+            session.ident_meta.as_deref(),
             session.collect_meta,
             &mut session.line_valid_cache,
             session.line_valid_cache_seed,

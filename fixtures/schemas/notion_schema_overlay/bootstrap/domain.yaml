@@ -113,22 +113,17 @@ capabilities:
 values:
   nv_notion_page_id:
     type: string
-    string_semantics: short
   nv_notion_database_id:
     type: string
-    string_semantics: short
   nv_database_search_query:
     type: string
-    string_semantics: short
   nv_notion_property_json:
     type: json
   nv_wire_str_short:
     type: string
-    string_semantics: short
   nv_wire_num:
     type: number
   nv_wire_bool:
     type: boolean
   nv_wire_date_rfc3339:
     type: string
-    value_format: rfc3339

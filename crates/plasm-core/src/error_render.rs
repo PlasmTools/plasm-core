@@ -5,7 +5,7 @@ use crate::expr_parser::{ParseError, ParseErrorKind};
 use crate::query_resolve::QueryCapabilityResolveError;
 use crate::schema::{
     capability_is_zero_arity_invoke, capability_method_label_kebab, capability_path_method_segment,
-    CapabilityKind, StringSemantics, CGS,
+    CapabilityKind, CGS,
 };
 use crate::step_semantics::{append_correction_lines, StepError};
 use crate::symbol_tuning::SymbolSession;
@@ -262,26 +262,26 @@ fn infer_param_lhs_name(work: &str, offset: usize) -> Option<&str> {
     }
 }
 
-fn string_semantics_for_wire_param(
+fn wire_param_is_structured_or_multiline(
     cgs: &CGS,
     full_entities: &[&str],
     wire_name: &str,
-) -> Option<StringSemantics> {
-    let slot = resolve_parameter_slot(cgs, full_entities, wire_name)?;
+) -> bool {
+    let slot = match resolve_parameter_slot(cgs, full_entities, wire_name) {
+        Some(s) => s,
+        None => return false,
+    };
     match slot {
         ParameterSlot::EntityField { entity, field } => {
-            let f = cgs
-                .get_entity(entity.as_str())?
-                .fields
-                .get(field.as_str())?;
-            let nv = f.named_value(cgs).ok()?;
-            if matches!(nv.field_type, FieldType::Blob) {
-                Some(crate::StringSemantics::Blob)
-            } else if matches!(nv.field_type, FieldType::String) {
-                Some(f.effective_string_semantics(cgs))
-            } else {
-                None
-            }
+            let f = match cgs.get_entity(entity.as_str()) {
+                Some(e) => e.fields.get(field.as_str()),
+                None => return false,
+            };
+            let f = match f {
+                Some(f) => f,
+                None => return false,
+            };
+            f.is_structured_or_multiline(cgs)
         }
         ParameterSlot::CapabilityInput {
             domain,
@@ -290,19 +290,22 @@ fn string_semantics_for_wire_param(
         } => {
             let cap = cgs.capabilities.values().find(|c| {
                 c.domain.as_str() == domain.as_str() && c.name.as_str() == capability.as_str()
-            })?;
-            let fields = cap.object_params()?;
-            let f = fields.iter().find(|p| p.name.as_str() == param.as_str())?;
-            let nv = f.named_value(cgs).ok()?;
-            if matches!(nv.field_type, FieldType::Blob) {
-                Some(crate::StringSemantics::Blob)
-            } else if matches!(nv.field_type, FieldType::String) {
-                Some(f.effective_string_semantics(cgs))
-            } else {
-                None
-            }
+            });
+            let cap = match cap {
+                Some(c) => c,
+                None => return false,
+            };
+            let fields = match cap.object_params() {
+                Some(f) => f,
+                None => return false,
+            };
+            let f = match fields.iter().find(|p| p.name.as_str() == param.as_str()) {
+                Some(f) => f,
+                None => return false,
+            };
+            f.is_structured_or_multiline(cgs)
         }
-        ParameterSlot::Relation { .. } => None,
+        ParameterSlot::Relation { .. } => false,
     }
 }
 
@@ -419,13 +422,9 @@ pub fn render_parse_error_with_feedback(
         }
         ParseErrorKind::UnterminatedString | ParseErrorKind::UnterminatedEscape => {
             let prefix_end = err.offset.min(work.len());
-            let inferred_sem = infer_param_lhs_name(work, err.offset)
+            let structured_slot = infer_param_lhs_name(work, err.offset)
                 .map(|n| resolve_wire_param_name_for_feedback(n, &style))
-                .and_then(|wire| {
-                    string_semantics_for_wire_param(cgs, &full_entity_refs, wire.as_str())
-                });
-            let structured_slot = inferred_sem
-                .map(StringSemantics::is_structured_or_multiline)
+                .map(|wire| wire_param_is_structured_or_multiline(cgs, &full_entity_refs, wire.as_str()))
                 .unwrap_or(false);
             if work[..prefix_end].contains("<<") {
                 correction_unterminated_heredoc(&work[..prefix_end]).unwrap_or_else(|| {
@@ -533,13 +532,9 @@ pub fn render_parse_error_with_feedback(
                         .to_string()
                 }
             };
-            let inferred_sem = infer_param_lhs_name(work, err.offset)
+            let structured_slot = infer_param_lhs_name(work, err.offset)
                 .map(|n| resolve_wire_param_name_for_feedback(n, &style))
-                .and_then(|wire| {
-                    string_semantics_for_wire_param(cgs, &full_entity_refs, wire.as_str())
-                });
-            let structured_slot = inferred_sem
-                .map(StringSemantics::is_structured_or_multiline)
+                .map(|wire| wire_param_is_structured_or_multiline(cgs, &full_entity_refs, wire.as_str()))
                 .unwrap_or(false);
             let markdown_like = markdown_like_payload_near(work, err.offset);
             if matches!(err.kind, ParseErrorKind::ExpectedValue)
@@ -2624,11 +2619,11 @@ mod tests {
             return;
         }
         let cgs = loader::load_schema_dir(dir).unwrap();
-        let err = expr_parser::parse("Message(1).awachment", &cgs).unwrap_err();
-        let se = render_parse_error(&err, "Message(1).awachment", &cgs);
+        let err = expr_parser::parse("Thread(1).mesages", &cgs).unwrap_err();
+        let se = render_parse_error(&err, "Thread(1).mesages", &cgs);
         assert!(
-            se.correction.contains("attachments"),
-            "expected suggestion toward attachments, got: {}",
+            se.correction.contains("messages"),
+            "expected suggestion toward messages, got: {}",
             se.correction
         );
     }

@@ -29,10 +29,7 @@ capabilities:
 values:
   nv_note_id:
     type: string
-    string_semantics: short
   nv_note_title:
     type: string
-    string_semantics: short
   nv_note_create_title:
     type: string
-    string_semantics: short

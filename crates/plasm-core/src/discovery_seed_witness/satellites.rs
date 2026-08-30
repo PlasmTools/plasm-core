@@ -351,6 +351,9 @@ fn witness_entity_ref(witness: &RequirementWitness) -> Option<(String, String)> 
 /// dropped by FO prune still mint `e#`. When `intent` is set, also revive attach/dependent
 /// (and hop) Directs in the corpus that plan seeds cover and the intent names (authored
 /// discovery aliases) — so IssueComment Create is not lost when assessment folds "comment" into Issue.
+///
+/// Catalog-authored [`SeedCoSeedStamp`] seats are **not** admitted here — see
+/// [`admit_co_seed_teaching_seats`] (forced extras outside the soft satellite budget).
 pub fn admit_teaching_satellites(
     corpus: &WitnessCorpus,
     plan: &DeterministicSeedPlan,
@@ -420,6 +423,68 @@ pub fn admit_teaching_satellites(
     SatelliteAdmission::Ok(required_vec)
 }
 
+/// Catalog-authored `co_seed_with` seats as teaching extras for a Ready plan.
+///
+/// Triggered by FO-minimal **workflow** seeds that are primary and not themselves
+/// co-seed seats. Does **not** enlarge the ≤3 seed plan — stamps only, no entity English.
+pub fn admit_co_seed_teaching_seats(
+    corpus: &WitnessCorpus,
+    plan: &DeterministicSeedPlan,
+) -> Vec<(String, String)> {
+    let mut catalog_triggers: HashSet<&str> = HashSet::new();
+    let mut federated_trigger = false;
+    for (entry_id, entity) in &plan.entities {
+        let Some(w) = corpus.witnesses.iter().find(|w| {
+            matches!(
+                &w.kind,
+                WitnessKind::DirectCapability {
+                    entry_id: e,
+                    entity: ent,
+                    ..
+                } if e == entry_id && ent == entity
+            )
+        }) else {
+            continue;
+        };
+        if !w.seed_class.is_primary() {
+            continue;
+        }
+        if !w.co_seed_with.is_catalog_primary_seat() {
+            catalog_triggers.insert(entry_id.as_str());
+        }
+        if !w.co_seed_with.is_federated_primary_seat() {
+            federated_trigger = true;
+        }
+    }
+    if catalog_triggers.is_empty() && !federated_trigger {
+        return Vec::new();
+    }
+
+    let seed_entities: HashSet<(&str, &str)> = plan
+        .entities
+        .iter()
+        .map(|(e, ent)| (e.as_str(), ent.as_str()))
+        .collect();
+    let mut out: BTreeSet<(String, String)> = BTreeSet::new();
+    for w in &corpus.witnesses {
+        let WitnessKind::DirectCapability { entry_id, entity, .. } = &w.kind else {
+            continue;
+        };
+        if seed_entities.contains(&(entry_id.as_str(), entity.as_str())) {
+            continue;
+        }
+        let admit = (w.co_seed_with.admits_on_catalog_primary()
+            && catalog_triggers.contains(entry_id.as_str()))
+            || (w.co_seed_with.admits_on_federated_primary()
+                && federated_trigger
+                && !catalog_triggers.contains(entry_id.as_str()));
+        if admit {
+            out.insert((entry_id.clone(), entity.clone()));
+        }
+    }
+    out.into_iter().collect()
+}
+
 fn witness_eligible_satellite(
     corpus: &WitnessCorpus,
     witness: &RequirementWitness,
@@ -435,7 +500,11 @@ fn witness_eligible_satellite(
 
 /// Apply satellite admission onto a Ready [`SeedSelectionRaw`] (multipass + coverage).
 ///
-/// On overflow, flips the decision to Clarify with extend-hint alternatives.
+/// Soft attach/dependent satellites are capped by [`MAX_TEACHING_SATELLITES`]. Catalog-authored
+/// `co_seed_with` seats are merged afterward as forced teaching extras — they do **not** count
+/// toward that soft cap and do **not** inflate the ≤3 workflow seed plan.
+///
+/// On soft overflow, flips the decision to Clarify with extend-hint alternatives.
 pub fn apply_teaching_satellites_to_ready(
     mut raw: crate::discovery_seed_select::SeedSelectionRaw,
     corpus: &WitnessCorpus,
@@ -446,7 +515,17 @@ pub fn apply_teaching_satellites_to_ready(
     use crate::discovery_seed_select::{SeedAlternativeSetRaw, SeedSelectionDecision};
 
     match admit_teaching_satellites(corpus, plan, satellite_indices, intent) {
-        SatelliteAdmission::Ok(sats) => {
+        SatelliteAdmission::Ok(mut sats) => {
+            let forced = admit_co_seed_teaching_seats(corpus, plan);
+            for seat in forced {
+                if sats
+                    .iter()
+                    .any(|(e, ent)| e == &seat.0 && ent == &seat.1)
+                {
+                    continue;
+                }
+                sats.push(seat);
+            }
             let sat_summary = if sats.is_empty() {
                 "none".to_string()
             } else {
@@ -542,7 +621,7 @@ mod tests {
     };
     use crate::discovery_seed_witness::role_index::CorpusRoleIndex;
     use crate::discovery_seed_witness::roles::{
-        PoolChild, PoolLinks, SeedClassStamp, SeedNavStamp,
+        PoolChild, PoolLinks, SeedClassStamp, SeedCoSeedStamp, SeedNavStamp,
     };
     use crate::schema::{DiscoverySeedClass, DiscoverySeedNav};
 
@@ -608,6 +687,7 @@ mod tests {
                 siblings: BTreeSet::new(),
             },
             seed_class: SeedClassStamp::Authored(DiscoverySeedClass::Primary),
+            co_seed_with: SeedCoSeedStamp::Unset,
             seed_nav: SeedNavStamp::Unset,
             own_pairs: Default::default(),
         };
@@ -632,6 +712,7 @@ mod tests {
                 siblings: BTreeSet::new(),
             },
             seed_class: SeedClassStamp::Authored(DiscoverySeedClass::Dependent),
+            co_seed_with: SeedCoSeedStamp::Unset,
             seed_nav: SeedNavStamp::Authored(DiscoverySeedNav::Attach),
             own_pairs: Default::default(),
         };
@@ -656,6 +737,7 @@ mod tests {
                 siblings: BTreeSet::new(),
             },
             seed_class: SeedClassStamp::Authored(DiscoverySeedClass::Dependent),
+            co_seed_with: SeedCoSeedStamp::Unset,
             seed_nav: SeedNavStamp::Authored(DiscoverySeedNav::Attach),
             own_pairs: Default::default(),
         };
@@ -736,6 +818,7 @@ mod tests {
                 siblings: BTreeSet::new(),
             },
             seed_class: SeedClassStamp::Authored(DiscoverySeedClass::Primary),
+            co_seed_with: SeedCoSeedStamp::Unset,
             seed_nav: SeedNavStamp::Unset,
             own_pairs: Default::default(),
         };
@@ -764,6 +847,7 @@ mod tests {
                 siblings: BTreeSet::new(),
             },
             seed_class: SeedClassStamp::Authored(DiscoverySeedClass::Ambient),
+            co_seed_with: SeedCoSeedStamp::Unset,
             seed_nav: SeedNavStamp::Authored(DiscoverySeedNav::Locate),
             own_pairs: Default::default(),
         };
@@ -878,6 +962,7 @@ mod tests {
                 siblings: BTreeSet::new(),
             },
             seed_class: SeedClassStamp::Authored(DiscoverySeedClass::Dependent),
+            co_seed_with: SeedCoSeedStamp::Unset,
             seed_nav: SeedNavStamp::Authored(DiscoverySeedNav::Attach),
             own_pairs: Default::default(),
         };
@@ -907,6 +992,7 @@ mod tests {
                 siblings: BTreeSet::new(),
             },
             seed_class: SeedClassStamp::Authored(DiscoverySeedClass::Primary),
+            co_seed_with: SeedCoSeedStamp::Unset,
             seed_nav: SeedNavStamp::Unset,
             own_pairs: Default::default(),
         };
@@ -1086,6 +1172,7 @@ mod tests {
                     siblings: BTreeSet::new(),
                 },
                 seed_class,
+                co_seed_with: SeedCoSeedStamp::Unset,
                 seed_nav: SeedNavStamp::Unset,
                 own_pairs: Default::default(),
             }
@@ -1149,6 +1236,113 @@ mod tests {
             primary_covers,
             vec!["fx:Root".to_string()],
             "primary Root Get must be owner-only: {primary_covers:?}"
+        );
+    }
+
+    #[test]
+    fn co_seed_seats_are_teaching_extras_not_plan_cover() {
+        use crate::schema::DiscoveryCoSeedWith;
+        use std::collections::HashMap;
+
+        fn primary(
+            entry: &str,
+            entity: &str,
+            kind: &str,
+            score: u32,
+            co: SeedCoSeedStamp,
+        ) -> RequirementWitness {
+            RequirementWitness {
+                symbol: String::new(),
+                kind: WitnessKind::DirectCapability {
+                    entry_id: entry.into(),
+                    entity: entity.into(),
+                    capability_id: format!("{entry}:{entity}:{kind}"),
+                    capability_name: format!("{entity}_{kind}"),
+                    kind: kind.into(),
+                    description: format!("{kind} {entity}"),
+                },
+                owner_candidate_id: format!("{entry}:{entity}"),
+                lexical_score: score,
+                summary: format!("{kind} {entity}"),
+                entity_description: format!("{entity} desc"),
+                aliases: entity.to_ascii_lowercase(),
+                pool: PoolLinks::default(),
+                seed_class: SeedClassStamp::Authored(DiscoverySeedClass::Primary),
+                co_seed_with: co,
+                seed_nav: SeedNavStamp::Unset,
+                own_pairs: Default::default(),
+            }
+        }
+
+        let payment = primary(
+            "payapp",
+            "PaymentRequest",
+            "Create",
+            90,
+            SeedCoSeedStamp::Unset,
+        );
+        let login = primary(
+            "payapp",
+            "LoginGate",
+            "Action",
+            10,
+            SeedCoSeedStamp::Authored(DiscoveryCoSeedWith::CatalogPrimary),
+        );
+        let profile = primary(
+            "creds",
+            "Profile",
+            "Query",
+            5,
+            SeedCoSeedStamp::Authored(DiscoveryCoSeedWith::FederatedPrimary),
+        );
+        let secret = primary(
+            "creds",
+            "Secret",
+            "Query",
+            5,
+            SeedCoSeedStamp::Authored(DiscoveryCoSeedWith::SessionPrimary),
+        );
+        let mut witnesses = vec![payment, login, profile, secret];
+        let mut symbol_to_index = HashMap::new();
+        for (idx, w) in witnesses.iter_mut().enumerate() {
+            w.symbol = format!("w{}", idx + 1);
+            symbol_to_index.insert(w.symbol.clone(), idx);
+        }
+        let corpus = WitnessCorpus {
+            roles: CorpusRoleIndex::build(&witnesses),
+            witnesses,
+            bundles: vec![],
+            brand_lock_catalogs: vec![],
+            symbol_to_index,
+        };
+        let plan = DeterministicSeedPlan {
+            symbol: "p1".into(),
+            candidate_ids: vec!["payapp:PaymentRequest".into()],
+            entities: vec![("payapp".into(), "PaymentRequest".into())],
+            lexical_score: 90,
+            covered_witness_symbols: vec!["w1".into()],
+            summary: "payapp.PaymentRequest".into(),
+        };
+        let seats = admit_co_seed_teaching_seats(&corpus, &plan);
+        assert!(
+            seats
+                .iter()
+                .any(|(e, n)| e == "payapp" && n == "LoginGate"),
+            "catalog_primary co-seed taught; got {seats:?}"
+        );
+        assert!(
+            seats.iter().any(|(e, n)| e == "creds" && n == "Profile"),
+            "federated_primary co-seed taught; got {seats:?}"
+        );
+        assert!(
+            seats.iter().any(|(e, n)| e == "creds" && n == "Secret"),
+            "session_primary co-seed taught; got {seats:?}"
+        );
+        assert!(
+            !seats
+                .iter()
+                .any(|(e, n)| e == "payapp" && n == "PaymentRequest"),
+            "workflow seed must not reappear as co-seed satellite"
         );
     }
 }

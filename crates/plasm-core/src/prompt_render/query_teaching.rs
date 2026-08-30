@@ -181,9 +181,8 @@ pub(crate) fn compound_get_expr_line(
     Some(format!("{es}({})", parts.join(", ")))
 }
 
-/// Unary identity GET teaching: positional literal for simple string ids (e.g. `e#(pikachu)` on
-/// Pokemon), otherwise opaque **`p#`** (`e#(p…)`) when the field has an allocated teaching ident
-/// symbol; otherwise **`e#($)`** (canonical / unresolved gloss).
+/// Unary identity GET teaching: positional **`$` hole** for simple string ids (`e#($)`),
+/// otherwise opaque **`p#`** / wire when identity is uuid/integer/other — never sample ids.
 pub(crate) fn unary_entity_id_teaching_expr_line(
     es: &str,
     ent: &EntityDef,
@@ -202,20 +201,21 @@ pub(crate) fn unary_entity_id_teaching_expr_line(
     format!("{es}({sym})")
 }
 
-/// Literal positional identity for teaching rows (B2): simple string `id_field`, no compound keys.
+/// Positional identity for teaching rows (B2): simple string `id_field`, no compound keys.
+///
+/// Holes are always [`TEACHING_PARAM_VALUE_PLACEHOLDER`] (`$`) — never sample ids (overfit).
+/// Uuid / integer / other identities fall through to wire/`p#`.
 fn positional_identity_teaching_literal(ent: &EntityDef) -> Option<&'static str> {
     if !ent.key_vars.is_empty() {
         return None;
     }
     match ent.id_format {
-        Some(crate::schema::IdFormat::Uuid) | Some(crate::schema::IdFormat::Integer) => None,
-        Some(crate::schema::IdFormat::Email) => Some("user@example.com"),
-        Some(crate::schema::IdFormat::Other) => None,
-        Some(crate::schema::IdFormat::Slug) | None => match ent.name.as_str() {
-            "Pokemon" => Some("pikachu"),
-            _ if ent.id_field.as_str() == "name" => Some("example-name"),
-            _ => None,
-        },
+        Some(crate::schema::IdFormat::Uuid)
+        | Some(crate::schema::IdFormat::Integer)
+        | Some(crate::schema::IdFormat::Other) => None,
+        Some(crate::schema::IdFormat::Email)
+        | Some(crate::schema::IdFormat::Slug)
+        | None => Some(TEACHING_PARAM_VALUE_PLACEHOLDER),
     }
 }
 
@@ -259,6 +259,39 @@ pub(crate) fn query_expr_maximal(
         return Some(es.to_string());
     }
     Some(format!("{es}{{{}}}", inner.join(", ")))
+}
+
+/// Row-filter brace on the entity **id_field** when the query capability has no filter/scope params.
+///
+/// AppWorld-style dump-all password lists still accept `e#{id_field=$}` as a client-side row filter;
+/// without this hole, projection teaching collapses to bare `e#[…]` (plural) and models feed
+/// `label.wire` arrays into scalar login params.
+///
+/// Uses [`TEACHING_PARAM_VALUE_PLACEHOLDER`] (`$`) — same hole as capability params. Never sample
+/// ids (overfit). Typecheck allows `$` on entity-field predicates; execute rejects leftover `$`.
+pub(crate) fn query_expr_id_field_row_filter(
+    es: &str,
+    ent: &EntityDef,
+    cgs: &CGS,
+    map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
+) -> Option<String> {
+    let id = ent.id_field.as_str();
+    if id.is_empty() || !ent.fields.contains_key(id) {
+        return None;
+    }
+    let field = ent.fields.get(id)?;
+    let nv = field.named_value(cgs).ok()?;
+    // Only synthesize for string-like ids (password vault keys, slugs). Numeric/uuid ids need GET.
+    if !matches!(
+        nv.field_type,
+        FieldType::String | FieldType::Blob | FieldType::Uuid | FieldType::Select
+    ) {
+        return None;
+    }
+    let sym = id_sym_entity(map, catalog_entry_id, ent.name.as_str(), id);
+    let p = TEACHING_PARAM_VALUE_PLACEHOLDER;
+    Some(format!("{es}{{{sym}={p}}}"))
 }
 
 /// Filter predicates only (no scope) — one `Entity{p#=…}` line per query cap so teaching table shows **filter**

@@ -7,31 +7,27 @@ description: >
 values:
   nv_aero_string_short:
     type: string
-    string_semantics: short
   nv_aero_int:
     type: integer
   nv_aero_bool:
     type: boolean
   nv_aero_date_rfc3339:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
   nv_aero_json:
     type: json
   nv_aero_search_query:
     type: string
-    string_semantics: short
     description: >
       Simplified airborne search DSL (`-key value` pairs per AeroAPI), e.g. lat/long box,
       idents, airline, altitude, or groundspeed filters.
   nv_aero_predicate_query:
     type: string
-    string_semantics: short
     description: >
       Advanced airborne search DSL (`{operator key value}` terms), scoped to recent
       positions per AeroAPI rules.
   nv_aero_ident_type:
-    type: select
-    allowed_values: [designator, registration, fa_flight_id]
+    type: enum
+    enum: [designator, registration, fa_flight_id]
 
 entities:
   AirborneTrack:

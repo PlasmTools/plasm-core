@@ -4,7 +4,7 @@
 //! [`crate::expr_parser`]. This module remains for **post-parse** normalization of structured /
 //! multiline string fields when a host may have double-encoded backslash sequences (literal `\` +
 //! `n` still present in a [`crate::Value::String`]). See
-//! [`crate::schema::StringSemantics::is_structured_or_multiline`].
+//! [`crate::value_domain::ValueDomain::is_structured_or_multiline`].
 
 use crate::schema::{InputType, CGS};
 use crate::value::{parse_json_subtree_str, FieldType, Value};
@@ -128,10 +128,7 @@ pub fn normalize_structured_string_inputs(
                 if nv.field_type != FieldType::String {
                     continue;
                 }
-                if !field
-                    .effective_string_semantics(cgs)
-                    .is_structured_or_multiline()
-                {
+                if !field.is_structured_or_multiline(cgs) {
                     continue;
                 }
                 if let Some(Value::String(s)) = map.get_mut(&field.name) {
@@ -161,7 +158,7 @@ pub fn normalize_structured_string_inputs(
 mod tests {
     use super::*;
     use crate::schema::{
-        InputFieldSchema, InputFieldWire, NamedValueSchema, StringSemantics, ValueDomainKey, CGS,
+        InputFieldSchema, InputFieldWire, NamedValueSchema, ValueDomainKey, CGS,
     };
 
     #[test]
@@ -182,11 +179,17 @@ mod tests {
         cgs.values.insert(
             "unescape_p2_md".into(),
             NamedValueSchema {
+                domain: crate::value_domain::ValueDomain::from_legacy(
+                    &FieldType::String,
+                    None,
+                    Some(crate::value_domain::ProfileId::Markdown),
+                    None,
+                    None,
+                ),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
                 allowed_values: None,
-                string_semantics: Some(StringSemantics::Markdown),
                 array_items: None,
                 currency: None,
             },
@@ -228,11 +231,11 @@ mod tests {
         cgs.values.insert(
             "unescape_p2_short".into(),
             NamedValueSchema {
+            domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
                 allowed_values: None,
-                string_semantics: Some(StringSemantics::Short),
                 array_items: None,
                 currency: None,
             },
@@ -276,11 +279,11 @@ mod tests {
         cgs.values.insert(
             "json_p4".into(),
             NamedValueSchema {
+            domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::Json,
                 value_format: None,
                 allowed_values: None,
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },

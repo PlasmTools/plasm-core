@@ -2266,9 +2266,11 @@ impl<'a> Parser<'a> {
             &mut map,
             self.active_catalog_entry_id(Some(&source)).as_deref(),
         )?;
+        let needs_explicit_anchor = cap.invoke_requires_explicit_anchor_id();
         let input = Value::Object(map);
         self.finish_dotted_call_with_payload_value_inner(
             source,
+            needs_explicit_anchor,
             cap.name.clone(),
             cap.domain.clone(),
             cap.kind,
@@ -2326,8 +2328,10 @@ impl<'a> Parser<'a> {
                 message: "expected `v#{{…}}` union constructor for this invoke".into(),
             }));
         }
+        let needs_explicit_anchor = cap.invoke_requires_explicit_anchor_id();
         self.finish_dotted_call_with_payload_value_inner(
             source,
+            needs_explicit_anchor,
             cap.name.clone(),
             cap.domain.clone(),
             cap.kind,
@@ -2335,9 +2339,32 @@ impl<'a> Parser<'a> {
         )
     }
 
+    /// Dotted invoke/delete anchor: explicit `Entity(id)` or, when the CML template has no path
+    /// variables, the bare teaching entity head (`e3.m7(…)`) — same synthetic `"0"` anchor as
+    /// zero-arity invoke.
+    fn coerce_dotted_call_get_anchor(
+        &self,
+        source: &Expr,
+        needs_explicit_anchor: bool,
+        requires_entity_id_message: &str,
+    ) -> Result<GetExpr, ParseError> {
+        if let Expr::Get(g) = source {
+            return Ok(g.clone());
+        }
+        if needs_explicit_anchor {
+            return Err(self.err(ParseErrorKind::Other {
+                message: requires_entity_id_message.to_string(),
+            }));
+        }
+        let entity = source.primary_entity().to_string();
+        self.validate_entity(&entity)?;
+        Ok(GetExpr::new(entity, "0"))
+    }
+
     fn finish_dotted_call_with_payload_value_inner(
         &mut self,
         source: Expr,
+        needs_explicit_anchor: bool,
         cap_name: CapabilityName,
         cap_domain: EntityName,
         cap_kind: CapabilityKind,
@@ -2355,11 +2382,11 @@ impl<'a> Parser<'a> {
                 }),
             )),
             CapabilityKind::Delete => {
-                let Expr::Get(g) = &source else {
-                    return Err(self.err(ParseErrorKind::Other {
-                        message: "delete with arguments requires Entity(id) on the left".into(),
-                    }));
-                };
+                let g = self.coerce_dotted_call_get_anchor(
+                    &source,
+                    needs_explicit_anchor,
+                    "delete with arguments requires Entity(id) on the left",
+                )?;
                 let path_vars = match input {
                     Value::Object(map) if !map.is_empty() => Some(map),
                     _ => g.path_vars.clone(),
@@ -2374,11 +2401,11 @@ impl<'a> Parser<'a> {
                 ))
             }
             CapabilityKind::Update | CapabilityKind::Action => {
-                let Expr::Get(g) = &source else {
-                    return Err(self.err(ParseErrorKind::Other {
-                        message: "invoke with arguments requires Entity(id) on the left".into(),
-                    }));
-                };
+                let g = self.coerce_dotted_call_get_anchor(
+                    &source,
+                    needs_explicit_anchor,
+                    "invoke with arguments requires Entity(id) on the left",
+                )?;
                 Ok(Self::stamp_session_catalog_from_source(
                     &source,
                     Expr::Invoke(InvokeExpr::with_target_path_vars(
@@ -3651,11 +3678,11 @@ mod tests {
         cgs.values.insert(
             "fx_str".into(),
             NamedValueSchema {
+            domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
                 allowed_values: None,
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -4149,6 +4176,7 @@ mod tests {
             kind: CapabilityKind::Get,
             domain: "Document".into(),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
@@ -4176,6 +4204,7 @@ mod tests {
             kind: CapabilityKind::Action,
             domain: "Document".into(),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method": "POST",
@@ -5099,6 +5128,7 @@ mod tests {
             kind: CapabilityKind::Query,
             domain: "Widget".into(),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: CapabilityMapping {
                 template: serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "widget"}]}).into(),
             },
@@ -5144,13 +5174,13 @@ mod tests {
         cgs.values.insert(
             "fx_ref_library".into(),
             NamedValueSchema {
+            domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::EntityRef {
                     target: "Library".into(),
                 },
                 value_format: None,
                 allowed_values: None,
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -5208,6 +5238,7 @@ mod tests {
             kind: CapabilityKind::Query,
             domain: "Book".into(),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: CapabilityMapping {
                 template:
                     serde_json::json!({"method":"GET","path":[{"type":"literal","value":"books"}]})
@@ -5230,6 +5261,7 @@ mod tests {
             kind: CapabilityKind::Get,
             domain: "Library".into(),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method":"GET",
@@ -5421,6 +5453,7 @@ mod tests {
             kind: CapabilityKind::Get,
             domain: "Ticket".into(),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
@@ -5558,6 +5591,7 @@ mod tests {
             kind: CapabilityKind::Get,
             domain: "Library".into(),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method":"GET",
@@ -5655,6 +5689,7 @@ mod tests {
             kind: CapabilityKind::Get,
             domain: "Parent".into(),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: CapabilityMapping {
                 template: serde_json::json!({"method":"GET","path":[
                     {"type":"literal","value":"parent"},
@@ -5680,6 +5715,7 @@ mod tests {
             kind: CapabilityKind::Query,
             domain: "Child".into(),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: CapabilityMapping {
                 template: serde_json::json!({"method":"GET","path":[
                     {"type":"literal","value":"children"}
@@ -5697,7 +5733,9 @@ mod tests {
             deterministic: None,
         })
         .unwrap();
-        cgs.validate().unwrap();
+        // Intentionally skip `validate()` — many-relations without `materialize:` are
+        // load-rejected but the parser still surfaces `ManyRelationUnmaterialized` for
+        // programmatic / legacy CGS built in-memory.
         cgs
     }
 
@@ -5816,11 +5854,8 @@ mod tests {
 
     #[test]
     fn program_parse_unknown_ident_becomes_phrase_ident_in_predicate() {
-        // A bare unquoted word in a predicate that is not a known program binding parses as a
-        // deferred `Value::PhraseIdent` (not a `PlasmInputRef`). Downstream
-        // `lower_program_phrase_idents_in_expr` then either lowers it to `Value::String` or
-        // rejects it ("quote the value if you meant a literal string"). This asserts the
-        // raw-parse shape only.
+        // Bare unquoted words in query `{…}` predicates coerce to string at parse time via
+        // [`coerce_value_for_field_type`] (same path as teaching-table query filters).
         let dir = std::path::Path::new("../../apis/github");
         if !dir.exists() {
             return;
@@ -5832,7 +5867,7 @@ mod tests {
         let mut refs = std::collections::BTreeSet::new();
         refs.insert("not_report".into());
         let r = parse_with_cgs_layers_program(
-            "Issue{state=report}",
+            "Issue{title=report}",
             &stack,
             sym_map,
             Some(&refs),
@@ -5848,7 +5883,7 @@ mod tests {
         let Predicate::Comparison { value, .. } = pred else {
             panic!("expected comparison");
         };
-        assert_eq!(value.to_value(), Value::PhraseIdent("report".into()));
+        assert_eq!(value.to_value(), Value::String("report".into()));
     }
 
     #[test]
@@ -5912,6 +5947,56 @@ mod tests {
             matches!(err, crate::TypeError::IncompatibleValue { .. }),
             "expected compile-time type rejection, got {err:?}"
         );
+    }
+
+    /// Program-mode bare `true`/`false` on invoke args must coerce via the **same**
+    /// [`coerce_value_for_field_type`] path as query predicates (PhraseIdent ≡ stringish).
+    #[test]
+    fn program_invoke_bare_bool_coerces_like_query_filter() {
+        use crate::InvokeInputPayload;
+        use std::sync::Arc;
+
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
+        let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
+        let stack = test_layer(&cgs);
+
+        // Read path (non-program): already Bool after predicate coerce.
+        let q = parse("LangItem{score=1}", &cgs).expect("query parse");
+        crate::type_checker::type_check_expr(&q.expr, &cgs).expect("query typecheck");
+
+        // Write path (program): bare true/false were PhraseIdent and used to fail typecheck.
+        let mut r = parse_with_cgs_layers_program(
+            r#"LangItem("i1").update(active=true, score=3)"#,
+            &stack,
+            sym_map,
+            None,
+            false,
+        )
+        .expect("program invoke parse");
+        let Expr::Invoke(inv) = &r.expr else {
+            panic!("expected Invoke, got {:?}", r.expr);
+        };
+        let Some(InvokeInputPayload::Raw(Value::Object(map))) = &inv.input else {
+            panic!("expected raw object input, got {:?}", inv.input);
+        };
+        assert_eq!(
+            map.get("active"),
+            Some(&Value::Bool(true)),
+            "invoke coerce must yield Bool(true), got {:?}",
+            map.get("active")
+        );
+        assert_eq!(map.get("score"), Some(&Value::Integer(3)));
+
+        let labels = std::collections::BTreeSet::new();
+        crate::lower_program_phrase_idents_in_expr(&mut r.expr, &labels, &cgs)
+            .expect("phrase lower");
+        crate::type_checker::type_check_expr(&r.expr, &cgs)
+            .expect("program invoke with bare bool must typecheck");
     }
 
     #[test]
@@ -6139,6 +6224,7 @@ mod tests {
             kind: CapabilityKind::Get,
             domain: "Pet".into(),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",

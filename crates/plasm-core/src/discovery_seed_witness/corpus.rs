@@ -11,7 +11,8 @@ use crate::schema::DiscoverySeedNav;
 
 use super::role_index::CorpusRoleIndex;
 use super::roles::{
-    prefer_seed_nav, OwnEdge, OwnPairs, PoolChild, PoolLinks, SeedClassStamp, SeedNavStamp,
+    prefer_seed_nav, OwnEdge, OwnPairs, PoolChild, PoolLinks, SeedClassStamp, SeedCoSeedStamp,
+    SeedNavStamp,
 };
 
 /// Max closed witnesses presented to the LLM per selection call.
@@ -53,6 +54,8 @@ pub struct RequirementWitness {
     pub pool: PoolLinks,
     /// Authored entity `discovery.seed_class`.
     pub seed_class: SeedClassStamp,
+    /// Authored entity `discovery.co_seed_with`.
+    pub co_seed_with: SeedCoSeedStamp,
     /// Governing edge `discovery.seed_nav` when in-pool.
     pub seed_nav: SeedNavStamp,
     /// In-pool `own` edges involving this entity.
@@ -155,7 +158,13 @@ pub fn build_witness_corpus(
     } else {
         bundles
             .iter()
-            .filter(|b| brand_lock_catalogs.iter().any(|l| l == &b.entry_id))
+            .filter(|b| {
+                brand_lock_catalogs.iter().any(|l| l == &b.entry_id)
+                    // Federated/session co-seed seats must survive brand-lock so prune can
+                    // force-admit them — stamp from catalog, never entry English.
+                    || co_seed_stamp(catalog_context, &b.entry_id, &b.entity)
+                        .admits_on_federated_primary()
+            })
             .cloned()
             .collect()
     };
@@ -178,6 +187,7 @@ pub fn build_witness_corpus(
         let aliases = entity_aliases_for(catalog_context, &bundle.entry_id, &bundle.entity);
         let pool = pool_links_for(bundle, graph, &in_pool, &locked);
         let seed_class = seed_class_stamp(catalog_context, &bundle.entry_id, &bundle.entity);
+        let co_seed_with = co_seed_stamp(catalog_context, &bundle.entry_id, &bundle.entity);
         let entity_seed_nav =
             governing_seed_nav_for_entity(catalog_context, bundle, graph, &in_pool, &locked);
         let own_pairs = own_pairs_for(catalog_context, bundle, graph, &in_pool, &locked);
@@ -207,6 +217,7 @@ pub fn build_witness_corpus(
                 aliases: aliases.clone(),
                 pool: pool.clone(),
                 seed_class,
+                co_seed_with,
                 seed_nav: entity_seed_nav,
                 own_pairs: own_pairs.clone(),
             });
@@ -242,6 +253,7 @@ pub fn build_witness_corpus(
                     aliases: aliases.clone(),
                     pool: pool.clone(),
                     seed_class,
+                    co_seed_with,
                     seed_nav: hop_nav,
                     own_pairs: own_pairs.clone(),
                 });
@@ -304,7 +316,79 @@ fn shortlist_witnesses_for_llm(
     let mut shortlist: Vec<RequirementWitness> =
         ranked.iter().take(MAX_WITNESSES).cloned().collect();
     admit_primary_parents_for_attach_leaves(&mut shortlist, &ranked);
+    admit_co_seed_with_primary(&mut shortlist, &ranked);
     shortlist
+}
+
+/// Pin catalog-authored `co_seed_with` seats into the closed witness set whenever a
+/// qualifying primary DirectCapability survives lexical truncate.
+fn admit_co_seed_with_primary(
+    shortlist: &mut Vec<RequirementWitness>,
+    ranked: &[RequirementWitness],
+) {
+    const MAX_CO_SEED_ADMITS: usize = 12;
+    let mut have: HashSet<(String, String, String)> = HashSet::new();
+    for w in shortlist.iter() {
+        if let WitnessKind::DirectCapability {
+            entry_id,
+            entity,
+            capability_id,
+            ..
+        } = &w.kind
+        {
+            have.insert((entry_id.clone(), entity.clone(), capability_id.clone()));
+        }
+    }
+
+    let mut catalog_triggers: HashSet<String> = HashSet::new();
+    let mut federated_trigger = false;
+    for w in shortlist.iter() {
+        let WitnessKind::DirectCapability { entry_id, .. } = &w.kind else {
+            continue;
+        };
+        if !w.seed_class.is_primary() {
+            continue;
+        }
+        if !w.co_seed_with.is_catalog_primary_seat() {
+            catalog_triggers.insert(entry_id.clone());
+        }
+        if !w.co_seed_with.is_federated_primary_seat() {
+            federated_trigger = true;
+        }
+    }
+    if catalog_triggers.is_empty() && !federated_trigger {
+        return;
+    }
+
+    let mut admitted = 0usize;
+    for w in ranked {
+        if admitted >= MAX_CO_SEED_ADMITS {
+            break;
+        }
+        let WitnessKind::DirectCapability {
+            entry_id,
+            entity,
+            capability_id,
+            ..
+        } = &w.kind
+        else {
+            continue;
+        };
+        let want = (w.co_seed_with.admits_on_catalog_primary()
+            && catalog_triggers.contains(entry_id))
+            || (w.co_seed_with.admits_on_federated_primary()
+                && federated_trigger
+                && !catalog_triggers.contains(entry_id));
+        if !want {
+            continue;
+        }
+        let key = (entry_id.clone(), entity.clone(), capability_id.clone());
+        if !have.insert(key) {
+            continue;
+        }
+        shortlist.push(w.clone());
+        admitted += 1;
+    }
 }
 
 /// Ensure attach/dependent leaves retain an in-corpus primary parent after lexical truncate.
@@ -498,6 +582,16 @@ fn seed_class_stamp(
 ) -> SeedClassStamp {
     SeedClassStamp::from_catalog(
         catalog_context.and_then(|ctx| ctx.entity_seed_class(entry_id, entity)),
+    )
+}
+
+fn co_seed_stamp(
+    catalog_context: Option<&CatalogWorkflowContext>,
+    entry_id: &str,
+    entity: &str,
+) -> SeedCoSeedStamp {
+    SeedCoSeedStamp::from_catalog(
+        catalog_context.and_then(|ctx| ctx.entity_co_seed_with(entry_id, entity)),
     )
 }
 

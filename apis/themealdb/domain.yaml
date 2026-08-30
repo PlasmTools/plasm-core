@@ -66,28 +66,21 @@ capabilities:
 values:
   nv_meal_id_meal:
     type: string
-    string_semantics: short
     description: Unique numeric string identifier for the meal.
   nv_meal_str_area:
     type: string
-    string_semantics: short
     description: Country of origin (e.g. British, Italian, Japanese).
   nv_meal_str_category:
     type: string
-    string_semantics: short
     description: Cuisine category (e.g. Chicken, Seafood, Dessert).
   nv_meal_str_meal:
     type: string
-    string_semantics: short
     description: The recipe or dish name.
   nv_meal_str_meal_thumb:
     type: string
-    string_semantics: short
     description: URL of the meal thumbnail image.
   nv_meal_str_tags:
     type: string
-    string_semantics: short
     description: Comma-separated tags for the meal.
   nv_wire_str_short:
     type: string
-    string_semantics: short

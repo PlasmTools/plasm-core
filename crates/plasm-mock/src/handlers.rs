@@ -200,6 +200,7 @@ fn error_response(status: StatusCode, error: MockError) -> (StatusCode, Json<Err
 
 #[cfg(test)]
 mod tests {
+    use plasm_core::value_domain::ValueDomain;
     use super::*;
     use axum::{
         body::Body,
@@ -207,7 +208,7 @@ mod tests {
         Router,
     };
     use plasm_core::{
-        FieldSchema, FieldType, FieldValueKind, NamedValueSchema, ResourceSchema, StringSemantics,
+        FieldSchema, FieldType, FieldValueKind, NamedValueSchema, ResourceSchema,
         ValueDomainKey,
     };
     use tower::ServiceExt;
@@ -217,15 +218,11 @@ mod tests {
         for k in ["mock_h_str_id", "mock_h_str_name"] {
             schema.values.insert(
                 k.into(),
-                NamedValueSchema {
-                    description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
-                    string_semantics: Some(StringSemantics::Short),
-                    array_items: None,
-                    currency: None,
-                },
+                NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                None,
+            ),
             );
         }
         let account = ResourceSchema {

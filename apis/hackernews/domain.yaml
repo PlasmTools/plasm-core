@@ -272,7 +272,6 @@ capabilities:
 values:
   nv_item_by:
     type: string
-    string_semantics: short
     description: Username of the author when present.
   nv_item_dead:
     type: boolean
@@ -284,8 +283,8 @@ values:
     type: integer
     description: Comment count for stories when known.
   nv_item_feed_query_feed:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - top
     - new
     - best
@@ -305,23 +304,19 @@ values:
     type: integer
     description: Net votes for stories and jobs when present.
   nv_item_text:
-    type: string
-    string_semantics: markdown
+    type: markdown
     description: Comment or story text payload when present.
   nv_item_time:
     type: integer
     description: Unix time the item was created.
   nv_item_title:
     type: string
-    string_semantics: short
     description: Story or job title when applicable.
   nv_item_type:
     type: string
-    string_semantics: short
     description: Wire kind such as story, comment, job, poll, or pollopt.
   nv_item_url:
     type: string
-    string_semantics: short
     description: Outbound link for link posts when present.
   nv_max_item_id_id:
     type: integer
@@ -331,11 +326,9 @@ values:
     description: Item id from the live updates snapshot.
   nv_recent_updated_user_id:
     type: string
-    string_semantics: short
     description: Username from the live updates snapshot.
   nv_user_about:
-    type: string
-    string_semantics: markdown
+    type: markdown
     description: Self-description text when set.
   nv_user_created:
     type: integer
@@ -345,7 +338,6 @@ values:
     description: Account delay setting when present.
   nv_user_id:
     type: string
-    string_semantics: short
     description: Unique username.
   nv_user_karma:
     type: integer
@@ -354,7 +346,6 @@ values:
     type: integer
   nv_wire_str_short:
     type: string
-    string_semantics: short
   nv_item_parts:
     type: array
     items:

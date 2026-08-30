@@ -1,4 +1,9 @@
 //! MCP `tools/call` name dispatch (keeps [`ServerHandler`] futures small).
+//!
+//! Heavy tools (`plasm_context`, `plasm`, `plasm_run`, discovery) run on
+//! [`LivePlanRunPool`](crate::live_plan_run_worker::LivePlanRunPool) so debug teaching /
+//! plan stacks do not overflow default tokio worker threads. Prefer that over
+//! process-wide `RUST_MIN_STACK`.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -18,9 +23,36 @@ pub(crate) async fn dispatch_plasm_mcp_call_tool_request(
     runtime: Arc<dyn McpServer>,
 ) -> Result<CallToolResult, CallToolError> {
     let tool_name = params.name.clone();
-    dispatch_plasm_mcp_call_tool_request_inner(handler, params, runtime)
-        .instrument(crate::spans::mcp_call_tool(tool_name.as_str()))
+    Box::pin(
+        dispatch_plasm_mcp_call_tool_request_inner(handler, params, runtime)
+            .instrument(crate::spans::mcp_call_tool(tool_name.as_str())),
+    )
+    .await
+}
+
+/// Run an owned MCP tool future on the live-plan large-stack worker pool.
+///
+/// [`CallToolError`] is not `Send` (`Box<dyn Error>`), so the tool future is created and
+/// polled only on the worker (`run_local`), and errors are folded into
+/// [`CallToolResult::with_error`] before the `Send` result crosses back.
+async fn on_live_plan_stack<F, Fut>(handler: &PlasmMcpHandler, f: F) -> CallToolResult
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Result<CallToolResult, CallToolError>> + 'static,
+{
+    let pool = handler.plasm.live_plan_pool();
+    match pool
+        .run_local(move || async move {
+            Ok(match f().await {
+                Ok(r) => r,
+                Err(e) => CallToolResult::with_error(e),
+            })
+        })
         .await
+    {
+        Ok(result) => result,
+        Err(e) => CallToolResult::with_error(CallToolError::from_message(e)),
+    }
 }
 
 async fn dispatch_plasm_mcp_call_tool_request_inner(
@@ -62,6 +94,16 @@ async fn dispatch_plasm_mcp_call_tool_request_inner(
         }
     }
 
+    fn record_tool_result(tname: &'static str, res: &CallToolResult, started: Instant) {
+        let elapsed = started.elapsed();
+        let status = if res.is_error.unwrap_or(false) {
+            "error"
+        } else {
+            "success"
+        };
+        crate::metrics::record_mcp_tool(tname, None, status, "none", elapsed);
+    }
+
     let key = mcp_key(&runtime)?;
     let v = args_value(&params);
 
@@ -74,46 +116,39 @@ async fn dispatch_plasm_mcp_call_tool_request_inner(
     match params.name.as_str() {
         "plasm_context" => {
             let started = Instant::now();
-            let tname = "plasm_context";
-            let res = handler
-                .handle_mcp_tool_plasm_context(key.as_str(), &runtime, &v)
-                .await;
-            let elapsed = started.elapsed();
-            match &res {
-                Ok(_) => crate::metrics::record_mcp_tool(tname, None, "success", "none", elapsed),
-                Err(e) => crate::metrics::record_mcp_tool(
-                    tname,
-                    None,
-                    "error",
-                    mcp_call_tool_error_class(e),
-                    elapsed,
-                ),
-            }
-            res
+            let owned = handler.clone();
+            let key = key.clone();
+            let runtime = Arc::clone(&runtime);
+            let v = v.clone();
+            let res = on_live_plan_stack(handler, move || {
+                let owned = owned.clone();
+                async move {
+                    owned
+                        .handle_mcp_tool_plasm_context(key.as_str(), &runtime, &v)
+                        .await
+                }
+            })
+            .await;
+            record_tool_result("plasm_context", &res, started);
+            Ok(res)
         }
         "discover_capabilities" => {
             let started = Instant::now();
-            let res = handler
-                .handle_mcp_tool_discover_capabilities(key.as_str(), &runtime, &v)
-                .await;
-            let elapsed = started.elapsed();
-            match &res {
-                Ok(_) => crate::metrics::record_mcp_tool(
-                    "discover_capabilities",
-                    None,
-                    "success",
-                    "none",
-                    elapsed,
-                ),
-                Err(e) => crate::metrics::record_mcp_tool(
-                    "discover_capabilities",
-                    None,
-                    "error",
-                    mcp_call_tool_error_class(e),
-                    elapsed,
-                ),
-            }
-            res
+            let owned = handler.clone();
+            let key = key.clone();
+            let runtime = Arc::clone(&runtime);
+            let v = v.clone();
+            let res = on_live_plan_stack(handler, move || {
+                let owned = owned.clone();
+                async move {
+                    owned
+                        .handle_mcp_tool_discover_capabilities(key.as_str(), &runtime, &v)
+                        .await
+                }
+            })
+            .await;
+            record_tool_result("discover_capabilities", &res, started);
+            Ok(res)
         }
         "plasm_ui_list_catalogs" => {
             let started = Instant::now();
@@ -167,9 +202,21 @@ async fn dispatch_plasm_mcp_call_tool_request_inner(
             let started = Instant::now();
             let dry_run_only = matches!(params.name.as_str(), "plasm");
             let tool_name: &'static str = if dry_run_only { "plasm" } else { "plasm_run" };
-            handler
-                .handle_plasm_mcp_tool(&key, &runtime, &v, tool_name, dry_run_only, started)
-                .await
+            let owned = handler.clone();
+            let key = key.clone();
+            let runtime = Arc::clone(&runtime);
+            let v = v.clone();
+            let res = on_live_plan_stack(handler, move || {
+                let owned = owned.clone();
+                async move {
+                    owned
+                        .handle_plasm_mcp_tool(&key, &runtime, &v, tool_name, dry_run_only, started)
+                        .await
+                }
+            })
+            .await;
+            record_tool_result(tool_name, &res, started);
+            Ok(res)
         }
         "plasm_read_run_artifact" => {
             let started = Instant::now();

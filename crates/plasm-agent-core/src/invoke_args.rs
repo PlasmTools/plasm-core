@@ -33,11 +33,12 @@ pub fn args_to_input(matches: &ArgMatches, cap: &CapabilitySchema, cgs: &CGS) ->
 
 #[cfg(test)]
 mod tests {
+    use plasm_core::value_domain::ValueDomain;
     use super::*;
     use clap::{Arg, Command};
     use plasm_core::{
         CapabilityKind, CapabilityMapping, FieldType, InputFieldSchema, InputFieldWire,
-        InputSchema, InputType, InputValidation, NamedValueSchema, StringSemantics, ValueDomainKey,
+        InputSchema, InputType, InputValidation, NamedValueSchema, ValueDomainKey,
         CGS,
     };
 
@@ -45,39 +46,27 @@ mod tests {
         let mut cgs = CGS::new();
         cgs.values.insert(
             "invoke_upd_name".into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: Some(StringSemantics::Short),
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                None,
+            ),
         );
         cgs.values.insert(
             "invoke_upd_revenue".into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Number,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::Number, None, None, None, None),
+                None,
+            ),
         );
         cgs.values.insert(
             "invoke_upd_priority".into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Select,
-                value_format: None,
-                allowed_values: Some(vec!["low".into(), "medium".into(), "high".into()]),
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::Select, None, None, Some(vec!["low".into(), "medium".into(), "high".into()]).clone(), None),
+                None,
+            ),
         );
         cgs
     }
@@ -89,6 +78,7 @@ mod tests {
             kind: CapabilityKind::Update,
             domain: "Account".into(),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: CapabilityMapping {
                 template: serde_json::json!({}).into(),
             },
@@ -138,7 +128,6 @@ mod tests {
                     additional_fields: false,
                 },
                 validation: InputValidation {
-                    predicates: vec![],
                     allow_null: false,
                     cross_field_rules: vec![],
                 },

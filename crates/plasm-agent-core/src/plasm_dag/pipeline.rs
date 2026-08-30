@@ -2,6 +2,7 @@
 
 use super::binding_continuation;
 use super::binding_contract::binding_contract;
+use super::invoke_cardinality::validate_invoke_scalar_field_refs;
 use super::plan_serialize::{
     collect_template_uses_from_expr, expr_template_json, infer_surface_contract,
     looks_like_plasm_effect_template, node_to_json, parse_plan_value_expr,
@@ -364,6 +365,9 @@ pub(in crate::plasm_dag) fn compile_surface_node(
         },
     };
     validate_surface_inline_projection(session, state, &node)?;
+    if let DagNodeSource::Surface { parsed, .. } = &node.source {
+        validate_invoke_scalar_field_refs(session, state, id, &parsed.expr)?;
+    }
     Ok(node)
 }
 pub(in crate::plasm_dag) fn split_return_list(

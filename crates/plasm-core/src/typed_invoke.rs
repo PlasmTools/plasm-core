@@ -461,7 +461,7 @@ fn field_input_schema_to_input_type(f: &InputFieldSchema, cgs: &CGS) -> Result<I
 mod tests {
     use super::*;
     use crate::schema::{
-        InputFieldWire, InputType, NamedValueSchema, StringSemantics, ValueDomainKey,
+        InputFieldWire, InputType, NamedValueSchema, ValueDomainKey,
     };
     use crate::FieldType;
     use crate::Value;
@@ -473,11 +473,11 @@ mod tests {
         cgs.values.insert(
             "typed_invoke_title".into(),
             NamedValueSchema {
+            domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
                 allowed_values: None,
-                string_semantics: Some(StringSemantics::Short),
                 array_items: None,
                 currency: None,
             },

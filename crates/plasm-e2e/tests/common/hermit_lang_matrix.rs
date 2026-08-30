@@ -29,12 +29,10 @@ async fn spawn_hermit_host_root(spec_path: &std::path::Path) -> String {
     let routes = beavuck_hermit::spec_parser::extract_routes(&spec);
     let router = beavuck_hermit::router::build_with_bounds(routes, 1, 5);
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let base_url = format!("http://127.0.0.1:{}", addr.port());
-
-    // Dedicated thread + runtime so Hermit keeps accepting while matrix rows run on other
-    // current-thread runtimes (parent `block_on` would otherwise starve `tokio::spawn` here).
+    // Bind the listener on the *server* runtime. Creating it on the caller's runtime and then
+    // dropping that runtime (e.g. views `block_on_views_live` harness) orphans the IO driver and
+    // kills accept — every later test then sees connection-refused on the cached OnceCell URL.
+    let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -42,10 +40,17 @@ async fn spawn_hermit_host_root(spec_path: &std::path::Path) -> String {
             .build()
             .expect("hermit server runtime");
         rt.block_on(async move {
-            axum::serve(listener, router).await.unwrap();
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("hermit bind");
+            let addr = listener.local_addr().expect("hermit local_addr");
+            let base_url = format!("http://127.0.0.1:{}", addr.port());
+            tx.send(base_url).expect("send hermit base url");
+            axum::serve(listener, router).await.expect("hermit serve");
         });
     });
 
+    let base_url = rx.recv().expect("hermit base url");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     base_url
 }

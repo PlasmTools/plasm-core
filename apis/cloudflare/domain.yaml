@@ -645,9 +645,9 @@ values:
     type: boolean
     description: Yes/no posture signal derived for SecurityOverview.
   nv_wire_sel_security_surface_status:
-    type: select
+    type: enum
     description: Coarse derived posture label for SecurityOverview (mirrors runtime derivation).
-    allowed_values:
+    enum:
     - minimal
     - managed_surface
     - custom_heavy
@@ -665,21 +665,20 @@ values:
     target: Zone
     description: Zone identifier.
   nv_wire_date_rfc3339:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
   nv_wire_int:
     type: integer
   nv_wire_sel_8da7df51398b3ce3:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - custom
     - managed
     - root
     - zone
   nv_wire_sel_zone_ruleset_entrypoint_phase:
-    type: select
+    type: enum
     description: Phases accepted by zone entrypoint ruleset GET/PUT (excludes account-scoped L4 DDoS).
-    allowed_values:
+    enum:
     - ddos_l7
     - http_config_settings
     - http_custom_errors
@@ -704,8 +703,8 @@ values:
     - magic_transit_managed
     - magic_transit_ratelimit
   nv_wire_sel_b53dd05524ff4281:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - ddos_l4
     - ddos_l7
     - http_config_settings
@@ -731,20 +730,16 @@ values:
     - magic_transit_managed
     - magic_transit_ratelimit
   nv_wire_str_markdown:
-    type: string
-    string_semantics: markdown
+    type: markdown
   nv_wire_str_short:
     type: string
-    string_semantics: short
   nv_zone_paused:
     type: boolean
   nv_zone_query_account_id:
     type: string
-    string_semantics: short
     description: Restrict listed zones to this account.
   nv_zone_query_name:
     type: string
-    string_semantics: short
     description: Exact zone name match.
   nv_zone_query_page:
     type: integer
@@ -754,9 +749,7 @@ values:
     description: Preferred maximum zones per page when listing.
   nv_zone_query_status:
     type: string
-    string_semantics: short
     description: Zone status filter (e.g. active, pending, initializing).
   nv_zone_query_type:
     type: string
-    string_semantics: short
     description: Zone type filter (full, partial, etc.).

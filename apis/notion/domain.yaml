@@ -401,7 +401,6 @@ auth:
 values:
   nv_comment_query_block_id:
     type: string
-    string_semantics: short
     description: ID of the page whose comments to retrieve.
   nv_database_in_trash:
     type: boolean
@@ -410,56 +409,47 @@ values:
     description: True if the database is displayed inline in its parent page.
   nv_database_query_database_id:
     type: string
-    string_semantics: short
     description: ID of the database to query.
   nv_database_query_page_size:
     type: integer
     description: Number of results per page (max 100).
   nv_database_search_query:
     type: string
-    string_semantics: short
     description: Title text to search for. Omit to retrieve all accessible databases.
   nv_page_archived:
     type: boolean
     description: Deprecated alias for in_trash.
   nv_page_id:
     type: string
-    string_semantics: short
     description: UUIDv4 page identifier.
   nv_page_in_trash:
     type: boolean
     description: True if this page has been trashed.
   nv_page_markdown:
-    type: string
-    string_semantics: markdown
+    type: markdown
     description: Full page content as Enhanced Markdown. Populated by page_get_markdown; absent until that action is invoked.
   nv_page_public_url:
     type: string
-    string_semantics: short
     description: Public web URL if the page is published, otherwise null.
   nv_page_search_query:
     type: string
-    string_semantics: short
     description: Title text to search for. Omit to retrieve all accessible pages.
   nv_page_truncated:
     type: boolean
     description: True if the markdown content was truncated (page exceeded ~20k block limit). Populated by page_get_markdown.
   nv_page_url:
     type: string
-    string_semantics: short
     description: Canonical Notion URL for this page.
   nv_user_email:
     type: string
-    string_semantics: short
     description: Only available when integration has user email capabilities.
   nv_user_type:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - person
     - bot
   nv_wire_date_rfc3339:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
   nv_wire_int:
     type: integer
   nv_wire_num:
@@ -470,10 +460,9 @@ values:
     type: json
     description: Unmapped Notion property payload.
   nv_wire_sel_54ee3732e356907b:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - ascending
     - descending
   nv_wire_str_short:
     type: string
-    string_semantics: short

@@ -446,8 +446,8 @@ values:
     type: entity_ref
     target: Account
   nv_post_feed_query_feed:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - hot
     - new
     - top
@@ -457,8 +457,8 @@ values:
     type: entity_ref
     target: Subreddit
   nv_post_search_query_sort:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - relevance
     - hot
     - top
@@ -477,8 +477,8 @@ values:
   nv_wire_num:
     type: number
   nv_wire_sel_2fde0f3a716481f3:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - all
     - day
     - hour
@@ -486,8 +486,6 @@ values:
     - week
     - year
   nv_wire_str_markdown:
-    type: string
-    string_semantics: markdown
+    type: markdown
   nv_wire_str_short:
     type: string
-    string_semantics: short

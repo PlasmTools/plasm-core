@@ -186,16 +186,6 @@ pub enum SchemaError {
     ValueFormatOnIncompatibleField { entity: String, field: String },
 
     #[error(
-        "Entity '{entity}' field '{field}': `string_semantics` is only allowed for `string` fields"
-    )]
-    StringSemanticsOnNonString { entity: String, field: String },
-
-    #[error(
-        "Capability '{capability}' parameter '{param}': `string_semantics` is only allowed for `string` parameters"
-    )]
-    StringSemanticsOnNonStringParam { capability: String, param: String },
-
-    #[error(
         "Entity '{entity}' field '{field}': `agent_presentation` is only allowed for `string` or `blob` fields"
     )]
     AgentPresentationOnNonString { entity: String, field: String },

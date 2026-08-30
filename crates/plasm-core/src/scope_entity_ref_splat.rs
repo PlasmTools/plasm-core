@@ -191,7 +191,7 @@ mod tests {
     use crate::schema::{
         registry_test_util, CapabilityKind, CapabilityMapping, CapabilitySchema,
         CapabilityTemplateJson, FieldSchema, InputSchema, InputType, InputValidation,
-        NamedValueSchema, ResourceSchema, StringSemantics,
+        NamedValueSchema, ResourceSchema,
     };
     use crate::FieldType;
 
@@ -199,11 +199,11 @@ mod tests {
         cgs.values.insert(
             "fx_str".into(),
             NamedValueSchema {
+            domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
                 allowed_values: None,
-                string_semantics: Some(StringSemantics::Short),
                 array_items: None,
                 currency: None,
             },
@@ -211,13 +211,13 @@ mod tests {
         cgs.values.insert(
             "fx_repo_ref".into(),
             NamedValueSchema {
+            domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::EntityRef {
                     target: EntityName::from("Repository"),
                 },
                 value_format: None,
                 allowed_values: None,
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -242,6 +242,7 @@ mod tests {
             kind: CapabilityKind::Query,
             domain: EntityName::from("Repository"),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: CapabilityMapping {
                 template: CapabilityTemplateJson(serde_json::json!({})),
             },

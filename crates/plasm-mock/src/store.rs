@@ -360,50 +360,39 @@ impl MockResource {
 
 #[cfg(test)]
 mod tests {
+    use plasm_core::value_domain::ValueDomain;
     use super::*;
     use plasm_compile::BackendOp;
     use plasm_core::{
         Cardinality, FieldSchema, FieldType, FieldValueKind, NamedValueSchema, RelationSchema,
-        ResourceSchema, StringSemantics, ValueDomainKey,
+        ResourceSchema, ValueDomainKey,
     };
 
     fn create_test_schema() -> CGS {
         let mut cgs = CGS::new();
         cgs.values.insert(
             "mock_nv_str_id".into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: Some(StringSemantics::Short),
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                None,
+            ),
         );
         cgs.values.insert(
             "mock_nv_str_name".into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: Some(StringSemantics::Short),
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                None,
+            ),
         );
         cgs.values.insert(
             "mock_nv_number".into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Number,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::Number, None, None, None, None),
+                None,
+            ),
         );
 
         let account = ResourceSchema {

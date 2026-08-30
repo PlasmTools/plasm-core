@@ -165,32 +165,27 @@ auth:
 values:
   nv_artist_artist_country:
     type: string
-    string_semantics: short
     description: Country of origin for the artist.
   nv_artist_artist_id:
     type: integer
     description: Unique Musixmatch artist identifier.
   nv_artist_artist_name:
     type: string
-    string_semantics: short
     description: Artist or band name.
   nv_artist_artist_rating:
     type: integer
     description: Musixmatch popularity rating.
   nv_lyrics_lyrics_body:
-    type: string
-    string_semantics: markdown
+    type: markdown
     description: The full lyrics text (may be truncated per Musixmatch licensing).
   nv_lyrics_lyrics_copyright:
     type: string
-    string_semantics: short
     description: Copyright notice for the lyrics.
   nv_lyrics_lyrics_id:
     type: integer
     description: Unique Musixmatch lyrics identifier.
   nv_lyrics_lyrics_language:
     type: string
-    string_semantics: short
     description: BCP 47 language code of the lyrics (e.g. 'en', 'es').
   nv_track_artist_id:
     type: entity_ref
@@ -204,7 +199,6 @@ values:
     description: Unique Musixmatch track identifier.
   nv_track_track_name:
     type: string
-    string_semantics: short
     description: Title of the track.
   nv_track_track_rating:
     type: integer
@@ -213,4 +207,3 @@ values:
     type: integer
   nv_wire_str_short:
     type: string
-    string_semantics: short

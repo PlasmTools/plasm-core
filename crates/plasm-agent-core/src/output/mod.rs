@@ -648,12 +648,13 @@ fn entity_to_json(entity: &CachedEntity) -> serde_json::Value {
 
 #[cfg(test)]
 mod tests {
+    use plasm_core::value_domain::{ProfileId, ValueDomain};
     use super::*;
     use indexmap::IndexMap;
     use plasm_compile::DecodedRelation;
     use plasm_core::{
         AgentPresentation, CapabilityKind, CapabilityMapping, CapabilitySchema, FieldSchema,
-        FieldType, FieldValueKind, NamedValueSchema, Ref, ResourceSchema, StringSemantics,
+        FieldType, FieldValueKind, NamedValueSchema, Ref, ResourceSchema,
         ValueDomainKey, PLASM_ATTACHMENT_KEY,
     };
     use plasm_runtime::{ExecutionSource, ExecutionStats};
@@ -664,15 +665,17 @@ mod tests {
         let mut cgs = CGS::new();
         cgs.values.insert(
             "out_note_id".into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: Some(StringSemantics::Markdown),
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(
+                    &FieldType::String,
+                    None,
+                    Some(ProfileId::Markdown),
+                    None,
+                    None,
+                ),
+                None,
+            ),
         );
         cgs.add_resource(ResourceSchema {
             name: "Note".into(),
@@ -710,6 +713,7 @@ mod tests {
                 kind: CapabilityKind::Query,
                 domain: "Note".into(),
                 identity_key: None,
+            invalidates_entities: vec![],
                 mapping: CapabilityMapping {
                     template: serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "notes"}]}).into(),
                 },
@@ -729,22 +733,18 @@ mod tests {
 
     fn tiny_cgs_lossy_desc() -> CGS {
         let mut cgs = CGS::new();
-        for (k, sem) in [
-            ("out_spell_id", StringSemantics::Short),
-            ("out_spell_name", StringSemantics::Short),
-            ("out_spell_desc", StringSemantics::Document),
+        for (k, profile) in [
+            ("out_spell_id", None),
+            ("out_spell_name", None),
+            ("out_spell_desc", Some(ProfileId::Document)),
         ] {
             cgs.values.insert(
                 k.into(),
-                NamedValueSchema {
-                    description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
-                    string_semantics: Some(sem),
-                    array_items: None,
-                    currency: None,
-                },
+                NamedValueSchema::from_domain(
+                    String::new(),
+                    ValueDomain::from_legacy(&FieldType::String, None, profile, None, None),
+                    None,
+                ),
             );
         }
         cgs.add_resource(ResourceSchema {
@@ -816,6 +816,7 @@ mod tests {
             kind: CapabilityKind::Query,
             domain: "Spell".into(),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: CapabilityMapping {
                 template: serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "spells"}]}).into(),
             },
@@ -917,27 +918,19 @@ mod tests {
         let mut cgs = CGS::new();
         cgs.values.insert(
             "out_file_id".into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: Some(StringSemantics::Short),
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                None,
+            ),
         );
         cgs.values.insert(
             "out_file_content".into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Blob,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::Blob, None, None, None, None),
+                None,
+            ),
         );
         cgs.add_resource(ResourceSchema {
             name: "File".into(),
@@ -994,6 +987,7 @@ mod tests {
                 kind: CapabilityKind::Get,
                 domain: "File".into(),
                 identity_key: None,
+            invalidates_entities: vec![],
                 mapping: CapabilityMapping {
                     template: serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "f"}]}).into(),
                 },

@@ -1,13 +1,16 @@
 // Domain model types extracted from an API specification.
 // The LLM infers the semantic domain graph from the RPC surface.
+// FieldType names align with CGS kernel/profile vocabulary — no retired date/select aliases.
 
 enum FieldType {
     STRING
-    INTEGER @description("Counts, sizes, ordinals, Unix timestamps as numbers — NOT foreign keys")
+    INTEGER @description("Counts, sizes, ordinals — NOT foreign keys. Use UNIX_MS only when the API wire is epoch milliseconds, not entity ids.")
     FLOAT
     BOOLEAN
-    DATE
-    DATETIME
+    RFC3339 @description("Instant timestamps as RFC3339 / ISO-8601 datetime strings")
+    ISO8601_DATE @description("Calendar dates without time (YYYY-MM-DD)")
+    UNIX_MS @description("Unix epoch milliseconds as integer")
+    UNIX_SEC @description("Unix epoch seconds as integer")
     ENUM
     ARRAY
     ENTITY_REF @description("Value is another entity's primary key (FK / parent scope / database_id / xxxId). Never INTEGER for these.")

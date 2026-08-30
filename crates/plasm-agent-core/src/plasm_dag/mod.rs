@@ -6,6 +6,7 @@
 
 mod binding_continuation;
 mod binding_contract;
+mod invoke_cardinality;
 mod plan_serialize;
 mod postfix;
 mod prelude;

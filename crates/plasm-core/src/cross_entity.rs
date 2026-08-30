@@ -227,11 +227,11 @@ mod tests {
         cgs.values.insert(
             "fx_int".into(),
             NamedValueSchema {
+            domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::Integer,
                 value_format: None,
                 allowed_values: None,
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -239,11 +239,11 @@ mod tests {
         cgs.values.insert(
             "fx_str".into(),
             NamedValueSchema {
+            domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
                 allowed_values: None,
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -251,11 +251,11 @@ mod tests {
         cgs.values.insert(
             "fx_pet_status".into(),
             NamedValueSchema {
+            domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::Select,
                 value_format: None,
                 allowed_values: Some(vec!["available".into(), "pending".into(), "sold".into()]),
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -263,13 +263,13 @@ mod tests {
         cgs.values.insert(
             "fx_ref_pet".into(),
             NamedValueSchema {
+            domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::EntityRef {
                     target: "Pet".into(),
                 },
                 value_format: None,
                 allowed_values: None,
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -331,6 +331,7 @@ mod tests {
             kind: CapabilityKind::Query,
             domain: "Pet".into(),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: CapabilityMapping {
                 template: serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "pet"}]}).into(),
             },
@@ -364,6 +365,7 @@ mod tests {
             kind: CapabilityKind::Query,
             domain: "Order".into(),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: CapabilityMapping {
                 template: serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "store"}, {"type": "literal", "value": "order"}]}).into(),
             },

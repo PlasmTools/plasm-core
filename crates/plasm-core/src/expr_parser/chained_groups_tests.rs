@@ -15,11 +15,11 @@ fn ticket_query_fixture_cgs() -> CGS {
     cgs.values.insert(
         "fx_str".into(),
         NamedValueSchema {
+            domain: Default::default(),
             description: String::new(),
             field_type: FieldType::String,
             value_format: None,
             allowed_values: None,
-            string_semantics: None,
             array_items: None,
             currency: None,
         },
@@ -48,6 +48,7 @@ fn ticket_query_fixture_cgs() -> CGS {
         kind: CapabilityKind::Get,
         domain: "Ticket".into(),
         identity_key: None,
+            invalidates_entities: vec![],
         mapping: CapabilityMapping {
             template: serde_json::json!({
                 "method": "GET",

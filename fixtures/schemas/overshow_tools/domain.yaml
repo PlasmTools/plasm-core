@@ -319,94 +319,78 @@ capabilities:
 values:
   nv_recorded_content_id:
     type: string
-    string_semantics: short
   nv_recorded_content_text:
-    type: string
-    string_semantics: markdown
+    type: markdown
   nv_recorded_content_content_type:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - all
     - ocr
     - audio
     - ui
   nv_recorded_content_captured_at:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
   nv_recorded_content_app_name:
     type: string
-    string_semantics: short
   nv_recorded_content_window_name:
     type: string
-    string_semantics: short
   nv_recorded_content_profile_id:
     type: entity_ref
     target: Profile
   nv_profile_id:
     type: integer
   nv_profile_profile_type:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - person
     - organisation
     - project
   nv_profile_display_name:
     type: string
-    string_semantics: short
   nv_detected_question_id:
     type: string
-    string_semantics: short
   nv_detected_question_question_text:
-    type: string
-    string_semantics: markdown
+    type: markdown
   nv_detected_question_resolved:
     type: boolean
   nv_meeting_meeting_uuid:
     type: string
-    string_semantics: short
   nv_meeting_meeting_id:
     type: integer
   nv_meeting_status:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - active
     - ended
     - cancelled
   nv_meeting_summary:
-    type: string
-    string_semantics: markdown
+    type: markdown
   nv_capture_item_id:
     type: integer
   nv_capture_item_content_type:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - ui
     - ocr
     - audio
     - document
   nv_capture_item_text_preview:
     type: string
-    string_semantics: short
   nv_pipeline_snapshot_id:
     type: string
-    string_semantics: short
   nv_pipeline_snapshot_workers:
     type: string
-    string_semantics: short
   nv_capture_session_id:
     type: string
-    string_semantics: short
   nv_capture_session_screen_capture_running:
     type: boolean
   nv_pipeline_event_id:
     type: string
-    string_semantics: short
   nv_pipeline_event_name:
     type: string
-    string_semantics: short
   nv_pipeline_event_severity:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - debug
     - info
     - warning
@@ -414,19 +398,15 @@ values:
     - critical
   nv_prompt_run_id:
     type: string
-    string_semantics: short
   nv_prompt_run_slug:
     type: string
-    string_semantics: short
   nv_prompt_run_output:
-    type: string
-    string_semantics: markdown
+    type: markdown
   nv_recorded_content_search_q:
     type: string
-    string_semantics: short
   nv_recorded_content_search_content_type:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - all
     - ocr
     - audio
@@ -436,17 +416,13 @@ values:
   nv_recorded_content_search_offset:
     type: integer
   nv_recorded_content_search_start_time:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
   nv_recorded_content_search_end_time:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
   nv_recorded_content_search_app_name:
     type: string
-    string_semantics: short
   nv_recorded_content_search_window_name:
     type: string
-    string_semantics: short
   nv_recorded_content_search_min_length:
     type: integer
   nv_recorded_content_search_max_length:
@@ -456,12 +432,11 @@ values:
     target: Profile
   nv_recorded_content_query_by_profile_query:
     type: string
-    string_semantics: short
   nv_recorded_content_query_by_profile_limit:
     type: integer
   nv_recorded_content_query_by_profile_mode:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - auto
     - keyword
     - natural
@@ -469,7 +444,6 @@ values:
     type: boolean
   nv_detected_question_query_app_name:
     type: string
-    string_semantics: short
   nv_detected_question_query_speaker_id:
     type: integer
   nv_detected_question_query_include_answers:
@@ -481,27 +455,23 @@ values:
   nv_detected_question_query_offset:
     type: integer
   nv_meeting_query_status:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - active
     - ended
     - cancelled
   nv_meeting_query_start_date:
-    type: date
-    value_format: iso8601_date
+    type: iso8601_date
   nv_meeting_query_end_date:
-    type: date
-    value_format: iso8601_date
+    type: iso8601_date
   nv_meeting_query_limit:
     type: integer
   nv_prompt_run_create_slug:
     type: string
-    string_semantics: short
   nv_prompt_run_create_meeting_id:
     type: integer
   nv_prompt_run_create_meeting_uuid:
     type: string
-    string_semantics: short
   nv_prompt_run_create_meeting_ids_item:
     type: integer
   nv_prompt_run_create_meeting_ids:
@@ -509,14 +479,12 @@ values:
     items:
       value_ref: nv_prompt_run_create_meeting_ids_item
   nv_prompt_run_create_start_time:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
   nv_prompt_run_create_end_time:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
   nv_profile_query_profile_type:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - person
     - organisation
     - project
@@ -526,22 +494,17 @@ values:
     type: integer
   nv_capture_item_query_app_name:
     type: string
-    string_semantics: short
   nv_capture_item_query_start_time:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
   nv_capture_item_query_end_time:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
   nv_pipeline_event_query_names:
     type: string
-    string_semantics: short
   nv_pipeline_event_query_sources:
     type: string
-    string_semantics: short
   nv_pipeline_event_query_min_severity:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - debug
     - info
     - warning

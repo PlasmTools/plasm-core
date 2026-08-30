@@ -1043,8 +1043,8 @@ values:
     type: entity_ref
     target: Project
   nv_issue_create_issue_type:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - issue
     - incident
     - test_case
@@ -1070,14 +1070,14 @@ values:
     type: entity_ref
     target: Project
   nv_issue_query_scope:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - created_by_me
     - assigned_to_me
     - all
   nv_issue_state:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - opened
     - closed
   nv_merge_request_award_emoji_create_project_id:
@@ -1108,15 +1108,15 @@ values:
     type: entity_ref
     target: Project
   nv_merge_request_query_scope:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - created_by_me
     - assigned_to_me
     - reviews_for_me
     - all
   nv_project_query_order_by:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - id
     - name
     - path
@@ -1128,18 +1128,17 @@ values:
   nv_wire_bool:
     type: boolean
   nv_wire_date_rfc3339:
-    type: date
-    value_format: rfc3339
+    type: rfc3339
   nv_wire_int:
     type: integer
   nv_wire_sel_1b3907e07c1297e8:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - asc
     - desc
   nv_wire_sel_7c59fc7f43f5debc:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - created_at
     - label_priority
     - merged_at
@@ -1149,19 +1148,19 @@ values:
     - title
     - updated_at
   nv_wire_sel_8807b75f968505fb:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - internal
     - private
     - public
   nv_wire_sel_a821a0002dfcca16:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - close
     - reopen
   nv_wire_sel_bc45924eafff6feb:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - created_at
     - due_date
     - label_priority
@@ -1173,25 +1172,23 @@ values:
     - updated_at
     - weight
   nv_wire_sel_c4015a1a98023521:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - all
     - closed
     - opened
   nv_wire_sel_e25280eac2a90f88:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - all
     - closed
     - locked
     - merged
     - opened
   nv_wire_str_markdown:
-    type: string
-    string_semantics: markdown
+    type: markdown
   nv_wire_str_short:
     type: string
-    string_semantics: short
   nv_issue_create_assignee_ids:
     type: array
     items:
