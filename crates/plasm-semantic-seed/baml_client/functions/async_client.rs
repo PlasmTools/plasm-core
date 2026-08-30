@@ -5,10 +5,7 @@
 
 //! Asynchronous BAML client with function-object pattern.
 
-use crate::baml_client::{
-    runtime::{get_runtime, FunctionOptions},
-    stream_types, types,
-};
+use crate::baml_client::{runtime::{get_runtime, FunctionOptions}, stream_types, types};
 use baml::{AsyncStreamingCall, BamlEncode, BamlError};
 
 // =============================================================================
@@ -122,23 +119,34 @@ macro_rules! baml_function_async {
 // Generate function structs
 // =============================================================================
 
+
+
 baml_function_async!(CompareSeedPlans(intent: impl AsRef<str> + BamlEncode, plan_a: &types::SeedPlanRow, plan_b: &types::SeedPlanRow, ) -> (stream_types::PlanComparison, types::PlanComparison));
+
 
 baml_function_async!(ExtractDomainModel(api_summary: impl AsRef<str> + BamlEncode, ) -> (stream_types::DomainModel, types::DomainModel));
 
+
 baml_function_async!(ExtractMissingEntities(api_summary: impl AsRef<str> + BamlEncode, missing_entity_names: impl AsRef<str> + BamlEncode, known_refs: impl AsRef<str> + BamlEncode, known_enums: impl AsRef<str> + BamlEncode, ) -> (stream_types::DomainModel, types::DomainModel));
+
 
 baml_function_async!(ExtractMissingSharedTypes(api_summary: impl AsRef<str> + BamlEncode, existing_entities: impl AsRef<str> + BamlEncode, missing_type_issues: impl AsRef<str> + BamlEncode, ) -> (stream_types::DomainModel, types::DomainModel));
 
+
 baml_function_async!(ExtractRequirementSlots(intent: impl AsRef<str> + BamlEncode, entity_glossary: &[types::EntityGlossaryRow], ) -> (stream_types::RequirementSlotExtraction, types::RequirementSlotExtraction));
+
 
 baml_function_async!(RerankDiscoveryCandidates(intent: impl AsRef<str> + BamlEncode, candidates: &[types::DiscoveryRerankCandidate], ) -> (stream_types::RerankedDiscovery, types::RerankedDiscovery));
 
+
 baml_function_async!(SelectRequirementWitnesses(intent: impl AsRef<str> + BamlEncode, brand_lock_catalogs: &[String], witnesses: &[types::RequirementWitnessRow], ) -> (stream_types::WitnessSelectionAssessment, types::WitnessSelectionAssessment));
+
 
 baml_function_async!(TranslatePlan(messages: &[types::PlanChatTurn], ) -> (stream_types::PlasmPlan, types::PlasmPlan));
 
+
 baml_function_async!(ValidateDomainModel(api_summary: impl AsRef<str> + BamlEncode, domain_model: impl AsRef<str> + BamlEncode, ) -> (stream_types::DomainModelValidation, types::DomainModelValidation));
+
 
 // =============================================================================
 // Client Struct
@@ -147,48 +155,50 @@ baml_function_async!(ValidateDomainModel(api_summary: impl AsRef<str> + BamlEnco
 #[derive(Clone)]
 pub struct BamlAsyncClient {
     options: FunctionOptions,
-
+    
     pub CompareSeedPlans: CompareSeedPlans,
-
+    
     pub ExtractDomainModel: ExtractDomainModel,
-
+    
     pub ExtractMissingEntities: ExtractMissingEntities,
-
+    
     pub ExtractMissingSharedTypes: ExtractMissingSharedTypes,
-
+    
     pub ExtractRequirementSlots: ExtractRequirementSlots,
-
+    
     pub RerankDiscoveryCandidates: RerankDiscoveryCandidates,
-
+    
     pub SelectRequirementWitnesses: SelectRequirementWitnesses,
-
+    
     pub TranslatePlan: TranslatePlan,
-
+    
     pub ValidateDomainModel: ValidateDomainModel,
+    
 }
 
 impl BamlAsyncClient {
     pub const fn new() -> Self {
         Self {
             options: FunctionOptions::new(),
-
+            
             CompareSeedPlans: CompareSeedPlans::new(),
-
+            
             ExtractDomainModel: ExtractDomainModel::new(),
-
+            
             ExtractMissingEntities: ExtractMissingEntities::new(),
-
+            
             ExtractMissingSharedTypes: ExtractMissingSharedTypes::new(),
-
+            
             ExtractRequirementSlots: ExtractRequirementSlots::new(),
-
+            
             RerankDiscoveryCandidates: RerankDiscoveryCandidates::new(),
-
+            
             SelectRequirementWitnesses: SelectRequirementWitnesses::new(),
-
+            
             TranslatePlan: TranslatePlan::new(),
-
+            
             ValidateDomainModel: ValidateDomainModel::new(),
+            
         }
     }
 
@@ -196,42 +206,25 @@ impl BamlAsyncClient {
     pub fn with_options(&self, options: FunctionOptions) -> Self {
         Self {
             options: options.clone(),
-
-            CompareSeedPlans: CompareSeedPlans {
-                options: options.clone(),
-            },
-
-            ExtractDomainModel: ExtractDomainModel {
-                options: options.clone(),
-            },
-
-            ExtractMissingEntities: ExtractMissingEntities {
-                options: options.clone(),
-            },
-
-            ExtractMissingSharedTypes: ExtractMissingSharedTypes {
-                options: options.clone(),
-            },
-
-            ExtractRequirementSlots: ExtractRequirementSlots {
-                options: options.clone(),
-            },
-
-            RerankDiscoveryCandidates: RerankDiscoveryCandidates {
-                options: options.clone(),
-            },
-
-            SelectRequirementWitnesses: SelectRequirementWitnesses {
-                options: options.clone(),
-            },
-
-            TranslatePlan: TranslatePlan {
-                options: options.clone(),
-            },
-
-            ValidateDomainModel: ValidateDomainModel {
-                options: options.clone(),
-            },
+            
+            CompareSeedPlans: CompareSeedPlans { options: options.clone() },
+            
+            ExtractDomainModel: ExtractDomainModel { options: options.clone() },
+            
+            ExtractMissingEntities: ExtractMissingEntities { options: options.clone() },
+            
+            ExtractMissingSharedTypes: ExtractMissingSharedTypes { options: options.clone() },
+            
+            ExtractRequirementSlots: ExtractRequirementSlots { options: options.clone() },
+            
+            RerankDiscoveryCandidates: RerankDiscoveryCandidates { options: options.clone() },
+            
+            SelectRequirementWitnesses: SelectRequirementWitnesses { options: options.clone() },
+            
+            TranslatePlan: TranslatePlan { options: options.clone() },
+            
+            ValidateDomainModel: ValidateDomainModel { options: options.clone() },
+            
         }
     }
 }

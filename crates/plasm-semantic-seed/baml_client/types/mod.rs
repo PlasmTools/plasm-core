@@ -7,24 +7,25 @@
 
 mod classes;
 mod enums;
-mod type_aliases;
 mod unions;
+mod type_aliases;
 
 pub use classes::*;
 pub use enums::*;
-pub use type_aliases::*;
 pub use unions::*;
+pub use type_aliases::*;
 
 // Re-export types from baml runtime
-use baml::__internal::serde;
 pub use baml::{Audio, Image, Pdf, Video};
 pub use baml::{Checked, StreamState};
+use baml::__internal::serde as serde;
 
 /// All known types in this BAML project.
 /// Serves as the compile-time type registry for BamlValue.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(crate = "::baml::__internal::serde", untagged)]
 pub enum Types {
+
     DiscoveryRerankCandidate(DiscoveryRerankCandidate),
 
     DomainCapability(DomainCapability),
@@ -65,6 +66,7 @@ pub enum Types {
 
     WitnessSelectionAssessment(WitnessSelectionAssessment),
 
+
     CapabilityKind(CapabilityKind),
 
     Cardinality(Cardinality),
@@ -73,7 +75,9 @@ pub enum Types {
 
     ParamLocation(ParamLocation),
 
+
     Union2KassistantOrKuser(Union2KassistantOrKuser),
+
 }
 
 impl ::baml::KnownTypes for Types {
@@ -83,6 +87,7 @@ impl ::baml::KnownTypes for Types {
 
     fn type_name(&self) -> &'static str {
         match self {
+
             Self::DiscoveryRerankCandidate(_) => "DiscoveryRerankCandidate",
 
             Self::DomainCapability(_) => "DomainCapability",
@@ -123,6 +128,7 @@ impl ::baml::KnownTypes for Types {
 
             Self::WitnessSelectionAssessment(_) => "WitnessSelectionAssessment",
 
+
             Self::CapabilityKind(_) => "CapabilityKind",
 
             Self::Cardinality(_) => "Cardinality",
@@ -131,17 +137,16 @@ impl ::baml::KnownTypes for Types {
 
             Self::ParamLocation(_) => "ParamLocation",
 
+
             Self::Union2KassistantOrKuser(_) => "Union2KassistantOrKuser",
+
+
         }
     }
 }
 
 impl<'de> serde::Deserialize<'de> for Types {
-    fn deserialize<D: serde::Deserializer<'de>>(
-        _deserializer: D,
-    ) -> ::std::result::Result<Self, D::Error> {
-        ::std::result::Result::Err(serde::de::Error::custom(
-            "Types is not deserializable, as we cannot disambiguate the type.",
-        ))
+    fn deserialize<D: serde::Deserializer<'de>>(_deserializer: D) -> ::std::result::Result<Self, D::Error> {
+        ::std::result::Result::Err(serde::de::Error::custom("Types is not deserializable, as we cannot disambiguate the type."))
     }
 }

@@ -5,6 +5,7 @@
 
 //! Generated enum builder wrappers for type-safe value access.
 
+
 /// Wrapper for the `CapabilityKind` enum builder.
 ///
 /// Provides type-safe method access to values defined in the schema.
@@ -27,57 +28,59 @@ impl CapabilityKindEnumBuilder {
 
     /// Get the enum as a type definition.
     pub fn r#type(&self) -> ::baml::TypeDef {
-        self.inner
-            .as_type()
+        self.inner.as_type()
             .expect("CapabilityKind is statically defined in .baml and should always have a type")
     }
+
 
     // =========================================================================
     // Value Accessors (1:1 with schema value names)
     // =========================================================================
 
+
     /// Access the `QUERY` value builder.
     pub fn value_QUERY(&self) -> ::baml::EnumValueBuilder {
-        self.inner.get_value("QUERY").expect(
-            "CapabilityKind.QUERY is statically defined in .baml and should always be present",
-        )
+        self.inner.get_value("QUERY")
+            .expect("CapabilityKind.QUERY is statically defined in .baml and should always be present")
     }
+
 
     /// Access the `GET` value builder.
     pub fn value_GET(&self) -> ::baml::EnumValueBuilder {
-        self.inner.get_value("GET").expect(
-            "CapabilityKind.GET is statically defined in .baml and should always be present",
-        )
+        self.inner.get_value("GET")
+            .expect("CapabilityKind.GET is statically defined in .baml and should always be present")
     }
+
 
     /// Access the `CREATE` value builder.
     pub fn value_CREATE(&self) -> ::baml::EnumValueBuilder {
-        self.inner.get_value("CREATE").expect(
-            "CapabilityKind.CREATE is statically defined in .baml and should always be present",
-        )
+        self.inner.get_value("CREATE")
+            .expect("CapabilityKind.CREATE is statically defined in .baml and should always be present")
     }
+
 
     /// Access the `UPDATE` value builder.
     pub fn value_UPDATE(&self) -> ::baml::EnumValueBuilder {
-        self.inner.get_value("UPDATE").expect(
-            "CapabilityKind.UPDATE is statically defined in .baml and should always be present",
-        )
+        self.inner.get_value("UPDATE")
+            .expect("CapabilityKind.UPDATE is statically defined in .baml and should always be present")
     }
+
 
     /// Access the `DELETE` value builder.
     pub fn value_DELETE(&self) -> ::baml::EnumValueBuilder {
-        self.inner.get_value("DELETE").expect(
-            "CapabilityKind.DELETE is statically defined in .baml and should always be present",
-        )
+        self.inner.get_value("DELETE")
+            .expect("CapabilityKind.DELETE is statically defined in .baml and should always be present")
     }
+
 
     /// Access the `ACTION` value builder.
     pub fn value_ACTION(&self) -> ::baml::EnumValueBuilder {
-        self.inner.get_value("ACTION").expect(
-            "CapabilityKind.ACTION is statically defined in .baml and should always be present",
-        )
+        self.inner.get_value("ACTION")
+            .expect("CapabilityKind.ACTION is statically defined in .baml and should always be present")
     }
+
 }
+
 
 /// Wrapper for the `Cardinality` enum builder.
 ///
@@ -101,29 +104,31 @@ impl CardinalityEnumBuilder {
 
     /// Get the enum as a type definition.
     pub fn r#type(&self) -> ::baml::TypeDef {
-        self.inner
-            .as_type()
+        self.inner.as_type()
             .expect("Cardinality is statically defined in .baml and should always have a type")
     }
+
 
     // =========================================================================
     // Value Accessors (1:1 with schema value names)
     // =========================================================================
 
+
     /// Access the `ONE` value builder.
     pub fn value_ONE(&self) -> ::baml::EnumValueBuilder {
-        self.inner
-            .get_value("ONE")
+        self.inner.get_value("ONE")
             .expect("Cardinality.ONE is statically defined in .baml and should always be present")
     }
 
+
     /// Access the `MANY` value builder.
     pub fn value_MANY(&self) -> ::baml::EnumValueBuilder {
-        self.inner
-            .get_value("MANY")
+        self.inner.get_value("MANY")
             .expect("Cardinality.MANY is statically defined in .baml and should always be present")
     }
+
 }
+
 
 /// Wrapper for the `FieldType` enum builder.
 ///
@@ -147,78 +152,80 @@ impl FieldTypeEnumBuilder {
 
     /// Get the enum as a type definition.
     pub fn r#type(&self) -> ::baml::TypeDef {
-        self.inner
-            .as_type()
+        self.inner.as_type()
             .expect("FieldType is statically defined in .baml and should always have a type")
     }
+
 
     // =========================================================================
     // Value Accessors (1:1 with schema value names)
     // =========================================================================
 
+
     /// Access the `STRING` value builder.
     pub fn value_STRING(&self) -> ::baml::EnumValueBuilder {
-        self.inner
-            .get_value("STRING")
+        self.inner.get_value("STRING")
             .expect("FieldType.STRING is statically defined in .baml and should always be present")
     }
 
+
     /// Access the `INTEGER` value builder.
     pub fn value_INTEGER(&self) -> ::baml::EnumValueBuilder {
-        self.inner
-            .get_value("INTEGER")
+        self.inner.get_value("INTEGER")
             .expect("FieldType.INTEGER is statically defined in .baml and should always be present")
     }
 
+
     /// Access the `FLOAT` value builder.
     pub fn value_FLOAT(&self) -> ::baml::EnumValueBuilder {
-        self.inner
-            .get_value("FLOAT")
+        self.inner.get_value("FLOAT")
             .expect("FieldType.FLOAT is statically defined in .baml and should always be present")
     }
 
+
     /// Access the `BOOLEAN` value builder.
     pub fn value_BOOLEAN(&self) -> ::baml::EnumValueBuilder {
-        self.inner
-            .get_value("BOOLEAN")
+        self.inner.get_value("BOOLEAN")
             .expect("FieldType.BOOLEAN is statically defined in .baml and should always be present")
     }
 
+
     /// Access the `DATE` value builder.
     pub fn value_DATE(&self) -> ::baml::EnumValueBuilder {
-        self.inner
-            .get_value("DATE")
+        self.inner.get_value("DATE")
             .expect("FieldType.DATE is statically defined in .baml and should always be present")
     }
 
+
     /// Access the `DATETIME` value builder.
     pub fn value_DATETIME(&self) -> ::baml::EnumValueBuilder {
-        self.inner.get_value("DATETIME").expect(
-            "FieldType.DATETIME is statically defined in .baml and should always be present",
-        )
+        self.inner.get_value("DATETIME")
+            .expect("FieldType.DATETIME is statically defined in .baml and should always be present")
     }
+
 
     /// Access the `ENUM` value builder.
     pub fn value_ENUM(&self) -> ::baml::EnumValueBuilder {
-        self.inner
-            .get_value("ENUM")
+        self.inner.get_value("ENUM")
             .expect("FieldType.ENUM is statically defined in .baml and should always be present")
     }
 
+
     /// Access the `ARRAY` value builder.
     pub fn value_ARRAY(&self) -> ::baml::EnumValueBuilder {
-        self.inner
-            .get_value("ARRAY")
+        self.inner.get_value("ARRAY")
             .expect("FieldType.ARRAY is statically defined in .baml and should always be present")
     }
 
+
     /// Access the `ENTITY_REF` value builder.
     pub fn value_ENTITY_REF(&self) -> ::baml::EnumValueBuilder {
-        self.inner.get_value("ENTITY_REF").expect(
-            "FieldType.ENTITY_REF is statically defined in .baml and should always be present",
-        )
+        self.inner.get_value("ENTITY_REF")
+            .expect("FieldType.ENTITY_REF is statically defined in .baml and should always be present")
     }
+
 }
+
 
 /// Wrapper for the `ParamLocation` enum builder.
 ///
@@ -242,40 +249,42 @@ impl ParamLocationEnumBuilder {
 
     /// Get the enum as a type definition.
     pub fn r#type(&self) -> ::baml::TypeDef {
-        self.inner
-            .as_type()
+        self.inner.as_type()
             .expect("ParamLocation is statically defined in .baml and should always have a type")
     }
+
 
     // =========================================================================
     // Value Accessors (1:1 with schema value names)
     // =========================================================================
 
+
     /// Access the `PATH` value builder.
     pub fn value_PATH(&self) -> ::baml::EnumValueBuilder {
-        self.inner.get_value("PATH").expect(
-            "ParamLocation.PATH is statically defined in .baml and should always be present",
-        )
+        self.inner.get_value("PATH")
+            .expect("ParamLocation.PATH is statically defined in .baml and should always be present")
     }
+
 
     /// Access the `QUERY` value builder.
     pub fn value_QUERY(&self) -> ::baml::EnumValueBuilder {
-        self.inner.get_value("QUERY").expect(
-            "ParamLocation.QUERY is statically defined in .baml and should always be present",
-        )
+        self.inner.get_value("QUERY")
+            .expect("ParamLocation.QUERY is statically defined in .baml and should always be present")
     }
+
 
     /// Access the `BODY` value builder.
     pub fn value_BODY(&self) -> ::baml::EnumValueBuilder {
-        self.inner.get_value("BODY").expect(
-            "ParamLocation.BODY is statically defined in .baml and should always be present",
-        )
+        self.inner.get_value("BODY")
+            .expect("ParamLocation.BODY is statically defined in .baml and should always be present")
     }
+
 
     /// Access the `HEADER` value builder.
     pub fn value_HEADER(&self) -> ::baml::EnumValueBuilder {
-        self.inner.get_value("HEADER").expect(
-            "ParamLocation.HEADER is statically defined in .baml and should always be present",
-        )
+        self.inner.get_value("HEADER")
+            .expect("ParamLocation.HEADER is statically defined in .baml and should always be present")
     }
+
 }
+
