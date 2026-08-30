@@ -339,6 +339,8 @@ enum TeachingMeaningAtom {
     TerminalChainHint {
         entity: String,
     },
+    /// Sparse mark: nullary `e.m()` yields this singleton row (`· materialize`).
+    Materialize,
     EntityHeadingDescription(String),
     LegendScope(String),
     LegendOptionalParams(Vec<String>),
@@ -368,6 +370,9 @@ impl TeachingMeaningAtom {
             TeachingMeaningAtom::RelationNav { line } => line.clone(),
             TeachingMeaningAtom::TerminalChainHint { entity } => {
                 format!("chain: {entity}(id=…).m#")
+            }
+            TeachingMeaningAtom::Materialize => {
+                super::teaching_legend::MATERIALIZE_LEGEND_MARK.to_string()
             }
             TeachingMeaningAtom::EntityHeadingDescription(s) => s.clone(),
             TeachingMeaningAtom::LegendScope(s) => s.clone(),
@@ -515,6 +520,10 @@ fn push_teaching_meaning_result_atom(
         arrow: row.arrow,
         gloss: row.result_type.clone(),
     });
+    if row.is_nullary_materialize {
+        atoms.push(TeachingMeaningAtom::Materialize);
+        return;
+    }
     // Terminal write that yields an entity slice (`↠ e#`, not `()` / list): teach the
     // entity-reconstruction form so an agent knows how to keep chaining after a mutation.
     if !identity_row && row.arrow == ReturnArrow::Terminal {

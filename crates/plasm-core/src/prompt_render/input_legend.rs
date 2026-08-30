@@ -89,6 +89,10 @@ pub struct TeachingExprLine {
     #[serde(flatten)]
     pub legend: CapabilityInputLegend,
     pub is_projection_teaching: bool,
+    /// Nullary `eN.mK()` (or pathless method) that yields a singleton entity row — Meaning gets
+    /// `· materialize` and a singleton `→` arrow (not terminal write / chain hint).
+    #[serde(default)]
+    pub is_nullary_materialize: bool,
     #[serde(default)]
     pub row_contract: RowContractLegend,
     /// Return-shape glyph for the result atom (`→` / `↣` / `↠`). Set from the validated
@@ -104,6 +108,7 @@ impl TeachingExprLine {
             result_type: String::new(),
             legend: CapabilityInputLegend::default(),
             is_projection_teaching: false,
+            is_nullary_materialize: false,
             row_contract: RowContractLegend::default(),
             arrow: ReturnArrow::Single,
         }

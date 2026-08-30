@@ -1986,7 +1986,14 @@ fn plasm_tool_description_includes_row_compute_worked_example() {
     assert!(
         frontmatter.contains("Replace teaching placeholders") || frontmatter.contains("substitute")
     );
-    assert!(frontmatter.contains("e#~$"));
+    assert!(
+        frontmatter.contains("e#~\"<query>\"") || frontmatter.contains("e#~\"alice\""),
+        "search exemplar must show a real-query hole, not metasyntax text/$"
+    );
+    assert!(
+        !frontmatter.contains("e#~$") && !frontmatter.contains("e#~\"text\""),
+        "must not teach literal e#~$ / e#~\"text\" placeholders that weak models copy"
+    );
     assert!(
         !frontmatter.contains("Session and symbol discipline"),
         "session discipline belongs in tool workflow descriptions, not duplicated in grammar"
@@ -1998,6 +2005,12 @@ fn plasm_tool_description_includes_row_compute_worked_example() {
     assert!(
         frontmatter.contains("label = e#"),
         "pitfalls must teach bind-before-filter preference"
+    );
+    assert!(
+        frontmatter.contains("Entity heads vs rows:")
+            && frontmatter.contains("query-all")
+            && frontmatter.contains("nullary"),
+        "must teach bare entity = plural query-all vs nullary materialize"
     );
     assert!(
         frontmatter.contains("PLASM_RPT_TAG"),
@@ -2025,9 +2038,40 @@ fn plasm_tool_description_includes_row_compute_worked_example() {
     );
     assert!(
         frontmatter.contains("bind-ordered")
-            && frontmatter.contains("e_issue.m_create")
-            && frontmatter.contains("e_comment.m_create"),
-        "write-batch guidance must prefer one multi-write program with create→write example"
+            && frontmatter.contains("e2.m2")
+            && frontmatter.contains("e3.m3")
+            && frontmatter.contains("label.field")
+            && !frontmatter.contains("e_issue.m_create"),
+        "write-batch guidance must prefer one multi-write program with domain-neutral create chain"
+    );
+    assert!(
+        frontmatter.contains("never invent a `.wire` postfix")
+            || frontmatter.contains("never invent a .wire postfix"),
+        "must warn against inventing .wire from binding.wire prose"
+    );
+    assert!(
+        !frontmatter.contains("owner=\"org\"") && !frontmatter.contains("e_repo"),
+        "worked examples must stay domain-neutral (no github-shaped repo/issue)"
+    );
+    assert!(
+        frontmatter.contains("```tsv")
+            && frontmatter.contains("noun · root")
+            && frontmatter.contains("verb · open")
+            && frontmatter.contains("a.w1")
+            && frontmatter.contains("e2~\"q\""),
+        "lookup example must pair a mini teaching TSV (noun/verb) with opaque program wires"
+    );
+    assert!(
+        !frontmatter.contains("access_token=sess.")
+            && !frontmatter.contains("user_email=peer.")
+            && !frontmatter.contains("token=sess.")
+            && !frontmatter.contains("sess.k")
+            && !frontmatter.contains("peer.id")
+            && !frontmatter.contains("peer_id=")
+            && !frontmatter.contains("user=\"u\"")
+            && !frontmatter.contains("secret=\"s\"")
+            && !frontmatter.contains("alice"),
+        "plasm_tool must not bake catalog or near-domain names into worked examples"
     );
     assert!(
         !frontmatter.contains("co-committed gates"),
@@ -2089,7 +2133,9 @@ fn plasm_tool_description_truncation_prefix_has_composition_mandate() {
         "batching mandate must be in first {prefix_n} bytes (host truncation)"
     );
     assert!(
-        prefix.contains("labels, branches") || prefix.contains("a, b"),
+        prefix.contains("labels, branches")
+            || prefix.contains("a, b")
+            || prefix.contains("bars, bazs"),
         "multi-root return example must be in first {prefix_n} bytes"
     );
     assert!(
@@ -2265,10 +2311,63 @@ fn row_producer_teaching_includes_inputs_and_rows_contract() {
 
 #[test]
 fn static_grammar_includes_symbols_only_rule() {
+    let g = super::PLASM_TOOL_DESCRIPTION;
     assert!(
-        super::PLASM_TOOL_DESCRIPTION.contains("**Symbolic only:**")
-            && super::PLASM_TOOL_DESCRIPTION.contains("wire names"),
-        "canonical static grammar must teach TSV-only program tokens and wire names"
+        g.contains("wire names"),
+        "canonical static grammar must teach wire names"
+    );
+    assert!(
+        g.contains("Entity heads vs rows:")
+            && g.contains("query-all")
+            && g.contains("nullary")
+            && g.contains("eN.field"),
+        "canonical static grammar must teach entity-head vs materialized-row cardinality"
+    );
+    assert!(
+        g.contains("· materialize")
+            && g.contains("↣ [e]")
+            && g.contains("→ e"),
+        "canonical static grammar must teach compact Meaning-arrow legend including materialize"
+    );
+}
+
+#[test]
+fn nullary_materialize_tsv_meaning_is_sparse_not_chain_hint() {
+    use super::input_legend::{CapabilityInputLegend, RowContractLegend, TeachingExprLine};
+    use super::tsv_emit::{write_teaching_tsv_row, DomainTsvRow};
+    use super::{ReturnArrow, TeachingHeading};
+
+    let line = TeachingExprLine {
+        expression: "e2.m2()".to_string(),
+        result_type: "e2".to_string(),
+        legend: CapabilityInputLegend::default(),
+        is_projection_teaching: false,
+        is_nullary_materialize: true,
+        row_contract: RowContractLegend::default(),
+        arrow: ReturnArrow::Single,
+    };
+    let heading = TeachingHeading::default();
+    let mut out = String::new();
+    write_teaching_tsv_row(
+        &mut out,
+        DomainTsvRow::TeachingExpr {
+            line: &line,
+            identity_returns_row: false,
+            attach_entity_heading: false,
+            heading: &heading,
+        },
+    );
+    assert!(
+        out.contains("e2.m2()\t→ e2 · materialize"),
+        "expected sparse materialize Meaning, got {out:?}"
+    );
+    assert!(
+        !out.contains("chain:"),
+        "nullary materialize must not emit write chain hint: {out:?}"
+    );
+    assert!(
+        !out.contains("op=query_all"),
+        "must not emit verbose T1 tags: {out:?}"
     );
 }
 
@@ -2623,6 +2722,7 @@ fn prompt_stats_fixture_cgs() -> CGS {
             kind: CapabilityKind::Query,
             domain: domain.into(),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: CapabilityMapping {
                 template: tmpl.clone().into(),
             },
@@ -2746,6 +2846,7 @@ fn p_slot_redefinition_fixture_cgs(id_desc_a: &str, id_desc_b: &str) -> CGS {
             kind: CapabilityKind::Get,
             domain: name.into(),
             identity_key: None,
+            invalidates_entities: vec![],
             mapping: CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",

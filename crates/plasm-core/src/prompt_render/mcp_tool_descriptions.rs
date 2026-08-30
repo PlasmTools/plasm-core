@@ -35,16 +35,18 @@ pub const DISCOVER_TOOL_DESCRIPTION: &str = include_str!("assets/discover_tool.t
 
 /// JSON-schema description for the MCP `plasm` tool `program` parameter.
 ///
-/// Field-attached surface: hosts often clip the long [`PLASM_TOOL_DESCRIPTION`] but keep
-/// per-parameter schema text, so this must be a self-sufficient minimum program-authoring
-/// contract (not a pointer-only stub). Budget: [`PLASM_PROGRAM_PARAM_MAX_BYTES`].
+/// Truncation-survival stub only: hosts sometimes clip [`PLASM_TOOL_DESCRIPTION`] but keep
+/// per-parameter schema text. **Canonical grammar and worked examples live in
+/// [`PLASM_TOOL_DESCRIPTION`] / `plasm_tool.txt`** — do not duplicate them here.
+/// Budget: [`PLASM_PROGRAM_PARAM_MAX_BYTES`].
 pub const PLASM_PROGRAM_PARAM_DESCRIPTION: &str = include_str!("assets/program_param.txt");
 
 /// Max bytes for [`PLASM_PROGRAM_PARAM_DESCRIPTION`] (truncation-resistant field surface).
 pub const PLASM_PROGRAM_PARAM_MAX_BYTES: usize = 1600;
 
 /// Max bytes for [`PLASM_TOOL_DESCRIPTION`].
-pub const PLASM_TOOL_DESCRIPTION_MAX_BYTES: usize = 4200;
+/// Raised for entity-head cardinality + Meaning-arrow legend (entity-semantics A+B).
+pub const PLASM_TOOL_DESCRIPTION_MAX_BYTES: usize = 5000;
 
 /// Host-truncation prefixes that must still carry program-authoring mandates.
 pub const PLASM_TOOL_DESCRIPTION_PREFIX_BYTES: usize = 2048;

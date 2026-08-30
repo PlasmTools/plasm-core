@@ -13,7 +13,8 @@ use super::line_validate::{
     domain_line_validate_cached, DomainLineValidCacheKey, DomainLineValidEntry,
 };
 use super::teaching_legend::{
-    teaching_expr_demonstrates_optional_params, teaching_expr_line_from_layers,
+    teaching_expr_demonstrates_optional_params, teaching_expr_is_nullary_method_call,
+    teaching_expr_line_from_layers, teaching_result_is_singleton_entity_gloss,
 };
 use super::{
     CrossEntityPlanMeta, CrossEntityStrategyKind, DomainLineKind, EntityTeachingExprRow,
@@ -174,7 +175,16 @@ pub(crate) fn try_push_teaching_example(
     // Classify the return-shape glyph from the validated domain-line kind (Method → terminal `↠`,
     // query/search → list `↣`, else gloss shape). Relation-nav rows render their own `relation … →`
     // atom verbatim, so the arrow only surfaces on plain `Returns` atoms.
+    //
+    // Sparse exception (entity-semantics A+B): nullary method calls that yield a singleton entity
+    // row are materializers (`→ e · materialize`), not terminal writes — override Method→Terminal.
     teaching_line.arrow = super::ReturnArrow::classify(meta.kind, &teaching_line.result_type);
+    if teaching_expr_is_nullary_method_call(&teaching_line.expression)
+        && teaching_result_is_singleton_entity_gloss(&teaching_line.result_type)
+    {
+        teaching_line.is_nullary_materialize = true;
+        teaching_line.arrow = super::ReturnArrow::Single;
+    }
     teaching_rows.push(EntityTeachingExprRow {
         teaching_expr: teaching_line,
         meta,

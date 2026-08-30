@@ -520,6 +520,7 @@ fn append_relation_nav_edge_delta_row(
         result_type,
         legend: line.legend,
         is_projection_teaching: false,
+        is_nullary_materialize: false,
         row_contract: RowContractLegend::default(),
         arrow,
     };
