@@ -3127,6 +3127,56 @@ fn federated_duplicate_entity_wire_names_use_distinct_e_in_teaching_tsv() {
     );
 }
 
+/// Federated homographs: method/query Meaning return atoms must be opaque `e#` / `[e#]` / `()`,
+/// never the colliding wire entity name (AppWorld `AuthSession` class of bug).
+#[test]
+fn federated_homograph_method_returns_use_opaque_e_never_bare_wire() {
+    use std::sync::Arc;
+
+    let root = fixtures_schemas_dir("plasm_language_matrix");
+    let cgs = load_schema_dir(&root).expect("plasm_language_matrix");
+    let layers = [&cgs, &cgs];
+    let mut exp = TeachingExposureSession::new(&cgs, "venmo", &["LangItem"]);
+    exp.expose_entities(&layers, Arc::new(cgs.clone()), "splitwise", &["LangItem"]);
+    let mut by_entry: IndexMap<String, &CGS> = IndexMap::new();
+    by_entry.insert("venmo".into(), &cgs);
+    by_entry.insert("splitwise".into(), &cgs);
+    let bundle = render_teaching_prompt_bundle_for_exposure_federated(
+        &by_entry,
+        RenderConfig::for_eval(None),
+        &exp,
+        None,
+    );
+    assert!(bundle.teaching_blocks.len() >= 2);
+
+    // Unqualified wire must not appear as a return atom after ↠ / → / ↣.
+    let bare_return = regex::Regex::new(r"[↠→↣]\s*LangItem\b").expect("regex");
+    let bare_list = regex::Regex::new(r"[↠→↣]\s*\[LangItem\]").expect("regex");
+    let mut saw_opaque_e = false;
+    for block in &bundle.teaching_blocks {
+        for row in &block.teaching_rows {
+            let rt = row.teaching_expr.result_type.as_str();
+            assert!(
+                !bare_return.is_match(rt) && !bare_list.is_match(rt),
+                "result_type must not use bare wire LangItem: expr={} result_type={rt}",
+                row.teaching_expr.expression
+            );
+            assert!(
+                rt != "LangItem" && rt != "[LangItem]",
+                "result_type must not be bare wire alone: expr={} result_type={rt}",
+                row.teaching_expr.expression
+            );
+            if rt.contains("e1") || rt.contains("e2") {
+                saw_opaque_e = true;
+            }
+        }
+    }
+    assert!(
+        saw_opaque_e,
+        "expected opaque e# in federated Meaning cells"
+    );
+}
+
 /// Production catalogs: `github/Issue` + `linear/Issue` federated TSV uses e1 vs e2.
 #[test]
 fn federated_github_linear_issue_distinct_e_symbols_when_apis_present() {

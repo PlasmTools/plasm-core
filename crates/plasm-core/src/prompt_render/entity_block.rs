@@ -207,7 +207,8 @@ pub(crate) fn collect_entity_teaching_block(
         .collect();
     singleton_get_caps.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let get_gloss = Some(crate::result_gloss::result_gloss_for_get_entity(ename, map));
+    let get_gloss =
+        crate::result_gloss::result_gloss_for_get_entity(ename, map, catalog_entry_id);
     let primary_get_cap = cgs
         .resolved_primary_get_for_projection(ename, ent)
         .filter(|cap| surface_allows_capability(surface_filter, catalog_entry_id, cap));
@@ -262,7 +263,8 @@ pub(crate) fn collect_entity_teaching_block(
         }
         let ms = met_sym(map, catalog_entry_id, ename, cap);
         let expr = format!("{es}.{ms}()");
-        let result_gloss = crate::result_gloss::result_gloss_for_capability(cap, cgs, map);
+        let result_gloss =
+            crate::result_gloss::result_gloss_for_capability(cap, cgs, map, catalog_entry_id);
         let cap_leg = capability_legend_with_session_gloss(
             map,
             cgs,
@@ -379,7 +381,8 @@ pub(crate) fn collect_entity_teaching_block(
                 };
                 format!("{recv}{suffix}")
             };
-            let result_gloss = crate::result_gloss::result_gloss_for_capability(cap, cgs, map);
+            let result_gloss =
+            crate::result_gloss::result_gloss_for_capability(cap, cgs, map, catalog_entry_id);
             let cap_leg = capability_legend_with_session_gloss(
                 map,
                 cgs,
@@ -441,7 +444,9 @@ pub(crate) fn collect_entity_teaching_block(
             capability_legend_with_session_gloss(map, cgs, c, ename, ident_meta, catalog_entry_id)
         });
         let gloss =
-            cap_ref.and_then(|c| crate::result_gloss::result_gloss_for_capability(c, cgs, map));
+            cap_ref.and_then(|c| {
+                crate::result_gloss::result_gloss_for_capability(c, cgs, map, catalog_entry_id)
+            });
         try_push_teaching_example(
             gloss_emit,
             &mut teaching_rows,
@@ -468,7 +473,12 @@ pub(crate) fn collect_entity_teaching_block(
             if query_line_count >= MAX_QUERY_LINES {
                 break;
             }
-            let qgloss = crate::result_gloss::result_gloss_for_capability(cap, cgs, map);
+            let qgloss = crate::result_gloss::result_gloss_for_capability(
+                cap,
+                cgs,
+                map,
+                catalog_entry_id,
+            );
             let cap_leg = capability_legend_with_session_gloss(
                 map,
                 cgs,
@@ -611,7 +621,9 @@ pub(crate) fn collect_entity_teaching_block(
             .filter(|cap| surface_allows_capability(surface_filter, catalog_entry_id, cap))
             .or_else(|| search_caps.first().copied());
         let sg =
-            scap.and_then(|cap| crate::result_gloss::result_gloss_for_capability(cap, cgs, map));
+            scap.and_then(|cap| {
+                crate::result_gloss::result_gloss_for_capability(cap, cgs, map, catalog_entry_id)
+            });
         let cap_leg = scap.and_then(|cap| {
             capability_legend_with_session_gloss(map, cgs, cap, ename, ident_meta, catalog_entry_id)
         });

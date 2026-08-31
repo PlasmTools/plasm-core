@@ -331,18 +331,26 @@ pub(crate) fn try_push_projection_witness_row(
             continue;
         };
         let gloss_core = witness_cap
-            .and_then(|c| crate::result_gloss::result_gloss_for_capability(c, cgs, map))
-            .or_else(|| {
-                primary_get_cap
-                    .and_then(|c| crate::result_gloss::result_gloss_for_capability(c, cgs, map))
+            .and_then(|c| {
+                crate::result_gloss::result_gloss_for_capability(c, cgs, map, catalog_entry_id)
             })
-            .unwrap_or_else(|| {
+            .or_else(|| {
+                primary_get_cap.and_then(|c| {
+                    crate::result_gloss::result_gloss_for_capability(c, cgs, map, catalog_entry_id)
+                })
+            })
+            .or_else(|| {
                 if base.contains('{') {
-                    crate::result_gloss::result_gloss_for_search_entity(ename, map)
+                    crate::result_gloss::result_gloss_for_search_entity(
+                        ename,
+                        map,
+                        catalog_entry_id,
+                    )
                 } else {
-                    crate::result_gloss::result_gloss_for_get_entity(ename, map)
+                    crate::result_gloss::result_gloss_for_get_entity(ename, map, catalog_entry_id)
                 }
-            });
+            })
+            .unwrap_or_default();
         let gloss = format!("{gloss_core} · projection");
         let source_cap = projection_witness_source_capability(
             &parsed.expr,
@@ -397,17 +405,22 @@ pub(crate) fn relation_nav_meaning_result_gloss(
     map: Option<&SymbolMap>,
     target_gloss: String,
 ) -> String {
+    let target = target_gloss.trim();
+    // No opaque `e#` for the hop target → omit return atom (never invent a bare wire name).
+    if target.is_empty() {
+        return String::new();
+    }
     match relation_receiver_teaching_hint(expr, map) {
         Some(h) => {
             // Glyph mirrors [`ReturnArrow`]: `↣` for a collection hop (`[e#]`), `→` for a single hop.
-            let glyph = if target_gloss.trim_start().starts_with('[') {
+            let glyph = if target.starts_with('[') {
                 super::ReturnArrow::List.glyph()
             } else {
                 super::ReturnArrow::Single.glyph()
             };
-            format!("relation {h} {glyph} {target_gloss}")
+            format!("relation {h} {glyph} {target}")
         }
-        None => target_gloss,
+        None => target.to_string(),
     }
 }
 
@@ -481,8 +494,13 @@ pub(crate) fn try_emit_relation_nav_teaching_row(
     let cardinality_many = rel_schema
         .map(|r| r.cardinality == Cardinality::Many)
         .unwrap_or(false);
-    let target_gloss =
-        crate::result_gloss::result_gloss_for_relation_nav(target_entity, map, cardinality_many);
+    let target_gloss = crate::result_gloss::result_gloss_for_relation_nav(
+        target_entity,
+        map,
+        catalog_entry_id,
+        cardinality_many,
+    )
+    .unwrap_or_default();
     let result_gloss = relation_nav_meaning_result_gloss(&rel_expr, map, target_gloss);
     try_push_teaching_example(
         gloss_emit,
@@ -511,6 +529,7 @@ fn append_relation_nav_edge_delta_row(
     r_sym: &str,
     description: &str,
     map_arc: Option<&std::sync::Arc<SymbolMap>>,
+    catalog_entry_id: &str,
     seen_r_gloss: &mut HashSet<String>,
     empty_heading: &TeachingHeading,
 ) {
@@ -525,8 +544,10 @@ fn append_relation_nav_edge_delta_row(
     let target_gloss = crate::result_gloss::result_gloss_for_relation_nav(
         rel_schema.target_resource.as_str(),
         map_arc.map(|m| m.as_ref()),
+        catalog_entry_id,
         cardinality_many,
-    );
+    )
+    .unwrap_or_default();
     let result_type =
         relation_nav_meaning_result_gloss(plasm_expr, map_arc.map(|m| m.as_ref()), target_gloss);
     let line = TeachingExprLine::empty_legend(plasm_expr.to_string());
@@ -655,6 +676,7 @@ pub(crate) fn render_relation_edge_delta_rows(
             &r_sym,
             &description,
             map_arc,
+            source.entry_id.as_str(),
             &mut seen_r_gloss,
             &empty_heading,
         );
