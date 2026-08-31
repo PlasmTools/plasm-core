@@ -130,6 +130,115 @@ langitem_ping:
   - type: literal
     value: ping
 
+langitem_broadcast:
+  method: POST
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: items
+  - type: literal
+    value: broadcast
+  body:
+    type: object
+    fields:
+    - - message
+      - type: var
+        name: message
+
+langauthsession_login:
+  method: POST
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: sessions
+  - type: literal
+    value: login
+  body:
+    type: object
+    fields:
+    - - username
+      - type: var
+        name: username
+    - - password
+      - type: var
+        name: password
+
+langsecurednote_search:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: secured_notes
+  headers:
+    type: object
+    fields:
+    - - Authorization
+      - type: format
+        template: "Bearer {token}"
+        vars:
+          token:
+            type: var
+            name: access_token
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+
+langsecurednote_get:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: secured_notes
+  - type: var
+    name: note_id
+  headers:
+    type: object
+    fields:
+    - - Authorization
+      - type: format
+        template: "Bearer {token}"
+        vars:
+          token:
+            type: var
+            name: access_token
+
+langsecuredgroup_query:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: secured_groups
+  headers:
+    type: object
+    fields:
+    - - Authorization
+      - type: format
+        template: "Bearer {token}"
+        vars:
+          token:
+            type: var
+            name: access_token
+
 langtag_query:
   method: GET
   path:

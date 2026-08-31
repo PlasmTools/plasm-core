@@ -43,11 +43,17 @@ mod compile_preflight;
 mod embed_cache;
 mod entity_decoder;
 mod http_exec;
+mod hydrate;
 mod mutators;
 mod pagination_state;
 mod projection;
 mod query_stream;
 mod resume;
+
+pub(crate) use hydrate::{
+    identity_keys_for_entity, stamp_entities_and_mat, synthesized_get, wrap_synthesized_get_error,
+    CapabilityParamEnv,
+};
 
 use self::entity_decoder::{
     create_entity_decoder, create_entity_decoder_for_capability,
@@ -232,7 +238,10 @@ pub struct ExecutionConfig {
     pub per_host_max_inflight: usize,
     /// Path for the replay store directory (if using replay/hybrid)
     pub replay_store_path: Option<std::path::PathBuf>,
-    /// After query, fetch each row via GET when the entity has a Get capability (unless `QueryExpr.hydrate == Some(false)`).
+    /// After query, fetch each row via GET when the entity has a Get capability whose
+    /// required capability params are inherited from the parent query env (unless
+    /// `QueryExpr.hydrate == Some(false)`). Identity-only GETs still hydrate; GETs that
+    /// require extra params do not run unless those params are present.
     pub hydrate: bool,
     /// Max concurrent GETs during query hydration.
     pub hydrate_concurrency: usize,
@@ -1482,6 +1491,9 @@ impl ExecutionEngine {
             )
             .await?;
         mat.insert(cached.clone())?;
+        if let Some(pv) = get.path_vars.clone() {
+            mat.stamp_capability_params(&cached.reference, pv);
+        }
 
         Ok(ExecutionResult {
             entities: vec![cached],
@@ -1560,6 +1572,9 @@ impl ExecutionEngine {
             )
             .await?;
         mat.insert(cached.clone())?;
+        if let Some(pv) = get.path_vars.clone() {
+            mat.stamp_capability_params(&cached.reference, pv);
+        }
 
         Ok(ExecutionResult {
             entities: vec![cached],
@@ -1833,83 +1848,6 @@ impl ExecutionEngine {
         )
         .await
     }
-
-    /// After a query, upgrade Summary rows to Complete via concurrent GET when configured and supported.
-    async fn hydrate_query_summaries(
-        &self,
-        entity_type: &str,
-        ordered_entities: &[CachedEntity],
-        cgs: &CGS,
-        mat: &mut SessionMaterialization,
-        mode: ExecutionMode,
-        hydrate_enabled: bool,
-    ) -> Result<(Vec<CachedEntity>, usize), RuntimeError> {
-        if !hydrate_enabled {
-            return Ok((ordered_entities.to_vec(), 0));
-        }
-        if cgs
-            .find_capability(entity_type, plasm_core::CapabilityKind::Get)
-            .is_none()
-        {
-            return Ok((ordered_entities.to_vec(), 0));
-        }
-
-        let ordered_refs: Vec<Ref> = ordered_entities
-            .iter()
-            .map(|e| e.reference.clone())
-            .collect();
-
-        let to_fetch: Vec<Ref> = ordered_refs
-            .iter()
-            .filter(|r| {
-                !matches!(
-                    mat.get(r).map(|e| e.completeness),
-                    Some(EntityCompleteness::Complete)
-                )
-            })
-            .cloned()
-            .collect();
-
-        let concurrency = self.config.hydrate_concurrency.max(1);
-        let mut extra_network = 0usize;
-
-        use futures_util::stream::{self, StreamExt};
-
-        let mut stream = stream::iter(to_fetch.into_iter().map(|reference| {
-            let get = GetExpr::from_ref(reference.clone());
-            async move {
-                self.fetch_get_decoded(
-                    &get,
-                    cgs,
-                    mode,
-                    None,
-                    false,
-                    None,
-                    &ViewAmbientContext::default(),
-                )
-                .await
-            }
-        }))
-        .buffer_unordered(concurrency);
-
-        while let Some(res) = stream.next().await {
-            cooperative_cancel_check()?;
-            let (entity, source) = res?;
-            if source == ExecutionSource::Live {
-                extra_network += 1;
-            }
-            mat.insert(entity)?;
-        }
-
-        let mut out = Vec::with_capacity(ordered_refs.len());
-        for r in &ordered_refs {
-            let e = mat.get(r).ok_or_else(|| RuntimeError::CacheError {
-                message: format!("entity missing after query/hydrate: {}", r),
-            })?;
-            out.push(e.clone());
-        }
-        Ok((out, extra_network))
-    }
 }
 
 fn cache_decoded_entity_tree(
@@ -2066,7 +2004,7 @@ fn normalize_cml_env_scope_entity_refs(
             .map_err(|e| RuntimeError::ConfigurationError {
                 message: format!("capability `{}`: {e}", capability.name),
             })?;
-        let FieldType::EntityRef { target } = &nv.field_type else {
+        let FieldType::EntityRef { target, .. } = &nv.field_type else {
             continue;
         };
         let Some(ent) = cgs.get_entity(target.as_str()) else {
@@ -3063,6 +3001,11 @@ fn collect_predicate_vars(
     match predicate {
         plasm_core::Predicate::Comparison { field, op, value } => {
             let rhs = value.to_value();
+            // Unfilled plan holes must not pollute CML env (would mask missing Bearer tokens as
+            // debug strings). Skip — compile then fails VariableNotFound if required.
+            if matches!(rhs, Value::PlasmInputRef(_)) {
+                return;
+            }
             match op {
                 // In/Contains: accumulate into an array for the field
                 plasm_core::CompOp::In | plasm_core::CompOp::Contains => match &rhs {
@@ -3213,15 +3156,14 @@ impl ExprExecutor for ExecutionEngine {
 
 #[cfg(test)]
 mod tests {
-    use plasm_core::value_domain::ValueDomain;
     use super::*;
     use indexmap::IndexMap;
     use plasm_compile::decode_entities;
+    use plasm_core::value_domain::ValueDomain;
     use plasm_core::{
         CapabilityKind, CapabilityMapping, CapabilitySchema, Expr, FieldSchema, FieldType,
         FieldValueKind, GetExpr, InputFieldSchema, InputFieldWire, InputSchema, InputValidation,
-        JsonPathSegment, NamedValueSchema, QueryPagination, Ref, ResourceSchema,
-        ValueDomainKey,
+        JsonPathSegment, NamedValueSchema, QueryPagination, Ref, ResourceSchema, ValueDomainKey,
     };
     use std::collections::BTreeMap;
 
@@ -3380,6 +3322,7 @@ mod tests {
                 String::new(),
                 ValueDomain::from_legacy(
                     &FieldType::EntityRef {
+                        entry_id: Default::default(),
                         target: "Workspace".into(),
                     },
                     None,

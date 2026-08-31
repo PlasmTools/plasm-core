@@ -47,6 +47,7 @@ impl BranchMaterializationBase {
             responses: hot.responses.clone(),
             query_index: hot.query_index.clone(),
             read_cache_invalidated: false,
+            inherited_capability_params: hot.inherited_capability_params.clone(),
         };
         (branch, base)
     }

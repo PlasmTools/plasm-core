@@ -602,6 +602,8 @@ pub(super) struct Parser<'a> {
     pub(super) for_each_row_context: bool,
     /// When the surface entity token was an opaque `e#`, owning catalog stamped on built [`Expr`].
     pending_session_catalog_entry_id: Option<String>,
+    /// Deferred bracket-equivalent projection from `.field` sugar (non-relation, non-EntityRef).
+    field_project_sugar: Option<String>,
 }
 
 impl<'a> Parser<'a> {
@@ -628,6 +630,7 @@ impl<'a> Parser<'a> {
             program_nodes: None,
             for_each_row_context: false,
             pending_session_catalog_entry_id: None,
+            field_project_sugar: None,
         };
         p.skip_ws();
         p
@@ -902,7 +905,7 @@ impl<'a> Parser<'a> {
         let Ok(nv) = sf.named_value(cgs) else {
             return false;
         };
-        let FieldType::EntityRef { target } = &nv.field_type else {
+        let FieldType::EntityRef { target, .. } = &nv.field_type else {
             return false;
         };
         target.as_str() == anchor_entity
@@ -915,34 +918,44 @@ impl<'a> Parser<'a> {
         cap: &crate::CapabilitySchema,
     ) -> Result<Expr, ParseError> {
         let entity = source.primary_entity().to_string();
-        self.validate_entity(&entity)?;
+        self.validate_entity_preferring(
+            &entity,
+            source.session_catalog_entry_id().map(|id| id.as_str()),
+        )?;
         let cap_name = cap.name.clone();
-        if cap.kind == CapabilityKind::Create {
-            return Ok(Expr::Create(CreateExpr::new(
+        let needs_anchor_id = template_invoke_requires_explicit_anchor_id(&cap.mapping.template.0);
+
+        let expr = if cap.kind == CapabilityKind::Create {
+            Expr::Create(CreateExpr::new(
                 cap_name,
                 entity,
                 Value::Object(Default::default()),
-            )));
-        }
-        let needs_anchor_id = template_invoke_requires_explicit_anchor_id(&cap.mapping.template.0);
-
-        if cap.kind == CapabilityKind::Delete {
+            ))
+        } else if cap.kind == CapabilityKind::Delete {
             if let Expr::Get(g) = source {
-                return Ok(Expr::Delete(DeleteExpr::with_target_path_vars(
+                Expr::Delete(DeleteExpr::with_target_path_vars(
                     cap_name,
                     g.reference.clone(),
                     g.path_vars.clone(),
-                )));
+                ))
+            } else if !needs_anchor_id {
+                let g = self.pathless_mutator_anchor_from_receiver(
+                    source,
+                    false,
+                    "delete requires Entity(id) on the left",
+                )?;
+                Expr::Delete(DeleteExpr::with_target_path_vars(
+                    cap_name,
+                    g.reference.clone(),
+                    g.path_vars.clone(),
+                ))
+            } else {
+                return Err(self.err(ParseErrorKind::InvokeRequiresTargetId {
+                    entity: entity.clone(),
+                    label: raw.to_string(),
+                }));
             }
-            if !needs_anchor_id {
-                return Ok(Expr::Delete(DeleteExpr::new(cap_name, entity, "0")));
-            }
-            return Err(self.err(ParseErrorKind::InvokeRequiresTargetId {
-                entity: entity.clone(),
-                label: raw.to_string(),
-            }));
-        }
-        if cap.kind == CapabilityKind::Get {
+        } else if cap.kind == CapabilityKind::Get {
             let invoke_id = if !needs_anchor_id {
                 "0".to_string()
             } else {
@@ -956,32 +969,38 @@ impl<'a> Parser<'a> {
                     }
                 }
             };
-            return Ok(Expr::Get(GetExpr::new(entity, invoke_id)));
-        }
-
-        if !needs_anchor_id {
-            if let Expr::Get(g) = source {
-                return Ok(Expr::Invoke(InvokeExpr::with_target_path_vars(
-                    cap_name,
-                    g.reference.clone(),
-                    None,
-                    g.path_vars.clone(),
-                )));
+            let mut g = GetExpr::new(entity, invoke_id);
+            if let Some(id) = source.session_catalog_entry_id() {
+                g.catalog_entry_id = CatalogEntryStamp::some(id.clone());
             }
-            return Ok(Expr::Invoke(InvokeExpr::new(cap_name, entity, "0", None)));
-        }
-        let Expr::Get(g) = source else {
-            return Err(self.err(ParseErrorKind::InvokeRequiresTargetId {
-                entity: entity.clone(),
-                label: raw.to_string(),
-            }));
+            Expr::Get(g)
+        } else if !needs_anchor_id {
+            let g = self.pathless_mutator_anchor_from_receiver(
+                source,
+                false,
+                "invoke requires Entity(id) on the left",
+            )?;
+            Expr::Invoke(InvokeExpr::with_target_path_vars(
+                cap_name,
+                g.reference.clone(),
+                None,
+                g.path_vars.clone(),
+            ))
+        } else {
+            let Expr::Get(g) = source else {
+                return Err(self.err(ParseErrorKind::InvokeRequiresTargetId {
+                    entity: entity.clone(),
+                    label: raw.to_string(),
+                }));
+            };
+            Expr::Invoke(InvokeExpr::with_target_path_vars(
+                cap_name,
+                g.reference.clone(),
+                None,
+                g.path_vars.clone(),
+            ))
         };
-        Ok(Expr::Invoke(InvokeExpr::with_target_path_vars(
-            cap_name,
-            g.reference.clone(),
-            None,
-            g.path_vars.clone(),
-        )))
+        Ok(Self::stamp_session_catalog_from_source(source, expr))
     }
 
     fn parse_zero_arity_invoke(&mut self, source: Expr, label: String) -> Result<Expr, ParseError> {
@@ -996,10 +1015,13 @@ impl<'a> Parser<'a> {
             return Ok(expr);
         }
         let entity = source.primary_entity().to_string();
-        self.validate_entity(&entity)?;
+        self.validate_entity_preferring(
+            &entity,
+            source.session_catalog_entry_id().map(|id| id.as_str()),
+        )?;
         let resolved_name = self.resolve_zero_arity_pipeline_cap(&entity, &label)?;
         let cap = self
-            .cgs_for_entity_required(&entity)?
+            .cgs_for_expr_source(&source)?
             .get_capability(&resolved_name)
             .ok_or_else(|| {
                 self.err(ParseErrorKind::CapabilityMissingInternal {
@@ -2339,10 +2361,12 @@ impl<'a> Parser<'a> {
         )
     }
 
-    /// Dotted invoke/delete anchor: explicit `Entity(id)` or, when the CML template has no path
-    /// variables, the bare teaching entity head (`e3.m7(…)`) — same synthetic `"0"` anchor as
-    /// zero-arity invoke.
-    fn coerce_dotted_call_get_anchor(
+    /// Pathless mutator/get anchor: explicit `Entity(id)` or, when the CML template has no path
+    /// variables, a synthetic `"0"` Get that **preserves** the receiver's federated catalog stamp.
+    ///
+    /// Bare teaching heads (`e3.m7(…)`) must not re-validate the wire entity name unqualified —
+    /// under homographs that would drop ownership and lie as [`ParseErrorKind::UnknownEntity`].
+    fn pathless_mutator_anchor_from_receiver(
         &self,
         source: &Expr,
         needs_explicit_anchor: bool,
@@ -2357,8 +2381,27 @@ impl<'a> Parser<'a> {
             }));
         }
         let entity = source.primary_entity().to_string();
-        self.validate_entity(&entity)?;
-        Ok(GetExpr::new(entity, "0"))
+        let stamp = source.session_catalog_entry_id();
+        self.validate_entity_preferring(&entity, stamp.map(|id| id.as_str()))?;
+        let mut g = GetExpr::new(entity, "0");
+        if let Some(id) = stamp {
+            g.catalog_entry_id = CatalogEntryStamp::some(id.clone());
+        }
+        Ok(g)
+    }
+
+    /// Dotted invoke/delete anchor — see [`Self::pathless_mutator_anchor_from_receiver`].
+    fn coerce_dotted_call_get_anchor(
+        &self,
+        source: &Expr,
+        needs_explicit_anchor: bool,
+        requires_entity_id_message: &str,
+    ) -> Result<GetExpr, ParseError> {
+        self.pathless_mutator_anchor_from_receiver(
+            source,
+            needs_explicit_anchor,
+            requires_entity_id_message,
+        )
     }
 
     fn finish_dotted_call_with_payload_value_inner(
@@ -2756,17 +2799,52 @@ impl<'a> Parser<'a> {
         Ok(Expr::Query(query))
     }
 
+    #[allow(dead_code)] // Unqualified facade; stamped receivers use [`Self::validate_entity_preferring`].
     fn validate_entity(&self, name: &str) -> Result<(), ParseError> {
-        if self.cgs_for_entity(name).is_none() {
-            return Err(ParseError {
+        self.validate_entity_preferring(name, None)
+    }
+
+    /// Entity membership check that distinguishes absent vs federated ambiguous wire names.
+    ///
+    /// When `preferred_entry_id` (or active session catalog) pins a layer, only that catalog is
+    /// consulted. Otherwise: unique hit → ok; multi-hit → [`ParseErrorKind::AmbiguousEntityCatalog`];
+    /// zero hits → [`ParseErrorKind::UnknownEntity`] (never collapse multi-hit into unknown).
+    fn validate_entity_preferring(
+        &self,
+        name: &str,
+        preferred_entry_id: Option<&str>,
+    ) -> Result<(), ParseError> {
+        if let Some(eid) = preferred_entry_id {
+            if self.cgs_for_catalog_entry_id(eid, name).is_some() {
+                return Ok(());
+            }
+        }
+        if let Some(eid) = self.active_catalog_entry_id(None) {
+            if self
+                .cgs_for_catalog_entry_id(eid.as_str(), name)
+                .is_some()
+            {
+                return Ok(());
+            }
+        }
+        let match_count = self
+            .layers_stack()
+            .iter()
+            .filter(|layer| layer.cgs().get_entity(name).is_some())
+            .count();
+        match match_count {
+            0 => Err(ParseError {
                 kind: ParseErrorKind::UnknownEntity {
                     name: name.to_string(),
                     span_opt: None,
                 },
                 offset: self.pos,
-            });
+            }),
+            1 => Ok(()),
+            _ => Err(self.err(ParseErrorKind::AmbiguousEntityCatalog {
+                entity: name.to_string(),
+            })),
         }
-        Ok(())
     }
 
     /// `Team(id).members` → `Member` query with `team_id` when CGS has no `members` relation on `Team`.
@@ -2868,7 +2946,7 @@ impl<'a> Parser<'a> {
                     }
                     let sf = scope_fields[0];
                     if let Ok(nv) = sf.named_value(c) {
-                        if let FieldType::EntityRef { target } = &nv.field_type {
+                        if let FieldType::EntityRef { target, .. } = &nv.field_type {
                             if target.as_str() == anchor_entity {
                                 matches.push(cap);
                             }
@@ -3228,7 +3306,10 @@ impl<'a> Parser<'a> {
                     Value::Integer(n) => n.to_string(),
                     _ => return Err(self.err(ParseErrorKind::SearchTextMustBeString)),
                 };
-                // Find the search capability to get its primary text param name
+                // Primary search-text param: prefer `role: search` only. Never fall through to the
+                // first `required` param — AppWorld-style catalogs put Bearer `access_token`
+                // (required, no search role) ahead of the optional `query` search slot; binding
+                // `e#~"text"` to `access_token` corrupts auth CML env / hole fill.
                 let q_field = {
                     let c = self.cgs_for_entity_required(&entity)?;
                     c.find_capabilities(&entity, CapabilityKind::Search)
@@ -3237,9 +3318,15 @@ impl<'a> Parser<'a> {
                         .and_then(|fields| {
                             fields
                                 .iter()
-                                .find(|f| {
-                                    matches!(f.role, Some(crate::ParameterRole::Search))
-                                        || f.required
+                                .find(|f| matches!(f.role, Some(crate::ParameterRole::Search)))
+                                .or_else(|| {
+                                    fields.iter().find(|f| {
+                                        f.required
+                                            && !matches!(
+                                                f.role,
+                                                Some(crate::ParameterRole::Scope)
+                                            )
+                                    })
                                 })
                                 .map(|f| f.name.clone())
                         })
@@ -3289,7 +3376,10 @@ impl<'a> Parser<'a> {
             self.pos += 2;
             let target_raw = self.parse_ident()?;
             let target_entity = self.canonical_entity_name_in_layers(&target_raw);
-            self.validate_entity(&target_entity)?;
+            self.validate_entity_preferring(
+                &target_entity,
+                source.session_catalog_entry_id().map(|id| id.as_str()),
+            )?;
 
             // Extract the source entity ID to build the reverse query predicate
             let source_id = extract_primary_id(&source);
@@ -3479,7 +3569,8 @@ impl<'a> Parser<'a> {
                     return Ok(Expr::Query(query));
                 }
 
-                // Check EntityRef fields (e.g. .petId → ChainExpr)
+                // Check EntityRef fields (e.g. .petId → ChainExpr). Non-ref fields are
+                // projection sugar: `source.wire` ≡ `source[wire]` (deferred onto ParsedExpr).
                 match ent.fields.get(field.as_str()) {
                     Some(f) => {
                         let is_ref = f
@@ -3487,15 +3578,31 @@ impl<'a> Parser<'a> {
                             .ok()
                             .is_some_and(|nv| matches!(nv.field_type, FieldType::EntityRef { .. }));
                         if !is_ref {
-                            return Err(ParseError {
-                                kind: ParseErrorKind::NotNavigable {
-                                    field: field.clone(),
-                                    entity: source_entity.clone(),
-                                    span_start,
-                                    span_end,
-                                },
-                                offset: span_start,
-                            });
+                            self.skip_ws();
+                            if self.remaining().starts_with('.') {
+                                return Err(ParseError {
+                                    kind: ParseErrorKind::NotNavigable {
+                                        field: field.clone(),
+                                        entity: source_entity.clone(),
+                                        span_start,
+                                        span_end,
+                                    },
+                                    offset: span_start,
+                                });
+                            }
+                            if self.field_project_sugar.is_some() {
+                                return Err(ParseError {
+                                    kind: ParseErrorKind::NotNavigable {
+                                        field: field.clone(),
+                                        entity: source_entity.clone(),
+                                        span_start,
+                                        span_end,
+                                    },
+                                    offset: span_start,
+                                });
+                            }
+                            self.field_project_sugar = Some(field);
+                            return Ok(source);
                         }
                     }
                     None => {
@@ -3540,7 +3647,7 @@ impl<'a> Parser<'a> {
                 if let Some(fields) = cap.object_params() {
                     for f in fields {
                         if let Ok(nv) = f.named_value(c) {
-                            if let FieldType::EntityRef { target } = &nv.field_type {
+                            if let FieldType::EntityRef { target, .. } = &nv.field_type {
                                 if target.as_str() == source_entity {
                                     return Ok(f.name.clone());
                                 }
@@ -3557,7 +3664,7 @@ impl<'a> Parser<'a> {
         {
             for (fname, field) in &ent.fields {
                 if let Ok(nv) = field.named_value(self.cgs_for_entity_required(target_entity)?) {
-                    if let FieldType::EntityRef { target } = &nv.field_type {
+                    if let FieldType::EntityRef { target, .. } = &nv.field_type {
                         if target.as_str() == source_entity {
                             return Ok(fname.as_str().to_string());
                         }
@@ -3612,10 +3719,20 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // Optional projection
+        // Optional projection — explicit `[…]` or deferred `.field` sugar (≡ `[field]`).
         self.skip_ws();
         let projection = if self.peek_char() == Some('[') {
+            if self.field_project_sugar.is_some() {
+                return Err(ParseError {
+                    kind: ParseErrorKind::UnexpectedTrailingInput {
+                        tail: self.remaining().to_string(),
+                    },
+                    offset: self.pos,
+                });
+            }
             Some(self.parse_projection()?)
+        } else if let Some(wire) = self.field_project_sugar.take() {
+            Some(vec![wire])
         } else {
             None
         };
@@ -4471,6 +4588,41 @@ mod tests {
     }
 
     #[test]
+    fn parse_field_dot_project_sugar_equals_bracket() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).expect("language matrix cgs");
+        let bracket = parse(r#"LangItem("i1")[title]"#, &cgs).expect("bracket project");
+        let sugar = parse(r#"LangItem("i1").title"#, &cgs).expect("field-dot project sugar");
+        assert!(matches!(bracket.expr, Expr::Get(_)));
+        assert!(matches!(sugar.expr, Expr::Get(_)));
+        assert_eq!(bracket.projection, Some(vec!["title".to_string()]));
+        assert_eq!(sugar.projection, bracket.projection);
+        // Relation still wins over field when both exist (tags).
+        let rel = parse(r#"LangItem("i1").tags"#, &cgs).expect("relation hop");
+        assert!(matches!(rel.expr, Expr::Chain(_)));
+        assert_eq!(rel.projection, None);
+    }
+
+    #[test]
+    fn parse_field_dot_project_sugar_rejects_further_nav() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).expect("language matrix cgs");
+        let err = parse(r#"LangItem("i1").title.tags"#, &cgs).expect_err("no chain after sugar");
+        assert!(
+            matches!(err.kind, ParseErrorKind::NotNavigable { .. }),
+            "expected NotNavigable, got {err:?}"
+        );
+    }
+
+    #[test]
     fn parse_query_with_projection() {
         if !has_petstore() {
             return;
@@ -5177,6 +5329,7 @@ mod tests {
             domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::EntityRef {
+                    entry_id: Default::default(),
                     target: "Library".into(),
                 },
                 value_format: None,
@@ -5922,6 +6075,45 @@ mod tests {
     }
 
     #[test]
+    fn search_tilde_text_binds_search_role_not_first_required_auth_param() {
+        let dir = std::path::Path::new("../../fixtures/schemas/auth_bearer_search");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let r = parse(r#"SecuredNote~"trip"{access_token="tok"}"#, &cgs).expect("parse search");
+        let Expr::Query(q) = &r.expr else {
+            panic!("expected Query, got {:?}", r.expr);
+        };
+        let pred = q.predicate.as_ref().expect("predicate");
+        fn access_token_eq_trip(p: &Predicate) -> bool {
+            match p {
+                Predicate::Comparison { field, value, .. } if field == "access_token" => {
+                    matches!(value.to_value(), Value::String(s) if s == "trip")
+                }
+                Predicate::And { args } | Predicate::Or { args } => {
+                    args.iter().any(access_token_eq_trip)
+                }
+                Predicate::Not { predicate } => access_token_eq_trip(predicate),
+                _ => false,
+            }
+        }
+        assert!(
+            !access_token_eq_trip(pred),
+            "search text must bind role:search `query`, not required `access_token`; pred={pred:?}"
+        );
+        let fields = pred.referenced_fields();
+        assert!(
+            fields.iter().any(|f| f == "query"),
+            "expected query field from tilde text; fields={fields:?}"
+        );
+        assert!(
+            fields.iter().any(|f| f == "access_token"),
+            "expected brace access_token; fields={fields:?}"
+        );
+    }
+
+    #[test]
     fn unquoted_string_filter_wire_value_typechecks_at_compile_time() {
         let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
         if !dir.exists() {
@@ -6041,6 +6233,92 @@ mod tests {
             q.catalog_entry_id.as_deref(),
             Some("linear"),
             "e2 must stamp linear catalog ownership"
+        );
+    }
+
+    /// Dual-catalog LangItem: pathless Action on stamped `e2` must keep `catalog_entry_id`.
+    /// Matrix counterpart: `lang_federated_duplicate_entity_pathless_action`.
+    #[test]
+    fn federated_pathless_action_preserves_opaque_entity_catalog_stamp() {
+        use crate::symbol_tuning::TeachingExposureSession;
+        use std::path::Path;
+        use std::sync::Arc;
+
+        let dir = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.is_dir() {
+            return;
+        }
+        let mut cgs_github = load_schema_dir(dir).expect("matrix github");
+        cgs_github.entry_id = Some("github".into());
+        let mut cgs_linear = load_schema_dir(dir).expect("matrix linear");
+        cgs_linear.entry_id = Some("linear".into());
+        let layers = [&cgs_github, &cgs_linear];
+        let stack = cgs_layer_stack(&["github", "linear"], &layers);
+        let mut exp = TeachingExposureSession::new(&cgs_github, "github", &["LangItem"]);
+        exp.expose_entities(&layers, Arc::new(cgs_linear.clone()), "linear", &["LangItem"]);
+        let map = exp.symbol_map_arc();
+        assert_eq!(
+            map.entry_id_for_entity_symbol("e2").as_deref(),
+            Some("linear")
+        );
+        let m_sym = map.method_sym_for("linear", "LangItem", "broadcast");
+        let expr = format!(r#"e2.{m_sym}(message="stamp-pathless")"#);
+        let r = parse_with_cgs_layers_program(&expr, &stack, map.clone(), None, false)
+            .expect("parse stamped pathless Action");
+        let Expr::Invoke(inv) = &r.expr else {
+            panic!("expected Invoke, got {:?}", r.expr);
+        };
+        assert_eq!(inv.capability.as_str(), "langitem_broadcast");
+        assert_eq!(
+            inv.catalog_entry_id.as_deref(),
+            Some("linear"),
+            "pathless Action must preserve e2 linear stamp"
+        );
+
+        let zero = format!("e2.{m_sym}()");
+        let r0 = parse_with_cgs_layers_program(&zero, &stack, map, None, false)
+            .expect("parse stamped zero-arity pathless Action");
+        let Expr::Invoke(inv0) = &r0.expr else {
+            panic!("expected Invoke, got {:?}", r0.expr);
+        };
+        assert_eq!(
+            inv0.catalog_entry_id.as_deref(),
+            Some("linear"),
+            "zero-arity pathless Action must preserve e2 linear stamp"
+        );
+    }
+
+    /// Bare wire pathless Action under LangItem homographs must be AmbiguousEntityCatalog,
+    /// not UnknownEntity / session-token lies.
+    #[test]
+    fn federated_pathless_action_bare_wire_is_ambiguous_entity_catalog() {
+        use crate::symbol_tuning::TeachingExposureSession;
+        use std::path::Path;
+        use std::sync::Arc;
+
+        let dir = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.is_dir() {
+            return;
+        }
+        let mut cgs_github = load_schema_dir(dir).expect("matrix github");
+        cgs_github.entry_id = Some("github".into());
+        let mut cgs_linear = load_schema_dir(dir).expect("matrix linear");
+        cgs_linear.entry_id = Some("linear".into());
+        let layers = [&cgs_github, &cgs_linear];
+        let stack = cgs_layer_stack(&["github", "linear"], &layers);
+        let mut exp = TeachingExposureSession::new(&cgs_github, "github", &["LangItem"]);
+        exp.expose_entities(&layers, Arc::new(cgs_linear.clone()), "linear", &["LangItem"]);
+        let map = exp.symbol_map_arc();
+        let m_sym = map.method_sym_for("linear", "LangItem", "broadcast");
+        let expr = format!(r#"LangItem.{m_sym}(message="x")"#);
+        let err = parse_with_cgs_layers_program(&expr, &stack, map, None, false)
+            .expect_err("bare LangItem pathless Action must not resolve under homograph");
+        assert!(
+            matches!(
+                err.kind,
+                ParseErrorKind::AmbiguousEntityCatalog { ref entity } if entity == "LangItem"
+            ),
+            "expected AmbiguousEntityCatalog(LangItem), got {err:?}"
         );
     }
 

@@ -4,7 +4,8 @@ use crate::cache::{CachedEntity, EntityCompleteness, GraphCache};
 use crate::query_index::{QueryCacheKey, QueryIndex};
 use crate::replay::{MemoryReplayStore, ReplayEntry, ReplayStore, RequestFingerprint};
 use crate::{ExecutionSource, RuntimeError};
-use plasm_core::{CompOp, GetExpr, QueryExpr, Ref, CGS};
+use indexmap::IndexMap;
+use plasm_core::{CompOp, GetExpr, QueryExpr, Ref, Value, CGS};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -185,11 +186,34 @@ pub struct SessionMaterialization {
     /// Set when a mutating execute poisons scoped read consults on this materialization.
     /// Branch commit replaces session auxiliary caches (and graph) when true.
     pub(crate) read_cache_invalidated: bool,
+    /// Capability params from the fetch that produced each row. Inherited by synthesized GETs.
+    pub(crate) inherited_capability_params: std::collections::HashMap<Ref, IndexMap<String, Value>>,
 }
 
 impl SessionMaterialization {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub(crate) fn stamp_capability_params(
+        &mut self,
+        reference: &Ref,
+        params: IndexMap<String, Value>,
+    ) {
+        if params.is_empty() {
+            return;
+        }
+        self.inherited_capability_params
+            .entry(reference.clone())
+            .or_default()
+            .extend(params);
+    }
+
+    pub(crate) fn capability_params_for(&self, reference: &Ref) -> IndexMap<String, Value> {
+        self.inherited_capability_params
+            .get(reference)
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub fn graph_mut(&mut self) -> &mut GraphCache {
@@ -214,6 +238,8 @@ impl SessionMaterialization {
         self.read_cache_invalidated = true;
         self.query_index = QueryIndex::default();
         self.responses = SessionResponseStore::default();
+        self.inherited_capability_params
+            .retain(|reference, _| self.graph.get(reference).is_some());
     }
 
     /// Mirror mutation fields onto invalidated read-model entities, evict stale graph rows,
@@ -260,12 +286,16 @@ impl SessionMaterialization {
             self.graph = branch.graph;
             self.query_index = branch.query_index;
             self.responses = branch.responses;
+            self.inherited_capability_params = branch.inherited_capability_params;
             self.read_cache_invalidated = true;
             return Ok(merged);
         }
         let merged = self.graph.merge_from_graph(&branch.graph)?;
         self.responses.merge_from(branch.responses);
         self.query_index.merge_from(branch.query_index);
+        for (reference, params) in branch.inherited_capability_params {
+            self.stamp_capability_params(&reference, params);
+        }
         Ok(merged)
     }
 }
@@ -498,7 +528,9 @@ mod tests {
     #[test]
     fn post_mutation_evicts_stale_read_model_graph_rows() {
         use crate::cache::EntityCompleteness;
-        use plasm_core::schema::{CapabilityKind, CapabilityMapping, CapabilitySchema, CapabilityTemplateJson};
+        use plasm_core::schema::{
+            CapabilityKind, CapabilityMapping, CapabilitySchema, CapabilityTemplateJson,
+        };
         use plasm_core::{CapabilityName, EntityName, Ref};
 
         let domain = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -530,9 +562,12 @@ mod tests {
         let mut mat = SessionMaterialization::new();
         mat.insert(CachedEntity::from_decoded(
             Ref::new("CreditCardAccount", "cc1"),
-            [("account_id".into(), Value::String("cc1".into())), ("balance".into(), Value::Integer(3000))]
-                .into_iter()
-                .collect(),
+            [
+                ("account_id".into(), Value::String("cc1".into())),
+                ("balance".into(), Value::Integer(3000)),
+            ]
+            .into_iter()
+            .collect(),
             indexmap::IndexMap::new(),
             1,
             EntityCompleteness::Complete,

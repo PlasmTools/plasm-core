@@ -91,7 +91,10 @@ pub(in crate::plasm_dag) fn resolve_relation_segment_for_continuation(
         }
         plasm_core::RelationSegmentOutcome::NotFound => Err(plasm_core::plp::plp4_program(
             "",
-            format!("entity `{}` has no relation `{segment}`", row_qe.entity),
+            format!(
+                "entity `{}` has neither relation nor field `{segment}`",
+                row_qe.entity
+            ),
         )),
     }
 }

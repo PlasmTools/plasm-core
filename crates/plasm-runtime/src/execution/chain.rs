@@ -72,7 +72,7 @@ impl ExecutionEngine {
                 }
             })?;
             match &nv.field_type {
-                FieldType::EntityRef { target } => target.to_string(),
+                FieldType::EntityRef { target, .. } => target.to_string(),
                 _ => {
                     return Err(RuntimeError::ConfigurationError {
                         message: format!(
@@ -336,9 +336,31 @@ impl ExecutionEngine {
         if !to_fetch.is_empty() {
             use futures_util::stream::{self, StreamExt};
 
+            let mut inherit_by_id: std::collections::HashMap<String, CapabilityParamEnv> =
+                std::collections::HashMap::new();
+            for (entity, id_opt) in source_result.entities.iter().zip(ref_ids.iter()) {
+                let Some(id) = id_opt else { continue };
+                inherit_by_id.entry(id.clone()).or_insert_with(|| {
+                    CapabilityParamEnv::from_source_row(
+                        cgs,
+                        target_entity_name.as_str(),
+                        mat,
+                        entity,
+                    )
+                });
+            }
+            let get_cap_name = cgs
+                .find_capability(&target_entity_name, plasm_core::CapabilityKind::Get)
+                .map(|c| c.name.to_string())
+                .unwrap_or_else(|| "get".to_string());
             let concurrency = self.config.hydrate_concurrency.max(1);
             let mut stream = stream::iter(to_fetch.into_iter().map(|reference| {
-                let get = GetExpr::from_ref(reference.clone());
+                let inherit = inherit_by_id
+                    .get(reference.primary_slot_str().as_str())
+                    .cloned()
+                    .unwrap_or_default();
+                let get = synthesized_get(reference.clone(), &inherit);
+                let cap_name = get_cap_name.clone();
                 async move {
                     self.fetch_get_decoded(
                         &get,
@@ -350,6 +372,13 @@ impl ExecutionEngine {
                         &ViewAmbientContext::default(),
                     )
                     .await
+                    .map_err(|e| {
+                        wrap_synthesized_get_error(
+                            cap_name.as_str(),
+                            reference.entity_type.as_str(),
+                            e,
+                        )
+                    })
                 }
             }))
             .buffer_unordered(concurrency);
@@ -424,6 +453,7 @@ impl ExecutionEngine {
                     graph: snap.into_graph(),
                     responses: mat.responses.clone(),
                     query_index: mat.query_index.clone(),
+                    inherited_capability_params: mat.inherited_capability_params.clone(),
                     ..SessionMaterialization::default()
                 }
             };
@@ -774,7 +804,18 @@ impl ExecutionEngine {
                 );
             }
             let reference = ref_from_materialize_bindings_for_get_chain(target_ent, &bound)?;
-            gets.push(GetExpr::from_ref(reference));
+            let inherit = CapabilityParamEnv::from_bindings(
+                &mat.capability_params_for(&entity.reference),
+                cap,
+            );
+            let mut path_vars = inherit.into_bindings();
+            for (k, v) in &bound {
+                path_vars.insert(k.clone(), Value::String(v.clone()));
+            }
+            gets.push(GetExpr::from_ref_with_path_vars(
+                reference,
+                (!path_vars.is_empty()).then_some(path_vars),
+            ));
         }
 
         if gets.is_empty() {
@@ -797,8 +838,10 @@ impl ExecutionEngine {
         let mut any_live = source_result.source == ExecutionSource::Live;
 
         let cap_named = capability.clone();
+        let entity_type = target_key.to_string();
         let mut stream = stream::iter(gets.into_iter().map(move |get| {
             let c = cap_named.clone();
+            let entity_type = entity_type.clone();
             async move {
                 self.fetch_get_decoded(
                     &get,
@@ -810,6 +853,7 @@ impl ExecutionEngine {
                     &ViewAmbientContext::default(),
                 )
                 .await
+                .map_err(|e| wrap_synthesized_get_error(c.as_str(), &entity_type, e))
             }
         }))
         .buffer_unordered(concurrency);
@@ -975,9 +1019,27 @@ impl ExecutionEngine {
         let mut any_live = source_result.source == ExecutionSource::Live;
 
         if !to_fetch.is_empty() {
+            let target_entity = to_fetch[0].entity_type.as_str();
+            let mut inherit_by_ref: std::collections::HashMap<Ref, CapabilityParamEnv> =
+                std::collections::HashMap::new();
+            for source in &source_result.entities {
+                if let Some(refs) = source.relations.get(relation_key) {
+                    for r in refs {
+                        inherit_by_ref.entry(r.clone()).or_insert_with(|| {
+                            CapabilityParamEnv::from_source_row(cgs, target_entity, mat, source)
+                        });
+                    }
+                }
+            }
+            let get_cap_name = cgs
+                .find_capability(target_entity, plasm_core::CapabilityKind::Get)
+                .map(|c| c.name.to_string())
+                .unwrap_or_else(|| "get".to_string());
             let concurrency = self.config.hydrate_concurrency.max(1);
             let mut stream = stream::iter(to_fetch.into_iter().map(|reference| {
-                let get = GetExpr::from_ref(reference.clone());
+                let inherit = inherit_by_ref.get(&reference).cloned().unwrap_or_default();
+                let get = synthesized_get(reference.clone(), &inherit);
+                let cap_name = get_cap_name.clone();
                 async move {
                     self.fetch_get_decoded(
                         &get,
@@ -989,6 +1051,13 @@ impl ExecutionEngine {
                         &ViewAmbientContext::default(),
                     )
                     .await
+                    .map_err(|e| {
+                        wrap_synthesized_get_error(
+                            cap_name.as_str(),
+                            reference.entity_type.as_str(),
+                            e,
+                        )
+                    })
                 }
             }))
             .buffer_unordered(concurrency);

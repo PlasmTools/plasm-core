@@ -6,13 +6,16 @@ use plasm_core::preflight::PLASM_EXISTENCE_SKIP_WRITE_ENV;
 use plasm_core::schema::{CapabilityKind, CapabilitySchema};
 use plasm_core::TypedFieldValue;
 use plasm_core::{
-    conflict_rules_from_mapping_template, CompOp, GetExpr, Predicate, QueryExpr,
-    ReconcileBindSource, Value, WorkflowConflict, WorkflowConflictKind, WriteOutcome, CGS,
+    conflict_rules_from_mapping_template, CompOp, Predicate, QueryExpr, ReconcileBindSource, Value,
+    WorkflowConflict, WorkflowConflictKind, WriteOutcome, CGS,
 };
 use serde_json::Value as JsonValue;
 
 use crate::api_error_detail::workflow_conflict_from_http;
-use crate::execution::{ExecutionEngine, ExecutionMode, ExecutionResult, StreamConsumeOpts};
+use crate::execution::{
+    synthesized_get, CapabilityParamEnv, ExecutionEngine, ExecutionMode, ExecutionResult,
+    StreamConsumeOpts,
+};
 use crate::materialization::SessionMaterialization;
 use crate::RuntimeError;
 
@@ -48,6 +51,7 @@ pub fn extract_http_error_parts(err: &RuntimeError) -> Option<(u16, serde_json::
             body: Some(body),
             ..
         } => Some((*status, body.clone(), message.clone())),
+        RuntimeError::HydrationGet { source, .. } => extract_http_error_parts(source),
         _ => None,
     }
 }
@@ -252,7 +256,8 @@ impl ExecutionEngine {
                 let bound: std::collections::BTreeMap<String, String> = bound.into_iter().collect();
                 let reference =
                     crate::view_plan::ref_from_view_get_node(target_ent, via_cap, &bound)?;
-                let get = GetExpr::from_ref(reference);
+                let inherit = CapabilityParamEnv::from_bindings(identity, via_cap);
+                let get = synthesized_get(reference, &inherit);
                 self.execute_get(
                     &get,
                     cgs,

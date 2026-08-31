@@ -443,6 +443,23 @@ enum BindingContinuationRoute {
     RelationMultiSegmentReparse,
 }
 
+/// Catalog field wire on `contract.row_entity` that is **not** also a declared relation.
+fn field_project_wire_for_continuation(
+    session: &ExecuteSession,
+    contract: &ProgramBindingContract,
+    segment: &str,
+) -> Option<String> {
+    use super::relation::resolve_cgs_for_qualified_entity;
+    let cgs = resolve_cgs_for_qualified_entity(session, &contract.row_entity)?;
+    let ent = cgs.get_entity(contract.row_entity.entity.as_str())?;
+    if ent.relations.contains_key(segment) {
+        return None;
+    }
+    ent.fields
+        .contains_key(segment)
+        .then(|| segment.to_string())
+}
+
 fn classify_binding_continuation_route(
     session: &ExecuteSession,
     state: &CompileState<'_>,
@@ -466,10 +483,28 @@ fn classify_binding_continuation_route(
                 _ => return Err(unknown_row_transform_error(id, tail_trim)),
             }
         }
-        if relation_sourced_continuation_eligible(state, label)
+        let relation_eligible = relation_sourced_continuation_eligible(state, label)
             || matches!(contract.anchor, ContinuationAnchor::BindingLabel)
-            || contract.anchor.allows_text_parse()
-        {
+            || contract.anchor.allows_text_parse();
+        if relation_eligible {
+            // Homograph law: declared relation wins over field-dot project sugar.
+            if resolve_relation_wire_on_entity(
+                session,
+                state.cross_cache,
+                &contract.row_entity,
+                tail_trim,
+                Some(plasm_core::ProgramBindingLabel(contract.label.as_str())),
+            )
+            .is_some()
+            {
+                return Ok(BindingContinuationRoute::RelationSingleHop);
+            }
+            // Field-dot sugar: `ℓ.wire` → same route as explicit `ℓ[wire]` postfix.
+            if let Some(wire) = field_project_wire_for_continuation(session, contract, tail_trim) {
+                return Ok(BindingContinuationRoute::Postfix {
+                    synthetic: format!("{label}[{wire}]"),
+                });
+            }
             return Ok(BindingContinuationRoute::RelationSingleHop);
         }
     } else if contract.anchor.allows_text_parse() {

@@ -76,6 +76,7 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "bindings_assignment",
     "bind_first_postfix_limit",
     "binding_continuation",
+    "field_dot_project_sugar",
     "bind_limit1_continuation",
     "bind_projection_then_relation",
     "bind_relation_hop_one_one",
@@ -106,6 +107,10 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "federated_duplicate_entity_symbol",
     "federated_duplicate_entity_relation_r",
     "federated_duplicate_entity_mutator_m",
+    "federated_duplicate_entity_pathless_action",
+    "federated_auth_session_provides_mutation",
+    "federated_dual_auth_bearer_holes",
+    "summary_hydrate_capability_params",
     "federated_parallel_roots",
     "federated_group_by_on_e1",
     "bracket_render_inline_on_e",
@@ -975,6 +980,27 @@ fn assert_planning_ir(
                 ));
             }
         }
+        "lang_field_dot_project_sugar" => {
+            if comp_has_relation_named(comp, "title") {
+                return Err("field-dot sugar must not lower `title` as a relation".into());
+            }
+            let Some(ComputeTemplate {
+                op: ComputeOp::Project { fields },
+                ..
+            }) = computes
+                .iter()
+                .find(|c| matches!(c.op, ComputeOp::Project { .. }))
+            else {
+                return Err(format!(
+                    "expected Project compute from field-dot sugar (≡ [title]), got {computes:?}"
+                ));
+            };
+            if !fields.keys().any(|k| k.as_str() == "title") {
+                return Err(format!(
+                    "expected Project fields to include title, got {fields:?}"
+                ));
+            }
+        }
         "lang_bind_limit1_continuation" => {
             if !comp_has_relation_named(comp, "tags") {
                 return Err("expected relation node for `.tags` after limit(1)".to_string());
@@ -1360,6 +1386,97 @@ fn assert_planning_ir(
                 ));
             }
         }
+        "lang_federated_duplicate_entity_pathless_action" => {
+            let inv = surfaces
+                .iter()
+                .find_map(|e| match e {
+                    Expr::Invoke(i) => Some(i),
+                    _ => None,
+                })
+                .ok_or_else(|| "expected Invoke surface from e2 pathless Action".to_string())?;
+            if inv.catalog_entry_id.as_deref() != Some("linear") {
+                return Err(format!(
+                    "e2 pathless Action must stamp linear catalog, got {:?}",
+                    inv.catalog_entry_id
+                ));
+            }
+            if inv.capability.as_str() != "langitem_broadcast" {
+                return Err(format!(
+                    "expected langitem_broadcast, got {}",
+                    inv.capability
+                ));
+            }
+        }
+        "lang_federated_auth_session_provides_mutation" => {
+            let logins: Vec<_> = surfaces
+                .iter()
+                .filter_map(|e| match e {
+                    Expr::Invoke(i) if i.capability.as_str() == "langauthsession_login" => Some(i),
+                    _ => None,
+                })
+                .collect();
+            if logins.len() != 2 {
+                return Err(format!(
+                    "expected two federated logins (CUGA dual-auth), got {}",
+                    logins.len()
+                ));
+            }
+            let catalogs: BTreeSet<_> = logins
+                .iter()
+                .filter_map(|i| i.catalog_entry_id.as_deref())
+                .collect();
+            if catalogs != BTreeSet::from(["github", "linear"]) {
+                return Err(format!(
+                    "logins must stamp github+linear catalogs, got {:?}",
+                    catalogs
+                ));
+            }
+            let has_mutation = json_value_contains_substring(comp, "mutation_result")
+                || dry
+                    .node_results
+                    .iter()
+                    .any(|nr| json_value_contains_substring(nr, "mutation_result"));
+            if !has_mutation {
+                return Err(
+                    "Action-with-provides must infer result_shape mutation_result on plan/dry nodes"
+                        .into(),
+                );
+            }
+            let has_note_search = surfaces.iter().any(|e| {
+                matches!(
+                    e,
+                    Expr::Query(q)
+                        if q.capability_name.as_deref() == Some("langsecurednote_search")
+                            || q.entity.as_str() == "LangSecuredNote"
+                )
+            });
+            if !has_note_search {
+                return Err(
+                    "expected LangSecuredNote search consuming sn_auth.access_token".into(),
+                );
+            }
+            let has_group_query = surfaces.iter().any(|e| {
+                matches!(
+                    e,
+                    Expr::Query(q)
+                        if q.capability_name.as_deref() == Some("langsecuredgroup_query")
+                            || q.entity.as_str() == "LangSecuredGroup"
+                )
+            });
+            if !has_group_query {
+                return Err(
+                    "expected LangSecuredGroup query consuming sw_auth.access_token".into(),
+                );
+            }
+            let hole_blob = format!("{comp}");
+            let hole_hits = hole_blob.matches("__plasm_hole").count()
+                + hole_blob.matches("node_input").count();
+            if hole_hits < 2 {
+                return Err(format!(
+                    "dual Bearer surfaces must carry ≥2 access_token holes (node_input/__plasm_hole), got {hole_hits}"
+                ));
+            }
+        }
         "lang_federated_parallel_roots" => {
             if surfaces.len() < 2 {
                 return Err(format!(
@@ -1581,6 +1698,20 @@ fn assert_row(row: &MatrixRow, out: &PlasmPlanRunResult) -> Result<(), String> {
                 "row {}: run_markdown missing substring {sub:?} (len {}):\n{md}",
                 row.id,
                 md.len()
+            ));
+        }
+    }
+    if row.id == "lang_federated_auth_session_provides_mutation" {
+        let notes_net: usize = out
+            .return_steps
+            .iter()
+            .filter(|s| s.entity.as_deref() == Some("LangSecuredNote"))
+            .map(|s| s.result.stats.network_requests)
+            .sum();
+        if notes_net < 2 {
+            return Err(format!(
+                "row {}: inherited summary hydrate must issue search+GET (notes network_requests={notes_net})",
+                row.id
             ));
         }
     }
@@ -2070,6 +2201,16 @@ tags"#,
         expect_markdown_substrings: &["```tsv"],
     },
     MatrixRow {
+        id: "lang_field_dot_project_sugar",
+        program: r#"root = LangItem("i1")
+root.title"#,
+        surface_line: false,
+        federated: false,
+        features: &["field_dot_project_sugar", "binding_continuation", "postfix_projection"],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv", "title"],
+    },
+    MatrixRow {
         id: "lang_bind_limit1_continuation",
         program: r#"root = LangItem{owner="alice"}
 one = root.limit(1)
@@ -2412,6 +2553,36 @@ tags"#,
         expect_markdown_substrings: &["```tsv"],
     },
     MatrixRow {
+        id: "lang_federated_duplicate_entity_pathless_action",
+        program: "",
+        surface_line: false,
+        federated: true,
+        features: &[
+            "federated_duplicate_entity_symbol",
+            "federated_duplicate_entity_pathless_action",
+            "effect_action",
+        ],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv"],
+    },
+    MatrixRow {
+        id: "lang_federated_auth_session_provides_mutation",
+        program: "",
+        surface_line: false,
+        federated: true,
+        features: &[
+            "federated_auth_session_provides_mutation",
+            "federated_dual_auth_bearer_holes",
+            "summary_hydrate_capability_params",
+            "effect_action",
+            "entity_search",
+            "entity_query",
+            "entity_get",
+        ],
+        min_node_results: 4,
+        expect_markdown_substrings: &["```tsv", "note_id", "group_id"],
+    },
+    MatrixRow {
         id: "lang_federated_parallel_roots",
         program: "e1{owner=\"alice\"}, e2~$",
         surface_line: false,
@@ -2543,6 +2714,36 @@ fn matrix_program_for_row(
             let m_sym = map.method_sym_for("linear", "LangItem", "create");
             format!("e2.{m_sym}(title=\"fed-mutator-matrix\", score=0, owner=\"matrix-fed-owner\")")
         }
+        "lang_federated_duplicate_entity_pathless_action" => {
+            let exp = es
+                .teaching_exposure
+                .as_ref()
+                .expect("federated dup session exposure");
+            let map = exp.symbol_map_arc();
+            let m_sym = map.method_sym_for("linear", "LangItem", "broadcast");
+            format!(r#"e2.{m_sym}(message="fed-pathless-broadcast")"#)
+        }
+        "lang_federated_auth_session_provides_mutation" => {
+            let exp = es
+                .teaching_exposure
+                .as_ref()
+                .expect("federated auth session exposure");
+            let map = exp.symbol_map_arc();
+            let e_sn_auth = map.entity_sym_for("linear", "LangAuthSession");
+            let m_sn_login = map.method_sym_for("linear", "LangAuthSession", "login");
+            let e_sw_auth = map.entity_sym_for("github", "LangAuthSession");
+            let m_sw_login = map.method_sym_for("github", "LangAuthSession", "login");
+            let e_note = map.entity_sym_for("linear", "LangSecuredNote");
+            let e_group = map.entity_sym_for("github", "LangSecuredGroup");
+            // CUGA AppWorld shape: two federated logins → two Bearer consumers in one plasm_run.
+            format!(
+                r#"sn_auth = {e_sn_auth}.{m_sn_login}(username="simple_note", password="secret")
+sw_auth = {e_sw_auth}.{m_sw_login}(username="splitwise", password="secret")
+notes = {e_note}~"trip"{{access_token=sn_auth.access_token}}
+groups = {e_group}{{access_token=sw_auth.access_token}}
+notes, groups"#
+            )
+        }
         "lang_federated_relation_target_entry" => {
             let exp = es
                 .teaching_exposure
@@ -2586,6 +2787,53 @@ fn plasm_language_matrix_live_runs() {
         .expect("spawn matrix live harness")
         .join()
         .expect("join matrix live harness");
+}
+
+/// Focused CUGA-shaped dual-auth witness: two logins → two Bearer surfaces in one program.
+#[test]
+fn lang_federated_auth_session_bearer_hole_fill_live() {
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("auth hole-fill runtime");
+            rt.block_on(lang_federated_auth_session_bearer_hole_fill_live_async());
+        })
+        .expect("spawn auth hole-fill harness")
+        .join()
+        .expect("join auth hole-fill harness");
+}
+
+async fn lang_federated_auth_session_bearer_hole_fill_live_async() {
+    use std::sync::Arc;
+
+    let base = hermit_lang_matrix::language_matrix_hermit_base_url()
+        .await
+        .clone();
+    let cgs = language_matrix::load_language_matrix_cgs();
+    let mut cgs_live = (*cgs).clone();
+    cgs_live.http_backend = base;
+    let cgs_live = Arc::new(cgs_live);
+
+    let es = Arc::new(language_matrix::matrix_federated_auth_session_session(
+        cgs_live.clone(),
+    ));
+    let st = Arc::new(language_matrix::matrix_federated_duplicate_entity_host_state(
+        ExecutionEngine::new(ExecutionConfig {
+            base_url: Some(cgs_live.http_backend.clone()),
+            ..Default::default()
+        })
+        .expect("ExecutionEngine"),
+        cgs_live,
+    ));
+    let row = MATRIX_ROWS
+        .iter()
+        .find(|r| r.id == "lang_federated_auth_session_provides_mutation")
+        .expect("auth hole-fill matrix row");
+    matrix_live_run_row(row, es.as_ref(), st.as_ref()).await;
 }
 
 async fn plasm_language_matrix_live_runs_async() {
@@ -2633,8 +2881,16 @@ async fn plasm_language_matrix_live_runs_body(base: String) {
         cgs_federated_primary,
         cgs_secondary.clone(),
     ));
+    let cgs_live = {
+        let mut live = (*cgs).clone();
+        live.http_backend = base.clone();
+        Arc::new(live)
+    };
     let es_federated_dup = Arc::new(language_matrix::matrix_federated_duplicate_entity_session(
-        cgs.clone(),
+        cgs_live.clone(),
+    ));
+    let es_federated_auth = Arc::new(language_matrix::matrix_federated_auth_session_session(
+        cgs_live.clone(),
     ));
     let st_federated_dup = Arc::new(
         language_matrix::matrix_federated_duplicate_entity_host_state(
@@ -2643,7 +2899,7 @@ async fn plasm_language_matrix_live_runs_body(base: String) {
                 ..Default::default()
             })
             .expect("ExecutionEngine"),
-            cgs,
+            cgs_live,
         ),
     );
 
@@ -2656,11 +2912,14 @@ async fn plasm_language_matrix_live_runs_body(base: String) {
                 | "lang_federated_duplicate_entity_e2_search"
                 | "lang_federated_duplicate_entity_relation_r"
                 | "lang_federated_duplicate_entity_mutator_m"
+                | "lang_federated_duplicate_entity_pathless_action"
                 | "lang_federated_parallel_roots"
                 | "lang_federated_group_by_on_e1"
                 | "lang_bind_template_inline_on_e1"
         ) {
             (Arc::clone(&es_federated_dup), Arc::clone(&st_federated_dup))
+        } else if row.id == "lang_federated_auth_session_provides_mutation" {
+            (Arc::clone(&es_federated_auth), Arc::clone(&st_federated_dup))
         } else if row.federated {
             (Arc::clone(&es_federated), Arc::clone(&st_federated))
         } else {
@@ -2750,6 +3009,8 @@ fn matrix_coverage_contract_all_rows_require_live_execution() {
         "lang_homograph_lhs_coercion",
         "lang_federated_duplicate_entity_relation_r",
         "lang_federated_duplicate_entity_mutator_m",
+        "lang_federated_duplicate_entity_pathless_action",
+        "lang_federated_auth_session_provides_mutation",
         "lang_federated_relation_target_entry",
         "lang_bind_template_inline_on_e1",
     ];

@@ -31,6 +31,42 @@ entities:
         required: true
         value_ref: nv_lang_line_note
     relations: {}
+  LangAuthSession:
+    id_field: access_token
+    description: Login session whose primary key is access_token (AppWorld AuthSession-shaped; federated provides + hole fill).
+    fields:
+      access_token:
+        required: true
+        value_ref: nv_lang_auth_access_token
+      token_type:
+        required: false
+        value_ref: nv_lang_auth_token_type
+    relations: {}
+  LangSecuredNote:
+    id_field: note_id
+    description: Note list requiring Bearer access_token from LangAuthSession (federated hole-fill witness).
+    fields:
+      note_id:
+        required: true
+        value_ref: nv_lang_secured_note_id
+      title:
+        required: true
+        value_ref: nv_lang_secured_note_title
+      body:
+        required: true
+        value_ref: nv_lang_secured_note_body
+    relations: {}
+  LangSecuredGroup:
+    id_field: group_id
+    description: Group list requiring Bearer access_token from a second LangAuthSession (CUGA dual-login hole-fill witness).
+    fields:
+      group_id:
+        required: true
+        value_ref: nv_lang_secured_group_id
+      name:
+        required: true
+        value_ref: nv_lang_secured_group_name
+    relations: {}
   LangItem:
     id_field: id
     description: Primary matrix entity — list, search, CRUD, relations, actions.
@@ -316,6 +352,72 @@ capabilities:
     output:
       type: side_effect
       description: Records a ping against the item (matrix conformance).
+  langitem_broadcast:
+    description: Pathless side-effect broadcast on LangItem (federated stamp regression; no path id).
+    kind: action
+    entity: LangItem
+    parameters:
+    - name: message
+      value_ref: nv_langitem_broadcast_message
+      required: false
+    output:
+      type: side_effect
+      description: Broadcasts an optional message for the catalog (no entity id in path).
+  langauthsession_login:
+    description: Pathless login returning LangAuthSession (provides access_token; MutationResult under federation).
+    kind: action
+    entity: LangAuthSession
+    parameters:
+    - name: username
+      value_ref: nv_lang_auth_username
+      required: false
+    - name: password
+      value_ref: nv_lang_auth_password
+      required: false
+    provides:
+    - access_token
+    - token_type
+    output:
+      type: side_effect
+      description: Creates an authenticated session; use access_token on subsequent calls.
+  langsecurednote_search:
+    description: Search secured notes; Bearer access_token required ahead of optional search text.
+    kind: search
+    entity: LangSecuredNote
+    parameters:
+    - name: access_token
+      value_ref: nv_lang_auth_access_token
+      required: true
+    - name: query
+      value_ref: nv_lang_secured_note_query
+      required: false
+      role: search
+    provides:
+    - note_id
+    - title
+  langsecurednote_get:
+    description: Get a secured note including body; Bearer access_token required (summary-hydrate witness).
+    kind: get
+    entity: LangSecuredNote
+    parameters:
+    - name: access_token
+      value_ref: nv_lang_auth_access_token
+      required: true
+    provides:
+    - note_id
+    - title
+    - body
+  langsecuredgroup_query:
+    description: List secured groups; Bearer access_token required (second federated auth consumer).
+    kind: query
+    entity: LangSecuredGroup
+    parameters:
+    - name: access_token
+      value_ref: nv_lang_auth_access_token
+      required: true
+    provides:
+    - group_id
+    - name
   langtag_query:
     description: List tags scoped to one LangItem
     kind: query
@@ -544,6 +646,30 @@ values:
   nv_lang_item_id:
     type: string
   nv_lang_item_title:
+    type: string
+  nv_langitem_broadcast_message:
+    type: string
+    description: Optional broadcast body for pathless LangItem action (federation stamp matrix).
+  nv_lang_auth_access_token:
+    type: string
+    description: Bearer token primary key for LangAuthSession.
+  nv_lang_auth_token_type:
+    type: string
+  nv_lang_auth_username:
+    type: string
+  nv_lang_auth_password:
+    type: string
+  nv_lang_secured_note_id:
+    type: integer
+  nv_lang_secured_note_title:
+    type: string
+  nv_lang_secured_note_body:
+    type: string
+  nv_lang_secured_note_query:
+    type: string
+  nv_lang_secured_group_id:
+    type: integer
+  nv_lang_secured_group_name:
     type: string
   nv_lang_item_score:
     type: integer

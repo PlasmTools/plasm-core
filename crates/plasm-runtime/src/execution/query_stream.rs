@@ -218,8 +218,19 @@ impl ExecutionEngine {
             res.stats.merge_telemetry(&consult);
             res.stats.record_rows_materialized(res.count);
             ExecutionCacheConsult::index_query_result(mat, &query, cap_name, &res.entities);
+            let inherit =
+                CapabilityParamEnv::for_entity_get(cgs, query.entity.as_str(), &env);
+            stamp_entities_and_mat(&res.entities, mat, &inherit);
             let (entities, extra_net) = self
-                .hydrate_query_summaries(&query.entity, &res.entities, cgs, mat, mode, hydrate_run)
+                .hydrate_query_summaries(
+                    &query.entity,
+                    &res.entities,
+                    cgs,
+                    mat,
+                    mode,
+                    hydrate_run,
+                    &env,
+                )
                 .await?;
             res.entities = entities;
             res.stats.network_requests += extra_net;
@@ -400,6 +411,9 @@ impl ExecutionEngine {
                 }
 
                 let hydrate_run = query.hydrate.unwrap_or(self.config.hydrate);
+                let inherit =
+                    CapabilityParamEnv::for_entity_get(cgs, query.entity.as_str(), &env);
+                stamp_entities_and_mat(&page_cached, mat, &inherit);
                 let (hydrated, extra_net) = self
                     .hydrate_query_summaries(
                         &query.entity,
@@ -408,6 +422,7 @@ impl ExecutionEngine {
                         mat,
                         mode,
                         hydrate_run,
+                        &env,
                     )
                     .await?;
 

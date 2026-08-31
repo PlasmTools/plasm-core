@@ -234,6 +234,143 @@ paths:
                     type: boolean
               example:
                 ok: true
+  /language/v1/items/broadcast:
+    post:
+      summary: Pathless broadcast (federated stamp matrix)
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+      responses:
+        "200":
+          description: Ack
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+              example:
+                ok: true
+  /language/v1/sessions/login:
+    post:
+      summary: Pathless login returning access_token (provides / MutationResult matrix)
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+      responses:
+        "200":
+          description: Auth session
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [access_token]
+                properties:
+                  access_token:
+                    type: string
+                  token_type:
+                    type: string
+              example:
+                access_token: matrix-token-linear
+                token_type: Bearer
+  /language/v1/secured_notes:
+    get:
+      summary: Search secured notes (Bearer access_token required)
+      parameters:
+        - name: query
+          in: query
+          schema:
+            type: string
+        - name: Authorization
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Secured notes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [note_id, title]
+                  properties:
+                    note_id:
+                      type: integer
+                    title:
+                      type: string
+              example:
+                - note_id: 1
+                  title: trip itinerary
+  /language/v1/secured_notes/{note_id}:
+    get:
+      summary: Get a secured note including body (Bearer access_token required; summary hydrate)
+      parameters:
+        - name: note_id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: Authorization
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Secured note detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LangSecuredNote"
+              example:
+                note_id: 1
+                title: trip itinerary
+                body: trip body
+  /language/v1/secured_groups:
+    get:
+      summary: List secured groups (Bearer access_token required; dual-auth witness)
+      parameters:
+        - name: Authorization
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Secured groups
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [group_id, name]
+                  properties:
+                    group_id:
+                      type: integer
+                    name:
+                      type: string
+              example:
+                - group_id: 42
+                  name: trip expenses
   /language/v1/tags/{id}:
     get:
       summary: Get tag by id
@@ -372,6 +509,23 @@ paths:
                 quote_currency: "USD"
 components:
   schemas:
+    LangSecuredNote:
+      type: object
+      required: [note_id, title, body]
+      example:
+        note_id: 1
+        title: trip itinerary
+        body: trip body
+      properties:
+        note_id:
+          type: integer
+          example: 1
+        title:
+          type: string
+          example: trip itinerary
+        body:
+          type: string
+          example: trip body
     LangItem:
       type: object
       required: [id, title]

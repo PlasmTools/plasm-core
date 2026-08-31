@@ -79,6 +79,14 @@ pub enum RuntimeError {
 
     #[error("Execution cancelled")]
     Cancelled,
+
+    #[error("synthesized GET `{cap_name}` during {entity_type} hydration: {source}")]
+    HydrationGet {
+        cap_name: String,
+        entity_type: String,
+        #[source]
+        source: Box<RuntimeError>,
+    },
 }
 
 impl RuntimeError {
@@ -87,6 +95,7 @@ impl RuntimeError {
             RuntimeError::RequestError { attempts: a, .. }
             | RuntimeError::WorkflowConflict { attempts: a, .. }
             | RuntimeError::RateLimited { attempts: a, .. } => *a = attempts,
+            RuntimeError::HydrationGet { source, .. } => source.set_attempts(attempts),
             _ => {}
         }
     }
