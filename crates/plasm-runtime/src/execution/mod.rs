@@ -991,6 +991,15 @@ impl ExecutionEngine {
         &self,
         operation: &CompiledOperation,
     ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+        self.execute_operation_full_inner(operation)
+            .instrument(crate::spans::execute_operation())
+            .await
+    }
+
+    async fn execute_operation_full_inner(
+        &self,
+        operation: &CompiledOperation,
+    ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
         let fp = crate::RequestFingerprint::from_operation(operation);
         let out = match operation {
             CompiledOperation::Http(request) => self.execute_http_request_full(request).await,
@@ -1225,6 +1234,20 @@ impl ExecutionEngine {
         consume: StreamConsumeOpts,
         ambient: &ViewAmbientContext,
     ) -> Result<ExecutionResult, RuntimeError> {
+        self.execute_query_inner(query, cgs, mat, mode, consume, ambient)
+            .instrument(crate::spans::execute_query())
+            .await
+    }
+
+    async fn execute_query_inner(
+        &self,
+        query: &QueryExpr,
+        cgs: &CGS,
+        mat: &mut SessionMaterialization,
+        mode: ExecutionMode,
+        consume: StreamConsumeOpts,
+        ambient: &ViewAmbientContext,
+    ) -> Result<ExecutionResult, RuntimeError> {
         let mut stream =
             self.query_to_stream(query, cgs, mat, mode, consume.clone(), None, ambient)?;
         collect_query_stream(&mut stream, &consume).await
@@ -1405,6 +1428,19 @@ impl ExecutionEngine {
 
     /// Execute a get expression
     pub(crate) async fn execute_get(
+        &self,
+        get: &GetExpr,
+        cgs: &CGS,
+        mat: &mut SessionMaterialization,
+        mode: ExecutionMode,
+        ambient: &ViewAmbientContext,
+    ) -> Result<ExecutionResult, RuntimeError> {
+        self.execute_get_inner(get, cgs, mat, mode, ambient)
+            .instrument(crate::spans::execute_get())
+            .await
+    }
+
+    async fn execute_get_inner(
         &self,
         get: &GetExpr,
         cgs: &CGS,
@@ -4083,6 +4119,84 @@ mod tests {
             .expect("execute");
 
         assert_eq!(last.lock().unwrap().as_deref(), Some("http://right-host"));
+    }
+
+    /// Sync test: `with_captured_spans` + nested `block_on` must not run under `#[tokio::test]`.
+    #[test]
+    fn execute_operation_parents_http_compiled_request_on_live_get() {
+        use crate::auth::ResolvedAuth;
+        use crate::http_transport::HttpTransport;
+        use async_trait::async_trait;
+        use plasm_compile::CompiledRequest;
+        use plasm_otel::span_capture::{find_span, is_child_of, with_captured_spans};
+        use std::sync::Arc;
+
+        struct OkTransport;
+
+        #[async_trait]
+        impl HttpTransport for OkTransport {
+            async fn send_compiled_http(
+                &self,
+                _base_url: &str,
+                _request: &CompiledRequest,
+                _auth: Option<ResolvedAuth>,
+            ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+                Ok((serde_json::json!({"id": "1", "name": "n"}), None))
+            }
+
+            async fn get_json_absolute(
+                &self,
+                _url: &str,
+                _auth: Option<ResolvedAuth>,
+            ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+                Ok((serde_json::json!({}), None))
+            }
+        }
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let ((), spans) = with_captured_spans(|| {
+            rt.block_on(async {
+                let config = ExecutionConfig {
+                    base_url: Some("http://example.test".to_string()),
+                    ..ExecutionConfig::default()
+                };
+                let engine =
+                    ExecutionEngine::new_with_transport(config, Arc::new(OkTransport), None);
+                let cgs = create_test_cgs();
+                let mut cache = SessionMaterialization::new();
+                let expr = Expr::Get(GetExpr::new("Account", "1"));
+                let _ = engine
+                    .execute(
+                        &expr,
+                        &cgs,
+                        &mut cache,
+                        None,
+                        StreamConsumeOpts::default(),
+                        ExecuteOptions::default(),
+                    )
+                    .await;
+            });
+        });
+
+        let parent =
+            find_span(&spans, "plasm_runtime.execute.operation").expect("execute.operation");
+        let child = find_span(&spans, "plasm_runtime.http.compiled_request")
+            .expect("http.compiled_request");
+        assert!(
+            is_child_of(child, parent),
+            "compiled_request must be child of execute.operation; spans={:?}",
+            spans.iter().map(|s| s.name.as_ref()).collect::<Vec<_>>()
+        );
+        assert!(
+            child
+                .attributes
+                .iter()
+                .any(|kv| kv.key.as_str() == "http.method"),
+            "expected http.method on compiled_request"
+        );
     }
 
     #[tokio::test]

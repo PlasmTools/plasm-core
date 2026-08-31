@@ -70,7 +70,26 @@ pub(in crate::plasm_dag) fn postfix_op_to_compute(
                 cgs: cgs.as_ref(),
                 symbol_map: None,
             };
-            plasm_core::type_check_row_predicate(&row_pred, &tc_ctx).map_err(|e| e.to_string())?;
+            let predicates = crate::row_predicate_lower::lower_row_predicate_to_plan(
+                &row_pred,
+                session,
+                &qe,
+                state.cross_cache,
+            )?;
+            let extra = resolve_immediate_compute_schema(state, staged, source);
+            let mut catalog_pred = row_pred.clone();
+            if let Some(schema) = extra.as_ref() {
+                catalog_pred.0.retain(|c| {
+                    !schema
+                        .fields
+                        .iter()
+                        .any(|f| f.name.as_str() == c.field.as_str())
+                });
+            }
+            if !catalog_pred.0.is_empty() {
+                plasm_core::type_check_row_predicate(&catalog_pred, &tc_ctx)
+                    .map_err(|e| e.to_string())?;
+            }
             let mut paths = Vec::new();
             for clause in &row_pred.0 {
                 paths.push(FieldPath::from_dotted(clause.field.as_str())?);
@@ -85,13 +104,13 @@ pub(in crate::plasm_dag) fn postfix_op_to_compute(
                     "filter(...)",
                 )?;
             }
-            let predicates = crate::row_predicate_lower::lower_row_predicate_to_plan(
-                &row_pred,
+            let schema = compute_passthrough_or_fallback_schema(
                 session,
-                &qe,
-                state.cross_cache,
-            )?;
-            let schema = synthetic_schema_passthrough_rows(session, state, staged, source)?;
+                state,
+                staged,
+                source,
+                "PlanFilter",
+            );
             Ok(mk(ComputeOp::Filter { predicates }, schema, false))
         }
         PlasmPostfixOp::Sort { args } => {
@@ -229,10 +248,43 @@ pub(in crate::plasm_dag) fn postfix_op_to_compute(
             let schema = synthetic_schema_passthrough_rows(session, state, staged, source)?;
             Ok(mk(ComputeOp::DedupeBy { keys: vec![] }, schema, false))
         }
+        PlasmPostfixOp::With { body } => {
+            let columns = plasm_core::parse_with_body(body).map_err(|e| e.to_string())?;
+            let schema = synthetic_schema_passthrough_rows(session, state, staged, source)?;
+            let mut schema = schema;
+            for col in &columns {
+                schema.fields.push(plasm_core::SyntheticFieldSchema {
+                    name: col.name.clone(),
+                    value_kind: SyntheticValueKind::Unknown,
+                    source: None,
+                });
+            }
+            Ok(mk(ComputeOp::With { columns }, schema, false))
+        }
         PlasmPostfixOp::Projection { fields } => {
             let qe = resolve_qualified_entity_for_dag_source(state, staged, source.to_string());
+            let source_schema = resolve_immediate_compute_schema(state, staged, source);
             let mut map = BTreeMap::new();
-            for field in parse_field_list(session, state.cross_cache, qe.as_ref(), fields)? {
+            for field in
+                parse_field_list(session, state.cross_cache, qe.as_ref(), fields).or_else(|_| {
+                    fields
+                        .split(',')
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty())
+                        .map(|raw| {
+                            let path = FieldPath::from_dotted(raw)?;
+                            let resolved = resolve_sort_field_path(
+                                session,
+                                state.cross_cache,
+                                qe.as_ref(),
+                                source_schema.as_ref(),
+                                &path,
+                            )?;
+                            Ok(resolved.dotted())
+                        })
+                        .collect::<Result<Vec<String>, String>>()
+                })?
+            {
                 map.insert(
                     OutputName::new(field.clone())?,
                     FieldPath::from_dotted(&field)?,

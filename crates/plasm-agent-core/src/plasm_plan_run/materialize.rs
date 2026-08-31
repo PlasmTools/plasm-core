@@ -485,16 +485,6 @@ pub(crate) async fn materialized_rows(
         .await
 }
 
-pub(crate) fn compute_needs_full_materialize(op: &ComputeOp) -> bool {
-    matches!(
-        op,
-        ComputeOp::Sort { .. }
-            | ComputeOp::GroupBy { .. }
-            | ComputeOp::Aggregate { .. }
-            | ComputeOp::DedupeBy { .. }
-    )
-}
-
 #[must_use]
 pub(crate) fn execution_result_from_fanout_fold(
     fold: super::plan_fanout_parallel::PlanLineExecutionFold,

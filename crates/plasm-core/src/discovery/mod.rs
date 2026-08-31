@@ -829,6 +829,8 @@ fn cap_passes_filters(query: &CapabilityQuery, entry_id: &str, cap: &CapabilityS
 
 impl CgsDiscovery for InMemoryCgsRegistry {
     fn discover(&self, query: &CapabilityQuery) -> Result<DiscoveryResult, DiscoveryError> {
+        let span = crate::spans::discovery_discover();
+        let _guard = span.enter();
         let query_text = collect_query_text(query);
         let query_tokens = collect_query_tokens(query);
         let has_explicit_expand = query
@@ -1035,6 +1037,9 @@ impl CgsDiscovery for InMemoryCgsRegistry {
             ambiguity_count = ambiguities.len(),
             "cgs discovery completed"
         );
+
+        tracing::Span::current().record("candidate_count", candidates.len());
+        tracing::Span::current().record("result_count", candidates.len());
 
         let catalog_route = catalog_route
             .as_ref()

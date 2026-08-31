@@ -21,7 +21,7 @@ use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::time::Duration;
-use tracing::instrument;
+use tracing::Instrument;
 
 use crate::control_plane_http::internal_or_outbound_setup_authorized;
 use crate::oauth_binding_kv::write_oauth_binding_pointer;
@@ -225,15 +225,20 @@ struct StartBody {
     auth_config_id: Option<String>,
 }
 
-#[instrument(
-    skip(st, headers, body),
-    target = "plasm_agent::oauth_link",
-    fields(oauth.phase = "start")
-)]
 async fn start_handler(
     Extension(st): Extension<PlasmHostState>,
     headers: axum::http::HeaderMap,
     Json(body): Json<StartBody>,
+) -> Result<Json<serde_json::Value>, OauthStartJsonError> {
+    start_handler_inner(st, headers, body)
+        .instrument(crate::spans::oauth_link_start())
+        .await
+}
+
+async fn start_handler_inner(
+    st: PlasmHostState,
+    headers: axum::http::HeaderMap,
+    body: StartBody,
 ) -> Result<Json<serde_json::Value>, OauthStartJsonError> {
     if !internal_or_outbound_setup_authorized(&headers, "oauth-link start") {
         return Err(oauth_start_json_err(
@@ -475,15 +480,20 @@ struct DevicePollBody {
     device_code: String,
 }
 
-#[instrument(
-    skip(st, headers, body),
-    target = "plasm_agent::oauth_link",
-    fields(oauth.phase = "device_start")
-)]
 async fn device_start_handler(
     Extension(st): Extension<PlasmHostState>,
     headers: axum::http::HeaderMap,
     Json(body): Json<DeviceStartBody>,
+) -> Result<Json<serde_json::Value>, OauthStartJsonError> {
+    device_start_handler_inner(st, headers, body)
+        .instrument(crate::spans::oauth_link_device_start())
+        .await
+}
+
+async fn device_start_handler_inner(
+    st: PlasmHostState,
+    headers: axum::http::HeaderMap,
+    body: DeviceStartBody,
 ) -> Result<Json<serde_json::Value>, OauthStartJsonError> {
     if !internal_or_outbound_setup_authorized(&headers, "oauth-link device start") {
         return Err(oauth_start_json_err(
@@ -614,15 +624,20 @@ async fn device_start_handler(
     })))
 }
 
-#[instrument(
-    skip(st, headers, body),
-    target = "plasm_agent::oauth_link",
-    fields(oauth.phase = "device_poll")
-)]
 async fn device_poll_handler(
     Extension(st): Extension<PlasmHostState>,
     headers: axum::http::HeaderMap,
     Json(body): Json<DevicePollBody>,
+) -> Result<Json<serde_json::Value>, OauthStartJsonError> {
+    device_poll_handler_inner(st, headers, body)
+        .instrument(crate::spans::oauth_link_device_poll())
+        .await
+}
+
+async fn device_poll_handler_inner(
+    st: PlasmHostState,
+    headers: axum::http::HeaderMap,
+    body: DevicePollBody,
 ) -> Result<Json<serde_json::Value>, OauthStartJsonError> {
     if !internal_or_outbound_setup_authorized(&headers, "oauth-link device poll") {
         return Err(oauth_start_json_err(

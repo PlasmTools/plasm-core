@@ -224,7 +224,7 @@ pub fn discovery_execute_router(state: PlasmHostState) -> Router {
 
     let traced = pre_internal
         .merge(oss_traced_routes())
-        .layer(TraceLayer::new_for_http().make_span_with(tower_http_trace_parent_span));
+        .route_layer(TraceLayer::new_for_http().make_span_with(tower_http_trace_parent_span));
 
     Router::new()
         .merge(health_public)
@@ -285,7 +285,7 @@ pub async fn serve_discovery_execute_on_listener_opts(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let addr = listener.local_addr()?;
     let port = addr.port();
-    tracing::info!("plasm HTTP listening on http://{addr}");
+    tracing::info!(%addr, "plasm HTTP listening");
     if opts.emit_stderr_route_help {
         eprint_http_command_help(port);
     }
@@ -317,7 +317,7 @@ pub async fn serve_discovery_execute_and_mcp_unified(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let addr = listener.local_addr()?;
     let port = addr.port();
-    tracing::info!("plasm HTTP+MCP unified listening on http://{addr}");
+    tracing::info!(%addr, "plasm HTTP+MCP unified listening");
     if opts.emit_stderr_route_help {
         eprint_http_command_help(port);
     }

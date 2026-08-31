@@ -2,11 +2,11 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use minijinja::value::{Enumerator, Object, ObjectRepr};
+use plasm_runtime::{eval_compute_ops, ComputeEvalOutcome};
 
 use crate::plasm_plan::OutputName;
 use crate::plasm_render_compile::render_context_hint;
 
-use super::super::value_at_field_path as value_at_path;
 use super::super::*;
 
 pub(crate) async fn eval_compute_with_row_source(
@@ -18,94 +18,15 @@ pub(crate) async fn eval_compute_with_row_source(
     session_id: &str,
     cgs: &CGS,
 ) -> Result<Vec<serde_json::Value>, String> {
-    match row_source {
-        MaterializedRowSource::Inline(rows) => {
-            eval_compute_from_rows(compute, rows, cross_binding_rows)
-        }
-        MaterializedRowSource::GraphBacked {
-            entity_type,
-            logical_count,
-            hot_snapshot,
-        } => {
-            if matches!(&compute.op, ComputeOp::Render { .. }) {
-                let rows =
-                    crate::graph_rehydrate::GraphSurfaceRehydrator::new(es, st, session_id, cgs)
-                        .resolve_row_source_rows(
-                            row_source,
-                            Some(crate::plasm_plan::PLAN_RENDER_MAX_ROWS),
-                        )
-                        .await?;
-                return eval_compute_from_rows(compute, &rows, cross_binding_rows);
-            }
-            if compute_needs_full_materialize(&compute.op) {
-                let rows =
-                    crate::graph_rehydrate::GraphSurfaceRehydrator::new(es, st, session_id, cgs)
-                        .rehydrate_rows(
-                            std::sync::Arc::clone(hot_snapshot),
-                            entity_type,
-                            *logical_count,
-                        )
-                        .await?;
-                return eval_compute_from_rows(compute, &rows, cross_binding_rows);
-            }
-            eval_compute_streaming(
-                compute,
-                es,
-                st,
-                session_id,
-                entity_type,
-                cgs,
-                std::sync::Arc::clone(hot_snapshot),
-            )
-            .await
-        }
-    }
-}
-
-pub(crate) async fn eval_compute_streaming(
-    compute: &ComputeTemplate,
-    es: &ExecuteSession,
-    st: &PlasmHostState,
-    session_id: &str,
-    entity_type: &str,
-    cgs: &CGS,
-    hot_snapshot: std::sync::Arc<[plasm_runtime::CachedEntity]>,
-) -> Result<Vec<serde_json::Value>, String> {
-    let mut out = Vec::new();
-    let limit = match &compute.op {
-        ComputeOp::Limit { count } => Some(*count),
-        _ => None,
+    let cap = if matches!(&compute.op, ComputeOp::Render { .. }) {
+        Some(crate::plasm_plan::PLAN_RENDER_MAX_ROWS)
+    } else {
+        None
     };
-    crate::graph_rehydrate::GraphSurfaceRehydrator::new(es, st, session_id, cgs)
-        .stream_entity_rows(hot_snapshot, entity_type, |row| {
-            match &compute.op {
-                ComputeOp::Filter { predicates } => {
-                    if predicates.iter().all(|p| predicate_matches(row, p)) {
-                        out.push(row.clone());
-                    }
-                }
-                ComputeOp::Limit { .. } => out.push(row.clone()),
-                ComputeOp::Project { fields } => {
-                    let mut obj = serde_json::Map::new();
-                    for (name, path) in fields {
-                        obj.insert(
-                            name.as_str().to_string(),
-                            value_at_path(row, path)
-                                .cloned()
-                                .unwrap_or(serde_json::Value::Null),
-                        );
-                    }
-                    out.push(serde_json::Value::Object(obj));
-                }
-                _ => {}
-            }
-            limit.is_some_and(|cap| out.len() >= cap)
-        })
+    let rows = crate::graph_rehydrate::GraphSurfaceRehydrator::new(es, st, session_id, cgs)
+        .resolve_row_source_rows(row_source, cap)
         .await?;
-    if let ComputeOp::Limit { count } = &compute.op {
-        out.truncate(*count);
-    }
-    Ok(out)
+    eval_compute_from_rows(compute, &rows, cross_binding_rows)
 }
 
 pub(crate) fn eval_compute_from_rows(
@@ -113,193 +34,26 @@ pub(crate) fn eval_compute_from_rows(
     rows: &[serde_json::Value],
     cross_binding_rows: &BTreeMap<String, Vec<serde_json::Value>>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    match &compute.op {
-        ComputeOp::Project { fields } => rows
-            .iter()
-            .map(|row| {
-                let mut out = serde_json::Map::new();
-                for (name, path) in fields {
-                    out.insert(
-                        name.as_str().to_string(),
-                        value_at_path(row, path)
-                            .cloned()
-                            .unwrap_or(serde_json::Value::Null),
-                    );
-                }
-                Ok(serde_json::Value::Object(out))
-            })
-            .collect(),
-        ComputeOp::Filter { predicates } => Ok(rows
-            .iter()
-            .filter(|row| predicates.iter().all(|p| predicate_matches(row, p)))
-            .cloned()
-            .collect()),
-        ComputeOp::GroupBy { keys, aggregates } => group_rows(rows, keys, aggregates),
-        ComputeOp::Aggregate { aggregates } => aggregate_rows(rows, aggregates),
-        ComputeOp::Sort { key, descending } => {
-            let mut sorted = rows.to_vec();
-            sorted
-                .sort_by(|a, b| cmp_json_sort_values(value_at_path(a, key), value_at_path(b, key)));
-            if *descending {
-                sorted.reverse();
-            }
-            Ok(sorted)
-        }
-        ComputeOp::Limit { count } => Ok(rows.iter().take(*count).cloned().collect()),
-        ComputeOp::DedupeBy { keys } => dedupe_rows(rows, keys),
-        ComputeOp::Render {
+    match eval_compute_ops(std::slice::from_ref(&compute.op), rows)? {
+        ComputeEvalOutcome::Rows(out) => Ok(out),
+        ComputeEvalOutcome::Render {
+            rows,
             columns,
-            template,
             column_aliases,
+            template,
+            collection_alias,
             render_bindings,
         } => render_compute(&RenderComputeInput {
-            primary_rows: rows,
-            columns: &RenderColumns::from_op_parts(columns.clone(), column_aliases.clone()),
-            template,
-            collection_alias: compute.collection_alias.as_ref(),
-            render_bindings,
+            primary_rows: &rows,
+            columns: &RenderColumns::from_op_parts(columns, column_aliases),
+            template: &template,
+            collection_alias: collection_alias
+                .as_ref()
+                .or(compute.collection_alias.as_ref()),
+            render_bindings: &render_bindings,
             binding_rows: cross_binding_rows,
         }),
     }
-}
-pub(crate) fn dedupe_rows(
-    rows: &[serde_json::Value],
-    keys: &[FieldPath],
-) -> Result<Vec<serde_json::Value>, String> {
-    use std::collections::HashSet;
-    let mut seen = HashSet::new();
-    let mut out = Vec::new();
-    for row in rows {
-        let composite = if keys.is_empty() {
-            serde_json::to_string(row).unwrap_or_default()
-        } else {
-            let parts: Vec<String> = keys
-                .iter()
-                .map(|k| {
-                    value_at_path(row, k)
-                        .map(json_scalar_display)
-                        .unwrap_or_default()
-                })
-                .collect();
-            serde_json::to_string(&parts).unwrap_or_default()
-        };
-        if seen.insert(composite) {
-            out.push(row.clone());
-        }
-    }
-    Ok(out)
-}
-
-pub(crate) fn group_rows(
-    rows: &[serde_json::Value],
-    keys: &[FieldPath],
-    aggregates: &[crate::plasm_plan::AggregateSpec],
-) -> Result<Vec<serde_json::Value>, String> {
-    if keys.is_empty() {
-        return Err("group_by requires at least one key".into());
-    }
-    let mut groups: BTreeMap<String, Vec<&serde_json::Value>> = BTreeMap::new();
-    for row in rows {
-        let parts: Vec<String> = keys
-            .iter()
-            .map(|k| {
-                value_at_path(row, k)
-                    .map(json_scalar_display)
-                    .unwrap_or_default()
-            })
-            .collect();
-        let composite = serde_json::to_string(&parts).unwrap_or_default();
-        groups.entry(composite).or_default().push(row);
-    }
-    let mut out = Vec::new();
-    for (composite, group_rows) in groups {
-        let parts: Vec<String> = serde_json::from_str(&composite).unwrap_or_default();
-        let mut obj = serde_json::Map::new();
-        for (key_path, part) in keys.iter().zip(parts.iter()) {
-            obj.insert(key_path.dotted(), serde_json::Value::String(part.clone()));
-        }
-        append_aggregates(&mut obj, &group_rows, aggregates)?;
-        out.push(serde_json::Value::Object(obj));
-    }
-    Ok(out)
-}
-
-pub(crate) fn aggregate_rows(
-    rows: &[serde_json::Value],
-    aggregates: &[crate::plasm_plan::AggregateSpec],
-) -> Result<Vec<serde_json::Value>, String> {
-    let refs = rows.iter().collect::<Vec<_>>();
-    let mut obj = serde_json::Map::new();
-    append_aggregates(&mut obj, &refs, aggregates)?;
-    Ok(vec![serde_json::Value::Object(obj)])
-}
-
-pub(crate) fn append_aggregates(
-    obj: &mut serde_json::Map<String, serde_json::Value>,
-    rows: &[&serde_json::Value],
-    aggregates: &[crate::plasm_plan::AggregateSpec],
-) -> Result<(), String> {
-    for agg in aggregates {
-        let value = match agg.function {
-            AggregateFunction::Count => serde_json::json!(rows.len()),
-            AggregateFunction::Sum => {
-                serde_json::json!(aggregate_numbers(rows, agg.field.as_ref())
-                    .iter()
-                    .sum::<f64>())
-            }
-            AggregateFunction::Avg => {
-                let nums = aggregate_numbers(rows, agg.field.as_ref());
-                serde_json::json!(if nums.is_empty() {
-                    0.0
-                } else {
-                    nums.iter().sum::<f64>() / nums.len() as f64
-                })
-            }
-            AggregateFunction::Min => aggregate_numbers(rows, agg.field.as_ref())
-                .into_iter()
-                .reduce(f64::min)
-                .map(|n| serde_json::json!(n))
-                .unwrap_or(serde_json::Value::Null),
-            AggregateFunction::Max => aggregate_numbers(rows, agg.field.as_ref())
-                .into_iter()
-                .reduce(f64::max)
-                .map(|n| serde_json::json!(n))
-                .unwrap_or(serde_json::Value::Null),
-            AggregateFunction::First => rows
-                .first()
-                .and_then(|row| {
-                    agg.field
-                        .as_ref()
-                        .and_then(|f| value_at_path(row, f))
-                        .cloned()
-                })
-                .unwrap_or(serde_json::Value::Null),
-            AggregateFunction::Last => rows
-                .last()
-                .and_then(|row| {
-                    agg.field
-                        .as_ref()
-                        .and_then(|f| value_at_path(row, f))
-                        .cloned()
-                })
-                .unwrap_or(serde_json::Value::Null),
-        };
-        obj.insert(agg.name.as_str().to_string(), value);
-    }
-    Ok(())
-}
-
-pub(crate) fn aggregate_numbers(
-    rows: &[&serde_json::Value],
-    field: Option<&FieldPath>,
-) -> Vec<f64> {
-    rows.iter()
-        .filter_map(|row| {
-            field
-                .and_then(|f| value_at_path(row, f))
-                .and_then(json_number)
-        })
-        .collect()
 }
 
 pub(crate) struct RenderComputeInput<'a> {
@@ -357,7 +111,7 @@ pub(crate) fn render_compute(
         .get_template("plan_render")
         .map_err(|e| format!("Plan.render template load error: {e}"))?;
     let alias_name = input.collection_alias.map(|a| a.as_str());
-    let rows_val = minijinja::Value::from_serialize(&projected);
+    let rows_val = template_json_value(&serde_json::Value::Array(projected));
     let mut ctx: BTreeMap<String, minijinja::Value> =
         BTreeMap::from([("rows".to_string(), rows_val)]);
     for label in effective_render_binding_labels(input.render_bindings, input.collection_alias) {
@@ -394,6 +148,23 @@ pub(crate) fn render_compute(
 /// convenience `{{ items.title }}` still resolves. This resolves the prior collapse where a 1-row
 /// binding bound as a scalar object and `{% for r in items %}` iterated an object (undefined value).
 #[derive(Debug)]
+struct TemplateNull;
+
+impl Object for TemplateNull {
+    fn repr(self: &Arc<Self>) -> ObjectRepr {
+        ObjectRepr::Plain
+    }
+
+    fn is_true(self: &Arc<Self>) -> bool {
+        false
+    }
+
+    fn render(self: &Arc<Self>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("none")
+    }
+}
+
+#[derive(Debug)]
 struct RenderBindingValue {
     rows: Vec<minijinja::Value>,
 }
@@ -404,7 +175,6 @@ impl Object for RenderBindingValue {
     }
 
     fn get_value(self: &Arc<Self>, key: &minijinja::Value) -> Option<minijinja::Value> {
-        // Attribute access (`items.title`) delegates to the first row.
         if let Some(name) = key.as_str() {
             return self
                 .rows
@@ -412,7 +182,6 @@ impl Object for RenderBindingValue {
                 .and_then(|row| row.get_attr(name).ok())
                 .filter(|value| !value.is_undefined());
         }
-        // Sequence index access (`items[0]`) and `{% for … %}` iteration.
         usize::try_from(key.clone())
             .ok()
             .and_then(|idx| self.rows.get(idx).cloned())
@@ -424,8 +193,39 @@ impl Object for RenderBindingValue {
 }
 
 fn template_binding_value(rows: &[serde_json::Value]) -> minijinja::Value {
-    let rows: Vec<minijinja::Value> = rows.iter().map(minijinja::Value::from_serialize).collect();
+    let rows: Vec<minijinja::Value> = rows.iter().map(template_json_value).collect();
     minijinja::Value::from_object(RenderBindingValue { rows })
+}
+
+fn template_json_value(value: &serde_json::Value) -> minijinja::Value {
+    match value {
+        serde_json::Value::Null => minijinja::Value::from_object(TemplateNull),
+        serde_json::Value::Bool(value) => minijinja::Value::from(*value),
+        serde_json::Value::Number(value) => {
+            if let Some(value) = value.as_i64() {
+                minijinja::Value::from(value)
+            } else if let Some(value) = value.as_u64() {
+                minijinja::Value::from(value)
+            } else if let Some(value) = value.as_f64() {
+                minijinja::Value::from(value)
+            } else {
+                minijinja::Value::from(value.to_string())
+            }
+        }
+        serde_json::Value::String(value) => minijinja::Value::from(value.as_str()),
+        serde_json::Value::Array(values) => minijinja::Value::from(
+            values
+                .iter()
+                .map(template_json_value)
+                .collect::<Vec<minijinja::Value>>(),
+        ),
+        serde_json::Value::Object(values) => minijinja::Value::from(
+            values
+                .iter()
+                .map(|(key, value)| (key.clone(), template_json_value(value)))
+                .collect::<BTreeMap<String, minijinja::Value>>(),
+        ),
+    }
 }
 
 pub(crate) fn binding_rows_for_render(
@@ -458,10 +258,6 @@ pub(crate) fn binding_rows_for_render(
     Ok(out)
 }
 
-pub(crate) fn json_number(v: &serde_json::Value) -> Option<f64> {
-    v.as_f64().or_else(|| v.as_i64().map(|n| n as f64))
-}
-
 pub(crate) fn json_scalar_display(v: &serde_json::Value) -> String {
     match v {
         serde_json::Value::String(s) => s.clone(),
@@ -484,37 +280,6 @@ pub(crate) fn json_plasm_literal_display(v: &serde_json::Value) -> String {
     }
 }
 
-pub(crate) fn sort_display_key(v: Option<&serde_json::Value>) -> String {
-    v.map(json_scalar_display).unwrap_or_default()
-}
-
-/// Compare two JSON cell values for deterministic `.sort(...)` ordering.
-///
-/// When both values are numeric (JSON numbers or strings that parse as integers/floats), ordering is
-/// numeric so multi-digit values sort correctly (`87` before `300`). Otherwise ordering follows the
-/// legacy string collation used by [`sort_display_key`] (including missing/`null` → empty string).
-pub(crate) fn cmp_json_sort_values(
-    a: Option<&serde_json::Value>,
-    b: Option<&serde_json::Value>,
-) -> std::cmp::Ordering {
-    match (a, b) {
-        (Some(va), Some(vb)) => {
-            if let (Some(na), Some(nb)) = (json_number(va), json_number(vb)) {
-                return na.total_cmp(&nb);
-            }
-            if let (Some(sa), Some(sb)) = (va.as_str(), vb.as_str()) {
-                if let (Ok(ia), Ok(ib)) = (sa.parse::<i64>(), sb.parse::<i64>()) {
-                    return ia.cmp(&ib);
-                }
-                if let (Ok(fa), Ok(fb)) = (sa.parse::<f64>(), sb.parse::<f64>()) {
-                    return fa.total_cmp(&fb);
-                }
-            }
-            sort_display_key(Some(va)).cmp(&sort_display_key(Some(vb)))
-        }
-        _ => sort_display_key(a).cmp(&sort_display_key(b)),
-    }
-}
 pub(crate) fn compute_fingerprint(node: &ValidatedPlanNode, rows: &[serde_json::Value]) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();

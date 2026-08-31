@@ -1,7 +1,6 @@
 //! Row JSON helpers.
 
 use super::*;
-use crate::plasm_plan::FieldPath;
 
 pub(crate) fn cached_entity_row_json(entity: &CachedEntity, cgs: &CGS) -> serde_json::Value {
     entity_to_row_json(entity, Some(cgs))
@@ -16,13 +15,6 @@ pub(crate) fn value_at_segments<'a>(
         cur = cur.get(segment.as_ref())?;
     }
     Some(cur)
-}
-
-pub(crate) fn value_at_field_path<'a>(
-    row: &'a serde_json::Value,
-    path: &FieldPath,
-) -> Option<&'a serde_json::Value> {
-    value_at_segments(row, path.segments())
 }
 
 pub(crate) fn value_at_dotted<'a>(

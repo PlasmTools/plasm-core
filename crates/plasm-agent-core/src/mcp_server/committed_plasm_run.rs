@@ -215,6 +215,10 @@ fn prepare_live_dry(
 }
 
 pub async fn execute_mcp_live_run(run: ExecuteMcpLiveRun) -> Result<PlasmPlanRunResult, String> {
+    execute_mcp_live_run_inner(run).await
+}
+
+async fn execute_mcp_live_run_inner(run: ExecuteMcpLiveRun) -> Result<PlasmPlanRunResult, String> {
     if !run.wait_live {
         return Err("plasm_run requires live execute".to_string());
     }

@@ -59,7 +59,7 @@ Each entry in `comp.steps` is a tagged serde object (`kind` discriminant). Wire 
 |--------|------|------------|
 | `invoke` | Read / action / view surface | `plan_kind`, `qualified_entity`, `ir` **xor** `ir_template`, `projection`, `predicates`, `page_size`, `approval` |
 | `pure` | Literal / artifact data | `data` (`PlasmDataValue`) |
-| `map` | Row compute (filter, sort, group, …) | `compute` (`ComputeTemplate`) |
+| `map` | Row compute (filter, sort, group, derived columns, …) | `compute` (`ComputeTemplate`) |
 | `derive` | Per-row map over a source | `derive` (`DeriveTemplate`: `source`, `item_binding`, `inputs`, `value`) |
 | `flat_map_relation` | Relation fanout (`>>=`) | `relation` (`PlanRelationTraversal`: `source`, `relation`, `target`, `ir`, `binding_proofs`, `materialize`) |
 | `flat_map_effect` | `for_each` side effects | `source`, `item_binding`, `effect_template`, `projection`, `predicates`, `approval` |
@@ -184,7 +184,7 @@ Implementation: unified entity constructor head resolution in [`entity_ref_parse
 | Fetch filter | `e#{field=…}` | wire is the query param/filter for that entity+capability |
 | Search filter | `e#~"…"{field=…}` | wire is the **Search**-capability param (homograph-safe vs Create/Update params) |
 | Relation hop | `receiver.r#` (or wire) | `r#` resolves to a declared relation wire; a filter wire after `.` yields `RelationSegmentWrongRole` except LHS-binding coercion (see [Binding RHS shapes](#binding-rhs-shapes-label--)) |
-| Projection / postfix | `[field,…]`, `.sort(field)`, `.group_by(field)`, … | wire names resolve to `rows:` field symbols under the row entity |
+| Projection / postfix | `[field,…]`, `.sort(field)`, `.group_by(field)`, `.with{col: expr}`, `.dedupe(…)`, `.distinct(…)`, … | wire names resolve to `rows:` field symbols under the row entity |
 
 ---
 
@@ -218,7 +218,7 @@ Cross-binding references (`${stats.content}`, `body=report.content`) are also su
 
 ## Invariants
 
-1. **Transforms are core postfix syntax** — `.limit(n)`, `.sort(field, desc)` / `.sort(field,dir)` (whitespace direction sugar accepted), `.filter{…}` / `.filter(…)`, `.aggregate(…)`, `.group_by(field).aggregate(specs)` (primary), `.group_by(field, …)` (comma sugar), `.singleton()`, `.page_size(n)`, bracket projections `[field,…]`, and row-to-text template blocks (`<<TAG … TAG`) are part of the same language as `e1{…}` / `e2(…)`.
+1. **Transforms are core postfix syntax** — `.limit(n)`, `.sort(field, desc)` / `.sort(field,dir)` (whitespace direction sugar accepted), `.filter{…}` / `.filter(…)`, `.aggregate(…)`, `.group_by(field).aggregate(specs)` (primary), `.group_by(field, …)` (comma sugar), `.with{…}` / `.with(…)` (derived columns), `.dedupe(…)` / `.distinct(…)`, `.singleton()`, `.page_size(n)`, bracket projections `[field,…]`, and row-to-text template blocks (`<<TAG … TAG`) are part of the same language as `e1{…}` / `e2(…)`.
 2. **Wire field names are canonical** — in MCP/symbolic sessions, postfix field tokens (`.sort`, `.filter`, `.group_by`, `.dedupe`, `.distinct`, `[field,…]`) use **catalog wire names** copied from the teaching TSV left column under the row entity. Diagnostics must never imply opaque `p#` tokens are accepted (legacy `p#` is rejected at parse).
 3. **Binding is optional** — `expr.limit(20)` is valid without a prior `commits = expr` line when `expr` is a complete surface expression or an in-scope label.
 4. **Artifact-level semantics today** — transforms are applied to materialized row JSON in the plan executor unless an optimizer later pushes work to HTTP (the optimizer must never change what the surface language means).
@@ -231,6 +231,7 @@ Cross-binding references (`${stats.content}`, `body=report.content`) are also su
 - **No `rows{…}` on bindings:** use `label.filter{…}` or `label.filter(…)` — not `rows{pred}`.
 - **Bare `.filter` in paths:** without `{` or `(` after `.filter`, the segment is a **relation** name, not row compute.
 - **`group_by`:** primary `group_by(p_key).aggregate(n=count)` (keys-only `.group_by` then `.aggregate`); bare `group_by(p_key)` is sugar for `count=count`; comma form `group_by(k1, k2, n=count)` remains sugar for fused keys+specs.
+- **`.with`:** `.with{col: expr}` adds derived columns per row; expression language is documented in [plasm-row-compute.md](plasm-row-compute.md#derived-columns-with). `.with{` / `.with(` is row compute — not a relation hop. Path segments like `.join(…)` without `{`/`(` after a known postfix verb are not row compute.
 - **`=>` on bindings (two uses only):** `source => { k: _.field }` (derive map) or `source => e1(…).update(…)` (for_each). There is no `.derive(…)` surface. Row-to-text uses postfix `rows <<TAG`, not `=>`.
 - **Relation fanout:** `labels = issues.labels` **or** `labels = issues.r#` (opaque relation symbol from teaching TSV) — never `issues => e2.r#` or `source => binding.r#` (compile rejects relation hops on `=>`). A **filter wire after `.`** on a receiver is not a relation hop (use `.r#` or the relation wire). The RHS of `=>` is not `plasm_expr`; entity calls there stringify or fail compile.
 - **Homograph wires:** query filters and relation hops may share a wire name (e.g. `labels`). In-grammar resolution at the nav position disambiguates: `receiver.r#` / `receiver.labels` is a relation hop; the same wire in `{…}` is a filter/param. Teaching exemplars prefer `.r#` or wire names in relation position.
@@ -247,7 +248,7 @@ A binding `label = E` names the plan node produced by `E`. **`label` and `E` are
 
 - `label.r#` ≡ `E.r#` (relation hop)
 - **`label.m#(…)` / `label.<method>(…)` ≡ `E.m#(…)`** (method invoke on the bound row)
-- Postfix on row lists (`label.filter{…}`, `[field,…]`) when row-preserving
+- Postfix on row lists (`label.filter{…}`, `label.with{…}`, `[field,…]`) when row-preserving
 
 Side-effect invokes on **plural** bindings are rejected — use `rows => e#.m#(param=_.…)` or `.limit(1)` / `.singleton()` first. **`.content`** applies only to row-to-text **Render** bindings, not plain string/data bindings.
 
@@ -256,6 +257,7 @@ Binding forms:
 | Form | Example | Lowers to |
 |------|---------|-----------|
 | Surface + postfix | `issues = e1{…}.page_size(100)` | Query / get + compute |
+| Derived columns | `stale = issues.with{age_days: (now - updated_at)}` or chained `issues.with{…}.filter{…}` | Row compute [`ComputeOp::With`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/plasm_monad/payload/with_expr.rs) — preserves RowIdentity; see [row compute — `.with`](plasm-row-compute.md#derived-columns-with) for continuation rules |
 | Relation hop | `labels = issues.labels` or `labels = issues.r#` | `RelationTraversal` (per-row fanout when parent is plural) |
 | Method invoke | `out = repo.m#(…)` when `repo = e#(…)` | Same invoke IR as `e#(…).m#(…)` |
 | Derive map | `cards = rows => { t: _.title }` | `Derive` (`value_or_template` only) |
@@ -321,7 +323,8 @@ Surface scanning lives in **`plasm-oss/crates/plasm-core/src/expr_parser/`**:
 | [`program_surface.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/program_surface.rs) | Physical-line merging across heredocs (`collect_program_statement_lines`), `;;` stripping, top-level comma/`=>` splitting (`split_top_level`, `split_token_top_level`), binding `=` splitting (`split_assignment_at_top_level` / `split_assignment_for_binding`), program label validation. |
 | [`predicate_surface.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/predicate_surface.rs) | Query `{…}` predicate list: same comma splitting as `split_top_level`, plus quote/heredoc-aware comparison-operator scan for [`expr_correction`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_correction/mod.rs) (no duplicate lexer). |
 | [`program.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/program.rs) | Optional shape AST: bindings + postfix-peeled primaries (`parse_program_shape`). Does not attach CGS typing. |
-| [`postfix.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/postfix.rs) | Postfix peel (`.limit`, `.sort`, `[projection]`, row-to-text `<<TAG`). |
+| [`postfix.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/postfix.rs) | Postfix peel (`.limit`, `.sort`, `.with`, `.dedupe`, `[projection]`, row-to-text `<<TAG`). |
+| [`row_plan/with_parse.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/row_plan/with_parse.rs) | `.with{col: expr}` body parse (`WithExpr` AST — see [plasm-row-compute.md](plasm-row-compute.md#derived-columns-with)). |
 | [`mod.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/mod.rs) (path parser) | CGS-aware **path expression** → [`Expr`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr.rs) + optional trailing `[projection]`. |
 | [`entity_ref_parse.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/entity_ref_parse.rs) | Session `e#` + wire entity constructor head resolution (referential transparency across value positions). |
 | [`value.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/value.rs) | Scalar/collection literals, strict vs lenient RHS, structured heredocs, `PlasmInputRef` holes when program context is enabled. |
@@ -401,7 +404,14 @@ POSTFIX_OP    = "singleton"
               | "filter" , ( "{" , PRED_LIST , "}" | "(" , PRED_LIST , ")" )
               | "aggregate" , "(" , AGG_ARGS , ")"
               | "group_by" , "(" , GROUP_ARGS , ")"
+              | "with" , ( "{" , WITH_BODY , "}" | "(" , WITH_BODY , ")" )
+              | "dedupe" , [ "(" , FIELD_LIST , ")" ]
+              | "distinct" , [ "(" , FIELD_LIST , ")" ]
               | "[" , FIELD_LIST , "]" ;
+WITH_BODY     = WITH_COLUMN , { "," , WITH_COLUMN } ;
+WITH_COLUMN   = IDENT , ":" , WITH_EXPR ;
+WITH_EXPR     = (* v1: field paths, literals, `now`, `len(field)`, `when(cmp, then, else)`, `+ - * /` — see plasm-row-compute.md *)
+              ;
 FIELD_LIST    = IDENT , { "," , IDENT } ;
 ```
 
@@ -564,7 +574,7 @@ Plan relation nodes may carry serialized `binding_proofs` (param ← parent fiel
 
 **Row identity (`RowIdentity`)** — every row-producing plan node carries a canonical identity handle (qualified entity + [`Ref`] + ambient scope slots) in materialization, not only JSON payload. Projection and `.limit(1)` preserve identity when the suffix pipeline folds [`RowSuffix`] segments; [`PlasmInputRef::NodeInput`] holes resolve via identity, not stripped JSON paths.
 
-**Suffix pipeline** — after the path head (Get/Query/label), dot/bracket segments classify as [`RowSuffix`] (relation, limit, project, sort, …) and lower through one fold (`lower_suffix_stream`), including interleaved forms such as `repo.commits.limit(1).author`.
+**Suffix pipeline** — after the path head (Get/Query/label), dot/bracket segments classify as [`RowSuffix`] (relation, limit, project, filter, with, sort, dedupe, distinct, group_by, …) and lower through one fold (`lower_suffix_stream`), including interleaved forms such as `repo.commits.limit(1).author` or `issues.with{age_days: (now - updated_at)}.filter{age_days>14}`.
 
 **Dry-live parity (invariants 6–10)**
 

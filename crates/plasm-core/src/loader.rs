@@ -436,6 +436,8 @@ pub fn load_schema_dir_unvalidated(dir: &Path) -> Result<CGS, String> {
 
 /// Run post-assemble normalization, validation, and string-semantics checks.
 pub fn finalize_cgs_load(cgs: &mut CGS) -> Result<(), String> {
+    let span = crate::spans::schema_validate(cgs.entities.len(), cgs.capabilities.len());
+    let _guard = span.enter();
     let legacy_via_param = std::mem::take(&mut cgs.pending_legacy_via_param_patches);
     cgs.normalize_relation_materialization(&legacy_via_param);
     debug!(
@@ -452,7 +454,7 @@ pub fn finalize_cgs_load(cgs: &mut CGS) -> Result<(), String> {
     let sem_violations = cgs.string_semantics_violations();
     if !sem_violations.is_empty() {
         for msg in &sem_violations {
-            error!(target: "plasm_core::cgs", "{}", msg);
+            error!(target: "plasm_core::cgs", violation = %msg, "string_semantics violation");
         }
         return Err(format!(
             "CGS load requires string_semantics on every string field and string capability parameter ({} issue(s); first: {})",
@@ -1048,7 +1050,7 @@ fn normalize_blob_field_type(
 /// without a `data_class` (plan-flow cannot label that data).
 fn warn_unlabeled_output_data(cgs: &CGS) {
     for msg in cgs.unlabeled_output_data_warnings() {
-        warn!(target: "plasm_core::loader", "{msg}");
+        warn!(target: "plasm_core::loader", violation = %msg, "unlabeled output data");
     }
 }
 

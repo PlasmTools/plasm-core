@@ -866,3 +866,65 @@ fn negotiate_accept_variants() {
     );
     assert!(negotiate_accept(Some("application/soap+xml")).is_err());
 }
+
+#[test]
+fn http_request_parents_execute_run_post_on_handler() {
+    use crate::execute_path_ids::{ExecuteSessionId, PromptHashHex};
+    use crate::http_execute::response::ExecuteRunQuery;
+    use axum::body::Bytes;
+    use axum::http::HeaderMap;
+    use plasm_otel::span_capture::{find_span, is_child_of, with_captured_spans};
+    use plasm_otel::tower_http_trace_parent_span;
+    use tracing::Instrument;
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/execute/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+        .body(())
+        .unwrap();
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let ((), spans) = with_captured_spans(|| {
+        let http = tower_http_trace_parent_span(&req);
+        // Create `execute_run_post` only after `http.request` is entered — tracing records
+        // parent at span construction time (mirrors TraceLayer then handler `.instrument`).
+        rt.block_on(
+            async {
+                async {
+                    let st = test_state_with_registry();
+                    let prompt_hash: PromptHashHex =
+                        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                            .parse()
+                            .expect("prompt hash");
+                    let session_id: ExecuteSessionId = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                        .parse()
+                        .expect("session id");
+                    let _ = super::handlers::post_run_execute_session_inner(
+                        st,
+                        None,
+                        prompt_hash,
+                        session_id,
+                        ExecuteRunQuery::default(),
+                        HeaderMap::new(),
+                        Bytes::new(),
+                    )
+                    .await;
+                }
+                .instrument(crate::spans::execute_run_post())
+                .await;
+            }
+            .instrument(http),
+        );
+    });
+
+    let parent = find_span(&spans, "plasm_agent.http.request").expect("http.request");
+    let child = find_span(&spans, "plasm_agent.execute.run_post").expect("execute.run_post");
+    assert!(
+        is_child_of(child, parent),
+        "execute.run_post must be child of http.request; spans={:?}",
+        spans.iter().map(|s| s.name.as_ref()).collect::<Vec<_>>()
+    );
+}
