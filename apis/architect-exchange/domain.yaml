@@ -277,7 +277,7 @@ entities:
     id_from:
     - account_id
     - symbol
-    description: Signed derivative exposure for one instrument in an account.
+    description: Signed derivative exposure for one instrument in an account. Ad-hoc ranking and money sums of fetched positions use program postfix, not extra catalog entities.
     discovery:
       names:
       - position
@@ -940,7 +940,7 @@ entities:
 
   Fill:
     id_field: trade_id
-    description: Private execution against an account, including fees and side.
+    description: Private execution against an account, including fees and side. Ad-hoc rollups (fees by symbol, notional) use program postfix on fetched rows, not extra catalog entities.
     discovery:
       names:
       - fill

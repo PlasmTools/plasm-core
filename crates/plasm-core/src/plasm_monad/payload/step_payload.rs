@@ -168,6 +168,7 @@ fn compute_op_label(op: &super::compute::ComputeOp) -> String {
         ComputeOp::Sort { .. } => "sort".into(),
         ComputeOp::Limit { count } => format!("limit {count}"),
         ComputeOp::DedupeBy { .. } => "dedupe_by".into(),
+        ComputeOp::With { .. } => "with".into(),
         ComputeOp::Render { .. } => "render".into(),
     }
 }

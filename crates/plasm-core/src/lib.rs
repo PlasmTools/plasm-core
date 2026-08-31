@@ -136,6 +136,7 @@ pub mod relation_validation_expr;
 pub mod resolved_identity;
 pub mod result_gloss;
 pub mod row_composition;
+pub mod row_plan;
 pub mod row_predicate;
 pub mod schema;
 pub mod schema_overlay;
@@ -236,15 +237,16 @@ pub use plan_commit::{PlanCommitId, PlanCommitRef};
 pub use plasm_monad::{
     comp_equivalent, comp_semantic_eq, empty_comp, invoke_step_payload, map_step_payload,
     plasm_bind_step, plasm_map_step, plasm_parallel_return, plasm_pure_step, AggregateFunction,
-    AggregateSpec, BindingName, CompEquivDiff, CompEquivResult, ComputeOp, ComputeTemplate,
-    DeriveKind, DerivePayload, DeriveTemplate, EffectBarrier, EffectClass, EffectTemplate,
-    FieldPath, FlatMapEffectPayload, FlatMapRelationPayload, InputCardinality, InvokePayload,
-    MapPayload, OutputName, PlanDataInput, PlanExprIr, PlanExprTemplate, PlanInputBinding,
-    PlanPredicate, PlanPredicateOp, PlanQualifiedEntityKey, PlanRelationTraversal, PlanResultUse,
-    PlasmBindGraph, PlasmComp, PlasmCompArtifact, PlasmDataValue, PlasmHoleUse, PlasmReturn,
-    PlasmStep, PlasmStepKind, PlasmStepPayload, PurePayload, RelationCardinality,
-    RelationSourceCardinality, ResultShape, RewritePolicy, StepId, SurfaceKind,
-    SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind, PLASM_COMP_WIRE_VERSION,
+    AggregateSpec, ArithOp, BindingName, CompEquivDiff, CompEquivResult, ComputeOp,
+    ComputeTemplate, DeriveKind, DerivePayload, DeriveTemplate, EffectBarrier, EffectClass,
+    EffectTemplate, FieldPath, FlatMapEffectPayload, FlatMapRelationPayload, InputCardinality,
+    InvokePayload, MapPayload, OutputName, PlanDataInput, PlanExprIr, PlanExprTemplate,
+    PlanInputBinding, PlanPredicate, PlanPredicateOp, PlanQualifiedEntityKey,
+    PlanRelationTraversal, PlanResultUse, PlasmBindGraph, PlasmComp, PlasmCompArtifact,
+    PlasmDataValue, PlasmHoleUse, PlasmReturn, PlasmStep, PlasmStepKind, PlasmStepPayload,
+    PurePayload, RelationCardinality, RelationSourceCardinality, ResultShape, RewritePolicy,
+    StepId, SurfaceKind, SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind,
+    WithColumn, WithExpr, WithExprError, WithLiteral, PLASM_COMP_WIRE_VERSION,
 };
 pub use predicate::Predicate;
 pub use preflight::{
@@ -277,6 +279,13 @@ pub use row_composition::{
     parse_row_suffix_stream_tail, resolve_relation_target_id, row_identity_from_parts,
     row_identity_from_ref, IdEncoding, PreflightToken, ResolutionHint, RowIdentity, RowProvenance,
     RowState, RowSuffix,
+};
+pub use row_plan::{
+    fold_compute_ops, parse_with_body, CatalogFilter, CollectCardinality, CollectReason,
+    CollectRows, CollectedFrame, ColumnName, CompileRowPlan, EnginePlanId, FrameId, FrameShape,
+    IngestBatch, IngestRows, LogicalColumn, LogicalColumnType, PlanNode, PlasmFrameSchema,
+    ProjectSpec, RowComputeEngine, RowComputeError, RowFilter, RowPlan, ScanError, ScanSource,
+    TypedAggregate,
 };
 pub use row_predicate::{
     entity_def_for_row_predicate, parse_row_predicate_list, row_predicate_from_expr,

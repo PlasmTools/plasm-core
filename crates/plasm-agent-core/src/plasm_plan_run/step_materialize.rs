@@ -111,9 +111,9 @@ pub(crate) async fn materialize_executable_plan_step(
 /// Live materialization of a pure step through the shared [`PureStep::materialize`] kernel.
 ///
 /// `Compute` over a GraphBacked source is the one arm that cannot funnel its rows through the plain
-/// kernel: live execute fuses the op with I/O streaming (bounded-RAM early-stop over spilled graph
-/// pages). That fusion still evaluates the *same* `eval_compute_from_rows` op semantics — only row
-/// *acquisition* differs — so it stays a pure step, just materialized against the live row source.
+/// kernel: live execute first resolves the row source, then evaluates the shared
+/// `eval_compute_from_rows` semantics against those rows. The op remains pure; only row acquisition
+/// is host-backed.
 async fn live_materialize_pure(
     ctx: &PlanStepMaterializeCtx<'_>,
     pure: PureStep,

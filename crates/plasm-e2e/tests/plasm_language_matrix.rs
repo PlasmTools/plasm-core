@@ -10,7 +10,7 @@
 //!
 //! - Entity roots: bare query, search `~`, get `(id)`, brace predicates `{field=value}`, comparisons.
 //! - Postfix: `.limit`, `.sort(field[, dir])` including `asc`/`desc`, `.aggregate` (named + sugar),
-//!   `.group_by`, `.singleton()`, `.page_size`, bracket projection `[…]`.
+//!   `.group_by`, `.with{k: expr}`, `.singleton()`, `.page_size`, bracket projection `[…]`.
 //! - Programs: bindings, node-ref continuation, parallel final roots, `compile_plasm_expression`
 //!   (single-line surface) vs multi-line DAG programs.
 //! - Relations: `from_parent_get`, `query_scoped`, opaque `r#` nav (not `p#`), one-cardinality `r#`,
@@ -25,9 +25,8 @@
 //! OpenAPI `example` literals. **Live `run_markdown`** is fenced TSV for row-shaped HTTP results
 //! ([`mcp_format_execute_result_table_or_tsv`](../../plasm-agent-core/src/mcp_run_markdown.rs));
 //! operation display strings (`Query(…)`, `Get(…)`) are asserted on dry-run IR in [`assert_planning_ir`].
-//! Multi-digit **numeric** `.sort` ordering is covered in
-//! `plasm-agent-core` (`plan_sort_compute_orders_integer_scores_numerically`) because Hermit list
-//! payloads are not example-stable.
+//! Multi-digit **numeric** `.sort` ordering is covered in `plasm-runtime` row-compute tests because
+//! Hermit list payloads are not example-stable.
 //!
 //! **Planning:** dry-run [`DryPlasmPlanEvaluation::node_results`] `ir.expr` JSON is deserialized into
 //! typed [`plasm_core::Expr`]; compute stages deserialize into [`plasm_agent::plasm_plan::ComputeOp`].
@@ -97,6 +96,7 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "for_each_effect",
     "domain_symbol_e1",
     "postfix_group_by",
+    "postfix_with",
     "postfix_group_by_aggregate_chain",
     "postfix_row_filter",
     "postfix_group_by_sugar",
@@ -612,6 +612,14 @@ fn assert_planning_ir(
                 .any(|c| matches!(c.op, ComputeOp::Filter { .. }))
             {
                 return Err(format!("expected Filter compute, got {:?}", computes));
+            }
+        }
+        "lang_with_mul" | "lang_with_div" | "lang_with_concat" | "lang_with_when_len" => {
+            if !computes
+                .iter()
+                .any(|c| matches!(c.op, ComputeOp::With { .. }))
+            {
+                return Err(format!("expected With compute, got {:?}", computes));
             }
         }
         "lang_group_by" => {
@@ -1845,6 +1853,46 @@ newbranch, newfile"#,
         surface_line: false,
         federated: false,
         features: &["postfix_row_filter", "bindings_assignment"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "alice"],
+    },
+    MatrixRow {
+        id: "lang_with_mul",
+        program: "items = LangItem\nboosted = items.with{boost: score * 2}.limit(3)\nboosted[id,boost]",
+        surface_line: false,
+        federated: false,
+        features: &["postfix_with", "bindings_assignment", "postfix_limit"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "boost"],
+    },
+    MatrixRow {
+        id: "lang_with_div",
+        program: "items = LangItem\nhalved = items.with{half: score / 2}.limit(3)\nhalved[id,half]",
+        surface_line: false,
+        federated: false,
+        features: &["postfix_with", "bindings_assignment", "postfix_limit"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "half"],
+    },
+    MatrixRow {
+        id: "lang_with_concat",
+        program: r#"items = LangItem.filter{owner="alice"}
+tagged = items.with{tag: owner + owner}.limit(1)
+tagged[tag]"#,
+        surface_line: false,
+        federated: false,
+        features: &["postfix_with", "bindings_assignment", "postfix_limit", "postfix_row_filter"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "alicealice"],
+    },
+    MatrixRow {
+        id: "lang_with_when_len",
+        program: r#"items = LangItem.filter{owner="alice"}
+labeled = items.with{label: when(len(owner)>0, owner, title)}.limit(1)
+labeled[label]"#,
+        surface_line: false,
+        federated: false,
+        features: &["postfix_with", "bindings_assignment", "postfix_limit", "postfix_row_filter"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "alice"],
     },
