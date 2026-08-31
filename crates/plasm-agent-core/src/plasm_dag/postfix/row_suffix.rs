@@ -92,6 +92,7 @@ pub(in crate::plasm_dag) fn row_suffix_to_postfix(suffix: &RowSuffix) -> Option<
         RowSuffix::GroupBy { args } => Some(PlasmPostfixOp::GroupBy { args: args.clone() }),
         RowSuffix::Dedupe { keys } => Some(PlasmPostfixOp::Dedupe { keys: keys.clone() }),
         RowSuffix::Distinct { keys } => Some(PlasmPostfixOp::Distinct { keys: keys.clone() }),
+        RowSuffix::With { body } => Some(PlasmPostfixOp::With { body: body.clone() }),
         RowSuffix::Singleton => Some(PlasmPostfixOp::Singleton),
         RowSuffix::PageSize { n } => Some(PlasmPostfixOp::PageSize(*n as usize)),
         RowSuffix::Relation { .. } => None,

@@ -52,7 +52,7 @@ impl BlockingComputePool {
             .acquire()
             .await
             .map_err(|_| ComputePoolError::Closed)?;
-        let span = tracing::debug_span!("plasm.blocking_compute", label);
+        let span = crate::spans::blocking_compute(label);
         let out = tokio::task::spawn_blocking(move || {
             let _guard = span.enter();
             f()

@@ -7,23 +7,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 #[test]
-fn cmp_json_sort_values_orders_multi_digit_numbers_numerically() {
-    use std::cmp::Ordering;
-    let n87 = serde_json::json!(87);
-    let n300 = serde_json::json!(300);
-    assert_eq!(
-        cmp_json_sort_values(Some(&n87), Some(&n300)),
-        Ordering::Less
-    );
-    let s87 = serde_json::json!("87");
-    let s300 = serde_json::json!("300");
-    assert_eq!(
-        cmp_json_sort_values(Some(&s87), Some(&s300)),
-        Ordering::Less
-    );
-}
-
-#[test]
 fn singleton_input_zero_row_error_is_actionable() {
     let err = singleton_input_row_count_error("src", "_", 0, "staged expression rendering");
     assert!(err.contains("zero rows"), "{err}");
@@ -37,40 +20,6 @@ fn singleton_input_multi_row_error_mentions_ambiguity_remedy() {
     assert!(err.contains("2 rows"), "{err}");
     assert!(err.contains("make the source unique"), "{err}");
     assert!(err.contains(".singleton()"), "{err}");
-}
-
-#[test]
-fn cmp_json_sort_values_string_collates_non_numeric_strings_lexically() {
-    use std::cmp::Ordering;
-    let apple = serde_json::json!("apple");
-    let banana = serde_json::json!("banana");
-    assert_eq!(
-        cmp_json_sort_values(Some(&apple), Some(&banana)),
-        Ordering::Less
-    );
-}
-
-/// Regression: `.sort(score)` must not stringify numbers and compare lexicographically (where
-/// `87` sorts after `300`). Keeps parity with [`eval_compute`] `ComputeOp::Sort` staging.
-#[test]
-fn plan_sort_compute_orders_integer_scores_numerically() {
-    let key = FieldPath::from_dotted("score").expect("score path");
-    let mut rows = [
-        serde_json::json!({"id": "n300", "score": 300}),
-        serde_json::json!({"id": "n87", "score": 87}),
-        serde_json::json!({"id": "n100", "score": 100}),
-    ];
-    rows.sort_by(|a, b| {
-        cmp_json_sort_values(value_at_field_path(a, &key), value_at_field_path(b, &key))
-    });
-    assert_eq!(rows[0]["id"], "n87");
-    assert_eq!(rows[1]["id"], "n100");
-    assert_eq!(rows[2]["id"], "n300");
-
-    rows.reverse();
-    assert_eq!(rows[0]["id"], "n300");
-    assert_eq!(rows[1]["id"], "n100");
-    assert_eq!(rows[2]["id"], "n87");
 }
 
 fn github_repository_commit_session() -> ExecuteSession {

@@ -67,6 +67,7 @@ subtle = { workspace = true }
 # even when we only use `InMemoryStorage` at runtime (see auth_framework::storage::memory).
 auth-framework = { workspace = true }
 sqlx = { workspace = true, features = ["migrate", "chrono", "uuid"] }
+sqlx-tracing = { workspace = true }
 opentelemetry = { workspace = true }
 minijinja = { version = "2.19.0", default-features = false, features = ["builtins", "serde"] }
 futures = { workspace = true }
@@ -74,6 +75,7 @@ redis = { workspace = true }
 dashmap = { workspace = true }
 
 [dev-dependencies]
+plasm-otel = { path = "../plasm-otel", features = ["testing"] }
 dhat = "0.3"
 tempfile = { workspace = true }
 insta = { workspace = true, features = ["json"] }

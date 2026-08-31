@@ -25,6 +25,7 @@ use crate::server_state::{PlasmHostState, ToolModelHostError};
 use crate::tool_model::ToolModelQuery;
 use crate::tool_model_service::ToolModelServiceError;
 use crate::typed_discovery_host::run_typed_catalog_discovery;
+use tracing::Instrument;
 
 #[derive(Debug, Deserialize)]
 pub struct IncludeCgsQuery {
@@ -230,6 +231,15 @@ async fn post_discover_typed(
     Extension(st): Extension<PlasmHostState>,
     Json(query): Json<DiscoveryQuery>,
 ) -> Response {
+    post_discover_typed_inner(st, query)
+        .instrument(crate::spans::discover_query())
+        .await
+}
+
+pub(crate) async fn post_discover_typed_inner(
+    st: PlasmHostState,
+    query: DiscoveryQuery,
+) -> Response {
     tracing::debug!(
         utterance_len = query.utterance.len(),
         allowed = query.allowed_entry_ids.len(),
@@ -303,6 +313,12 @@ async fn post_discover(
     Extension(st): Extension<PlasmHostState>,
     Json(query): Json<CapabilityQuery>,
 ) -> Response {
+    post_discover_inner(st, query)
+        .instrument(crate::spans::discover_query())
+        .await
+}
+
+pub(crate) async fn post_discover_inner(st: PlasmHostState, query: CapabilityQuery) -> Response {
     tracing::debug!(
         tokens = query.tokens.len(),
         phrases = query.phrases.len(),

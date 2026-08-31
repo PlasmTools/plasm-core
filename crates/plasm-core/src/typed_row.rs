@@ -22,6 +22,8 @@ pub enum TypedFieldValue {
     Object(IndexMap<String, TypedFieldValue>),
     /// Normalized `entity_ref` payload when [`FieldType::EntityRef`] applies and the wire shape parses.
     EntityRef(EntityRefPayload),
+    /// Fowler money — must not collapse to [`TypedFieldValue::Json`].
+    Money(crate::money::MoneyValue),
     PlasmInputRef(PlasmInputRef),
     /// Arbitrary subtree (`FieldType::Json`, `Blob`, attachment blobs) stored verbatim.
     Json(Value),
@@ -39,6 +41,10 @@ impl TypedFieldValue {
     pub fn from_value_in_field(field_type: &FieldType, v: Value) -> Self {
         match field_type {
             FieldType::Json | FieldType::Blob => Self::Json(v),
+            FieldType::Money => match v {
+                Value::Money(m) => Self::Money(m),
+                other => Self::from(other),
+            },
             FieldType::EntityRef { .. } => match EntityRefPayload::try_from_value(&v) {
                 Ok(p) => Self::EntityRef(p),
                 Err(_) => Self::from(v),
@@ -61,6 +67,7 @@ impl TypedFieldValue {
                 Value::Object(m.iter().map(|(k, v)| (k.clone(), v.to_value())).collect())
             }
             TypedFieldValue::EntityRef(p) => p.to_value(),
+            TypedFieldValue::Money(m) => Value::Money(m.clone()),
             TypedFieldValue::PlasmInputRef(r) => Value::PlasmInputRef(r.clone()),
             TypedFieldValue::Json(v) => v.clone(),
         }
@@ -107,7 +114,7 @@ impl From<Value> for TypedFieldValue {
             Value::Float(f) => TypedFieldValue::Float(f),
             Value::String(s) | Value::PhraseIdent(s) => TypedFieldValue::String(s),
             Value::Array(a) => TypedFieldValue::Array(a.into_iter().map(Self::from).collect()),
-            Value::Money(_) => TypedFieldValue::Json(v),
+            Value::Money(m) => TypedFieldValue::Money(m),
             Value::Object(m) => {
                 TypedFieldValue::Object(m.into_iter().map(|(k, v)| (k, Self::from(v))).collect())
             }
@@ -189,5 +196,20 @@ mod tests {
             TypedFieldValue::Json(inner) => assert_eq!(inner, v),
             other => panic!("expected Json variant: {other:?}"),
         }
+    }
+
+    #[test]
+    fn money_does_not_dump_to_json() {
+        let m =
+            crate::money::MoneyValue::new(rust_decimal::Decimal::new(1250, 2), Some("USD".into()));
+        let v = Value::Money(m.clone());
+        let tf = TypedFieldValue::from(v);
+        match tf {
+            TypedFieldValue::Money(got) => assert_eq!(got, m),
+            other => panic!("expected Money variant: {other:?}"),
+        }
+        let tf2 = TypedFieldValue::from_value_in_field(&FieldType::Money, Value::Money(m.clone()));
+        assert!(matches!(tf2, TypedFieldValue::Money(_)));
+        assert_eq!(tf2.to_value(), Value::Money(m));
     }
 }

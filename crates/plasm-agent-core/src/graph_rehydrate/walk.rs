@@ -125,6 +125,7 @@ where
     })
 }
 
+#[cfg(test)]
 pub(crate) async fn stream_rows<F>(
     ctx: &GraphSurfaceWalkCtx<'_>,
     hot_snapshot: Arc<[CachedEntity]>,
@@ -180,7 +181,7 @@ pub(crate) async fn collect_entities(
     out.truncate(logical_count);
     crate::graph_cache_metrics::record_graph_rehydrate(
         "full",
-        out.len(),
+        stats.rows_yielded,
         stats.pages_read,
         started.elapsed(),
     );

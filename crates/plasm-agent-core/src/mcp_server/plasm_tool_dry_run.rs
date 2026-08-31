@@ -38,6 +38,16 @@ pub(crate) async fn execute_plasm_tool_dry_run(
     ctx: PlasmDryRunContext<'_>,
     program: &str,
 ) -> Result<PlasmPlanRunResult, String> {
+    use tracing::Instrument;
+    execute_plasm_tool_dry_run_inner(ctx, program)
+        .instrument(crate::spans::plan_dry_run(program.len()))
+        .await
+}
+
+async fn execute_plasm_tool_dry_run_inner(
+    ctx: PlasmDryRunContext<'_>,
+    program: &str,
+) -> Result<PlasmPlanRunResult, String> {
     let total_started = Instant::now();
     let plan_name = format!("plasm_dag_call_{}", ctx.call_index);
     let pipeline = ctx.host.engine.prompt_pipeline();

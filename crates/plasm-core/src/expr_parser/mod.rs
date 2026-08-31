@@ -424,6 +424,8 @@ pub fn parse_with_remainder(
     input: &str,
     cgs: &CGS,
 ) -> Result<(ParsedExpr, ParseRemainder), ParseError> {
+    let span = crate::spans::parse_program(input.len());
+    let _guard = span.enter();
     let mut p = Parser::new(input, cgs);
     let mut parsed = p.parse_expr()?;
     parsed.expr = crate::expr_sugar::rewrite_id_field_brace_query_to_get(parsed.expr, cgs);
@@ -440,6 +442,8 @@ pub fn parse_with_remainder(
 /// Trailing text (after whitespace) is **ignored** so callers can paste noisy LLM output
 /// without failing the whole line.
 pub fn parse(input: &str, cgs: &CGS) -> Result<ParsedExpr, ParseError> {
+    let span = crate::spans::parse_program(input.len());
+    let _guard = span.enter();
     let mut p = Parser::new(input, cgs);
     let mut parsed = p.parse_expr()?;
     parsed.expr = crate::expr_sugar::rewrite_id_field_brace_query_to_get(parsed.expr, cgs);
@@ -522,6 +526,8 @@ fn parse_with_cgs_layers_program_opts(
     for_each_row_context: bool,
     apply_id_field_get_rewrite: bool,
 ) -> Result<ParsedExpr, ParseError> {
+    let span = crate::spans::parse_program(input.len());
+    let _guard = span.enter();
     if layers.is_empty() {
         return Err(ParseError {
             kind: ParseErrorKind::Other {

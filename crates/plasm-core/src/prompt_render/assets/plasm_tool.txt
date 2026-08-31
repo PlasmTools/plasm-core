@@ -41,7 +41,7 @@ TSV table semantics:
 
 Core surface:
 - Get identity: `e#(id)` (parens). Query/filter: `e#{field=…}` (braces). Search when taught: `e#~$` / `e#~"text"`.
-- Postfix from TSV left column: `.filter{…}` `.sort` `.limit` `.group_by` `.aggregate` `[field,…]`.
+- Postfix from TSV left column: `.filter{…}` `.sort` `.limit` `.group_by` `.aggregate` `.with{k: expr}` `[field,…]`.
 - Inline rows when delivery is `inline` (≤25); `snapshot_only` / `(in artifact)` need artifact read. Copy **`artifact_uri`** from the step — never plan `run_step` / `dict_ref`.
 - `page(...)` is HTTP-execute only — not an MCP tool argument.
 

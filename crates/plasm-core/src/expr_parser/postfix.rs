@@ -22,6 +22,7 @@ pub enum PlasmPostfixOp {
     GroupBy { args: String },
     Dedupe { keys: String },
     Distinct { keys: Option<String> },
+    With { body: String },
     Projection { fields: String },
 }
 
@@ -323,6 +324,14 @@ pub fn peel_postfix_suffixes(rhs: &str) -> Result<(String, Vec<PlasmPostfixOp>),
                     Some(args)
                 },
             });
+            cur = p;
+            progressed = true;
+        } else if let Some((p, body)) = strip_trailing_brace_block(t, "with")? {
+            ops_rev.push(PlasmPostfixOp::With { body });
+            cur = p;
+            progressed = true;
+        } else if let Some((p, body)) = strip_trailing_method_call(t, "with")? {
+            ops_rev.push(PlasmPostfixOp::With { body });
             cur = p;
             progressed = true;
         } else if let Some((p, fields)) = strip_trailing_projection(t)? {
@@ -682,6 +691,28 @@ mod tests {
         let (p3, ops3) = peel_postfix_suffixes("rows.distinct()").unwrap();
         assert_eq!(p3, "rows");
         assert_eq!(ops3, vec![PlasmPostfixOp::Distinct { keys: None }]);
+    }
+
+    #[test]
+    fn peel_with_brace_body() {
+        let (p, ops) = peel_postfix_suffixes("issues.with{age_days: (now - updated_at)}").unwrap();
+        assert_eq!(p, "issues");
+        assert_eq!(
+            ops,
+            vec![PlasmPostfixOp::With {
+                body: "age_days: (now - updated_at)".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn peel_does_not_treat_join_or_open_as_row_compute() {
+        let (p, ops) = peel_postfix_suffixes("issues.join(comments)").unwrap();
+        assert!(ops.is_empty(), "join is not a postfix verb, got {ops:?}");
+        assert!(p.contains("join"));
+        let (p2, ops2) = peel_postfix_suffixes("issues.open(labels)").unwrap();
+        assert!(ops2.is_empty(), "open is not a postfix verb, got {ops2:?}");
+        assert!(p2.contains("open"));
     }
 
     #[test]

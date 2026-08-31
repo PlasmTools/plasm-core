@@ -123,6 +123,7 @@ pub mod paginated_collect;
 pub mod preflight;
 pub mod query_index;
 pub mod replay;
+pub mod row_compute;
 pub mod row_predicate;
 pub mod runtime_error_render;
 pub mod session_graph_cache;
@@ -149,6 +150,8 @@ pub use view_preflight::{
 mod cancel_signal;
 mod live_run_telemetry;
 mod runtime_metrics;
+#[cfg(test)]
+mod span_graph_tests;
 mod spans;
 
 pub use api_error_detail::{
@@ -198,6 +201,7 @@ pub use oauth_client::{
 pub use oauth_token_debug::TokenEndpointResponseSummary;
 pub use query_index::{QueryCacheKey, QueryIndex};
 pub use replay::*;
+pub use row_compute::{eval_compute_ops, ComputeEvalOutcome, PolarsAdapter};
 pub use row_predicate::{
     json_matches_predicate, json_predicate_matches, JsonRowPredicate, JsonRowPredicateOp,
 };

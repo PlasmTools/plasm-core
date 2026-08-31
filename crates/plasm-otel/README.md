@@ -48,6 +48,18 @@ HTTP servers use `**tower_http::trace::TraceLayer`**, whose default request span
 
 If you set `**RUST_LOG**` yourself (for example to `info` only), add `**tower_http=debug**` (or `trace`) for request spans to reach OTLP, and the same `**on_request`/`on_response**` overrides if you want to avoid that log noise.
 
+## Semantic span names (stable contract)
+
+Application spans use **product semantics**, not Rust module paths, so refactors do not churn dashboards. Prefixes:
+
+| Prefix | Crate | Examples |
+|--------|-------|----------|
+| `plasm_agent.*` | `plasm-agent-core` | `plasm_agent.execute.expression`, `plasm_agent.mcp.tool.plasm`, `plasm_agent.plan.live_run` |
+| `plasm_core.*` | `plasm-core` | `plasm_core.schema.load_path`, `plasm_core.parse.program`, `plasm_core.typecheck.expr` |
+| `plasm_runtime.*` | `plasm-runtime` | `plasm_runtime.execute.query`, `plasm_runtime.http.compiled_request`, `plasm_runtime.projection.hydrate` |
+
+Parent/child relationships are asserted in crate `span_graph_tests` (force-flush capture via `plasm_otel::span_capture` under the `testing` feature). Async work must use `.instrument(span)` (or explicit `parent:`) so nested spans link under the request root — see module docs in each crate’s `spans.rs`.
+
 ## Fallback
 
 If OTLP wiring fails at startup, falls back to **stderr** `tracing` formatting only (same as a pure console setup).

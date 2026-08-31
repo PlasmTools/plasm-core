@@ -130,6 +130,7 @@ sqlx = { version = "0.8.6", default-features = false, features = [
     "postgres",
     "runtime-tokio-rustls",
 ] }
+sqlx-tracing = { version = "0.2.1", default-features = false, features = ["postgres"] }
 redis = { version = "0.27", default-features = false, features = [
     "tokio-comp",
     "connection-manager",
@@ -165,6 +166,16 @@ tempfile = "3.0"
 chrono = { version = "0.4.44", default-features = false, features = ["clock", "serde"] }
 chrono-english = "0.1.8"
 rust_decimal = { version = "1.37", default-features = false, features = ["std", "serde", "serde-with-str"] }
+polars = { version = "0.46", default-features = false, features = [
+    "lazy",
+    "dtype-struct",
+    "dtype-decimal",
+    "strings",
+    "temporal",
+    "is_in",
+    "abs",
+    "regex",
+] }
 toon = "0.1"
 
 # LLM / REPL

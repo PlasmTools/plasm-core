@@ -121,7 +121,7 @@ impl TraceIngestClient for EnvTraceIngestClient {
                 return;
             }
         };
-        tokio::spawn(async move { post_events_json(base, body).await }.instrument(emit_span));
+        tokio::spawn(post_events_json(base, body).instrument(emit_span));
     }
 }
 

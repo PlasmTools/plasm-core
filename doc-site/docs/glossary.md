@@ -3,6 +3,8 @@
 | Term | Meaning |
 |------|---------|
 | **CGS** | Capability Graph Schema — `domain.yaml` semantic model (entities, relations, capabilities; split catalogs use **`values:`** + **`value_ref`**). |
+| **`.with`** | Row-compute postfix that adds derived columns per row (`.with{col: expr}`) while preserving entity identity — see [Row compute](reference/plasm-row-compute.md#derived-columns-with). |
+| **RowPlan** | Fused execute-time IR for row compute (`plasm_core::row_plan`); Polars-backed evaluation in `plasm_runtime::row_compute`. |
 | **CML** | Capability Mapping Language — `mappings.yaml` wire templates. |
 | **teaching table** | Symbol-tuned teaching text (`e#` / `m#` / `r#` plus **wire names** for fields/params; `v#` gloss only) for agents. |
 | **view** | CGS **`views:`** entry — composed read-only DAG over existing capabilities (not MCP tenant “registry views”). |
