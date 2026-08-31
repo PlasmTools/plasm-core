@@ -18,7 +18,7 @@ use plasm_core::QueryExpr;
 use plasm_runtime::{
     preflight_view_query,
     view_test_support::{matrix_view_query, matrix_views_cgs, MATRIX_VIEW_PREFLIGHT_CASES},
-    ViewAmbientContext,
+    SessionMaterialization, ViewAmbientContext,
 };
 use plasm_runtime::{ExecutionConfig, ExecutionEngine};
 
@@ -61,8 +61,14 @@ fn matrix_views_all_preflight() {
     let ambient = ViewAmbientContext::default();
     for &(view_name, entity) in MATRIX_VIEW_PREFLIGHT_CASES {
         let query = matrix_view_query(entity);
-        preflight_view_query(view_name, &query, &cgs, &ambient)
-            .unwrap_or_else(|err| panic!("{view_name} preflight: {err}"));
+        preflight_view_query(
+            view_name,
+            &query,
+            &cgs,
+            &ambient,
+            &SessionMaterialization::new(),
+        )
+        .unwrap_or_else(|err| panic!("{view_name} preflight: {err}"));
     }
 }
 
@@ -70,8 +76,14 @@ fn matrix_views_all_preflight() {
 fn matrix_views_missing_scope_preflight_errors() {
     let cgs = matrix_views_cgs();
     let query = QueryExpr::all("LangDigest");
-    let err = preflight_view_query("lang_digest", &query, &cgs, &ViewAmbientContext::default())
-        .expect_err("missing scope");
+    let err = preflight_view_query(
+        "lang_digest",
+        &query,
+        &cgs,
+        &ViewAmbientContext::default(),
+        &SessionMaterialization::new(),
+    )
+    .expect_err("missing scope");
     assert!(err.to_string().contains("item_id"), "{err}");
 }
 

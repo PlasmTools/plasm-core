@@ -100,6 +100,37 @@ pub(crate) fn synthesized_get(reference: Ref, params: &CapabilityParamEnv) -> Ge
     GetExpr::from_ref_with_path_vars(reference, params.as_path_vars())
 }
 
+/// Overlay session-stamped capability params onto a GET. Explicit `path_vars` win.
+pub(crate) fn get_with_session_params(
+    get: &GetExpr,
+    cgs: &CGS,
+    mat: &SessionMaterialization,
+) -> GetExpr {
+    let cap = get
+        .capability_name
+        .as_deref()
+        .and_then(|n| cgs.get_capability(n))
+        .or_else(|| cgs.find_capability(&get.reference.entity_type, CapabilityKind::Get));
+    let Some(cap) = cap else {
+        return get.clone();
+    };
+    let inherit =
+        CapabilityParamEnv::from_bindings(&mat.capability_params_for(&get.reference), cap);
+    let mut merged = inherit.into_bindings();
+    if let Some(explicit) = &get.path_vars {
+        for (k, v) in explicit {
+            merged.insert(k.clone(), v.clone());
+        }
+    }
+    let mut out = get.clone();
+    out.path_vars = if merged.is_empty() {
+        None
+    } else {
+        Some(merged)
+    };
+    out
+}
+
 pub(crate) fn identity_keys_for_entity(cgs: &CGS, entity: &str) -> HashSet<String> {
     let mut keys = HashSet::from(["id".to_string()]);
     if let Some(ent) = cgs.get_entity(entity) {
@@ -317,6 +348,71 @@ mod tests {
         assert_eq!(pv.get("access_token"), Some(&Value::String("tok".into())));
     }
 
+    #[test]
+    fn session_params_overlay_explicit_wins() {
+        use plasm_core::loader::load_schema_dir;
+        let cgs = load_schema_dir(
+            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/plasm_language_matrix"),
+        )
+        .expect("language matrix CGS");
+        let reference = Ref::new("LangSecuredNote", "1");
+        let mut mat = SessionMaterialization::new();
+        mat.stamp_capability_params(
+            &reference,
+            IndexMap::from([("access_token".into(), Value::String("session".into()))]),
+        );
+        let inherited = get_with_session_params(&GetExpr::from_ref(reference.clone()), &cgs, &mat);
+        assert_eq!(
+            inherited
+                .path_vars
+                .as_ref()
+                .and_then(|p| p.get("access_token")),
+            Some(&Value::String("session".into()))
+        );
+        let mut explicit = IndexMap::new();
+        explicit.insert("access_token".into(), Value::String("program".into()));
+        let over = get_with_session_params(
+            &GetExpr::from_ref_with_path_vars(reference, Some(explicit)),
+            &cgs,
+            &mat,
+        );
+        assert_eq!(
+            over.path_vars.as_ref().and_then(|p| p.get("access_token")),
+            Some(&Value::String("program".into()))
+        );
+    }
+
+    #[test]
+    fn preflight_identity_get_compiles_from_session_stamps() {
+        use plasm_core::loader::load_schema_dir;
+        let cgs = load_schema_dir(
+            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/plasm_language_matrix"),
+        )
+        .expect("language matrix CGS");
+        let get = GetExpr::from_ref(Ref::new("LangSecuredNote", "1"));
+        let empty = SessionMaterialization::new();
+        let err = preflight_compile_expr(
+            &Expr::Get(get.clone()),
+            &cgs,
+            &ViewAmbientContext::default(),
+            &empty,
+        )
+        .expect_err("unstamped identity GET must fail CML compile");
+        assert!(
+            err.to_string().contains("access_token"),
+            "expected access_token miss, got {err}"
+        );
+        let mut mat = SessionMaterialization::new();
+        mat.stamp_capability_params(
+            &get.reference,
+            IndexMap::from([("access_token".into(), Value::String("tok".into()))]),
+        );
+        preflight_compile_expr(&Expr::Get(get), &cgs, &ViewAmbientContext::default(), &mat)
+            .expect("session-stamped identity GET compiles");
+    }
+
     #[tokio::test]
     async fn summary_search_hydrates_get_with_inherited_capability_params() {
         use crate::auth::ResolvedAuth;
@@ -434,6 +530,147 @@ mod tests {
             auths.lock().unwrap()
         );
         let body = result
+            .entities
+            .iter()
+            .find_map(|e| e.fields.get("body").map(|f| f.to_value()));
+        assert_eq!(body, Some(Value::String("trip body".into())));
+    }
+
+    #[tokio::test]
+    async fn explicit_identity_get_inherits_session_capability_params() {
+        use crate::auth::ResolvedAuth;
+        use crate::http_transport::HttpTransport;
+        use async_trait::async_trait;
+        use plasm_compile::CompiledRequest;
+        use plasm_core::loader::load_schema_dir;
+        use plasm_core::{Expr, GetExpr, Predicate, QueryExpr};
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone)]
+        struct RecordingTransport {
+            paths: Arc<Mutex<Vec<String>>>,
+            auths: Arc<Mutex<Vec<String>>>,
+        }
+
+        #[async_trait]
+        impl HttpTransport for RecordingTransport {
+            async fn send_compiled_http(
+                &self,
+                _base_url: &str,
+                request: &CompiledRequest,
+                _auth: Option<ResolvedAuth>,
+            ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+                self.paths.lock().unwrap().push(request.path.clone());
+                let auth = match &request.headers {
+                    Some(Value::Object(m)) => match m.get("Authorization") {
+                        Some(Value::String(s)) => s.clone(),
+                        _ => String::new(),
+                    },
+                    _ => String::new(),
+                };
+                self.auths.lock().unwrap().push(auth);
+                if request.path.contains("/secured_notes/") {
+                    Ok((
+                        serde_json::json!({
+                            "note_id": 1,
+                            "title": "trip itinerary",
+                            "body": "trip body"
+                        }),
+                        None,
+                    ))
+                } else {
+                    Ok((
+                        serde_json::json!([{
+                            "note_id": 1,
+                            "title": "trip itinerary"
+                        }]),
+                        None,
+                    ))
+                }
+            }
+
+            async fn get_json_absolute(
+                &self,
+                _url: &str,
+                _auth: Option<ResolvedAuth>,
+            ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+                Ok((serde_json::json!({}), None))
+            }
+        }
+
+        let paths = Arc::new(Mutex::new(Vec::new()));
+        let auths = Arc::new(Mutex::new(Vec::new()));
+        let engine = ExecutionEngine::new_with_transport(
+            ExecutionConfig {
+                base_url: Some("http://matrix.test".into()),
+                hydrate: false,
+                ..ExecutionConfig::default()
+            },
+            Arc::new(RecordingTransport {
+                paths: paths.clone(),
+                auths: auths.clone(),
+            }),
+            None,
+        );
+        let cgs = load_schema_dir(
+            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/plasm_language_matrix"),
+        )
+        .expect("language matrix CGS");
+        let mut query = QueryExpr::filtered(
+            "LangSecuredNote",
+            Predicate::and(vec![
+                Predicate::eq("query", "trip"),
+                Predicate::eq("access_token", "tok"),
+            ]),
+        );
+        query.capability_name = Some("langsecurednote_search".into());
+        let mut mat = SessionMaterialization::new();
+        let listed = engine
+            .execute(
+                &Expr::Query(query),
+                &cgs,
+                &mut mat,
+                None,
+                StreamConsumeOpts::default(),
+                ExecuteOptions::default(),
+            )
+            .await
+            .expect("search without hydrate");
+        let reference = listed.entities[0].reference.clone();
+
+        paths.lock().unwrap().clear();
+        auths.lock().unwrap().clear();
+        let get = GetExpr::from_ref(reference);
+        assert!(
+            get.path_vars.is_none(),
+            "explicit identity GET has no path_vars"
+        );
+        let got = engine
+            .execute_get(
+                &get,
+                &cgs,
+                &mut mat,
+                ExecutionMode::Live,
+                &ViewAmbientContext::default(),
+            )
+            .await
+            .expect("identity GET inherits session Bearer");
+        assert!(
+            paths
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|p| p.contains("/secured_notes/")),
+            "explicit GET path missing: {:?}",
+            paths.lock().unwrap()
+        );
+        assert!(
+            auths.lock().unwrap().iter().any(|a| a == "Bearer tok"),
+            "explicit GET must inherit Bearer: {:?}",
+            auths.lock().unwrap()
+        );
+        let body = got
             .entities
             .iter()
             .find_map(|e| e.fields.get("body").map(|f| f.to_value()));

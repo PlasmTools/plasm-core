@@ -92,6 +92,20 @@ fn compile_dispatch_cgs<'a>(
         .unwrap_or(scoped_es.cgs.as_ref())
 }
 
+fn compile_expr_with_session_mat(
+    federation_es: &ExecuteSession,
+    expr: &Expr,
+    cgs: &plasm_core::CGS,
+    label: &str,
+) -> Result<(), String> {
+    let ambient = federation_es.view_ambient();
+    let guard = federation_es
+        .graph_cache
+        .try_lock()
+        .map_err(|_| format!("{label}: session graph locked during CML preflight"))?;
+    preflight_compile_expr(expr, cgs, &ambient, &guard).map_err(|e| format!("{label}: {e}"))
+}
+
 /// Normalize, plan-kind match, and CML compile after [`PlasmPreflight::preflight_parsed_line`].
 pub fn preflight_surface_dispatch_after_typecheck(
     federation_es: &ExecuteSession,
@@ -104,8 +118,7 @@ pub fn preflight_surface_dispatch_after_typecheck(
     let normalized = prepare_parsed_expr_for_dispatch(federation_es, scoped_es, parsed)?;
     ensure_surface_expr_matches_plan_kind(scoped_es, surface, &normalized, step_idx)?;
     let cgs = compile_dispatch_cgs(federation_es, scoped_es, surface);
-    let ambient = federation_es.view_ambient();
-    preflight_compile_expr(&normalized.expr, cgs, &ambient).map_err(|e| format!("{label}: {e}"))?;
+    compile_expr_with_session_mat(federation_es, &normalized.expr, cgs, &label)?;
     Ok(normalized)
 }
 
@@ -118,7 +131,6 @@ pub fn preflight_line_compile_dispatch(
     cgs: &plasm_core::CGS,
 ) -> Result<ParsedExpr, String> {
     let normalized = prepare_parsed_expr_for_dispatch(federation_es, scoped_es, parsed)?;
-    let ambient = federation_es.view_ambient();
-    preflight_compile_expr(&normalized.expr, cgs, &ambient).map_err(|e| format!("{label}: {e}"))?;
+    compile_expr_with_session_mat(federation_es, &normalized.expr, cgs, label)?;
     Ok(normalized)
 }

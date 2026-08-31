@@ -4,7 +4,7 @@
 use plasm_runtime::{
     preflight_view_query,
     view_test_support::{matrix_view_query, matrix_views_cgs},
-    ViewAmbientContext,
+    SessionMaterialization, ViewAmbientContext,
 };
 
 #[test]
@@ -16,6 +16,7 @@ fn matrix_lang_tag_filter_demo_literal_label_bind_preflight() {
         &query,
         &cgs,
         &ViewAmbientContext::default(),
+        &SessionMaterialization::new(),
     )
     .unwrap_or_else(|e| panic!("lang_tag_filter_demo preflight: {e}"));
 }

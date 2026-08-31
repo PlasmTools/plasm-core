@@ -1,5 +1,5 @@
 use plasm_core::{Expr, InvokeExpr, Value, CGS};
-use plasm_runtime::{preflight_compile_expr, ViewAmbientContext};
+use plasm_runtime::{preflight_compile_expr, SessionMaterialization, ViewAmbientContext};
 
 fn fixture() -> CGS {
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -34,12 +34,18 @@ fn static_compile_hydrates_declared_entity_fields_and_honors_prefix() {
     let cgs = fixture();
     let ambient = ViewAmbientContext::default();
 
-    preflight_compile_expr(&run_expr("datasource_run"), &cgs, &ambient)
+    let mat = SessionMaterialization::new();
+    preflight_compile_expr(&run_expr("datasource_run"), &cgs, &ambient, &mat)
         .expect("ds_type comes from Datasource fields even though provides omits it");
-    preflight_compile_expr(&run_expr("datasource_run_source_prefix"), &cgs, &ambient)
-        .expect("source_type should honor the configured prefix");
+    preflight_compile_expr(
+        &run_expr("datasource_run_source_prefix"),
+        &cgs,
+        &ambient,
+        &mat,
+    )
+    .expect("source_type should honor the configured prefix");
 
-    let error = preflight_compile_expr(&run_expr("datasource_run_typo"), &cgs, &ambient)
+    let error = preflight_compile_expr(&run_expr("datasource_run_typo"), &cgs, &ambient, &mat)
         .expect_err("ds_typo must remain an unknown CML variable");
     assert!(error.to_string().contains("ds_typo"), "{error}");
 }

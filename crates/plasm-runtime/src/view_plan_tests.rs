@@ -109,6 +109,7 @@ fn preflight_proof_matches_fixture_runner_on_lang_digest() {
         scope.clone(),
         &cgs,
         &ambient,
+        &crate::SessionMaterialization::new(),
     )
     .expect("preflight proof");
     assert_eq!(

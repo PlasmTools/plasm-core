@@ -51,8 +51,8 @@ mod query_stream;
 mod resume;
 
 pub(crate) use hydrate::{
-    identity_keys_for_entity, stamp_entities_and_mat, synthesized_get, wrap_synthesized_get_error,
-    CapabilityParamEnv,
+    get_with_session_params, identity_keys_for_entity, stamp_entities_and_mat, synthesized_get,
+    wrap_synthesized_get_error, CapabilityParamEnv,
 };
 
 use self::entity_decoder::{
@@ -1479,9 +1479,10 @@ impl ExecutionEngine {
             }
         }
 
+        let get = get_with_session_params(get, cgs, mat);
         let (cached, source) = self
             .fetch_get_decoded(
-                get,
+                &get,
                 cgs,
                 mode,
                 get.capability_name.as_deref(),
@@ -1560,9 +1561,10 @@ impl ExecutionEngine {
                         .into(),
             });
         }
+        let get = get_with_session_params(get, cgs, mat);
         let (cached, source) = self
             .fetch_http_transport_get_decoded(
-                get,
+                &get,
                 cgs,
                 mode,
                 capability,

@@ -6,18 +6,22 @@ use crate::view_plan::ViewAmbientContext;
 use crate::view_preflight::{preflight_view_get, preflight_view_query};
 
 /// Compile capability templates for `expr` without dispatching HTTP.
+///
+/// Identity GETs inherit session-stamped capability params from `mat` (explicit
+/// `path_vars` still win). Dry-run and live share this gate.
 pub fn preflight_compile_expr(
     expr: &Expr,
     cgs: &CGS,
     ambient: &ViewAmbientContext,
+    mat: &SessionMaterialization,
 ) -> Result<(), RuntimeError> {
     match expr {
-        Expr::Query(query) => preflight_compile_query(query, cgs, ambient),
-        Expr::Get(get) => preflight_compile_get(get, cgs, ambient),
+        Expr::Query(query) => preflight_compile_query(query, cgs, ambient, mat),
+        Expr::Get(get) => preflight_compile_get(get, cgs, ambient, mat),
         Expr::Create(create) => preflight_compile_create(create, cgs),
         Expr::Delete(delete) => preflight_compile_delete(delete, cgs),
         Expr::Invoke(invoke) => preflight_compile_invoke(invoke, cgs),
-        Expr::Chain(chain) => preflight_compile_expr(&chain.source, cgs, ambient),
+        Expr::Chain(chain) => preflight_compile_expr(&chain.source, cgs, ambient, mat),
         Expr::Page(_) | Expr::Wait(_) | Expr::Cancel(_) | Expr::TeachingValue { .. } => Ok(()),
     }
 }
@@ -26,6 +30,7 @@ fn preflight_compile_query(
     query: &QueryExpr,
     cgs: &CGS,
     ambient: &ViewAmbientContext,
+    mat: &SessionMaterialization,
 ) -> Result<(), RuntimeError> {
     let filter = compile_query_dispatch(query, cgs)?;
     let capability = resolve_query_capability(query, cgs)?;
@@ -51,7 +56,7 @@ fn preflight_compile_query(
     }
     let capability_template = parse_capability_template(&capability.mapping.template)?;
     if let CapabilityTemplate::View(vt) = &capability_template {
-        return preflight_view_query(vt.view.as_str(), query, cgs, ambient);
+        return preflight_view_query(vt.view.as_str(), query, cgs, ambient, mat);
     }
     compile_operation_dispatch(&capability_template, &env).map(|_| ())
 }
@@ -60,7 +65,9 @@ fn preflight_compile_get(
     get: &GetExpr,
     cgs: &CGS,
     ambient: &ViewAmbientContext,
+    mat: &SessionMaterialization,
 ) -> Result<(), RuntimeError> {
+    let get = get_with_session_params(get, cgs, mat);
     let capability = cgs
         .find_capability(&get.reference.entity_type, CapabilityKind::Get)
         .ok_or_else(|| RuntimeError::CapabilityNotFound {
@@ -69,7 +76,7 @@ fn preflight_compile_get(
         })?;
     let capability_template = parse_capability_template(&capability.mapping.template)?;
     if let CapabilityTemplate::View(vt) = &capability_template {
-        return preflight_view_get(vt.view.as_str(), get, cgs, ambient);
+        return preflight_view_get(vt.view.as_str(), &get, cgs, ambient, mat);
     }
     let mut env = CmlEnv::new();
     merge_plasm_execute_session_share_token_env(&mut env);
