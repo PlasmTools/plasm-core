@@ -25,12 +25,28 @@ impl ResolvedIdentity {
     pub fn from_ref(reference: &Ref, ent: Option<&EntityDef>) -> Self {
         let primary = reference.primary_slot_str();
         let mut slots = BTreeMap::new();
+
+        // Pathless nullary Get uses an empty primary slot — do not invent wire bindings
+        // (`phone_number=0` / empty-string `exists` traps).
+        if primary.is_empty() {
+            if let EntityKey::Compound(parts) = &reference.key {
+                for (k, v) in parts {
+                    if !v.is_empty() {
+                        slots.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+            return Self { slots };
+        }
+
         slots.insert("id".to_string(), primary.clone());
 
         match &reference.key {
             EntityKey::Compound(parts) => {
                 for (k, v) in parts {
-                    slots.insert(k.clone(), v.clone());
+                    if !v.is_empty() {
+                        slots.insert(k.clone(), v.clone());
+                    }
                 }
             }
             EntityKey::Simple(id) => {

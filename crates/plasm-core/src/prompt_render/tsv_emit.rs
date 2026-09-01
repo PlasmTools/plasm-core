@@ -181,9 +181,10 @@ pub(crate) fn render_prompt_tsv_from_bundle(bundle: &TeachingPromptBundle) -> St
         let projection_first_idx = teaching_expr_rows
             .iter()
             .position(|r| r.is_projection_teaching);
-        let entity_desc_attach_idx = projection_first_idx.or(identity_idx);
+        // Entity banner attaches only to the noun card (`e#[wires]`), never to get/search/mutator ops.
+        let entity_desc_attach_idx = projection_first_idx;
         // Do not read projection from the entity heading: legends may contain unrelated `[…]`
-        // fragments (e.g. `[e1]` in result gloss). Teach projection only via a validated witness row
+        // fragments (e.g. `[e1]` in result gloss). Teach projection only via a noun-card witness row
         // and/or
         // a trailing `[p#,…]` on the identity get line.
         let mut proj =
@@ -310,7 +311,7 @@ pub(crate) enum DomainTsvRow<'a> {
         line: &'a TeachingExprLine,
         /// [`compute_tsv_identity_row_index`] — affects relation vs `returns …` gloss shaping.
         identity_returns_row: bool,
-        /// Entity banner description at most once: first projection witness, else identity fallback.
+        /// Noun-card attach: entity banner on the first `e#[wires]` row only.
         attach_entity_heading: bool,
         heading: &'a TeachingHeading,
     },
@@ -339,13 +340,17 @@ enum TeachingMeaningAtom {
     TerminalChainHint {
         entity: String,
     },
-    /// Sparse mark: nullary `e.m()` yields this singleton row (`· materialize`).
+    /// Sparse mark: nullary `e.m()` / sole bare `e` yields this singleton row (`· materialize`).
     Materialize,
-    EntityHeadingDescription(String),
+    /// Capability prose (e.g. Get description) joined into Meaning.
+    CapabilityGloss(String),
+    /// Noun card: `noun · {entity description}` (no return arrow).
+    NounCard {
+        description: String,
+    },
     LegendScope(String),
     LegendOptionalParams(Vec<String>),
     LegendCompactArgs(String),
-    LegendDescription(String),
 }
 
 /// True when an emitted teaching row already demonstrates **relation navigation** on `rel_sym`
@@ -369,24 +374,31 @@ impl TeachingMeaningAtom {
             TeachingMeaningAtom::Returns { arrow, gloss } => format!("{} {gloss}", arrow.glyph()),
             TeachingMeaningAtom::RelationNav { line } => line.clone(),
             TeachingMeaningAtom::TerminalChainHint { entity } => {
-                format!("chain: {entity}(id=…).m#")
+                format!("chain: {entity}(<id>).m#")
             }
             TeachingMeaningAtom::Materialize => {
                 super::teaching_legend::MATERIALIZE_LEGEND_MARK.to_string()
             }
-            TeachingMeaningAtom::EntityHeadingDescription(s) => s.clone(),
+            TeachingMeaningAtom::CapabilityGloss(s) => s.clone(),
+            TeachingMeaningAtom::NounCard { description } => {
+                let mark = super::teaching_legend::NOUN_CARD_LEGEND_MARK;
+                if description.is_empty() {
+                    mark.to_string()
+                } else {
+                    format!("{mark} · {description}")
+                }
+            }
             TeachingMeaningAtom::LegendScope(s) => s.clone(),
             TeachingMeaningAtom::LegendOptionalParams(wires) => {
                 format!("{TEACHING_OPTIONAL_LEGEND_MARK}: {}", wires.join(","))
             }
             TeachingMeaningAtom::LegendCompactArgs(s) => format!("args: {s}"),
-            TeachingMeaningAtom::LegendDescription(s) => s.clone(),
         };
         sanitize_tsv_cell(&raw)
     }
 }
 
-/// Sanitized `plasm_expr` column for teaching table teaching TSV (no literal tabs; trimmed).
+/// Sanitized `plasm_expr` column for the language card (no literal tabs; trimmed).
 #[derive(Clone, Debug)]
 struct DomainTsvExprCell(String);
 
@@ -400,7 +412,7 @@ impl DomainTsvExprCell {
     }
 }
 
-/// Sanitized `Meaning` column for teaching table teaching TSV (no literal tabs; trimmed).
+/// Sanitized `Meaning` column for the language card (no literal tabs; trimmed).
 #[derive(Clone, Debug)]
 struct DomainTsvMeaningCell(String);
 
@@ -430,7 +442,7 @@ impl DomainTsvMeaningCell {
     }
 }
 
-/// One encoded teaching table teaching row: sanitized expr, **exactly one** U+0009, sanitized meaning, newline.
+/// One encoded language-card row: sanitized expr, **exactly one** U+0009, sanitized meaning, newline.
 struct DomainTsvEncodedLine {
     expr: DomainTsvExprCell,
     meaning: DomainTsvMeaningCell,
@@ -461,13 +473,17 @@ fn teaching_expr_meaning_atoms(
     attach_entity_heading: bool,
     heading: &TeachingHeading,
 ) -> Vec<TeachingMeaningAtom> {
+    if row.is_projection_teaching {
+        let description = if attach_entity_heading {
+            heading.description.clone()
+        } else {
+            String::new()
+        };
+        return vec![TeachingMeaningAtom::NounCard { description }];
+    }
+
     let mut atoms = Vec::new();
     push_teaching_meaning_result_atom(&mut atoms, row, identity_returns_row);
-    if attach_entity_heading && !heading.description.is_empty() {
-        atoms.push(TeachingMeaningAtom::EntityHeadingDescription(
-            heading.description.clone(),
-        ));
-    }
     append_teaching_meaning_legend_tail_atoms(&mut atoms, row);
     atoms
 }
@@ -493,11 +509,6 @@ fn append_teaching_meaning_legend_tail_atoms(
             row.legend.compact_args.clone(),
         ));
     }
-    if !row.legend.description.is_empty() {
-        atoms.push(TeachingMeaningAtom::LegendDescription(
-            row.legend.description.clone(),
-        ));
-    }
 }
 
 /// When `identity_row`, always prefix with `returns …` (including relation-nav identity picks).
@@ -521,6 +532,11 @@ fn push_teaching_meaning_result_atom(
         gloss: row.result_type.clone(),
     });
     if row.is_nullary_materialize {
+        // `→ e · {capability gloss} · materialize` — never naked `materialize` alone when prose exists.
+        let desc = row.legend.description.trim();
+        if !desc.is_empty() {
+            atoms.push(TeachingMeaningAtom::CapabilityGloss(desc.to_string()));
+        }
         atoms.push(TeachingMeaningAtom::Materialize);
         return;
     }

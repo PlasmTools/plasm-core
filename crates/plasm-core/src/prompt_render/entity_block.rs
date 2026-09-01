@@ -6,6 +6,7 @@ use crate::schema::capability_is_zero_arity_invoke;
 use crate::symbol_tuning::{ExposureSurface, IdentMetaKey, IdentMetadata, SymbolMap};
 use crate::{CapabilityKind, CapabilityName, FieldType, CGS};
 
+use super::fetch_head_teaching::push_entity_fetch_heads;
 use super::gloss_collect::GlossScratch;
 use super::gloss_filter;
 use super::input_legend::RowContractLegend;
@@ -20,7 +21,7 @@ use super::query_teaching::{
     search_expr_with_filters, unary_entity_id_teaching_expr_line,
 };
 use super::relation_teaching::{
-    receiver_for_dotted_suffix, try_emit_relation_nav_teaching_row, try_push_projection_witness_row,
+    receiver_for_dotted_suffix, try_emit_relation_nav_teaching_row,
 };
 use super::row_producer::RowProducerProjection;
 use super::row_producer_teaching::{
@@ -34,6 +35,7 @@ use super::surface_filter::{
 use super::symbol_tokens::{ent_sym, id_sym_entity, id_sym_rel, met_sym};
 use super::teaching_push::try_push_teaching_example;
 use super::teaching_util::truncate_inline_desc;
+use super::teaching_util::TEACHING_SEARCH_QUERY_LITERAL;
 use super::tsv_emit::relation_sym_shown_in_query_teaching_rows;
 use super::{EntityTeachingBlock, EntityTeachingExprRow, TeachingHeading};
 
@@ -200,15 +202,7 @@ pub(crate) fn collect_entity_teaching_block(
             .iter()
             .all(|cap| path_vars_empty(cap) && capability_is_zero_arity_invoke(cap));
 
-    let mut singleton_get_caps: Vec<_> = get_caps
-        .iter()
-        .copied()
-        .filter(|cap| path_vars_empty(cap) && capability_is_zero_arity_invoke(cap))
-        .collect();
-    singleton_get_caps.sort_by(|a, b| a.name.cmp(&b.name));
-
-    let get_gloss =
-        crate::result_gloss::result_gloss_for_get_entity(ename, map, catalog_entry_id);
+    let get_gloss = crate::result_gloss::result_gloss_for_get_entity(ename, map, catalog_entry_id);
     let primary_get_cap = cgs
         .resolved_primary_get_for_projection(ename, ent)
         .filter(|cap| surface_allows_capability(surface_filter, catalog_entry_id, cap));
@@ -228,68 +222,29 @@ pub(crate) fn collect_entity_teaching_block(
             _ => a.name.cmp(&b.name),
         }
     });
-    let query_cap_refs: Vec<&crate::CapabilitySchema> = query_caps.to_vec();
 
-    // Projection witness before other `e#…` lines for this entity (query/get/relation) so the field
-    // narrow `[p#,…]` is taught once; row-producer lines omit the same bracket/`rows:` contract.
+    let witness_taught = push_entity_fetch_heads(
+        gloss_emit,
+        &mut teaching_rows,
+        collect_meta,
+        cgs,
+        ename,
+        &es,
+        ent,
+        map,
+        map_arc,
+        surface_filter,
+        catalog_entry_id,
+        ident_meta,
+        primary_get_projection_bracket.as_deref(),
+        primary_get_cap,
+        get_gloss.clone(),
+        line_valid_cache,
+        line_valid_cache_seed,
+    );
     let canonical_bracket = primary_get_projection_bracket
         .as_deref()
         .filter(|b| !b.trim().is_empty());
-    let witness_taught = canonical_bracket.is_some_and(|bracket| {
-        try_push_projection_witness_row(
-            gloss_emit,
-            &mut teaching_rows,
-            collect_meta,
-            cgs,
-            map,
-            bracket,
-            ename,
-            &es,
-            ent,
-            primary_get_cap,
-            &query_cap_refs,
-            line_valid_cache,
-            line_valid_cache_seed,
-            map_arc,
-            surface_filter,
-            catalog_entry_id,
-        )
-    });
-
-    let mut seen_singleton_cap: HashSet<String> = HashSet::new();
-    for cap in &singleton_get_caps {
-        if !seen_singleton_cap.insert(cap.name.to_string()) {
-            continue;
-        }
-        let ms = met_sym(map, catalog_entry_id, ename, cap);
-        let expr = format!("{es}.{ms}()");
-        let result_gloss =
-            crate::result_gloss::result_gloss_for_capability(cap, cgs, map, catalog_entry_id);
-        let cap_leg = capability_legend_with_session_gloss(
-            map,
-            cgs,
-            cap,
-            ename,
-            ident_meta,
-            catalog_entry_id,
-        );
-        try_push_teaching_example(
-            gloss_emit,
-            &mut teaching_rows,
-            collect_meta,
-            cgs,
-            &expr,
-            result_gloss,
-            cap_leg,
-            None,
-            Some(&cap.name),
-            true,
-            line_valid_cache,
-            line_valid_cache_seed,
-            map_arc,
-            None,
-        );
-    }
 
     let mut emitted_primary_get = false;
     if primary_get_cap.is_some() && !only_singleton_gets {
@@ -382,7 +337,7 @@ pub(crate) fn collect_entity_teaching_block(
                 format!("{recv}{suffix}")
             };
             let result_gloss =
-            crate::result_gloss::result_gloss_for_capability(cap, cgs, map, catalog_entry_id);
+                crate::result_gloss::result_gloss_for_capability(cap, cgs, map, catalog_entry_id);
             let cap_leg = capability_legend_with_session_gloss(
                 map,
                 cgs,
@@ -443,10 +398,9 @@ pub(crate) fn collect_entity_teaching_block(
         let cap_leg = cap_ref.and_then(|c| {
             capability_legend_with_session_gloss(map, cgs, c, ename, ident_meta, catalog_entry_id)
         });
-        let gloss =
-            cap_ref.and_then(|c| {
-                crate::result_gloss::result_gloss_for_capability(c, cgs, map, catalog_entry_id)
-            });
+        let gloss = cap_ref.and_then(|c| {
+            crate::result_gloss::result_gloss_for_capability(c, cgs, map, catalog_entry_id)
+        });
         try_push_teaching_example(
             gloss_emit,
             &mut teaching_rows,
@@ -457,7 +411,7 @@ pub(crate) fn collect_entity_teaching_block(
             cap_leg,
             None,
             Some(&cap_name),
-            false,
+            true,
             line_valid_cache,
             line_valid_cache_seed,
             map_arc,
@@ -473,12 +427,8 @@ pub(crate) fn collect_entity_teaching_block(
             if query_line_count >= MAX_QUERY_LINES {
                 break;
             }
-            let qgloss = crate::result_gloss::result_gloss_for_capability(
-                cap,
-                cgs,
-                map,
-                catalog_entry_id,
-            );
+            let qgloss =
+                crate::result_gloss::result_gloss_for_capability(cap, cgs, map, catalog_entry_id);
             let cap_leg = capability_legend_with_session_gloss(
                 map,
                 cgs,
@@ -614,16 +564,15 @@ pub(crate) fn collect_entity_teaching_block(
         .filter(|cap| surface_allows_capability(surface_filter, catalog_entry_id, cap))
         .collect();
     if !search_caps.is_empty() {
-        let line = format!("{es}~\"text\"");
+        let line = format!("{es}~{TEACHING_SEARCH_QUERY_LITERAL}");
         search_caps.sort_by(|a, b| a.name.cmp(&b.name));
         let scap = cgs
             .primary_search_capability(ename)
             .filter(|cap| surface_allows_capability(surface_filter, catalog_entry_id, cap))
             .or_else(|| search_caps.first().copied());
-        let sg =
-            scap.and_then(|cap| {
-                crate::result_gloss::result_gloss_for_capability(cap, cgs, map, catalog_entry_id)
-            });
+        let sg = scap.and_then(|cap| {
+            crate::result_gloss::result_gloss_for_capability(cap, cgs, map, catalog_entry_id)
+        });
         let cap_leg = scap.and_then(|cap| {
             capability_legend_with_session_gloss(map, cgs, cap, ename, ident_meta, catalog_entry_id)
         });
@@ -734,7 +683,7 @@ pub(crate) fn collect_entity_teaching_block(
                 }
                 match f.named_value(cgs) {
                     Ok(nv) => match &nv.field_type {
-                        FieldType::EntityRef { target } => (target.clone(), None),
+                        FieldType::EntityRef { target, .. } => (target.clone(), None),
                         _ => continue,
                     },
                     Err(_) => continue,

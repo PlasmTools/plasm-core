@@ -366,6 +366,13 @@ impl GetExpr {
         }
     }
 
+    /// Pathless zero-arity singleton Get (`e#` / `e#.m#()`): empty identity — no synthetic `"0"`.
+    ///
+    /// CML env population skips empty identity slots so optional id params are omitted, not wired as `0`.
+    pub fn pathless_nullary(entity_type: impl Into<EntityName>) -> Self {
+        Self::new(entity_type, "")
+    }
+
     /// Attach the GET capability wire name (overrides entity default get).
     pub fn with_capability(mut self, name: impl Into<CapabilityName>) -> Self {
         self.capability_name = Some(name.into());

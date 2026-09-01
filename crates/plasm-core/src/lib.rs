@@ -275,7 +275,8 @@ pub use prompt_render::ROW_COMPUTE_EXEMPLAR_THRESHOLD;
 pub use prompt_render::TSV_TEACHING_TABLE_HEADER;
 pub use query_resolve::{
     normalize_expr_query_capabilities, normalize_expr_query_capabilities_federated,
-    required_scope_param_names, resolve_query_capability, QueryCapabilityResolveError,
+    required_scope_param_names, resolve_query_capability, sole_nullary_singleton_get,
+    sole_nullary_singleton_get_for_bare_query, QueryCapabilityResolveError,
 };
 pub use resolved_identity::ResolvedIdentity;
 pub use row_composition::{
@@ -336,16 +337,16 @@ pub use schema::{
     AttachmentMediaKind, AuthScheme, CapabilityKind, CapabilityManifest, CapabilityMapping,
     CapabilitySchema, CapabilityTemplateJson, Cardinality, CgsCapabilityIndex, CrossFieldRule,
     CrossFieldRuleType, DataClassDimension, DataClassName, DataClassSchema, DataClassSeverity,
-    DiscoveryCapabilityHints, DiscoveryEntityHints, DiscoveryRelationHints, DiscoveryCoSeedWith,
-    DiscoverySeedClass,
-    DiscoverySeedNav, EmbedOnMissPolicy, EntityDef, FieldDeriveRule, FieldSchema, FieldValueKind,
-    IdFormat, InputFieldSchema, InputFieldWire, InputSchema, InputType, InputValidation,
-    InputVariantSchema, JsonPathSegment, NamedValueSchema, OauthDefaultScopeSet, OauthExtension,
-    OauthRequirements, OauthScopeEntry, OutputSchema, OutputType, ParameterRole,
-    RelationMaterialization, RelationSchema, RelationScopedFallback, ResourceSchema,
-    ScopeAggregateKeyPolicy, ScopeRequirement, SinkClassName, ValueDomainKey, ValueDomainSlot, ViewDefinition, ViewNodeSpec,
-    ViewOutputBinding, ViewParamBinding, ViewRelationBinding, ViewRelationOutputSpec,
-    ViewScopeInject, ViewScopeParam, WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
+    DiscoveryCapabilityHints, DiscoveryCoSeedWith, DiscoveryEntityHints, DiscoveryRelationHints,
+    DiscoverySeedClass, DiscoverySeedNav, EmbedOnMissPolicy, EntityDef, FieldDeriveRule,
+    FieldSchema, FieldValueKind, IdFormat, InputFieldSchema, InputFieldWire, InputSchema,
+    InputType, InputValidation, InputVariantSchema, JsonPathSegment, NamedValueSchema,
+    OauthDefaultScopeSet, OauthExtension, OauthRequirements, OauthScopeEntry, OutputSchema,
+    OutputType, ParameterRole, RelationMaterialization, RelationSchema, RelationScopedFallback,
+    ResourceSchema, ScopeAggregateKeyPolicy, ScopeRequirement, SinkClassName, ValueDomainKey,
+    ValueDomainSlot, ViewDefinition, ViewNodeSpec, ViewOutputBinding, ViewParamBinding,
+    ViewRelationBinding, ViewRelationOutputSpec, ViewScopeInject, ViewScopeParam,
+    WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
 };
 pub use schema_overlay::{
     build_decode_scope_key, build_schema_overlay, overlay_bind_cache_suffix, overlay_collect_rows,

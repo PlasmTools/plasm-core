@@ -37,6 +37,8 @@ impl ReturnArrow {
         match kind {
             K::Method => ReturnArrow::Terminal,
             K::Query | K::Search => ReturnArrow::List,
+            // Noun card is shape pedagogy — no retrieved-object arrow class.
+            K::Projection => ReturnArrow::Single,
             _ if gloss.trim_start().starts_with('[') => ReturnArrow::List,
             _ => ReturnArrow::Single,
         }

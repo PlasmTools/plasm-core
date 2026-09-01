@@ -956,11 +956,20 @@ impl<'a> Parser<'a> {
                 }));
             }
         } else if cap.kind == CapabilityKind::Get {
-            let invoke_id = if !needs_anchor_id {
-                "0".to_string()
+            let mut g = if !needs_anchor_id {
+                let mut g = GetExpr::pathless_nullary(entity);
+                g.capability_name = Some(cap_name);
+                g
             } else {
                 match source {
-                    Expr::Get(g) => g.reference.primary_slot_str(),
+                    Expr::Get(src) => {
+                        let mut g = GetExpr::from_ref_with_path_vars(
+                            src.reference.clone(),
+                            src.path_vars.clone(),
+                        );
+                        g.capability_name = Some(cap_name);
+                        g
+                    }
                     _ => {
                         return Err(self.err(ParseErrorKind::InvokeRequiresTargetId {
                             entity: entity.clone(),
@@ -969,7 +978,6 @@ impl<'a> Parser<'a> {
                     }
                 }
             };
-            let mut g = GetExpr::new(entity, invoke_id);
             if let Some(id) = source.session_catalog_entry_id() {
                 g.catalog_entry_id = CatalogEntryStamp::some(id.clone());
             }
@@ -2383,7 +2391,7 @@ impl<'a> Parser<'a> {
         let entity = source.primary_entity().to_string();
         let stamp = source.session_catalog_entry_id();
         self.validate_entity_preferring(&entity, stamp.map(|id| id.as_str()))?;
-        let mut g = GetExpr::new(entity, "0");
+        let mut g = GetExpr::pathless_nullary(entity);
         if let Some(id) = stamp {
             g.catalog_entry_id = CatalogEntryStamp::some(id.clone());
         }
@@ -2820,10 +2828,7 @@ impl<'a> Parser<'a> {
             }
         }
         if let Some(eid) = self.active_catalog_entry_id(None) {
-            if self
-                .cgs_for_catalog_entry_id(eid.as_str(), name)
-                .is_some()
-            {
+            if self.cgs_for_catalog_entry_id(eid.as_str(), name).is_some() {
                 return Ok(());
             }
         }
@@ -3322,10 +3327,7 @@ impl<'a> Parser<'a> {
                                 .or_else(|| {
                                     fields.iter().find(|f| {
                                         f.required
-                                            && !matches!(
-                                                f.role,
-                                                Some(crate::ParameterRole::Scope)
-                                            )
+                                            && !matches!(f.role, Some(crate::ParameterRole::Scope))
                                     })
                                 })
                                 .map(|f| f.name.clone())
@@ -3795,7 +3797,7 @@ mod tests {
         cgs.values.insert(
             "fx_str".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
@@ -5326,7 +5328,7 @@ mod tests {
         cgs.values.insert(
             "fx_ref_library".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::EntityRef {
                     entry_id: Default::default(),
@@ -6255,7 +6257,12 @@ mod tests {
         let layers = [&cgs_github, &cgs_linear];
         let stack = cgs_layer_stack(&["github", "linear"], &layers);
         let mut exp = TeachingExposureSession::new(&cgs_github, "github", &["LangItem"]);
-        exp.expose_entities(&layers, Arc::new(cgs_linear.clone()), "linear", &["LangItem"]);
+        exp.expose_entities(
+            &layers,
+            Arc::new(cgs_linear.clone()),
+            "linear",
+            &["LangItem"],
+        );
         let map = exp.symbol_map_arc();
         assert_eq!(
             map.entry_id_for_entity_symbol("e2").as_deref(),
@@ -6307,7 +6314,12 @@ mod tests {
         let layers = [&cgs_github, &cgs_linear];
         let stack = cgs_layer_stack(&["github", "linear"], &layers);
         let mut exp = TeachingExposureSession::new(&cgs_github, "github", &["LangItem"]);
-        exp.expose_entities(&layers, Arc::new(cgs_linear.clone()), "linear", &["LangItem"]);
+        exp.expose_entities(
+            &layers,
+            Arc::new(cgs_linear.clone()),
+            "linear",
+            &["LangItem"],
+        );
         let map = exp.symbol_map_arc();
         let m_sym = map.method_sym_for("linear", "LangItem", "broadcast");
         let expr = format!(r#"LangItem.{m_sym}(message="x")"#);

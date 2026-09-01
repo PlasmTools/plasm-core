@@ -9,7 +9,9 @@ use std::collections::HashSet;
 use thiserror::Error;
 
 use crate::expr::QueryExpr;
-use crate::schema::{CapabilityKind, CapabilitySchema, ParameterRole, CGS};
+use crate::schema::{
+    capability_is_zero_arity_invoke, CapabilityKind, CapabilitySchema, ParameterRole, CGS,
+};
 
 /// Failure to pick exactly one query/search capability for a [`QueryExpr`].
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
@@ -143,6 +145,89 @@ fn required_filter_like_param_names(cap: &CapabilitySchema) -> Vec<String> {
         .collect();
     names.sort();
     names
+}
+
+/// Exactly one pathless zero-arity Get on `entity`, and every Get on that entity is such a Get;
+/// no Query/Search. Shared by teaching and bare-`e#` normalize.
+pub fn sole_nullary_singleton_get<'a>(
+    cgs: &'a CGS,
+    entity: &str,
+) -> Option<&'a CapabilitySchema> {
+    if !cgs
+        .find_capabilities(entity, CapabilityKind::Query)
+        .is_empty()
+    {
+        return None;
+    }
+    if !cgs
+        .find_capabilities(entity, CapabilityKind::Search)
+        .is_empty()
+    {
+        return None;
+    }
+    let get_caps: Vec<_> = cgs.find_capabilities(entity, CapabilityKind::Get);
+    if get_caps.is_empty() {
+        return None;
+    }
+    let mut singleton: Vec<_> = get_caps
+        .iter()
+        .copied()
+        .filter(|c| {
+            !c.domain_exemplar_requires_entity_anchor() && capability_is_zero_arity_invoke(c)
+        })
+        .collect();
+    if singleton.len() != get_caps.len() || singleton.len() != 1 {
+        return None;
+    }
+    singleton.sort_by_key(|c| c.name.as_str());
+    Some(singleton[0])
+}
+
+/// When a bare entity head (`Entity` / `e#`, no predicate) qualifies, return that sole Get.
+pub fn sole_nullary_singleton_get_for_bare_query<'a>(
+    query: &QueryExpr,
+    cgs: &'a CGS,
+) -> Option<&'a CapabilitySchema> {
+    if query.capability_name.is_some() || query.predicate.is_some() {
+        return None;
+    }
+    sole_nullary_singleton_get(cgs, query.entity.as_str())
+}
+
+/// Rewrite a bare query to a pathless nullary [`Expr::Get`] (empty identity, stamped capability).
+pub fn rewrite_bare_query_to_sole_get(
+    query: &QueryExpr,
+    get_cap: &CapabilitySchema,
+) -> crate::Expr {
+    let mut g = crate::expr::GetExpr::pathless_nullary(query.entity.clone());
+    g.capability_name = Some(get_cap.name.clone());
+    g.catalog_entry_id = query.catalog_entry_id.clone();
+    crate::Expr::Get(g)
+}
+
+fn normalize_query_arm(
+    expr: &mut crate::Expr,
+    cgs: &CGS,
+) -> Result<(), QueryCapabilityResolveError> {
+    let crate::Expr::Query(q) = expr else {
+        return Ok(());
+    };
+    if q.capability_name.is_some() {
+        return Ok(());
+    }
+    match resolve_query_capability(q, cgs) {
+        Ok(cap) => {
+            q.capability_name = Some(cap.name.clone());
+            Ok(())
+        }
+        Err(err) => {
+            let Some(get_cap) = sole_nullary_singleton_get_for_bare_query(q, cgs) else {
+                return Err(err);
+            };
+            *expr = rewrite_bare_query_to_sole_get(q, get_cap);
+            Ok(())
+        }
+    }
 }
 
 /// Resolve the **query** capability that executes `query`.
@@ -306,18 +391,15 @@ pub fn resolve_query_capability<'a>(
 }
 
 /// When inference succeeds and `capability_name` was unset, set it so intent lines and `expr_display` show `cap=…`.
+///
+/// Bare entity heads with no Query/Search but a sole nullary singleton Get are rewritten to
+/// [`Expr::Get`] via [`rewrite_bare_query_to_sole_get`] so `label = eN` is executable.
 pub fn normalize_expr_query_capabilities(
     expr: &mut crate::Expr,
     cgs: &CGS,
 ) -> Result<(), QueryCapabilityResolveError> {
     match expr {
-        crate::Expr::Query(q) => {
-            if q.capability_name.is_none() {
-                let cap = resolve_query_capability(q, cgs)?;
-                q.capability_name = Some(cap.name.clone());
-            }
-            Ok(())
-        }
+        crate::Expr::Query(_) => normalize_query_arm(expr, cgs),
         crate::Expr::Chain(c) => {
             normalize_expr_query_capabilities(&mut c.source, cgs)?;
             if let crate::ChainStep::Explicit { expr: inner } = &mut c.step {
@@ -352,23 +434,19 @@ pub fn normalize_expr_query_capabilities_federated(
     };
     match expr {
         crate::Expr::Query(q) => {
-            if q.capability_name.is_none() {
-                let cgs = if let Some(eid) = q.catalog_entry_id.as_deref() {
-                    fed.cgs_for_catalog_entry_id(eid, q.entity.as_str())
-                        .ok_or_else(|| QueryCapabilityResolveError::NoMatchingCapability {
-                            entity: q.entity.to_string(),
-                            message: format!(
-                                "catalog `{eid}` is not loaded or does not define `{}`",
-                                q.entity
-                            ),
-                        })?
-                } else {
-                    cgs_for(q.entity.as_str())
-                };
-                let cap = resolve_query_capability(q, cgs)?;
-                q.capability_name = Some(cap.name.clone());
-            }
-            Ok(())
+            let cgs = if let Some(eid) = q.catalog_entry_id.as_deref() {
+                fed.cgs_for_catalog_entry_id(eid, q.entity.as_str())
+                    .ok_or_else(|| QueryCapabilityResolveError::NoMatchingCapability {
+                        entity: q.entity.to_string(),
+                        message: format!(
+                            "catalog `{eid}` is not loaded or does not define `{}`",
+                            q.entity
+                        ),
+                    })?
+            } else {
+                cgs_for(q.entity.as_str())
+            };
+            normalize_query_arm(expr, cgs)
         }
         crate::Expr::Chain(c) => {
             normalize_expr_query_capabilities_federated(&mut c.source, fed, fallback)?;
@@ -616,6 +694,34 @@ mod tests {
                 assert_eq!(q.catalog_entry_id.as_deref(), Some("github"));
             }
             _ => panic!("expected query"),
+        }
+    }
+
+    #[test]
+    fn bare_profile_desugars_to_sole_nullary_get() {
+        let dir = std::path::Path::new("../../fixtures/schemas/sole_nullary_get");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let q = QueryExpr::all("Profile");
+        assert!(
+            sole_nullary_singleton_get_for_bare_query(&q, &cgs)
+                .is_some_and(|c| c.name.as_str() == "profile_get"),
+            "sole nullary get detection"
+        );
+        let mut expr = crate::Expr::Query(QueryExpr::all("Profile"));
+        normalize_expr_query_capabilities(&mut expr, &cgs).unwrap();
+        match &expr {
+            crate::Expr::Get(g) => {
+                assert_eq!(g.reference.entity_type.as_str(), "Profile");
+                assert!(
+                    g.reference.primary_slot_str().is_empty(),
+                    "pathless nullary must not invent identity"
+                );
+                assert_eq!(g.capability_name.as_deref(), Some("profile_get"));
+            }
+            other => panic!("expected Get desugar, got {other:?}"),
         }
     }
 }

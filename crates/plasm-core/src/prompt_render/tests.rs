@@ -73,7 +73,7 @@ pub(crate) fn domain_example_lines(
     .collect()
 }
 
-/// Count canonical `· projection ·` witness rows (one per entity; query/search omit the same bracket).
+/// Count canonical `noun ·` witness rows (one per entity; query/search omit the same bracket).
 #[cfg(test)]
 fn count_projection_teaching_witness_rows(
     cgs: &CGS,
@@ -334,7 +334,7 @@ fn fixture_schema_dir(name: &str) -> std::path::PathBuf {
     repo_path(&["..", "..", "fixtures", "schemas", name])
 }
 
-/// Locks Proof `Document`-focused symbolic teaching TSV (`apis/proof`): union ctor teaching rows,
+/// Locks Proof `Document`-focused symbolic language card (`apis/proof`): union ctor teaching rows,
 /// value-domain gloss, and `document_edit_v2` witness line. Update with
 /// `INSTA_UPDATE=1 cargo test -p plasm-core proof_document_teaching_tsv_snapshot`.
 #[test]
@@ -469,7 +469,7 @@ fn teaching_tsv_return_glyphs_and_terminal_chain_hint_language_matrix() {
     assert!(
         meanings
             .iter()
-            .any(|m| m.contains('↠') && m.contains("chain:") && m.contains("(id=…).m#")),
+            .any(|m| m.contains('↠') && m.contains("chain:") && m.contains("(<id>).m#")),
         "expected a provides-write row with terminal glyph + reconstruction hint; meanings:\n{}",
         meanings.join("\n")
     );
@@ -640,19 +640,20 @@ fn google_sheets_compound_get_entity_ref_key_var_emits_valid_domain_line() {
     }
     let cgs = load_schema_dir(&dir).unwrap();
     let lines = domain_example_lines(&cgs, "ValueRange", None, None);
-    let expected = "ValueRange(spreadsheetId=$, range=$)";
+    let expected = "ValueRange(spreadsheetId=<id>, range=<id>)";
     assert!(
         lines.iter().any(|l| l.starts_with(expected)),
         "missing compound dotted-call-safe get witness for entity_ref key var: expected prefix `{expected}` in {:?}",
         lines
     );
+    let expected_for_validate = super::teaching_util::teaching_expr_for_validation(expected);
     assert!(
-        validate_teaching_line_wire(&cgs, expected).is_some(),
-        "expected synthesized compound get witness to parse+typecheck: `{expected}`"
+        validate_teaching_line_wire(&cgs, &expected_for_validate).is_some(),
+        "expected synthesized compound get witness to parse+typecheck: `{expected_for_validate}`"
     );
 }
 
-/// Regression: Issue teaching table teaches **one** canonical `· projection ·` witness row.
+/// Regression: Issue teaching table teaches **one** canonical `noun ·` witness row.
 /// Scoped query/search exemplars omit the same trailing `[p#,…]` / `rows:` contract.
 #[test]
 fn github_issue_domain_emits_single_full_projection_exemplar() {
@@ -691,7 +692,7 @@ fn github_issue_domain_emits_single_full_projection_exemplar() {
     assert_eq!(
         count_projection_teaching_witness_rows(&cgs, "Issue", map.as_deref(), surface),
         1,
-        "expect exactly one `· projection ·` witness row per entity"
+        "expect exactly one `noun ·` witness row per entity"
     );
     let block = {
         let mut line_valid_cache = HashMap::new();
@@ -768,7 +769,7 @@ fn github_issue_domain_emits_single_full_projection_exemplar() {
     let out = render_prompt_with_config(&cgs, cfg);
     assert!(
         !out.contains("Federated sessions"),
-        "single-catalog github slice teaching TSV should not embed grammar pitfalls"
+        "single-catalog github slice language card should not embed grammar pitfalls"
     );
     assert!(
         out.contains(br.as_str()),
@@ -824,7 +825,7 @@ fn linear_issue_heading_projection_despite_method_style_get() {
     assert_eq!(
         count_projection_teaching_witness_rows(&cgs, "Issue", map.as_deref(), surface),
         1,
-        "expect exactly one `· projection ·` witness row per entity"
+        "expect exactly one `noun ·` witness row per entity"
     );
     let mut line_valid_cache = HashMap::new();
     let mut gloss_emit_none = None;
@@ -1035,7 +1036,7 @@ fn tsv_additive_wave_omits_global_contract_but_keeps_column_header() {
     let eval_prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
     assert!(
         !eval_prompt.contains(TEACHING_VALID_EXPR_MARKER),
-        "teaching TSV is table-only; grammar lives in PLASM_TOOL_DESCRIPTION"
+        "language card is table-only; grammar lives in PLASM_TOOL_DESCRIPTION"
     );
     assert!(
         super::PLASM_TOOL_DESCRIPTION.contains(TEACHING_VALID_EXPR_MARKER),
@@ -1175,7 +1176,7 @@ fn prompt_matrix_full_tsv_synthesis_benchmark() {
     let warmup = render_prompt_tsv_with_config(&cgs, config);
     assert!(
         warmup.contains(TSV_TEACHING_TABLE_HEADER.trim_end()),
-        "warmup must emit teaching TSV header"
+        "warmup must emit language-card header"
     );
 
     let mut best = std::time::Duration::MAX;
@@ -1335,8 +1336,8 @@ fn overshow_tsv_includes_compound_capture_item_get_witness() {
     assert!(
         tsv.lines().any(|line| {
             line.starts_with("e1(")
-                && line.contains(&format!("{p_id}=$"))
-                && line.contains(&format!("{p_ct}=$"))
+                && line.contains(&format!("{p_id}=<id>"))
+                && line.contains(&format!("{p_ct}=<id>"))
                 && line.contains("→ e1")
         }),
         "expected compound-key capture-item get witness in TSV; e1 lines:\n{}",
@@ -1426,7 +1427,7 @@ fn prompt_matrix_zone_domain_no_unary_placeholder_relation_or_fake_projection_me
         let head = line.trim();
         assert!(
             !(head.contains("($)") && head.contains('.')),
-            "relation/method recv must not use invalid unary identity get `e#($).…`: {head}"
+            "relation/method recv must not use invalid unary identity get `e#(<id>).…`: {head}"
         );
     }
     let mut line_valid_cache = HashMap::new();
@@ -1469,7 +1470,7 @@ fn prompt_matrix_zone_domain_no_unary_placeholder_relation_or_fake_projection_me
         "projection witness must parse+typecheck: {expr}"
     );
     assert!(
-        !legend.contains("projection [") && !legend.contains("· projection ["),
+        !legend.contains("projection [") && !legend.contains("projection ["),
         "projection Meaning must not use legacy `projection […]` gloss prefix: {legend:?}"
     );
     assert!(
@@ -1488,7 +1489,7 @@ fn plasm_language_contract_defines_ref_meaning_prefix() {
     let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
     assert!(
         prompt.contains("ref:Zone") && prompt.contains("string · Zone identifier"),
-        "teaching TSV must include entity-ref value-domain gloss with canonical entity (not e#):\n{prompt}"
+        "language card must include entity-ref value-domain gloss with canonical entity (not e#):\n{prompt}"
     );
 }
 
@@ -1848,8 +1849,10 @@ fn prompt_matrix_waf_package_query_projection_witness_row() {
         );
     };
     assert!(
-        row.teaching_expr.expression.contains('{'),
-        "witness base should be query-shaped brace form: {}",
+        !row.teaching_expr.expression.contains('{')
+            && !row.teaching_expr.expression.contains('(')
+            && !row.teaching_expr.expression.contains('~'),
+        "noun card must be bare e#[wires] shape: {}",
         row.teaching_expr.expression
     );
     let expr = row.teaching_expr.expression.as_str();
@@ -1866,7 +1869,7 @@ fn prompt_matrix_waf_package_query_projection_witness_row() {
                     && !l.is_empty()
                     && l.split_once('\t').is_some_and(|(e, _)| e == expr)
             }),
-            "abstract WafPackage lines must not appear in default teaching TSV: {expr:?}"
+            "abstract WafPackage lines must not appear in default language card: {expr:?}"
         );
         return;
     }
@@ -1884,7 +1887,7 @@ fn prompt_matrix_waf_package_query_projection_witness_row() {
     );
     assert!(
         line.split_once('\t')
-            .is_some_and(|(_, m)| m.contains("· projection")),
+            .is_some_and(|(_, m)| m.contains("noun")),
         "Meaning should include projection gloss: {line:?}"
     );
 }
@@ -1912,7 +1915,7 @@ fn prompt_matrix_duplicate_registry_p_slot_gloss_suppressed() {
     let cgs = load_schema_dir(&dir).unwrap();
     let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
     let Some(idx) = prompt.find(TSV_TEACHING_TABLE_HEADER) else {
-        panic!("expected teaching TSV header");
+        panic!("expected language-card header");
     };
     fn count_slot_rows(body: &str, prefix: &str) -> usize {
         body.lines()
@@ -2010,9 +2013,9 @@ fn plasm_tool_description_includes_row_compute_worked_example() {
     );
     assert!(
         frontmatter.contains("Entity heads vs rows:")
-            && frontmatter.contains("query-all")
-            && frontmatter.contains("nullary"),
-        "must teach bare entity = plural query-all vs nullary materialize"
+            && frontmatter.contains("materialize")
+            && frontmatter.contains("executable"),
+        "must teach copying executable card e# patterns including materialize"
     );
     assert!(
         frontmatter.contains("PLASM_RPT_TAG"),
@@ -2061,7 +2064,7 @@ fn plasm_tool_description_includes_row_compute_worked_example() {
             && frontmatter.contains("verb · open")
             && frontmatter.contains("a.w1")
             && frontmatter.contains("e2~\"q\""),
-        "lookup example must pair a mini teaching TSV (noun/verb) with opaque program wires"
+        "lookup example must pair a mini language card (noun/verb) with opaque program wires"
     );
     assert!(
         !frontmatter.contains("access_token=sess.")
@@ -2213,7 +2216,7 @@ fn plasm_tool_description_stats() {
     let single_stats = super::grammar_frontmatter_stats_from_prompt(&single_prompt);
     assert!(
         single_stats.contract_comment_bytes <= full_prompt_stats.contract_comment_bytes,
-        "single-entity slice should not add contract comments to teaching TSV"
+        "single-entity slice should not add contract comments to language card"
     );
 }
 
@@ -2256,9 +2259,9 @@ fn grammar_frontmatter_stats_matrix_and_catalog() {
     }
 }
 
-/// Search teaching rows must not invite copy-paste of `e#~$` (grammar teaches `e#~"text"`).
+/// Search teaching rows must not invite copy-paste of `e#~$` / `e#~"text"` (grammar teaches `e#~"<query>"`).
 #[test]
-fn domain_search_teaching_rows_use_quoted_text_not_dollar() {
+fn domain_search_teaching_rows_use_quoted_query_hole() {
     let dir = apis_dir("linear");
     if !dir.is_dir() {
         return;
@@ -2268,8 +2271,12 @@ fn domain_search_teaching_rows_use_quoted_text_not_dollar() {
     for line in prompt.lines() {
         if line.contains('~') && line.starts_with('e') {
             assert!(
-                !line.contains("~$"),
-                "search teaching row must not contain ~$: {line}"
+                !line.contains("~$") && !line.contains("~\"text\""),
+                "search teaching row must use ~\"<query>\" hole, not ~$ / ~\"text\": {line}"
+            );
+            assert!(
+                line.contains("~\"<query>\"") || line.contains("~\""),
+                "search teaching row should quote the query operand: {line}"
             );
         }
     }
@@ -2285,7 +2292,7 @@ fn row_producer_teaching_includes_inputs_and_rows_contract() {
     let cgs = load_schema_dir(&dir).unwrap();
     let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
     assert!(
-        prompt.lines().any(|l| l.contains("· projection")),
+        prompt.lines().any(|l| l.contains("noun")),
         "teaching rows should include a projection witness:\n{prompt}"
     );
     assert!(
@@ -2296,13 +2303,13 @@ fn row_producer_teaching_includes_inputs_and_rows_contract() {
                 && !cols[0].contains(".r")
                 && parse_trailing_projection_bracket(cols[0].trim()).is_none()
                 && !cols[1].contains("rows:")
-                && !cols[1].contains("· projection")
+                && !cols[1].contains("noun")
         }),
         "set-equal query omits bracket/rows: in Meaning:\n{prompt}"
     );
     assert!(
         prompt.lines().any(|l| {
-            l.contains("~\"text\"")
+            l.contains("~\"<query>\"")
                 && parse_trailing_projection_bracket(l.split('\t').next().unwrap_or("").trim())
                     .is_some()
                 && !l.contains("rows:")
@@ -2320,17 +2327,80 @@ fn static_grammar_includes_symbols_only_rule() {
     );
     assert!(
         g.contains("Entity heads vs rows:")
-            && g.contains("query-all")
-            && g.contains("nullary")
+            && g.contains("materialize")
+            && g.contains("executable")
             && g.contains("eN.field"),
-        "canonical static grammar must teach entity-head vs materialized-row cardinality"
+        "canonical static grammar must teach copying executable card e# patterns"
     );
     assert!(
-        g.contains("· materialize")
-            && g.contains("↣ [e]")
-            && g.contains("→ e"),
+        g.contains("· materialize") && g.contains("↣ [e]") && g.contains("→ e"),
         "canonical static grammar must teach compact Meaning-arrow legend including materialize"
     );
+}
+
+#[test]
+fn sole_nullary_get_fixture_teaches_bare_e_first_with_gloss() {
+    use crate::FocusSpec;
+    use crate::TeachingExposureSession;
+
+    let dir = fixtures_schemas_dir("sole_nullary_get");
+    assert!(dir.exists(), "missing fixture {dir:?}");
+    let cgs = load_schema_dir(&dir).unwrap();
+    let pipeline = PromptPipelineConfig::default();
+    let exp = TeachingExposureSession::new(&cgs, "", &["Profile"]);
+    let first = pipeline.render_teaching_first_wave_for_session(&cgs, &exp, None);
+    let (_, body) = split_tsv_teaching_contract_and_table(&first);
+    validate_teaching_tsv_teaching_table(&body).expect("valid teaching rows");
+
+    let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
+    let e = map.entity_sym_for("", "Profile");
+    let mut e_rows = body.lines().filter_map(|l| {
+        l.split_once('\t').and_then(|(expr, meaning)| {
+            let expr = expr.trim();
+            if expr.starts_with('e')
+                && (expr == e.as_str()
+                    || expr.starts_with(&format!("{e}["))
+                    || expr.starts_with(&format!("{e}."))
+                    || expr.starts_with(&format!("{e}(")))
+            {
+                Some((expr.to_string(), meaning.to_string()))
+            } else {
+                None
+            }
+        })
+    });
+    let (first_expr, first_meaning) = e_rows.next().expect("Profile e# row");
+    assert_eq!(
+        first_expr, e.as_str(),
+        "first e# must be bare executable materialize, got {first_expr:?}\n{body}"
+    );
+    assert!(
+        first_meaning.contains("materialize")
+            && first_meaning.contains("Show phone profile by phone number"),
+        "expected gloss + materialize, got {first_meaning:?}"
+    );
+    assert!(
+        !body.lines().any(|l| l.contains(&format!("{e}.m")) && l.contains("()\t")),
+        "must not teach redundant e#.m#() for sole materialize:\n{body}"
+    );
+    assert!(
+        !body.lines().any(|l| l.starts_with(&format!("{e}["))),
+        "must not lead with noun e#[wires]:\n{body}"
+    );
+}
+
+#[test]
+fn sole_nullary_get_bare_program_normalizes_and_typechecks() {
+    let dir = fixtures_schemas_dir("sole_nullary_get");
+    let cgs = load_schema_dir(&dir).unwrap();
+    let mut parsed = crate::expr_parser::parse("Profile", &cgs).expect("parse bare Profile");
+    assert!(matches!(parsed.expr, crate::Expr::Query(_)));
+    crate::normalize_expr_query_capabilities(&mut parsed.expr, &cgs).unwrap();
+    assert!(
+        matches!(parsed.expr, crate::Expr::Get(_)),
+        "bare Profile must desugar to Get"
+    );
+    crate::type_check_expr(&parsed.expr, &cgs).expect("typecheck Get");
 }
 
 #[test]
@@ -2339,10 +2409,12 @@ fn nullary_materialize_tsv_meaning_is_sparse_not_chain_hint() {
     use super::tsv_emit::{write_teaching_tsv_row, DomainTsvRow};
     use super::{ReturnArrow, TeachingHeading};
 
+    let mut legend = CapabilityInputLegend::default();
+    legend.description = "Show the current profile".to_string();
     let line = TeachingExprLine {
         expression: "e2.m2()".to_string(),
         result_type: "e2".to_string(),
-        legend: CapabilityInputLegend::default(),
+        legend,
         is_projection_teaching: false,
         is_nullary_materialize: true,
         row_contract: RowContractLegend::default(),
@@ -2360,8 +2432,8 @@ fn nullary_materialize_tsv_meaning_is_sparse_not_chain_hint() {
         },
     );
     assert!(
-        out.contains("e2.m2()\t→ e2 · materialize"),
-        "expected sparse materialize Meaning, got {out:?}"
+        out.contains("e2.m2()\t→ e2 · Show the current profile · materialize"),
+        "expected materialize Meaning with capability gloss, got {out:?}"
     );
     assert!(
         !out.contains("chain:"),
@@ -2507,15 +2579,15 @@ fn clickup_domain_includes_materialized_team_spaces_nav() {
     let p_team_identity = map.ident_sym_entity_field_for("", "Team", team_ent.id_field.as_str());
     assert!(
         raw.contains(".spaces")
-            && (raw.contains("Team($)")
+            && (raw.contains("Team(<id>)")
                 || raw.contains(&format!("Team({p_team_identity})"))
                 || raw.contains("Team{"))
             && raw.contains("Team"),
-        "expected Team→spaces relation line (chain materialization; receiver may be `Team($)`, `Team({p_team_identity})`, or query-scoped `Team{{…}}`)"
+        "expected Team→spaces relation line (chain materialization; receiver may be `Team(<id>)`, `Team({p_team_identity})`, or query-scoped `Team{{…}}`)"
     );
     assert!(
         sym.contains(&format!(".{spaces_rel}"))
-            || sym.contains(&format!("{team_sym}($).{spaces_rel}"))
+            || sym.contains(&format!("{team_sym}(<id>).{spaces_rel}"))
             || sym.contains(&format!("{team_sym}({p_team_identity}).{spaces_rel}"))
             || sym.contains(&format!("{team_sym}{{")),
         "expected symbol-tuned Team→spaces relation (`.{spaces_rel}` on a `{team_sym}` receiver)"
@@ -2606,10 +2678,10 @@ fn clickup_domain_gloss_and_symbol_map_queries() {
             "{}{{{}={}({})",
             task_sym, p_team_id, team_sym, p_team_identity
         )) || domain_block.contains(&format!(
-            "{}{{{}={}($)",
+            "{}{{{}={}(<id>)",
             task_sym, p_team_id, team_sym
         )),
-        "workspace-scoped task query should teach scope with unary entity-ref fill-in (p#=e#(id_slot) or e#($)), not bare team id literals"
+        "workspace-scoped task query should teach scope with unary entity-ref fill-in (p#=e#(id_slot) or e#(<id>)), not bare team id literals"
     );
     assert!(
         !domain_block.contains("2000-01-01") && !domain_block.contains("p10>=\""),
@@ -2621,7 +2693,7 @@ fn clickup_domain_gloss_and_symbol_map_queries() {
     );
 }
 
-/// User has only pathless singleton `user_get_me` — teaching table must show `e#.m#()` (get-me) and not mislead with `e#(42)`.
+/// User has only pathless singleton `user_get_me` — first e# row is bare materialize (not `e#(42)` / `e#.m#()`).
 #[test]
 fn clickup_user_singleton_get_me_line_in_domain() {
     let dir = apis_dir("clickup");
@@ -2635,13 +2707,32 @@ fn clickup_user_singleton_get_me_line_in_domain() {
     );
     let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
     let user_sym = map.entity_sym_for("", "User");
+    let first_user_e = sym.lines().find_map(|l| {
+        l.split_once('\t').and_then(|(expr, meaning)| {
+            let expr = expr.trim();
+            if expr == user_sym.as_str() || expr.starts_with(&format!("{user_sym}[")) || expr.starts_with(&format!("{user_sym}.")) || expr.starts_with(&format!("{user_sym}(")) {
+                Some((expr.to_string(), meaning.to_string()))
+            } else {
+                None
+            }
+        })
+    });
+    let (expr, meaning) = first_user_e.expect("User must have an e# teaching row");
+    assert_eq!(
+        expr, user_sym.as_str(),
+        "sole singleton Get: first e# row must be bare {user_sym}, got {expr:?}"
+    );
     assert!(
-        sym.lines().any(|l| {
-            l.split_once('\t').is_some_and(|(expr, _)| {
-                expr.contains(&format!("{user_sym}.m")) && expr.contains("()")
+        meaning.contains("materialize"),
+        "bare User materialize Meaning, got {meaning:?}"
+    );
+    assert!(
+        !sym.lines().any(|l| {
+            l.split_once('\t').is_some_and(|(e, _)| {
+                e.contains(&format!("{user_sym}.m")) && e.contains("()")
             })
         }),
-        "User TSV should teach singleton get-me as e#.m#(), not id-based e#(42)"
+        "sole materialize must not also teach redundant e#.m#()"
     );
 }
 
@@ -2958,6 +3049,13 @@ fn assert_prompt_examples_valid(dir: &std::path::Path, config: RenderConfig<'_>)
         dir.display()
     );
     for expr in &exprs {
+        // Angle-bracket teaching holes are templates; validate the `$` / `"q"` stand-in form.
+        let expr_for_check = if expr.contains('<') {
+            super::teaching_util::teaching_expr_for_validation(expr)
+        } else {
+            expr.clone()
+        };
+        let expr = &expr_for_check;
         if let Some(arc) = map.as_ref() {
             let layers = [crate::CgsLayer::unset(&cgs)];
             let mut r = crate::expr_parser::parse_with_cgs_layers(expr, &layers, arc.clone())
@@ -3066,7 +3164,7 @@ fn overshow_tools_compact_prompt_snapshot() {
     });
 }
 
-/// Locks teaching TSV render for the same fixture (review diffs with compact snapshot above).
+/// Locks language card render for the same fixture (review diffs with compact snapshot above).
 #[test]
 fn overshow_tools_prompt_tsv_snapshot() {
     let dir = fixtures_schemas_dir("overshow_tools");
@@ -3080,7 +3178,7 @@ fn overshow_tools_prompt_tsv_snapshot() {
     });
 }
 
-/// Federated open: colliding wire entity names get distinct `e#` in teaching TSV rows (B1).
+/// Federated open: colliding wire entity names get distinct `e#` in language card rows (B1).
 #[test]
 fn federated_duplicate_entity_wire_names_use_distinct_e_in_teaching_tsv() {
     use std::sync::Arc;
@@ -3230,6 +3328,7 @@ fn from_parent_get_nav_matrix_relation_fanout_type_checks_and_edge_delta_validat
     let dir = fixture_schema_dir("from_parent_get_nav");
     let mut cgs = load_schema_dir(&dir).expect("from_parent_get_nav fixture");
     cgs.entry_id = Some("from_parent_get_nav".into());
+    cgs.stamp_entity_ref_catalogs();
     let chain = ChainExpr::auto_get(Expr::Get(GetExpr::new("ParentItem", "p-1")), "tags");
     type_check_chain(&chain, &cgs).expect("ParentItem.tags from_parent_get chain");
 
@@ -3291,6 +3390,7 @@ fn linear_issue_labels_relation_fanout_type_checks_and_edge_delta_validates() {
     }
     let mut cgs = load_schema_dir(&dir).expect("linear");
     cgs.entry_id = Some("linear".into());
+    cgs.stamp_entity_ref_catalogs();
     let chain = ChainExpr::auto_get(Expr::Get(GetExpr::new("Issue", "ENG-42")), "labels");
     type_check_chain(&chain, &cgs).expect("Issue.labels from_parent_get chain");
 
@@ -3348,7 +3448,7 @@ fn github_prompt_tier1_typed_gloss_dedupe() {
     let cgs = load_schema_dir(&dir).unwrap();
     let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
     let Some(idx) = prompt.find(TSV_TEACHING_TABLE_HEADER) else {
-        panic!("expected teaching TSV header");
+        panic!("expected language-card header");
     };
     let table = &prompt[idx..];
     fn count_slot_rows(body: &str, prefix: &str) -> usize {

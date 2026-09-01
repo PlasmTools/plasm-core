@@ -4,11 +4,11 @@ expression: "super::PLASM_TOOL_DESCRIPTION"
 ---
 **Plasm** — **`logical_session_ref`** + **`program`**. Clean read-only plans execute inline (rows in tool **`content`**). Plans with any mutation / review gate return a **`run_ref`** (`pcN`, 10 min TTL) for **`plasm_run`**; do **not** echo the program.
 
-**`program` is Plasm source text, not JSON data.** Grammar below; symbols from `plasm_context` TSV. Reply with one valid plasm_program:
+**`program` is Plasm source text, not JSON data.** Grammar below; symbols from the language card. Reply with one valid plasm_program:
 
 **Program shape:** one `plasm_expr`, or `label = …` bindings then **one** final return line (comma-separated roots on that line only). No prose, `return`, fences, or table rows. A plan that merely echoes an object/array/string literal is a **literal no-op**.
 
-**Entity heads vs rows:** Bare `eN` = query-all (**plural**), not “current/self”. `eN(id)` = get (**singleton**). `eN{…}` / `eN~"q"` = filtered/search (**plural**). When TSV teaches nullary `eN.mK()` providing a row, call `eN.mK()` — do not invent `eN.field` as a fetch or bind `me = eN` for that singular row. `[field,…]` keeps row shape; scalar params need `label.wire` from a **singleton** row (get / `eN.mK()` / filter+`.limit(1)`), not bare query-all. Array params may take plural `rows.wire`. After `label = eN.mK()` / `eN(id)`, use `label.wire` / `label.mK(…)`.
+**Entity heads vs rows:** Copy the card’s left-column `eN…` patterns — they are executable. Meaning arrows: `↣ [e]` plural · `→ e` one row · `↠` write · `· materialize` singleton row fetch. Do not invent `eN.field` as a fetch. `[field,…]` keeps row shape; scalar params need `label.wire` from a singleton row, not a plural query-all. Array params may take plural `rows.wire`. After binding, use `label.wire` / `label.mK(…)`.
 
 **Strings:** JSON escapes in quotes (`\n` `\t` `\\` `\"`); unknown `\x` errors. Prefer tagged `<<TAG` … `TAG` heredocs for long bodies (real newlines).
 
@@ -19,14 +19,14 @@ bars = e2{foo=foo}
 bazs = e3{foo=foo}
 bars, bazs
 ```
-Batch reads aggressively. **Prefer one multi-write program** when steps share one approval: writes run **bind-ordered (sequential)**; **one** `run_ref` for the plan. After a write use **`label.field`** (TSV wire names) — never invent a `.wire` postfix.
+Batch reads aggressively. **Prefer one multi-write program** when steps share one approval: writes run **bind-ordered (sequential)**; **one** `run_ref` for the plan. After a write use **`label.field`** (card wire names) — never invent a `.wire` postfix.
 ```
 foo = e1.m1(name="n")
 bar = e2.m2(foo=foo, title="t")
 baz = e3.m3(bar=bar, body="…")
 bar, baz
 ```
-Worked lookup→write (illustrative mini-TSV; live symbols from `plasm_context`). **noun**↔`e#`, **verb**↔`m#`; left=code; never copy Meaning.
+Worked lookup→write (illustrative mini card; live symbols from `plasm_context`). **noun**↔`e#`, **verb**↔`m#`; left=code; never copy Meaning. Session tokens: ` ```plasm-session `; language-card / run rows: ` ```tsv `.
 ```tsv
 plasm_expr	Meaning
 e1	noun · root
@@ -57,21 +57,22 @@ report = sorted[name,amount] <<PLASM_RPT_TAG
 {% endfor %}
 PLASM_RPT_TAG
 
-TSV table semantics:
+Language-card table semantics:
 - Header `plasm_expr<TAB>Meaning`; **left column only is syntax** — never copy Meaning (arrows, `chain:`, prose).
 - Executable rows start with `e#`; `r#`/`v#` are never roots.
-- Meaning arrows: `↣ [e]` = plural · `→ e` = singleton · `↠` = write · `· materialize` = nullary `e.m()` yields that row (not bare `e` / `e.field`).
-- Meaning arrows document result shape only. In-program: bind the write, use `label.field`. TSV `chain:` is for a **later turn** — not a ban on in-program chaining.
+- Meaning arrows: `↣ [e]` = plural · `→ e` = singleton row · `↠` = write · `· materialize` = singleton row fetch (copy the taught left-column pattern).
+- Meaning arrows document result shape only. In-program: bind the write, use `label.field`. Card `chain:` is for a **later turn** — not a ban on in-program chaining.
 
 Core surface:
-- Get: `e#(id)`. Query: `e#{field=…}`. Search when taught: `e#~"<query>"` (real query in quotes).
-- Postfix from TSV left column: `.filter{…}` `.sort` `.limit` `.group_by` `.aggregate` `.with{k: expr}` `[field,…]`.
-- Inline rows when delivery is `inline` (≤25); `snapshot_only` / `(in artifact)` need artifact read. Copy **`artifact_uri`** — never plan `run_step` / `dict_ref`.
+- Get: `e#(<id>)`. Query: `e#{field=<wire>}`. Search when taught: `e#~"<query>"`.
+- Shape/projection uses taught left-column patterns — never invent a root `e#[wires]` fetch.
+- Postfix from card left column: `.filter{…}` `.sort` `.limit` `.group_by` `.aggregate` `.with{k: expr}` `[field,…]`.
+- Inline rows when delivery is `inline` (≤25); `snapshot_only` / `(in artifact)` need artifact read. Copy **`artifact_uri`** from `plasm-session` tokens — never plan `run_step` / `dict_ref`.
 - `page(...)` is HTTP-execute only — not an MCP tool argument.
 
 Composition rules:
 - One binding per line; multi-roots on the final line only.
-- Row text: `label = source[field,…] <<TAG` … `TAG`; string params use **`label.content`**. Bare string bind: `label = <<TAG` … `TAG` → `param=label`.
+- Row text: `label = source[field,…] <<TAG` … `TAG`; string params use **`binding.content`**, not the whole row. Bare string bind: `label = <<TAG` … `TAG` → `param=label`.
 - After `foo = e#(…)`, prefer `foo.m#(…)` / `foo.r#`. `${report.content}` in later strings (`$$` escapes `$`).
 - Bare create: `e#.m#(param=…)`; scoped write: `source => e#.m#(…)`. Heredoc closes on first trimmed `TAG` line.
 
@@ -79,6 +80,6 @@ Symbol and fill rules:
 - Code uses `e#` / `m#` / `r#`; **wire names** for fields/params/filters. Never emit `v#`.
 - Homographs by syntax position (`{wire=…}`, `.r#`, `m#(wire=…)`).
 - Session handles (`logical_session_ref`, `run_ref`/`pcN`) are MCP tokens — not program syntax.
-- Teaching templates have holes — fill with real values; never emit leftover placeholder characters from a teaching row.
+- Card templates have holes — fill with real values; never emit leftover placeholder characters from a card row.
 - Quote scalars in `{…}` predicates and string params. Prefer `label = e#` then `label.filter{…}` when you need the full plural set.
 - Recovery: **`plasm_context`** `session_mode: "extend"` + same **`logical_session_ref`** — never **`new`**.

@@ -11,14 +11,14 @@
 //! `m#` / `p#`); legacy compact/canonical modes affect symbol naming only, not the output format.
 //! The Plasm language grammar (composition / postfix / heredoc / row-to-text) lives **statically** in
 //! the MCP `plasm` tool description ([`PLASM_TOOL_DESCRIPTION`]); the prompt rendered here is the
-//! **table-only** teaching TSV — no grammar contract is interleaved per wave. Catalogue-specific
+//! **table-only** language card — no grammar contract is interleaved per wave. Catalogue-specific
 //! teaching rows act as many-shot semantic instantiations: they teach which concrete `e#` / `m#` /
 //! `p#` symbols, fields, methods, scoped filters, and relations are valid for this catalogue wave.
 //! The `~` search form and tagged `<<TAG` heredocs are taught unconditionally by the static grammar;
 //! per-entity teaching rows still witness the concrete search / string-valued slots for each entity.
 //!
 //! **teaching table** is **per-entity blocks** of **valid Plasm expressions only** (CGS-validated before emit).
-//! In the teaching TSV, the entity `description` is attached to the **first projection witness** for that
+//! In the language card, the entity `description` is attached to the **first projection witness** for that
 //! entity when one exists, otherwise to the **identity** get row. Rows are phased per block: **`v#` gloss**
 //! (except the deferred synthetic union summary), **`p#` gloss**, **`r#` gloss** (relation alias → wire name),
 //! **union constructor exemplars**
@@ -65,6 +65,7 @@ mod bundle_render;
 mod capability_delta;
 mod contract;
 mod entity_block;
+mod fetch_head_teaching;
 mod gloss_collect;
 mod gloss_dedup;
 mod gloss_filter;

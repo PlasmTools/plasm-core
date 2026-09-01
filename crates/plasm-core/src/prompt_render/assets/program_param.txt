@@ -1,5 +1,5 @@
 Plasm source text, not JSON data — one expression, or `label = …` bindings then ONE final return line (comma-separated roots on that line only). No prose, no `return` keyword, no code fences. Echoing a bare object/array/string literal is a no-op; write Plasm source.
 
-Symbols from the `plasm_context` teaching TSV: `e#` entity, `m#` method, `r#` relation; **wire names** for fields, params, and filters. Bare `eN` is plural query-all; taught nullary `eN.mK()` materializes a row — not `eN.field` as a fetch. Fill teaching holes with real values; never emit leftover placeholder characters.
+Symbols from the `plasm_context` language card: `e#` entity, `m#` method, `r#` relation; **wire names** for fields, params, and filters. Copy taught `e#` patterns from the card; never invent `eN.field` as a fetch. Fill card holes with real values; never emit leftover placeholder characters.
 
 Full grammar, composition, and worked examples are in the **`plasm` tool description** (not duplicated here). Multiline strings: `label = <<TAG` … `TAG`. Session / parse recovery: **`plasm_context`** (`session_mode: "extend"`, same `logical_session_ref` — not `new`).
