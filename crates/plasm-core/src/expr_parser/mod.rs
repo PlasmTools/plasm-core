@@ -3733,10 +3733,8 @@ impl<'a> Parser<'a> {
                 });
             }
             Some(self.parse_projection()?)
-        } else if let Some(wire) = self.field_project_sugar.take() {
-            Some(vec![wire])
         } else {
-            None
+            self.field_project_sugar.take().map(|wire| vec![wire])
         };
 
         // One expression per call; ignore trailing noise (LLM markdown, prose, etc.).
@@ -6206,9 +6204,9 @@ mod tests {
             return;
         }
         let mut cgs_github = load_schema_dir(&github_dir).expect("github");
-        cgs_github.entry_id = Some("github".into());
+        cgs_github.bind_registry_entry_id("github");
         let mut cgs_linear = load_schema_dir(&linear_dir).expect("linear");
-        cgs_linear.entry_id = Some("linear".into());
+        cgs_linear.bind_registry_entry_id("linear");
         let layers = [&cgs_github, &cgs_linear];
         let stack = cgs_layer_stack(&["github", "linear"], &layers);
         let mut exp = TeachingExposureSession::new(&cgs_github, "github", &["Issue"]);
@@ -6251,9 +6249,9 @@ mod tests {
             return;
         }
         let mut cgs_github = load_schema_dir(dir).expect("matrix github");
-        cgs_github.entry_id = Some("github".into());
+        cgs_github.bind_registry_entry_id("github");
         let mut cgs_linear = load_schema_dir(dir).expect("matrix linear");
-        cgs_linear.entry_id = Some("linear".into());
+        cgs_linear.bind_registry_entry_id("linear");
         let layers = [&cgs_github, &cgs_linear];
         let stack = cgs_layer_stack(&["github", "linear"], &layers);
         let mut exp = TeachingExposureSession::new(&cgs_github, "github", &["LangItem"]);
@@ -6308,9 +6306,9 @@ mod tests {
             return;
         }
         let mut cgs_github = load_schema_dir(dir).expect("matrix github");
-        cgs_github.entry_id = Some("github".into());
+        cgs_github.bind_registry_entry_id("github");
         let mut cgs_linear = load_schema_dir(dir).expect("matrix linear");
-        cgs_linear.entry_id = Some("linear".into());
+        cgs_linear.bind_registry_entry_id("linear");
         let layers = [&cgs_github, &cgs_linear];
         let stack = cgs_layer_stack(&["github", "linear"], &layers);
         let mut exp = TeachingExposureSession::new(&cgs_github, "github", &["LangItem"]);

@@ -146,10 +146,9 @@ pub(crate) use bundle_render::{
     render_prompt_tsv_for_single_catalog_exposure, render_teaching_prompt_bundle_for_validation,
 };
 pub(crate) use relation_teaching::render_relation_edge_delta_rows;
-pub(crate) use tsv_emit::{
-    is_union_ctor_teaching_surface_line, parse_trailing_projection_bracket,
-    render_prompt_tsv_from_bundle,
-};
+pub(crate) use tsv_emit::{is_union_ctor_teaching_surface_line, render_prompt_tsv_from_bundle};
+#[cfg(test)]
+pub(crate) use tsv_emit::parse_trailing_projection_bracket;
 pub(crate) use types::{TeachingRowDedupeKey, TEACHING_OPTIONAL_LEGEND_MARK};
 
 #[cfg(test)]

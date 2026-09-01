@@ -3,7 +3,7 @@
 use super::super::*;
 use crate::plan_flow::FlowVerdict;
 use crate::plasm_plan_run::{evaluate_plasm_plan_dry, symbol_map_for_plasm_surface_parse};
-use plasm_core::{load_schema, CgsContext, PromptPipelineConfig, TeachingExposureSession, CGS};
+use plasm_core::{load_schema, CgsContext, PromptPipelineConfig, TeachingExposureSession};
 use std::path::PathBuf;
 use std::sync::Arc;
 

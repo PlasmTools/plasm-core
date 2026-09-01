@@ -25,6 +25,7 @@ pub enum PersistedIdentRegistryRole {
     CapabilityParam { capability: String },
 }
 
+#[allow(clippy::large_enum_variant)] // mirrors IdentMetadata::RegistryBacked payload size
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PersistedIdentMetadata {
     RegistryBacked {

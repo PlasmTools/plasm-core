@@ -171,7 +171,7 @@ fn decode_entity_fields_and_ref(
                             if let Ok(nv) = fs.named_value(cgs) {
                                 let (v, diag) = plasm_core::decode_coerce_and_validate_field(
                                     field_decoder.field.as_str(),
-                                    &nv,
+                                    nv,
                                     decoded_value,
                                 );
                                 decoded_value = v;

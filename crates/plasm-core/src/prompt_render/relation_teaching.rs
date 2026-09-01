@@ -4,7 +4,9 @@ use std::collections::{HashMap, HashSet};
 
 use crate::relation_nav::relation_nav_admissible;
 use crate::schema::{Cardinality, EntityDef, RelationSchema};
-use crate::symbol_tuning::{ExposureSurface, SymbolMap};
+use crate::symbol_tuning::SymbolMap;
+#[cfg(test)]
+use crate::symbol_tuning::ExposureSurface;
 use crate::{CapabilityKind, CGS};
 
 use super::gloss_collect::GlossScratch;
@@ -16,8 +18,11 @@ use super::query_teaching::{
     compound_get_expr_line, query_expr_filters_only, query_expr_maximal, query_expr_scope_only,
     unary_entity_id_teaching_expr_line,
 };
+#[cfg(test)]
 use super::surface_filter::{surface_allows_relation_nav, surface_includes_exposed_entity};
-use super::symbol_tokens::{ent_sym, id_sym_entity, id_sym_rel};
+#[cfg(test)]
+use super::symbol_tokens::{ent_sym, id_sym_entity};
+use super::symbol_tokens::id_sym_rel;
 use super::teaching_push::try_push_teaching_example;
 use super::teaching_util::truncate_inline_desc;
 use super::tsv_emit::{teaching_relation_field_gloss, write_teaching_tsv_row, DomainTsvRow};
@@ -65,31 +70,6 @@ pub(crate) fn nav_receiver_candidates(
     out
 }
 
-/// Receiver for relation nav / bare recv: must **parse and type-check alone**.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn relation_nav_anchor_expr(
-    es: &str,
-    ent: &EntityDef,
-    cgs: &CGS,
-    map: Option<&SymbolMap>,
-    catalog_entry_id: &str,
-    line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
-    line_valid_cache_seed: u64,
-    map_arc: Option<&std::sync::Arc<SymbolMap>>,
-) -> Option<String> {
-    nav_receiver_candidates(es, ent, cgs, map, catalog_entry_id)
-        .into_iter()
-        .find(|recv| {
-            domain_line_work_valid_cached(
-                line_valid_cache,
-                line_valid_cache_seed,
-                cgs,
-                recv,
-                map_arc,
-            )
-        })
-}
-
 /// First receiver such that `recv + suffix` is a valid full teaching table expression (e.g. `.m#(…)`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn receiver_for_dotted_suffix(
@@ -117,13 +97,44 @@ pub(crate) fn receiver_for_dotted_suffix(
         })
 }
 
-pub(crate) const MAX_INCOMING_REL_NAV_PROJECTION_BASES: usize = 16;
+/// Receiver for relation nav / bare recv: must **parse and type-check alone**.
+///
+/// Test-only helper for [`incoming_relation_nav_bases_to_entity`]; production teaching uses
+/// [`receiver_for_dotted_suffix`].
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+fn relation_nav_anchor_expr(
+    es: &str,
+    ent: &EntityDef,
+    cgs: &CGS,
+    map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
+    line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
+    line_valid_cache_seed: u64,
+    map_arc: Option<&std::sync::Arc<SymbolMap>>,
+) -> Option<String> {
+    nav_receiver_candidates(es, ent, cgs, map, catalog_entry_id)
+        .into_iter()
+        .find(|recv| {
+            domain_line_work_valid_cached(
+                line_valid_cache,
+                line_valid_cache_seed,
+                cgs,
+                recv,
+                map_arc,
+            )
+        })
+}
+
+#[cfg(test)]
+const MAX_INCOMING_REL_NAV_PROJECTION_BASES: usize = 16;
 
 /// `ParentRecv.rel` expressions that type-check and return `target_ename` (incoming edges).
 ///
 /// With `surface_filter: Some`, only edges whose **parent** (`src_name`) is in
 /// [`ExposureSurface::entities`] and passes [`surface_allows_relation_nav`] for that slot are kept —
 /// symmetric with outgoing relation-nav rows on the parent entity block.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn incoming_relation_nav_bases_to_entity(
     cgs: &CGS,

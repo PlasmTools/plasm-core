@@ -123,6 +123,9 @@ pub enum IdentRegistryRole {
 
 /// Typed metadata for one teaching table / symbol slot — **discriminated** so relations and CGS-backed
 /// fields do not share optional `values:` keys (`RegistryBacked` always carries [`ValueDomainKey`]).
+///
+/// `RegistryBacked` dominates enum size; boxing deferred until `EntityRefSpec` extraction lands.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum IdentMetadata {
     /// Entity field or capability parameter: denormalized wire typing from [`CGS::values`].
@@ -4630,7 +4633,7 @@ mod tests {
     #[test]
     fn value_domain_v_symbols_dedupe_shared_registry_rows() {
         let mut cgs = CGS::new();
-        cgs.entry_id = Some("fixture_entry".into());
+        cgs.bind_registry_entry_id("fixture_entry");
         cgs.values.insert(
             "fixture_str_vtest".into(),
             NamedValueSchema {
@@ -4897,9 +4900,9 @@ mod tests {
             return;
         }
         let mut cgs_a = load_schema_dir(dir).unwrap();
-        cgs_a.entry_id = Some("alpha".into());
+        cgs_a.bind_registry_entry_id("alpha");
         let mut cgs_b = cgs_a.clone();
-        cgs_b.entry_id = Some("beta".into());
+        cgs_b.bind_registry_entry_id("beta");
         let arc_b = std::sync::Arc::new(cgs_b);
         let mut s = TeachingExposureSession::new(&cgs_a, "alpha", &["Pet"]);
         s.expose_entities(&[arc_b.as_ref()], arc_b.clone(), "beta", &["Pet"]);

@@ -775,10 +775,20 @@ impl FieldType {
         }
     }
 
-    /// Catalog ownership for an [`FieldType::EntityRef`], including an unstamped empty id.
+    /// Catalog ownership for an [`FieldType::EntityRef`].
+    ///
+    /// Returns [`None`] when not an entity-ref, or when the id is still the unstamped empty
+    /// default (authoring / pre-[`CGS::bind_registry_entry_id`] state).
     pub fn entity_ref_entry_id(&self) -> Option<&str> {
         match self {
-            FieldType::EntityRef { entry_id, .. } => Some(entry_id.as_str()),
+            FieldType::EntityRef { entry_id, .. } => {
+                let s = entry_id.as_str();
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(s)
+                }
+            }
             _ => None,
         }
     }

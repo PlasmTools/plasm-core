@@ -223,7 +223,7 @@ fn parent_scalar_field_supplies_entity_ref_scope(
 /// stringish coerce path — used by **both** query predicates (`QueryFilter`) and invoke/create
 /// args (`InvokeArg`). Divergent handling here is what made `archived=false` work on reads while
 /// `contacted_merchant=true` failed on writes.
-fn stringish<'a>(val: &'a Value) -> Option<&'a str> {
+fn stringish(val: &Value) -> Option<&str> {
     match val {
         Value::String(s) | Value::PhraseIdent(s) => Some(s.as_str()),
         _ => None,

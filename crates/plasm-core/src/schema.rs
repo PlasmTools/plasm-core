@@ -1597,7 +1597,7 @@ impl ValueDomainSlot for ArrayItemsSchema {
 const INPUT_VALIDATION_PREDICATES_REMOVED: &str = "input_schema.validation.predicates is removed: declare scalar constraints (min, max, min_length, max_length, pattern, …) on the corresponding `values:` row via value_ref; keep only cross_field_rules and allow_null under validation";
 
 /// Cross-field validation for capability inputs (`allow_null`, `cross_field_rules` only).
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Default)]
 pub struct InputValidation {
     /// Whether null/undefined inputs are allowed
     #[serde(default)]
@@ -1605,15 +1605,6 @@ pub struct InputValidation {
     /// Cross-field validation rules
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cross_field_rules: Vec<CrossFieldRule>,
-}
-
-impl Default for InputValidation {
-    fn default() -> Self {
-        Self {
-            allow_null: false,
-            cross_field_rules: Vec::new(),
-        }
-    }
 }
 
 impl<'de> Deserialize<'de> for InputValidation {
@@ -2580,10 +2571,20 @@ fn stamp_named_value_entity_refs(
 }
 
 impl CGS {
+    /// Bind this graph to a registry `entry_id` and stamp every [`FieldType::EntityRef`] /
+    /// [`KernelKind::EntityRef`] with that ownership. Prefer this over assigning `entry_id`
+    /// then calling [`Self::stamp_entity_ref_catalogs`] separately.
+    pub fn bind_registry_entry_id(&mut self, id: impl Into<String>) {
+        self.entry_id = Some(id.into());
+        self.stamp_entity_ref_catalogs();
+    }
+
     /// Stamp every [`FieldType::EntityRef`] / [`KernelKind::EntityRef`] with this catalog's
     /// `entry_id` (empty string when unset). Intra-catalog default for homograph-safe types.
     pub fn stamp_entity_ref_catalogs(&mut self) {
-        let eid = crate::identity::RegistryEntryId::new(self.entry_id.clone().unwrap_or_default());
+        let eid = crate::identity::RegistryEntryId::new(
+            self.entry_id.as_deref().unwrap_or_default().to_owned(),
+        );
         for nv in self.values.values_mut() {
             stamp_named_value_entity_refs(nv, &eid);
         }

@@ -371,8 +371,7 @@ fn intent_surface_seeded_sharelink_create_requires_intent_overlap() {
         return;
     }
     let mut cgs = load_schema_dir(&dir).expect("proof");
-    cgs.entry_id = Some("proof".into());
-    cgs.stamp_entity_ref_catalogs();
+    cgs.bind_registry_entry_id("proof");
     let endpoints = relation_keys("proof", &["ShareLink"]);
     let delta = derive_intent_exposure_surface_batch(
         &cgs,
@@ -409,8 +408,7 @@ fn intent_surface_seeded_sharelink_create_with_intent_lexicon_match() {
         return;
     }
     let mut cgs = load_schema_dir(&dir).expect("proof");
-    cgs.entry_id = Some("proof".into());
-    cgs.stamp_entity_ref_catalogs();
+    cgs.bind_registry_entry_id("proof");
     let endpoints = relation_keys("proof", &["ShareLink"]);
     let delta = derive_intent_exposure_surface_batch(
         &cgs,
@@ -498,7 +496,7 @@ fn intent_only_admits_mutators_on_readless_seeded_auth_session() {
     use indexmap::IndexMap;
 
     let mut cgs = CGS::new();
-    cgs.entry_id = Some("phone".into());
+    cgs.bind_registry_entry_id("phone");
     cgs.entities.insert(
         "AuthSession".into(),
         EntityDef {

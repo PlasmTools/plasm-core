@@ -2390,8 +2390,10 @@ fn singleton_row_fetch_tsv_meaning_has_gloss_not_chain_hint() {
     use super::tsv_emit::{write_teaching_tsv_row, DomainTsvRow};
     use super::{ReturnArrow, TeachingHeading};
 
-    let mut legend = CapabilityInputLegend::default();
-    legend.description = "Show the current profile".to_string();
+    let legend = CapabilityInputLegend {
+        description: "Show the current profile".to_string(),
+        ..Default::default()
+    };
     let line = TeachingExprLine {
         expression: "e2.m2()".to_string(),
         result_type: "e2".to_string(),
@@ -3270,9 +3272,9 @@ fn federated_github_linear_issue_distinct_e_symbols_when_apis_present() {
         return;
     }
     let mut cgs_github = load_schema_dir(&github_dir).expect("github");
-    cgs_github.entry_id = Some("github".into());
+    cgs_github.bind_registry_entry_id("github");
     let mut cgs_linear = load_schema_dir(&linear_dir).expect("linear");
-    cgs_linear.entry_id = Some("linear".into());
+    cgs_linear.bind_registry_entry_id("linear");
     let layers = [&cgs_github, &cgs_linear];
     let mut exp = TeachingExposureSession::new(&cgs_github, "github", &["Issue"]);
     exp.expose_entities(&layers, Arc::new(cgs_linear.clone()), "linear", &["Issue"]);
@@ -3311,8 +3313,7 @@ fn from_parent_get_nav_matrix_relation_fanout_type_checks_and_edge_delta_validat
 
     let dir = fixture_schema_dir("from_parent_get_nav");
     let mut cgs = load_schema_dir(&dir).expect("from_parent_get_nav fixture");
-    cgs.entry_id = Some("from_parent_get_nav".into());
-    cgs.stamp_entity_ref_catalogs();
+    cgs.bind_registry_entry_id("from_parent_get_nav");
     let chain = ChainExpr::auto_get(Expr::Get(GetExpr::new("ParentItem", "p-1")), "tags");
     type_check_chain(&chain, &cgs).expect("ParentItem.tags from_parent_get chain");
 
@@ -3373,8 +3374,7 @@ fn linear_issue_labels_relation_fanout_type_checks_and_edge_delta_validates() {
         return;
     }
     let mut cgs = load_schema_dir(&dir).expect("linear");
-    cgs.entry_id = Some("linear".into());
-    cgs.stamp_entity_ref_catalogs();
+    cgs.bind_registry_entry_id("linear");
     let chain = ChainExpr::auto_get(Expr::Get(GetExpr::new("Issue", "ENG-42")), "labels");
     type_check_chain(&chain, &cgs).expect("Issue.labels from_parent_get chain");
 

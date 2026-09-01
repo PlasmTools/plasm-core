@@ -153,7 +153,7 @@ fn prepare_cgs_for_catalog(api_dir: &Path, entry_id: &str) -> Result<CGS> {
         }
     }
 
-    cgs.entry_id = Some(entry_id.to_string());
+    cgs.bind_registry_entry_id(entry_id);
     if cgs.version == 0 {
         bail!(
             "CGS version must be explicitly set (> 0) for `{}` (no defaulting)",

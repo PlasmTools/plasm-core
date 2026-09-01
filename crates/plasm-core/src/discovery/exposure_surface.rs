@@ -51,9 +51,7 @@ fn fields_for_admitted_read_cap(
     }
 }
 
-use super::mutator_admit::{
-    entity_declares_readable_capability, seeded_entity_cap_always_includes,
-};
+use super::mutator_admit::seeded_entity_cap_always_includes;
 pub(crate) use super::mutator_admit::{
     mutating_capability_admitted, seeded_mutating_capability_admitted,
 };
@@ -152,9 +150,6 @@ pub fn derive_intent_exposure_surface_batch(
             field: ent.id_field.clone(),
         });
 
-        let seed_declares_readable_surface =
-            entity_declares_readable_capability(cgs, ename);
-
         let Some(cap_names) = cgs.capability_names_by_domain().get(ename) else {
             continue;
         };
@@ -169,7 +164,7 @@ pub fn derive_intent_exposure_surface_batch(
                 ename,
                 ent,
                 &seeded_entities,
-                seed_declares_readable_surface,
+                cgs,
             ) {
                 true
             } else {

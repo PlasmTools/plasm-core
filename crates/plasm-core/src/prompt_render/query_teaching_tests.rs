@@ -402,8 +402,7 @@ fn seeded_pokemon_teaching_includes_bare_query_row() {
         return;
     }
     let mut cgs = load_schema_dir(&dir).expect("pokeapi");
-    cgs.entry_id = Some("pokeapi".into());
-    cgs.stamp_entity_ref_catalogs();
+    cgs.bind_registry_entry_id("pokeapi");
     let endpoints = crate::relation_endpoint_keys("pokeapi", &["Pokemon".to_string()]);
     let delta = derive_intent_exposure_surface_batch(
         &cgs,

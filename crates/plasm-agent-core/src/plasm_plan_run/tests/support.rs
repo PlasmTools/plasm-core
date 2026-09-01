@@ -39,12 +39,12 @@ pub(super) fn duplicate_product_create_session() -> ExecuteSession {
         .expect("load scoped_create_tiny");
     let cgs_acme = Arc::new({
         let mut c = cgs_base.clone();
-        c.entry_id = Some("acme".into());
+        c.bind_registry_entry_id("acme");
         c
     });
     let cgs_other = Arc::new({
         let mut c = cgs_base;
-        c.entry_id = Some("other".into());
+        c.bind_registry_entry_id("other");
         c
     });
     let mut ctxs = indexmap::IndexMap::new();

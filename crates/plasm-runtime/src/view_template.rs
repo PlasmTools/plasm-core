@@ -58,7 +58,7 @@ fn parse_wire_num_value(v: minijinja::Value) -> Result<f64, String> {
         }
         ValueKind::String => {
             let mut s = v.as_str().unwrap_or_default().trim().to_string();
-            s = s.replace('$', "").replace(',', "");
+            s = s.replace(['$', ','], "");
             for suffix in [" points", " point", " pts", " pt"] {
                 if s.to_ascii_lowercase().ends_with(suffix) {
                     s.truncate(s.len() - suffix.len());

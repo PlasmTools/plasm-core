@@ -189,6 +189,7 @@ fn required_capability_param_names(capability: &CapabilitySchema) -> Vec<String>
 impl ExecutionEngine {
     /// After a query, upgrade Summary rows via concurrent GET when configured and the
     /// GET's required capability params are inherited from the parent env.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn hydrate_query_summaries(
         &self,
         entity_type: &str,

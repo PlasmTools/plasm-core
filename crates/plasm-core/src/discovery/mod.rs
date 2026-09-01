@@ -1358,8 +1358,7 @@ mod tests {
             return;
         }
         let mut cgs = load_schema_dir(&dir).expect("pokeapi");
-        cgs.entry_id = Some("pokeapi".into());
-        cgs.stamp_entity_ref_catalogs();
+        cgs.bind_registry_entry_id("pokeapi");
         cgs.registry_aliases = vec!["pokemon".into(), "poke-api".into()];
         let reg = InMemoryCgsRegistry::from_pairs(vec![(
             "pokeapi".into(),
@@ -1381,11 +1380,9 @@ mod tests {
             return;
         }
         let mut poke_cgs = load_schema_dir(&poke_dir).expect("pokeapi");
-        poke_cgs.entry_id = Some("pokeapi".into());
-        poke_cgs.stamp_entity_ref_catalogs();
+        poke_cgs.bind_registry_entry_id("pokeapi");
         let mut proof_cgs = load_schema_dir(&proof_dir).expect("proof");
-        proof_cgs.entry_id = Some("proof".into());
-        proof_cgs.stamp_entity_ref_catalogs();
+        proof_cgs.bind_registry_entry_id("proof");
         let reg = InMemoryCgsRegistry::from_pairs(vec![
             (
                 "pokeapi".into(),

@@ -658,9 +658,9 @@ mod tests {
         }
         let cgs = Arc::new(load_schema_dir(dir).unwrap());
         let mut cgs_github = (*cgs).clone();
-        cgs_github.entry_id = Some("github".into());
+        cgs_github.bind_registry_entry_id("github");
         let mut cgs_linear = (*cgs).clone();
-        cgs_linear.entry_id = Some("linear".into());
+        cgs_linear.bind_registry_entry_id("linear");
         let mut by_entry = IndexMap::new();
         by_entry.insert(
             "github".into(),

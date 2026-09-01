@@ -696,11 +696,11 @@ fn type_check_comparison(
     // Teaching `$` hole: allowed in typecheck for capability params **and** entity-field
     // predicates (client-side row filters). Executable plans reject leftover `$` via
     // [`reject_domain_placeholder_in_executable`] — never ship sample ids as teaching fill-ins.
-    if value.is_domain_example_placeholder() {
-        if cap_params.iter().any(|p| p.name == field_name) || entity.fields.contains_key(field_name)
-        {
-            return Ok(());
-        }
+    if value.is_domain_example_placeholder()
+        && (cap_params.iter().any(|p| p.name == field_name)
+            || entity.fields.contains_key(field_name))
+    {
+        return Ok(());
     }
 
     // ── 1. Capability parameter ───────────────────────────────────────────────
@@ -2010,10 +2010,10 @@ mod tests {
             return;
         }
         let mut cgs_github = load_schema_dir(&github_dir).expect("github");
-        cgs_github.entry_id = Some("github".into());
+        cgs_github.bind_registry_entry_id("github");
         let cgs_github = std::sync::Arc::new(cgs_github);
         let mut cgs_linear = load_schema_dir(&linear_dir).expect("linear");
-        cgs_linear.entry_id = Some("linear".into());
+        cgs_linear.bind_registry_entry_id("linear");
         let cgs_linear = std::sync::Arc::new(cgs_linear);
         let mut by_entry = IndexMap::new();
         by_entry.insert(
@@ -2106,8 +2106,10 @@ mod tests {
                 None,
             ),
         );
-        let mut pattern_constraints = Constraints::default();
-        pattern_constraints.pattern = Some("^a+$".into());
+        let pattern_constraints = Constraints {
+            pattern: Some("^a+$".into()),
+            ..Default::default()
+        };
         cgs.values.insert(
             "tc_gate_pattern".into(),
             NamedValueSchema::from_domain(

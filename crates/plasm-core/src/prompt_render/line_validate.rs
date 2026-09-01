@@ -160,8 +160,7 @@ mod tests {
             return;
         }
         let mut cgs = load_schema_dir_unvalidated(&p).expect("proof");
-        cgs.entry_id = Some("proof".to_string());
-        cgs.stamp_entity_ref_catalogs();
+        cgs.bind_registry_entry_id("proof");
         let missing = crate::cgs_expression_validate::uncovered_capabilities(&cgs);
         assert!(
             !missing

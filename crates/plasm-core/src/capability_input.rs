@@ -382,7 +382,7 @@ pub(crate) fn validate_input_type(
                                     })?;
                                     validate_concrete_named_value(
                                         field_value,
-                                        &fnv,
+                                        fnv,
                                         &field_path,
                                         cgs,
                                     )?;

@@ -1160,7 +1160,7 @@ mod tests {
                 target: EntityName::from("SharedTarget"),
             };
             let mut cgs = CGS::new();
-            cgs.entry_id = Some(entry_id.to_string());
+            cgs.bind_registry_entry_id(entry_id);
             cgs.values.insert(
                 "shared_ref".into(),
                 NamedValueSchema::from_domain(

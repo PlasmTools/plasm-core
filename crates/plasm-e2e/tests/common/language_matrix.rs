@@ -19,8 +19,7 @@ pub const MATRIX_ENTRY_ID: &str = "langmatrix";
 /// Clone a fixture [`CGS`] and stamp registry `entry_id` for federated parser/layer tests.
 pub fn cgs_with_registry_entry_id(cgs: &plasm_core::CGS, entry_id: &str) -> plasm_core::CGS {
     let mut out = cgs.clone();
-    out.entry_id = Some(entry_id.to_string());
-    out.stamp_entity_ref_catalogs();
+    out.bind_registry_entry_id(entry_id);
     out
 }
 

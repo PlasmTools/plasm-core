@@ -107,17 +107,16 @@ pub(crate) fn entity_declares_readable_capability(cgs: &crate::CGS, entity: &str
 
 /// Capabilities on an explicitly seeded entity that are always admitted (no intent lexicon score).
 ///
-/// `seed_declares_readable_surface`: when false, the seed has no `get`/`query`/`search`. Under
-/// [`MutatorAdmit::IntentOnly`], **`Action`** caps on those seeds still admit (AppWorld
-/// `AuthSession` login/logout co-seed). `Create`/`Update`/`Delete` stay score-/ranked-gated so
-/// create-only entities do not overshow on weak intents.
+/// Under [`MutatorAdmit::IntentOnly`], **`Action`** caps on seeds with **no** `get`/`query`/`search`
+/// still admit (AppWorld `AuthSession` login/logout co-seed). `Create`/`Update`/`Delete` stay
+/// score-/ranked-gated so create-only entities do not overshow on weak intents.
 pub(crate) fn seeded_entity_cap_always_includes(
     mutator_admit: MutatorAdmit,
     cap: &CapabilitySchema,
     entity_name: &str,
     ent: &EntityDef,
     seeded_entities: &HashSet<String>,
-    seed_declares_readable_surface: bool,
+    cgs: &crate::CGS,
 ) -> bool {
     if cap.domain.as_str() != entity_name || !seeded_entities.contains(entity_name) {
         return false;
@@ -149,5 +148,6 @@ pub(crate) fn seeded_entity_cap_always_includes(
         return true;
     }
     // IntentOnly: action-only (no get/query/search) seeds must still teach Actions.
-    matches!(cap.kind, CapabilityKind::Action) && !seed_declares_readable_surface
+    matches!(cap.kind, CapabilityKind::Action)
+        && !entity_declares_readable_capability(cgs, entity_name)
 }

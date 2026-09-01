@@ -146,13 +146,15 @@ fn ultimate_surface_is_bare_list_producer(state: &CompileState<'_>, label: &str)
         return false;
     };
     match &node.source {
-        DagNodeSource::Surface { parsed, kind, .. } => match kind {
-            PlanNodeKind::Query | PlanNodeKind::Search => match &parsed.expr {
-                Expr::Query(q) => predicate_is_absent_or_true(q.predicate.as_ref()),
-                _ => false,
-            },
+        DagNodeSource::Surface {
+            parsed,
+            kind: PlanNodeKind::Query | PlanNodeKind::Search,
+            ..
+        } => match &parsed.expr {
+            Expr::Query(q) => predicate_is_absent_or_true(q.predicate.as_ref()),
             _ => false,
         },
+        DagNodeSource::Surface { .. } => false,
         DagNodeSource::Compute { source, op, .. } => match op {
             ComputeOp::Filter { .. }
             | ComputeOp::Aggregate { .. }

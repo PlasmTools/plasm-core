@@ -503,8 +503,7 @@ mod tests {
             return;
         }
         let mut cgs = load_schema_dir(p).expect("proof");
-        cgs.entry_id = Some("proof".to_string());
-        cgs.stamp_entity_ref_catalogs();
+        cgs.bind_registry_entry_id("proof");
         validate_cgs_expression_surface(&cgs).unwrap_or_else(|e| {
             panic!("validate_cgs_expression_surface(proof, entry_id=proof): {e}");
         });
