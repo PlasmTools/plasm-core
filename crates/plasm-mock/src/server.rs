@@ -86,11 +86,11 @@ pub async fn start_server_with_config(
 
 #[cfg(test)]
 mod tests {
-    use plasm_core::value_domain::ValueDomain;
     use super::*;
+    use plasm_core::value_domain::ValueDomain;
     use plasm_core::{
-        FieldSchema, FieldType, FieldValueKind, NamedValueSchema, ResourceSchema,
-        ValueDomainKey, CGS,
+        FieldSchema, FieldType, FieldValueKind, NamedValueSchema, ResourceSchema, ValueDomainKey,
+        CGS,
     };
 
     fn create_test_store() -> MockStore {
@@ -99,10 +99,10 @@ mod tests {
             schema.values.insert(
                 k.into(),
                 NamedValueSchema::from_domain(
-                String::new(),
-                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
-                None,
-            ),
+                    String::new(),
+                    ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                    None,
+                ),
             );
         }
         let account = ResourceSchema {

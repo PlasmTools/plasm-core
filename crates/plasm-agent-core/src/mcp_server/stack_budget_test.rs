@@ -24,7 +24,11 @@ fn stack_bytes() -> usize {
         * 1024
 }
 
-fn host_from_schema_dir(entry_id: &str, title: &str, dir: &std::path::Path) -> Arc<crate::server_state::PlasmHostState> {
+fn host_from_schema_dir(
+    entry_id: &str,
+    title: &str,
+    dir: &std::path::Path,
+) -> Arc<crate::server_state::PlasmHostState> {
     if std::env::var_os("PLASM_HTTP_NO_SYSTEM_PROXY").is_none() {
         unsafe { std::env::set_var("PLASM_HTTP_NO_SYSTEM_PROXY", "1") };
     }
@@ -151,8 +155,14 @@ fn mcp_plasm_context_matrix_survives_two_mib_worker_stack() {
             let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("../../fixtures/schemas/plasm_language_matrix");
             let st = host_from_schema_dir("github", "GitHub", &dir);
-            dispatch_plasm_context(st, "stack-budget-matrix", "github", "LangItem", "list items")
-                .await;
+            dispatch_plasm_context(
+                st,
+                "stack-budget-matrix",
+                "github",
+                "LangItem",
+                "list items",
+            )
+            .await;
         });
     });
 }

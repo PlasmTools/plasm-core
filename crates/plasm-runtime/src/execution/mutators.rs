@@ -366,8 +366,14 @@ impl ExecutionEngine {
                     &identity_ambient,
                     rid,
                 );
-                let decoded =
-                    decode_entities_with_cgs(&decoder, &response, Some(cgs)).unwrap_or_default();
+                let decoded = if capability.provides.is_empty() {
+                    // True side-effect Actions may return empty/opaque bodies.
+                    decode_entities_with_cgs(&decoder, &response, Some(cgs)).unwrap_or_default()
+                } else {
+                    // Action-with-`provides` must materialize catalog-qualified rows (e.g. AuthSession
+                    // access_token) for downstream hole fill / CML env — never swallow decode failure.
+                    decode_entities_with_cgs(&decoder, &response, Some(cgs))?
+                };
 
                 let timestamp = current_timestamp();
                 let entities: Vec<CachedEntity> = decoded

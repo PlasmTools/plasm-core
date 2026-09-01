@@ -217,9 +217,7 @@ where
         inject_co_seed_with_primary(&mut pool, &catalogs, &discovery);
         let seats: Vec<types::EntityCandidateBundle> = pool
             .iter()
-            .filter(|(key, bundle)| {
-                !before.contains(key) || co_seed_bundle(&catalogs, bundle)
-            })
+            .filter(|(key, bundle)| !before.contains(key) || co_seed_bundle(&catalogs, bundle))
             .map(|(_, bundle)| bundle.clone())
             .collect();
         for bundle in &mut diversified {
@@ -327,12 +325,7 @@ where
     }
     // Load catalogs that author `co_seed_with: federated_primary|session_primary` whenever
     // any other catalog is already in the session (allowlist / registry scan — no entry names).
-    ensure_federated_co_seed_catalogs(
-        &mut catalogs,
-        catalog,
-        named_catalogs,
-        allowed_entry_ids,
-    );
+    ensure_federated_co_seed_catalogs(&mut catalogs, catalog, named_catalogs, allowed_entry_ids);
     if let Some(ids) = allowed_entry_ids {
         for entry_id in ids {
             if catalogs.contains_key(entry_id) {
@@ -356,8 +349,7 @@ fn cgs_has_federated_co_seed(cgs: &crate::schema::CGS) -> bool {
     cgs.entities.values().any(|e| {
         matches!(
             e.discovery.as_ref().and_then(|d| d.co_seed_with),
-            Some(DiscoveryCoSeedWith::FederatedPrimary)
-                | Some(DiscoveryCoSeedWith::SessionPrimary)
+            Some(DiscoveryCoSeedWith::FederatedPrimary) | Some(DiscoveryCoSeedWith::SessionPrimary)
         )
     })
 }

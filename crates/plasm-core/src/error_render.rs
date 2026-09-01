@@ -1234,7 +1234,7 @@ fn correction_predicate_field(
             let es = entity_label_for_feedback(entity, style);
             let bad = ident_label_for_feedback(field, style);
             return format!(
-                "`{bad}` is not a filter on `{es}` — use wire names from the teaching TSV query/filter columns."
+                "`{bad}` is not a filter on `{es}` — use wire names from the language card query/filter columns."
             );
         }
     }
@@ -1276,7 +1276,7 @@ fn correction_navigation_name(
             let es = entity_label_for_feedback(entity, style);
             let bad = ident_label_for_feedback(field, style);
             return format!(
-                "`{bad}` is not a field or relation on `{es}` — use wire field names or `r#` relation hops from the teaching TSV."
+                "`{bad}` is not a field or relation on `{es}` — use wire field names or `r#` relation hops from the language card."
             );
         }
     }
@@ -1397,7 +1397,7 @@ fn correction_no_entity_ref_bridge(
             let Ok(nv) = field.named_value(cgs) else {
                 continue;
             };
-            if let FieldType::EntityRef { target: t } = &nv.field_type {
+            if let FieldType::EntityRef { target: t, .. } = &nv.field_type {
                 pivots.push(match style {
                     FeedbackStyle::CanonicalDev => format!("{fname} (→ {})", t),
                     FeedbackStyle::SymbolicLlm { map } => {
@@ -1414,7 +1414,7 @@ fn correction_no_entity_ref_bridge(
                     let Ok(nv) = f.named_value(cgs) else {
                         continue;
                     };
-                    if let FieldType::EntityRef { target: t } = &nv.field_type {
+                    if let FieldType::EntityRef { target: t, .. } = &nv.field_type {
                         pivots.push(match style {
                             FeedbackStyle::CanonicalDev => {
                                 format!("{} (→ {})", f.name, t)

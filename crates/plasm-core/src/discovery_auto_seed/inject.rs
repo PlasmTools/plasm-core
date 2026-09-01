@@ -744,8 +744,7 @@ pub(crate) fn inject_co_seed_with_primary(
         let is_catalog_seat = matches!(policy, Some(DiscoveryCoSeedWith::CatalogPrimary));
         let is_federated_seat = matches!(
             policy,
-            Some(DiscoveryCoSeedWith::FederatedPrimary)
-                | Some(DiscoveryCoSeedWith::SessionPrimary)
+            Some(DiscoveryCoSeedWith::FederatedPrimary) | Some(DiscoveryCoSeedWith::SessionPrimary)
         );
         if !is_catalog_seat {
             catalog_triggers.insert(entry_id.clone());
@@ -764,8 +763,7 @@ pub(crate) fn inject_co_seed_with_primary(
             let Some(policy) = entity.discovery.as_ref().and_then(|d| d.co_seed_with) else {
                 continue;
             };
-            let admit = (policy.admits_on_catalog_primary()
-                && catalog_triggers.contains(entry_id))
+            let admit = (policy.admits_on_catalog_primary() && catalog_triggers.contains(entry_id))
                 || (policy.admits_on_federated_primary()
                     && federated_trigger
                     && !catalog_triggers.contains(entry_id));

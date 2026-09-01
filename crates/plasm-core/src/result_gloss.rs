@@ -112,11 +112,7 @@ fn collection_gloss(
     entity_sym_for_gloss(map, catalog_entry_id, entity).map(|s| format!("[{s}]"))
 }
 
-fn single_gloss(
-    map: Option<&SymbolMap>,
-    catalog_entry_id: &str,
-    entity: &str,
-) -> Option<String> {
+fn single_gloss(map: Option<&SymbolMap>, catalog_entry_id: &str, entity: &str) -> Option<String> {
     entity_sym_for_gloss(map, catalog_entry_id, entity)
 }
 
@@ -153,7 +149,10 @@ mod tests {
 
         // Unqualified lookup is ambiguous → None (never "LangItem").
         assert_eq!(map.try_entity_teaching_term("LangItem"), None);
-        assert_eq!(entity_sym_for_gloss(Some(map.as_ref()), "", "LangItem"), None);
+        assert_eq!(
+            entity_sym_for_gloss(Some(map.as_ref()), "", "LangItem"),
+            None
+        );
 
         let e_venmo = entity_sym_for_gloss(Some(map.as_ref()), "venmo", "LangItem")
             .expect("venmo LangItem e#");

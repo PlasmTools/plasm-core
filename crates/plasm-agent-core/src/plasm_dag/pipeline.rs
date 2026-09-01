@@ -6,6 +6,7 @@ use super::invoke_cardinality::validate_invoke_scalar_field_refs;
 use super::plan_serialize::{
     collect_template_uses_from_expr, expr_template_json, infer_surface_contract,
     looks_like_plasm_effect_template, node_to_json, parse_plan_value_expr,
+    stamp_plan_uses_result_qualified_entities,
 };
 use super::postfix::try_lower_row_suffix_expression;
 use super::prelude::*;
@@ -110,14 +111,16 @@ pub(crate) fn compile_plasm_dag_to_plan_inner(
             serde_json::json!(label),
         );
     }
-    Ok(json!({
+    let mut plan = json!({
         "version": 1,
         "kind": "program",
         "name": name,
         "nodes": nodes,
         "return": return_value,
         "metadata": serde_json::Value::Object(metadata),
-    }))
+    });
+    stamp_plan_uses_result_qualified_entities(&mut plan)?;
+    Ok(plan)
 }
 
 /// One line of surface Plasm (or `a, b` at top level) as a one-line program plan — same shape as
@@ -152,14 +155,16 @@ pub(crate) fn compile_plasm_surface_line_to_plan(
     } else {
         json!({ "kind": "parallel", "nodes": roots })
     };
-    Ok(json!({
+    let mut plan = json!({
         "version": 1,
         "kind": "program",
         "name": name,
         "nodes": nodes,
         "return": return_value,
         "metadata": { "language": "plasm-dag" }
-    }))
+    });
+    stamp_plan_uses_result_qualified_entities(&mut plan)?;
+    Ok(plan)
 }
 pub(in crate::plasm_dag) fn compile_node_expr(
     session: &ExecuteSession,

@@ -348,7 +348,7 @@ mod tests {
                     target_terms: vec![],
                 }),
                 identity_key: None,
-            invalidates_entities: vec![],
+                invalidates_entities: vec![],
             },
         );
         cgs

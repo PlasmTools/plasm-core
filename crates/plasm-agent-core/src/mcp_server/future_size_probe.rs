@@ -87,7 +87,9 @@ fn mcp_apply_capability_seeds_future_size() {
 
 #[test]
 fn mcp_plasm_context_future_size() {
-    use rust_mcp_sdk::schema::{Implementation, InitializeResult, ProtocolVersion, ServerCapabilities};
+    use rust_mcp_sdk::schema::{
+        Implementation, InitializeResult, ProtocolVersion, ServerCapabilities,
+    };
     use rust_mcp_sdk::ToMcpServerHandler;
     use serde_json::json;
 
@@ -102,8 +104,8 @@ fn mcp_plasm_context_future_size() {
             let _guard = rt.enter();
             let st = Arc::new(matrix_host());
             let handler = crate::mcp_server::PlasmMcpHandler::new(Arc::clone(&st));
-            let mcp_handler = crate::mcp_server::PlasmMcpHandler::new(Arc::clone(&st))
-                .to_mcp_server_handler();
+            let mcp_handler =
+                crate::mcp_server::PlasmMcpHandler::new(Arc::clone(&st)).to_mcp_server_handler();
             let details = Arc::new(InitializeResult {
                 protocol_version: ProtocolVersion::V2025_11_25.into(),
                 capabilities: ServerCapabilities::default(),
@@ -165,8 +167,8 @@ fn mcp_call_tool_dispatch_future_size() {
             let _guard = rt.enter();
             let st = Arc::new(matrix_host());
             let handler = crate::mcp_server::PlasmMcpHandler::new(Arc::clone(&st));
-            let mcp_handler = crate::mcp_server::PlasmMcpHandler::new(Arc::clone(&st))
-                .to_mcp_server_handler();
+            let mcp_handler =
+                crate::mcp_server::PlasmMcpHandler::new(Arc::clone(&st)).to_mcp_server_handler();
             let details = Arc::new(InitializeResult {
                 protocol_version: ProtocolVersion::V2025_11_25.into(),
                 capabilities: ServerCapabilities::default(),

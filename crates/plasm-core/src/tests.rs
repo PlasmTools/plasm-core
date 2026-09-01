@@ -60,7 +60,7 @@ mod property_tests {
         cgs.values.insert(
             "fx_str".into(),
             crate::schema::NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
@@ -72,7 +72,7 @@ mod property_tests {
         cgs.values.insert(
             "fx_region".into(),
             crate::schema::NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::Select,
                 value_format: None,

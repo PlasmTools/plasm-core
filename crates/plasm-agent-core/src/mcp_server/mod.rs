@@ -22,7 +22,7 @@
 //! Do not shrink or rotate picks to “narrow” the session; that only makes sense when opening a new binding.
 //! Tenant MCP policy
 //! is enforced from `Authorization: Bearer <api_key>` (opaque key from control-plane provision) when tenant configs exist.
-//! Tool text returns **table-only** teaching TSV on fresh `plasm_context` opens (`reused: false`); repeated
+//! Tool text returns **table-only** language card on fresh `plasm_context` opens (`reused: false`); repeated
 //! opens with the same entry + capability picks omit the teaching body to avoid token churn.
 //! **Symbols:** for a fixed binding (`prompt_hash` + `session`), `e#` / `m#` / `p#` grow **append-only**
 //! when you add new picks; they do not reshuffle. A new primary catalog open or logical session starts a new
@@ -79,6 +79,8 @@ mod call_tool_dispatch;
 mod committed_plasm_run;
 mod context_new_seeds;
 mod discover;
+#[cfg(test)]
+mod future_size_probe;
 mod host_policy;
 mod initialize;
 mod mcp_http_dns_rebinding;
@@ -92,6 +94,8 @@ mod read_run_artifact;
 mod resource_read;
 mod resource_read_trace;
 mod schema;
+#[cfg(test)]
+mod stack_budget_test;
 mod stateless;
 mod teaching_prompt_reporter;
 mod tool_parse;
@@ -99,10 +103,6 @@ mod tools;
 mod trace;
 mod transport;
 mod ui_read;
-#[cfg(test)]
-mod future_size_probe;
-#[cfg(test)]
-mod stack_budget_test;
 
 pub(crate) use initialize::mcp_stateless_server_details;
 pub use initialize::{

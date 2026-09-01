@@ -360,9 +360,9 @@ impl MockResource {
 
 #[cfg(test)]
 mod tests {
-    use plasm_core::value_domain::ValueDomain;
     use super::*;
     use plasm_compile::BackendOp;
+    use plasm_core::value_domain::ValueDomain;
     use plasm_core::{
         Cardinality, FieldSchema, FieldType, FieldValueKind, NamedValueSchema, RelationSchema,
         ResourceSchema, ValueDomainKey,

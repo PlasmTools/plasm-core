@@ -755,13 +755,44 @@ pub enum FieldType {
     Json,
     /// Fowler money: exact decimal amount + optional currency.
     Money,
-    /// Foreign key: stores an ID referencing another entity.
+    /// Foreign key: stores an ID referencing another entity in a catalog.
+    ///
+    /// `entry_id` is stamped from the owning CGS at load/finalize (intra-catalog default).
+    /// Authoring YAML keeps bare `target:`; serde defaults `entry_id` to empty until stamp.
     EntityRef {
+        #[serde(default)]
+        entry_id: crate::identity::RegistryEntryId,
         target: crate::identity::EntityName,
     },
 }
 
 impl FieldType {
+    /// Wire entity name for an [`FieldType::EntityRef`], if any.
+    pub fn entity_ref_target(&self) -> Option<&str> {
+        match self {
+            FieldType::EntityRef { target, .. } => Some(target.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Catalog ownership for an [`FieldType::EntityRef`], including an unstamped empty id.
+    pub fn entity_ref_entry_id(&self) -> Option<&str> {
+        match self {
+            FieldType::EntityRef { entry_id, .. } => Some(entry_id.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Catalog-qualified key for an [`FieldType::EntityRef`].
+    pub fn entity_ref_qualified(&self) -> Option<crate::symbol_tuning::QualifiedEntityKey> {
+        match self {
+            FieldType::EntityRef { entry_id, target } => Some(
+                crate::symbol_tuning::QualifiedEntityKey::new(entry_id.clone(), target.clone()),
+            ),
+            _ => None,
+        }
+    }
+
     /// Get compatible comparison operators for this field type.
     pub fn compatible_operators(&self) -> &[CompOp] {
         match self {

@@ -49,13 +49,12 @@ pub fn args_to_query_predicate(
 
 #[cfg(test)]
 mod tests {
-    use plasm_core::value_domain::ValueDomain;
     use super::*;
     use clap::Command;
+    use plasm_core::value_domain::ValueDomain;
     use plasm_core::{
         CapabilityKind, CapabilityMapping, CompOp, FieldType, InputFieldSchema, InputFieldWire,
-        InputSchema, InputType, InputValidation, NamedValueSchema, Value,
-        ValueDomainKey, CGS,
+        InputSchema, InputType, InputValidation, NamedValueSchema, Value, ValueDomainKey, CGS,
     };
 
     fn query_test_cgs() -> CGS {
@@ -67,7 +66,13 @@ mod tests {
             "qa_status_req",
             NamedValueSchema::from_domain(
                 String::new(),
-                ValueDomain::from_legacy(&FieldType::Select, None, None, Some(vec!["available".into(), "pending".into(), "sold".into()]).clone(), None),
+                ValueDomain::from_legacy(
+                    &FieldType::Select,
+                    None,
+                    None,
+                    Some(vec!["available".into(), "pending".into(), "sold".into()]).clone(),
+                    None,
+                ),
                 None,
             ),
         );
@@ -75,7 +80,13 @@ mod tests {
             "qa_status_rej",
             NamedValueSchema::from_domain(
                 String::new(),
-                ValueDomain::from_legacy(&FieldType::Select, None, None, Some(vec!["available".into()]).clone(), None),
+                ValueDomain::from_legacy(
+                    &FieldType::Select,
+                    None,
+                    None,
+                    Some(vec!["available".into()]).clone(),
+                    None,
+                ),
                 None,
             ),
         );
@@ -107,7 +118,13 @@ mod tests {
             "qa_status_none",
             NamedValueSchema::from_domain(
                 String::new(),
-                ValueDomain::from_legacy(&FieldType::Select, None, None, Some(vec!["available".into()]).clone(), None),
+                ValueDomain::from_legacy(
+                    &FieldType::Select,
+                    None,
+                    None,
+                    Some(vec!["available".into()]).clone(),
+                    None,
+                ),
                 None,
             ),
         );
@@ -115,7 +132,13 @@ mod tests {
             "qa_region_gen",
             NamedValueSchema::from_domain(
                 String::new(),
-                ValueDomain::from_legacy(&FieldType::Select, None, None, Some(vec!["EMEA".into(), "APAC".into(), "AMER".into()]).clone(), None),
+                ValueDomain::from_legacy(
+                    &FieldType::Select,
+                    None,
+                    None,
+                    Some(vec!["EMEA".into(), "APAC".into(), "AMER".into()]).clone(),
+                    None,
+                ),
                 None,
             ),
         );
@@ -131,7 +154,13 @@ mod tests {
             "qa_region_nf",
             NamedValueSchema::from_domain(
                 String::new(),
-                ValueDomain::from_legacy(&FieldType::Select, None, None, Some(vec!["EMEA".into()]).clone(), None),
+                ValueDomain::from_legacy(
+                    &FieldType::Select,
+                    None,
+                    None,
+                    Some(vec!["EMEA".into()]).clone(),
+                    None,
+                ),
                 None,
             ),
         );

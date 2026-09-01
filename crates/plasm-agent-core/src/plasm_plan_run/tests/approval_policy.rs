@@ -244,6 +244,11 @@ fn for_each_plan_eval_env_interpolates_row_and_cross_binding_strings() {
         InputAlias::new("report".to_string()).expect("alias"),
         MaterializedInputRow {
             node: PlanNodeId::new("report").expect("node"),
+            qualified_entity: crate::plasm_plan::QualifiedEntityKey {
+                entry_id: "acme".into(),
+                entity: "Report".into(),
+            },
+            id_field: "id".into(),
             proof: crate::plasm_plan::InputCardinalityProof::StaticSingleton,
             row: serde_json::json!({"content": "STATS"}),
             rows: vec![serde_json::json!({"content": "STATS"})],
@@ -257,10 +262,11 @@ fn for_each_plan_eval_env_interpolates_row_and_cross_binding_strings() {
         binding: &binding,
     };
     let inputs = InputEnv { rows: &input_rows };
+    let empty_coercion = BTreeMap::new();
     let env = PlanEvalEnv {
         scope,
         inputs,
-        wire_coercion: None,
+        wire_coercion_by_alias: &empty_coercion,
     };
     let out =
         instantiate_expr_template_value(&serde_json::json!("${_.title} / ${report.content}"), &env)

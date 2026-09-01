@@ -219,7 +219,7 @@ Cross-binding references (`${stats.content}`, `body=report.content`) are also su
 ## Invariants
 
 1. **Transforms are core postfix syntax** — `.limit(n)`, `.sort(field, desc)` / `.sort(field,dir)` (whitespace direction sugar accepted), `.filter{…}` / `.filter(…)`, `.aggregate(…)`, `.group_by(field).aggregate(specs)` (primary), `.group_by(field, …)` (comma sugar), `.with{…}` / `.with(…)` (derived columns), `.dedupe(…)` / `.distinct(…)`, `.singleton()`, `.page_size(n)`, bracket projections `[field,…]`, and row-to-text template blocks (`<<TAG … TAG`) are part of the same language as `e1{…}` / `e2(…)`.
-2. **Wire field names are canonical** — in MCP/symbolic sessions, postfix field tokens (`.sort`, `.filter`, `.group_by`, `.dedupe`, `.distinct`, `[field,…]`) use **catalog wire names** copied from the teaching TSV left column under the row entity. Diagnostics must never imply opaque `p#` tokens are accepted (legacy `p#` is rejected at parse).
+2. **Wire field names are canonical** — in MCP/symbolic sessions, postfix field tokens (`.sort`, `.filter`, `.group_by`, `.dedupe`, `.distinct`, `[field,…]`) use **catalog wire names** copied from the language-card left column under the row entity. Diagnostics must never imply opaque `p#` tokens are accepted (legacy `p#` is rejected at parse).
 3. **Binding is optional** — `expr.limit(20)` is valid without a prior `commits = expr` line when `expr` is a complete surface expression or an in-scope label.
 4. **Artifact-level semantics today** — transforms are applied to materialized row JSON in the plan executor unless an optimizer later pushes work to HTTP (the optimizer must never change what the surface language means).
 5. **No second “DAG language” for users** — diagnostics, MCP copy, and teaching gloss refer to **Plasm programs** or **Plasm expressions**, not “Plasm-DAG” as a distinct syntax tier.
@@ -233,7 +233,7 @@ Cross-binding references (`${stats.content}`, `body=report.content`) are also su
 - **`group_by`:** primary `group_by(p_key).aggregate(n=count)` (keys-only `.group_by` then `.aggregate`); bare `group_by(p_key)` is sugar for `count=count`; comma form `group_by(k1, k2, n=count)` remains sugar for fused keys+specs.
 - **`.with`:** `.with{col: expr}` adds derived columns per row; expression language is documented in [plasm-row-compute.md](plasm-row-compute.md#derived-columns-with). `.with{` / `.with(` is row compute — not a relation hop. Path segments like `.join(…)` without `{`/`(` after a known postfix verb are not row compute.
 - **`=>` on bindings (two uses only):** `source => { k: _.field }` (derive map) or `source => e1(…).update(…)` (for_each). There is no `.derive(…)` surface. Row-to-text uses postfix `rows <<TAG`, not `=>`.
-- **Relation fanout:** `labels = issues.labels` **or** `labels = issues.r#` (opaque relation symbol from teaching TSV) — never `issues => e2.r#` or `source => binding.r#` (compile rejects relation hops on `=>`). A **filter wire after `.`** on a receiver is not a relation hop (use `.r#` or the relation wire). The RHS of `=>` is not `plasm_expr`; entity calls there stringify or fail compile.
+- **Relation fanout:** `labels = issues.labels` **or** `labels = issues.r#` (opaque relation symbol from language card) — never `issues => e2.r#` or `source => binding.r#` (compile rejects relation hops on `=>`). A **filter wire after `.`** on a receiver is not a relation hop (use `.r#` or the relation wire). The RHS of `=>` is not `plasm_expr`; entity calls there stringify or fail compile.
 - **Homograph wires:** query filters and relation hops may share a wire name (e.g. `labels`). In-grammar resolution at the nav position disambiguates: `receiver.r#` / `receiver.labels` is a relation hop; the same wire in `{…}` is a filter/param. Teaching exemplars prefer `.r#` or wire names in relation position.
 - **teaching table Meaning column:** `relation e3 → e2` (or legacy `=>` in older TSV) is teaching gloss only — executable relation hops are `binding.r#` **or** the catalog wire name (e.g. `binding.labels`).
 - **Federated sessions:** duplicate wire entity/method/relation/field names across catalogs are disambiguated by session **`e#` / `m#` / `r#`** (stamped with `catalog_entry_id` in IR), not bare wire tokens alone. `entry_id:Entity` appears in MCP seeds and reuse maps only — never in program surface.
@@ -266,7 +266,7 @@ Binding forms:
 
 **Type-check admissibility (many-relation `.r#`):** chain `AutoGet` on a declared relation is valid when the target entity has **Get**, or when catalog `materialize` is **`from_parent_get`**, **`prefer_from_parent_get`**, **`query_scoped`**, or **`query_scoped_bindings`**. Embed-driven hops (e.g. Linear `Issue.labels` from `issue_get`) do **not** require a target Get capability. Teaching rows and extend-wave relation deltas are emitted only when a candidate exemplar passes parse + type-check.
 
-**teaching vs grammar:** Meaning-column text such as `relation e3 → e2` in the teaching TSV is **pedagogy only** (relation target gloss, not program syntax). Executable navigation is `receiver.r#`, `binding.r#`, or the declared wire name (`binding.labels`), never `binding => Entity(…)`.
+**teaching vs grammar:** Meaning-column text such as `relation e3 → e2` in the language card is **pedagogy only** (relation target gloss, not program syntax). Executable navigation is `receiver.r#`, `binding.r#`, or the declared wire name (`binding.labels`), never `binding => Entity(…)`.
 
 **Row-hole relation continuation:** when a plural binding (`issues = e1{…}`) continues with `issues.labels` / `issues.r#`, the compiler often cannot re-parse the anchor surface expression (federated catalogs, relation-sourced parents). It lowers **row-hole IR** instead: per-row `NodeInput` holes filled from the upstream binding at plan/runtime. Symbol resolution for relation segments (`r#` → wire) applies at the same DAG boundary as field projection (`binding[field]`). Anchor re-parse is used when the continuation anchor still allows text parse (e.g. singleton `issue = e1(…); issue.r#`).
 
@@ -283,7 +283,7 @@ Binding forms:
 
 First-binding **replacement** of an existing roots expression never applies at program scope. Plan metadata records `coerced_default_return` when either sugar applies.
 
-**teaching table `r#` vs wire fields:** declared relations allocate **`r#`** symbols; fields, capability params, and query filters use **catalog wire names** in the teaching TSV left column. Relation-nav exemplars use `.r#` (or wire); they do not emit a second standalone gloss row per relation.
+**teaching table `r#` vs wire fields:** declared relations allocate **`r#`** symbols; fields, capability params, and query filters use **catalog wire names** in the language-card left column. Relation-nav exemplars use `.r#` (or wire); they do not emit a second standalone gloss row per relation.
 
 **`=>` is not a row-map or relation operator:** it appears only in the binding form `label = source => rhs`. Do not use it for read fanout, relation hops, or Minijinja templates.
 

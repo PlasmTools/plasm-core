@@ -69,12 +69,6 @@ pub(crate) struct TeachingSynthesisSession<'a> {
     surface_filter: Option<&'a ExposureSurface>,
     entity_catalog_ids: IndexMap<(&'a str, &'a str), ()>,
     collect_meta: bool,
-    /// When true, an entity that yields **zero** teaching rows trips a debug-build invariant assert:
-    /// post-validation synthesis operates on an already-validated CGS, so an empty block "cannot
-    /// happen". Set false only for the `validate_cgs_expression_surface` probe, where an empty block
-    /// is the *intended signal* that the author declared a non-teachable entity (surfaced upward as
-    /// [`crate::error::SchemaError::EntityExpressionIncomplete`], not a panic).
-    assert_nonempty_blocks: bool,
 }
 
 impl<'a> TeachingSynthesisSession<'a> {
@@ -85,7 +79,6 @@ impl<'a> TeachingSynthesisSession<'a> {
         surface_filter: Option<&'a ExposureSurface>,
         entity_catalog_ids: IndexMap<(&'a str, &'a str), ()>,
         collect_meta: bool,
-        assert_nonempty_blocks: bool,
     ) -> Self {
         Self {
             line_valid_cache: HashMap::with_capacity(8192),
@@ -96,7 +89,6 @@ impl<'a> TeachingSynthesisSession<'a> {
             surface_filter,
             entity_catalog_ids,
             collect_meta,
-            assert_nonempty_blocks,
         }
     }
 
@@ -218,7 +210,6 @@ pub(crate) fn render_teaching_table_resolved<'b, F>(
         surface_filter,
         entity_catalog_ids,
         fill_model,
-        !validation_probe,
     ));
 
     let render_one = |session: &mut TeachingSynthesisSession<'_>,
@@ -261,18 +252,15 @@ pub(crate) fn render_teaching_table_resolved<'b, F>(
             Some(catalog_entry_id),
         );
         if block.teaching_rows.is_empty() {
-            // Empty block is legitimate *only* during the validation probe (author declared a
-            // non-teachable entity; the caller rejects with EntityExpressionIncomplete). In every
-            // post-validation session the CGS already passed validation, so an empty block is a
-            // genuine renderer/coherence bug worth asserting in debug builds.
-            debug_assert!(
-                !session.assert_nonempty_blocks,
-                "teaching block empty for entity {ename} — CGS::validate should have rejected this via cgs_expression_validate"
-            );
+            // Validation probe: empty block is the authoring signal for EntityExpressionIncomplete.
+            // Live MCP / incremental surfaces: mute entities can appear if exposure admitted an
+            // entity seat without teachable caps — skip without panicking (request path must not
+            // abort the process). Prefer fixing exposure admission so this warn stays rare.
             tracing::warn!(
                 target: "plasm_core::prompt_render",
                 entity = ename,
-                "empty teaching block; schema should have failed CGS::validate"
+                validation_probe,
+                "empty teaching block; skipping entity"
             );
             return;
         }

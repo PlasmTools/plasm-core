@@ -1494,9 +1494,8 @@ async fn dry_workflow_rejects_ref_outside_tenant_scope() {
     let runtime = test_mcp_runtime(mcp_handler, mcp_key);
 
     // Valid wire format, never minted in this registry -> not in any tenant scope.
-    let foreign_ref = crate::mcp_logical_ref::format_logical_session_wire_ref_from_uuid(
-        uuid::Uuid::new_v4(),
-    );
+    let foreign_ref =
+        crate::mcp_logical_ref::format_logical_session_wire_ref_from_uuid(uuid::Uuid::new_v4());
 
     let res = handler
         .handle_mcp_tool_dry_workflow(
@@ -1507,7 +1506,11 @@ async fn dry_workflow_rejects_ref_outside_tenant_scope() {
         .await
         .expect("handler returns Ok with an error CallToolResult");
 
-    assert_eq!(res.is_error, Some(true), "expected an error result: {res:?}");
+    assert_eq!(
+        res.is_error,
+        Some(true),
+        "expected an error result: {res:?}"
+    );
     let text = call_tool_result_markdown(&res);
     assert!(
         text.contains("does not belong to this tenant scope"),

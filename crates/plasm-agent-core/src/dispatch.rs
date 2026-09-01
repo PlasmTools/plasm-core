@@ -779,13 +779,12 @@ fn find_capability<'a>(
 
 #[cfg(test)]
 mod tests {
-    use plasm_core::value_domain::ValueDomain;
     use super::*;
     use crate::cli_builder::build_app;
+    use plasm_core::value_domain::ValueDomain;
     use plasm_core::{
         CapabilityKind, CapabilityMapping, CapabilitySchema, EntityKey, Expr, FieldSchema,
-        FieldType, FieldValueKind, NamedValueSchema, ResourceSchema,
-        ValueDomainKey,
+        FieldType, FieldValueKind, NamedValueSchema, ResourceSchema, ValueDomainKey,
     };
 
     fn evm_get_cgs() -> CGS {
@@ -1009,10 +1008,10 @@ mod tests {
             cgs.values.insert(
                 k.into(),
                 NamedValueSchema::from_domain(
-                String::new(),
-                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
-                None,
-            ),
+                    String::new(),
+                    ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                    None,
+                ),
             );
         }
         cgs.values.insert(

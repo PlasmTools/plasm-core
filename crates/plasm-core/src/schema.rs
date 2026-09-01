@@ -1035,7 +1035,7 @@ pub fn mapping_body_is_whole_var_input(template: &serde_json::Value) -> bool {
 ///
 /// Used with [`path_var_names_from_mapping_json`] for zero-arity `Issue(id).get()`: the HTTP `path` is
 /// only `/graphql`, but `variables.id` still needs the anchor id — without this, the parser wrongly
-/// defaulted the target id to `"0"`.
+/// defaulted the target to a synthetic pathless identity.
 ///
 /// We intentionally **do not** scan the whole template (login bodies, pagination, etc.).
 pub fn graphql_operation_variable_names(template: &serde_json::Value) -> Vec<String> {
@@ -1567,9 +1567,9 @@ impl InputFieldSchema {
 fn input_type_is_structured_or_multiline(ty: &InputType, cgs: &CGS) -> bool {
     match ty {
         InputType::None | InputType::Value { .. } => false,
-        InputType::Object { fields, .. } => fields
-            .iter()
-            .any(|f| f.is_structured_or_multiline(cgs)),
+        InputType::Object { fields, .. } => {
+            fields.iter().any(|f| f.is_structured_or_multiline(cgs))
+        }
         InputType::Array { element_type, .. } => {
             input_type_is_structured_or_multiline(element_type.as_ref(), cgs)
         }
@@ -1632,9 +1632,7 @@ impl<'de> Deserialize<'de> for InputValidation {
         }
         let raw = Raw::deserialize(deserializer)?;
         if raw.predicates.is_some() {
-            return Err(SerdeDeError::custom(
-                INPUT_VALIDATION_PREDICATES_REMOVED,
-            ));
+            return Err(SerdeDeError::custom(INPUT_VALIDATION_PREDICATES_REMOVED));
         }
         Ok(Self {
             allow_null: raw.allow_null,
@@ -2076,7 +2074,7 @@ impl CgsIncomingNavIndex {
                 let Ok(nv) = f.named_value(cgs) else {
                     continue;
                 };
-                if let FieldType::EntityRef { target } = &nv.field_type {
+                if let FieldType::EntityRef { target, .. } = &nv.field_type {
                     by_target
                         .entry(EntityName::from(target.as_str()))
                         .or_default()
@@ -2555,7 +2553,42 @@ impl ResourceSchema {
     }
 }
 
+fn stamp_field_type_entity_ref(ft: &mut FieldType, eid: &crate::identity::RegistryEntryId) {
+    if let FieldType::EntityRef { entry_id, .. } = ft {
+        *entry_id = eid.clone();
+    }
+}
+
+fn stamp_kernel_entity_ref(
+    kernel: &mut crate::value_domain::KernelKind,
+    eid: &crate::identity::RegistryEntryId,
+) {
+    if let crate::value_domain::KernelKind::EntityRef { entry_id, .. } = kernel {
+        *entry_id = eid.clone();
+    }
+}
+
+fn stamp_named_value_entity_refs(
+    nv: &mut NamedValueSchema,
+    eid: &crate::identity::RegistryEntryId,
+) {
+    stamp_field_type_entity_ref(&mut nv.field_type, eid);
+    stamp_kernel_entity_ref(&mut nv.domain.kernel, eid);
+    if let Some(ai) = nv.array_items.as_mut() {
+        stamp_field_type_entity_ref(&mut ai.field_type, eid);
+    }
+}
+
 impl CGS {
+    /// Stamp every [`FieldType::EntityRef`] / [`KernelKind::EntityRef`] with this catalog's
+    /// `entry_id` (empty string when unset). Intra-catalog default for homograph-safe types.
+    pub fn stamp_entity_ref_catalogs(&mut self) {
+        let eid = crate::identity::RegistryEntryId::new(self.entry_id.clone().unwrap_or_default());
+        for nv in self.values.values_mut() {
+            stamp_named_value_entity_refs(nv, &eid);
+        }
+    }
+
     /// Create a new empty CGS.
     pub fn new() -> Self {
         Self {
@@ -3349,7 +3382,7 @@ impl CGS {
                         });
                     }
                 }
-                if let FieldType::EntityRef { target } = &nv.field_type {
+                if let FieldType::EntityRef { target, .. } = &nv.field_type {
                     if !self.entities.contains_key(target) {
                         return Err(SchemaError::EntityRefUnknownTarget {
                             target: target.to_string(),
@@ -3372,7 +3405,7 @@ impl CGS {
                     });
                 }
                 if let Some(ai) = nv.array_items.as_ref() {
-                    if let FieldType::EntityRef { target } = &ai.field_type {
+                    if let FieldType::EntityRef { target, .. } = &ai.field_type {
                         if !self.entities.contains_key(target) {
                             return Err(SchemaError::EntityRefUnknownTarget {
                                 target: target.to_string(),
@@ -4007,7 +4040,7 @@ impl CGS {
         domain_entity: Option<&EntityDef>,
     ) -> Result<(), SchemaError> {
         let nv = param.named_value(cgs)?;
-        if let FieldType::EntityRef { target } = &nv.field_type {
+        if let FieldType::EntityRef { target, .. } = &nv.field_type {
             if !cgs.entities.contains_key(target) {
                 return Err(SchemaError::EntityRefUnknownTarget {
                     target: target.to_string(),
@@ -4030,7 +4063,7 @@ impl CGS {
             });
         }
         if let Some(ai) = nv.array_items.as_ref() {
-            if let FieldType::EntityRef { target } = &ai.field_type {
+            if let FieldType::EntityRef { target, .. } = &ai.field_type {
                 if !cgs.entities.contains_key(target) {
                     return Err(SchemaError::EntityRefUnknownTarget {
                         target: target.to_string(),
@@ -4046,6 +4079,7 @@ impl CGS {
         if cap.kind == CapabilityKind::Query {
             if let FieldType::EntityRef {
                 target: param_target,
+                ..
             } = &nv.field_type
             {
                 if let Some(ent) = domain_entity {
@@ -4053,6 +4087,7 @@ impl CGS {
                         let field_nv = entity_field.named_value(cgs)?;
                         if let FieldType::EntityRef {
                             target: field_target,
+                            ..
                         } = &field_nv.field_type
                         {
                             if param_target != field_target {
@@ -4555,7 +4590,7 @@ impl CGS {
                 let Ok(nv) = p.named_value(self) else {
                     continue;
                 };
-                if let FieldType::EntityRef { target } = &nv.field_type {
+                if let FieldType::EntityRef { target, .. } = &nv.field_type {
                     if target.as_str() == source_entity {
                         out.push((cap, p.name.as_str()));
                     }
@@ -4574,7 +4609,7 @@ impl CGS {
             .values()
             .filter_map(|f| {
                 let nv = f.named_value(self).ok()?;
-                if let FieldType::EntityRef { target } = &nv.field_type {
+                if let FieldType::EntityRef { target, .. } = &nv.field_type {
                     Some((f, target.as_str()))
                 } else {
                     None

@@ -51,7 +51,9 @@ fn fields_for_admitted_read_cap(
     }
 }
 
-use super::mutator_admit::seeded_entity_cap_always_includes;
+use super::mutator_admit::{
+    entity_declares_readable_capability, seeded_entity_cap_always_includes,
+};
 pub(crate) use super::mutator_admit::{
     mutating_capability_admitted, seeded_mutating_capability_admitted,
 };
@@ -86,7 +88,8 @@ pub fn outgoing_relation_hints_for_entity(cgs: &CGS, entity: &str, max: usize) -
 ///   entity’s domain, plus [`EntityDef::primary_read`] when set. With
 ///   [`MutatorAdmit::AlwaysOnSeeds`], seeded `create` / `update` / `delete` / `action` are also
 ///   always admitted (test/benchmark overshow). Production [`MutatorAdmit::IntentOnly`] admits
-///   seeded mutators via BM25 score **or** ranked boost.
+///   seeded mutators via BM25 score **or** ranked boost; seeded entities with **no** read
+///   capabilities always admit their **`Action`** caps (AuthSession / login co-seed).
 /// - **Non-seeded** read capabilities require a non-zero lexicon overlap score against `intent`.
 /// - **Non-seeded** mutating capabilities require a non-zero score; with `ranked_capability_gate`,
 ///   when `ranked_capability_names` is non-empty they must also appear in that list.
@@ -149,6 +152,9 @@ pub fn derive_intent_exposure_surface_batch(
             field: ent.id_field.clone(),
         });
 
+        let seed_declares_readable_surface =
+            entity_declares_readable_capability(cgs, ename);
+
         let Some(cap_names) = cgs.capability_names_by_domain().get(ename) else {
             continue;
         };
@@ -163,6 +169,7 @@ pub fn derive_intent_exposure_surface_batch(
                 ename,
                 ent,
                 &seeded_entities,
+                seed_declares_readable_surface,
             ) {
                 true
             } else {
@@ -330,7 +337,31 @@ pub fn derive_intent_exposure_surface_batch(
         }
     }
 
+    prune_entities_without_capabilities(&mut surface);
+
     ExposureSurfaceDelta { required: surface }
+}
+
+/// Drop entities (and orphan slots) that never received a taught capability — bare entity seats
+/// synthesize empty teaching blocks under a surface filter.
+fn prune_entities_without_capabilities(surface: &mut ExposureSurface) {
+    let taught: BTreeSet<ExposureEntityKey> = surface
+        .capabilities
+        .iter()
+        .map(|c| ExposureEntityKey {
+            entry_id: c.entry_id.clone(),
+            entity: c.domain.clone(),
+        })
+        .collect();
+    surface.entities.retain(|e| taught.contains(e));
+    surface.slots.retain(|s| match s {
+        ExposureSlotKey::EntityField { entity, .. } | ExposureSlotKey::Relation { source: entity, .. } => {
+            taught.contains(entity)
+        }
+        ExposureSlotKey::CapabilityParam { capability, .. } => {
+            surface.capabilities.contains(capability)
+        }
+    });
 }
 
 /// Mutating capability wire names on **non-seeded** relation targets that intent qualifies but

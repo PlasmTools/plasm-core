@@ -424,7 +424,7 @@ fn plan_parses_product_query() {
     assert!(v.get("expr").is_some());
 }
 
-/// `e#` is session-local (teaching TSV); single-catalog + exposure must not parse `e1` as an entity *name*.
+/// `e#` is session-local (language card); single-catalog + exposure must not parse `e1` as an entity *name*.
 /// (`.page_size(n)` is Plasm program postfix sugar; the core line parser does not treat it as Plasm path syntax.)
 #[test]
 fn parse_resolves_e1_with_teaching_exposure() {

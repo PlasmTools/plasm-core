@@ -90,7 +90,7 @@ pub(crate) async fn materialize_executable_plan_step(
                 )
             })?,
     };
-    let step_entry_id = mat.entry_id.clone();
+    let step_entry_id = mat.qualified_entity.entry_id.clone();
     let step_fps = mat.result.request_fingerprints.clone();
     Ok(PlanStepMaterializeOutcome {
         node_id,
@@ -127,7 +127,7 @@ async fn live_materialize_pure(
                 source_id.as_str()
             )
         })?;
-        let owner_entry_id = source_mat.entry_id.clone();
+        let owner_entry_id = source_mat.qualified_entity.entry_id.clone();
         let binding_rows = binding_rows_for_render(&compute.compute, materialized)?;
         let rows = eval_compute_with_row_source(
             &compute.compute,
@@ -165,7 +165,11 @@ async fn live_materialize_pure(
     };
     let owner_entry_id = source
         .as_ref()
-        .and_then(|src| materialized.get(src).map(|m| m.entry_id.clone()))
+        .and_then(|src| {
+            materialized
+                .get(src)
+                .map(|m| m.qualified_entity.entry_id.clone())
+        })
         .unwrap_or_else(|| ctx.es.entry_id.clone());
     let input_rows = materialized_singleton_inputs(materialized, pure.inputs())?;
     let binding_rows = pure.binding_rows(materialized)?;
@@ -220,13 +224,25 @@ impl IoPort for LiveIoPort<'_> {
                         expr: ir.expr.clone(),
                         projection: ir.projection.clone(),
                     };
-                    instantiate_parsed_expr_plan_inputs(pe, &surface.uses_result, materialized)?
+                    let mut input_rows =
+                        materialized_result_use_inputs(materialized, &surface.uses_result, None)?;
+                    let wire_coercion_by_alias =
+                        wire_coercion_by_alias_from_inputs(ctx.es, &mut input_rows)?;
+                    instantiate_parsed_expr_plan_inputs_with_rows(
+                        pe,
+                        &input_rows,
+                        &wire_coercion_by_alias,
+                    )?
                 } else if let Some(template) = &surface.ir_template {
-                    let input_rows = materialized_result_use_inputs(
+                    let mut input_rows = materialized_result_use_inputs(
                         materialized,
                         &surface.uses_result,
                         surface.ir_template.as_ref(),
                     )?;
+                    // Alias-specific coercion: each hole uses its source catalog entity
+                    // (e.g. AuthSession.access_token), not the surface target or uses_result.first().
+                    let wire_coercion_by_alias =
+                        wire_coercion_by_alias_from_inputs(ctx.es, &mut input_rows)?;
                     let scope = EvalScope::Root {
                         row: &serde_json::Value::Null,
                     };
@@ -234,7 +250,7 @@ impl IoPort for LiveIoPort<'_> {
                     let env = PlanEvalEnv {
                         scope,
                         inputs,
-                        wire_coercion: None,
+                        wire_coercion_by_alias: &wire_coercion_by_alias,
                     };
                     instantiate_expr_template(template, &env)?
                 } else {
@@ -308,10 +324,9 @@ impl IoPort for LiveIoPort<'_> {
                     .await;
                 }
                 Ok(Some(MaterializedNode {
-                    entry_id: surface
+                    qualified_entity: surface
                         .qualified_entity
-                        .as_ref()
-                        .map(|q| q.entry_id.clone())
+                        .clone()
                         .or_else(|| {
                             crate::catalog_ownership::resolve_qualified_entity_key(
                                 &scoped_es,
@@ -319,14 +334,11 @@ impl IoPort for LiveIoPort<'_> {
                                 None,
                             )
                             .ok()
-                            .map(|q| q.entry_id)
                         })
-                        .unwrap_or_else(|| ctx.es.entry_id.clone()),
-                    entity: surface
-                        .qualified_entity
-                        .as_ref()
-                        .map(|q| q.entity.clone())
-                        .unwrap_or_else(|| surface.id.as_str().to_string()),
+                        .unwrap_or_else(|| crate::plasm_plan::QualifiedEntityKey {
+                            entry_id: ctx.es.entry_id.clone(),
+                            entity: surface.id.as_str().to_string(),
+                        }),
                     display: crate::expr_display::expr_display(&parsed.expr),
                     projection: parsed.projection,
                     row_source,

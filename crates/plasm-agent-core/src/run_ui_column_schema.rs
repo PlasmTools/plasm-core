@@ -151,10 +151,7 @@ mod tests {
             field_wire_type(&FieldType::String, Some(ProfileId::Markdown)),
             "markdown"
         );
-        assert_eq!(
-            field_wire_type(&FieldType::String, None),
-            "string"
-        );
+        assert_eq!(field_wire_type(&FieldType::String, None), "string");
     }
 
     #[test]

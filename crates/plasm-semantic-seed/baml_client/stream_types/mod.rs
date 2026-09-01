@@ -8,20 +8,19 @@
 //! Full implementation coming in Phase 6.
 
 mod classes;
-mod unions;
 mod type_aliases;
+mod unions;
 
 pub use classes::*;
-pub use unions::*;
 pub use type_aliases::*;
+pub use unions::*;
 
-use baml::__internal::serde as serde;
+use baml::__internal::serde;
 
 /// Streaming variants of types (all fields Optional).
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(crate = "::baml::__internal::serde", untagged)]
 pub enum StreamTypes {
-
     DiscoveryRerankCandidate(DiscoveryRerankCandidate),
 
     DomainCapability(DomainCapability),
@@ -61,8 +60,6 @@ pub enum StreamTypes {
     ValidationIssue(ValidationIssue),
 
     WitnessSelectionAssessment(WitnessSelectionAssessment),
-
-
 }
 
 impl baml::KnownTypes for StreamTypes {
@@ -72,7 +69,6 @@ impl baml::KnownTypes for StreamTypes {
 
     fn type_name(&self) -> &'static str {
         match self {
-
             StreamTypes::DiscoveryRerankCandidate(_) => "DiscoveryRerankCandidate",
 
             StreamTypes::DomainCapability(_) => "DomainCapability",
@@ -112,15 +108,16 @@ impl baml::KnownTypes for StreamTypes {
             StreamTypes::ValidationIssue(_) => "ValidationIssue",
 
             StreamTypes::WitnessSelectionAssessment(_) => "WitnessSelectionAssessment",
-
-
-
         }
     }
 }
 
 impl<'de> serde::Deserialize<'de> for StreamTypes {
-    fn deserialize<D: serde::Deserializer<'de>>(_deserializer: D) -> ::std::result::Result<Self, D::Error> {
-        ::std::result::Result::Err(serde::de::Error::custom("StreamTypes is not deserializable, as we cannot disambiguate the type."))
+    fn deserialize<D: serde::Deserializer<'de>>(
+        _deserializer: D,
+    ) -> ::std::result::Result<Self, D::Error> {
+        ::std::result::Result::Err(serde::de::Error::custom(
+            "StreamTypes is not deserializable, as we cannot disambiguate the type.",
+        ))
     }
 }

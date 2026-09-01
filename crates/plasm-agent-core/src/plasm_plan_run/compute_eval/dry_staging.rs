@@ -182,8 +182,7 @@ impl IoPort for DryIoPort<'_> {
                         let (rows, row_identities) =
                             self.stub_entity_rows(&qe, dry_stub_row_count(surface.result_shape))?;
                         Ok(Some(MaterializedNode::inline_cache(
-                            qe.entry_id.to_string(),
-                            qe.entity.to_string(),
+                            qe.clone(),
                             rows,
                             row_identities,
                             surface.display_expr.clone().unwrap_or_default(),
@@ -203,8 +202,7 @@ impl IoPort for DryIoPort<'_> {
                 let qe = &relation.relation.target;
                 let (rows, row_identities) = self.stub_entity_rows(qe, 2)?;
                 Ok(Some(MaterializedNode::inline_cache(
-                    qe.entry_id.to_string(),
-                    qe.entity.to_string(),
+                    qe.clone(),
                     rows,
                     row_identities,
                     String::new(),
@@ -228,8 +226,7 @@ impl IoPort for DryIoPort<'_> {
                 let (rows, row_identities) =
                     self.stub_entity_rows(qe, dry_stub_row_count(for_each.result_shape))?;
                 Ok(Some(MaterializedNode::inline_cache(
-                    qe.entry_id.to_string(),
-                    qe.entity.to_string(),
+                    qe.clone(),
                     rows,
                     row_identities,
                     String::new(),
@@ -297,7 +294,11 @@ async fn dry_stub_materialize_node(
             };
             let owner_entry_id = source
                 .as_ref()
-                .and_then(|src| materialized.get(src).map(|m| m.entry_id.clone()))
+                .and_then(|src| {
+                    materialized
+                        .get(src)
+                        .map(|m| m.qualified_entity.entry_id.clone())
+                })
                 .unwrap_or_else(|| es.entry_id.clone());
             let input_rows = materialized_singleton_inputs(materialized, pure.inputs())?;
             let binding_rows = pure.binding_rows(materialized)?;
@@ -312,8 +313,10 @@ async fn dry_stub_materialize_node(
             materialized.insert(
                 id,
                 MaterializedNode::inline_cache(
-                    owner_entry_id,
-                    pm.entity_override.unwrap_or_default(),
+                    QualifiedEntityKey {
+                        entry_id: owner_entry_id,
+                        entity: pm.entity_override.unwrap_or_default(),
+                    },
                     pm.rows,
                     pm.row_identities,
                     String::new(),
@@ -379,10 +382,11 @@ pub(crate) fn dry_validate_staged_surfaces(
             row: &serde_json::Value::Null,
         };
         let inputs = InputEnv { rows: &input_rows };
+        let empty_coercion = BTreeMap::new();
         let env = PlanEvalEnv {
             scope,
             inputs,
-            wire_coercion: None,
+            wire_coercion_by_alias: &empty_coercion,
         };
         instantiate_expr_template(template, &env)?;
     }

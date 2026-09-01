@@ -263,7 +263,7 @@ impl PromptPipelineConfig {
         )
     }
 
-    /// Compact teaching TSV when ranked replay adds mutators without new entities.
+    /// Compact language card when ranked replay adds mutators without new entities.
     pub fn render_teaching_new_capabilities_delta(
         &self,
         cgs: &CGS,

@@ -192,8 +192,8 @@ pub fn compile_query(
 
 #[cfg(test)]
 mod tests {
-    use plasm_core::value_domain::ValueDomain;
     use super::*;
+    use plasm_core::value_domain::ValueDomain;
     use plasm_core::{
         Cardinality, FieldSchema, FieldType, FieldValueKind, NamedValueSchema, Predicate,
         QueryExpr, RelationSchema, ResourceSchema, Value, ValueDomainKey,
@@ -248,11 +248,18 @@ mod tests {
             "nv_pred_account_region".to_string(),
             NamedValueSchema::from_domain(
                 String::new(),
-                ValueDomain::from_legacy(&FieldType::Select, None, None, Some(vec![
-                    "EMEA".to_string(),
-                    "APAC".to_string(),
-                    "AMER".to_string(),
-                ]).clone(), None),
+                ValueDomain::from_legacy(
+                    &FieldType::Select,
+                    None,
+                    None,
+                    Some(vec![
+                        "EMEA".to_string(),
+                        "APAC".to_string(),
+                        "AMER".to_string(),
+                    ])
+                    .clone(),
+                    None,
+                ),
                 None,
             ),
         );
@@ -276,7 +283,13 @@ mod tests {
             "nv_pred_contact_role".to_string(),
             NamedValueSchema::from_domain(
                 String::new(),
-                ValueDomain::from_legacy(&FieldType::Select, None, None, Some(vec!["Manager".to_string(), "Employee".to_string()]).clone(), None),
+                ValueDomain::from_legacy(
+                    &FieldType::Select,
+                    None,
+                    None,
+                    Some(vec!["Manager".to_string(), "Employee".to_string()]).clone(),
+                    None,
+                ),
                 None,
             ),
         );

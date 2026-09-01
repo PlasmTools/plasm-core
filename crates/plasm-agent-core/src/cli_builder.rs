@@ -411,7 +411,7 @@ fn build_entity_command(name: &str, entity: &EntityDef, cgs: &CGS) -> Command {
         let Ok(nv) = cgs.named_value_for_slot(field_schema) else {
             continue;
         };
-        if let FieldType::EntityRef { ref target } = nv.field_type {
+        if let FieldType::EntityRef { ref target, .. } = nv.field_type {
             let kebab: &'static str = leak(field_subcommand_kebab(field_name));
             if entity.relations.contains_key(field_name.as_str()) {
                 continue;
@@ -626,8 +626,8 @@ pub fn build_app(cgs: &CGS, surface: AgentCliSurface) -> Command {
 
 #[cfg(test)]
 mod tests {
-    use plasm_core::value_domain::ValueDomain;
     use super::*;
+    use plasm_core::value_domain::ValueDomain;
     use plasm_core::*;
 
     fn nv_string(cgs: &mut CGS, key: &str) {
@@ -655,7 +655,13 @@ mod tests {
             key.into(),
             NamedValueSchema::from_domain(
                 String::new(),
-                ValueDomain::from_legacy(&FieldType::Select, None, None, Some(allowed.clone()), None),
+                ValueDomain::from_legacy(
+                    &FieldType::Select,
+                    None,
+                    None,
+                    Some(allowed.clone()),
+                    None,
+                ),
                 None,
             ),
         );
@@ -675,7 +681,16 @@ mod tests {
             key.into(),
             NamedValueSchema::from_domain(
                 String::new(),
-                ValueDomain::from_legacy(&FieldType::EntityRef { target }, None, None, None, None),
+                ValueDomain::from_legacy(
+                    &FieldType::EntityRef {
+                        entry_id: Default::default(),
+                        target,
+                    },
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
                 None,
             ),
         );

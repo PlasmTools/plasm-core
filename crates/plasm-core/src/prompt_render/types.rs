@@ -52,7 +52,7 @@ impl PromptRenderMode {
     }
 }
 
-/// teaching TSV: first line of the teaching table (`plasm_expr` and `Meaning` columns) including the
+/// language card: first line of the teaching table (`plasm_expr` and `Meaning` columns) including the
 /// trailing newline, matching [`render_prompt_tsv_from_bundle`].
 pub const TSV_TEACHING_TABLE_HEADER: &str = "plasm_expr\tMeaning\n";
 

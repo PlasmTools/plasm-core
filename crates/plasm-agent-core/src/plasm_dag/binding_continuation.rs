@@ -320,7 +320,7 @@ pub(in crate::plasm_dag) fn lower_relation_continuation(
         return Err(plp::plp4_program(
             id,
             format!(
-                "`{segment}` is not a field or relation on `{source_label}` — use wire field names or `r#` relation hops from the teaching TSV"
+                "`{segment}` is not a field or relation on `{source_label}` — use wire field names or `r#` relation hops from the language card"
             ),
         ));
     };

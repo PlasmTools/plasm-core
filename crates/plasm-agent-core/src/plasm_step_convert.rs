@@ -404,6 +404,7 @@ fn step_uses_result(step_id: &StepId, bind: &PlasmBindGraph) -> Vec<PlanResultUs
                 .map(|h| PlanResultUse {
                     node: h.step.as_str().to_string(),
                     r#as: h.alias.clone(),
+                    qualified_entity: None,
                 })
                 .collect()
         })

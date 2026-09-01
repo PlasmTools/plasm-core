@@ -6,11 +6,8 @@ use std::collections::BTreeMap;
 pub(crate) fn instantiate_parsed_expr_plan_inputs_with_rows(
     parsed: ParsedExpr,
     input_rows: &BTreeMap<InputAlias, MaterializedInputRow>,
-    wire_coercion: Option<WireCoercionCtx<'_>>,
+    wire_coercion_by_alias: &BTreeMap<InputAlias, WireCoercionCtx<'_>>,
 ) -> Result<ParsedExpr, String> {
-    if input_rows.is_empty() {
-        return Ok(parsed);
-    }
     let scope = EvalScope::Root {
         row: &serde_json::Value::Null,
     };
@@ -18,11 +15,12 @@ pub(crate) fn instantiate_parsed_expr_plan_inputs_with_rows(
     let env = PlanEvalEnv {
         scope,
         inputs,
-        wire_coercion,
+        wire_coercion_by_alias,
     };
     let expr_json = serde_json::to_value(&parsed.expr)
         .map_err(|e| format!("serialize expr for hole instantiation: {e}"))?;
     let expr_json = instantiate_expr_template_value(&expr_json, &env)?;
+    reject_unresolved_plasm_holes(&expr_json)?;
     let expr: Expr = serde_json::from_value(expr_json)
         .map_err(|e| format!("deserialize expr after hole instantiation: {e}"))?;
     Ok(ParsedExpr {
@@ -43,7 +41,8 @@ pub(crate) fn instantiate_parsed_expr_plan_inputs(
         return Ok(parsed);
     }
     let input_rows = materialized_result_use_inputs(materialized, uses_result, None)?;
-    instantiate_parsed_expr_plan_inputs_with_rows(parsed, &input_rows, None)
+    let empty = BTreeMap::new();
+    instantiate_parsed_expr_plan_inputs_with_rows(parsed, &input_rows, &empty)
 }
 
 pub(crate) fn wire_coercion_ctx_for_source_entity<'a>(
@@ -56,11 +55,47 @@ pub(crate) fn wire_coercion_ctx_for_source_entity<'a>(
         source_entity: ent,
     })
 }
+
+/// Build alias-specific coercion contexts from each input's [`QualifiedEntityKey`] (no first-input heuristic).
+/// Stamps each input's `id_field` from the source entity when the catalog is loaded.
+pub(crate) fn wire_coercion_by_alias_from_inputs<'a>(
+    es: &'a ExecuteSession,
+    input_rows: &mut BTreeMap<InputAlias, MaterializedInputRow>,
+) -> Result<BTreeMap<InputAlias, WireCoercionCtx<'a>>, String> {
+    let mut out = BTreeMap::new();
+    for (alias, row) in input_rows.iter_mut() {
+        let entry_id = row.qualified_entity.entry_id.as_str();
+        let entity = row.qualified_entity.entity.as_str();
+        if entry_id.is_empty() || entity.is_empty() {
+            // Synthetic / data-literal rows: row JSON only, no catalog coercion.
+            continue;
+        }
+        let cgs = es
+            .contexts_by_entry
+            .get(entry_id)
+            .map(|c| c.cgs.as_ref())
+            .ok_or_else(|| {
+                format!(
+                    "alias {:?} qualified_entity {}:{}: catalog entry not loaded in session (no primary-catalog fallback)",
+                    alias.as_str(),
+                    entry_id,
+                    entity
+                )
+            })?;
+        // Plan-computed / render synthetics have no EntityDef — skip coercion, keep row JSON fills.
+        if let Some(ctx) = wire_coercion_ctx_for_source_entity(cgs, entity) {
+            row.id_field = ctx.source_entity.id_field.to_string();
+            out.insert(alias.clone(), ctx);
+        }
+    }
+    Ok(out)
+}
 pub(crate) fn instantiate_expr_template(
     template: &ValidatedPlanExprTemplate,
     env: &PlanEvalEnv<'_>,
 ) -> Result<ParsedExpr, String> {
     let expr_json = instantiate_expr_template_value(&template.expr, env)?;
+    reject_unresolved_plasm_holes(&expr_json)?;
     let expr = serde_json::from_value(expr_json)
         .map_err(|e| format!("templated Plasm IR instantiation failed: {e}"))?;
     Ok(ParsedExpr {
@@ -74,12 +109,39 @@ pub(crate) fn instantiate_raw_expr_template(
     env: &PlanEvalEnv<'_>,
 ) -> Result<ParsedExpr, String> {
     let expr_json = instantiate_expr_template_value(&template.expr, env)?;
+    reject_unresolved_plasm_holes(&expr_json)?;
     let expr = serde_json::from_value(expr_json)
         .map_err(|e| format!("templated Plasm IR instantiation failed: {e}"))?;
     Ok(ParsedExpr {
         expr,
         projection: template.projection.clone(),
     })
+}
+
+fn reject_unresolved_plasm_holes(value: &serde_json::Value) -> Result<(), String> {
+    if value
+        .as_object()
+        .and_then(|obj| obj.get("__plasm_hole"))
+        .is_some()
+    {
+        return Err(format!(
+            "unresolved __plasm_hole remains after input instantiation: {value}"
+        ));
+    }
+    match value {
+        serde_json::Value::Array(items) => {
+            for item in items {
+                reject_unresolved_plasm_holes(item)?;
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for v in map.values() {
+                reject_unresolved_plasm_holes(v)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 pub(crate) fn instantiate_expr_template_value(
@@ -186,6 +248,7 @@ pub(crate) fn coerce_node_input_json(
 
 pub(crate) fn node_input_hole_from_identity(
     ctx: Option<&WireCoercionCtx<'_>>,
+    id_field: &str,
     identity: &Option<plasm_core::RowIdentity>,
     path: &[String],
     row: &serde_json::Value,
@@ -201,14 +264,6 @@ pub(crate) fn node_input_hole_from_identity(
     }
     if path.len() == 1 {
         let key = path[0].as_str();
-        if key == "id" {
-            let slot = identity.reference.primary_slot_str();
-            return Some(coerce_node_input_json(
-                ctx,
-                path,
-                serde_json::Value::String(slot),
-            ));
-        }
         if let Some(v) = identity.ambient.get(key) {
             return Some(coerce_node_input_json(
                 ctx,
@@ -223,6 +278,15 @@ pub(crate) fn node_input_hole_from_identity(
                     .unwrap_or_else(|| serde_json::Value::String(v.clone()));
                 return Some(coerce_node_input_json(ctx, path, raw));
             }
+        }
+        // Primary identity: CGS `id_field` (e.g. AuthSession.access_token) or legacy `"id"`.
+        if key == "id" || key == id_field {
+            let slot = identity.reference.primary_slot_str();
+            return Some(coerce_node_input_json(
+                ctx,
+                path,
+                serde_json::Value::String(slot),
+            ));
         }
     }
     value_at_segments(row, path)
@@ -281,43 +345,66 @@ pub(crate) fn instantiate_ir_hole(
             let input = env.inputs.rows.get(&alias).ok_or_else(|| {
                 format!("node_input IR hole references unavailable alias {alias:?}")
             })?;
-            if !path.is_empty() && input.rows.len() > 1 {
+            let wire_ctx = env.wire_coercion_for_alias(&alias);
+            let id_field = wire_ctx
+                .map(|c| c.source_entity.id_field.as_str())
+                .unwrap_or(input.id_field.as_str());
+            if input.rows.len() > 1 && !path.is_empty() {
                 let mut values = Vec::with_capacity(input.rows.len());
                 for (row, ident) in input.rows.iter().zip(input.row_identities.iter()) {
                     let cell = value_at_segments(row, &path)
                         .cloned()
                         .or_else(|| {
-                            node_input_hole_from_identity(
-                                env.wire_coercion.as_ref(),
-                                ident,
-                                &path,
-                                row,
-                            )
+                            node_input_hole_from_identity(wire_ctx, id_field, ident, &path, row)
                         })
-                        .unwrap_or(serde_json::Value::Null);
+                        .ok_or_else(|| {
+                            format!(
+                                "node_input hole {:?}.{} unresolved on catalog {}:{} (missing row field and id_field identity)",
+                                alias.as_str(),
+                                path.join("."),
+                                input.qualified_entity.entry_id,
+                                input.qualified_entity.entity
+                            )
+                        })?;
                     if !cell.is_null() {
-                        values.push(coerce_node_input_json(
-                            env.wire_coercion.as_ref(),
-                            &path,
-                            cell,
-                        ));
+                        values.push(coerce_node_input_json(wire_ctx, &path, cell));
                     }
                 }
+                if values.is_empty() {
+                    return Err(format!(
+                        "node_input hole {:?}.{} produced no values from catalog {}:{}",
+                        alias.as_str(),
+                        path.join("."),
+                        input.qualified_entity.entry_id,
+                        input.qualified_entity.entity
+                    ));
+                }
                 return Ok(serde_json::Value::Array(values));
+            }
+            if path.is_empty() {
+                if let Some(value) = node_input_hole_from_identity(
+                    wire_ctx,
+                    id_field,
+                    &input.row_identity,
+                    &path,
+                    &input.row,
+                ) {
+                    if value.as_str().is_none_or(|s| !s.is_empty()) {
+                        return Ok(value);
+                    }
+                }
+                return Ok(input.row.clone());
             }
             let from_row = value_at_segments(&input.row, &path).cloned();
             let from_row_usable = from_row
                 .as_ref()
                 .is_some_and(|v| !v.is_null() && v.as_str().is_none_or(|s| !s.is_empty()));
             if from_row_usable {
-                return Ok(coerce_node_input_json(
-                    env.wire_coercion.as_ref(),
-                    &path,
-                    from_row.unwrap(),
-                ));
+                return Ok(coerce_node_input_json(wire_ctx, &path, from_row.unwrap()));
             }
             if let Some(value) = node_input_hole_from_identity(
-                env.wire_coercion.as_ref(),
+                wire_ctx,
+                id_field,
                 &input.row_identity,
                 &path,
                 &input.row,
@@ -326,7 +413,14 @@ pub(crate) fn instantiate_ir_hole(
                     return Ok(value);
                 }
             }
-            Ok(from_row.unwrap_or(serde_json::Value::Null))
+            Err(format!(
+                "node_input hole {:?}.{} unresolved on catalog {}:{} (row field empty; id_field={})",
+                alias.as_str(),
+                path.join("."),
+                input.qualified_entity.entry_id,
+                input.qualified_entity.entity,
+                id_field
+            ))
         }
         other => Err(format!("unknown IR value hole kind {other:?}")),
     }
@@ -337,10 +431,11 @@ pub(crate) fn plan_value_to_rows(value: &PlanValue) -> Result<Vec<serde_json::Va
         row: &serde_json::Value::Null,
     };
     let input_env = InputEnv { rows: &inputs };
+    let empty_coercion = BTreeMap::new();
     let env = PlanEvalEnv {
         scope,
         inputs: input_env,
-        wire_coercion: None,
+        wire_coercion_by_alias: &empty_coercion,
     };
     let json = eval_plan_value(value, &env)?;
     Ok(match json {
@@ -359,6 +454,7 @@ pub(crate) fn derive_node_rows(
     source_rows: &[serde_json::Value],
     input_rows: &BTreeMap<InputAlias, MaterializedInputRow>,
 ) -> Result<Vec<serde_json::Value>, String> {
+    let empty_coercion = BTreeMap::new();
     let mut rows = Vec::with_capacity(source_rows.len());
     for row in source_rows {
         let scope = EvalScope::Bound {
@@ -369,7 +465,7 @@ pub(crate) fn derive_node_rows(
         let env = PlanEvalEnv {
             scope,
             inputs,
-            wire_coercion: None,
+            wire_coercion_by_alias: &empty_coercion,
         };
         rows.push(eval_plan_value(value, &env)?);
     }
@@ -406,7 +502,14 @@ pub(crate) struct WireCoercionCtx<'a> {
 pub(crate) struct PlanEvalEnv<'a> {
     pub(crate) scope: EvalScope<'a>,
     pub(crate) inputs: InputEnv<'a>,
-    pub(crate) wire_coercion: Option<WireCoercionCtx<'a>>,
+    /// Per-alias wire coercion from each input's catalog-qualified source entity.
+    pub(crate) wire_coercion_by_alias: &'a BTreeMap<InputAlias, WireCoercionCtx<'a>>,
+}
+
+impl<'a> PlanEvalEnv<'a> {
+    fn wire_coercion_for_alias(&self, alias: &InputAlias) -> Option<&WireCoercionCtx<'a>> {
+        self.wire_coercion_by_alias.get(alias)
+    }
 }
 
 pub(crate) fn eval_plan_value(

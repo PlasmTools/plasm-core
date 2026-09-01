@@ -388,7 +388,9 @@ fn mutation_branch_commit_replaces_poisoned_read_caches() {
     let card_ref = Ref::new("CreditCardAccount", "cc1");
     let card = crate::CachedEntity::from_decoded(
         card_ref.clone(),
-        [("balance".into(), Value::Integer(3000))].into_iter().collect(),
+        [("balance".into(), Value::Integer(3000))]
+            .into_iter()
+            .collect(),
         indexmap::IndexMap::new(),
         1,
         EntityCompleteness::Complete,
@@ -409,7 +411,9 @@ fn mutation_branch_commit_replaces_poisoned_read_caches() {
     branch.graph.remove(&card_ref);
     branch.poison_read_caches_after_mutation();
 
-    session.absorb_branch(branch).expect("commit mutation branch");
+    session
+        .absorb_branch(branch)
+        .expect("commit mutation branch");
 
     assert!(session.get(&card_ref).is_none());
     assert!(session.query_index.get(&key).is_none());

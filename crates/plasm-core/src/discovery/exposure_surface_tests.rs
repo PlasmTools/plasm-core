@@ -372,6 +372,7 @@ fn intent_surface_seeded_sharelink_create_requires_intent_overlap() {
     }
     let mut cgs = load_schema_dir(&dir).expect("proof");
     cgs.entry_id = Some("proof".into());
+    cgs.stamp_entity_ref_catalogs();
     let endpoints = relation_keys("proof", &["ShareLink"]);
     let delta = derive_intent_exposure_surface_batch(
         &cgs,
@@ -409,6 +410,7 @@ fn intent_surface_seeded_sharelink_create_with_intent_lexicon_match() {
     }
     let mut cgs = load_schema_dir(&dir).expect("proof");
     cgs.entry_id = Some("proof".into());
+    cgs.stamp_entity_ref_catalogs();
     let endpoints = relation_keys("proof", &["ShareLink"]);
     let delta = derive_intent_exposure_surface_batch(
         &cgs,
@@ -486,5 +488,86 @@ fn intent_surface_ranked_list_does_not_cage_scored_seeded_create() {
     assert!(
         surface_has_capability(&delta, "ShareLink", "share_link_create"),
         "ranked list must not cage BM25-scored seeded mutators"
+    );
+}
+
+#[test]
+fn intent_only_admits_mutators_on_readless_seeded_auth_session() {
+    use crate::schema::{CapabilityMapping, CapabilityTemplateJson, EntityDef};
+    use crate::{CapabilityName, EntityFieldName, EntityName};
+    use indexmap::IndexMap;
+
+    let mut cgs = CGS::new();
+    cgs.entry_id = Some("phone".into());
+    cgs.entities.insert(
+        "AuthSession".into(),
+        EntityDef {
+            name: EntityName::from("AuthSession"),
+            description: "Login session.".into(),
+            id_field: EntityFieldName::from("access_token"),
+            id_format: None,
+            id_from: None,
+            fields: IndexMap::new(),
+            relations: IndexMap::new(),
+            expression_aliases: vec![],
+            implicit_request_identity: false,
+            key_vars: vec![],
+            abstract_entity: false,
+            domain_projection_examples: true,
+            primary_read: None,
+            discovery: None,
+        },
+    );
+    let login = CapabilitySchema {
+        name: CapabilityName::from("login"),
+        description: "Login; returns access_token.".into(),
+        kind: CapabilityKind::Action,
+        domain: EntityName::from("AuthSession"),
+        mapping: CapabilityMapping {
+            template: CapabilityTemplateJson(serde_json::json!({ "method": "POST" })),
+        },
+        input_schema: None,
+        output_schema: None,
+        provides: vec![],
+        sanitizes: vec![],
+        deterministic: None,
+        scope_aggregate_key_policy: Default::default(),
+        preflight: None,
+        discovery: None,
+        identity_key: None,
+        invalidates_entities: vec![],
+    };
+    cgs.capabilities
+        .insert(CapabilityName::from("login"), login);
+
+    let zero_intent = "snooze alarm vibration minutes unrelated";
+    let endpoints = relation_keys("phone", &["AuthSession"]);
+    let delta = derive_intent_exposure_surface_batch(
+        &cgs,
+        "phone",
+        zero_intent,
+        &endpoints,
+        &["AuthSession".to_string()],
+        None,
+        ExposureSurfaceOptions {
+            mutator_admit: MutatorAdmit::IntentOnly,
+        },
+    );
+    assert!(
+        delta
+            .required
+            .capabilities
+            .iter()
+            .any(|c| c.capability.as_str() == "login"),
+        "readless AuthSession seed must admit login under IntentOnly; got {:?}",
+        delta.required.capabilities
+    );
+    assert!(
+        delta
+            .required
+            .entities
+            .iter()
+            .any(|e| e.entity.as_str() == "AuthSession"),
+        "AuthSession must remain on the surface once login is taught"
     );
 }

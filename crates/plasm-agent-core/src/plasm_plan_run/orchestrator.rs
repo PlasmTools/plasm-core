@@ -93,8 +93,7 @@ pub(crate) async fn run_plasm_comp_scoped(
 
 #[derive(Debug, Clone)]
 pub(crate) struct MaterializedNode {
-    pub(crate) entry_id: String,
-    pub(crate) entity: String,
+    pub(crate) qualified_entity: crate::plasm_plan::QualifiedEntityKey,
     pub(crate) result: Arc<ExecutionResult>,
     pub(crate) row_source: MaterializedRowSource,
     /// Parallel canonical identity handles (one per row when known).
@@ -110,16 +109,14 @@ impl MaterializedNode {
     /// artifact. Centralizes the `ExecutionResult` boilerplate that would otherwise be copy-pasted
     /// at every synthetic materialization site.
     pub(crate) fn inline_cache(
-        entry_id: String,
-        entity: String,
+        qualified_entity: crate::plasm_plan::QualifiedEntityKey,
         rows: Vec<serde_json::Value>,
         row_identities: Vec<Option<plasm_core::RowIdentity>>,
         display: String,
         projection: Option<Vec<String>>,
     ) -> Self {
         MaterializedNode {
-            entry_id,
-            entity,
+            qualified_entity,
             result: Arc::new(ExecutionResult {
                 count: rows.len(),
                 entities: Vec::new(),
@@ -149,7 +146,7 @@ impl MaterializedNode {
     ) -> Vec<plasm_runtime::CachedEntity> {
         rehydrator
             .resolve_source_parents_with_identities(
-                self.entity.as_str(),
+                self.qualified_entity.entity.as_str(),
                 self.result.as_ref(),
                 &self.row_identities,
             )
@@ -173,6 +170,10 @@ fn pre_layer_materialized_snapshot(
 
 pub(crate) struct MaterializedInputRow {
     pub(crate) node: PlanNodeId,
+    /// Catalog-qualified row domain of the source node (alias-specific hole coercion).
+    pub(crate) qualified_entity: crate::plasm_plan::QualifiedEntityKey,
+    /// CGS `id_field` for the source entity (e.g. `access_token` on AuthSession); `"id"` when unknown.
+    pub(crate) id_field: String,
     pub(crate) proof: crate::plasm_plan::InputCardinalityProof,
     pub(crate) row: serde_json::Value,
     /// All materialized rows for this alias (column refs aggregate across `rows`).
@@ -421,11 +422,11 @@ pub(crate) async fn run_executable_plan_phased(
         steps.push(PublishedResultStep {
             name: return_names.get(i).cloned().flatten(),
             node_id: Some(node_ref.as_str().to_string()),
-            entry_id: Some(mat.entry_id.clone()),
-            entity: Some(mat.entity.clone()),
+            entry_id: Some(mat.qualified_entity.entry_id.clone()),
+            entity: Some(mat.qualified_entity.entity.clone()),
             cgs: es
                 .contexts_by_entry
-                .get(&mat.entry_id)
+                .get(&mat.qualified_entity.entry_id)
                 .map(|ctx| ctx.cgs.clone()),
             display: mat.display.clone(),
             projection: mat.projection.clone(),
@@ -562,8 +563,10 @@ mod tests {
 
     fn test_node(display: &str) -> MaterializedNode {
         MaterializedNode {
-            entry_id: "test".into(),
-            entity: "Item".into(),
+            qualified_entity: crate::plasm_plan::QualifiedEntityKey {
+                entry_id: "test".into(),
+                entity: "Item".into(),
+            },
             result: Arc::new(ExecutionResult {
                 count: 0,
                 entities: Vec::new(),

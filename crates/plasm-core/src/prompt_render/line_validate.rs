@@ -104,6 +104,9 @@ pub(crate) fn domain_line_validate_cached(
     map_arc: Option<&Arc<SymbolMap>>,
 ) -> Option<(Arc<crate::expr_parser::ParsedExpr>, String)> {
     let stripped = strip_prompt_expression_annotations(expr);
+    // Angle-bracket teaching holes (`<id>` / `<wire>` / `"<query>"`) are templates — validate
+    // against `$` / `"q"` stand-ins so emit stays non-literal while still typechecking.
+    let stripped = super::teaching_util::teaching_expr_for_validation(&stripped);
     let key = domain_line_cache_key(cache_seed, &stripped, map_arc);
     if let Some(entry) = cache.get(&key) {
         return match entry {
@@ -158,6 +161,7 @@ mod tests {
         }
         let mut cgs = load_schema_dir_unvalidated(&p).expect("proof");
         cgs.entry_id = Some("proof".to_string());
+        cgs.stamp_entity_ref_catalogs();
         let missing = crate::cgs_expression_validate::uncovered_capabilities(&cgs);
         assert!(
             !missing

@@ -51,6 +51,8 @@ pub(crate) fn augment_row_json_with_identity(
     let primary = identity.reference.primary_slot_str();
     obj.entry("id".to_string())
         .or_insert_with(|| serde_json::Value::String(primary.clone()));
+    // Homograph-safe primary: when ambient already names the CGS id_field (e.g. access_token),
+    // prefer that wire; otherwise still expose `id` for legacy holes.
     for (k, v) in &identity.ambient {
         obj.entry(k.clone())
             .or_insert_with(|| serde_json::Value::String(v.clone()));
@@ -61,6 +63,10 @@ pub(crate) fn augment_row_json_with_identity(
                 .or_insert_with(|| serde_json::Value::String(v.clone()));
         }
     }
+    // Simple-key identity: also stamp a non-`id` primary when ambient is empty but callers
+    // look up catalog id_field via hole path (AuthSession.access_token). Without a CGS here we
+    // cannot know id_field; ambient/compound paths above cover stamped sessions. When the
+    // decoded row already carries id_field, from_row wins in hole fill.
     serde_json::Value::Object(obj)
 }
 

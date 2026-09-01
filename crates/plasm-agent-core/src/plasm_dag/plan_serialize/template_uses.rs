@@ -185,3 +185,88 @@ pub(in crate::plasm_dag) fn dedupe_inputs(
         })
         .collect()
 }
+
+/// Stamp each `uses_result` edge with the source node's `qualified_entity` (or relation target).
+/// Asserts edge/source agreement when an edge already carries provenance. Full cutover: no
+/// primary-catalog fallback for missing catalog-backed sources.
+pub(in crate::plasm_dag) fn stamp_plan_uses_result_qualified_entities(
+    plan: &mut serde_json::Value,
+) -> Result<(), String> {
+    let nodes = plan
+        .get("nodes")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let by_id: BTreeMap<String, serde_json::Value> = nodes
+        .iter()
+        .filter_map(|n| {
+            n.get("id")
+                .and_then(|v| v.as_str())
+                .map(|id| (id.to_string(), n.clone()))
+        })
+        .collect();
+
+    let Some(nodes_mut) = plan.get_mut("nodes").and_then(|v| v.as_array_mut()) else {
+        return Ok(());
+    };
+    for node in nodes_mut.iter_mut() {
+        let consumer = node
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("<unknown>")
+            .to_string();
+        let Some(uses) = node.get_mut("uses_result").and_then(|v| v.as_array_mut()) else {
+            continue;
+        };
+        for use_edge in uses.iter_mut() {
+            let source_id = use_edge
+                .get("node")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| format!("plan node {consumer:?} uses_result entry missing node id"))?
+                .to_string();
+            let Some(source) = by_id.get(&source_id) else {
+                return Err(format!(
+                    "plan node {consumer:?} uses_result references unknown node {source_id:?}"
+                ));
+            };
+            let resolved = source_node_qualified_entity_json(source);
+            if let Some(existing) = use_edge.get("qualified_entity") {
+                if !existing.is_null() {
+                    if let Some(resolved) = &resolved {
+                        if existing != resolved {
+                            return Err(format!(
+                                "plan node {consumer:?} uses_result[{source_id:?}] contradictory qualified_entity"
+                            ));
+                        }
+                    }
+                    continue;
+                }
+            }
+            if let Some(qe) = resolved {
+                use_edge
+                    .as_object_mut()
+                    .ok_or_else(|| "uses_result entry must be object".to_string())?
+                    .insert("qualified_entity".to_string(), qe);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn source_node_qualified_entity_json(source: &serde_json::Value) -> Option<serde_json::Value> {
+    if source.get("kind").and_then(|v| v.as_str()) == Some("data") {
+        return None;
+    }
+    if let Some(qe) = source.get("qualified_entity") {
+        if !qe.is_null() {
+            return Some(qe.clone());
+        }
+    }
+    if let Some(target) = source.get("relation").and_then(|r| r.get("target")) {
+        return Some(target.clone());
+    }
+    source
+        .get("effect_template")
+        .and_then(|t| t.get("qualified_entity"))
+        .cloned()
+}

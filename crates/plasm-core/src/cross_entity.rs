@@ -90,7 +90,7 @@ fn resolve_cross_entity_field(
     // Find the EntityRef field whose name or target entity matches the prefix.
     for (field_name, field_schema) in &source_entity.fields {
         let nv = cgs.named_value_for_slot(field_schema).ok()?;
-        let FieldType::EntityRef { target } = &nv.field_type else {
+        let FieldType::EntityRef { target, .. } = &nv.field_type else {
             continue;
         };
 
@@ -227,7 +227,7 @@ mod tests {
         cgs.values.insert(
             "fx_int".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::Integer,
                 value_format: None,
@@ -239,7 +239,7 @@ mod tests {
         cgs.values.insert(
             "fx_str".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
@@ -251,7 +251,7 @@ mod tests {
         cgs.values.insert(
             "fx_pet_status".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::Select,
                 value_format: None,
@@ -263,9 +263,10 @@ mod tests {
         cgs.values.insert(
             "fx_ref_pet".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::EntityRef {
+                    entry_id: Default::default(),
                     target: "Pet".into(),
                 },
                 value_format: None,

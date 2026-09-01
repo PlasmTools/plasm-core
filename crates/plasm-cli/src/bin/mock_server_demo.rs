@@ -1,8 +1,7 @@
 use indexmap::IndexMap;
 use plasm_core::value_domain::ValueDomain;
 use plasm_core::{
-    FieldSchema, FieldType, FieldValueKind, NamedValueSchema, ResourceSchema,
-    ValueDomainKey, CGS,
+    FieldSchema, FieldType, FieldValueKind, NamedValueSchema, ResourceSchema, ValueDomainKey, CGS,
 };
 use plasm_mock::{start_server, MockResource, MockStore};
 
@@ -42,11 +41,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "demo_region".into(),
             NamedValueSchema::from_domain(
                 String::new(),
-                ValueDomain::from_legacy(&FieldType::Select, None, None, Some(vec![
-                    "EMEA".to_string(),
-                    "APAC".to_string(),
-                    "AMER".to_string(),
-                ]).clone(), None),
+                ValueDomain::from_legacy(
+                    &FieldType::Select,
+                    None,
+                    None,
+                    Some(vec![
+                        "EMEA".to_string(),
+                        "APAC".to_string(),
+                        "AMER".to_string(),
+                    ])
+                    .clone(),
+                    None,
+                ),
                 None,
             ),
         ),

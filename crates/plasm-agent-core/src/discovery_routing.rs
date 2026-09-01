@@ -257,7 +257,7 @@ fn format_hard_miss_breakout(
     }
     if ctx.session_mode == "new" {
         lines.push(
-            "After a ready open, use `session_mode: \"extend\"` with the same `logical_session_ref` and a new `intent` to add more catalogs/entities, then write `plasm.program` from the teaching TSV."
+            "After a ready open, use `session_mode: \"extend\"` with the same `logical_session_ref` and a new `intent` to add more catalogs/entities, then write `plasm.program` from the language card."
                 .into(),
         );
     } else {

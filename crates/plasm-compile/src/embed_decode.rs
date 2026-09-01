@@ -379,8 +379,7 @@ fn expand_transitive_from_parent_get_embeds(
             let child_sources = extract_path(&rel_path, &wire)?;
             let mut refs = Vec::new();
             for child_wire in child_sources {
-                let related =
-                    decode_entity_fields_and_ref(&child_decoder, &child_wire, Some(cgs))?;
+                let related = decode_entity_fields_and_ref(&child_decoder, &child_wire, Some(cgs))?;
                 let reference = related.reference;
                 refs.push(reference.clone());
                 let child_idx = entity.embedded_entities.len();

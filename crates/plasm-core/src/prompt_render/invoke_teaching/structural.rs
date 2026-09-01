@@ -21,7 +21,7 @@ fn cap_param_structural_lhs(
 }
 
 /// Structural invoke RHS inside union constructors (`v101{…}`): wire leaf names when a
-/// [`SymbolMap`] is present (teaching TSV); canonical [`RenderMode`] uses wire names.
+/// [`SymbolMap`] is present (language card); canonical [`RenderMode`] uses wire names.
 pub(crate) fn format_inline_structural_example_symbolic(
     map: Option<&SymbolMap>,
     catalog_entry_id: &str,

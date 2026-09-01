@@ -5,7 +5,7 @@ Plasm uses two execution surfaces:
 - **MCP:** `plasm` compiles and dry-runs a program. **Provably read-only** plans (plan gate `Proceed`, flow `Clean`, zero remote-mutation nodes) **auto-execute** and return rows in the same tool response. Plans that need review or contain mutations return **`run_ref`** (`pcN`); `plasm_run` executes those via **`run_ref`** only and awaits server-side.
 - **HTTP / remote CLI:** live execute can opt into explicit async operation continuations with `wait(oN)` / `cancel(oN)`. After a dry-run, live execute accepts query/body **`plan_commit_ref=pcN`** (HTTP name for the same `pcN` token).
 
-See also [plasm-language-definition.md](plasm-language-definition.md#host-continuations-page-wait-cancel) for surface syntax, [incremental-teaching-prompts.md](incremental-teaching-prompts.md) for how the teaching TSV preamble teaches continuations, and [tool-model-http.md](tool-model-http.md) for tool-model `execute` notes.
+See also [plasm-language-definition.md](plasm-language-definition.md#host-continuations-page-wait-cancel) for surface syntax, [incremental-teaching-prompts.md](incremental-teaching-prompts.md) for how the language-card preamble teaches continuations, and [tool-model-http.md](tool-model-http.md) for tool-model `execute` notes.
 
 ## Handles
 

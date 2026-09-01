@@ -648,14 +648,14 @@ fn entity_to_json(entity: &CachedEntity) -> serde_json::Value {
 
 #[cfg(test)]
 mod tests {
-    use plasm_core::value_domain::{ProfileId, ValueDomain};
     use super::*;
     use indexmap::IndexMap;
     use plasm_compile::DecodedRelation;
+    use plasm_core::value_domain::{ProfileId, ValueDomain};
     use plasm_core::{
         AgentPresentation, CapabilityKind, CapabilityMapping, CapabilitySchema, FieldSchema,
-        FieldType, FieldValueKind, NamedValueSchema, Ref, ResourceSchema,
-        ValueDomainKey, PLASM_ATTACHMENT_KEY,
+        FieldType, FieldValueKind, NamedValueSchema, Ref, ResourceSchema, ValueDomainKey,
+        PLASM_ATTACHMENT_KEY,
     };
     use plasm_runtime::{ExecutionSource, ExecutionStats};
 

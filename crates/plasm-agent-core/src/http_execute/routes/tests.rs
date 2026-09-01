@@ -722,7 +722,7 @@ async fn expand_domain_session_updates_session_entities() {
     .expect("expand");
     assert!(
         first_wave.markdown.contains("```tsv"),
-        "expected fenced teaching TSV (default TSV render): {}",
+        "expected fenced language card (default TSV render): {}",
         first_wave.markdown
     );
     assert!(

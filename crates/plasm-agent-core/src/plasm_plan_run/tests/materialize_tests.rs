@@ -9,8 +9,10 @@ fn materialized_result_use_preserves_scalar_data_binding_value() {
     materialized.insert(
         node.clone(),
         MaterializedNode {
-            entry_id: "acme".to_string(),
-            entity: "PlanComputed_workspace_id".to_string(),
+            qualified_entity: crate::plasm_plan::QualifiedEntityKey {
+                entry_id: "acme".to_string(),
+                entity: "PlanComputed_workspace_id".to_string(),
+            },
             result: Arc::new(ExecutionResult {
                 count: entities.len(),
                 entities: entities.clone(),
@@ -39,6 +41,7 @@ fn materialized_result_use_preserves_scalar_data_binding_value() {
         &[PlanResultUse {
             node: node.as_str().to_string(),
             r#as: "workspace_id".to_string(),
+            qualified_entity: None,
         }],
         None,
     )
@@ -73,6 +76,11 @@ fn scoped_node_symbols_evaluate_against_singleton_inputs() {
         InputAlias::new("moveFacts".to_string()).expect("alias"),
         MaterializedInputRow {
             node: PlanNodeId::new("moveFacts".to_string()).expect("node id"),
+            qualified_entity: crate::plasm_plan::QualifiedEntityKey {
+                entry_id: "acme".into(),
+                entity: "Move".into(),
+            },
+            id_field: "id".into(),
             proof: crate::plasm_plan::InputCardinalityProof::StaticSingleton,
             row: serde_json::json!({ "move": "thunderbolt", "power": 90 }),
             rows: vec![serde_json::json!({ "move": "thunderbolt", "power": 90 })],
@@ -86,10 +94,11 @@ fn scoped_node_symbols_evaluate_against_singleton_inputs() {
         binding: &binding,
     };
     let input_env = InputEnv { rows: &inputs };
+    let empty_coercion = BTreeMap::new();
     let env = PlanEvalEnv {
         scope,
         inputs: input_env,
-        wire_coercion: None,
+        wire_coercion_by_alias: &empty_coercion,
     };
     let out = eval_plan_value(&value, &env).expect("eval");
     assert_eq!(out["title"], "pikachu uses thunderbolt");
@@ -163,8 +172,10 @@ fn for_each_cross_uses_materialization_wires_upstream_singleton() {
     materialized.insert(
         PlanNodeId::new("report").expect("report"),
         MaterializedNode {
-            entry_id: "acme".into(),
-            entity: "Report".into(),
+            qualified_entity: crate::plasm_plan::QualifiedEntityKey {
+                entry_id: "acme".into(),
+                entity: "Report".into(),
+            },
             result: Arc::new(ExecutionResult {
                 entities: vec![],
                 count: 1,
@@ -195,7 +206,8 @@ fn for_each_cross_uses_materialization_wires_upstream_singleton() {
             .expect("input rows");
     assert_eq!(input_rows.len(), 1);
     let row = serde_json::json!({"id": "p1", "title": "Bolt"});
-    let env = for_each_plan_eval_env(for_each, &row, &input_rows);
+    let empty_coercion = BTreeMap::new();
+    let env = for_each_plan_eval_env(for_each, &row, &input_rows, &empty_coercion);
     let out =
         instantiate_expr_template_value(&serde_json::json!("${_.title} ${report.content}"), &env)
             .expect("interpolate");
@@ -213,8 +225,10 @@ fn materialized_result_use_allows_plural_rows_for_column_node_input_holes() {
     materialized.insert(
         node.clone(),
         MaterializedNode {
-            entry_id: "github".to_string(),
-            entity: "Label".to_string(),
+            qualified_entity: crate::plasm_plan::QualifiedEntityKey {
+                entry_id: "github".to_string(),
+                entity: "Label".to_string(),
+            },
             result: Arc::new(ExecutionResult {
                 count: rows.len(),
                 entities: Vec::new(),
@@ -249,18 +263,20 @@ fn materialized_result_use_allows_plural_rows_for_column_node_input_holes() {
         &[PlanResultUse {
             node: node.as_str().to_string(),
             r#as: "labels".to_string(),
+            qualified_entity: None,
         }],
         Some(&template),
     )
     .expect("plural column projection inputs");
     let alias = InputAlias::new("labels".to_string()).expect("alias");
     assert_eq!(input_rows.get(&alias).expect("labels").rows.len(), 2);
+    let empty_coercion = BTreeMap::new();
     let env = PlanEvalEnv {
         scope: EvalScope::Root {
             row: &serde_json::Value::Null,
         },
         inputs: InputEnv { rows: &input_rows },
-        wire_coercion: None,
+        wire_coercion_by_alias: &empty_coercion,
     };
     let out =
         instantiate_expr_template_value(&template.expr, &env).expect("instantiate column array");

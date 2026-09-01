@@ -460,9 +460,7 @@ fn field_input_schema_to_input_type(f: &InputFieldSchema, cgs: &CGS) -> Result<I
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::{
-        InputFieldWire, InputType, NamedValueSchema, ValueDomainKey,
-    };
+    use crate::schema::{InputFieldWire, InputType, NamedValueSchema, ValueDomainKey};
     use crate::FieldType;
     use crate::Value;
     use std::path::PathBuf;
@@ -473,7 +471,7 @@ mod tests {
         cgs.values.insert(
             "typed_invoke_title".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,

@@ -367,7 +367,7 @@ fn param_entity_ref_target(
         .named_value(cgs)
         .map_err(|e| preflight_err(cap, format!("{step_label} param '{param}': {e}")))?;
     match &nv.field_type {
-        FieldType::EntityRef { target } => Ok(target.to_string()),
+        FieldType::EntityRef { target, .. } => Ok(target.to_string()),
         _ => Err(preflight_err(
             cap,
             format!("{step_label} param '{param}' must be entity_ref"),

@@ -7,7 +7,7 @@ use crate::{ArrayItemsSchema, FieldType, TypeError, Value, CGS};
 /// Human-facing “what to write instead of `$`” for LLM corrections.
 fn expected_type_phrase_for_placeholder(field_type: &FieldType) -> String {
     match field_type {
-        FieldType::EntityRef { target } => format!(
+        FieldType::EntityRef { target, .. } => format!(
             "a real id or reference for `{target}` (`$` in examples is only a stand-in, not a wire value)"
         ),
         FieldType::Uuid => {
@@ -39,7 +39,7 @@ pub(crate) fn value_fits_field_type_entity_ref_aware(
     field_type: &FieldType,
     cgs: &CGS,
 ) -> bool {
-    let FieldType::EntityRef { target } = field_type else {
+    let FieldType::EntityRef { target, .. } = field_type else {
         return value.is_compatible_with_field_type(field_type);
     };
     let Some(ent) = cgs.get_entity(target) else {
@@ -193,11 +193,14 @@ pub(crate) fn validate_concrete_named_value(
 ) -> Result<(), TypeError> {
     match &nv.field_type {
         FieldType::Array => {
-            let spec = nv.array_items.as_ref().ok_or_else(|| TypeError::IncompatibleValue {
-                field: field_path.to_string(),
-                value_type: value.type_name().to_string(),
-                field_type: "array (missing items schema)".to_string(),
-            })?;
+            let spec = nv
+                .array_items
+                .as_ref()
+                .ok_or_else(|| TypeError::IncompatibleValue {
+                    field: field_path.to_string(),
+                    value_type: value.type_name().to_string(),
+                    field_type: "array (missing items schema)".to_string(),
+                })?;
             validate_typed_array_value(value, spec, field_path, cgs)
         }
         FieldType::MultiSelect => {
@@ -207,7 +210,7 @@ pub(crate) fn validate_concrete_named_value(
         _ => {
             if !value_fits_field_type_entity_ref_aware(value, &nv.field_type, cgs) {
                 return Err(match &nv.field_type {
-                    FieldType::EntityRef { target } => {
+                    FieldType::EntityRef { target, .. } => {
                         entity_ref_incompatible_value(field_path, target.as_str(), value, cgs)
                     }
                     _ => TypeError::IncompatibleValue {
@@ -308,7 +311,7 @@ pub(crate) fn validate_input_type(
             if !value_fits_field_type_entity_ref_aware(value, field_type, cgs) {
                 let lbl = path_label();
                 return Err(match field_type {
-                    FieldType::EntityRef { target } => {
+                    FieldType::EntityRef { target, .. } => {
                         entity_ref_incompatible_value(lbl.as_str(), target.as_str(), value, cgs)
                     }
                     _ => TypeError::IncompatibleValue {

@@ -20,7 +20,56 @@ pub const MATRIX_ENTRY_ID: &str = "langmatrix";
 pub fn cgs_with_registry_entry_id(cgs: &plasm_core::CGS, entry_id: &str) -> plasm_core::CGS {
     let mut out = cgs.clone();
     out.entry_id = Some(entry_id.to_string());
+    out.stamp_entity_ref_catalogs();
     out
+}
+
+/// Dual-catalog session: AuthSession on github+linear; secured notes on linear; secured groups on github
+/// (CUGA-shaped: two logins → two Bearer surfaces in one program).
+pub fn matrix_federated_auth_session_session(cgs: Arc<plasm_core::CGS>) -> ExecuteSession {
+    let cgs_github = Arc::new(cgs_with_registry_entry_id(cgs.as_ref(), "github"));
+    let cgs_linear = Arc::new(cgs_with_registry_entry_id(cgs.as_ref(), "linear"));
+    let mut ctxs = IndexMap::new();
+    ctxs.insert(
+        "github".into(),
+        Arc::new(CgsContext::entry("github", cgs_github.clone())),
+    );
+    ctxs.insert(
+        "linear".into(),
+        Arc::new(CgsContext::entry("linear", cgs_linear.clone())),
+    );
+    let layers: Vec<&plasm_core::CGS> = vec![cgs_github.as_ref(), cgs_linear.as_ref()];
+    let mut exp = TeachingExposureSession::new(
+        cgs_github.as_ref(),
+        "github",
+        &["LangAuthSession", "LangSecuredGroup"],
+    );
+    exp.expose_entities(
+        &layers,
+        cgs_linear.clone(),
+        "linear",
+        &["LangAuthSession", "LangSecuredNote"],
+    );
+    ExecuteSession::new(
+        "matrix_ph".into(),
+        String::new(),
+        cgs_github.clone(),
+        ctxs,
+        "github".into(),
+        String::new(),
+        String::new(),
+        None,
+        vec![
+            "LangAuthSession".into(),
+            "LangSecuredGroup".into(),
+            "LangSecuredNote".into(),
+        ],
+        Some(exp),
+        None,
+        cgs_github.catalog_cgs_hash_hex(),
+        None,
+        None,
+    )
 }
 
 pub fn language_matrix_schema_dir() -> PathBuf {

@@ -116,7 +116,7 @@ Old bundles remain verifiable indefinitely via their embedded pubkey unless a tr
 ## Out of scope
 
 - TraceHub row chaining
-- Teaching TSV / full prompt bodies in the chain
+- Language card / full prompt bodies in the chain
 - HTTP response bodies
 
 Implementation: [`plasm-evidence`](https://github.com/PlasmTools/plasm-core/tree/main/crates/plasm-evidence/) (`jcs` module, RFC 8785 segment hashing), emitters in [`evidence_chain.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-agent-core/src/evidence_chain.rs).

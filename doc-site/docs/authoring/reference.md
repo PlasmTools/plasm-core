@@ -444,7 +444,7 @@ When an upstream API rejects a **static** parameter combination (GitHub `pr_crea
    - `mutually_exclusive` — at most one may be present
    - `at_least_one` / `all_or_none` / `implies` as needed
 3. Put a sharp `error_message` agents can act on at dry typecheck.
-4. Gloss the params (`description:` / `values:`) so teaching TSV states which shape is which.
+4. Gloss the params (`description:` / `values:`) so language card states which shape is which.
 
 Example (GitHub `pr_create`): `exactly_one` over `[title, issue]` — title path opens a new PR; issue path converts issue `#N` and must omit title. Dry compile fails before `run_ref` mint; live 422 for that combo is a catalog miss.
 

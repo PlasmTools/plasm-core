@@ -100,7 +100,7 @@ pub fn try_auto_correct(input: &str, lexicon: &DomainLexicon, cgs: &CGS) -> Corr
                 let entry = candidates[0];
                 if let Some(canonical_field) = entry.field_name() {
                     let new_value =
-                        if let Some(FieldType::EntityRef { target }) = entry.field_type() {
+                        if let Some(FieldType::EntityRef { target, .. }) = entry.field_type() {
                             // Extract the id from the original value (may be Entity(id) or bare)
                             let id = extract_id_from_value(&pred.value);
                             format!("{target}({id})")
@@ -121,7 +121,7 @@ pub fn try_auto_correct(input: &str, lexicon: &DomainLexicon, cgs: &CGS) -> Corr
                     .iter()
                     .filter_map(|e| e.field_name())
                     .map(|f| {
-                        if let Some(FieldType::EntityRef { target }) = candidates
+                        if let Some(FieldType::EntityRef { target, .. }) = candidates
                             .iter()
                             .find(|e| e.field_name() == Some(f))
                             .and_then(|e| e.field_type())
@@ -221,7 +221,7 @@ fn collect_all_scopes(cgs: &CGS, entity_name: &str) -> Vec<(String, String)> {
             let Ok(nv) = f.named_value(cgs) else {
                 continue;
             };
-            if let FieldType::EntityRef { target } = &nv.field_type {
+            if let FieldType::EntityRef { target, .. } = &nv.field_type {
                 let entry = (f.name.clone(), target.to_string());
                 if !scopes.contains(&entry) {
                     scopes.push(entry);

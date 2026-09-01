@@ -4,7 +4,7 @@
 
 ## Flow (summary)
 
-1. **`plasm_context`** `session_mode: "new"` + **`intent` only** when semantic auto-seed is enabled → host routes seeds ([intent discovery](https://github.com/PlasmTools/plasm/blob/main/docs/intent-discovery.md)); **`ready`** mints `logical_session_ref` + teaching TSV.
+1. **`plasm_context`** `session_mode: "new"` + **`intent` only** when semantic auto-seed is enabled → host routes seeds ([intent discovery](https://github.com/PlasmTools/plasm/blob/main/docs/intent-discovery.md)); **`ready`** mints `logical_session_ref` + language card.
 2. **`plasm`** / **`plasm_run`** with the same `logical_session_ref`.
 3. **`discover_capabilities`** is **secondary** — browse / recover after `hard_miss` or pick explicit `seeds`.
 

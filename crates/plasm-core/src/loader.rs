@@ -460,6 +460,7 @@ pub fn finalize_cgs_load(cgs: &mut CGS) -> Result<(), String> {
     let _guard = span.enter();
     let legacy_via_param = std::mem::take(&mut cgs.pending_legacy_via_param_patches);
     cgs.normalize_relation_materialization(&legacy_via_param);
+    cgs.stamp_entity_ref_catalogs();
     debug!(
         entities = cgs.entities.len(),
         capabilities = cgs.capabilities.len(),
@@ -523,8 +524,9 @@ pub fn load_schema(path: &Path) -> Result<CGS, String> {
 
         // Full CGS document (e.g. `.cgs.yaml` from extract pipelines)
         debug!("trying serde_yaml -> CGS interchange");
-        if let Ok(cgs) = serde_yaml::from_str::<CGS>(&content) {
+        if let Ok(mut cgs) = serde_yaml::from_str::<CGS>(&content) {
             debug!("CGS interchange parse ok; validating");
+            cgs.stamp_entity_ref_catalogs();
             cgs.validate()
                 .map_err(|e| format!("CGS validation failed: {}", e))?;
             return Ok(cgs);
@@ -616,9 +618,8 @@ fn compile_one_named_value(
     if vt.is_empty() {
         return Err(format!("{ctx}: missing `type`"));
     }
-    let (kernel, profile) =
-        crate::value_domain::parse_type_name(vt, d.target.as_deref())
-            .map_err(|e| format!("{ctx}: {e}"))?;
+    let (kernel, profile) = crate::value_domain::parse_type_name(vt, d.target.as_deref())
+        .map_err(|e| format!("{ctx}: {e}"))?;
 
     let enum_values = d
         .enum_key
@@ -678,14 +679,9 @@ fn compile_one_named_value(
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
-    let domain = crate::value_domain::ValueDomain::new(
-        kernel,
-        profile,
-        constraints,
-        enum_values,
-        currency,
-    )
-    .map_err(|e| format!("{ctx}: {e}"))?;
+    let domain =
+        crate::value_domain::ValueDomain::new(kernel, profile, constraints, enum_values, currency)
+            .map_err(|e| format!("{ctx}: {e}"))?;
 
     Ok(NamedValueSchema::from_domain(
         d.description.clone(),
@@ -1156,6 +1152,47 @@ mod tests {
     use super::*;
     use std::sync::Once;
 
+    #[test]
+    fn entity_ref_stamp_distinguishes_same_target_across_catalogs() {
+        fn stamped(entry_id: &str) -> FieldType {
+            let field_type = FieldType::EntityRef {
+                entry_id: Default::default(),
+                target: EntityName::from("SharedTarget"),
+            };
+            let mut cgs = CGS::new();
+            cgs.entry_id = Some(entry_id.to_string());
+            cgs.values.insert(
+                "shared_ref".into(),
+                NamedValueSchema::from_domain(
+                    String::new(),
+                    crate::value_domain::ValueDomain::from_legacy(
+                        &field_type,
+                        None,
+                        None,
+                        None,
+                        None,
+                    ),
+                    None,
+                ),
+            );
+            cgs.stamp_entity_ref_catalogs();
+            cgs.values["shared_ref"].field_type.clone()
+        }
+
+        let alpha = stamped("alpha");
+        let beta = stamped("beta");
+
+        assert_eq!(alpha.entity_ref_target(), Some("SharedTarget"));
+        assert_eq!(beta.entity_ref_target(), Some("SharedTarget"));
+        assert_eq!(alpha.entity_ref_entry_id(), Some("alpha"));
+        assert_eq!(beta.entity_ref_entry_id(), Some("beta"));
+        assert_ne!(
+            alpha.entity_ref_entry_id(),
+            beta.entity_ref_entry_id(),
+            "same wire target in different catalogs must retain distinct ownership"
+        );
+    }
+
     fn init_loader_tracing_test() {
         static INIT: Once = Once::new();
         INIT.call_once(|| {
@@ -1292,10 +1329,7 @@ capabilities:
         .unwrap();
         std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
         let err = load_schema_dir(dir.path()).unwrap_err();
-        assert!(
-            err.contains("string_semantics"),
-            "unexpected error: {err}"
-        );
+        assert!(err.contains("string_semantics"), "unexpected error: {err}");
     }
 
     #[test]

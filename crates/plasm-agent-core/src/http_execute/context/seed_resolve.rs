@@ -35,11 +35,11 @@ pub fn resolve_entity_name_case_insensitive(cgs: &CGS, raw: &str) -> Result<Stri
             let hints = nearest_entity_names(cgs, raw, 5);
             if hints.is_empty() {
                 Err(format!(
-                    "unknown entity `{raw}` in this schema (entity keys are catalog PascalCase; check teaching TSV / browse preview)"
+                    "unknown entity `{raw}` in this schema (entity keys are catalog PascalCase; check language card / browse preview)"
                 ))
             } else {
                 Err(format!(
-                    "unknown entity `{raw}` in this schema — nearest: {}; use an exact catalog key from teaching TSV / browse preview",
+                    "unknown entity `{raw}` in this schema — nearest: {}; use an exact catalog key from language card / browse preview",
                     hints.join(", ")
                 ))
             }

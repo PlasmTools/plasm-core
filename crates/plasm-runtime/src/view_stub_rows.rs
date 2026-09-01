@@ -27,7 +27,7 @@ fn placeholder_value(field_type: &FieldType) -> Value {
             None,
         )
         .unwrap_or_else(|_| Value::String("0".into())),
-        FieldType::EntityRef { target } => Value::String(format!("stub-{target}")),
+        FieldType::EntityRef { target, .. } => Value::String(format!("stub-{target}")),
     }
 }
 

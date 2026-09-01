@@ -4,7 +4,10 @@ use std::collections::{HashMap, HashSet};
 
 use crate::discovery_intent_class::DiscoveryIntentClass;
 use crate::discovery_intent_signals::intent_mentions_repo_path;
-use crate::schema::{CapabilityKind, CapabilitySchema, DiscoveryCoSeedWith, DiscoverySeedClass, DiscoverySeedNav, CGS};
+use crate::schema::{
+    CapabilityKind, CapabilitySchema, DiscoveryCoSeedWith, DiscoverySeedClass, DiscoverySeedNav,
+    CGS,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CatalogCapabilityMeta {
@@ -163,11 +166,7 @@ impl CatalogWorkflowContext {
     }
 
     /// Authored entity `discovery.co_seed_with`, if any.
-    pub fn entity_co_seed_with(
-        &self,
-        entry_id: &str,
-        entity: &str,
-    ) -> Option<DiscoveryCoSeedWith> {
+    pub fn entity_co_seed_with(&self, entry_id: &str, entity: &str) -> Option<DiscoveryCoSeedWith> {
         self.indexes
             .get(entry_id)
             .and_then(|idx| idx.entity_co_seed_with.get(entity).copied())

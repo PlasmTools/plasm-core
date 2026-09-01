@@ -750,7 +750,7 @@ fn write_eval_report_artifacts(
     Ok(())
 }
 
-/// Eval first-turn prompt: canonical static `plasm` tool description + per-catalog teaching TSV.
+/// Eval first-turn prompt: canonical static `plasm` tool description + per-catalog language card.
 fn prepend_eval_grammar_contract(teaching_table: &str) -> String {
     format!(
         "{}\n\n{}",

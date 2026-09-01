@@ -31,7 +31,7 @@ pub fn apply_entity_ref_scope_splat(
         let Ok(nv) = param.named_value(cgs) else {
             continue;
         };
-        let FieldType::EntityRef { target } = &nv.field_type else {
+        let FieldType::EntityRef { target, .. } = &nv.field_type else {
             continue;
         };
         let Some(ent) = cgs.get_entity(target) else {
@@ -199,7 +199,7 @@ mod tests {
         cgs.values.insert(
             "fx_str".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
@@ -211,9 +211,10 @@ mod tests {
         cgs.values.insert(
             "fx_repo_ref".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::EntityRef {
+                    entry_id: Default::default(),
                     target: EntityName::from("Repository"),
                 },
                 value_format: None,

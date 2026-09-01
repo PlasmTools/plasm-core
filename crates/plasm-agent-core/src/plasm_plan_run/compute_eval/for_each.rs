@@ -1,5 +1,5 @@
 use super::super::*;
-use super::eval::instantiate_raw_expr_template;
+use super::eval::{instantiate_raw_expr_template, wire_coercion_by_alias_from_inputs};
 use super::materialized_result_use_inputs;
 
 pub(crate) fn for_each_cross_uses(for_each: &ValidatedForEachNode) -> Vec<PlanResultUse> {
@@ -15,6 +15,7 @@ pub(crate) fn for_each_plan_eval_env<'a>(
     for_each: &'a ValidatedForEachNode,
     row: &'a serde_json::Value,
     input_rows: &'a BTreeMap<InputAlias, MaterializedInputRow>,
+    wire_coercion_by_alias: &'a BTreeMap<InputAlias, WireCoercionCtx<'a>>,
 ) -> PlanEvalEnv<'a> {
     let scope = EvalScope::Bound {
         row,
@@ -24,7 +25,7 @@ pub(crate) fn for_each_plan_eval_env<'a>(
     PlanEvalEnv {
         scope,
         inputs,
-        wire_coercion: None,
+        wire_coercion_by_alias,
     }
 }
 
@@ -42,7 +43,8 @@ pub(crate) fn render_for_each_expressions(
     source_rows
         .iter()
         .map(|row| {
-            let env = for_each_plan_eval_env(for_each, row, &input_rows);
+            let empty = BTreeMap::new();
+            let env = for_each_plan_eval_env(for_each, row, &input_rows, &empty);
             super::eval::render_expr_template(&for_each.effect_template.expr_template, &env)
         })
         .collect()
@@ -61,12 +63,13 @@ pub(crate) async fn materialize_for_each_node(
     plan_shared: Option<Arc<crate::plan_execute_shared::PlanLineExecuteShared>>,
 ) -> Result<MaterializedNode, String> {
     let source_rows = materialized_rows(es, st, session_id, materialized, &for_each.source).await?;
-    let input_rows =
+    let mut input_rows =
         materialized_result_use_inputs(materialized, &for_each_cross_uses(for_each), None)?;
+    let wire_coercion_by_alias = wire_coercion_by_alias_from_inputs(es, &mut input_rows)?;
     let mut parsed_steps = Vec::with_capacity(source_rows.len());
     let mut expressions = Vec::with_capacity(source_rows.len());
     for row in &source_rows {
-        let env = for_each_plan_eval_env(for_each, row, &input_rows);
+        let env = for_each_plan_eval_env(for_each, row, &input_rows, &wire_coercion_by_alias);
         let parsed = instantiate_raw_expr_template(&for_each.effect_template.ir_template, &env)?;
         expressions.push(crate::expr_display::expr_display(&parsed.expr));
         parsed_steps.push(parsed);

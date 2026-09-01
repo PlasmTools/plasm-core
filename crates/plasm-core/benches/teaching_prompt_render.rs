@@ -1,4 +1,4 @@
-//! teaching table / teaching TSV synthesis benchmarks (CGS materialization + prompt render).
+//! teaching table / language card synthesis benchmarks (CGS materialization + prompt render).
 //!
 //! Run (from `plasm-oss/`): `cargo bench -p plasm-core --bench teaching_prompt_render`
 //!

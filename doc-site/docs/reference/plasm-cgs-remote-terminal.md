@@ -32,7 +32,7 @@ Profile and session state live under **the current working directory**: `.plasm/
 ## Agent flow
 
 1. **`plasm search "…"`** — MCP-shaped discovery Markdown; **merges** rows into `hosts/<slug>/discovery.tsv` by `(api, entity)`; when a session is active, appends **`out/NNNN-search/`** under that session.
-2. **`plasm context -i "…" pokeapi:Pokemon pokeapi:Move`** — client symbol exposure; prints the **symbol wave** (teaching TSV) on stdout; appends **`teaching.tsv`**; records **`out/NNNN-context/`** (`wave.tsv`, `meta.json`); updates **`hosts/<slug>/current`**.
+2. **`plasm context -i "…" pokeapi:Pokemon pokeapi:Move`** — client symbol exposure; prints the **symbol wave** (language card) on stdout; appends **`teaching.tsv`**; records **`out/NNNN-context/`** (`wave.tsv`, `meta.json`); updates **`hosts/<slug>/current`**.
 3. **`plasm context --new -i "…" github:Issue`** — new client session id and fresh **`teaching.tsv`** (`entry_id:Entity` seeds required with `--new`).
 4. **`plasm run`** — expand with client symbols, execute on server.
 
@@ -65,7 +65,7 @@ With **`--new`**, every seed must be `entry_id:Entity` (e.g. `pokeapi:Pokemon`).
   s/<8hex>/
     meta.txt                       # intent, catalog digests, capabilities
     symbols.json                   # client symbol authority
-    teaching.tsv                     # cumulative teaching TSV (agent reads this)
+    teaching.tsv                     # cumulative language card (agent reads this)
     catalogs/<api>.json
     latest                         # one line: newest out/NNNN-* dir
     out/

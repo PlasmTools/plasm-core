@@ -349,7 +349,6 @@ fn value_to_json_value(value: &Value) -> serde_json::Value {
 
 #[cfg(test)]
 mod tests {
-    use plasm_core::value_domain::ValueDomain;
     use super::*;
     use alloy_json_abi::{Event, Function};
     use alloy_primitives::Address;
@@ -357,6 +356,7 @@ mod tests {
     use plasm_compile::{
         CompiledEvmCall, CompiledEvmLogs, EvmFieldSource, HttpBodyFormat, HttpMethod,
     };
+    use plasm_core::value_domain::ValueDomain;
     use plasm_core::Value;
     use tempfile::tempdir;
 
@@ -616,8 +616,7 @@ mod tests {
     #[test]
     fn invoke_input_payload_lift_preserves_http_fingerprint() {
         use plasm_core::schema::{
-            InputFieldSchema, InputFieldWire, InputType, NamedValueSchema,
-            ValueDomainKey, CGS,
+            InputFieldSchema, InputFieldWire, InputType, NamedValueSchema, ValueDomainKey, CGS,
         };
         use plasm_core::typed_invoke::InvokeInputPayload;
         use plasm_core::FieldType;

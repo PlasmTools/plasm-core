@@ -40,7 +40,7 @@ pub fn classify_scope_param_supply(
     let Ok(nv) = field.named_value(cgs) else {
         return ScopeParamSupply::Explicit;
     };
-    let FieldType::EntityRef { target } = &nv.field_type else {
+    let FieldType::EntityRef { target, .. } = &nv.field_type else {
         return ScopeParamSupply::Explicit;
     };
     if receiver_entity.name == *target {
@@ -169,7 +169,7 @@ pub fn effective_capability_input(
                 let Ok(nv) = field.named_value(cgs) else {
                     continue;
                 };
-                let FieldType::EntityRef { target } = &nv.field_type else {
+                let FieldType::EntityRef { target, .. } = &nv.field_type else {
                     continue;
                 };
                 let Some(target_ent) = cgs.get_entity(target) else {
@@ -244,7 +244,7 @@ mod tests {
         cgs.values.insert(
             "fx_str".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
@@ -256,9 +256,10 @@ mod tests {
         cgs.values.insert(
             "fx_repo_ref".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::EntityRef {
+                    entry_id: Default::default(),
                     target: EntityName::from("Repository"),
                 },
                 value_format: None,

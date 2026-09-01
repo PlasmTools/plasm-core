@@ -91,7 +91,7 @@ pub(crate) fn invoke_dotted_call_arg_example(
         | FieldType::Number
         | FieldType::Money => Some(format!("{n}={p}")),
         FieldType::Select | FieldType::MultiSelect => Some(format!("{n}={p}")),
-        FieldType::EntityRef { target } => Some(format!(
+        FieldType::EntityRef { target, .. } => Some(format!(
             "{n}={}",
             entity_ref_id_example(cgs, catalog_entry_id, target, map)
         )),

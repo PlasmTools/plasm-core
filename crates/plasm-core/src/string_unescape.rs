@@ -157,9 +157,7 @@ pub fn normalize_structured_string_inputs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::{
-        InputFieldSchema, InputFieldWire, NamedValueSchema, ValueDomainKey, CGS,
-    };
+    use crate::schema::{InputFieldSchema, InputFieldWire, NamedValueSchema, ValueDomainKey, CGS};
 
     #[test]
     fn unescape_basic_escapes() {
@@ -231,7 +229,7 @@ mod tests {
         cgs.values.insert(
             "unescape_p2_short".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
@@ -279,7 +277,7 @@ mod tests {
         cgs.values.insert(
             "json_p4".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::Json,
                 value_format: None,

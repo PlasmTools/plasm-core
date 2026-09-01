@@ -30,7 +30,7 @@ pub(crate) fn structural_value_domain_allocation_fp(
 
 pub(crate) fn structural_field_type_fp(catalog_entry_id: &str, field_type: &FieldType) -> String {
     match field_type {
-        FieldType::EntityRef { target } => {
+        FieldType::EntityRef { target, .. } => {
             format!("entity_ref|{}|{}", catalog_entry_id, target.as_str())
         }
         _ => serde_json::to_string(field_type).unwrap_or_else(|_| "\"?\"".to_string()),

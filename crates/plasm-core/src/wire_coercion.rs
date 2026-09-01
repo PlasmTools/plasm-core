@@ -165,7 +165,7 @@ pub fn field_type_assignable_for_relation_binding(parent: &FieldType, param: &Fi
         (Integer, Number) | (Number, Integer) => true,
         (String, Integer) | (String, Number) => true,
         (Integer, String) | (Number, String) | (Uuid, String) => true,
-        (EntityRef { target: t1 }, EntityRef { target: t2 }) => t1 == t2,
+        (EntityRef { target: t1, .. }, EntityRef { target: t2, .. }) => t1 == t2,
         (Boolean, String) | (String, Boolean) => true,
         (Date, String) | (String, Date) => true,
         _ => false,
@@ -182,7 +182,7 @@ pub fn relation_binding_assignable(
     if field_type_assignable_for_relation_binding(parent_ty, param_ty) {
         return true;
     }
-    let FieldType::EntityRef { target } = param_ty else {
+    let FieldType::EntityRef { target, .. } = param_ty else {
         return false;
     };
     if parent_entity.name != *target {
@@ -345,7 +345,8 @@ pub fn coerce_value_for_field_type_with_policy(
                 Value::Integer(n) => Value::Float(n as f64),
                 other => other,
             })
-        }        FieldType::EntityRef { .. } => Ok(match val {
+        }
+        FieldType::EntityRef { .. } => Ok(match val {
             Value::Integer(n) => Value::String(n.to_string()),
             Value::Float(f) => Value::String(normalize_numeric_id_float(f)),
             Value::PhraseIdent(s) => Value::String(s),
@@ -688,6 +689,7 @@ mod tests {
             "id",
             &FieldType::String,
             &FieldType::EntityRef {
+                entry_id: Default::default(),
                 target: "Zone".into(),
             },
         ));
@@ -696,6 +698,7 @@ mod tests {
             "name",
             &FieldType::String,
             &FieldType::EntityRef {
+                entry_id: Default::default(),
                 target: "Zone".into(),
             },
         ));
@@ -727,6 +730,7 @@ mod tests {
             "full_name",
             &FieldType::String,
             &FieldType::EntityRef {
+                entry_id: Default::default(),
                 target: "Repository".into(),
             },
         ));
@@ -735,6 +739,7 @@ mod tests {
             "description",
             &FieldType::String,
             &FieldType::EntityRef {
+                entry_id: Default::default(),
                 target: "Repository".into(),
             },
         ));
@@ -900,11 +905,8 @@ mod tests {
             .expect("email domain"),
             None,
         );
-        let (value, diag) = decode_coerce_and_validate_field(
-            "email",
-            &nv,
-            Value::String("not-an-email".into()),
-        );
+        let (value, diag) =
+            decode_coerce_and_validate_field("email", &nv, Value::String("not-an-email".into()));
         assert!(matches!(value, Value::Null));
         let d = diag.expect("diagnostic");
         assert_eq!(d.field, "email");

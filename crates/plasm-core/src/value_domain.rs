@@ -22,6 +22,8 @@ pub enum KernelKind {
     Blob,
     Money,
     EntityRef {
+        #[serde(default)]
+        entry_id: crate::identity::RegistryEntryId,
         target: crate::identity::EntityName,
     },
 }
@@ -305,6 +307,7 @@ pub fn parse_type_name(
             };
             Ok((
                 KernelKind::EntityRef {
+                    entry_id: crate::identity::RegistryEntryId::default(),
                     target: crate::identity::EntityName::from(tgt),
                 },
                 None,
@@ -380,8 +383,9 @@ impl ValueDomain {
             FieldType::Array => (KernelKind::Array, None),
             FieldType::Json => (KernelKind::Json, None),
             FieldType::Money => (KernelKind::Money, None),
-            FieldType::EntityRef { target } => (
+            FieldType::EntityRef { entry_id, target } => (
                 KernelKind::EntityRef {
+                    entry_id: entry_id.clone(),
                     target: target.clone(),
                 },
                 None,
@@ -425,7 +429,8 @@ impl ValueDomain {
     /// Effective legacy [`FieldType`] for shape / operator call sites.
     pub fn to_field_type(&self) -> FieldType {
         match (&self.kernel, self.profile) {
-            (KernelKind::EntityRef { target }, _) => FieldType::EntityRef {
+            (KernelKind::EntityRef { entry_id, target }, _) => FieldType::EntityRef {
+                entry_id: entry_id.clone(),
                 target: target.clone(),
             },
             (KernelKind::Boolean, _) => FieldType::Boolean,
@@ -452,9 +457,7 @@ impl ValueDomain {
             Some(ProfileId::Iso8601Date) => {
                 Some(ValueWireFormat::Temporal(TemporalWireFormat::Iso8601Date))
             }
-            Some(ProfileId::UnixMs) => {
-                Some(ValueWireFormat::Temporal(TemporalWireFormat::UnixMs))
-            }
+            Some(ProfileId::UnixMs) => Some(ValueWireFormat::Temporal(TemporalWireFormat::UnixMs)),
             Some(ProfileId::UnixSec) => {
                 Some(ValueWireFormat::Temporal(TemporalWireFormat::UnixSec))
             }
@@ -467,7 +470,10 @@ impl ValueDomain {
 
     pub fn compatible_operators(&self) -> &'static [CompOp] {
         if self.profile.is_some_and(|p| p.is_temporal())
-            || matches!(self.kernel, KernelKind::Number | KernelKind::Integer | KernelKind::Money)
+            || matches!(
+                self.kernel,
+                KernelKind::Number | KernelKind::Integer | KernelKind::Money
+            )
         {
             return &[
                 CompOp::Eq,
@@ -582,12 +588,12 @@ pub fn validate_string_profile(profile: ProfileId, s: &str) -> Result<(), String
         ProfileId::HttpUrl => validate_url(s, true),
         ProfileId::Hostname => validate_hostname(s),
         ProfileId::E164 => validate_e164(s),
-        ProfileId::Ipv4 => {
-            Ipv4Addr::from_str(s).map(|_| ()).map_err(|_| format!("invalid ipv4 '{s}'"))
-        }
-        ProfileId::Ipv6 => {
-            Ipv6Addr::from_str(s).map(|_| ()).map_err(|_| format!("invalid ipv6 '{s}'"))
-        }
+        ProfileId::Ipv4 => Ipv4Addr::from_str(s)
+            .map(|_| ())
+            .map_err(|_| format!("invalid ipv4 '{s}'")),
+        ProfileId::Ipv6 => Ipv6Addr::from_str(s)
+            .map(|_| ())
+            .map_err(|_| format!("invalid ipv6 '{s}'")),
         ProfileId::Hex => {
             if s.is_empty() || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
                 return Err(format!("invalid hex '{s}'"));
@@ -787,8 +793,12 @@ mod tests {
 
     #[test]
     fn rejects_retired_type_names() {
-        assert!(parse_type_name("date", None).unwrap_err().contains("rfc3339"));
-        assert!(parse_type_name("select", None).unwrap_err().contains("enum"));
+        assert!(parse_type_name("date", None)
+            .unwrap_err()
+            .contains("rfc3339"));
+        assert!(parse_type_name("select", None)
+            .unwrap_err()
+            .contains("enum"));
         assert!(parse_type_name("multi_select", None)
             .unwrap_err()
             .contains("multi_enum"));

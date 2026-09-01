@@ -135,6 +135,10 @@ pub struct PlanResultUse {
     pub node: String,
     /// Local binding name.
     pub r#as: String,
+    /// Catalog-qualified row domain of the **source** node (not the consumer).
+    /// Required after [`enrich_uses_result_provenance`]; optional on raw DAG JSON until validation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qualified_entity: Option<QualifiedEntityKey>,
 }
 
 /// Cardinality contract for a data input consumed by a derived node.
@@ -1122,6 +1126,96 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
     Ok(validated)
 }
 
+/// Resolve the catalog-qualified row domain of a plan node, walking compute/derive sources.
+/// Returns `None` for pure Data literals (no catalog domain). Fail-closed otherwise — no
+/// primary-catalog fallback when a catalog-backed source lacks provenance.
+pub fn resolve_plan_node_qualified_entity(
+    plan: &Plan,
+    node_id: &str,
+) -> Result<Option<QualifiedEntityKey>, String> {
+    let by_id: HashMap<&str, &PlanNode> = plan.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
+    let mut cur = node_id.to_string();
+    for _ in 0..512 {
+        let n = by_id
+            .get(cur.as_str())
+            .ok_or_else(|| format!("uses_result provenance: unknown plan node {cur:?}"))?;
+        if n.kind == PlanNodeKind::Data {
+            return Ok(None);
+        }
+        if let Some(qe) = &n.qualified_entity {
+            return Ok(Some(qe.clone()));
+        }
+        if let Some(rel) = &n.relation {
+            return Ok(Some(rel.target.clone()));
+        }
+        if let Some(effect) = &n.effect_template {
+            return Ok(Some(effect.qualified_entity.clone()));
+        }
+        if let Some(compute) = &n.compute {
+            cur = compute.source.clone();
+            continue;
+        }
+        if let Some(derive) = &n.derive_template {
+            if let Some(src) = &derive.source {
+                cur = src.clone();
+                continue;
+            }
+        }
+        if let Some(src) = &n.source {
+            cur = src.clone();
+            continue;
+        }
+        return Err(format!(
+            "uses_result provenance: plan node {cur:?} has no qualified_entity (catalog domain required)"
+        ));
+    }
+    Err(format!(
+        "uses_result provenance: exceeded source walk depth from {node_id:?}"
+    ))
+}
+
+/// Stamp each `uses_result` edge with the source node's [`QualifiedEntityKey`] when the source is
+/// catalog-backed. Data literal sources remain unqualified. Rejects contradictory provenance.
+pub fn enrich_uses_result_provenance(
+    uses: &[PlanResultUse],
+    plan: &Plan,
+    consumer_id: &str,
+) -> Result<Vec<PlanResultUse>, String> {
+    let mut out = Vec::with_capacity(uses.len());
+    for u in uses {
+        let resolved = resolve_plan_node_qualified_entity(plan, u.node.as_str())
+            .map_err(|e| format!("plan node {consumer_id:?} uses_result[{:?}]: {e}", u.r#as))?;
+        match (u.qualified_entity.as_ref(), resolved) {
+            (Some(existing), Some(resolved)) if existing != &resolved => {
+                return Err(format!(
+                    "plan node {consumer_id:?} uses_result[{:?}] contradictory qualified_entity: edge has {}:{} but source {:?} resolves to {}:{}",
+                    u.r#as,
+                    existing.entry_id,
+                    existing.entity,
+                    u.node,
+                    resolved.entry_id,
+                    resolved.entity
+                ));
+            }
+            (_, Some(resolved)) => {
+                out.push(PlanResultUse {
+                    node: u.node.clone(),
+                    r#as: u.r#as.clone(),
+                    qualified_entity: Some(resolved),
+                });
+            }
+            (existing, None) => {
+                out.push(PlanResultUse {
+                    node: u.node.clone(),
+                    r#as: u.r#as.clone(),
+                    qualified_entity: existing.cloned(),
+                });
+            }
+        }
+    }
+    Ok(out)
+}
+
 fn validated_node_from_raw(
     plan: &Plan,
     node: &PlanNode,
@@ -1130,7 +1224,7 @@ fn validated_node_from_raw(
 ) -> Result<ValidatedPlanNode, String> {
     let id = PlanNodeId::new(node.id.clone())?;
     let depends_on = typed_node_ids(&node.depends_on)?;
-    let uses_result = node.uses_result.clone();
+    let uses_result = enrich_uses_result_provenance(&node.uses_result, plan, node.id.as_str())?;
     match node.kind {
         kind @ (PlanNodeKind::Query
         | PlanNodeKind::Search
@@ -2401,6 +2495,43 @@ mod tests {
             "return": { "kind": "node", "node": "n1" }
         });
         validate_plan_value(&v).expect("ok");
+    }
+
+    #[test]
+    fn enrich_uses_result_stamps_source_qualified_entity() {
+        let plan: Plan = serde_json::from_value(serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "name": "qe-uses",
+            "nodes": [
+                {
+                    "id": "sn",
+                    "kind": "action",
+                    "qualified_entity": { "entry_id": "linear", "entity": "LangAuthSession" },
+                    "effect_class": "side_effect",
+                    "result_shape": "single",
+                    "depends_on": [],
+                    "uses_result": []
+                },
+                {
+                    "id": "notes",
+                    "kind": "search",
+                    "qualified_entity": { "entry_id": "linear", "entity": "LangSecuredNote" },
+                    "effect_class": "read",
+                    "result_shape": "list",
+                    "depends_on": ["sn"],
+                    "uses_result": [{ "node": "sn", "as": "sn" }]
+                }
+            ],
+            "return": { "kind": "node", "node": "notes" }
+        }))
+        .expect("plan serde");
+        let uses = enrich_uses_result_provenance(&plan.nodes[1].uses_result, &plan, "notes")
+            .expect("enrich");
+        assert_eq!(uses.len(), 1);
+        let qe = uses[0].qualified_entity.as_ref().expect("stamped qe");
+        assert_eq!(qe.entry_id, "linear");
+        assert_eq!(qe.entity, "LangAuthSession");
     }
 
     #[test]

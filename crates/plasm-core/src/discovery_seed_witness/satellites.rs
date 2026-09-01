@@ -467,7 +467,10 @@ pub fn admit_co_seed_teaching_seats(
         .collect();
     let mut out: BTreeSet<(String, String)> = BTreeSet::new();
     for w in &corpus.witnesses {
-        let WitnessKind::DirectCapability { entry_id, entity, .. } = &w.kind else {
+        let WitnessKind::DirectCapability {
+            entry_id, entity, ..
+        } = &w.kind
+        else {
             continue;
         };
         if seed_entities.contains(&(entry_id.as_str(), entity.as_str())) {
@@ -518,10 +521,7 @@ pub fn apply_teaching_satellites_to_ready(
         SatelliteAdmission::Ok(mut sats) => {
             let forced = admit_co_seed_teaching_seats(corpus, plan);
             for seat in forced {
-                if sats
-                    .iter()
-                    .any(|(e, ent)| e == &seat.0 && ent == &seat.1)
-                {
+                if sats.iter().any(|(e, ent)| e == &seat.0 && ent == &seat.1) {
                     continue;
                 }
                 sats.push(seat);
@@ -1325,9 +1325,7 @@ mod tests {
         };
         let seats = admit_co_seed_teaching_seats(&corpus, &plan);
         assert!(
-            seats
-                .iter()
-                .any(|(e, n)| e == "payapp" && n == "LoginGate"),
+            seats.iter().any(|(e, n)| e == "payapp" && n == "LoginGate"),
             "catalog_primary co-seed taught; got {seats:?}"
         );
         assert!(

@@ -21,7 +21,7 @@ pub(in crate::plasm_dag) fn infer_surface_contract(
         );
     }
 
-    let (mut kind, entity, effect, shape) = infer_surface_contract_from_expr(expr)?;
+    let (mut kind, entity, mut effect, mut shape) = infer_surface_contract_from_expr(expr)?;
     let qe = if matches!(shape, crate::plasm_plan::ResultShape::Page) {
         if let Some(qe) = expr.qualified_entity_key() {
             QualifiedEntityKey::from(qe)
@@ -78,6 +78,22 @@ pub(in crate::plasm_dag) fn infer_surface_contract(
                 if cap.kind == plasm_core::CapabilityKind::Search {
                     kind = PlanNodeKind::Search;
                 }
+            }
+        }
+    }
+    // Action-with-`provides` returns catalog-qualified entity rows (AuthSession login, etc.),
+    // not a bare side-effect ack — required for federated homograph hole fill / CML env.
+    if let Expr::Invoke(inv) = expr {
+        let resolving_cgs = cgs_for_qualified_entity(session, &qe).ok_or_else(|| {
+            format!(
+                "catalog `{}` is not loaded for entity `{}`",
+                qe.entry_id, qe.entity
+            )
+        })?;
+        if let Some(cap) = resolving_cgs.capabilities.get(inv.capability.as_str()) {
+            if !cap.provides.is_empty() {
+                shape = crate::plasm_plan::ResultShape::MutationResult;
+                effect = EffectClass::Write;
             }
         }
     }

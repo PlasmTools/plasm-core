@@ -69,13 +69,13 @@ impl SymbolResolveError {
             Self::UnknownEntityPSym { .. }
             | Self::NotARowField { .. }
             | Self::AmbiguousEntityRowFieldPSym { .. } => Some(
-                "Use catalog wire field names from the teaching TSV left column for this binding (e.g. `.sort(height)`, `[title,…]`).",
+                "Use catalog wire field names from the language-card left column for this binding (e.g. `.sort(height)`, `[title,…]`).",
             ),
             Self::UnknownQueryFilterPSym { .. } | Self::AmbiguousQueryFilterPSym { .. } => Some(
-                "Use wire names from the teaching TSV for query/search filters on this entity (e.g. `{team_key=\"…\"}`).",
+                "Use wire names from the language card for query/search filters on this entity (e.g. `{team_key=\"…\"}`).",
             ),
             Self::UnknownCapParam { .. } => Some(
-                "Use wire parameter names from the teaching TSV invoke/create row for this capability.",
+                "Use wire parameter names from the language card invoke/create row for this capability.",
             ),
             Self::UnknownCompoundKey { .. } => Some(
                 "Supply every compound identity key using wire names from the teaching table.",
@@ -87,7 +87,7 @@ impl SymbolResolveError {
                 "Use `e#` symbols from the teaching table for this session.",
             ),
             Self::UnknownSessionPSym { .. } | Self::WrongSlotKind { .. } => Some(
-                "Use wire field names from the teaching TSV left column for fields, filters, and params.",
+                "Use wire field names from the language-card left column for fields, filters, and params.",
             ),
         }
     }

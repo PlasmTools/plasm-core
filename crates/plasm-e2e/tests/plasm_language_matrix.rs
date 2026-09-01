@@ -1469,8 +1469,8 @@ fn assert_planning_ir(
                 );
             }
             let hole_blob = format!("{comp}");
-            let hole_hits = hole_blob.matches("__plasm_hole").count()
-                + hole_blob.matches("node_input").count();
+            let hole_hits =
+                hole_blob.matches("__plasm_hole").count() + hole_blob.matches("node_input").count();
             if hole_hits < 2 {
                 return Err(format!(
                     "dual Bearer surfaces must carry ≥2 access_token holes (node_input/__plasm_hole), got {hole_hits}"
@@ -2754,9 +2754,7 @@ notes, groups"#
             format!("item = {e_poke}(\"i1\")\nsummary = item.summary\nsummary")
         }
         "lang_federated_duplicate_entity_e2_search" => r#"e2~"Alpha""#.to_string(),
-        "lang_federated_parallel_roots" => {
-            r#"e1{owner="alice"}, e2~"Alpha""#.to_string()
-        }
+        "lang_federated_parallel_roots" => r#"e1{owner="alice"}, e2~"Alpha""#.to_string(),
         "lang_bind_template_inline_on_e1" => r#"report = e1{owner="alice"}[title] <<INLINE_E1
 # {{ rows | length }} row(s)
 INLINE_E1
@@ -2821,14 +2819,16 @@ async fn lang_federated_auth_session_bearer_hole_fill_live_async() {
     let es = Arc::new(language_matrix::matrix_federated_auth_session_session(
         cgs_live.clone(),
     ));
-    let st = Arc::new(language_matrix::matrix_federated_duplicate_entity_host_state(
-        ExecutionEngine::new(ExecutionConfig {
-            base_url: Some(cgs_live.http_backend.clone()),
-            ..Default::default()
-        })
-        .expect("ExecutionEngine"),
-        cgs_live,
-    ));
+    let st = Arc::new(
+        language_matrix::matrix_federated_duplicate_entity_host_state(
+            ExecutionEngine::new(ExecutionConfig {
+                base_url: Some(cgs_live.http_backend.clone()),
+                ..Default::default()
+            })
+            .expect("ExecutionEngine"),
+            cgs_live,
+        ),
+    );
     let row = MATRIX_ROWS
         .iter()
         .find(|r| r.id == "lang_federated_auth_session_provides_mutation")
@@ -2919,7 +2919,10 @@ async fn plasm_language_matrix_live_runs_body(base: String) {
         ) {
             (Arc::clone(&es_federated_dup), Arc::clone(&st_federated_dup))
         } else if row.id == "lang_federated_auth_session_provides_mutation" {
-            (Arc::clone(&es_federated_auth), Arc::clone(&st_federated_dup))
+            (
+                Arc::clone(&es_federated_auth),
+                Arc::clone(&st_federated_dup),
+            )
         } else if row.federated {
             (Arc::clone(&es_federated), Arc::clone(&st_federated))
         } else {

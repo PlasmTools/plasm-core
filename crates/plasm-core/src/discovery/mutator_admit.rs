@@ -42,8 +42,10 @@ pub struct ExposureSurfaceOptions {
     /// Production ([`MutatorAdmit::IntentOnly`]): seeded entities always teach reads
     /// (`query`/`search`/`get` + `primary_read`); seeded mutators admit when BM25 score > 0 **or**
     /// the wire name is listed in `ranked_capability_names` (score-0 boost). Ranked is a boost on
-    /// seeded domains — not a whitelist cage. Non-seeded relation-target mutators require score > 0
-    /// and, when ranked is non-empty, membership in that list.
+    /// seeded domains — not a whitelist cage. **Exception:** seeded entities with **no** read
+    /// capabilities always admit their **`Action`** caps (AuthSession login co-seed); create /
+    /// update / delete remain score-/ranked-gated. Non-seeded relation-target mutators require
+    /// score > 0 and, when ranked is non-empty, membership in that list.
     /// [`MutatorAdmit::AlwaysOnSeeds`] always admits seeded mutators (tests / overshow).
     pub mutator_admit: MutatorAdmit,
 }
@@ -89,13 +91,33 @@ pub(crate) fn mutating_capability_admitted(
     }
 }
 
+/// True when `entity` declares at least one teachable read (`get` / `query` / `search`).
+#[inline]
+pub(crate) fn entity_declares_readable_capability(cgs: &crate::CGS, entity: &str) -> bool {
+    !cgs
+        .find_capabilities(entity, CapabilityKind::Get)
+        .is_empty()
+        || !cgs
+            .find_capabilities(entity, CapabilityKind::Query)
+            .is_empty()
+        || !cgs
+            .find_capabilities(entity, CapabilityKind::Search)
+            .is_empty()
+}
+
 /// Capabilities on an explicitly seeded entity that are always admitted (no intent lexicon score).
+///
+/// `seed_declares_readable_surface`: when false, the seed has no `get`/`query`/`search`. Under
+/// [`MutatorAdmit::IntentOnly`], **`Action`** caps on those seeds still admit (AppWorld
+/// `AuthSession` login/logout co-seed). `Create`/`Update`/`Delete` stay score-/ranked-gated so
+/// create-only entities do not overshow on weak intents.
 pub(crate) fn seeded_entity_cap_always_includes(
     mutator_admit: MutatorAdmit,
     cap: &CapabilitySchema,
     entity_name: &str,
     ent: &EntityDef,
     seeded_entities: &HashSet<String>,
+    seed_declares_readable_surface: bool,
 ) -> bool {
     if cap.domain.as_str() != entity_name || !seeded_entities.contains(entity_name) {
         return false;
@@ -113,12 +135,19 @@ pub(crate) fn seeded_entity_cap_always_includes(
     {
         return true;
     }
-    matches!(mutator_admit, MutatorAdmit::AlwaysOnSeeds)
-        && matches!(
-            cap.kind,
-            CapabilityKind::Create
-                | CapabilityKind::Update
-                | CapabilityKind::Delete
-                | CapabilityKind::Action
-        )
+    let is_mutator = matches!(
+        cap.kind,
+        CapabilityKind::Create
+            | CapabilityKind::Update
+            | CapabilityKind::Delete
+            | CapabilityKind::Action
+    );
+    if !is_mutator {
+        return false;
+    }
+    if matches!(mutator_admit, MutatorAdmit::AlwaysOnSeeds) {
+        return true;
+    }
+    // IntentOnly: action-only (no get/query/search) seeds must still teach Actions.
+    matches!(cap.kind, CapabilityKind::Action) && !seed_declares_readable_surface
 }

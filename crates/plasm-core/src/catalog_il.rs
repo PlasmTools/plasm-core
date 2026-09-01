@@ -71,8 +71,9 @@ pub fn cgs_to_catalog_il_bytes(cgs: &CGS) -> Result<Vec<u8>, String> {
 pub fn load_catalog_il_bytes(bytes: &[u8]) -> Result<CGS, String> {
     let span = crate::spans::catalog_load_il(bytes.len());
     let _guard = span.enter();
-    let cgs: CGS =
+    let mut cgs: CGS =
         serde_json::from_slice(bytes).map_err(|e| format!("CGS JSON decode failed: {e}"))?;
+    cgs.stamp_entity_ref_catalogs();
     cgs.validate()
         .map_err(|e| format!("CGS validation failed after JSON decode: {e}"))?;
     Ok(cgs)

@@ -506,7 +506,7 @@ fn corpus_stamps_attach_on_label_and_prune_drops_label_read() {
                 preflight: None,
                 discovery: None,
                 identity_key: None,
-            invalidates_entities: vec![],
+                invalidates_entities: vec![],
             },
         );
     }
@@ -694,7 +694,7 @@ fn corpus_stamps_own_pair_on_both_ends_of_own_edge() {
                 preflight: None,
                 discovery: None,
                 identity_key: None,
-            invalidates_entities: vec![],
+                invalidates_entities: vec![],
             },
         );
     }

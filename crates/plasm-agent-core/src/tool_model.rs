@@ -14,8 +14,8 @@ use plasm_core::schema::{
     input_variant_body_type, AuthScheme, EntityDef, FieldSchema, InputFieldSchema, InputFieldWire,
     InputType, OauthExtension, OutputType, RelationMaterialization, RelationSchema, CGS,
 };
-use plasm_core::value_domain::ProfileId;
 use plasm_core::symbol_tuning::FocusSpec;
+use plasm_core::value_domain::ProfileId;
 use plasm_core::{capability_method_label_kebab, CapabilityKind, CapabilitySchema, FieldType};
 use plasm_core::{catalog_connect_profile, CatalogConnectProfile};
 use serde::Serialize;
@@ -437,7 +437,7 @@ fn type_label_from_parts(
     array_items: Option<&plasm_core::schema::ArrayItemsSchema>,
 ) -> String {
     match field_type {
-        FieldType::EntityRef { target } => {
+        FieldType::EntityRef { target, .. } => {
             format!("entity_ref → {target}")
         }
         FieldType::Select => {
@@ -523,7 +523,7 @@ fn input_field_type_label(field: &InputFieldSchema, cgs: &CGS) -> String {
 
 fn navigable_entity_ref_target(cgs: &CGS, field_type: &FieldType) -> Option<String> {
     match field_type {
-        FieldType::EntityRef { target } if cgs.entities.contains_key(target.as_str()) => {
+        FieldType::EntityRef { target, .. } if cgs.entities.contains_key(target.as_str()) => {
             Some(target.to_string())
         }
         _ => None,
@@ -554,7 +554,7 @@ fn field_type_compact_label(ft: &FieldType) -> String {
         FieldType::Money => "money".into(),
         FieldType::Array => "array".into(),
         FieldType::Json => "json · object".into(),
-        FieldType::EntityRef { target } => format!("entity_ref → {target}"),
+        FieldType::EntityRef { target, .. } => format!("entity_ref → {target}"),
     }
 }
 
@@ -1424,7 +1424,7 @@ fn project_entity(
         let Ok(nv) = cgs.named_value_for_slot(field_schema) else {
             continue;
         };
-        if let FieldType::EntityRef { ref target } = nv.field_type {
+        if let FieldType::EntityRef { ref target, .. } = nv.field_type {
             let kebab = field_subcommand_kebab(field_name);
             if entity.relations.contains_key(field_name.as_str()) {
                 continue;

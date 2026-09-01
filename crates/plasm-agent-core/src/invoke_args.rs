@@ -33,13 +33,12 @@ pub fn args_to_input(matches: &ArgMatches, cap: &CapabilitySchema, cgs: &CGS) ->
 
 #[cfg(test)]
 mod tests {
-    use plasm_core::value_domain::ValueDomain;
     use super::*;
     use clap::{Arg, Command};
+    use plasm_core::value_domain::ValueDomain;
     use plasm_core::{
         CapabilityKind, CapabilityMapping, FieldType, InputFieldSchema, InputFieldWire,
-        InputSchema, InputType, InputValidation, NamedValueSchema, ValueDomainKey,
-        CGS,
+        InputSchema, InputType, InputValidation, NamedValueSchema, ValueDomainKey, CGS,
     };
 
     fn invoke_test_cgs() -> CGS {
@@ -64,7 +63,13 @@ mod tests {
             "invoke_upd_priority".into(),
             NamedValueSchema::from_domain(
                 String::new(),
-                ValueDomain::from_legacy(&FieldType::Select, None, None, Some(vec!["low".into(), "medium".into(), "high".into()]).clone(), None),
+                ValueDomain::from_legacy(
+                    &FieldType::Select,
+                    None,
+                    None,
+                    Some(vec!["low".into(), "medium".into(), "high".into()]).clone(),
+                    None,
+                ),
                 None,
             ),
         );

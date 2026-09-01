@@ -1,4 +1,4 @@
-//! Client-owned symbol sessions: catalog fetch, local `TeachingExposureSession`, teaching TSV rendering.
+//! Client-owned symbol sessions: catalog fetch, local `TeachingExposureSession`, language card rendering.
 
 use anyhow::{anyhow, Context as _, Result};
 use indexmap::IndexMap;

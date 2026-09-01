@@ -254,9 +254,7 @@ fn predicate_contains_domain_placeholder(pred: &crate::Predicate) -> bool {
     use crate::Predicate;
     match pred {
         Predicate::True | Predicate::False => false,
-        Predicate::Comparison { value, .. } => {
-            value.to_value().contains_domain_placeholder_deep()
-        }
+        Predicate::Comparison { value, .. } => value.to_value().contains_domain_placeholder_deep(),
         Predicate::And { args } | Predicate::Or { args } => {
             args.iter().any(predicate_contains_domain_placeholder)
         }
@@ -282,7 +280,7 @@ fn resolve_chain_target<'a>(
                 entity: source_entity_name.to_string(),
             })?;
         let target = match &nv.field_type {
-            FieldType::EntityRef { target } => target.to_string(),
+            FieldType::EntityRef { target, .. } => target.to_string(),
             other => {
                 return Err(TypeError::IncompatibleOperator {
                     field: selector.to_string(),
@@ -811,7 +809,7 @@ mod tests {
         cgs.values.insert(
             "tc_fx_str".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
@@ -823,7 +821,7 @@ mod tests {
         cgs.values.insert(
             "tc_fx_num".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::Number,
                 value_format: None,
@@ -835,7 +833,7 @@ mod tests {
         cgs.values.insert(
             "tc_fx_region_account".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::Select,
                 value_format: None,
@@ -851,7 +849,7 @@ mod tests {
         cgs.values.insert(
             "tc_fx_role_contact".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::Select,
                 value_format: None,
@@ -944,7 +942,7 @@ mod tests {
         cgs.values.insert(
             "tc_chain_int".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::Integer,
                 value_format: None,
@@ -956,7 +954,7 @@ mod tests {
         cgs.values.insert(
             "tc_chain_str".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
@@ -968,9 +966,10 @@ mod tests {
         cgs.values.insert(
             "tc_chain_pet_ref".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::EntityRef {
+                    entry_id: Default::default(),
                     target: "Pet".into(),
                 },
                 value_format: None,
@@ -1188,7 +1187,7 @@ mod tests {
         cgs.values.insert(
             "tc_ab_str".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
@@ -1200,9 +1199,12 @@ mod tests {
         cgs.values.insert(
             "tc_ab_ref_b".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
-                field_type: FieldType::EntityRef { target: "B".into() },
+                field_type: FieldType::EntityRef {
+                    entry_id: Default::default(),
+                    target: "B".into(),
+                },
                 value_format: None,
                 allowed_values: None,
                 array_items: None,
@@ -1324,7 +1326,7 @@ mod tests {
             cgs.values.insert(
                 key.into(),
                 NamedValueSchema {
-            domain: Default::default(),
+                    domain: Default::default(),
                     description: desc.into(),
                     field_type: FieldType::String,
                     value_format: None,
@@ -1398,7 +1400,7 @@ mod tests {
         cgs.values.insert(
             "tc_qs_state_ent".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::Select,
                 value_format: None,
@@ -1410,7 +1412,7 @@ mod tests {
         cgs.values.insert(
             "tc_qs_state_cap".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::Select,
                 value_format: None,
@@ -1511,7 +1513,7 @@ mod tests {
         cgs.values.insert(
             "tc_cap_bool".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::Boolean,
                 value_format: None,
@@ -1568,7 +1570,7 @@ mod tests {
         cgs.values.insert(
             "tc_cap_q_str".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
@@ -1623,7 +1625,7 @@ mod tests {
         cgs.values.insert(
             "tc_cap_limit_int".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::Integer,
                 value_format: None,
@@ -1645,7 +1647,7 @@ mod tests {
         cgs.values.insert(
             "tc_visit_str".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
@@ -1657,9 +1659,10 @@ mod tests {
         cgs.values.insert(
             "tc_visit_pet_ref".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::EntityRef {
+                    entry_id: Default::default(),
                     target: "Pet".into(),
                 },
                 value_format: None,
@@ -1735,7 +1738,7 @@ mod tests {
         cgs.values.insert(
             "tc_visit_str".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
@@ -1747,9 +1750,10 @@ mod tests {
         cgs.values.insert(
             "tc_visit_pet_ref".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::EntityRef {
+                    entry_id: Default::default(),
                     target: "Pet".into(),
                 },
                 value_format: None,
@@ -2108,14 +2112,8 @@ mod tests {
             "tc_gate_pattern".into(),
             NamedValueSchema::from_domain(
                 String::new(),
-                ValueDomain::new(
-                    KernelKind::String,
-                    None,
-                    pattern_constraints,
-                    None,
-                    None,
-                )
-                .expect("pattern domain"),
+                ValueDomain::new(KernelKind::String, None, pattern_constraints, None, None)
+                    .expect("pattern domain"),
                 None,
             ),
         );
@@ -2127,8 +2125,20 @@ mod tests {
             id_from: None,
             fields: vec![
                 registry_test_util::entity_field_from_values(&cgs, "tc_fx_str", "id", true, ""),
-                registry_test_util::entity_field_from_values(&cgs, "tc_gate_email", "email", false, ""),
-                registry_test_util::entity_field_from_values(&cgs, "tc_gate_uuid", "uuid", false, ""),
+                registry_test_util::entity_field_from_values(
+                    &cgs,
+                    "tc_gate_email",
+                    "email",
+                    false,
+                    "",
+                ),
+                registry_test_util::entity_field_from_values(
+                    &cgs,
+                    "tc_gate_uuid",
+                    "uuid",
+                    false,
+                    "",
+                ),
                 registry_test_util::entity_field_from_values(
                     &cgs,
                     "tc_gate_pattern",
@@ -2196,12 +2206,13 @@ mod tests {
             fields: vec![
                 registry_test_util::entity_field_from_values(&cgs, "tc_fx_str", "id", true, ""),
                 registry_test_util::entity_field_from_values(
-                &cgs,
-                "tc_gate_money",
-                "amount",
-                false,
-                "",
-            )],
+                    &cgs,
+                    "tc_gate_money",
+                    "amount",
+                    false,
+                    "",
+                ),
+            ],
             relations: vec![],
             expression_aliases: vec![],
             implicit_request_identity: false,

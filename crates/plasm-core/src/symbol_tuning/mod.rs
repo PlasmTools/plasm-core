@@ -70,8 +70,8 @@ use crate::schema::{
     union_variant_constructor_symbol, ArrayItemsSchema, CapabilitySchema, InputFieldSchema,
     InputFieldWire, InputType, ParameterRole, ValueDomainKey, CGS,
 };
-use crate::value_domain::ProfileId;
 use crate::teaching_term::{method_ref_for_capability, EntityRef, ParameterSlot, TeachingTerm};
+use crate::value_domain::ProfileId;
 use crate::CapabilityKind;
 use crate::FieldType;
 use indexmap::IndexMap;
@@ -603,7 +603,7 @@ pub fn build_focus_set<'a>(cgs: &'a CGS, focus: Option<&'a str>) -> Option<HashS
     if let Some(ent) = cgs.get_entity(f) {
         for field in ent.fields.values() {
             if let Ok(nv) = field.named_value(cgs) {
-                if let FieldType::EntityRef { target } = &nv.field_type {
+                if let FieldType::EntityRef { target, .. } = &nv.field_type {
                     s.insert(target.as_str());
                 }
             }
@@ -615,7 +615,7 @@ pub fn build_focus_set<'a>(cgs: &'a CGS, focus: Option<&'a str>) -> Option<HashS
     for (ename, ent) in &cgs.entities {
         for field in ent.fields.values() {
             if let Ok(nv) = field.named_value(cgs) {
-                if let FieldType::EntityRef { target } = &nv.field_type {
+                if let FieldType::EntityRef { target, .. } = &nv.field_type {
                     if target.as_str() == f {
                         s.insert(ename.as_str());
                     }
@@ -782,8 +782,7 @@ pub(crate) fn slot_allocation_fingerprint(meta: &IdentMetadata) -> String {
                 }
             };
             let ft = serde_json::to_string(field_type).unwrap_or_else(|_| "\"?\"".to_string());
-            let prof =
-                serde_json::to_string(profile).unwrap_or_else(|_| "null".to_string());
+            let prof = serde_json::to_string(profile).unwrap_or_else(|_| "null".to_string());
             let ai = serde_json::to_string(array_items).unwrap_or_else(|_| "null".to_string());
             let av = serde_json::to_string(allowed_values).unwrap_or_else(|_| "null".to_string());
             let vr = value_registry_key.as_str();
@@ -809,6 +808,7 @@ pub(crate) fn slot_allocation_fingerprint(meta: &IdentMetadata) -> String {
         } => {
             let role_tag = format!("rel:{}", target.as_str());
             let ft = serde_json::to_string(&FieldType::EntityRef {
+                entry_id: Default::default(),
                 target: target.clone(),
             })
             .unwrap_or_else(|_| "\"?\"".to_string());
@@ -1255,18 +1255,18 @@ impl IdentMetadata {
         match self {
             IdentMetadata::RegistryBacked {
                 catalog_entry_id,
-            field_type,
-            profile,
-            array_items,
-            allowed_values,
-            ..
-        } => Some(structural_value_domain_allocation_fp(
-            catalog_entry_id,
-            field_type,
-            *profile,
-            array_items.as_ref(),
-            allowed_values.as_ref(),
-        )),
+                field_type,
+                profile,
+                array_items,
+                allowed_values,
+                ..
+            } => Some(structural_value_domain_allocation_fp(
+                catalog_entry_id,
+                field_type,
+                *profile,
+                array_items.as_ref(),
+                allowed_values.as_ref(),
+            )),
             IdentMetadata::Relation { .. }
             | IdentMetadata::SyntheticUnknown { .. }
             | IdentMetadata::CapabilityStructuralSlot { .. } => None,
@@ -1289,7 +1289,7 @@ impl IdentMetadata {
         else {
             return None;
         };
-        if let FieldType::EntityRef { target } = field_type {
+        if let FieldType::EntityRef { target, .. } = field_type {
             return Some(entity_ref_value_domain_row_gloss(
                 target,
                 cgs,
@@ -1416,7 +1416,7 @@ pub(crate) fn field_type_to_gloss_label(ft: &FieldType) -> String {
         FieldType::Money => "money".to_string(),
         FieldType::Array => "array".to_string(),
         FieldType::Json => "json".to_string(),
-        FieldType::EntityRef { target } => format!("ref:{target}"),
+        FieldType::EntityRef { target, .. } => format!("ref:{target}"),
     }
 }
 
@@ -1442,7 +1442,7 @@ fn money_value_domain_gloss_label(meta: &IdentMetadata, cgs: Option<&CGS>) -> St
 
 fn array_element_gloss_label(ai: &ArrayItemsSchema, map: Option<&SymbolMap>) -> String {
     match &ai.field_type {
-        FieldType::EntityRef { target } => {
+        FieldType::EntityRef { target, .. } => {
             let sym = map
                 .map(|m| m.entity_sym_for("", target.as_str()))
                 .unwrap_or_else(|| target.to_string());
@@ -2373,7 +2373,7 @@ impl SymbolMap {
             let Ok(nv) = f.named_value(cgs) else {
                 continue;
             };
-            if let FieldType::EntityRef { target } = &nv.field_type {
+            if let FieldType::EntityRef { target, .. } = &nv.field_type {
                 let ps = self.ident_sym_cap_param_for(entry_id, domain, cap_name, f.name.as_str());
                 let es = self.entity_sym_for(entry_id, target.as_str());
                 scope_parts.push(format!("{ps}→{es}"));
@@ -3954,6 +3954,7 @@ mod tests {
             role: IdentRegistryRole::EntityField,
             value_registry_key: ValueDomainKey::new("nv_assignee").expect("key"),
             field_type: FieldType::EntityRef {
+                entry_id: Default::default(),
                 target: EntityName::from("User".to_string()),
             },
             profile: None,
@@ -4247,7 +4248,7 @@ mod tests {
     /// Two exposures reaching the **same ordered entity rows + surface** via different wave
     /// structure (one open vs incremental `expose_entities`) may assign different opaque numbering.
     /// The cross-request [`SymbolMapCacheKey`] must encode that numbering: if it did not, the LRU
-    /// would serve one session a `SymbolMap` whose `p#`→wire map disagrees with the teaching TSV it
+    /// would serve one session a `SymbolMap` whose `p#`→wire map disagrees with the language card it
     /// was shown (the `p21=title` rendered / `p21=height` resolved contamination).
     #[test]
     fn cache_key_distinguishes_wave_structure_numbering() {
@@ -4587,6 +4588,7 @@ mod tests {
                     ValueDomainKey::new("fixture_variant_ref").expect("key"),
                 ),
                 field_type: FieldType::EntityRef {
+                    entry_id: Default::default(),
                     target: EntityName::from("Variant".to_string()),
                 },
                 value_format: None,
@@ -4632,7 +4634,7 @@ mod tests {
         cgs.values.insert(
             "fixture_str_vtest".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
@@ -4644,7 +4646,7 @@ mod tests {
         cgs.values.insert(
             "shared_sel_vtest".into(),
             NamedValueSchema {
-            domain: Default::default(),
+                domain: Default::default(),
                 description: "shared select semantics".into(),
                 field_type: FieldType::Select,
                 value_format: None,

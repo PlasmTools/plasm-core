@@ -1076,4 +1076,3 @@ fn prune_does_not_inflate_selection_with_co_seed_seats() {
         "co_seed seats are teaching extras, not plan-cover witnesses; got {pruned:?}"
     );
 }
-

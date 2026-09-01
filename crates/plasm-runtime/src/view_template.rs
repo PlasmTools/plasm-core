@@ -165,11 +165,13 @@ fn register_view_template_filters(env: &mut Environment<'_>) {
             Ok(s.split(&sep).nth(idx).unwrap_or("").to_string())
         },
     );
-    env.add_filter("wire_num", |v: minijinja::Value| -> Result<f64, minijinja::Error> {
-        parse_wire_num_value(v).map_err(|e| {
-            minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, e)
-        })
-    });
+    env.add_filter(
+        "wire_num",
+        |v: minijinja::Value| -> Result<f64, minijinja::Error> {
+            parse_wire_num_value(v)
+                .map_err(|e| minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, e))
+        },
+    );
     env.add_filter(
         "wire_days_since",
         |v: minijinja::Value| -> Result<f64, minijinja::Error> {
@@ -399,10 +401,7 @@ mod tests {
     #[test]
     fn wire_days_since_uses_banking_domain_today() {
         let mut fields = IndexMap::new();
-        fields.insert(
-            "submitted".to_string(),
-            Value::String("2025-09-15".into()),
-        );
+        fields.insert("submitted".to_string(), Value::String("2025-09-15".into()));
         let out = render_view_computed_template(
             "{{ submitted | wire_days_since | int }}",
             &IndexMap::new(),
