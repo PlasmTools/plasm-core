@@ -4,7 +4,7 @@
 
 **Program shape:** one `plasm_expr`, or `label = …` bindings then **one** final return line (comma-separated roots on that line only). No prose, `return`, fences, or table rows. A plan that merely echoes an object/array/string literal is a **literal no-op**.
 
-**Entity heads vs rows:** Copy the card’s left-column `eN…` patterns — they are executable. Meaning arrows: `↣ [e]` plural · `→ e` one row · `↠` write · `· materialize` singleton row fetch. Do not invent `eN.field` as a fetch. `[field,…]` keeps row shape; scalar params need `label.wire` from a singleton row, not a plural query-all. Array params may take plural `rows.wire`. After binding, use `label.wire` / `label.mK(…)`.
+**Entity heads vs rows:** Copy the card’s left-column `eN…` patterns — they are executable. Meaning arrows: `↣ [e]` plural rows · `→ e` one entity row · `↠` write. Do not invent `eN.field` as a fetch. `[field,…]` keeps row shape; scalar params need `label.wire` from a singleton row (`→ e`), not a plural query-all. Array params may take plural `rows.wire`. After binding, use `label.wire` / `label.mK(…)`.
 
 **Strings:** JSON escapes in quotes (`\n` `\t` `\\` `\"`); unknown `\x` errors. Prefer tagged `<<TAG` … `TAG` heredocs for long bodies (real newlines).
 
@@ -56,7 +56,7 @@ PLASM_RPT_TAG
 Language-card table semantics:
 - Header `plasm_expr<TAB>Meaning`; **left column only is syntax** — never copy Meaning (arrows, `chain:`, prose).
 - Executable rows start with `e#`; `r#`/`v#` are never roots.
-- Meaning arrows: `↣ [e]` = plural · `→ e` = singleton row · `↠` = write · `· materialize` = singleton row fetch (copy the taught left-column pattern).
+- Meaning arrows: `↣ [e]` = plural rows · `→ e` = one entity row (chainable; not a scalar) · `↠` = write. Copy the taught left-column pattern for that shape.
 - Meaning arrows document result shape only. In-program: bind the write, use `label.field`. Card `chain:` is for a **later turn** — not a ban on in-program chaining.
 
 Core surface:

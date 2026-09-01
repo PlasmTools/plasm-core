@@ -169,7 +169,7 @@ fn push_sole_nullary_bare_head(
         None,
     ) {
         if let Some(row) = teaching_rows.last_mut() {
-            row.teaching_expr.is_nullary_materialize = true;
+            row.teaching_expr.is_singleton_row_fetch = true;
             row.teaching_expr.arrow = super::ReturnArrow::Single;
         }
     }

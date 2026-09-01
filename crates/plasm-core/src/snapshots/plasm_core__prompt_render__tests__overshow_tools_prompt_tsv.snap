@@ -17,7 +17,7 @@ text_preview	v14
 e1[id,content_type,text_preview]	noun · One capture pipeline item
 e1(id=<id>, content_type=<id>)	→ e1
 e1{limit=<wire>, app_name=<wire>, start_time=<wire>, end_time=<wire>}	↣ [e1] · optional: app_name,end_time,limit,start_time
-e2	→ e2 · capture-session-get · materialize
+e2	→ e2 · capture-session-get
 e2(<id>)	→ e2
 v13	markdown
 v2	boolean
@@ -51,7 +51,7 @@ name	v14
 severity	v11
 e5[id,name,severity]	noun · One pipeline bus event
 e5{names=<wire>, sources=<wire>, min_severity=<wire>, limit=<wire>}	↣ [e5] · optional: limit,min_severity,names,sources
-e6	→ e6 · pipeline-snapshot-get · materialize
+e6	→ e6 · pipeline-snapshot-get
 e6(<id>)	→ e6
 v12	enum · person, organisation, project
 display_name	v14

@@ -34,32 +34,33 @@ markdown	v6
 title	v7
 links	v4 · SDK link bundle (state, ops, docs). Wire key _links
 agent_auth	v4 · Auth hints from share JSON agent.auth (token source, header names)
-v210{mark_id=$,text=$,resolve=$}	→ comment_reply — Reply in a thread; optionally resolve in the same step
-v211{mark_id=$}	→ comment_resolve — Resolve a thread; keep history
-v212{mark_id=$}	→ comment_unresolve — Unresolve a thread for more replies
-v101{ref=$,markdown=$}	→ replace_block — Replace one block’s markdown
-v102{ref=$,blocks=$}	→ insert_before — Insert blocks before the anchor block
-v103{ref=$,blocks=$}	→ insert_after — Insert blocks after the anchor block
-v104{ref=$}	→ delete_block — Delete one block
-v105{fromRef=$,toRef=$,blocks=$}	→ replace_range — Replace a range of blocks with new blocks
-v106{ref=$,find=$,replace=$,occurrence=$}	→ find_replace_in_block — Find and replace text inside one block
-v107{find=$,replace=$,occurrence=$,fromRef=$,toRef=$,blockFilter=$}	→ find_replace_in_doc — Find and replace text across the document (optional block range or kind filter)
+v210{mark_id=<wire>,text=<wire>,resolve=<wire>}	→ comment_reply — Reply in a thread; optionally resolve in the same step
+v211{mark_id=<wire>}	→ comment_resolve — Resolve a thread; keep history
+v212{mark_id=<wire>}	→ comment_unresolve — Unresolve a thread for more replies
+v101{ref=<wire>,markdown=<wire>}	→ replace_block — Replace one block’s markdown
+v102{ref=<wire>,blocks=<wire>}	→ insert_before — Insert blocks before the anchor block
+v103{ref=<wire>,blocks=<wire>}	→ insert_after — Insert blocks after the anchor block
+v104{ref=<wire>}	→ delete_block — Delete one block
+v105{fromRef=<wire>,toRef=<wire>,blocks=<wire>}	→ replace_range — Replace a range of blocks with new blocks
+v106{ref=<wire>,find=<wire>,replace=<wire>,occurrence=<wire>}	→ find_replace_in_block — Find and replace text inside one block
+v107{find=<wire>,replace=<wire>,occurrence=<wire>,fromRef=<wire>,toRef=<wire>,blockFilter=<wire>}	→ find_replace_in_doc — Find and replace text across the document (optional block range or kind filter)
 v10	union · v210 | v211 | v212
 v11	union · v101 | v102 | v103 | v104 | v105 | v106 | v107
-e1($).slug[slug,markdown,title,links,agent_auth]	→ e1 · projection · Read or edit a shared Proof document
-e1($)	→ e1
-e1($).m16()	→ e1 · materialize · Bind this session to a share URL (preferred: full URL with embedded `?token=`…
-e1($).m1(agent_id=$, by=$, quote=$, text=$, base_token=$, share_token=$)	↠ e1 · chain: e1(id=…).m# · optional: base_token,share_token · Start a comment thread on quoted text from the document
-e1($).m2(agent_id=$, by=$, share_token=$, base_token=$, operations=[$])	↠ e1 · chain: e1(id=…).m# · optional: base_token,share_token · Apply several comment updates in one request
-e1($).m3(agent_id=$, by=$, mark_id=$, text=$, resolve=$, base_token=$, share_token=$)	↠ e1 · chain: e1(id=…).m# · optional: base_token,resolve,share_token · Reply in a thread; optionally mark it resolved in the same step
-e1($).m4(agent_id=$, by=$, mark_id=$, base_token=$, share_token=$)	↠ e1 · chain: e1(id=…).m# · optional: base_token,share_token · Mark a thread resolved; history stays visible
-e1($).m5(agent_id=$, by=$, mark_id=$, base_token=$, share_token=$)	↠ e1 · chain: e1(id=…).m# · optional: base_token,share_token · Open a resolved thread for more discussion
-e1($).m6(agent_id=$, by=$, mark_id=$, base_token=$, share_token=$)	↠ e1 · chain: e1(id=…).m# · optional: base_token,share_token · Accept a pending suggestion and apply it to the document
-e1($).m7(agent_id=$, by=$, quote=$, base_token=$, idempotency_key=$, share_token=$, status=$)	↠ e1 · chain: e1(id=…).m# · optional: base_token,idempotency_key,share_token,status · Propose deleting a quoted passage for a human to accept or reject
-e1($).m8(agent_id=$, by=$, quote=$, content=$, base_token=$, idempotency_key=$, share_token=$, status=$)	↠ e1 · chain: e1(id=…).m# · optional: base_token,idempotency_key,share_token,status · Propose inserting text after a quoted passage for a human to accept or reject
-e1($).m9(agent_id=$, by=$, mark_id=$, base_token=$, share_token=$)	↠ e1 · chain: e1(id=…).m# · optional: base_token,share_token · Reject a pending suggestion without changing the document body
-e1($).m10(agent_id=$, by=$, quote=$, content=$, base_token=$, idempotency_key=$, share_token=$, status=$)	↠ e1 · chain: e1(id=…).m# · optional: base_token,idempotency_key,share_token,status · Propose replacing a quoted passage with new content for a human to accept or …
-e1($).m11(agent_id=$, up_to_id=$, by=$, share_token=$)	↠ e1 · chain: e1(id=…).m# · optional: share_token · Tell the server how far you read the collaboration event stream
-e1($).m12(report=$)	↠ e1 · chain: e1(id=…).m# · Report a bug and include this document as context
-e1($).m13(agent_id=$, idempotency_key=$, share_token=$, by=$, base_revision=$, operations=[v101{ref=$,markdown=$},v103{ref=$,blocks=$}])	↠ e1 · chain: e1(id=…).m# · optional: idempotency_key,share_token · Apply one batch of block edits. Use base_revision from your latest snapshot (…
-e1($).m17(agent_id=$, presence_status=$)	↠ e1 · chain: e1(id=…).m# · optional: presence_status · You MUST announce presence before you edit or comment—call this once per do…
+e1[slug,markdown,title,links,agent_auth]	noun · Read or edit a shared Proof document
+e1(<id>)	→ e1
+e1(<id>).m16()	→ e1 · Bind this session to a share URL (preferred: full URL with embedded `?token=`…
+e1(<id>).m1(agent_id=<wire>, by=<wire>, quote=<wire>, text=<wire>, base_token=<wire>, share_token=<wire>)	↠ e1 · chain: e1(<id>).m# · optional: base_token,share_token
+e1(<id>).m2(agent_id=<wire>, by=<wire>, share_token=<wire>, base_token=<wire>, operations=[<wire>])	↠ e1 · chain: e1(<id>).m# · optional: base_token,share_token
+e1(<id>).m3(agent_id=<wire>, by=<wire>, mark_id=<wire>, text=<wire>, resolve=<wire>, base_token=<wire>, share_token=<wire>)	↠ e1 · chain: e1(<id>).m# · optional: base_token,resolve,share_token
+e1(<id>).m4(agent_id=<wire>, by=<wire>, mark_id=<wire>, base_token=<wire>, share_token=<wire>)	↠ e1 · chain: e1(<id>).m# · optional: base_token,share_token
+e1(<id>).m5(agent_id=<wire>, by=<wire>, mark_id=<wire>, base_token=<wire>, share_token=<wire>)	↠ e1 · chain: e1(<id>).m# · optional: base_token,share_token
+e1(<id>).m6(agent_id=<wire>, by=<wire>, mark_id=<wire>, base_token=<wire>, share_token=<wire>)	↠ e1 · chain: e1(<id>).m# · optional: base_token,share_token
+e1(<id>).m7(agent_id=<wire>, by=<wire>, quote=<wire>, base_token=<wire>, idempotency_key=<wire>, share_token=<wire>, status=<wire>)	↠ e1 · chain: e1(<id>).m# · optional: base_token,idempotency_key,share_token,status
+e1(<id>).m8(agent_id=<wire>, by=<wire>, quote=<wire>, content=<wire>, base_token=<wire>, idempotency_key=<wire>, share_token=<wire>, status=<wire>)	↠ e1 · chain: e1(<id>).m# · optional: base_token,idempotency_key,share_token,status
+e1(<id>).m9(agent_id=<wire>, by=<wire>, mark_id=<wire>, base_token=<wire>, share_token=<wire>)	↠ e1 · chain: e1(<id>).m# · optional: base_token,share_token
+e1(<id>).m10(agent_id=<wire>, by=<wire>, quote=<wire>, content=<wire>, base_token=<wire>, idempotency_key=<wire>, share_token=<wire>, status=<wire>)	↠ e1 · chain: e1(<id>).m# · optional: base_token,idempotency_key,share_token,status
+e1(<id>).m11(agent_id=<wire>, up_to_id=<wire>, by=<wire>, share_token=<wire>)	↠ e1 · chain: e1(<id>).m# · optional: share_token
+e1(<id>).m12(report=<wire>)	↠ e1 · chain: e1(<id>).m#
+e1(<id>).m13(agent_id=<wire>, idempotency_key=<wire>, share_token=<wire>, by=<wire>, base_revision=<wire>, operations=[v101{ref=<wire>,markdown=<wire>},v103{ref=<wire>,blocks=<wire>}])	↠ e1 · chain: e1(<id>).m# · optional: idempotency_key,share_token
+e1(<id>).m17(agent_id=<wire>, presence_status=<wire>)	↠ e1 · chain: e1(<id>).m# · optional: presence_status
+e1(<id>).slug	relation e1 → e1

@@ -1,21 +1,20 @@
-//! Relation navigation teaching rows and projection witnesses.
+//! Relation navigation teaching rows and noun-card shape witnesses.
 
 use std::collections::{HashMap, HashSet};
 
 use crate::relation_nav::relation_nav_admissible;
 use crate::schema::{Cardinality, EntityDef, RelationSchema};
 use crate::symbol_tuning::{ExposureSurface, SymbolMap};
-use crate::{CapabilityKind, CapabilityName, Expr, CGS};
+use crate::{CapabilityKind, CGS};
 
 use super::gloss_collect::GlossScratch;
 use super::input_legend::{RowContractLegend, TeachingExprLine};
 use super::line_validate::{
-    domain_line_validate_cached, domain_line_work_valid_cached, DomainLineValidCacheKey,
-    DomainLineValidEntry,
+    domain_line_work_valid_cached, DomainLineValidCacheKey, DomainLineValidEntry,
 };
 use super::query_teaching::{
-    compound_get_expr_line, query_expr_filters_only, query_expr_id_field_row_filter,
-    query_expr_maximal, query_expr_scope_only, unary_entity_id_teaching_expr_line,
+    compound_get_expr_line, query_expr_filters_only, query_expr_maximal, query_expr_scope_only,
+    unary_entity_id_teaching_expr_line,
 };
 use super::surface_filter::{surface_allows_relation_nav, surface_includes_exposed_entity};
 use super::symbol_tokens::{ent_sym, id_sym_entity, id_sym_rel};
@@ -210,174 +209,6 @@ pub(crate) fn incoming_relation_nav_bases_to_entity(
 }
 
 /// Maps parsed projection witness to a capability id for teaching table coverage (see [`covered_capabilities`]).
-pub(crate) fn projection_witness_source_capability<'a>(
-    expr: &Expr,
-    witness_cap: Option<&'a crate::CapabilitySchema>,
-    primary_get_cap: Option<&'a crate::CapabilitySchema>,
-    query_caps: &[&'a crate::CapabilitySchema],
-) -> Option<&'a CapabilityName> {
-    match expr {
-        Expr::Get(_) => primary_get_cap.map(|c| &c.name),
-        Expr::Query(_) => witness_cap
-            .map(|c| &c.name)
-            .or_else(|| query_caps.first().map(|c| &c.name)),
-        _ => None,
-    }
-}
-
-/// One validated `base[p#,…]` line teaching scalar projection for this entity type.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn try_push_projection_witness_row(
-    gloss_emit: &mut Option<GlossScratch<'_>>,
-    teaching_rows: &mut Vec<EntityTeachingExprRow>,
-    collect_meta: bool,
-    cgs: &CGS,
-    map: Option<&SymbolMap>,
-    bracket: &str,
-    ename: &str,
-    es: &str,
-    ent: &EntityDef,
-    primary_get_cap: Option<&crate::CapabilitySchema>,
-    query_caps: &[&crate::CapabilitySchema],
-    line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
-    line_valid_cache_seed: u64,
-    map_arc: Option<&std::sync::Arc<SymbolMap>>,
-    surface_filter: Option<&ExposureSurface>,
-    catalog_entry_id: &str,
-) -> bool {
-    let bracket = bracket.trim();
-    if bracket.is_empty() || !bracket.starts_with('[') {
-        return false;
-    }
-
-    let mut seen_bases: HashSet<String> = HashSet::new();
-    let mut attempts: Vec<(String, Option<&crate::CapabilitySchema>)> = Vec::new();
-
-    // Prefer brace/filter bases before bare `e#` so query-backed projection witnesses teach
-    // row narrowing (`e#{…}[…]`) instead of query-all (`e#[…]`) when both validate.
-    for cap in query_caps {
-        for qline in [
-            query_expr_maximal(cap, es, cgs, map, catalog_entry_id),
-            query_expr_scope_only(cap, es, cgs, map, catalog_entry_id),
-            query_expr_filters_only(cap, es, cgs, map, catalog_entry_id),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            // `query_expr_maximal` returns bare `es` when the cap has no filter/scope slots —
-            // skip that here; bare is appended after synthetic id_field filters.
-            if qline == es {
-                continue;
-            }
-            if seen_bases.insert(qline.clone()) {
-                attempts.push((qline, Some(cap)));
-            }
-        }
-    }
-    if !query_caps.is_empty()
-        && !attempts
-            .iter()
-            .any(|(base, _)| base.contains('{') || base.contains('~'))
-    {
-        if let Some(id_filter) =
-            query_expr_id_field_row_filter(es, ent, cgs, map, catalog_entry_id)
-        {
-            if seen_bases.insert(id_filter.clone()) {
-                attempts.push((id_filter, query_caps.first().copied()));
-            }
-        }
-    }
-    let bare = es.to_string();
-    if seen_bases.insert(bare.clone()) {
-        attempts.push((bare, None));
-    }
-    if let Some(cmp) = compound_get_expr_line(es, ent, cgs, map, catalog_entry_id) {
-        if seen_bases.insert(cmp.clone()) {
-            attempts.push((cmp, primary_get_cap));
-        }
-    }
-    for rel_base in incoming_relation_nav_bases_to_entity(
-        cgs,
-        ename,
-        map,
-        surface_filter,
-        catalog_entry_id,
-        line_valid_cache,
-        line_valid_cache_seed,
-        map_arc,
-    ) {
-        if seen_bases.insert(rel_base.clone()) {
-            attempts.push((rel_base, None));
-        }
-    }
-    // Unary identity get is omitted from projection attempts when list/query exists — teach
-    // `e#{{…}}[p#,…]` instead of unary `e#(p#)[p#,…]` / `e#($)[p#,…]` (same policy as primary-get emission).
-    if query_caps.is_empty() {
-        let unary = unary_entity_id_teaching_expr_line(es, ent, map, catalog_entry_id);
-        if seen_bases.insert(unary.clone()) {
-            attempts.push((unary, primary_get_cap));
-        }
-    }
-
-    for (base, witness_cap) in attempts {
-        let full = format!("{base}{bracket}");
-        let Some((parsed, _wire)) = domain_line_validate_cached(
-            line_valid_cache,
-            line_valid_cache_seed,
-            cgs,
-            &full,
-            map_arc,
-        ) else {
-            continue;
-        };
-        let gloss_core = witness_cap
-            .and_then(|c| {
-                crate::result_gloss::result_gloss_for_capability(c, cgs, map, catalog_entry_id)
-            })
-            .or_else(|| {
-                primary_get_cap.and_then(|c| {
-                    crate::result_gloss::result_gloss_for_capability(c, cgs, map, catalog_entry_id)
-                })
-            })
-            .or_else(|| {
-                if base.contains('{') {
-                    crate::result_gloss::result_gloss_for_search_entity(
-                        ename,
-                        map,
-                        catalog_entry_id,
-                    )
-                } else {
-                    crate::result_gloss::result_gloss_for_get_entity(ename, map, catalog_entry_id)
-                }
-            })
-            .unwrap_or_default();
-        let gloss = format!("{gloss_core} · projection");
-        let source_cap = projection_witness_source_capability(
-            &parsed.expr,
-            witness_cap,
-            primary_get_cap,
-            query_caps,
-        );
-        return try_push_teaching_example(
-            gloss_emit,
-            teaching_rows,
-            collect_meta,
-            cgs,
-            &full,
-            Some(gloss),
-            None,
-            None,
-            source_cap,
-            false,
-            line_valid_cache,
-            line_valid_cache_seed,
-            map_arc,
-            None,
-        );
-    }
-    false
-}
-
 /// Receiver token for relation-nav teaching: symbolic leading `e#`, else canonical entity name before `(` / `{`.
 pub(crate) fn relation_receiver_teaching_hint(
     expr: &str,
@@ -561,7 +392,7 @@ fn append_relation_nav_edge_delta_row(
         result_type,
         legend: line.legend,
         is_projection_teaching: false,
-        is_nullary_materialize: false,
+        is_singleton_row_fetch: false,
         row_contract: RowContractLegend::default(),
         arrow,
     };

@@ -340,8 +340,6 @@ enum TeachingMeaningAtom {
     TerminalChainHint {
         entity: String,
     },
-    /// Sparse mark: nullary `e.m()` / sole bare `e` yields this singleton row (`· materialize`).
-    Materialize,
     /// Capability prose (e.g. Get description) joined into Meaning.
     CapabilityGloss(String),
     /// Noun card: `noun · {entity description}` (no return arrow).
@@ -375,9 +373,6 @@ impl TeachingMeaningAtom {
             TeachingMeaningAtom::RelationNav { line } => line.clone(),
             TeachingMeaningAtom::TerminalChainHint { entity } => {
                 format!("chain: {entity}(<id>).m#")
-            }
-            TeachingMeaningAtom::Materialize => {
-                super::teaching_legend::MATERIALIZE_LEGEND_MARK.to_string()
             }
             TeachingMeaningAtom::CapabilityGloss(s) => s.clone(),
             TeachingMeaningAtom::NounCard { description } => {
@@ -531,13 +526,12 @@ fn push_teaching_meaning_result_atom(
         arrow: row.arrow,
         gloss: row.result_type.clone(),
     });
-    if row.is_nullary_materialize {
-        // `→ e · {capability gloss} · materialize` — never naked `materialize` alone when prose exists.
+    if row.is_singleton_row_fetch {
+        // `→ e · {capability gloss}` — arrow already means one entity row; no redundant mark.
         let desc = row.legend.description.trim();
         if !desc.is_empty() {
             atoms.push(TeachingMeaningAtom::CapabilityGloss(desc.to_string()));
         }
-        atoms.push(TeachingMeaningAtom::Materialize);
         return;
     }
     // Terminal write that yields an entity slice (`↠ e#`, not `()` / list): teach the

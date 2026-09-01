@@ -7,8 +7,6 @@ use super::TeachingExprLine;
 pub(crate) const LEGEND_EM_DESC_SEP: &str = " — ";
 /// Noun-card / shape witness Meaning mark (`noun · {entity description}`).
 pub(crate) const NOUN_CARD_LEGEND_MARK: &str = "noun";
-/// Sparse Meaning mark for nullary `eN.mK()` rows that yield a singleton entity row.
-pub(crate) const MATERIALIZE_LEGEND_MARK: &str = "materialize";
 
 /// True when `expr` is a nullary method call (`… .mN()` / `… .kebab()` with empty args).
 pub(crate) fn teaching_expr_is_nullary_method_call(expr: &str) -> bool {
@@ -90,7 +88,7 @@ pub(crate) fn teaching_expr_line_from_layers(
         },
         legend: CapabilityInputLegend::default(),
         is_projection_teaching,
-        is_nullary_materialize: false,
+        is_singleton_row_fetch: false,
         row_contract,
         arrow: super::ReturnArrow::Single,
     };

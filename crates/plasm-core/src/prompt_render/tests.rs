@@ -2013,9 +2013,9 @@ fn plasm_tool_description_includes_row_compute_worked_example() {
     );
     assert!(
         frontmatter.contains("Entity heads vs rows:")
-            && frontmatter.contains("materialize")
+            && frontmatter.contains("→ e")
             && frontmatter.contains("executable"),
-        "must teach copying executable card e# patterns including materialize"
+        "must teach copying executable card e# patterns with singleton-row arrow"
     );
     assert!(
         frontmatter.contains("PLASM_RPT_TAG"),
@@ -2327,14 +2327,14 @@ fn static_grammar_includes_symbols_only_rule() {
     );
     assert!(
         g.contains("Entity heads vs rows:")
-            && g.contains("materialize")
+            && g.contains("→ e")
             && g.contains("executable")
             && g.contains("eN.field"),
         "canonical static grammar must teach copying executable card e# patterns"
     );
     assert!(
-        g.contains("· materialize") && g.contains("↣ [e]") && g.contains("→ e"),
-        "canonical static grammar must teach compact Meaning-arrow legend including materialize"
+        g.contains("↣ [e]") && g.contains("→ e") && g.contains("↠") && !g.contains("materialize"),
+        "canonical static grammar must teach arrow legend without obsolete materialize mark"
     );
 }
 
@@ -2372,16 +2372,17 @@ fn sole_nullary_get_fixture_teaches_bare_e_first_with_gloss() {
     let (first_expr, first_meaning) = e_rows.next().expect("Profile e# row");
     assert_eq!(
         first_expr, e.as_str(),
-        "first e# must be bare executable materialize, got {first_expr:?}\n{body}"
+        "first e# must be bare executable singleton fetch, got {first_expr:?}\n{body}"
     );
     assert!(
-        first_meaning.contains("materialize")
-            && first_meaning.contains("Show phone profile by phone number"),
-        "expected gloss + materialize, got {first_meaning:?}"
+        first_meaning.contains("→")
+            && first_meaning.contains("Show phone profile by phone number")
+            && !first_meaning.contains("materialize"),
+        "expected →e + gloss without materialize mark, got {first_meaning:?}"
     );
     assert!(
         !body.lines().any(|l| l.contains(&format!("{e}.m")) && l.contains("()\t")),
-        "must not teach redundant e#.m#() for sole materialize:\n{body}"
+        "must not teach redundant e#.m#() for sole singleton Get:\n{body}"
     );
     assert!(
         !body.lines().any(|l| l.starts_with(&format!("{e}["))),
@@ -2404,7 +2405,7 @@ fn sole_nullary_get_bare_program_normalizes_and_typechecks() {
 }
 
 #[test]
-fn nullary_materialize_tsv_meaning_is_sparse_not_chain_hint() {
+fn singleton_row_fetch_tsv_meaning_has_gloss_not_chain_hint() {
     use super::input_legend::{CapabilityInputLegend, RowContractLegend, TeachingExprLine};
     use super::tsv_emit::{write_teaching_tsv_row, DomainTsvRow};
     use super::{ReturnArrow, TeachingHeading};
@@ -2416,7 +2417,7 @@ fn nullary_materialize_tsv_meaning_is_sparse_not_chain_hint() {
         result_type: "e2".to_string(),
         legend,
         is_projection_teaching: false,
-        is_nullary_materialize: true,
+        is_singleton_row_fetch: true,
         row_contract: RowContractLegend::default(),
         arrow: ReturnArrow::Single,
     };
@@ -2432,12 +2433,16 @@ fn nullary_materialize_tsv_meaning_is_sparse_not_chain_hint() {
         },
     );
     assert!(
-        out.contains("e2.m2()\t→ e2 · Show the current profile · materialize"),
-        "expected materialize Meaning with capability gloss, got {out:?}"
+        out.contains("e2.m2()\t→ e2 · Show the current profile"),
+        "expected →e + capability gloss, got {out:?}"
+    );
+    assert!(
+        !out.contains("materialize"),
+        "must not emit obsolete materialize mark: {out:?}"
     );
     assert!(
         !out.contains("chain:"),
-        "nullary materialize must not emit write chain hint: {out:?}"
+        "singleton row fetch must not emit write chain hint: {out:?}"
     );
     assert!(
         !out.contains("op=query_all"),
@@ -2693,7 +2698,7 @@ fn clickup_domain_gloss_and_symbol_map_queries() {
     );
 }
 
-/// User has only pathless singleton `user_get_me` — first e# row is bare materialize (not `e#(42)` / `e#.m#()`).
+/// User has only pathless singleton `user_get_me` — first e# row is bare `e#` (not `e#(42)` / `e#.m#()`).
 #[test]
 fn clickup_user_singleton_get_me_line_in_domain() {
     let dir = apis_dir("clickup");
@@ -2723,16 +2728,15 @@ fn clickup_user_singleton_get_me_line_in_domain() {
         "sole singleton Get: first e# row must be bare {user_sym}, got {expr:?}"
     );
     assert!(
-        meaning.contains("materialize"),
-        "bare User materialize Meaning, got {meaning:?}"
+        meaning.contains("→") && !meaning.contains("materialize"),
+        "bare User Meaning is →e (+ gloss), not materialize mark, got {meaning:?}"
     );
     assert!(
         !sym.lines().any(|l| {
-            l.split_once('\t').is_some_and(|(e, _)| {
-                e.contains(&format!("{user_sym}.m")) && e.contains("()")
-            })
+            let expr = l.split('\t').next().unwrap_or("");
+            expr.starts_with(&format!("{user_sym}.m")) && expr.ends_with("()")
         }),
-        "sole materialize must not also teach redundant e#.m#()"
+        "sole singleton Get must not also teach redundant e#.m#()"
     );
 }
 
