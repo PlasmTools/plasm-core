@@ -5,7 +5,7 @@ use super::*;
 /// Numeric threshold used in row-compute teaching exemplars (filter/sort/limit worked examples).
 pub const ROW_COMPUTE_EXEMPLAR_THRESHOLD: i64 = 300;
 
-/// Which portion of a fenced teaching TSV block to expose on the wire.
+/// Which portion of a fenced language card block to expose on the wire.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TeachingFenceSlice {
     /// `plasm_expr` / `Meaning` table only (execute waves, MCP `plasm_context`, terminal).
@@ -35,7 +35,7 @@ pub fn markdown_fence_body_inner<'a>(markdown: &'a str, fence_info: &str) -> Opt
     Some(&rest[..end])
 }
 
-/// Extract a teaching TSV slice from a markdown-fenced session prompt.
+/// Extract a language card slice from a markdown-fenced session prompt.
 pub fn teaching_tsv_from_wrapped_prompt(
     prompt: &str,
     fence_info: &str,
@@ -48,7 +48,7 @@ pub fn teaching_tsv_from_wrapped_prompt(
     })
 }
 
-/// teaching TSV table fragment (from [`TSV_TEACHING_TABLE_HEADER`] onward), dropping optional `#` contract lines inside the fence body.
+/// language card table fragment (from [`TSV_TEACHING_TABLE_HEADER`] onward), dropping optional `#` contract lines inside the fence body.
 pub fn teaching_tsv_table_from_wrapped_prompt(prompt: &str, fence_info: &str) -> Option<String> {
     teaching_tsv_from_wrapped_prompt(prompt, fence_info, TeachingFenceSlice::TableOnly)
 }
@@ -70,7 +70,7 @@ pub(crate) fn validate_teaching_tsv_teaching_table(body_from_header: &str) -> Re
     let mut lines = body_from_header.lines();
     let header = lines
         .next()
-        .ok_or_else(|| "empty teaching TSV table".to_string())?;
+        .ok_or_else(|| "empty language card table".to_string())?;
     let header = header.strip_suffix('\r').unwrap_or(header);
     if header != "plasm_expr\tMeaning" {
         return Err(format!(
@@ -128,8 +128,8 @@ pub(crate) fn enforce_teaching_tsv_teaching_invariant(prompt: &str) {
         tracing::error!(
             target: "plasm_core::prompt_render",
             error = %msg,
-            "teaching TSV teaching table invariant violated"
+            "language card invariant violated"
         );
-        debug_assert!(false, "teaching TSV: {msg}");
+        debug_assert!(false, "language card: {msg}");
     }
 }

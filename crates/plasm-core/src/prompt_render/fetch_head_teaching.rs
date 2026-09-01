@@ -12,12 +12,10 @@ use super::line_validate::{DomainLineValidCacheKey, DomainLineValidEntry};
 use super::query_teaching::unary_entity_id_teaching_expr_line;
 use super::surface_filter::surface_allows_capability;
 use super::symbol_tokens::met_sym;
-use super::teaching_push::{push_noun_card_teaching_row, try_push_teaching_example};
+use super::teaching_push::try_push_teaching_example;
 use super::EntityTeachingExprRow;
 
-/// Push noun card (unless sole-nullary owns the first `e#` seat) and singleton Get teaching rows.
-///
-/// Returns whether a noun-card witness was taught (for later projection-bracket coordination).
+/// Push singleton Get teaching rows (sole bare `e#` or multi `e#.m#()`). No noun/shape cards.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn push_entity_fetch_heads(
     gloss_emit: &mut Option<GlossScratch<'_>>,
@@ -32,36 +30,12 @@ pub(crate) fn push_entity_fetch_heads(
     surface_filter: Option<&ExposureSurface>,
     catalog_entry_id: &str,
     ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
-    primary_get_projection_bracket: Option<&str>,
-    primary_get_cap: Option<&CapabilitySchema>,
     get_gloss: Option<String>,
     line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
     line_valid_cache_seed: u64,
-) -> bool {
-    let sole_cap = sole_nullary_singleton_get(cgs, ename).filter(|cap| {
-        surface_allows_capability(surface_filter, catalog_entry_id, cap)
-    });
-
-    let canonical_bracket = primary_get_projection_bracket
-        .filter(|b| !b.trim().is_empty());
-    let witness_taught = if sole_cap.is_some() {
-        false
-    } else {
-        canonical_bracket.is_some_and(|bracket| {
-            let full = format!("{es}{bracket}");
-            push_noun_card_teaching_row(
-                gloss_emit,
-                teaching_rows,
-                collect_meta,
-                cgs,
-                &full,
-                primary_get_cap.map(|c| &c.name),
-                line_valid_cache,
-                line_valid_cache_seed,
-                map_arc,
-            )
-        })
-    };
+) {
+    let sole_cap = sole_nullary_singleton_get(cgs, ename)
+        .filter(|cap| surface_allows_capability(surface_filter, catalog_entry_id, cap));
 
     if let Some(cap) = sole_cap {
         push_sole_nullary_bare_head(
@@ -81,7 +55,12 @@ pub(crate) fn push_entity_fetch_heads(
             line_valid_cache,
             line_valid_cache_seed,
         );
-        return witness_taught;
+        return;
+    }
+
+    // Compound-key entities teach `e#(k=…)` later — not zero-arity `e#.m#()`.
+    if ent.key_vars.len() > 1 {
+        return;
     }
 
     let mut singleton_get_caps: Vec<_> = cgs
@@ -126,8 +105,6 @@ pub(crate) fn push_entity_fetch_heads(
             None,
         );
     }
-
-    witness_taught
 }
 
 #[allow(clippy::too_many_arguments)]

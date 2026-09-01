@@ -197,7 +197,9 @@ pub(crate) fn collect_entity_teaching_block(
         .into_iter()
         .filter(|cap| surface_allows_capability(surface_filter, catalog_entry_id, cap))
         .collect();
+    // Compound `key_vars` need `e#(k=…)` identity Gets — never classify as method-style singleton.
     let only_singleton_gets = !get_caps.is_empty()
+        && ent.key_vars.len() <= 1
         && get_caps
             .iter()
             .all(|cap| path_vars_empty(cap) && capability_is_zero_arity_invoke(cap));
@@ -223,7 +225,7 @@ pub(crate) fn collect_entity_teaching_block(
         }
     });
 
-    let witness_taught = push_entity_fetch_heads(
+    push_entity_fetch_heads(
         gloss_emit,
         &mut teaching_rows,
         collect_meta,
@@ -236,8 +238,6 @@ pub(crate) fn collect_entity_teaching_block(
         surface_filter,
         catalog_entry_id,
         ident_meta,
-        primary_get_projection_bracket.as_deref(),
-        primary_get_cap,
         get_gloss.clone(),
         line_valid_cache,
         line_valid_cache_seed,
@@ -245,17 +245,25 @@ pub(crate) fn collect_entity_teaching_block(
     let canonical_bracket = primary_get_projection_bracket
         .as_deref()
         .filter(|b| !b.trim().is_empty());
+    // Noun cards deleted — query/search never omit brackets as "same as witness".
+    let witness_taught = false;
 
     let mut emitted_primary_get = false;
     if primary_get_cap.is_some() && !only_singleton_gets {
         let primary_name = primary_get_cap.map(|c| &c.name);
+        let with_wires = |base: String| -> String {
+            match canonical_bracket {
+                Some(br) => format!("{base}{br}"),
+                None => base,
+            }
+        };
         if let Some(cmp) = compound_get_expr_line(&es, ent, cgs, map, catalog_entry_id) {
             if try_push_teaching_example(
                 gloss_emit,
                 &mut teaching_rows,
                 collect_meta,
                 cgs,
-                &cmp,
+                &with_wires(cmp),
                 get_gloss.clone(),
                 None,
                 None,
@@ -277,7 +285,7 @@ pub(crate) fn collect_entity_teaching_block(
                 &mut teaching_rows,
                 collect_meta,
                 cgs,
-                &line_base,
+                &with_wires(line_base),
                 get_gloss.clone(),
                 None,
                 None,
@@ -532,7 +540,8 @@ pub(crate) fn collect_entity_teaching_block(
         }
     }
 
-    // Unary `e#(p…)` / `e#($)` after query lines when primary GET was not emitted earlier.
+    // Unary `e#(p…)` after query lines when primary GET was not emitted earlier.
+    // Queries already teach wires by first use — keep this get unbracketed.
     if primary_get_cap.is_some()
         && !only_singleton_gets
         && !emitted_primary_get

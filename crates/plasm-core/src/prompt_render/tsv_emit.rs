@@ -62,12 +62,9 @@ fn compute_tsv_identity_row_index(teaching_expr_rows: &[&TeachingExprLine]) -> O
         })
 }
 
-/// Scalar projection bracket `[p#,…]` from a synthesized projection-teaching row (`TeachingExprLine`).
+/// Scalar projection bracket `[wires…]` from a teaching row with a trailing bracket.
 pub(crate) fn projection_bracket_from_teaching_rows(rows: &[&TeachingExprLine]) -> Option<String> {
     for row in rows {
-        if !row.is_projection_teaching {
-            continue;
-        }
         if let Some(b) = parse_trailing_projection_bracket(row.expression.trim()) {
             return Some(b);
         }
@@ -178,15 +175,11 @@ pub(crate) fn render_prompt_tsv_from_bundle(bundle: &TeachingPromptBundle) -> St
             .collect();
         let union_ctor_row_set: HashSet<usize> = union_ctor_row_idxs.iter().copied().collect();
         let identity_idx = compute_tsv_identity_row_index(&teaching_expr_rows);
-        let projection_first_idx = teaching_expr_rows
-            .iter()
-            .position(|r| r.is_projection_teaching);
-        // Entity banner attaches only to the noun card (`e#[wires]`), never to get/search/mutator ops.
-        let entity_desc_attach_idx = projection_first_idx;
-        // Do not read projection from the entity heading: legends may contain unrelated `[…]`
-        // fragments (e.g. `[e1]` in result gloss). Teach projection only via a noun-card witness row
-        // and/or
-        // a trailing `[p#,…]` on the identity get line.
+        // Entity banner on the first executable teaching row (identity get preferred).
+        let entity_desc_attach_idx = identity_idx.or_else(|| {
+            (0..teaching_expr_rows.len()).find(|&i| !union_ctor_row_set.contains(&i))
+        });
+        // Projection symbols for field-gloss ordering: trailing brackets on get/query rows.
         let mut proj =
             projection_bracket_from_teaching_rows(&teaching_expr_rows).unwrap_or_default();
         if proj.is_empty() {
@@ -274,13 +267,8 @@ pub(crate) fn render_prompt_tsv_from_bundle(bundle: &TeachingPromptBundle) -> St
             }
         }
 
-        // Phase E: remaining teaching expr rows (projection witnesses first so the canonical
-        // `[p#,…]` is taught before bare query/search lines that omit the same bracket).
-        let mut emit_order: Vec<usize> = (0..teaching_expr_rows.len()).collect();
-        emit_order.sort_by_key(|&i| {
-            let is_proj = teaching_expr_rows[i].is_projection_teaching;
-            (!is_proj, i)
-        });
+        // Phase E: remaining teaching expr rows in synthesis order.
+        let emit_order: Vec<usize> = (0..teaching_expr_rows.len()).collect();
         for row_idx in emit_order {
             if union_ctor_row_set.contains(&row_idx) {
                 continue;
@@ -340,12 +328,8 @@ enum TeachingMeaningAtom {
     TerminalChainHint {
         entity: String,
     },
-    /// Capability prose (e.g. Get description) joined into Meaning.
+    /// Capability prose (e.g. Get description) or entity banner joined into Meaning.
     CapabilityGloss(String),
-    /// Noun card: `noun · {entity description}` (no return arrow).
-    NounCard {
-        description: String,
-    },
     LegendScope(String),
     LegendOptionalParams(Vec<String>),
     LegendCompactArgs(String),
@@ -375,14 +359,6 @@ impl TeachingMeaningAtom {
                 format!("chain: {entity}(<id>).m#")
             }
             TeachingMeaningAtom::CapabilityGloss(s) => s.clone(),
-            TeachingMeaningAtom::NounCard { description } => {
-                let mark = super::teaching_legend::NOUN_CARD_LEGEND_MARK;
-                if description.is_empty() {
-                    mark.to_string()
-                } else {
-                    format!("{mark} · {description}")
-                }
-            }
             TeachingMeaningAtom::LegendScope(s) => s.clone(),
             TeachingMeaningAtom::LegendOptionalParams(wires) => {
                 format!("{TEACHING_OPTIONAL_LEGEND_MARK}: {}", wires.join(","))
@@ -468,17 +444,14 @@ fn teaching_expr_meaning_atoms(
     attach_entity_heading: bool,
     heading: &TeachingHeading,
 ) -> Vec<TeachingMeaningAtom> {
-    if row.is_projection_teaching {
-        let description = if attach_entity_heading {
-            heading.description.clone()
-        } else {
-            String::new()
-        };
-        return vec![TeachingMeaningAtom::NounCard { description }];
-    }
-
     let mut atoms = Vec::new();
     push_teaching_meaning_result_atom(&mut atoms, row, identity_returns_row);
+    if attach_entity_heading {
+        let d = heading.description.trim();
+        if !d.is_empty() {
+            atoms.push(TeachingMeaningAtom::CapabilityGloss(d.to_string()));
+        }
+    }
     append_teaching_meaning_legend_tail_atoms(&mut atoms, row);
     atoms
 }

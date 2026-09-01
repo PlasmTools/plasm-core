@@ -7,8 +7,8 @@
 use serde_json::{Map, Value};
 use std::fmt::Write as _;
 
-/// Stable fence info for the agent token table.
-pub const AGENT_TOKEN_FENCE: &str = "tsv";
+/// Stable fence info for the agent token table (session refs — not domain/language card).
+pub const AGENT_TOKEN_FENCE: &str = "plasm-session";
 
 /// Keys emitted in the agent token table (order stable for snapshots).
 #[allow(dead_code)] // contract checklist for token key set / ordering
@@ -197,16 +197,25 @@ impl AgentContent {
         }
     }
 
+    /// Banner prepended to every `plasm_context` agent body.
+    pub const CONTEXT_LANGUAGE_CARD_BANNER: &str =
+        "**Language card** — Plasm symbols + syntax table for this session. Write `plasm.program` from the left column; Meaning marks are defined in the **`plasm` tool** description. Domain rows come from `plasm` / `plasm_run`.";
+
     pub fn context(refs: &ContextTokenRefs<'_>, body_markdown: &str) -> Self {
         let tokens: Vec<(&'static str, String)> = vec![
             ("kind", AgentResultKind::Context.as_str().into()),
             ("logical_session_ref", refs.logical_session_ref.into()),
         ];
         let body = body_markdown.trim();
+        let body = if body.is_empty() {
+            None
+        } else {
+            Some(format!("{}\n\n{}", Self::CONTEXT_LANGUAGE_CARD_BANNER, body))
+        };
         Self {
             kind: AgentResultKind::Context,
             tokens,
-            body: (!body.is_empty()).then(|| body.to_string()),
+            body,
             run_instruction: None,
         }
     }
@@ -326,7 +335,7 @@ mod tests {
             "plan ok · 1n 1r → r1\n\n01 r1           query Label{}",
         )
         .render();
-        assert!(md.contains("```tsv\nkey\tvalue\n"));
+        assert!(md.contains("```plasm-session\nkey\tvalue\n"));
         assert!(md.contains("kind\tplan\n"));
         assert!(md.contains("run_ref\tpc2\n"));
         assert!(md.contains("logical_session_ref\tl_ref\n"));
@@ -344,14 +353,21 @@ mod tests {
             &ContextTokenRefs {
                 logical_session_ref: "l_ref",
             },
-            "## teaching\nok",
+            "## language card\nok",
         )
         .render();
         assert!(md.contains("kind\tcontext\n"));
         assert!(md.contains("logical_session_ref\tl_ref\n"));
         assert!(!md.contains("session_mode\tnew\n"));
         assert!(!md.contains("domain_revision\t"));
-        assert!(md.contains("## teaching\nok"));
+        assert!(md.contains(AgentContent::CONTEXT_LANGUAGE_CARD_BANNER));
+        assert!(md.contains("## language card\nok"));
+        assert!(
+            md.find(AgentContent::CONTEXT_LANGUAGE_CARD_BANNER)
+                .zip(md.find("## language card\nok"))
+                .is_some_and(|(a, b)| a < b),
+            "banner must precede language-card body"
+        );
     }
 
     #[test]
@@ -402,7 +418,7 @@ mod tests {
         assert!(!md.contains("kind\trun"));
         assert!(!md.contains("logical_session_ref\t"));
         assert!(!md.contains("artifact_uri\t"));
-        assert!(!md.contains("```tsv\nkey\tvalue"));
+        assert!(!md.contains("```plasm-session\nkey\tvalue"));
         assert!(AGENT_TOKEN_KEYS.contains(&"artifact_uri"));
     }
 
@@ -418,7 +434,7 @@ mod tests {
             "## Snapshot\nread artifact",
         )
         .render();
-        assert!(md.contains("```tsv\nkey\tvalue\n"));
+        assert!(md.contains("```plasm-session\nkey\tvalue\n"));
         assert!(md.contains("result_delivery\tsnapshot_only\n"));
         assert!(md.contains("artifact_uri\tplasm://execute/ph/s/run/prabc\n"));
         assert!(!md.contains("kind\trun"));

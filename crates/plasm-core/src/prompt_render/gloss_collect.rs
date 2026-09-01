@@ -473,7 +473,7 @@ pub(crate) fn emit_field_def_lines_before_example(
         catalog_entry_id,
         entity,
     );
-    let projection_witness_row = result_gloss.is_some_and(|g| g.contains("· projection"));
+    let projection_witness_row = false;
     let union_ctor_row = is_union_ctor_teaching_surface_line(expr);
     for sym in crate::symbol_tuning::teaching_slot_keys_for_teaching_row(
         expr,

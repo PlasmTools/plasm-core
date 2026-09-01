@@ -1,5 +1,5 @@
-Plasm MCP: **`plasm_context`** first — **`session_mode: "new"`** + **`intent` only** on semantic-auto-seed hosts (no `seeds`; opens teaching TSV + **`logical_session_ref`**). Then **`plasm`** (reads execute inline when clean; writes return **`run_ref`**) → **`plasm_run`** only for reviewed writes / paging.
+Plasm MCP: **`plasm_context`** first — **`session_mode: "new"`** + **`intent` only** on semantic-auto-seed hosts (no `seeds`; opens language card + **`logical_session_ref`**). Then **`plasm`** (reads execute inline when clean; writes return **`run_ref`**) → **`plasm_run`** only for reviewed writes / paging.
 **Do NOT** invent `{api, entity}` keys on auto-seed hosts. On **`clarify`**/**`hard_miss`**, rephrase **`intent`** with the provider brand.
 **One workflow → one `logical_session_ref`.** **`new`** once, then **`extend`** + the same ref. **`intent`** accumulates — it does **not** select the session.
-**Teaching TSV** supplies `e#`/`m#`/`r#` and wire names. Reuse ref for `plasm` / `plasm_run`; **`extend`** on later turns — never **`new`** to recover from parse errors.
+**Language card** supplies `e#`/`m#`/`r#` and wire names. Reuse ref for `plasm` / `plasm_run`; **`extend`** on later turns — never **`new`** to recover from parse errors.
 **Live rows:** ≤25-row results inline TSV (`result_delivery`: `inline`); larger / reference-only need **`resources/read`** or **`plasm_read_run_artifact`**.

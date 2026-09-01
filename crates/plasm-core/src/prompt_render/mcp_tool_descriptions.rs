@@ -46,7 +46,7 @@ pub const PLASM_PROGRAM_PARAM_MAX_BYTES: usize = 1600;
 
 /// Max bytes for [`PLASM_TOOL_DESCRIPTION`].
 /// Raised for entity-head cardinality + Meaning-arrow legend (entity-semantics A+B).
-pub const PLASM_TOOL_DESCRIPTION_MAX_BYTES: usize = 5000;
+pub const PLASM_TOOL_DESCRIPTION_MAX_BYTES: usize = 5200;
 
 /// Host-truncation prefixes that must still carry program-authoring mandates.
 pub const PLASM_TOOL_DESCRIPTION_PREFIX_BYTES: usize = 2048;
@@ -64,13 +64,13 @@ pub const MCP_TOOL_SEQUENCING_MARKER: &str =
 
 /// Marker for tests; grammar contract opener in [`PLASM_TOOL_DESCRIPTION`].
 pub const TEACHING_VALID_EXPR_MARKER: &str =
-    "Grammar below; symbols from `plasm_context` TSV. Reply with one valid plasm_program:";
+    "Grammar below; symbols from the language card. Reply with one valid plasm_program:";
 
 /// Substrings that must appear in [`PLASM_PROGRAM_PARAM_DESCRIPTION`].
 const PROGRAM_PARAM_CONTRACT_MARKERS: &[&str] = &[
     "not JSON data",
     "plasm_context",
-    "teaching TSV",
+    "language card",
     "final return line",
     "<<TAG",
     "session_mode: \"extend\"",

@@ -3,9 +3,9 @@ source: crates/plasm-core/src/prompt_render/tests.rs
 expression: tsv
 ---
 plasm_expr	Meaning
+v7	string · Short text
 v9	ref:Document · Document slug or id this API uses
 v6	markdown
-v7	string · Short text
 v4	json · JSON object
 v2	boolean · true/false flag (for example resolve thread)
 v8	uuid · Optional idempotency key so you can retry the same edit batch safely
@@ -46,8 +46,7 @@ v106{ref=<wire>,find=<wire>,replace=<wire>,occurrence=<wire>}	→ find_replace_i
 v107{find=<wire>,replace=<wire>,occurrence=<wire>,fromRef=<wire>,toRef=<wire>,blockFilter=<wire>}	→ find_replace_in_doc — Find and replace text across the document (optional block range or kind filter)
 v10	union · v210 | v211 | v212
 v11	union · v101 | v102 | v103 | v104 | v105 | v106 | v107
-e1[slug,markdown,title,links,agent_auth]	noun · Read or edit a shared Proof document
-e1(<id>)	→ e1
+e1(<id>)[slug,markdown,title,links,agent_auth]	→ e1 · Read or edit a shared Proof document
 e1(<id>).m16()	→ e1 · Bind this session to a share URL (preferred: full URL with embedded `?token=`…
 e1(<id>).m1(agent_id=<wire>, by=<wire>, quote=<wire>, text=<wire>, base_token=<wire>, share_token=<wire>)	↠ e1 · chain: e1(<id>).m# · optional: base_token,share_token
 e1(<id>).m2(agent_id=<wire>, by=<wire>, share_token=<wire>, base_token=<wire>, operations=[<wire>])	↠ e1 · chain: e1(<id>).m# · optional: base_token,share_token

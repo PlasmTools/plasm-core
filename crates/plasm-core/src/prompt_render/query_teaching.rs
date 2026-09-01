@@ -5,11 +5,13 @@ use crate::symbol_tuning::SymbolMap;
 use crate::{FieldType, InputType, ParameterRole, CGS};
 
 use super::symbol_tokens::{ent_sym, id_sym_cap, id_sym_entity};
-use super::teaching_util::TEACHING_PARAM_VALUE_PLACEHOLDER;
+use super::teaching_util::{
+    TEACHING_ID_HOLE, TEACHING_PARAM_VALUE_PLACEHOLDER, TEACHING_SEARCH_QUERY_LITERAL,
+};
 
-/// Compound `Entity(p#=$,…)` when the target has multiple `key_vars`.
+/// Compound `Entity(p#=<id>,…)` when the target has multiple `key_vars`.
 ///
-/// Unary entity refs use [`unary_entity_id_teaching_expr_line`] / `$` fallback like scalar identity GET teaching.
+/// Unary entity refs use [`unary_entity_id_teaching_expr_line`] / `<id>` like scalar identity GET teaching.
 pub(crate) fn entity_ref_id_example(
     cgs: &CGS,
     catalog_entry_id: &str,
@@ -17,12 +19,12 @@ pub(crate) fn entity_ref_id_example(
     map: Option<&SymbolMap>,
 ) -> String {
     if !entity_ref_target_in_session(map, catalog_entry_id, target) {
-        return TEACHING_PARAM_VALUE_PLACEHOLDER.to_string();
+        return TEACHING_ID_HOLE.to_string();
     }
     let target_sym = ent_sym(map, catalog_entry_id, target);
-    let p = TEACHING_PARAM_VALUE_PLACEHOLDER;
+    let p = TEACHING_ID_HOLE;
     let Some(ent) = cgs.get_entity(target) else {
-        return format!("{target_sym}({})", TEACHING_PARAM_VALUE_PLACEHOLDER);
+        return format!("{target_sym}({TEACHING_ID_HOLE})");
     };
     if ent.key_vars.len() > 1 {
         let parts: Vec<String> = ent
@@ -64,7 +66,7 @@ pub(crate) fn unseeded_entity_ref_invocation_gloss(
         let Ok(nv) = f.named_value(cgs) else {
             continue;
         };
-        let FieldType::EntityRef { target } = &nv.field_type else {
+        let FieldType::EntityRef { target, .. } = &nv.field_type else {
             continue;
         };
         if entity_ref_target_in_session(map, catalog_entry_id, target.as_str()) {
@@ -106,7 +108,7 @@ fn query_param_slot_example(
         FieldType::String | FieldType::Blob | FieldType::Uuid => format!("{n}={p}"),
         FieldType::Date => format!("{n}={p}"),
         FieldType::Select | FieldType::MultiSelect => format!("{n}={p}"),
-        FieldType::EntityRef { target } => {
+        FieldType::EntityRef { target, .. } => {
             format!(
                 "{n}={}",
                 entity_ref_id_example(cgs, catalog_entry_id, target, map)
@@ -150,7 +152,7 @@ pub(crate) fn compound_get_expr_line(
         return None;
     }
     let mut parts: Vec<String> = Vec::new();
-    let p = TEACHING_PARAM_VALUE_PLACEHOLDER;
+    let p = TEACHING_ID_HOLE;
     for kv in &ent.key_vars {
         let f = ent.fields.get(kv)?;
         let sym = id_sym_entity(map, catalog_entry_id, ent.name.as_str(), kv.as_str());
@@ -170,7 +172,7 @@ pub(crate) fn compound_get_expr_line(
             | FieldType::Blob => {
                 parts.push(format!("{sym}={p}"));
             }
-            FieldType::EntityRef { target } => {
+            FieldType::EntityRef { target, .. } => {
                 parts.push(format!(
                     "{sym}={}",
                     entity_ref_id_example(cgs, catalog_entry_id, target, map)
@@ -181,42 +183,14 @@ pub(crate) fn compound_get_expr_line(
     Some(format!("{es}({})", parts.join(", ")))
 }
 
-/// Unary identity GET teaching: positional **`$` hole** for simple string ids (`e#($)`),
-/// otherwise opaque **`p#`** / wire when identity is uuid/integer/other — never sample ids.
+/// Unary identity GET teaching: always `e#(<id>)` — never sample ids or bare `$`.
 pub(crate) fn unary_entity_id_teaching_expr_line(
     es: &str,
-    ent: &EntityDef,
-    map: Option<&SymbolMap>,
-    catalog_entry_id: &str,
+    _ent: &EntityDef,
+    _map: Option<&SymbolMap>,
+    _catalog_entry_id: &str,
 ) -> String {
-    if let Some(literal) = positional_identity_teaching_literal(ent) {
-        return format!("{es}({literal})");
-    }
-    let sym = id_sym_entity(
-        map,
-        catalog_entry_id,
-        ent.name.as_str(),
-        ent.id_field.as_str(),
-    );
-    format!("{es}({sym})")
-}
-
-/// Positional identity for teaching rows (B2): simple string `id_field`, no compound keys.
-///
-/// Holes are always [`TEACHING_PARAM_VALUE_PLACEHOLDER`] (`$`) — never sample ids (overfit).
-/// Uuid / integer / other identities fall through to wire/`p#`.
-fn positional_identity_teaching_literal(ent: &EntityDef) -> Option<&'static str> {
-    if !ent.key_vars.is_empty() {
-        return None;
-    }
-    match ent.id_format {
-        Some(crate::schema::IdFormat::Uuid)
-        | Some(crate::schema::IdFormat::Integer)
-        | Some(crate::schema::IdFormat::Other) => None,
-        Some(crate::schema::IdFormat::Email)
-        | Some(crate::schema::IdFormat::Slug)
-        | None => Some(TEACHING_PARAM_VALUE_PLACEHOLDER),
-    }
+    format!("{es}({TEACHING_ID_HOLE})")
 }
 
 /// Scope predicates + all filter-like parameters (required + optional) with CGS-derived placeholders.
@@ -261,39 +235,6 @@ pub(crate) fn query_expr_maximal(
     Some(format!("{es}{{{}}}", inner.join(", ")))
 }
 
-/// Row-filter brace on the entity **id_field** when the query capability has no filter/scope params.
-///
-/// AppWorld-style dump-all password lists still accept `e#{id_field=$}` as a client-side row filter;
-/// without this hole, projection teaching collapses to bare `e#[…]` (plural) and models feed
-/// `label.wire` arrays into scalar login params.
-///
-/// Uses [`TEACHING_PARAM_VALUE_PLACEHOLDER`] (`$`) — same hole as capability params. Never sample
-/// ids (overfit). Typecheck allows `$` on entity-field predicates; execute rejects leftover `$`.
-pub(crate) fn query_expr_id_field_row_filter(
-    es: &str,
-    ent: &EntityDef,
-    cgs: &CGS,
-    map: Option<&SymbolMap>,
-    catalog_entry_id: &str,
-) -> Option<String> {
-    let id = ent.id_field.as_str();
-    if id.is_empty() || !ent.fields.contains_key(id) {
-        return None;
-    }
-    let field = ent.fields.get(id)?;
-    let nv = field.named_value(cgs).ok()?;
-    // Only synthesize for string-like ids (password vault keys, slugs). Numeric/uuid ids need GET.
-    if !matches!(
-        nv.field_type,
-        FieldType::String | FieldType::Blob | FieldType::Uuid | FieldType::Select
-    ) {
-        return None;
-    }
-    let sym = id_sym_entity(map, catalog_entry_id, ent.name.as_str(), id);
-    let p = TEACHING_PARAM_VALUE_PLACEHOLDER;
-    Some(format!("{es}{{{sym}={p}}}"))
-}
-
 /// Filter predicates only (no scope) — one `Entity{p#=…}` line per query cap so teaching table shows **filter**
 /// field symbols even when scope+filters are merged on the maximal line.
 pub(crate) fn query_expr_filters_only(
@@ -325,7 +266,7 @@ pub(crate) fn query_expr_filters_only(
     Some(format!("{es}{{{}}}", inner.join(", ")))
 }
 
-/// Search filter slots for `e#~"text"{p#=…}` — same param selection as [`query_expr_filters_only`].
+/// Search filter slots for `e#~"<query>"{p#=…}` — same param selection as [`query_expr_filters_only`].
 pub(crate) fn search_expr_with_filters(
     cap: &crate::CapabilitySchema,
     es: &str,
@@ -355,7 +296,10 @@ pub(crate) fn search_expr_with_filters(
     if inner.is_empty() {
         return None;
     }
-    Some(format!("{es}~\"text\"{{{}}}", inner.join(", ")))
+    Some(format!(
+        "{es}~{TEACHING_SEARCH_QUERY_LITERAL}{{{}}}",
+        inner.join(", ")
+    ))
 }
 
 /// Only scope predicates (for a distinct structural example when maximal adds filters).

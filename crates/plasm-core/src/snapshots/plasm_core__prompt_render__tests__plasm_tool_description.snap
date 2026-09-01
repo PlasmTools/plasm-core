@@ -8,7 +8,13 @@ expression: "super::PLASM_TOOL_DESCRIPTION"
 
 **Program shape:** one `plasm_expr`, or `label = …` bindings then **one** final return line (comma-separated roots on that line only). No prose, `return`, fences, or table rows. A plan that merely echoes an object/array/string literal is a **literal no-op**.
 
-**Entity heads vs rows:** Copy the card’s left-column `eN…` patterns — they are executable. Meaning arrows: `↣ [e]` plural rows · `→ e` one entity row · `↠` write. Do not invent `eN.field` as a fetch. `[field,…]` keeps row shape; scalar params need `label.wire` from a singleton row (`→ e`), not a plural query-all. Array params may take plural `rows.wire`. After binding, use `label.wire` / `label.mK(…)`.
+**Entity heads vs rows:** Copy the card’s left-column `eN…` patterns — they are executable. Do not invent `eN.field` as a fetch. `[field,…]` keeps row shape; scalar params need `label.wire` from a singleton row (`→ e`), not a plural `↣ [e]` head. Array params may take plural `rows.wire`. After binding, use `label.wire` / `label.mK(…)`.
+
+**Language-card Meaning** (static here — not repeated on each `plasm_context` card):
+- Header `plasm_expr<TAB>Meaning`; **left column only is syntax** — never copy Meaning.
+- `↣ [e]` = plural rows · `→ e` = one entity row (chainable; not a scalar) · `↠` = write.
+- `optional:` = optional params · `chain:` = later-turn write reconstruction (not a ban on in-program chaining).
+- Executable rows start with `e#`; `r#`/`v#` are never roots. Wires appear on field-gloss / bracket rows by first use.
 
 **Strings:** JSON escapes in quotes (`\n` `\t` `\\` `\"`); unknown `\x` errors. Prefer tagged `<<TAG` … `TAG` heredocs for long bodies (real newlines).
 
@@ -19,23 +25,21 @@ bars = e2{foo=foo}
 bazs = e3{foo=foo}
 bars, bazs
 ```
-Batch reads aggressively. **Prefer one multi-write program** when steps share one approval: writes run **bind-ordered (sequential)**; **one** `run_ref` for the plan. After a write use **`label.field`** (card wire names) — never invent a `.wire` postfix.
+Batch reads aggressively. **Prefer one multi-write program** when steps share one approval: writes run **bind-ordered (sequential)**; **one** `run_ref` for the plan. After a write use **`label.wire`** — never invent a `.wire` postfix.
 ```
 foo = e1.m1(name="n")
 bar = e2.m2(foo=foo, title="t")
 baz = e3.m3(bar=bar, body="…")
 bar, baz
 ```
-Worked lookup→write (illustrative mini card; live symbols from `plasm_context`). **noun**↔`e#`, **verb**↔`m#`; left=code; never copy Meaning. Session tokens: ` ```plasm-session `; language-card / run rows: ` ```tsv `.
+Worked lookup→write (illustrative mini card; live symbols from `plasm_context`). Left=code; never copy Meaning. Session tokens: ` ```plasm-session `; language-card / run rows: ` ```tsv `.
 ```tsv
 plasm_expr	Meaning
-e1	noun · root
-m1	verb · open · provides w1
+e1.m1(p1=<wire>, p2=<wire>)	→ e1 · open · provides w1
 w1	str · handle from m1
-e2	noun · searchable
+e2~"<query>"{w1=<wire>}	↣ [e2]
 w2	str · key on e2
-e3	noun · write target
-m2	verb · create linked
+e3.m2(w1=<wire>, w2=<wire>, n=<wire>)	↠ e3 · create linked
 ```
 ```
 a = e1.m1(p1="u", p2="s")
@@ -57,15 +61,9 @@ report = sorted[name,amount] <<PLASM_RPT_TAG
 {% endfor %}
 PLASM_RPT_TAG
 
-Language-card table semantics:
-- Header `plasm_expr<TAB>Meaning`; **left column only is syntax** — never copy Meaning (arrows, `chain:`, prose).
-- Executable rows start with `e#`; `r#`/`v#` are never roots.
-- Meaning arrows: `↣ [e]` = plural rows · `→ e` = one entity row (chainable; not a scalar) · `↠` = write. Copy the taught left-column pattern for that shape.
-- Meaning arrows document result shape only. In-program: bind the write, use `label.field`. Card `chain:` is for a **later turn** — not a ban on in-program chaining.
-
 Core surface:
-- Get: `e#(<id>)`. Query: `e#{field=<wire>}`. Search when taught: `e#~"<query>"`.
-- Shape/projection uses taught left-column patterns — never invent a root `e#[wires]` fetch.
+- Get: `e#(<id>)`. Query: `e#{field=<wire>}`. Search when taught: `e#~"<query>"`. Bare `e#` when the card teaches it as `→ e`.
+- Projection: taught brackets / bound `label[wires]` — never invent a root `e#[wires]` fetch.
 - Postfix from card left column: `.filter{…}` `.sort` `.limit` `.group_by` `.aggregate` `.with{k: expr}` `[field,…]`.
 - Inline rows when delivery is `inline` (≤25); `snapshot_only` / `(in artifact)` need artifact read. Copy **`artifact_uri`** from `plasm-session` tokens — never plan `run_step` / `dict_ref`.
 - `page(...)` is HTTP-execute only — not an MCP tool argument.

@@ -571,7 +571,7 @@ pub fn format_qualified_capabilities(capabilities: &[(String, String)]) -> Strin
         .join(", ")
 }
 
-/// Append client-rendered teaching TSV rows to `teaching.tsv`.
+/// Append client-rendered language card rows to `teaching.tsv`.
 pub fn append_teaching_tsv_wave(
     path: &Path,
     tsv_fragment: &str,
@@ -917,7 +917,7 @@ mod tests {
 
     #[test]
     fn format_plasm_cli_agent_skill_includes_frontmatter_and_workflow() {
-        let grammar = "TSV table semantics:\nplasm_expr\tMeaning";
+        let grammar = "Language-card Meaning:\nplasm_expr\tMeaning";
         let skill = format_plasm_cli_agent_skill(grammar);
         assert!(skill.starts_with("---\nname: plasm-cli\n"));
         assert!(skill.contains("description: >-"));

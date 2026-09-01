@@ -1,12 +1,9 @@
 //! Capability legend parsing for language card rows.
 
 use super::input_legend::{CapabilityInputLegend, RowContractLegend};
-use super::tsv_emit::parse_trailing_projection_bracket;
 use super::TeachingExprLine;
 
 pub(crate) const LEGEND_EM_DESC_SEP: &str = " — ";
-/// Noun-card / shape witness Meaning mark (`noun · {entity description}`).
-pub(crate) const NOUN_CARD_LEGEND_MARK: &str = "noun";
 
 /// True when `expr` is a nullary method call (`… .mN()` / `… .kebab()` with empty args).
 pub(crate) fn teaching_expr_is_nullary_method_call(expr: &str) -> bool {
@@ -74,20 +71,11 @@ pub(crate) fn teaching_expr_line_from_layers(
         };
     }
     // Arrow is assigned by the push pipeline from the validated domain-line kind; default here.
-    // Noun card: gloss is exactly `noun` (no retrieved-object arrow core).
-    let is_projection_teaching = gloss.is_some_and(|g| {
-        let t = g.trim();
-        t == NOUN_CARD_LEGEND_MARK || t.ends_with(NOUN_CARD_LEGEND_MARK)
-    }) && parse_trailing_projection_bracket(expr.trim()).is_some();
     let mut row = TeachingExprLine {
         expression: expr,
-        result_type: if is_projection_teaching {
-            NOUN_CARD_LEGEND_MARK.to_string()
-        } else {
-            gloss.map(|s| s.to_string()).unwrap_or_default()
-        },
+        result_type: gloss.map(|s| s.to_string()).unwrap_or_default(),
         legend: CapabilityInputLegend::default(),
-        is_projection_teaching,
+        is_projection_teaching: false,
         is_singleton_row_fetch: false,
         row_contract,
         arrow: super::ReturnArrow::Single,

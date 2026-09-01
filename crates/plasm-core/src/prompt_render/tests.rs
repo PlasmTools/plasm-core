@@ -73,7 +73,7 @@ pub(crate) fn domain_example_lines(
     .collect()
 }
 
-/// Count canonical `noun ·` witness rows (one per entity; query/search omit the same bracket).
+/// Count teaching rows that still claim a deleted noun/projection-witness flag (must be 0).
 #[cfg(test)]
 fn count_projection_teaching_witness_rows(
     cgs: &CGS,
@@ -101,6 +101,17 @@ fn count_projection_teaching_witness_rows(
     .iter()
     .filter(|r| r.teaching_expr.is_projection_teaching)
     .count()
+}
+
+/// First executable teaching row with a trailing projection bracket (wires by first use).
+#[cfg(test)]
+fn first_bracketed_executable_row(
+    block: &EntityTeachingBlock,
+) -> Option<&EntityTeachingExprRow> {
+    block.teaching_rows.iter().find(|r| {
+        !r.teaching_expr.is_projection_teaching
+            && parse_trailing_projection_bracket(r.teaching_expr.expression.trim()).is_some()
+    })
 }
 
 /// Primary-get projection bracket for the teaching table entity heading (when enabled); test-only helper.
@@ -576,8 +587,12 @@ fn with_insta_snapshots<R>(f: impl FnOnce() -> R) -> R {
 fn plasm_language_contract_is_tsv_first_and_avoids_legacy_terms() {
     let contract = super::PLASM_TOOL_DESCRIPTION;
     assert!(
-        contract.contains("TSV table semantics:"),
-        "contract should teach TSV interpretation before catalog rows"
+        contract.contains("Language-card Meaning"),
+        "contract should teach Meaning marks once in plasm_tool"
+    );
+    assert!(
+        !contract.contains("TSV table semantics:"),
+        "retired per-wave TSV table semantics heading"
     );
     assert!(
         contract.contains("Replace teaching placeholders")
@@ -653,8 +668,7 @@ fn google_sheets_compound_get_entity_ref_key_var_emits_valid_domain_line() {
     );
 }
 
-/// Regression: Issue teaching table teaches **one** canonical `noun ·` witness row.
-/// Scoped query/search exemplars omit the same trailing `[p#,…]` / `rows:` contract.
+/// Regression: Issue teaching has no noun card; projection brackets ride on executable producers.
 #[test]
 fn github_issue_domain_emits_single_full_projection_exemplar() {
     let dir = apis_dir("github");
@@ -691,8 +705,8 @@ fn github_issue_domain_emits_single_full_projection_exemplar() {
     let lines = domain_example_lines(&cgs, "Issue", map.as_deref(), surface);
     assert_eq!(
         count_projection_teaching_witness_rows(&cgs, "Issue", map.as_deref(), surface),
-        1,
-        "expect exactly one `noun ·` witness row per entity"
+        0,
+        "noun / projection-witness flag must be gone"
     );
     let block = {
         let mut line_valid_cache = HashMap::new();
@@ -711,60 +725,39 @@ fn github_issue_domain_emits_single_full_projection_exemplar() {
             None,
         )
     };
-    let witness = block
-        .teaching_rows
-        .iter()
-        .find(|r| r.teaching_expr.is_projection_teaching)
-        .expect("Issue projection witness");
+    let witness = first_bracketed_executable_row(&block).expect("Issue bracket on executable");
+    assert!(
+        !witness.teaching_expr.result_type.contains("noun"),
+        "Meaning must not contain noun: {:?}",
+        witness.teaching_expr.result_type
+    );
     let canon_syms = projection_bracket_syms(
         &parse_trailing_projection_bracket(witness.teaching_expr.expression.trim())
             .expect("witness bracket"),
     );
-    let same_set_brackets = lines
-        .iter()
-        .filter(|l| {
+    assert!(
+        !canon_syms.is_empty(),
+        "expected projection wires on executable: {:?}",
+        witness.teaching_expr.expression
+    );
+    assert!(
+        lines.iter().any(|l| {
             parse_trailing_projection_bracket(l.trim()).is_some_and(|b| {
                 projection_field_sets_equal(&projection_bracket_syms(&b), &canon_syms)
             })
-        })
-        .count();
-    assert_eq!(
-        same_set_brackets, 1,
-        "canonical projection field set taught once (got {same_set_brackets}): {lines:?}"
+        }),
+        "canonical projection field set must appear on an executable line: {lines:?}"
     );
     for row in &block.teaching_rows {
-        if row.teaching_expr.is_projection_teaching {
-            continue;
-        }
-        let expr = row.teaching_expr.expression.as_str();
-        let gloss = row.teaching_expr.result_type.as_str();
-        if !(expr.contains('{') || expr.contains('~')) {
-            continue;
-        }
-        match parse_trailing_projection_bracket(expr.trim()) {
-            None => {
-                assert!(
-                    !gloss.contains("rows:"),
-                    "omitted bracket must omit rows: : {gloss}"
-                );
-                if expr.contains('{') {
-                    assert!(
-                        gloss.contains("inputs:"),
-                        "query filter lines keep inputs: gloss: {gloss}"
-                    );
-                }
-            }
-            Some(b) => {
-                assert!(
-                    !projection_field_sets_equal(&projection_bracket_syms(&b), &canon_syms),
-                    "set-equal bracket must be suppressed: {expr}"
-                );
-                assert!(
-                    !gloss.contains("rows:"),
-                    "divergent provides keep bracket on expr without rows: in Meaning: {gloss}"
-                );
-            }
-        }
+        assert!(
+            !row.teaching_expr.is_projection_teaching,
+            "no noun/projection-teaching rows"
+        );
+        assert!(
+            !row.teaching_expr.result_type.contains("noun"),
+            "no noun in Meaning: {}",
+            row.teaching_expr.result_type
+        );
     }
     let out = render_prompt_with_config(&cgs, cfg);
     assert!(
@@ -824,8 +817,8 @@ fn linear_issue_heading_projection_despite_method_style_get() {
     let lines = domain_example_lines(&cgs, "Issue", map.as_deref(), surface);
     assert_eq!(
         count_projection_teaching_witness_rows(&cgs, "Issue", map.as_deref(), surface),
-        1,
-        "expect exactly one `noun ·` witness row per entity"
+        0,
+        "noun / projection-witness flag must be gone"
     );
     let mut line_valid_cache = HashMap::new();
     let mut gloss_emit_none = None;
@@ -842,11 +835,8 @@ fn linear_issue_heading_projection_despite_method_style_get() {
         surface,
         None,
     );
-    let witness = block
-        .teaching_rows
-        .iter()
-        .find(|r| r.teaching_expr.is_projection_teaching)
-        .expect("Linear Issue projection witness");
+    let witness = first_bracketed_executable_row(&block)
+        .expect("Linear Issue bracket on executable");
     let canon_syms = projection_bracket_syms(
         &parse_trailing_projection_bracket(witness.teaching_expr.expression.trim())
             .expect("witness bracket"),
@@ -918,32 +908,20 @@ fn github_issue_intent_surface_omits_set_equal_projection_on_query_search() {
         surface,
         Some("github"),
     );
-    let witness = block
-        .teaching_rows
-        .iter()
-        .find(|r| r.teaching_expr.is_projection_teaching)
-        .expect("Issue projection witness");
+    let witness = first_bracketed_executable_row(&block).expect("Issue bracket on executable");
     let canon = parse_trailing_projection_bracket(witness.teaching_expr.expression.trim())
         .expect("witness bracket");
     let mut saw_list_producer = false;
     for row in &block.teaching_rows {
-        if row.teaching_expr.is_projection_teaching {
-            continue;
-        }
+        assert!(!row.teaching_expr.is_projection_teaching);
+        assert!(!row.teaching_expr.result_type.contains("noun"));
         let expr = row.teaching_expr.expression.as_str();
         if !(expr.contains('{') || expr.contains('~')) {
             continue;
         }
         saw_list_producer = true;
-        assert!(
-            parse_trailing_projection_bracket(expr.trim()).is_none(),
-            "intent-scoped query/search must omit set-equal bracket: {expr}"
-        );
         let gloss = row.teaching_expr.result_type.as_str();
-        assert!(
-            !gloss.contains("rows:"),
-            "intent-scoped query/search must omit rows: : {gloss}"
-        );
+        assert!(!gloss.contains("rows:"), "no rows: in Meaning: {gloss}");
     }
     assert!(saw_list_producer, "expected query/search teaching rows");
     let lines: Vec<_> = block
@@ -951,18 +929,17 @@ fn github_issue_intent_surface_omits_set_equal_projection_on_query_search() {
         .iter()
         .map(|r| r.teaching_expr.expression.as_str())
         .collect();
-    let same_set = lines
-        .iter()
-        .filter(|l| {
+    assert!(
+        lines.iter().any(|l| {
             parse_trailing_projection_bracket(l).is_some_and(|b| {
                 projection_field_sets_equal(
                     &projection_bracket_syms(&b),
                     &projection_bracket_syms(&canon),
                 )
             })
-        })
-        .count();
-    assert_eq!(same_set, 1, "canonical set once: {lines:?}");
+        }),
+        "canonical projection set on an executable: {lines:?}"
+    );
 }
 
 #[test]
@@ -1052,6 +1029,28 @@ fn tsv_additive_wave_omits_global_contract_but_keeps_column_header() {
         delta.contains(TSV_TEACHING_TABLE_HEADER.trim_end()),
         "additive TSV should keep column header"
     );
+    for body in [&first, &delta] {
+        for banned in [
+            "Meaning arrows:",
+            "Entity heads vs rows:",
+            "Language-card table semantics",
+            "TSV table semantics",
+            "Language-card Meaning",
+        ] {
+            assert!(
+                !body.contains(banned),
+                "teaching wave must stay table-only (no glossary prose `{banned}`):\n{body}"
+            );
+        }
+        assert!(
+            body.lines().all(|l| {
+                l.split_once('\t')
+                    .map(|(_, m)| !m.contains("noun"))
+                    .unwrap_or(true)
+            }),
+            "teaching Meaning must not contain noun:\n{body}"
+        );
+    }
 }
 
 #[test]
@@ -1444,12 +1443,9 @@ fn prompt_matrix_zone_domain_no_unary_placeholder_relation_or_fake_projection_me
         None,
         None,
     );
-    let witness_row = block.teaching_rows.iter().find(|r| {
-        r.teaching_expr.is_projection_teaching
-            && parse_trailing_projection_bracket(r.teaching_expr.expression.trim()).is_some()
-    });
+    let witness_row = first_bracketed_executable_row(&block);
     let Some(row) = witness_row else {
-        panic!("expected a projection witness row for Zone teaching table; lines={lines:?}");
+        panic!("expected bracketed executable for Zone teaching table; lines={lines:?}");
     };
     let expr = row.teaching_expr.expression.as_str();
     let legend = teaching_row_meaning_text(
@@ -1730,12 +1726,9 @@ fn prompt_matrix_zone_projection_tsv_row_has_exactly_one_machine_tab() {
         None,
         None,
     );
-    let witness_row = block.teaching_rows.iter().find(|r| {
-        r.teaching_expr.is_projection_teaching
-            && parse_trailing_projection_bracket(r.teaching_expr.expression.trim()).is_some()
-    });
+    let witness_row = first_bracketed_executable_row(&block);
     let Some(row) = witness_row else {
-        panic!("expected a projection witness row for Zone teaching table");
+        panic!("expected bracketed executable for Zone teaching table");
     };
     let expr = row.teaching_expr.expression.as_str();
     let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
@@ -1782,37 +1775,19 @@ fn prompt_matrix_ruleset_tsv_teaching_semantics() {
         .iter()
         .map(|r| &r.teaching_expr)
         .collect();
-    let proj_i = rows
-        .iter()
-        .position(|r| r.is_projection_teaching)
-        .expect("Ruleset projection witness");
-    let mut order: Vec<usize> = (0..rows.len()).collect();
-    order.sort_by_key(|&i| (!rows[i].is_projection_teaching, i));
-    assert_eq!(
-        order[0], proj_i,
-        "TSV encoder emits projection witness rows before other teaching rows"
+    assert!(
+        rows.iter().all(|r| !r.is_projection_teaching),
+        "Ruleset must not emit noun/projection-teaching rows"
     );
-    let compound_i = rows.iter().position(|r| {
-        r.expression.contains('(')
-            && r.expression.contains(',')
-            && !r.expression.contains('{')
-            && !r.is_projection_teaching
-    });
-    let query_i = rows
-        .iter()
-        .position(|r| r.expression.contains('{') && !r.is_projection_teaching);
-    if let Some(ci) = compound_i {
-        assert!(
-            proj_i < ci,
-            "projection witness should precede compound get in synthesis order"
-        );
-    }
-    if let Some(qi) = query_i {
-        assert!(
-            proj_i < qi,
-            "projection witness should precede query brace line in synthesis order"
-        );
-    }
+    let first = rows.first().expect("Ruleset teaching rows");
+    assert!(
+        first.expression.contains('{')
+            || first.expression.contains('(')
+            || first.expression.contains('~')
+            || first.expression.chars().all(|c| c.is_ascii_alphanumeric()),
+        "first Ruleset row must be executable, got {}",
+        first.expression
+    );
 }
 
 #[test]
@@ -1834,13 +1809,10 @@ fn prompt_matrix_waf_package_query_projection_witness_row() {
         None,
         None,
     );
-    let witness = block.teaching_rows.iter().find(|r| {
-        r.teaching_expr.is_projection_teaching
-            && parse_trailing_projection_bracket(r.teaching_expr.expression.trim()).is_some()
-    });
+    let witness = first_bracketed_executable_row(&block);
     let Some(row) = witness else {
         panic!(
-            "expected query-backed projection witness for WafPackage; rows={:?}",
+            "expected bracketed executable for WafPackage; rows={:?}",
             block
                 .teaching_rows
                 .iter()
@@ -1849,10 +1821,10 @@ fn prompt_matrix_waf_package_query_projection_witness_row() {
         );
     };
     assert!(
-        !row.teaching_expr.expression.contains('{')
-            && !row.teaching_expr.expression.contains('(')
-            && !row.teaching_expr.expression.contains('~'),
-        "noun card must be bare e#[wires] shape: {}",
+        row.teaching_expr.expression.contains('{')
+            || row.teaching_expr.expression.contains('(')
+            || row.teaching_expr.expression.contains('~'),
+        "bracket must ride on executable producer: {}",
         row.teaching_expr.expression
     );
     let expr = row.teaching_expr.expression.as_str();
@@ -2045,7 +2017,8 @@ fn plasm_tool_description_includes_row_compute_worked_example() {
         frontmatter.contains("bind-ordered")
             && frontmatter.contains("e2.m2")
             && frontmatter.contains("e3.m3")
-            && frontmatter.contains("label.field")
+            && frontmatter.contains("label.wire")
+            && !frontmatter.contains("label.field")
             && !frontmatter.contains("e_issue.m_create"),
         "write-batch guidance must prefer one multi-write program with domain-neutral create chain"
     );
@@ -2060,11 +2033,14 @@ fn plasm_tool_description_includes_row_compute_worked_example() {
     );
     assert!(
         frontmatter.contains("```tsv")
-            && frontmatter.contains("noun · root")
-            && frontmatter.contains("verb · open")
+            && frontmatter.contains("→ e1")
+            && frontmatter.contains("↣ [e2]")
+            && frontmatter.contains("↠ e3")
+            && !frontmatter.contains("noun ·")
+            && !frontmatter.contains("verb ·")
             && frontmatter.contains("a.w1")
             && frontmatter.contains("e2~\"q\""),
-        "lookup example must pair a mini language card (noun/verb) with opaque program wires"
+        "lookup example must pair a live-shaped mini language card with opaque program wires"
     );
     assert!(
         !frontmatter.contains("access_token=sess.")
@@ -2282,7 +2258,7 @@ fn domain_search_teaching_rows_use_quoted_query_hole() {
     }
 }
 
-/// Projection witness teaches `[p#,…]` once; set-equal query omits `rows:`; divergent keeps it.
+/// Executable producers carry `[wires]` by first use; Meaning never says `noun`.
 #[test]
 fn row_producer_teaching_includes_inputs_and_rows_contract() {
     let dir = fixtures_schemas_dir("plasm_language_matrix");
@@ -2292,8 +2268,12 @@ fn row_producer_teaching_includes_inputs_and_rows_contract() {
     let cgs = load_schema_dir(&dir).unwrap();
     let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
     assert!(
-        prompt.lines().any(|l| l.contains("noun")),
-        "teaching rows should include a projection witness:\n{prompt}"
+        prompt.lines().all(|l| {
+            l.split_once('\t')
+                .map(|(_, m)| !m.contains("noun"))
+                .unwrap_or(true)
+        }),
+        "teaching Meaning must not contain noun:\n{prompt}"
     );
     assert!(
         prompt.lines().any(|l| {
@@ -2301,11 +2281,11 @@ fn row_producer_teaching_includes_inputs_and_rows_contract() {
             cols.len() == 2
                 && cols[0].contains('{')
                 && !cols[0].contains(".r")
-                && parse_trailing_projection_bracket(cols[0].trim()).is_none()
+                && parse_trailing_projection_bracket(cols[0].trim()).is_some()
                 && !cols[1].contains("rows:")
                 && !cols[1].contains("noun")
         }),
-        "set-equal query omits bracket/rows: in Meaning:\n{prompt}"
+        "query producers teach brackets by first use:\n{prompt}"
     );
     assert!(
         prompt.lines().any(|l| {

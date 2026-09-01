@@ -13,33 +13,11 @@ use crate::symbol_tuning::{
 use crate::{CapabilityKind, CGS};
 
 use super::{
-    parse_trailing_projection_bracket, render_prompt_tsv_from_bundle,
-    render_teaching_prompt_bundle_for_exposure,
+    render_prompt_tsv_from_bundle, render_teaching_prompt_bundle_for_exposure,
     render_teaching_prompt_bundle_for_exposure_federated, EntityTeachingBlock,
     EntityTeachingExprRow, FieldGlossMeaning, RenderConfig, TeachingFieldGloss,
     TeachingPromptBundle, TSV_TEACHING_TABLE_HEADER,
 };
-
-/// List-producing teaching rows that omit a trailing `[p#,…]` rely on the entity projection witness.
-fn row_needs_canonical_projection_witness(row: &EntityTeachingExprRow) -> bool {
-    if row.teaching_expr.is_projection_teaching {
-        return false;
-    }
-    let expr = row.teaching_expr.expression.trim();
-    if parse_trailing_projection_bracket(expr).is_some() {
-        return false;
-    }
-    // Method/action/create witnesses do not teach entity field projection.
-    if expr.contains(".m") {
-        return false;
-    }
-    if expr.contains('{') || expr.contains('~') {
-        return true;
-    }
-    // Bare list-all `e#`.
-    let mut chars = expr.chars();
-    matches!(chars.next(), Some('e')) && chars.all(|c| c.is_ascii_digit())
-}
 
 fn method_syms_for_new_capabilities(
     exp: &TeachingExposureSession,
@@ -265,7 +243,7 @@ pub(crate) fn filter_teaching_bundle_to_new_capabilities(
         else {
             continue;
         };
-        let mut kept_rows: Vec<EntityTeachingExprRow> = block
+        let kept_rows: Vec<EntityTeachingExprRow> = block
             .teaching_rows
             .iter()
             .filter(|row| {
@@ -281,23 +259,6 @@ pub(crate) fn filter_teaching_bundle_to_new_capabilities(
             .collect();
         if kept_rows.is_empty() {
             continue;
-        }
-        // Bare query/search lines omit the canonical projection when the witness was taught in the
-        // full block; keep that witness in the delta so first-wave entity exposure still demonstrates
-        // `[p#,…]` once (mutator-only deltas do not need it).
-        if kept_rows.iter().any(row_needs_canonical_projection_witness) {
-            if let Some(witness) = block
-                .teaching_rows
-                .iter()
-                .find(|r| r.teaching_expr.is_projection_teaching)
-            {
-                let already = kept_rows
-                    .iter()
-                    .any(|r| r.teaching_expr.is_projection_teaching);
-                if !already {
-                    kept_rows.insert(0, witness.clone());
-                }
-            }
         }
         let field_gloss_rows =
             gloss_rows_for_filtered_block(&block, &kept_rows, exp, map.as_ref(), new_caps);
@@ -332,7 +293,7 @@ fn affected_entity_keys(new_caps: &BTreeSet<ExposureCapabilityKey>) -> Vec<Expos
     keys
 }
 
-/// Compact teaching TSV for newly exposed mutators: gloss rows + invoke witnesses only.
+/// Compact language card for newly exposed mutators: gloss rows + invoke witnesses only.
 pub fn render_teaching_new_capabilities_delta_tsv(
     cgs: &CGS,
     config: RenderConfig<'_>,

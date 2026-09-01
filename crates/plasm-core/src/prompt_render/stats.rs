@@ -170,7 +170,7 @@ impl GrammarFrontmatterStats {
 
 const GRAMMAR_SECTION_MARKERS: &[(&str, &str)] = &[
     ("output", "Output:"),
-    ("tsv_semantics", "TSV table semantics:"),
+    ("tsv_semantics", "Language-card Meaning"),
     ("symbol_rules", "Symbol and fill rules:"),
     ("core_surface", "Core surface:"),
     ("composition", "Composition rules:"),
@@ -235,7 +235,7 @@ pub fn grammar_frontmatter_stats_from_contract(contract: &str) -> GrammarFrontma
     }
 }
 
-/// Stats for a rendered teaching TSV prompt (optional `#` contract + table).
+/// Stats for a rendered language card prompt (optional `#` contract + table).
 pub fn grammar_frontmatter_stats_from_prompt(prompt: &str) -> GrammarFrontmatterStats {
     let (contract_comment, table) = split_tsv_teaching_contract_and_table(prompt);
     let contract_comment_bytes = contract_comment.as_ref().map(|s| s.len()).unwrap_or(0);

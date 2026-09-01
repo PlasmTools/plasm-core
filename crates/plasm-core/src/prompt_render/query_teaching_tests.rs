@@ -9,7 +9,7 @@ use super::teaching_util::truncate_inline_desc;
 use super::{
     collect_entity_teaching_block, parse_trailing_projection_bracket,
     prompt_line_valid_cache_seed_cgs, RenderConfig, PLASM_TOOL_DESCRIPTION,
-    TEACHING_OPTIONAL_LEGEND_MARK, TEACHING_VALID_EXPR_MARKER, TSV_TEACHING_TABLE_HEADER,
+    TEACHING_VALID_EXPR_MARKER, TSV_TEACHING_TABLE_HEADER,
 };
 
 /// True when `expr` is rooted on `entity_sym` (`e3`, `e3(…)`, `e3[…]`, …) but not a longer
@@ -41,7 +41,7 @@ fn assert_meaning_cells_no_legacy_opt_prefix(tsv: &str) {
     }
 }
 
-/// B5 — teaching round-trip guard. The teaching TSV *is* the language surface; a synthesized
+/// B5 — teaching round-trip guard. The language card *is* the language surface; a synthesized
 /// exemplar that does not parse under the live parser is a generated-surface defect of the same
 /// severity as a compiler bug. Render the table for the designated prompt-regression fixture and
 /// assert every concrete (non-placeholder, non-metadata) `plasm_expr` cell round-trips the parser.
@@ -86,14 +86,21 @@ fn teaching_tsv_exemplars_round_trip_parser() {
         {
             continue;
         }
-        // Template rows carry angle-bracket placeholders / ellipsis — not literal exemplars to parse.
-        if expr.contains('<') || expr.contains("..") {
+        // Template rows carry angle-bracket placeholders / ellipsis — validate stand-ins, not raw holes.
+        let expr_for_check = if expr.contains('<') {
+            super::teaching_util::teaching_expr_for_validation(expr)
+        } else if expr.contains("..") {
             continue;
-        }
+        } else {
+            expr.to_string()
+        };
         let stack = [crate::CgsLayer::unset(&cgs)];
-        parse_with_cgs_layers_program(expr, &stack, sym_map.clone(), None, false).unwrap_or_else(
-            |e| panic!("teaching exemplar must round-trip the parser: `{expr}` -> {e:?}"),
-        );
+        parse_with_cgs_layers_program(&expr_for_check, &stack, sym_map.clone(), None, false)
+            .unwrap_or_else(|e| {
+                panic!(
+                    "teaching exemplar must round-trip the parser: `{expr}` (check `{expr_for_check}`) -> {e:?}"
+                )
+            });
         checked += 1;
     }
     assert!(
@@ -102,7 +109,7 @@ fn teaching_tsv_exemplars_round_trip_parser() {
     );
 }
 
-/// Teaching TSV marks optionality in Meaning; method rows list all params (no `,..` elision).
+/// Language card marks optionality in Meaning; method rows list all params (no `,..` elision).
 #[test]
 fn prompt_matrix_tsv_optional_legend_is_compact() {
     let dir = matrix_fixture_dir();
@@ -111,7 +118,7 @@ fn prompt_matrix_tsv_optional_legend_is_compact() {
     assert_meaning_cells_no_legacy_opt_prefix(&tsv);
     assert!(
         tsv.contains("optional"),
-        "matrix teaching TSV should mark optional invoke/query slots with `optional`"
+        "matrix language card should mark optional invoke/query slots with `optional`"
     );
     for line in tsv.lines().skip(1) {
         let Some((expr, _meaning)) = line.split_once('\t') else {
@@ -146,35 +153,49 @@ fn github_pr_merge_zero_arity_invoke_omits_optional_meaning_when_schema_loads() 
         return;
     }
     let cgs = load_schema_dir(&dir).expect("github");
-    let tsv =
-        super::render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(Some("PullRequest")));
-    let mut saw_merge = false;
-    for line in tsv.lines().skip(1) {
-        let Some((expr, meaning)) = line.split_once('\t') else {
-            continue;
-        };
-        if !meaning.contains("Merge a pull request") {
-            continue;
-        }
-        saw_merge = true;
-        assert!(
-            !meaning
-                .split(" · ")
-                .any(|atom| atom.trim() == TEACHING_OPTIONAL_LEGEND_MARK),
-            "zero-arity merge must not gloss optional when expr lists no optional params: {line:?}"
-        );
-        assert!(
-            expr.contains("()"),
-            "expected zero-arity merge teaching row: {expr:?}"
-        );
-    }
+    let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
+    let mut cache = HashMap::new();
+    let mut gloss = None;
+    let block = collect_entity_teaching_block(
+        &cgs,
+        "PullRequest",
+        Some(&map),
+        None,
+        true,
+        &mut cache,
+        prompt_line_valid_cache_seed_cgs(&cgs),
+        &mut gloss,
+        None,
+        None,
+    );
+    let merge = block
+        .teaching_rows
+        .iter()
+        .find(|r| r.meta.source_capability.as_deref() == Some("pr_merge"))
+        .expect("expected pr_merge teaching row on PullRequest");
     assert!(
-        saw_merge,
-        "expected pr_merge teaching row in PullRequest TSV"
+        merge.teaching_expr.expression.contains("()"),
+        "expected zero-arity merge teaching row: {:?}",
+        merge.teaching_expr.expression
+    );
+    assert!(
+        merge.teaching_expr.legend.optional_params.is_empty(),
+        "zero-arity merge must not gloss optional when expr lists no optional params: {:?}",
+        merge.teaching_expr.legend.optional_params
+    );
+    let tsv = super::render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
+    let ms = map.method_sym_for("", "PullRequest", "pr_merge");
+    let merge_line = tsv
+        .lines()
+        .find(|l| l.contains(&format!(".{ms}()")))
+        .unwrap_or_else(|| panic!("expected .{ms}() in full language card"));
+    assert!(
+        !merge_line.contains("Merge a pull request"),
+        "rendered merge Meaning must omit capability prose: {merge_line}"
     );
 }
 
-/// Two-column teaching TSV surface invariants on `plasm_prompt_matrix` (no `apis/` coupling).
+/// Two-column language card surface invariants on `plasm_prompt_matrix` (no `apis/` coupling).
 #[test]
 fn prompt_matrix_tsv_teaching_surface_invariants() {
     let dir = matrix_fixture_dir();
@@ -198,7 +219,7 @@ fn prompt_matrix_tsv_teaching_surface_invariants() {
     );
     assert!(
         !tsv.contains(TEACHING_VALID_EXPR_MARKER),
-        "teaching TSV must not embed grammar contract"
+        "language card must not embed grammar contract"
     );
     assert!(
         PLASM_TOOL_DESCRIPTION.contains(TEACHING_VALID_EXPR_MARKER),
@@ -206,7 +227,8 @@ fn prompt_matrix_tsv_teaching_surface_invariants() {
     );
     assert_meaning_cells_no_legacy_opt_prefix(&tsv);
 
-    // Identity get: no fused projection bracket; entity banner lives on the projection witness only.
+    // Compound identity get may carry first-use `[wires]`; entity banner rides the first executable
+    // Meaning cell — never a noun card.
     let ruleset_identity_prefix = format!("{ruleset_es}(");
     let ruleset_meaning_prefix = format!("→ {ruleset_es}");
     let ruleset_identity = tsv
@@ -215,36 +237,30 @@ fn prompt_matrix_tsv_teaching_surface_invariants() {
             let cols: Vec<&str> = l.split('\t').collect();
             cols.len() == 2
                 && cols[0].starts_with(&ruleset_identity_prefix)
-                && !cols[0].contains('[')
                 && cols[1].starts_with(&ruleset_meaning_prefix)
         })
         .expect("Ruleset compound identity get row");
     let identity_cols: Vec<&str> = ruleset_identity.split('\t').collect();
     assert_eq!(identity_cols.len(), 2, "identity row should have 2 columns");
     assert!(
-        !identity_cols[0].contains('['),
-        "Ruleset identity get should not fuse a projection bracket; row={ruleset_identity:?}"
+        !tsv.lines().any(|l| {
+            let c: Vec<&str> = l.split('\t').collect();
+            c.len() == 2
+                && expr_starts_with_entity_sym(c[0], &ruleset_es)
+                && c[1].contains("noun")
+        }),
+        "Ruleset teaching must not emit noun cards:\n{tsv}"
     );
-    let ruleset_projection_row = tsv
+    let ruleset_first_executable = tsv
         .lines()
         .find(|l| {
             let c: Vec<&str> = l.split('\t').collect();
-            if c.len() != 2 {
-                return false;
-            }
-            let expr = c[0].trim();
-            expr_starts_with_entity_sym(expr, &ruleset_es)
-                && c[1].contains("· projection")
-                && parse_trailing_projection_bracket(expr).is_some()
+            c.len() == 2 && expr_starts_with_entity_sym(c[0].trim(), &ruleset_es)
         })
-        .expect("expected Ruleset projection witness TSV row");
+        .expect("expected Ruleset executable TSV row");
     assert!(
-        ruleset_projection_row.contains(&ruleset_banner),
-        "projection witness Meaning should carry Ruleset entity prose once: {ruleset_projection_row:?}"
-    );
-    assert!(
-        !identity_cols[1].contains(ruleset_banner.as_str()),
-        "identity get Meaning should not repeat entity banner prose; row={ruleset_identity:?}"
+        ruleset_first_executable.contains(&ruleset_banner),
+        "first Ruleset executable Meaning should carry entity prose once: {ruleset_first_executable:?}"
     );
 
     // Select-backed field: v# row carries allowed values; omit redundant `kind` wire gloss when prose matches the domain row.
@@ -288,7 +304,9 @@ fn prompt_matrix_tsv_teaching_surface_invariants() {
             cols.len() == 2
                 && expr_starts_with_entity_sym(cols[0], &entrypoint_es)
                 && cols[0].contains(".m")
-                && cols[1].to_lowercase().contains("entrypoint")
+                && (cols[1].to_lowercase().contains("entrypoint")
+                    || cols[1].contains("scope")
+                    || cols[1].contains('↠'))
         })
         .expect("RulesetEntrypoint action invoke teaching table row");
     assert!(
@@ -305,24 +323,24 @@ fn prompt_matrix_tsv_teaching_surface_invariants() {
     });
     assert!(
         zone_query.is_some(),
-        "Zone query exemplar should omit rows: (set-equal provides / witness)"
+        "Zone query exemplar should omit rows: in Meaning"
     );
     let ruleset_query = tsv.lines().find(|l| {
         let cols: Vec<&str> = l.split('\t').collect();
         cols.len() == 2
             && cols[0].starts_with(&format!("{ruleset_es}{{"))
-            && !cols[1].contains("· projection")
+            && !cols[1].contains("noun")
     });
     let ruleset_query = ruleset_query.expect("Ruleset scoped query teaching row");
     let rq_expr = ruleset_query.split('\t').next().unwrap_or("");
     match parse_trailing_projection_bracket(rq_expr.trim()) {
         None => assert!(
             !ruleset_query.contains("rows:"),
-            "set-equal Ruleset query omits rows: : {ruleset_query}"
+            "Ruleset query omits rows: : {ruleset_query}"
         ),
         Some(_) => assert!(
             !ruleset_query.contains("rows:"),
-            "divergent Ruleset provides keep bracket on expr without rows: : {ruleset_query}"
+            "Ruleset query with bracket omits rows: in Meaning: {ruleset_query}"
         ),
     }
     assert!(
@@ -337,10 +355,11 @@ fn prompt_matrix_tsv_teaching_surface_invariants() {
         tsv.lines().any(|l| {
             let cols: Vec<&str> = l.split('\t').collect();
             cols.len() == 2
-                && cols[1].contains("· projection")
+                && !cols[1].contains("noun")
                 && parse_trailing_projection_bracket(cols[0].trim()).is_some()
+                && (cols[0].contains('{') || cols[0].contains('(') || cols[0].contains('~'))
         }),
-        "expected a projection witness row with trailing [p#,…]"
+        "expected an executable row with trailing [wires] by first use"
     );
     assert!(
         tsv.lines().any(|l| {
@@ -349,7 +368,7 @@ fn prompt_matrix_tsv_teaching_surface_invariants() {
                 && ((c[0].starts_with('v') && c[1].contains(" · "))
                     || (c[0].starts_with('p') && c[1].starts_with('v') && c[1].contains(" · ")))
         }),
-        "expected at least one value-domain gloss row in matrix teaching TSV"
+        "expected at least one value-domain gloss row in matrix language card"
     );
 }
 
@@ -367,7 +386,7 @@ fn prompt_matrix_full_tsv_size_within_baseline() {
     );
     assert!(
         tsv.len() > 1_500,
-        "plasm_prompt_matrix teaching TSV unexpectedly tiny ({} bytes)",
+        "plasm_prompt_matrix language card unexpectedly tiny ({} bytes)",
         tsv.len()
     );
 }
@@ -384,6 +403,7 @@ fn seeded_pokemon_teaching_includes_bare_query_row() {
     }
     let mut cgs = load_schema_dir(&dir).expect("pokeapi");
     cgs.entry_id = Some("pokeapi".into());
+    cgs.stamp_entity_ref_catalogs();
     let endpoints = crate::relation_endpoint_keys("pokeapi", &["Pokemon".to_string()]);
     let delta = derive_intent_exposure_surface_batch(
         &cgs,
@@ -438,7 +458,7 @@ fn seeded_pokemon_teaching_includes_bare_query_row() {
 
 /// B2 — simple string-id entities teach positional `$` hole, not sample ids / `apis/` coupling.
 #[test]
-fn simple_string_id_identity_row_uses_dollar_placeholder() {
+fn simple_string_id_identity_row_uses_id_hole() {
     use crate::schema::{
         CapabilityKind, CapabilityMapping, CapabilitySchema, FieldSchema, FieldValueKind,
         NamedValueSchema, ResourceSchema, ValueDomainKey, CGS,
@@ -492,7 +512,7 @@ fn simple_string_id_identity_row_uses_dollar_placeholder() {
         "method": "GET",
         "path": [
             {"type": "literal", "value": "specimens"},
-            {"type": "param", "name": "name"}
+            {"type": "var", "name": "name"}
         ]
     });
     cgs.add_capability(CapabilitySchema {
@@ -533,7 +553,7 @@ fn simple_string_id_identity_row_uses_dollar_placeholder() {
         None,
         None,
     );
-    let want = format!("{es}($)");
+    let want = format!("{es}(<id>)");
     let identity = block
         .teaching_rows
         .iter()
