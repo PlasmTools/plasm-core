@@ -1,0 +1,271 @@
+# File System — AppWorld. Auth: login → access_token → Bearer header.
+
+_auth_header: &auth_header
+  type: object
+  fields:
+  - - Authorization
+    - type: format
+      template: "Bearer {token}"
+      vars:
+        token:
+          type: var
+          name: access_token
+
+login:
+  method: POST
+  path:
+  - { type: literal, value: file_system }
+  - { type: literal, value: auth }
+  - { type: literal, value: token }
+  body_format: form_urlencoded
+  body:
+    type: object
+    fields:
+    - [username, { type: var, name: username }]
+    - [password, { type: var, name: password }]
+
+logout:
+  method: POST
+  path:
+  - { type: literal, value: file_system }
+  - { type: literal, value: auth }
+  - { type: literal, value: logout }
+  headers: *auth_header
+
+directory_query:
+  method: GET
+  path:
+  - { type: literal, value: file_system }
+  - { type: literal, value: directory }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - - directory_path
+      - type: if
+        condition: { type: exists, var: directory_path }
+        then_expr: { type: var, name: directory_path }
+        else_expr: { type: const, value: null }
+    - - substring
+      - type: if
+        condition: { type: exists, var: substring }
+        then_expr: { type: var, name: substring }
+        else_expr: { type: const, value: null }
+    - - entry_type
+      - type: if
+        condition: { type: exists, var: entry_type }
+        then_expr: { type: var, name: entry_type }
+        else_expr: { type: const, value: null }
+    - - recursive
+      - type: if
+        condition: { type: exists, var: recursive }
+        then_expr: { type: var, name: recursive }
+        else_expr: { type: const, value: null }
+
+directory_create:
+  method: POST
+  path:
+  - { type: literal, value: file_system }
+  - { type: literal, value: directory }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [directory_path, { type: var, name: directory_path }]
+    - - recursive
+      - type: if
+        condition: { type: exists, var: recursive }
+        then_expr: { type: var, name: recursive }
+        else_expr: { type: const, value: null }
+
+directory_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: file_system }
+  - { type: literal, value: directory }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - [directory_path, { type: var, name: directory_path }]
+
+directory_exists:
+  method: GET
+  path:
+  - { type: literal, value: file_system }
+  - { type: literal, value: directory }
+  - { type: literal, value: exists }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - [directory_path, { type: var, name: directory_path }]
+
+directory_copy:
+  method: POST
+  path:
+  - { type: literal, value: file_system }
+  - { type: literal, value: directory }
+  - { type: literal, value: copy }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [source_directory_path, { type: var, name: source_directory_path }]
+    - [destination_directory_path, { type: var, name: destination_directory_path }]
+
+directory_move:
+  method: POST
+  path:
+  - { type: literal, value: file_system }
+  - { type: literal, value: directory }
+  - { type: literal, value: move }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [source_directory_path, { type: var, name: source_directory_path }]
+    - [destination_directory_path, { type: var, name: destination_directory_path }]
+
+directory_compress:
+  method: POST
+  path:
+  - { type: literal, value: file_system }
+  - { type: literal, value: directory }
+  - { type: literal, value: compress }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [directory_path, { type: var, name: directory_path }]
+    - - compressed_file_path
+      - type: if
+        condition: { type: exists, var: compressed_file_path }
+        then_expr: { type: var, name: compressed_file_path }
+        else_expr: { type: const, value: null }
+    - - delete_directory
+      - type: if
+        condition: { type: exists, var: delete_directory }
+        then_expr: { type: var, name: delete_directory }
+        else_expr: { type: const, value: null }
+    - - overwrite
+      - type: if
+        condition: { type: exists, var: overwrite }
+        then_expr: { type: var, name: overwrite }
+        else_expr: { type: const, value: null }
+
+file_get:
+  method: GET
+  path:
+  - { type: literal, value: file_system }
+  - { type: literal, value: file }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - [file_path, { type: var, name: id }]
+
+file_create:
+  method: POST
+  path:
+  - { type: literal, value: file_system }
+  - { type: literal, value: file }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [file_path, { type: var, name: file_path }]
+    - [content, { type: var, name: content }]
+    - - overwrite
+      - type: if
+        condition: { type: exists, var: overwrite }
+        then_expr: { type: var, name: overwrite }
+        else_expr: { type: const, value: null }
+
+file_update:
+  method: PATCH
+  path:
+  - { type: literal, value: file_system }
+  - { type: literal, value: file }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [file_path, { type: var, name: id }]
+    - [content, { type: var, name: content }]
+
+file_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: file_system }
+  - { type: literal, value: file }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - [file_path, { type: var, name: id }]
+
+file_exists:
+  method: GET
+  path:
+  - { type: literal, value: file_system }
+  - { type: literal, value: file }
+  - { type: literal, value: exists }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - [file_path, { type: var, name: file_path }]
+
+file_copy:
+  method: POST
+  path:
+  - { type: literal, value: file_system }
+  - { type: literal, value: file }
+  - { type: literal, value: copy }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [source_file_path, { type: var, name: source_file_path }]
+    - [destination_file_path, { type: var, name: destination_file_path }]
+
+file_move:
+  method: POST
+  path:
+  - { type: literal, value: file_system }
+  - { type: literal, value: file }
+  - { type: literal, value: move }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [source_file_path, { type: var, name: source_file_path }]
+    - [destination_file_path, { type: var, name: destination_file_path }]
+
+file_decompress:
+  method: POST
+  path:
+  - { type: literal, value: file_system }
+  - { type: literal, value: file }
+  - { type: literal, value: decompress }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [compressed_file_path, { type: var, name: compressed_file_path }]
+    - - decompressed_directory_path
+      - type: if
+        condition: { type: exists, var: decompressed_directory_path }
+        then_expr: { type: var, name: decompressed_directory_path }
+        else_expr: { type: const, value: null }
+    - - retain_dates
+      - type: if
+        condition: { type: exists, var: retain_dates }
+        then_expr: { type: var, name: retain_dates }
+        else_expr: { type: const, value: null }
+    - - delete_compressed_file
+      - type: if
+        condition: { type: exists, var: delete_compressed_file }
+        then_expr: { type: var, name: delete_compressed_file }
+        else_expr: { type: const, value: null }

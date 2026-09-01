@@ -1,0 +1,621 @@
+version: 4
+entry_id: phone
+auth:
+  scheme: none
+http_backend: http://127.0.0.1:9000
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  external_sms:
+    description: Outbound SMS or voice message delivered to a phone number.
+    severity: critical
+entities:
+  AuthSession:
+    id_field: access_token
+    description: Login session for Phone (Bearer token).
+    discovery:
+      names:
+      - login
+      - auth
+      - access token
+      seed_class: primary
+      co_seed_with: catalog_primary
+    fields:
+      access_token:
+        required: true
+        value_ref: nv_access_token
+      token_type:
+        required: false
+        value_ref: nv_str
+  Contact:
+    id_field: contact_id
+    description: Phone contact with name, number, and optional email/addresses.
+    discovery:
+      names:
+      - contact
+      - contacts
+      - address book
+      seed_class: primary
+    fields:
+      contact_id:
+        required: true
+        value_ref: nv_contact_id
+      first_name:
+        required: true
+        value_ref: nv_str
+      last_name:
+        required: false
+        value_ref: nv_str
+      email:
+        required: false
+        value_ref: nv_email
+      phone_number:
+        required: true
+        value_ref: nv_phone
+      relationships:
+        required: false
+        value_ref: nv_str_list
+      birthday:
+        required: false
+        value_ref: nv_str
+      home_address:
+        required: false
+        value_ref: nv_str
+      work_address:
+        required: false
+        value_ref: nv_str
+      created_at:
+        required: false
+        value_ref: nv_datetime
+  Alarm:
+    id_field: alarm_id
+    description: Device alarm with time and repeat days.
+    discovery:
+      names:
+      - alarm
+      - alarms
+      seed_class: primary
+    fields:
+      alarm_id:
+        required: true
+        value_ref: nv_alarm_id
+      time:
+        required: true
+        value_ref: nv_str
+      repeat_days:
+        required: false
+        value_ref: nv_str_list
+      label:
+        required: false
+        value_ref: nv_str
+      enabled:
+        required: false
+        value_ref: nv_bool
+      snooze_minutes:
+        required: false
+        value_ref: nv_int
+      vibration:
+        required: false
+        value_ref: nv_bool
+      created_at:
+        required: false
+        value_ref: nv_datetime
+  TextMessage:
+    id_field: text_message_id
+    description: SMS / text message between phone numbers.
+    discovery:
+      names:
+      - text
+      - sms
+      - message
+      seed_class: primary
+    fields:
+      text_message_id:
+        required: true
+        value_ref: nv_text_id
+      message:
+        required: true
+        value_ref: nv_message
+        data_class: untrusted
+      sent_at:
+        required: false
+        value_ref: nv_datetime
+  VoiceMessage:
+    id_field: voice_message_id
+    description: Voice message between phone numbers.
+    fields:
+      voice_message_id:
+        required: true
+        value_ref: nv_voice_id
+      message:
+        required: true
+        value_ref: nv_message
+        data_class: untrusted
+      sent_at:
+        required: false
+        value_ref: nv_datetime
+  Profile:
+    id_field: phone_number
+    description: Public phone profile lookup.
+    fields:
+      first_name:
+        required: false
+        value_ref: nv_str
+      last_name:
+        required: false
+        value_ref: nv_str
+      phone_number:
+        required: true
+        value_ref: nv_phone
+      registered_at:
+        required: false
+        value_ref: nv_datetime
+  DateTime:
+    id_field: date
+    description: Current device date and time.
+    fields:
+      date:
+        required: true
+        value_ref: nv_str
+      time:
+        required: true
+        value_ref: nv_str
+capabilities:
+  login:
+    description: Login to Phone; returns access_token for Bearer auth.
+    kind: action
+    entity: AuthSession
+    parameters:
+    - name: username
+      value_ref: nv_login_username
+      required: true
+    - name: password
+      value_ref: nv_password
+      required: true
+    provides:
+    - access_token
+    - token_type
+    output:
+      type: side_effect
+      description: Creates an authenticated Phone session.
+  logout:
+    description: Logout and invalidate the access token.
+    kind: action
+    entity: AuthSession
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    output:
+      type: side_effect
+      description: Ends the Phone session for this token.
+  contact_query:
+    description: Search contacts by name/relationship.
+    kind: search
+    entity: Contact
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+      role: search
+    - name: relationship
+      value_ref: nv_str
+      required: false
+      role: filter
+    - name: page_index
+      value_ref: nv_int
+      required: false
+      role: response_control
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+      role: response_control
+    provides:
+    - contact_id
+    - first_name
+    - last_name
+    - email
+    - phone_number
+    - relationships
+    - birthday
+    - home_address
+    - work_address
+    - created_at
+  contact_create:
+    description: Add a contact.
+    kind: create
+    entity: Contact
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: first_name
+      value_ref: nv_str
+      required: true
+    - name: last_name
+      value_ref: nv_str
+      required: false
+    - name: phone_number
+      value_ref: nv_phone
+      required: true
+    - name: email
+      value_ref: nv_email
+      required: false
+    - name: relationships
+      value_ref: nv_str_list
+      required: false
+    - name: birthday
+      value_ref: nv_str
+      required: false
+    - name: home_address
+      value_ref: nv_str
+      required: false
+    - name: work_address
+      value_ref: nv_str
+      required: false
+    provides:
+    - contact_id
+  contact_update:
+    description: Update a contact.
+    kind: update
+    entity: Contact
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: first_name
+      value_ref: nv_str
+      required: false
+    - name: last_name
+      value_ref: nv_str
+      required: false
+    - name: phone_number
+      value_ref: nv_phone
+      required: false
+    - name: email
+      value_ref: nv_email
+      required: false
+    - name: relationships
+      value_ref: nv_str_list
+      required: false
+    - name: birthday
+      value_ref: nv_str
+      required: false
+    - name: home_address
+      value_ref: nv_str
+      required: false
+    - name: work_address
+      value_ref: nv_str
+      required: false
+  contact_delete:
+    description: Delete a contact.
+    kind: delete
+    entity: Contact
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+  alarm_query:
+    description: List alarms.
+    kind: query
+    entity: Alarm
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: page_index
+      value_ref: nv_int
+      required: false
+      role: response_control
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+      role: response_control
+    provides:
+    - alarm_id
+    - time
+    - repeat_days
+    - label
+    - enabled
+    - snooze_minutes
+    - vibration
+    - created_at
+  alarm_get:
+    description: Show one alarm.
+    kind: get
+    entity: Alarm
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - alarm_id
+    - time
+    - repeat_days
+    - label
+    - enabled
+    - snooze_minutes
+    - vibration
+    - created_at
+  alarm_create:
+    description: Create an alarm.
+    kind: create
+    entity: Alarm
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: time
+      value_ref: nv_str
+      required: true
+    - name: repeat_days
+      value_ref: nv_str_list
+      required: false
+    - name: label
+      value_ref: nv_str
+      required: false
+    - name: enabled
+      value_ref: nv_bool
+      required: false
+    - name: snooze_minutes
+      value_ref: nv_int
+      required: false
+    - name: vibration
+      value_ref: nv_bool
+      required: false
+    provides:
+    - alarm_id
+  alarm_update:
+    description: Update an alarm.
+    kind: update
+    entity: Alarm
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: time
+      value_ref: nv_str
+      required: false
+    - name: repeat_days
+      value_ref: nv_str_list
+      required: false
+    - name: label
+      value_ref: nv_str
+      required: false
+    - name: enabled
+      value_ref: nv_bool
+      required: false
+    - name: snooze_minutes
+      value_ref: nv_int
+      required: false
+    - name: vibration
+      value_ref: nv_bool
+      required: false
+  alarm_delete:
+    description: Delete an alarm.
+    kind: delete
+    entity: Alarm
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+  text_message_query:
+    description: Search text messages.
+    kind: search
+    entity: TextMessage
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+      role: search
+    - name: phone_number
+      value_ref: nv_phone
+      required: false
+      role: filter
+    - name: only_latest_per_contact
+      value_ref: nv_bool
+      required: false
+      role: filter
+    - name: page_index
+      value_ref: nv_int
+      required: false
+      role: response_control
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+      role: response_control
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+      role: sort
+    provides:
+    - text_message_id
+    - message
+    - sent_at
+  text_message_get:
+    description: Show one text message.
+    kind: get
+    entity: TextMessage
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - text_message_id
+    - message
+    - sent_at
+  text_message_send:
+    description: Send a text message to a phone number.
+    kind: action
+    entity: TextMessage
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: phone_number
+      value_ref: nv_phone
+      required: true
+    - name: message
+      value_ref: nv_message
+      required: true
+      sink_class: external_sms
+    output:
+      type: side_effect
+      description: Sends an SMS to the given phone number.
+  text_message_delete:
+    description: Delete a text message.
+    kind: delete
+    entity: TextMessage
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+  voice_message_query:
+    description: Search voice messages.
+    kind: search
+    entity: VoiceMessage
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+      role: search
+    - name: phone_number
+      value_ref: nv_phone
+      required: false
+      role: filter
+    - name: only_latest_per_contact
+      value_ref: nv_bool
+      required: false
+      role: filter
+    - name: page_index
+      value_ref: nv_int
+      required: false
+      role: response_control
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+      role: response_control
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+      role: sort
+    provides:
+    - voice_message_id
+    - message
+    - sent_at
+  voice_message_send:
+    description: Send a voice message to a phone number.
+    kind: action
+    entity: VoiceMessage
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: phone_number
+      value_ref: nv_phone
+      required: true
+    - name: message
+      value_ref: nv_message
+      required: true
+      sink_class: external_sms
+    output:
+      type: side_effect
+      description: Sends a voice message to the given phone number.
+  voice_message_delete:
+    description: Delete a voice message.
+    kind: delete
+    entity: VoiceMessage
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+  profile_get:
+    description: Show phone profile by phone number.
+    kind: get
+    entity: Profile
+    parameters:
+    - name: phone_number
+      value_ref: nv_phone
+      required: true
+    provides:
+    - first_name
+    - last_name
+    - phone_number
+    - registered_at
+  date_time_get:
+    description: Get current device date and time.
+    kind: get
+    entity: DateTime
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - date
+    - time
+values:
+  nv_str:
+    type: string
+
+    description: Free-form string.
+  nv_email:
+    type: email
+
+    description: Email address of a user or counterparty.
+  nv_login_username:
+    type: e164
+
+    description: Account-holder login id for this service (phone number here) — not a counterparty.
+  nv_password:
+    type: string
+
+    description: Account-holder password for this service.
+  nv_access_token:
+    type: string
+
+    description: Bearer access token from login.
+  nv_phone:
+    type: e164
+
+    description: Phone number.
+  nv_message:
+    type: document
+
+    description: Message body text.
+  nv_contact_id:
+    type: integer
+    description: Contact primary key.
+  nv_alarm_id:
+    type: integer
+    description: Alarm primary key.
+  nv_text_id:
+    type: integer
+    description: Text message primary key.
+  nv_voice_id:
+    type: integer
+    description: Voice message primary key.
+  nv_str_list:
+    type: array
+    items:
+      value_ref: nv_str
+    description: List of strings.
+  nv_bool:
+    type: boolean
+    description: Boolean flag.
+  nv_int:
+    type: integer
+    description: Integer.
+  nv_datetime:
+    type: rfc3339
+
+    description: ISO datetime string.

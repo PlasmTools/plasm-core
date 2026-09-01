@@ -1,0 +1,23 @@
+- id: login_phone
+  schema: phone
+  goal: Login to phone with username and password to get an access token
+  tags: [action, auth]
+  covers: [invoke]
+  expect:
+    entities_any: [AuthSession]
+
+- id: search_contacts
+  schema: phone
+  goal: Search my phone contacts for mom after logging in
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Contact]
+
+- id: send_text
+  schema: phone
+  goal: Send a text message saying running late to a phone number
+  tags: [action]
+  covers: [invoke]
+  expect:
+    entities_any: [TextMessage]

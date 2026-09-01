@@ -1,0 +1,468 @@
+version: 6
+entry_id: venmo
+
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  pii_payment:
+    description: Payment card digits or owner identity.
+    severity: sensitive
+  external_pay:
+    description: Outbound payment or payment request leaving the account boundary.
+    severity: critical
+
+values:
+  nv_access_token: { type: string, description: Bearer access token returned by login. }
+  nv_token_type:
+    type: enum
+    description: OAuth token type from login.
+    enum: [bearer]
+  nv_login_username: { type: string, description: Account-holder login id for this service — not a payment counterparty. }
+  nv_email: { type: email, description: Email of a Venmo user (profile or counterparty). }
+  nv_password: { type: string, description: Account-holder password for this service. }
+  nv_person_name: { type: string, description: Display name of a Venmo user. }
+  nv_search_query: { type: string, description: Free-text search query. }
+  nv_description: { type: markdown, description: Payment or request note text. }
+  nv_status:
+    type: enum
+    description: Payment-request status filter.
+    enum: [pending, approved, denied]
+  nv_direction:
+    type: enum
+    description: Transaction direction filter.
+    enum: [sent, received]
+  nv_sort_field: { type: string, description: Sort attribute with optional +/- prefix (created_at, like_count, amount). }
+  nv_card_name: { type: string, description: Payment card display name. }
+  nv_card_digits: { type: string, description: Card last-four or digit string. }
+  nv_transaction_id: { type: integer, description: Transaction primary key. }
+  nv_payment_request_id: { type: integer, description: Payment request primary key. }
+  nv_payment_card_id: { type: integer, description: Payment card primary key. }
+  nv_comment_id: { type: integer, description: Transaction comment primary key. }
+  nv_notification_id: { type: integer, description: Notification primary key. }
+  nv_card_number: { type: integer, description: Card number digits as integer. }
+  nv_cvv: { type: integer, description: Card CVV digits as integer. }
+  nv_month: { type: integer, description: Card expiry month. }
+  nv_year: { type: integer, description: Card expiry year. }
+  nv_amount: { type: number, description: Money amount as JSON number. }
+  nv_count: { type: integer, description: Count or limit. }
+  nv_private: { type: boolean, description: Whether the payment/request is private. }
+  nv_read: { type: boolean, description: Whether a notification has been read. }
+  nv_comment: { type: string, description: Text body of a transaction comment. }
+  nv_notification_type:
+    type: enum
+    description: Venmo notification kind.
+    enum: [payment_request_approved, payment_request_denied, payment_request_received, payment_request_reminded, received_money]
+  nv_notification_title: { type: string, description: Notification title. }
+  nv_notification_message: { type: string, description: Notification message body. }
+  nv_timestamp: { type: rfc3339, description: Instant on the wire (created_at / updated_at / …). }
+  nv_filter_date: { type: iso8601_date, description: Calendar date filter for min/max created_at (YYYY-MM-DD). }
+
+entities:
+  AuthSession:
+    id_field: access_token
+    description: Establish or end authenticated access to Venmo.
+    discovery: { names: [login, logout, authentication, access token], seed_class: primary, co_seed_with: catalog_primary }
+    fields:
+      access_token: { value_ref: nv_access_token, required: true }
+      token_type: { value_ref: nv_token_type }
+  User:
+    id_field: email
+    description: Find a Venmo user before viewing their profile or exchanging money.
+    discovery: { names: [user, person, profile, recipient], seed_class: primary }
+    fields:
+      email: { value_ref: nv_email, required: true }
+      first_name: { value_ref: nv_person_name }
+      last_name: { value_ref: nv_person_name }
+      registered_at: { value_ref: nv_timestamp }
+      friends_since: { value_ref: nv_timestamp }
+    relations:
+      friends:
+        target: Friend
+        cardinality: many
+        materialize: { kind: query_scoped, capability: friend_query, param: user_email }
+  Friend:
+    id_field: email
+    description: Search and manage Venmo friendships.
+    discovery: { names: [friend, contact], seed_class: primary }
+    fields:
+      email: { value_ref: nv_email, required: true }
+      first_name: { value_ref: nv_person_name }
+      last_name: { value_ref: nv_person_name }
+      registered_at: { value_ref: nv_timestamp }
+      friends_since: { value_ref: nv_timestamp }
+  Balance:
+    id_field: venmo_balance
+    description: Inspect or move money through the authenticated user's Venmo balance.
+    discovery: { names: [balance, wallet, funds], seed_class: primary }
+    fields:
+      venmo_balance: { value_ref: nv_amount, required: true }
+  Transaction:
+    id_field: transaction_id
+    description: Review completed transfers or send money you already owe — not for asking someone to pay you.
+    discovery: { names: [transaction, payment, transfer, pay], seed_class: primary }
+    fields:
+      transaction_id: { value_ref: nv_transaction_id, required: true }
+      amount: { value_ref: nv_amount, required: true }
+      description: { value_ref: nv_description, data_class: untrusted }
+      created_at: { value_ref: nv_timestamp }
+      updated_at: { value_ref: nv_timestamp }
+      private: { value_ref: nv_private }
+      like_count: { value_ref: nv_count }
+      payment_card_digits: { value_ref: nv_card_digits, data_class: pii_payment }
+      comment_count: { value_ref: nv_count }
+  PaymentRequest:
+    id_field: payment_request_id
+    description: Ask someone to pay you (request money) or track/resolve those requests — not for sending your own funds.
+    discovery: { names: [payment request, money request, charge, request money], seed_class: primary }
+    fields:
+      payment_request_id: { value_ref: nv_payment_request_id, required: true }
+      amount: { value_ref: nv_amount, required: true }
+      description: { value_ref: nv_description, data_class: untrusted }
+      created_at: { value_ref: nv_timestamp }
+      updated_at: { value_ref: nv_timestamp }
+      approved_at: { value_ref: nv_timestamp }
+      denied_at: { value_ref: nv_timestamp }
+      private: { value_ref: nv_private }
+  PaymentCard:
+    id_field: payment_card_id
+    description: Select a linked payment source for balance and request operations.
+    discovery: { names: [payment card, card, funding source], seed_class: primary }
+    fields:
+      payment_card_id: { value_ref: nv_payment_card_id, required: true }
+      card_name: { value_ref: nv_card_name }
+      owner_name: { value_ref: nv_person_name }
+      card_number: { value_ref: nv_card_number, data_class: pii_payment }
+      expiry_year: { value_ref: nv_year }
+      expiry_month: { value_ref: nv_month }
+      cvv_number: { value_ref: nv_cvv, data_class: pii_payment }
+  TransactionComment:
+    id_field: comment_id
+    description: Read or write comments on a Venmo transaction.
+    discovery: { names: [transaction comment, comment], seed_class: dependent }
+    fields:
+      comment_id: { value_ref: nv_comment_id, required: true }
+      transaction_id: { value_ref: nv_transaction_id, required: true }
+      comment: { value_ref: nv_comment, data_class: untrusted }
+      created_at: { value_ref: nv_timestamp }
+      like_count: { value_ref: nv_count }
+  Notification:
+    id_field: notification_id
+    description: Manage Venmo inbox notifications (payment requests, reminders, received money).
+    discovery: { names: [notification, alert, inbox], seed_class: ambient }
+    fields:
+      notification_id: { value_ref: nv_notification_id, required: true }
+      type: { value_ref: nv_notification_type }
+      title: { value_ref: nv_notification_title }
+      message: { value_ref: nv_notification_message, data_class: untrusted }
+      read: { value_ref: nv_read }
+      created_at: { value_ref: nv_timestamp }
+
+capabilities:
+  login:
+    description: Authenticate as this Venmo account holder (login id + password) — not a payment recipient.
+    kind: action
+    entity: AuthSession
+    parameters:
+    - { name: username, value_ref: nv_login_username, required: true }
+    - { name: password, value_ref: nv_password, required: true }
+    provides: [access_token, token_type]
+    output: { type: side_effect, description: Creates an authenticated Venmo session. }
+  logout:
+    description: Invalidate an authenticated Venmo session.
+    kind: action
+    entity: AuthSession
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    output: { type: side_effect, description: Ends the Venmo session represented by the access token. }
+  user_search:
+    description: Search Venmo users by name or email.
+    kind: search
+    entity: User
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: query, value_ref: nv_search_query, required: true, role: search }
+    provides: [email, first_name, last_name, registered_at, friends_since]
+  user_get:
+    description: Show a user's public Venmo profile and friendship status.
+    kind: get
+    entity: User
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    provides: [email, first_name, last_name, registered_at, friends_since]
+  friend_query:
+    description: Search the authenticated user's friends or another user's friends.
+    kind: search
+    entity: Friend
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: query, value_ref: nv_search_query, role: search }
+    - { name: user_email, value_ref: nv_email, role: scope }
+    provides: [email, first_name, last_name, registered_at, friends_since]
+  friend_add:
+    description: Add a Venmo user as a friend.
+    kind: action
+    entity: Friend
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: user_email, value_ref: nv_email, required: true }
+    output: { type: side_effect, description: Creates a friendship with the specified Venmo user. }
+  friend_remove:
+    description: Remove an existing Venmo friendship.
+    kind: delete
+    entity: Friend
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+  balance_get:
+    description: Show the authenticated user's current Venmo balance.
+    kind: get
+    entity: Balance
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    provides: [venmo_balance]
+  balance_add:
+    description: Add money to the Venmo balance from a linked payment card.
+    kind: action
+    entity: Balance
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: amount, value_ref: nv_amount, required: true }
+    - { name: payment_card_id, value_ref: nv_payment_card_id, required: true }
+    output: { type: side_effect, description: Increases the authenticated user's Venmo balance. }
+  balance_withdraw:
+    description: Withdraw money from the Venmo balance to a linked payment card.
+    kind: action
+    entity: Balance
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: amount, value_ref: nv_amount, required: true }
+    - { name: payment_card_id, value_ref: nv_payment_card_id, required: true }
+    output: { type: side_effect, description: Decreases the authenticated user's Venmo balance. }
+  transaction_query:
+    description: Find the authenticated user's sent and received transactions.
+    kind: search
+    entity: Transaction
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: query, value_ref: nv_search_query, role: search }
+    - { name: user_email, value_ref: nv_email }
+    - { name: min_created_at, value_ref: nv_filter_date }
+    - { name: max_created_at, value_ref: nv_filter_date }
+    - { name: min_like_count, value_ref: nv_count }
+    - { name: max_like_count, value_ref: nv_count }
+    - { name: min_amount, value_ref: nv_amount }
+    - { name: max_amount, value_ref: nv_amount }
+    - { name: private, value_ref: nv_private }
+    - { name: direction, value_ref: nv_direction }
+    - { name: sort_by, value_ref: nv_sort_field, role: sort }
+    provides: &transaction_fields
+    - transaction_id
+    - amount
+    - description
+    - created_at
+    - updated_at
+    - private
+    - like_count
+    - payment_card_digits
+    - comment_count
+  transaction_get:
+    description: Show the details of one Venmo transaction.
+    kind: get
+    entity: Transaction
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    provides: *transaction_fields
+  transaction_create:
+    description: Send your money to another Venmo user (you pay them).
+    kind: create
+    entity: Transaction
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: receiver_email, value_ref: nv_email, required: true }
+    - { name: amount, value_ref: nv_amount, required: true }
+    - { name: description, value_ref: nv_description, sink_class: external_pay }
+    - { name: payment_card_id, value_ref: nv_payment_card_id }
+    - { name: private, value_ref: nv_private }
+    provides: [transaction_id]
+  payment_request_received_query:
+    description: List payment requests received from other Venmo users.
+    kind: query
+    entity: PaymentRequest
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: status, value_ref: nv_status }
+    provides: &payment_request_fields
+    - payment_request_id
+    - amount
+    - description
+    - created_at
+    - updated_at
+    - approved_at
+    - denied_at
+    - private
+  payment_request_sent_query:
+    description: List payment requests sent to other Venmo users.
+    kind: query
+    entity: PaymentRequest
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: status, value_ref: nv_status }
+    provides: *payment_request_fields
+  payment_request_create:
+    description: Request money from another Venmo user (they pay you); keep the request public unless the task asks for private.
+    kind: create
+    entity: PaymentRequest
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: user_email, value_ref: nv_email, required: true }
+    - { name: amount, value_ref: nv_amount, required: true }
+    - { name: description, value_ref: nv_description, sink_class: external_pay }
+    - { name: private, value_ref: nv_private }
+    provides: [payment_request_id]
+  payment_request_approve:
+    description: Approve and pay a received payment request.
+    kind: action
+    entity: PaymentRequest
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: payment_card_id, value_ref: nv_payment_card_id }
+    output: { type: side_effect, description: Approves the payment request and transfers the requested money. }
+  payment_request_deny:
+    description: Deny a received payment request.
+    kind: action
+    entity: PaymentRequest
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    output: { type: side_effect, description: Marks the payment request as denied. }
+  payment_request_update:
+    description: Update amount, description, or privacy on a pending payment request you sent.
+    kind: update
+    entity: PaymentRequest
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: amount, value_ref: nv_amount }
+    - { name: description, value_ref: nv_description, sink_class: external_pay }
+    - { name: private, value_ref: nv_private }
+  payment_request_remind:
+    description: Send a reminder notification about a pending payment request you sent.
+    kind: action
+    entity: PaymentRequest
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    output: { type: side_effect, description: Notifies the recipient about the outstanding payment request. }
+  payment_request_delete:
+    description: Delete a pending payment request you sent.
+    kind: delete
+    entity: PaymentRequest
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+  transaction_update:
+    description: Update description or privacy on a transaction you sent.
+    kind: update
+    entity: Transaction
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: description, value_ref: nv_description }
+    - { name: private, value_ref: nv_private }
+  transaction_like:
+    description: Like a transaction.
+    kind: action
+    entity: Transaction
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    output: { type: side_effect, description: Records a like on the transaction. }
+  transaction_unlike:
+    description: Unlike a transaction.
+    kind: action
+    entity: Transaction
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    output: { type: side_effect, description: Removes the authenticated user's like from the transaction. }
+  transaction_comment_create:
+    description: Add a comment on a Venmo transaction.
+    kind: create
+    entity: TransactionComment
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: transaction_id, value_ref: nv_transaction_id, required: true }
+    - { name: comment, value_ref: nv_comment, required: true }
+    provides: [comment_id]
+  transaction_comment_update:
+    description: Edit the text of a transaction comment you wrote.
+    kind: update
+    entity: TransactionComment
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: comment, value_ref: nv_comment, required: true }
+  transaction_comment_delete:
+    description: Delete a transaction comment you wrote.
+    kind: delete
+    entity: TransactionComment
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+  payment_card_query:
+    description: List payment cards linked to the authenticated user's account.
+    kind: query
+    entity: PaymentCard
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    provides: [payment_card_id, card_name, owner_name, card_number, expiry_year, expiry_month, cvv_number]
+  payment_card_create:
+    description: Add a payment card to the authenticated user's Venmo account.
+    kind: create
+    entity: PaymentCard
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: card_name, value_ref: nv_card_name, required: true }
+    - { name: owner_name, value_ref: nv_person_name, required: true }
+    - { name: card_number, value_ref: nv_card_number, required: true }
+    - { name: expiry_year, value_ref: nv_year, required: true }
+    - { name: expiry_month, value_ref: nv_month, required: true }
+    - { name: cvv_number, value_ref: nv_cvv, required: true }
+    provides: [payment_card_id]
+  payment_card_update:
+    description: Rename a linked payment card.
+    kind: update
+    entity: PaymentCard
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: card_name, value_ref: nv_card_name, required: true }
+  payment_card_delete:
+    description: Delete a linked payment card.
+    kind: delete
+    entity: PaymentCard
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+  notification_delete:
+    description: Delete one Venmo notification.
+    kind: delete
+    entity: Notification
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+  notification_mark:
+    description: Mark one notification as read or unread.
+    kind: action
+    entity: Notification
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: read, value_ref: nv_read, required: true }
+    output: { type: side_effect, description: Updates the read status of one notification. }
+  notification_delete_all:
+    description: Delete all Venmo notifications for the authenticated user.
+    kind: action
+    entity: Notification
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    output: { type: side_effect, description: Clears the entire notification inbox. }
+  notification_mark_all:
+    description: Mark all notifications as read or unread.
+    kind: action
+    entity: Notification
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: read, value_ref: nv_read, required: true }
+    output: { type: side_effect, description: Updates the read status of every notification. }
+
+auth:
+  scheme: none
+http_backend: http://127.0.0.1:9000

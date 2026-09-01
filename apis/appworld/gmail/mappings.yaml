@@ -1,0 +1,580 @@
+# Gmail — AppWorld. Auth: login → access_token → Bearer header.
+
+_auth_header: &auth_header
+  type: object
+  fields:
+  - - Authorization
+    - type: format
+      template: "Bearer {token}"
+      vars:
+        token:
+          type: var
+          name: access_token
+
+login:
+  method: POST
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: auth }
+  - { type: literal, value: token }
+  body_format: form_urlencoded
+  body:
+    type: object
+    fields:
+    - [username, { type: var, name: username }]
+    - [password, { type: var, name: password }]
+
+logout:
+  method: POST
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: auth }
+  - { type: literal, value: logout }
+  headers: *auth_header
+
+email_thread_query:
+  method: GET
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: email_threads }
+  - { type: literal, value: category }
+  - { type: literal, value: inbox }
+  headers: *auth_header
+  query: &thread_search_query
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+    - - label
+      - type: if
+        condition: { type: exists, var: label }
+        then_expr: { type: var, name: label }
+        else_expr: { type: const, value: null }
+    - - starred
+      - type: if
+        condition: { type: exists, var: starred }
+        then_expr: { type: var, name: starred }
+        else_expr: { type: const, value: null }
+    - - read
+      - type: if
+        condition: { type: exists, var: read }
+        then_expr: { type: var, name: read }
+        else_expr: { type: const, value: null }
+    - - archived
+      - type: if
+        condition: { type: exists, var: archived }
+        then_expr: { type: var, name: archived }
+        else_expr: { type: const, value: null }
+    - - from_email
+      - type: if
+        condition: { type: exists, var: from_email }
+        then_expr: { type: var, name: from_email }
+        else_expr: { type: const, value: null }
+    - - to_email
+      - type: if
+        condition: { type: exists, var: to_email }
+        then_expr: { type: var, name: to_email }
+        else_expr: { type: const, value: null }
+    - - page_index
+      - type: if
+        condition: { type: exists, var: page_index }
+        then_expr: { type: var, name: page_index }
+        else_expr: { type: const, value: null }
+    - - page_limit
+      - type: if
+        condition: { type: exists, var: page_limit }
+        then_expr: { type: var, name: page_limit }
+        else_expr: { type: const, value: null }
+    - - sort_by
+      - type: if
+        condition: { type: exists, var: sort_by }
+        then_expr: { type: var, name: sort_by }
+        else_expr: { type: const, value: null }
+
+email_thread_outbox_query:
+  method: GET
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: email_threads }
+  - { type: literal, value: category }
+  - { type: literal, value: outbox }
+  headers: *auth_header
+  query: *thread_search_query
+
+email_thread_archived_query:
+  method: GET
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: email_threads }
+  - { type: literal, value: category }
+  - { type: literal, value: archived }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+    - - label
+      - type: if
+        condition: { type: exists, var: label }
+        then_expr: { type: var, name: label }
+        else_expr: { type: const, value: null }
+    - - starred
+      - type: if
+        condition: { type: exists, var: starred }
+        then_expr: { type: var, name: starred }
+        else_expr: { type: const, value: null }
+    - - read
+      - type: if
+        condition: { type: exists, var: read }
+        then_expr: { type: var, name: read }
+        else_expr: { type: const, value: null }
+    - - from_email
+      - type: if
+        condition: { type: exists, var: from_email }
+        then_expr: { type: var, name: from_email }
+        else_expr: { type: const, value: null }
+    - - to_email
+      - type: if
+        condition: { type: exists, var: to_email }
+        then_expr: { type: var, name: to_email }
+        else_expr: { type: const, value: null }
+    - - page_index
+      - type: if
+        condition: { type: exists, var: page_index }
+        then_expr: { type: var, name: page_index }
+        else_expr: { type: const, value: null }
+    - - page_limit
+      - type: if
+        condition: { type: exists, var: page_limit }
+        then_expr: { type: var, name: page_limit }
+        else_expr: { type: const, value: null }
+    - - sort_by
+      - type: if
+        condition: { type: exists, var: sort_by }
+        then_expr: { type: var, name: sort_by }
+        else_expr: { type: const, value: null }
+
+email_thread_get:
+  method: GET
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: email_threads }
+  - { type: var, name: id }
+  headers: *auth_header
+
+email_thread_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: email_threads }
+  - { type: var, name: id }
+  headers: *auth_header
+
+email_thread_mark_read:
+  method: POST
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: email_threads }
+  - { type: var, name: id }
+  - { type: literal, value: read }
+  headers: *auth_header
+
+email_thread_mark_unread:
+  method: POST
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: email_threads }
+  - { type: var, name: id }
+  - { type: literal, value: unread }
+  headers: *auth_header
+
+email_thread_star:
+  method: POST
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: email_threads }
+  - { type: var, name: id }
+  - { type: literal, value: starred }
+  headers: *auth_header
+
+email_thread_unstar:
+  method: POST
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: email_threads }
+  - { type: var, name: id }
+  - { type: literal, value: unstarred }
+  headers: *auth_header
+
+email_thread_archive:
+  method: POST
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: email_threads }
+  - { type: var, name: id }
+  - { type: literal, value: archived }
+  headers: *auth_header
+
+email_thread_unarchive:
+  method: POST
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: email_threads }
+  - { type: var, name: id }
+  - { type: literal, value: unarchived }
+  headers: *auth_header
+
+email_thread_snooze:
+  method: POST
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: email_threads }
+  - { type: var, name: id }
+  - { type: literal, value: snooze }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [snooze_until, { type: var, name: snooze_until }]
+
+email_thread_unsnooze:
+  method: POST
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: email_threads }
+  - { type: var, name: id }
+  - { type: literal, value: unsnooze }
+  headers: *auth_header
+
+email_get:
+  method: GET
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: emails }
+  - { type: var, name: id }
+  headers: *auth_header
+
+email_send:
+  method: POST
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: emails }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [email_addresses, { type: var, name: email_addresses }]
+    - [subject, { type: var, name: subject }]
+    - [body, { type: var, name: body }]
+
+email_reply:
+  method: POST
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: email_threads }
+  - { type: var, name: email_thread_id }
+  - { type: literal, value: emails }
+  - { type: var, name: id }
+  - { type: literal, value: reply }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [body, { type: var, name: body }]
+    - - email_addresses
+      - type: if
+        condition: { type: exists, var: email_addresses }
+        then_expr: { type: var, name: email_addresses }
+        else_expr: { type: const, value: null }
+
+email_delete_in_thread:
+  method: DELETE
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: email_threads }
+  - { type: var, name: email_thread_id }
+  - { type: literal, value: emails }
+  - { type: var, name: id }
+  headers: *auth_header
+
+draft_query:
+  method: GET
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: drafts }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - - page_index
+      - type: if
+        condition: { type: exists, var: page_index }
+        then_expr: { type: var, name: page_index }
+        else_expr: { type: const, value: null }
+    - - page_limit
+      - type: if
+        condition: { type: exists, var: page_limit }
+        then_expr: { type: var, name: page_limit }
+        else_expr: { type: const, value: null }
+
+draft_get:
+  method: GET
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: drafts }
+  - { type: var, name: id }
+  headers: *auth_header
+
+draft_create:
+  method: POST
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: drafts }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - - recipient_email_addresses
+      - type: if
+        condition: { type: exists, var: recipient_email_addresses }
+        then_expr: { type: var, name: recipient_email_addresses }
+        else_expr: { type: const, value: null }
+    - - subject
+      - type: if
+        condition: { type: exists, var: subject }
+        then_expr: { type: var, name: subject }
+        else_expr: { type: const, value: null }
+    - - body
+      - type: if
+        condition: { type: exists, var: body }
+        then_expr: { type: var, name: body }
+        else_expr: { type: const, value: null }
+    - - belongs_to_email_thread_id
+      - type: if
+        condition: { type: exists, var: belongs_to_email_thread_id }
+        then_expr: { type: var, name: belongs_to_email_thread_id }
+        else_expr: { type: const, value: null }
+    - - response_to_email_id
+      - type: if
+        condition: { type: exists, var: response_to_email_id }
+        then_expr: { type: var, name: response_to_email_id }
+        else_expr: { type: const, value: null }
+    - - scheduled_send_at
+      - type: if
+        condition: { type: exists, var: scheduled_send_at }
+        then_expr: { type: var, name: scheduled_send_at }
+        else_expr: { type: const, value: null }
+
+draft_update:
+  method: PATCH
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: drafts }
+  - { type: var, name: id }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - - email_addresses
+      - type: if
+        condition: { type: exists, var: email_addresses }
+        then_expr: { type: var, name: email_addresses }
+        else_expr: { type: const, value: null }
+    - - subject
+      - type: if
+        condition: { type: exists, var: subject }
+        then_expr: { type: var, name: subject }
+        else_expr: { type: const, value: null }
+    - - body
+      - type: if
+        condition: { type: exists, var: body }
+        then_expr: { type: var, name: body }
+        else_expr: { type: const, value: null }
+    - - scheduled_send_at
+      - type: if
+        condition: { type: exists, var: scheduled_send_at }
+        then_expr: { type: var, name: scheduled_send_at }
+        else_expr: { type: const, value: null }
+
+draft_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: drafts }
+  - { type: var, name: id }
+  headers: *auth_header
+
+draft_send:
+  method: POST
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: drafts }
+  - { type: var, name: id }
+  - { type: literal, value: send }
+  headers: *auth_header
+
+profile_get:
+  method: GET
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: profile }
+  query:
+    type: object
+    fields:
+    - [email, { type: var, name: email }]
+
+email_thread_spam_query:
+  method: GET
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: email_threads }
+  - { type: literal, value: category }
+  - { type: literal, value: spam }
+  headers: *auth_header
+  query: *thread_search_query
+
+email_thread_snoozed_query:
+  method: GET
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: email_threads }
+  - { type: literal, value: category }
+  - { type: literal, value: snoozed }
+  headers: *auth_header
+  query: *thread_search_query
+
+email_thread_label:
+  method: POST
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: email_threads }
+  - { type: var, name: id }
+  - { type: literal, value: label }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [label, { type: var, name: label }]
+
+email_thread_unlabel:
+  method: POST
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: email_threads }
+  - { type: var, name: id }
+  - { type: literal, value: unlabel }
+  headers: *auth_header
+
+email_thread_mark_spam:
+  method: POST
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: email_threads }
+  - { type: var, name: id }
+  - { type: literal, value: spam }
+  headers: *auth_header
+
+email_thread_mark_not_spam:
+  method: POST
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: email_threads }
+  - { type: var, name: id }
+  - { type: literal, value: not_spam }
+  headers: *auth_header
+
+email_forward:
+  method: POST
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: email_threads }
+  - { type: var, name: email_thread_id }
+  - { type: literal, value: emails }
+  - { type: var, name: id }
+  - { type: literal, value: forward }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [email_addresses, { type: var, name: email_addresses }]
+    - - draft_not_send
+      - type: if
+        condition: { type: exists, var: draft_not_send }
+        then_expr: { type: var, name: draft_not_send }
+        else_expr: { type: const, value: null }
+
+email_thread_forward:
+  method: POST
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: email_threads }
+  - { type: var, name: id }
+  - { type: literal, value: forward }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [email_addresses, { type: var, name: email_addresses }]
+    - - draft_not_send
+      - type: if
+        condition: { type: exists, var: draft_not_send }
+        then_expr: { type: var, name: draft_not_send }
+        else_expr: { type: const, value: null }
+
+attachment_download:
+  method: GET
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: attachments }
+  - { type: var, name: id }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - - download_to_file_path
+      - type: if
+        condition: { type: exists, var: download_to_file_path }
+        then_expr: { type: var, name: download_to_file_path }
+        else_expr: { type: const, value: null }
+    - - overwrite
+      - type: if
+        condition: { type: exists, var: overwrite }
+        then_expr: { type: var, name: overwrite }
+        else_expr: { type: const, value: null }
+    - [file_system_access_token, { type: var, name: file_system_access_token }]
+
+draft_attachment_upload:
+  method: POST
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: drafts }
+  - { type: var, name: draft_id }
+  - { type: literal, value: attachments }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [attachment_file_paths, { type: var, name: attachment_file_paths }]
+    - - overwrite
+      - type: if
+        condition: { type: exists, var: overwrite }
+        then_expr: { type: var, name: overwrite }
+        else_expr: { type: const, value: null }
+    - [file_system_access_token, { type: var, name: file_system_access_token }]
+
+draft_attachment_remove:
+  method: DELETE
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: drafts }
+  - { type: var, name: draft_id }
+  - { type: literal, value: attachments }
+  - { type: var, name: id }
+  headers: *auth_header

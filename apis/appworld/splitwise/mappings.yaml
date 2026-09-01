@@ -1,0 +1,759 @@
+# Splitwise — AppWorld. Auth: login → access_token → Bearer header.
+
+_auth_header: &auth_header
+  type: object
+  fields:
+  - - Authorization
+    - type: format
+      template: "Bearer {token}"
+      vars:
+        token:
+          type: var
+          name: access_token
+
+login:
+  method: POST
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: auth }
+  - { type: literal, value: token }
+  body_format: form_urlencoded
+  body:
+    type: object
+    fields:
+    - [username, { type: var, name: username }]
+    - [password, { type: var, name: password }]
+
+logout:
+  method: POST
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: auth }
+  - { type: literal, value: logout }
+  headers: *auth_header
+
+group_query:
+  method: GET
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: groups }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - - page_index
+      - type: if
+        condition: { type: exists, var: page_index }
+        then_expr: { type: var, name: page_index }
+        else_expr: { type: const, value: null }
+    - - page_limit
+      - type: if
+        condition: { type: exists, var: page_limit }
+        then_expr: { type: var, name: page_limit }
+        else_expr: { type: const, value: null }
+
+group_get:
+  method: GET
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: groups }
+  - { type: var, name: id }
+  headers: *auth_header
+
+group_create:
+  method: POST
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: groups }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [name, { type: var, name: name }]
+    - [member_emails, { type: var, name: member_emails }]
+    - - description
+      - type: if
+        condition: { type: exists, var: description }
+        then_expr: { type: var, name: description }
+        else_expr: { type: const, value: null }
+
+group_update:
+  method: PATCH
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: groups }
+  - { type: var, name: id }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - - name
+      - type: if
+        condition: { type: exists, var: name }
+        then_expr: { type: var, name: name }
+        else_expr: { type: const, value: null }
+    - - description
+      - type: if
+        condition: { type: exists, var: description }
+        then_expr: { type: var, name: description }
+        else_expr: { type: const, value: null }
+
+group_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: groups }
+  - { type: var, name: id }
+  headers: *auth_header
+
+group_add_member:
+  method: POST
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: groups }
+  - { type: var, name: id }
+  - { type: literal, value: members }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [user_email, { type: var, name: user_email }]
+
+group_remove_member:
+  method: DELETE
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: groups }
+  - { type: var, name: id }
+  - { type: literal, value: members }
+  - { type: var, name: user_email }
+  headers: *auth_header
+
+group_exit:
+  method: POST
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: groups }
+  - { type: var, name: id }
+  - { type: literal, value: members }
+  - { type: literal, value: exit }
+  headers: *auth_header
+
+group_undelete:
+  method: PATCH
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: groups }
+  - { type: var, name: id }
+  - { type: literal, value: undelete }
+  headers: *auth_header
+
+group_accept_invitation:
+  method: POST
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: group_invitation }
+  - { type: var, name: invitation_code }
+  - { type: literal, value: accept }
+  headers: *auth_header
+
+group_regenerate_invitation:
+  method: PATCH
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: group_invitation }
+  - { type: var, name: id }
+  - { type: literal, value: regenerate }
+  headers: *auth_header
+
+expense_query:
+  method: GET
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: group }
+  - { type: var, name: group_id }
+  - { type: literal, value: expenses }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+    - - participant_email
+      - type: if
+        condition: { type: exists, var: participant_email }
+        then_expr: { type: var, name: participant_email }
+        else_expr: { type: const, value: null }
+    - - min_amount
+      - type: if
+        condition: { type: exists, var: min_amount }
+        then_expr: { type: var, name: min_amount }
+        else_expr: { type: const, value: null }
+    - - max_amount
+      - type: if
+        condition: { type: exists, var: max_amount }
+        then_expr: { type: var, name: max_amount }
+        else_expr: { type: const, value: null }
+    - - page_index
+      - type: if
+        condition: { type: exists, var: page_index }
+        then_expr: { type: var, name: page_index }
+        else_expr: { type: const, value: null }
+    - - page_limit
+      - type: if
+        condition: { type: exists, var: page_limit }
+        then_expr: { type: var, name: page_limit }
+        else_expr: { type: const, value: null }
+    - - sort_by
+      - type: if
+        condition: { type: exists, var: sort_by }
+        then_expr: { type: var, name: sort_by }
+        else_expr: { type: const, value: null }
+
+expense_ungrouped_query:
+  method: GET
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: no_group }
+  - { type: literal, value: expenses }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+    - - participant_email
+      - type: if
+        condition: { type: exists, var: participant_email }
+        then_expr: { type: var, name: participant_email }
+        else_expr: { type: const, value: null }
+    - - page_index
+      - type: if
+        condition: { type: exists, var: page_index }
+        then_expr: { type: var, name: page_index }
+        else_expr: { type: const, value: null }
+    - - page_limit
+      - type: if
+        condition: { type: exists, var: page_limit }
+        then_expr: { type: var, name: page_limit }
+        else_expr: { type: const, value: null }
+    - - sort_by
+      - type: if
+        condition: { type: exists, var: sort_by }
+        then_expr: { type: var, name: sort_by }
+        else_expr: { type: const, value: null }
+
+expense_get:
+  method: GET
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: expenses }
+  - { type: var, name: id }
+  headers: *auth_header
+
+expense_create:
+  method: POST
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: expenses }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [description, { type: var, name: description }]
+    - [paid_amount, { type: var, name: paid_amount }]
+    - [payer_email, { type: var, name: payer_email }]
+    - [debtor_emails, { type: var, name: debtor_emails }]
+    - - debt_amounts
+      - type: if
+        condition: { type: exists, var: debt_amounts }
+        then_expr: { type: var, name: debt_amounts }
+        else_expr: { type: const, value: null }
+    - - group_id
+      - type: if
+        condition: { type: exists, var: group_id }
+        then_expr: { type: var, name: group_id }
+        else_expr: { type: const, value: null }
+
+expense_update:
+  method: PATCH
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: expenses }
+  - { type: var, name: id }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - - description
+      - type: if
+        condition: { type: exists, var: description }
+        then_expr: { type: var, name: description }
+        else_expr: { type: const, value: null }
+    - - paid_amount
+      - type: if
+        condition: { type: exists, var: paid_amount }
+        then_expr: { type: var, name: paid_amount }
+        else_expr: { type: const, value: null }
+    - - payer_email
+      - type: if
+        condition: { type: exists, var: payer_email }
+        then_expr: { type: var, name: payer_email }
+        else_expr: { type: const, value: null }
+    - - debtor_emails
+      - type: if
+        condition: { type: exists, var: debtor_emails }
+        then_expr: { type: var, name: debtor_emails }
+        else_expr: { type: const, value: null }
+    - - debt_amounts
+      - type: if
+        condition: { type: exists, var: debt_amounts }
+        then_expr: { type: var, name: debt_amounts }
+        else_expr: { type: const, value: null }
+
+expense_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: expenses }
+  - { type: var, name: id }
+  headers: *auth_header
+
+expense_undelete:
+  method: PATCH
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: expenses }
+  - { type: var, name: id }
+  - { type: literal, value: undelete }
+  headers: *auth_header
+
+expense_attach_receipt:
+  method: POST
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: expenses }
+  - { type: var, name: id }
+  - { type: literal, value: file }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [receipt_file_path, { type: var, name: receipt_file_path }]
+    - - overwrite
+      - type: if
+        condition: { type: exists, var: overwrite }
+        then_expr: { type: var, name: overwrite }
+        else_expr: { type: const, value: null }
+    - [file_system_access_token, { type: var, name: file_system_access_token }]
+
+expense_delete_receipt:
+  method: DELETE
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: expenses }
+  - { type: var, name: id }
+  - { type: literal, value: file }
+  headers: *auth_header
+
+payment_query:
+  method: GET
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: group }
+  - { type: var, name: group_id }
+  - { type: literal, value: payments }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+    - - participant_email
+      - type: if
+        condition: { type: exists, var: participant_email }
+        then_expr: { type: var, name: participant_email }
+        else_expr: { type: const, value: null }
+    - - page_index
+      - type: if
+        condition: { type: exists, var: page_index }
+        then_expr: { type: var, name: page_index }
+        else_expr: { type: const, value: null }
+    - - page_limit
+      - type: if
+        condition: { type: exists, var: page_limit }
+        then_expr: { type: var, name: page_limit }
+        else_expr: { type: const, value: null }
+    - - sort_by
+      - type: if
+        condition: { type: exists, var: sort_by }
+        then_expr: { type: var, name: sort_by }
+        else_expr: { type: const, value: null }
+
+payment_ungrouped_query:
+  method: GET
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: no_group }
+  - { type: literal, value: payments }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+    - - participant_email
+      - type: if
+        condition: { type: exists, var: participant_email }
+        then_expr: { type: var, name: participant_email }
+        else_expr: { type: const, value: null }
+    - - page_index
+      - type: if
+        condition: { type: exists, var: page_index }
+        then_expr: { type: var, name: page_index }
+        else_expr: { type: const, value: null }
+    - - page_limit
+      - type: if
+        condition: { type: exists, var: page_limit }
+        then_expr: { type: var, name: page_limit }
+        else_expr: { type: const, value: null }
+    - - sort_by
+      - type: if
+        condition: { type: exists, var: sort_by }
+        then_expr: { type: var, name: sort_by }
+        else_expr: { type: const, value: null }
+
+payment_get:
+  method: GET
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: payments }
+  - { type: var, name: id }
+  headers: *auth_header
+
+payment_create:
+  method: POST
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: payments }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [payer_email, { type: var, name: payer_email }]
+    - [receiver_email, { type: var, name: receiver_email }]
+    - [amount, { type: var, name: amount }]
+    - - group_id
+      - type: if
+        condition: { type: exists, var: group_id }
+        then_expr: { type: var, name: group_id }
+        else_expr: { type: const, value: null }
+    - - description
+      - type: if
+        condition: { type: exists, var: description }
+        then_expr: { type: var, name: description }
+        else_expr: { type: const, value: null }
+
+payment_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: payments }
+  - { type: var, name: id }
+  headers: *auth_header
+
+payment_update:
+  method: PATCH
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: payments }
+  - { type: var, name: id }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - - amount
+      - type: if
+        condition: { type: exists, var: amount }
+        then_expr: { type: var, name: amount }
+        else_expr: { type: const, value: null }
+    - - description
+      - type: if
+        condition: { type: exists, var: description }
+        then_expr: { type: var, name: description }
+        else_expr: { type: const, value: null }
+
+payment_undelete:
+  method: PATCH
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: payments }
+  - { type: var, name: id }
+  - { type: literal, value: undelete }
+  headers: *auth_header
+
+payment_attach_receipt:
+  method: POST
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: payments }
+  - { type: var, name: id }
+  - { type: literal, value: file }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [receipt_file_path, { type: var, name: receipt_file_path }]
+    - - overwrite
+      - type: if
+        condition: { type: exists, var: overwrite }
+        then_expr: { type: var, name: overwrite }
+        else_expr: { type: const, value: null }
+    - [file_system_access_token, { type: var, name: file_system_access_token }]
+
+payment_delete_receipt:
+  method: DELETE
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: payments }
+  - { type: var, name: id }
+  - { type: literal, value: file }
+  headers: *auth_header
+
+balance_person_query:
+  method: POST
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: balance }
+  - { type: literal, value: person }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [email, { type: var, name: email }]
+
+balance_people_query:
+  method: POST
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: balance }
+  - { type: literal, value: people }
+  headers: *auth_header
+
+balance_group_query:
+  method: GET
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: balance }
+  - { type: literal, value: group }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - [group_id, { type: var, name: group_id }]
+    - - email
+      - type: if
+        condition: { type: exists, var: email }
+        then_expr: { type: var, name: email }
+        else_expr: { type: const, value: null }
+
+balance_groups_query:
+  method: GET
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: balance }
+  - { type: literal, value: groups }
+  headers: *auth_header
+
+settle_up:
+  method: POST
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: settle_up }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [email, { type: var, name: email }]
+    - - group_id
+      - type: if
+        condition: { type: exists, var: group_id }
+        then_expr: { type: var, name: group_id }
+        else_expr: { type: const, value: null }
+    - - description
+      - type: if
+        condition: { type: exists, var: description }
+        then_expr: { type: var, name: description }
+        else_expr: { type: const, value: null }
+
+expense_comment_query:
+  method: GET
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: expenses }
+  - { type: var, name: expense_id }
+  - { type: literal, value: comments }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - - page_index
+      - type: if
+        condition: { type: exists, var: page_index }
+        then_expr: { type: var, name: page_index }
+        else_expr: { type: const, value: null }
+    - - page_limit
+      - type: if
+        condition: { type: exists, var: page_limit }
+        then_expr: { type: var, name: page_limit }
+        else_expr: { type: const, value: null }
+
+expense_comment_create:
+  method: POST
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: expenses }
+  - { type: var, name: expense_id }
+  - { type: literal, value: comments }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [comment, { type: var, name: comment }]
+
+expense_comment_update:
+  method: PATCH
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: expense_comments }
+  - { type: var, name: id }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [comment, { type: var, name: comment }]
+
+expense_comment_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: expense_comments }
+  - { type: var, name: id }
+  headers: *auth_header
+
+payment_comment_query:
+  method: GET
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: payments }
+  - { type: var, name: payment_id }
+  - { type: literal, value: comments }
+  headers: *auth_header
+
+payment_comment_create:
+  method: POST
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: payments }
+  - { type: var, name: payment_id }
+  - { type: literal, value: comments }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [comment, { type: var, name: comment }]
+
+payment_comment_update:
+  method: PATCH
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: payment_comments }
+  - { type: var, name: id }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [comment, { type: var, name: comment }]
+
+payment_comment_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: payment_comments }
+  - { type: var, name: id }
+  headers: *auth_header
+
+notification_query:
+  method: GET
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: notifications }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - - read
+      - type: if
+        condition: { type: exists, var: read }
+        then_expr: { type: var, name: read }
+        else_expr: { type: const, value: null }
+    - - page_index
+      - type: if
+        condition: { type: exists, var: page_index }
+        then_expr: { type: var, name: page_index }
+        else_expr: { type: const, value: null }
+    - - page_limit
+      - type: if
+        condition: { type: exists, var: page_limit }
+        then_expr: { type: var, name: page_limit }
+        else_expr: { type: const, value: null }
+
+notification_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: notifications }
+  - { type: var, name: id }
+  headers: *auth_header
+
+notification_mark:
+  method: PATCH
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: notifications }
+  - { type: var, name: id }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [read, { type: var, name: read }]
+
+notification_delete_all:
+  method: DELETE
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: notifications }
+  headers: *auth_header
+
+notification_mark_all:
+  method: PATCH
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: notifications }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [read, { type: var, name: read }]

@@ -1,0 +1,429 @@
+# Phone — AppWorld. Auth: login → access_token → Bearer header.
+
+_auth_header: &auth_header
+  type: object
+  fields:
+  - - Authorization
+    - type: format
+      template: "Bearer {token}"
+      vars:
+        token:
+          type: var
+          name: access_token
+
+login:
+  method: POST
+  path:
+  - { type: literal, value: phone }
+  - { type: literal, value: auth }
+  - { type: literal, value: token }
+  body_format: form_urlencoded
+  body:
+    type: object
+    fields:
+    - [username, { type: var, name: username }]
+    - [password, { type: var, name: password }]
+
+logout:
+  method: POST
+  path:
+  - { type: literal, value: phone }
+  - { type: literal, value: auth }
+  - { type: literal, value: logout }
+  headers: *auth_header
+
+contact_query:
+  method: GET
+  path:
+  - { type: literal, value: phone }
+  - { type: literal, value: contacts }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+    - - relationship
+      - type: if
+        condition: { type: exists, var: relationship }
+        then_expr: { type: var, name: relationship }
+        else_expr: { type: const, value: null }
+    - - page_index
+      - type: if
+        condition: { type: exists, var: page_index }
+        then_expr: { type: var, name: page_index }
+        else_expr: { type: const, value: null }
+    - - page_limit
+      - type: if
+        condition: { type: exists, var: page_limit }
+        then_expr: { type: var, name: page_limit }
+        else_expr: { type: const, value: null }
+
+contact_create:
+  method: POST
+  path:
+  - { type: literal, value: phone }
+  - { type: literal, value: contacts }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [first_name, { type: var, name: first_name }]
+    - - last_name
+      - type: if
+        condition: { type: exists, var: last_name }
+        then_expr: { type: var, name: last_name }
+        else_expr: { type: const, value: null }
+    - [phone_number, { type: var, name: phone_number }]
+    - - email
+      - type: if
+        condition: { type: exists, var: email }
+        then_expr: { type: var, name: email }
+        else_expr: { type: const, value: null }
+    - - relationships
+      - type: if
+        condition: { type: exists, var: relationships }
+        then_expr: { type: var, name: relationships }
+        else_expr: { type: const, value: null }
+    - - birthday
+      - type: if
+        condition: { type: exists, var: birthday }
+        then_expr: { type: var, name: birthday }
+        else_expr: { type: const, value: null }
+    - - home_address
+      - type: if
+        condition: { type: exists, var: home_address }
+        then_expr: { type: var, name: home_address }
+        else_expr: { type: const, value: null }
+    - - work_address
+      - type: if
+        condition: { type: exists, var: work_address }
+        then_expr: { type: var, name: work_address }
+        else_expr: { type: const, value: null }
+
+contact_update:
+  method: PATCH
+  path:
+  - { type: literal, value: phone }
+  - { type: literal, value: contacts }
+  - { type: var, name: id }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - - first_name
+      - type: if
+        condition: { type: exists, var: first_name }
+        then_expr: { type: var, name: first_name }
+        else_expr: { type: const, value: null }
+    - - last_name
+      - type: if
+        condition: { type: exists, var: last_name }
+        then_expr: { type: var, name: last_name }
+        else_expr: { type: const, value: null }
+    - - phone_number
+      - type: if
+        condition: { type: exists, var: phone_number }
+        then_expr: { type: var, name: phone_number }
+        else_expr: { type: const, value: null }
+    - - email
+      - type: if
+        condition: { type: exists, var: email }
+        then_expr: { type: var, name: email }
+        else_expr: { type: const, value: null }
+    - - relationships
+      - type: if
+        condition: { type: exists, var: relationships }
+        then_expr: { type: var, name: relationships }
+        else_expr: { type: const, value: null }
+    - - birthday
+      - type: if
+        condition: { type: exists, var: birthday }
+        then_expr: { type: var, name: birthday }
+        else_expr: { type: const, value: null }
+    - - home_address
+      - type: if
+        condition: { type: exists, var: home_address }
+        then_expr: { type: var, name: home_address }
+        else_expr: { type: const, value: null }
+    - - work_address
+      - type: if
+        condition: { type: exists, var: work_address }
+        then_expr: { type: var, name: work_address }
+        else_expr: { type: const, value: null }
+
+contact_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: phone }
+  - { type: literal, value: contacts }
+  - { type: var, name: id }
+  headers: *auth_header
+
+alarm_query:
+  method: GET
+  path:
+  - { type: literal, value: phone }
+  - { type: literal, value: alarms }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - - page_index
+      - type: if
+        condition: { type: exists, var: page_index }
+        then_expr: { type: var, name: page_index }
+        else_expr: { type: const, value: null }
+    - - page_limit
+      - type: if
+        condition: { type: exists, var: page_limit }
+        then_expr: { type: var, name: page_limit }
+        else_expr: { type: const, value: null }
+
+alarm_get:
+  method: GET
+  path:
+  - { type: literal, value: phone }
+  - { type: literal, value: alarms }
+  - { type: var, name: id }
+  headers: *auth_header
+
+alarm_create:
+  method: POST
+  path:
+  - { type: literal, value: phone }
+  - { type: literal, value: alarms }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [time, { type: var, name: time }]
+    - - repeat_days
+      - type: if
+        condition: { type: exists, var: repeat_days }
+        then_expr: { type: var, name: repeat_days }
+        else_expr: { type: const, value: null }
+    - - label
+      - type: if
+        condition: { type: exists, var: label }
+        then_expr: { type: var, name: label }
+        else_expr: { type: const, value: null }
+    - - enabled
+      - type: if
+        condition: { type: exists, var: enabled }
+        then_expr: { type: var, name: enabled }
+        else_expr: { type: const, value: null }
+    - - snooze_minutes
+      - type: if
+        condition: { type: exists, var: snooze_minutes }
+        then_expr: { type: var, name: snooze_minutes }
+        else_expr: { type: const, value: null }
+    - - vibration
+      - type: if
+        condition: { type: exists, var: vibration }
+        then_expr: { type: var, name: vibration }
+        else_expr: { type: const, value: null }
+
+alarm_update:
+  method: PATCH
+  path:
+  - { type: literal, value: phone }
+  - { type: literal, value: alarms }
+  - { type: var, name: id }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - - time
+      - type: if
+        condition: { type: exists, var: time }
+        then_expr: { type: var, name: time }
+        else_expr: { type: const, value: null }
+    - - repeat_days
+      - type: if
+        condition: { type: exists, var: repeat_days }
+        then_expr: { type: var, name: repeat_days }
+        else_expr: { type: const, value: null }
+    - - label
+      - type: if
+        condition: { type: exists, var: label }
+        then_expr: { type: var, name: label }
+        else_expr: { type: const, value: null }
+    - - enabled
+      - type: if
+        condition: { type: exists, var: enabled }
+        then_expr: { type: var, name: enabled }
+        else_expr: { type: const, value: null }
+    - - snooze_minutes
+      - type: if
+        condition: { type: exists, var: snooze_minutes }
+        then_expr: { type: var, name: snooze_minutes }
+        else_expr: { type: const, value: null }
+    - - vibration
+      - type: if
+        condition: { type: exists, var: vibration }
+        then_expr: { type: var, name: vibration }
+        else_expr: { type: const, value: null }
+
+alarm_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: phone }
+  - { type: literal, value: alarms }
+  - { type: var, name: id }
+  headers: *auth_header
+
+text_message_query:
+  method: GET
+  path:
+  - { type: literal, value: phone }
+  - { type: literal, value: messages }
+  - { type: literal, value: text }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+    - - phone_number
+      - type: if
+        condition: { type: exists, var: phone_number }
+        then_expr: { type: var, name: phone_number }
+        else_expr: { type: const, value: null }
+    - - only_latest_per_contact
+      - type: if
+        condition: { type: exists, var: only_latest_per_contact }
+        then_expr: { type: var, name: only_latest_per_contact }
+        else_expr: { type: const, value: null }
+    - - page_index
+      - type: if
+        condition: { type: exists, var: page_index }
+        then_expr: { type: var, name: page_index }
+        else_expr: { type: const, value: null }
+    - - page_limit
+      - type: if
+        condition: { type: exists, var: page_limit }
+        then_expr: { type: var, name: page_limit }
+        else_expr: { type: const, value: null }
+    - - sort_by
+      - type: if
+        condition: { type: exists, var: sort_by }
+        then_expr: { type: var, name: sort_by }
+        else_expr: { type: const, value: null }
+
+text_message_get:
+  method: GET
+  path:
+  - { type: literal, value: phone }
+  - { type: literal, value: messages }
+  - { type: literal, value: text }
+  - { type: var, name: id }
+  headers: *auth_header
+
+text_message_send:
+  method: POST
+  path:
+  - { type: literal, value: phone }
+  - { type: literal, value: messages }
+  - { type: literal, value: text }
+  - { type: var, name: phone_number }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [message, { type: var, name: message }]
+
+text_message_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: phone }
+  - { type: literal, value: messages }
+  - { type: literal, value: text }
+  - { type: var, name: id }
+  headers: *auth_header
+
+voice_message_query:
+  method: GET
+  path:
+  - { type: literal, value: phone }
+  - { type: literal, value: messages }
+  - { type: literal, value: voice }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+    - - phone_number
+      - type: if
+        condition: { type: exists, var: phone_number }
+        then_expr: { type: var, name: phone_number }
+        else_expr: { type: const, value: null }
+    - - only_latest_per_contact
+      - type: if
+        condition: { type: exists, var: only_latest_per_contact }
+        then_expr: { type: var, name: only_latest_per_contact }
+        else_expr: { type: const, value: null }
+    - - page_index
+      - type: if
+        condition: { type: exists, var: page_index }
+        then_expr: { type: var, name: page_index }
+        else_expr: { type: const, value: null }
+    - - page_limit
+      - type: if
+        condition: { type: exists, var: page_limit }
+        then_expr: { type: var, name: page_limit }
+        else_expr: { type: const, value: null }
+    - - sort_by
+      - type: if
+        condition: { type: exists, var: sort_by }
+        then_expr: { type: var, name: sort_by }
+        else_expr: { type: const, value: null }
+
+voice_message_send:
+  method: POST
+  path:
+  - { type: literal, value: phone }
+  - { type: literal, value: messages }
+  - { type: literal, value: voice }
+  - { type: var, name: phone_number }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [message, { type: var, name: message }]
+
+voice_message_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: phone }
+  - { type: literal, value: messages }
+  - { type: literal, value: voice }
+  - { type: var, name: id }
+  headers: *auth_header
+
+profile_get:
+  method: GET
+  path:
+  - { type: literal, value: phone }
+  - { type: literal, value: profile }
+  query:
+    type: object
+    fields:
+    - [phone_number, { type: var, name: phone_number }]
+
+date_time_get:
+  method: GET
+  path:
+  - { type: literal, value: phone }
+  - { type: literal, value: date_time }
+  headers: *auth_header

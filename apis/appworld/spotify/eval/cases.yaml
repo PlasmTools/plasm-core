@@ -1,0 +1,119 @@
+- id: login_spotify
+  schema: spotify
+  goal: Login to spotify with username and password to get an access token
+  tags: [action, auth]
+  covers: [invoke]
+  expect:
+    entities_any: [AuthSession]
+
+- id: search_songs
+  schema: spotify
+  goal: Search Spotify songs for jazz tracks
+  tags: [search]
+  covers: [search_text, query_filtered, projection]
+  expect:
+    entities_any: [Song]
+
+- id: get_song
+  schema: spotify
+  goal: Show details for one Spotify song by id
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Song]
+
+- id: search_albums
+  schema: spotify
+  goal: Search albums by name
+  tags: [search]
+  covers: [search_text]
+  expect:
+    entities_any: [Album]
+
+- id: search_artists
+  schema: spotify
+  goal: Search artists named Miles
+  tags: [search]
+  covers: [search_text]
+  expect:
+    entities_any: [Artist]
+
+- id: create_playlist
+  schema: spotify
+  goal: Create a playlist called Road Trip Mix
+  tags: [create]
+  covers: [create]
+  expect:
+    entities_any: [Playlist]
+
+- id: update_playlist
+  schema: spotify
+  goal: Rename my playlist to Beach Road Trip
+  tags: [update]
+  covers: [update]
+  expect:
+    entities_any: [Playlist]
+
+- id: playlist_with_songs
+  schema: spotify
+  goal: Show my playlist and the songs on it
+  tags: [get, chain, multi_step]
+  covers: [get, chain, multi_step]
+  expect:
+    entities_any: [Playlist, Song]
+
+- id: downloaded_songs
+  schema: spotify
+  goal: List my downloaded songs for offline listening
+  tags: [search]
+  covers: [search_text, query_filtered]
+  expect:
+    entities_any: [DownloadedSong]
+
+- id: show_player
+  schema: spotify
+  goal: Show what is currently playing on the music player
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Player]
+
+- id: show_queue
+  schema: spotify
+  goal: Show the song queue
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [QueueEntry]
+
+- id: delete_playlist
+  schema: spotify
+  goal: Delete a playlist I no longer need
+  tags: [delete]
+  covers: [delete]
+  expect:
+    entities_any: [Playlist]
+
+- id: liked_songs
+  schema: spotify
+  goal: List my liked songs on Spotify
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Song]
+
+- id: song_library
+  schema: spotify
+  goal: Show songs saved in my Spotify library
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Song]
+
+- id: following_artists
+  schema: spotify
+  goal: List artists I follow on Spotify
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Artist]

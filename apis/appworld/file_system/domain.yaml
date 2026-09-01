@@ -1,0 +1,410 @@
+version: 4
+entry_id: file_system
+auth:
+  scheme: none
+http_backend: http://127.0.0.1:9000
+data_classes:
+  untrusted:
+    description: User-authored file content.
+    severity: untrusted
+entities:
+  AuthSession:
+    id_field: access_token
+    description: Login session for File System (Bearer token).
+    discovery:
+      names:
+      - login
+      - auth
+      - access token
+      seed_class: primary
+      co_seed_with: catalog_primary
+    fields:
+      access_token:
+        required: true
+        value_ref: nv_access_token
+      token_type:
+        required: false
+        value_ref: nv_str
+  File:
+    id_field: path
+    description: A file with path and textual content.
+    discovery:
+      names:
+      - file
+      - files
+      - document
+      seed_class: primary
+    fields:
+      file_id:
+        required: false
+        value_ref: nv_file_id
+      path:
+        required: true
+        value_ref: nv_path
+      content:
+        required: false
+        value_ref: nv_content
+        data_class: untrusted
+      created_at:
+        required: false
+        value_ref: nv_datetime
+      updated_at:
+        required: false
+        value_ref: nv_datetime
+      compressed_file_path:
+        required: false
+        value_ref: nv_path
+  DirectoryEntry:
+    id_field: path
+    description: Path string returned when listing a directory.
+    discovery:
+      names:
+      - directory
+      - folder
+      - listing
+      seed_class: primary
+    fields:
+      path:
+        required: true
+        value_ref: nv_path
+      decompressed_directory_path:
+        required: false
+        value_ref: nv_path
+  PathExists:
+    id_field: path
+    description: Whether a file or directory path exists.
+    fields:
+      path:
+        required: true
+        value_ref: nv_path
+      exists:
+        required: true
+        value_ref: nv_bool
+capabilities:
+  login:
+    description: Login to File System; returns access_token for Bearer auth.
+    kind: action
+    entity: AuthSession
+    parameters:
+    - name: username
+      value_ref: nv_login_username
+      required: true
+    - name: password
+      value_ref: nv_password
+      required: true
+    provides:
+    - access_token
+    - token_type
+    output:
+      type: side_effect
+      description: Creates an authenticated File System session.
+  logout:
+    description: Logout and invalidate the access token.
+    kind: action
+    entity: AuthSession
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    output:
+      type: side_effect
+      description: Ends the File System session for this token.
+  directory_query:
+    description: List paths under a directory (optional substring / entry_type / recursive).
+    kind: search
+    entity: DirectoryEntry
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: directory_path
+      value_ref: nv_path
+      required: false
+      role: filter
+    - name: substring
+      value_ref: nv_str
+      required: false
+      role: search
+    - name: entry_type
+      value_ref: nv_str
+      required: false
+      role: filter
+    - name: recursive
+      value_ref: nv_bool
+      required: false
+      role: filter
+    provides:
+    - path
+  directory_create:
+    description: Create a directory.
+    kind: action
+    entity: DirectoryEntry
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: directory_path
+      value_ref: nv_path
+      required: true
+    - name: recursive
+      value_ref: nv_bool
+      required: false
+    output:
+      type: side_effect
+      description: Creates a directory at directory_path.
+  directory_delete:
+    description: Delete a directory.
+    kind: action
+    entity: DirectoryEntry
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: directory_path
+      value_ref: nv_path
+      required: true
+    output:
+      type: side_effect
+      description: Deletes the directory at directory_path.
+  directory_exists:
+    description: Check whether a directory path exists.
+    kind: action
+    entity: PathExists
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: directory_path
+      value_ref: nv_path
+      required: true
+    provides:
+    - exists
+    output:
+      type: side_effect
+      description: Reports whether directory_path exists.
+  directory_copy:
+    description: Copy a directory to a destination path.
+    kind: action
+    entity: DirectoryEntry
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: source_directory_path
+      value_ref: nv_path
+      required: true
+    - name: destination_directory_path
+      value_ref: nv_path
+      required: true
+    output:
+      type: side_effect
+      description: Copies a directory tree to the destination.
+  directory_move:
+    description: Move a directory to a destination path.
+    kind: action
+    entity: DirectoryEntry
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: source_directory_path
+      value_ref: nv_path
+      required: true
+    - name: destination_directory_path
+      value_ref: nv_path
+      required: true
+    output:
+      type: side_effect
+      description: Moves a directory to the destination.
+  directory_compress:
+    description: Compress a directory into an archive file.
+    kind: action
+    entity: File
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: directory_path
+      value_ref: nv_path
+      required: true
+    - name: compressed_file_path
+      value_ref: nv_path
+      required: false
+    - name: delete_directory
+      value_ref: nv_bool
+      required: false
+    - name: overwrite
+      value_ref: nv_bool
+      required: false
+    provides:
+    - compressed_file_path
+    output:
+      type: side_effect
+      description: Writes a compressed archive and returns its path.
+  file_get:
+    description: Show file content by path (entity id is the path).
+    kind: get
+    entity: File
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - file_id
+    - path
+    - content
+    - created_at
+    - updated_at
+  file_create:
+    description: Create a file with content.
+    kind: create
+    entity: File
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: file_path
+      value_ref: nv_path
+      required: true
+    - name: content
+      value_ref: nv_content
+      required: true
+    - name: overwrite
+      value_ref: nv_bool
+      required: false
+    provides:
+    - file_id
+    - path
+  file_update:
+    description: Update file content at the entity path (id).
+    kind: update
+    entity: File
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: content
+      value_ref: nv_content
+      required: true
+  file_delete:
+    description: Delete a file by path (entity id).
+    kind: delete
+    entity: File
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+  file_exists:
+    description: Check whether a file path exists.
+    kind: action
+    entity: PathExists
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: file_path
+      value_ref: nv_path
+      required: true
+    provides:
+    - exists
+    output:
+      type: side_effect
+      description: Reports whether file_path exists.
+  file_copy:
+    description: Copy a file to a destination path.
+    kind: action
+    entity: File
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: source_file_path
+      value_ref: nv_path
+      required: true
+    - name: destination_file_path
+      value_ref: nv_path
+      required: true
+    output:
+      type: side_effect
+      description: Copies a file to the destination path.
+  file_move:
+    description: Move a file to a destination path.
+    kind: action
+    entity: File
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: source_file_path
+      value_ref: nv_path
+      required: true
+    - name: destination_file_path
+      value_ref: nv_path
+      required: true
+    output:
+      type: side_effect
+      description: Moves a file to the destination path.
+  file_decompress:
+    description: Decompress an archive file into a directory.
+    kind: action
+    entity: DirectoryEntry
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: compressed_file_path
+      value_ref: nv_path
+      required: true
+    - name: decompressed_directory_path
+      value_ref: nv_path
+      required: false
+    - name: retain_dates
+      value_ref: nv_bool
+      required: false
+    - name: delete_compressed_file
+      value_ref: nv_bool
+      required: false
+    provides:
+    - decompressed_directory_path
+    output:
+      type: side_effect
+      description: Expands the archive and returns the destination directory path.
+values:
+  nv_str:
+    type: string
+
+    description: Free-form string.
+  nv_email:
+    type: email
+
+    description: Email address of a user or counterparty.
+  nv_login_username:
+    type: string
+
+    description: Account-holder login id for this service — not a counterparty.
+  nv_password:
+    type: string
+
+    description: Account-holder password for this service.
+  nv_access_token:
+    type: string
+
+    description: Bearer access token from login.
+  nv_path:
+    type: string
+
+    description: Absolute or ~/ relative filesystem path.
+  nv_content:
+    type: document
+
+    description: File body text.
+  nv_file_id:
+    type: integer
+    description: File primary key.
+  nv_bool:
+    type: boolean
+    description: Boolean flag.
+  nv_datetime:
+    type: rfc3339
+
+    description: ISO datetime string.

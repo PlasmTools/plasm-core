@@ -1,0 +1,728 @@
+version: 5
+entry_id: spotify
+auth:
+  scheme: none
+http_backend: http://127.0.0.1:9000
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  pii_payment:
+    description: Payment-card numbers and CVV.
+    severity: sensitive
+entities:
+  AuthSession:
+    id_field: access_token
+    description: Login session for Spotify (Bearer token).
+    discovery:
+      names: [login, auth, access token]
+      seed_class: primary
+      co_seed_with: catalog_primary
+    fields:
+      access_token: { required: true, value_ref: nv_access_token }
+      token_type: { required: false, value_ref: nv_str }
+  Song:
+    id_field: song_id
+    description: A Spotify song track.
+    discovery:
+      names: [song, songs, track, music]
+      seed_class: primary
+    fields:
+      song_id: { required: true, value_ref: nv_song_id }
+      title: { required: true, value_ref: nv_str }
+      album_id: { required: false, value_ref: nv_album_id }
+      album_title: { required: false, value_ref: nv_str }
+      duration: { required: false, value_ref: nv_int }
+      genre: { required: false, value_ref: nv_str }
+      release_date: { required: false, value_ref: nv_str }
+      play_count: { required: false, value_ref: nv_int }
+      rating: { required: false, value_ref: nv_number }
+      like_count: { required: false, value_ref: nv_int }
+      shareable_link: { required: false, value_ref: nv_str }
+  Album:
+    id_field: album_id
+    description: Album containing songs.
+    discovery:
+      names: [album, albums]
+      seed_class: primary
+    fields:
+      album_id: { required: true, value_ref: nv_album_id }
+      title: { required: true, value_ref: nv_str }
+      genre: { required: false, value_ref: nv_str }
+      rating: { required: false, value_ref: nv_number }
+      like_count: { required: false, value_ref: nv_int }
+      release_date: { required: false, value_ref: nv_str }
+  Artist:
+    id_field: artist_id
+    description: Music artist.
+    discovery:
+      names: [artist, artists]
+      seed_class: primary
+    fields:
+      artist_id: { required: true, value_ref: nv_artist_id }
+      name: { required: true, value_ref: nv_str }
+      genre: { required: false, value_ref: nv_str }
+      follower_count: { required: false, value_ref: nv_int }
+  Playlist:
+    id_field: playlist_id
+    description: User or public playlist.
+    discovery:
+      names: [playlist, playlists]
+      seed_class: primary
+    fields:
+      playlist_id: { required: true, value_ref: nv_playlist_id }
+      title: { required: true, value_ref: nv_str }
+      is_public: { required: false, value_ref: nv_bool }
+      rating: { required: false, value_ref: nv_number }
+      like_count: { required: false, value_ref: nv_int }
+      created_at: { required: false, value_ref: nv_datetime }
+      shareable_link: { required: false, value_ref: nv_str }
+    relations:
+      songs:
+        description: Songs currently on this playlist.
+        target: Song
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: songs
+          - wildcard: true
+          - key: id
+  DownloadedSong:
+    id_field: song_id
+    description: A song downloaded for offline playback.
+    discovery:
+      names: [downloaded song, downloads, offline song]
+      seed_class: primary
+    fields:
+      song_id: { required: true, value_ref: nv_song_id }
+      title: { required: false, value_ref: nv_str }
+      album_id: { required: false, value_ref: nv_album_id }
+      album_title: { required: false, value_ref: nv_str }
+      duration: { required: false, value_ref: nv_int }
+      downloaded_at: { required: false, value_ref: nv_datetime }
+  Player:
+    id_field: song_id
+    description: Music player / queue / volume state.
+    discovery:
+      names: [player, queue, volume]
+      seed_class: primary
+    fields:
+      song_id: { required: false, value_ref: nv_song_id }
+      title: { required: false, value_ref: nv_str }
+      position: { required: false, value_ref: nv_int }
+      is_playing: { required: false, value_ref: nv_bool }
+      volume: { required: false, value_ref: nv_int }
+  QueueEntry:
+    id_field: position
+    description: A song in the player queue.
+    fields:
+      position: { required: true, value_ref: nv_int }
+      song_id: { required: false, value_ref: nv_song_id }
+      title: { required: false, value_ref: nv_str }
+  SongReview:
+    id_field: song_review_id
+    description: User review of a song.
+    discovery:
+      names: [song review, song reviews, rate song]
+      seed_class: primary
+    fields:
+      song_review_id: { required: true, value_ref: nv_song_review_id }
+      song_id: { required: true, value_ref: nv_song_id }
+      rating: { required: false, value_ref: nv_rating }
+      title: { required: false, value_ref: nv_review_title }
+      text: { required: false, value_ref: nv_review_text, data_class: untrusted }
+  AlbumReview:
+    id_field: album_review_id
+    description: User review of an album.
+    discovery:
+      names: [album review, album reviews, rate album]
+      seed_class: primary
+    fields:
+      album_review_id: { required: true, value_ref: nv_album_review_id }
+      album_id: { required: true, value_ref: nv_album_id }
+      rating: { required: false, value_ref: nv_rating }
+      title: { required: false, value_ref: nv_review_title }
+      text: { required: false, value_ref: nv_review_text, data_class: untrusted }
+  PlaylistReview:
+    id_field: playlist_review_id
+    description: User review of a playlist.
+    discovery:
+      names: [playlist review, playlist reviews, rate playlist]
+      seed_class: primary
+    fields:
+      playlist_review_id: { required: true, value_ref: nv_playlist_review_id }
+      playlist_id: { required: true, value_ref: nv_playlist_id }
+      rating: { required: false, value_ref: nv_rating }
+      title: { required: false, value_ref: nv_review_title }
+      text: { required: false, value_ref: nv_review_text, data_class: untrusted }
+  PaymentCard:
+    id_field: payment_card_id
+    description: Saved payment card.
+    discovery:
+      names: [payment card, card, payment cards]
+      seed_class: primary
+    fields:
+      payment_card_id: { required: true, value_ref: nv_payment_card_id }
+      card_name: { required: false, value_ref: nv_str }
+      owner_name: { required: false, value_ref: nv_str }
+      card_number: { required: false, value_ref: nv_int, data_class: pii_payment }
+      expiry_year: { required: false, value_ref: nv_int }
+      expiry_month: { required: false, value_ref: nv_int }
+      cvv_number: { required: false, value_ref: nv_int, data_class: pii_payment }
+capabilities:
+  login:
+    description: Login to Spotify; returns access_token for Bearer auth.
+    kind: action
+    entity: AuthSession
+    parameters:
+    - { name: username, value_ref: nv_login_username, required: true }
+    - { name: password, value_ref: nv_password, required: true }
+    provides: [access_token, token_type]
+    output: { type: side_effect, description: Creates an authenticated Spotify session. }
+  logout:
+    description: Logout and invalidate the access token.
+    kind: action
+    entity: AuthSession
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    output: { type: side_effect, description: Ends the Spotify session for this token. }
+  song_search:
+    description: Search songs.
+    kind: search
+    entity: Song
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: query, value_ref: nv_str, required: false, role: search }
+    - { name: genre, value_ref: nv_str, required: false, role: filter }
+    - { name: page_index, value_ref: nv_int, required: false, role: response_control }
+    - { name: page_limit, value_ref: nv_int, required: false, role: response_control }
+    - { name: sort_by, value_ref: nv_str, required: false, role: sort }
+    provides: [song_id, title, album_id, album_title, duration, genre, release_date, play_count, rating, like_count, shareable_link]
+  song_get:
+    description: Show one song.
+    kind: get
+    entity: Song
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    provides: [song_id, title, album_id, album_title, duration, genre, release_date, play_count, rating, like_count, shareable_link]
+  song_like:
+    description: Like a song.
+    kind: action
+    entity: Song
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    output: { type: side_effect, description: Likes the song. }
+  song_unlike:
+    description: Unlike a song.
+    kind: action
+    entity: Song
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    output: { type: side_effect, description: Unlikes the song. }
+  downloaded_song_query:
+    description: Search downloaded songs for offline play.
+    kind: search
+    entity: DownloadedSong
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: query, value_ref: nv_str, required: false, role: search }
+    - { name: min_downloaded_at, value_ref: nv_datetime, required: false, role: filter }
+    - { name: max_downloaded_at, value_ref: nv_datetime, required: false, role: filter }
+    - { name: page_index, value_ref: nv_int, required: false, role: response_control }
+    - { name: page_limit, value_ref: nv_int, required: false, role: response_control }
+    - { name: sort_by, value_ref: nv_str, required: false, role: sort }
+    provides: [song_id, title, album_id, album_title, duration, downloaded_at]
+  song_download:
+    description: Download a song for offline playback.
+    kind: action
+    entity: Song
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    output: { type: side_effect, description: Downloads this song for offline play. }
+  song_undownload:
+    description: Remove a song from offline downloads.
+    kind: action
+    entity: Song
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    output: { type: side_effect, description: Removes this song from offline downloads. }
+  album_search:
+    description: Search albums.
+    kind: search
+    entity: Album
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: query, value_ref: nv_str, required: false, role: search }
+    - { name: genre, value_ref: nv_str, required: false, role: filter }
+    - { name: page_index, value_ref: nv_int, required: false, role: response_control }
+    - { name: page_limit, value_ref: nv_int, required: false, role: response_control }
+    - { name: sort_by, value_ref: nv_str, required: false, role: sort }
+    provides: [album_id, title, genre, rating, like_count, release_date]
+  album_get:
+    description: Show one album.
+    kind: get
+    entity: Album
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    provides: [album_id, title, genre, rating, like_count, release_date]
+  album_like:
+    description: Like an album.
+    kind: action
+    entity: Album
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    output: { type: side_effect, description: Likes the album. }
+  album_unlike:
+    description: Unlike an album.
+    kind: action
+    entity: Album
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    output: { type: side_effect, description: Unlikes the album. }
+  artist_search:
+    description: Search artists.
+    kind: search
+    entity: Artist
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: query, value_ref: nv_str, required: false, role: search }
+    - { name: page_index, value_ref: nv_int, required: false, role: response_control }
+    - { name: page_limit, value_ref: nv_int, required: false, role: response_control }
+    provides: [artist_id, name, genre, follower_count]
+  artist_get:
+    description: Show one artist.
+    kind: get
+    entity: Artist
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    provides: [artist_id, name, genre, follower_count]
+  artist_follow:
+    description: Follow an artist.
+    kind: action
+    entity: Artist
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    output: { type: side_effect, description: Follows the artist. }
+  artist_unfollow:
+    description: Unfollow an artist.
+    kind: action
+    entity: Artist
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    output: { type: side_effect, description: Unfollows the artist. }
+  playlist_search:
+    description: Search playlists.
+    kind: search
+    entity: Playlist
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: query, value_ref: nv_str, required: false, role: search }
+    - { name: page_index, value_ref: nv_int, required: false, role: response_control }
+    - { name: page_limit, value_ref: nv_int, required: false, role: response_control }
+    - { name: sort_by, value_ref: nv_str, required: false, role: sort }
+    provides: [playlist_id, title, is_public, rating, like_count, created_at, shareable_link]
+  playlist_get:
+    description: Show one playlist including its songs.
+    kind: get
+    entity: Playlist
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    provides: [playlist_id, title, is_public, rating, like_count, created_at, shareable_link]
+  playlist_create:
+    description: Create a playlist.
+    kind: create
+    entity: Playlist
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: title, value_ref: nv_str, required: true }
+    - { name: is_public, value_ref: nv_bool, required: false }
+    provides: [playlist_id]
+  playlist_update:
+    description: Update playlist title or visibility.
+    kind: update
+    entity: Playlist
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: title, value_ref: nv_str, required: false }
+    - { name: is_public, value_ref: nv_bool, required: false }
+  playlist_delete:
+    description: Delete a playlist.
+    kind: delete
+    entity: Playlist
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+  playlist_add_song:
+    description: Add a song to this playlist.
+    kind: action
+    entity: Playlist
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: song_id, value_ref: nv_song_id, required: true }
+    output: { type: side_effect, description: Adds song_id to the playlist. }
+  playlist_remove_song:
+    description: Remove a song from this playlist.
+    kind: action
+    entity: Playlist
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: song_id, value_ref: nv_song_id, required: true }
+    output: { type: side_effect, description: Removes song_id from the playlist. }
+  playlist_like:
+    description: Like a playlist.
+    kind: action
+    entity: Playlist
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    output: { type: side_effect, description: Likes the playlist. }
+  playlist_unlike:
+    description: Unlike a playlist.
+    kind: action
+    entity: Playlist
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    output: { type: side_effect, description: Unlikes the playlist. }
+  player_current:
+    description: Show the current song in the music player.
+    kind: get
+    entity: Player
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    provides: [song_id, title, position, is_playing, volume]
+  player_play:
+    description: Start or resume playback.
+    kind: action
+    entity: Player
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: song_id, value_ref: nv_song_id, required: false }
+    - { name: album_id, value_ref: nv_album_id, required: false }
+    - { name: playlist_id, value_ref: nv_playlist_id, required: false }
+    output: { type: side_effect, description: Starts playback. }
+  player_pause:
+    description: Pause playback.
+    kind: action
+    entity: Player
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    output: { type: side_effect, description: Pauses playback. }
+  player_previous:
+    description: Go to the previous song in the queue.
+    kind: action
+    entity: Player
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    provides: [song_id]
+    output: { type: side_effect, description: Moves playback to the previous song in the queue. }
+  player_next:
+    description: Go to the next song in the queue.
+    kind: action
+    entity: Player
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    provides: [song_id]
+    output: { type: side_effect, description: Moves playback to the next song in the queue. }
+  player_queue:
+    description: Show the song queue.
+    kind: query
+    entity: QueueEntry
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    provides: [position, song_id, title]
+  player_queue_add:
+    description: Add to the song queue.
+    kind: action
+    entity: Player
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: song_id, value_ref: nv_song_id, required: false }
+    - { name: album_id, value_ref: nv_album_id, required: false }
+    - { name: playlist_id, value_ref: nv_playlist_id, required: false }
+    output: { type: side_effect, description: Appends to the playback queue. }
+  player_queue_clear:
+    description: Clear the song queue.
+    kind: action
+    entity: Player
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    output: { type: side_effect, description: Clears the playback queue. }
+  player_queue_remove:
+    description: Remove a song at a queue position.
+    kind: action
+    entity: QueueEntry
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: position, value_ref: nv_int, required: true }
+    output: { type: side_effect, description: Removes the song at the given queue position. }
+  player_move_song:
+    description: Move a song in the queue to a new position.
+    kind: action
+    entity: Player
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: current_position, value_ref: nv_int, required: true }
+    - { name: new_position, value_ref: nv_int, required: true }
+    output: { type: side_effect, description: Reorders a song within the playback queue. }
+  player_seek:
+    description: Seek the current song to a given number of seconds.
+    kind: action
+    entity: Player
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: seek_seconds, value_ref: nv_int, required: true }
+    output: { type: side_effect, description: Seeks within the current song. }
+  player_loop:
+    description: Set whether to loop the current song.
+    kind: action
+    entity: Player
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: loop, value_ref: nv_bool, required: true }
+    output: { type: side_effect, description: Enables or disables looping the current song. }
+  player_shuffle:
+    description: Shuffle songs in the music player queue.
+    kind: action
+    entity: Player
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    output: { type: side_effect, description: Shuffles the playback queue. }
+  player_volume_get:
+    description: Get player volume.
+    kind: get
+    entity: Player
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    provides: [volume]
+  player_volume_set:
+    description: Set player volume.
+    kind: action
+    entity: Player
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: volume, value_ref: nv_int, required: true }
+    output: { type: side_effect, description: Sets the playback volume. }
+  liked_song_query:
+    description: List songs the user has liked.
+    kind: query
+    entity: Song
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: page_index, value_ref: nv_int, required: false, role: response_control }
+    - { name: page_limit, value_ref: nv_int, required: false, role: response_control }
+    - { name: sort_by, value_ref: nv_str, required: false, role: sort }
+    provides: [song_id, title, album_id, album_title, duration, genre, release_date, play_count, rating, like_count, shareable_link]
+  song_library_query:
+    description: List songs saved to the user's library.
+    kind: query
+    entity: Song
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: page_index, value_ref: nv_int, required: false, role: response_control }
+    - { name: page_limit, value_ref: nv_int, required: false, role: response_control }
+    provides: [song_id, title, album_id, album_title, duration, genre, release_date, play_count, rating, like_count, shareable_link]
+  song_library_add:
+    description: Add a song to the user's library.
+    kind: action
+    entity: Song
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    output: { type: side_effect, description: Saves this song to the library. }
+  song_library_remove:
+    description: Remove a song from the user's library.
+    kind: action
+    entity: Song
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    output: { type: side_effect, description: Removes this song from the library. }
+  album_library_query:
+    description: List albums saved to the user's library.
+    kind: query
+    entity: Album
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: page_index, value_ref: nv_int, required: false, role: response_control }
+    - { name: page_limit, value_ref: nv_int, required: false, role: response_control }
+    provides: [album_id, title, genre, rating, like_count, release_date]
+  album_library_add:
+    description: Add an album to the user's library.
+    kind: action
+    entity: Album
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    output: { type: side_effect, description: Saves this album to the library. }
+  album_library_remove:
+    description: Remove an album from the user's library.
+    kind: action
+    entity: Album
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    output: { type: side_effect, description: Removes this album from the library. }
+  playlist_library_query:
+    description: List playlists in the user's library.
+    kind: query
+    entity: Playlist
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: page_index, value_ref: nv_int, required: false, role: response_control }
+    - { name: page_limit, value_ref: nv_int, required: false, role: response_control }
+    - { name: is_public, value_ref: nv_bool, required: false, role: filter }
+    provides: [playlist_id, title, is_public, rating, like_count, created_at, shareable_link]
+  liked_playlist_query:
+    description: List playlists the user has liked.
+    kind: query
+    entity: Playlist
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: page_index, value_ref: nv_int, required: false, role: response_control }
+    - { name: page_limit, value_ref: nv_int, required: false, role: response_control }
+    provides: [playlist_id, title, is_public, rating, like_count, created_at, shareable_link]
+  liked_album_query:
+    description: List albums the user has liked.
+    kind: query
+    entity: Album
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: page_index, value_ref: nv_int, required: false, role: response_control }
+    - { name: page_limit, value_ref: nv_int, required: false, role: response_control }
+    provides: [album_id, title, genre, rating, like_count, release_date]
+  following_artist_query:
+    description: List artists the user follows.
+    kind: query
+    entity: Artist
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: page_index, value_ref: nv_int, required: false, role: response_control }
+    - { name: page_limit, value_ref: nv_int, required: false, role: response_control }
+    provides: [artist_id, name, genre, follower_count]
+  song_review_create:
+    description: Write a review for a song.
+    kind: create
+    entity: SongReview
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: song_id, value_ref: nv_song_id, required: true, role: scope }
+    - { name: rating, value_ref: nv_rating, required: true }
+    - { name: title, value_ref: nv_review_title, required: false }
+    - { name: text, value_ref: nv_review_text, required: false }
+    provides: [song_review_id]
+  song_review_update:
+    description: Update a song review.
+    kind: update
+    entity: SongReview
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: rating, value_ref: nv_rating, required: false }
+    - { name: title, value_ref: nv_review_title, required: false }
+    - { name: text, value_ref: nv_review_text, required: false }
+  song_review_delete:
+    description: Delete a song review.
+    kind: delete
+    entity: SongReview
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+  album_review_create:
+    description: Write a review for an album.
+    kind: create
+    entity: AlbumReview
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: album_id, value_ref: nv_album_id, required: true, role: scope }
+    - { name: rating, value_ref: nv_rating, required: true }
+    - { name: title, value_ref: nv_review_title, required: false }
+    - { name: text, value_ref: nv_review_text, required: false }
+    provides: [album_review_id]
+  album_review_update:
+    description: Update an album review.
+    kind: update
+    entity: AlbumReview
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: rating, value_ref: nv_rating, required: false }
+    - { name: title, value_ref: nv_review_title, required: false }
+    - { name: text, value_ref: nv_review_text, required: false }
+  album_review_delete:
+    description: Delete an album review.
+    kind: delete
+    entity: AlbumReview
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+  playlist_review_create:
+    description: Write a review for a playlist.
+    kind: create
+    entity: PlaylistReview
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: playlist_id, value_ref: nv_playlist_id, required: true, role: scope }
+    - { name: rating, value_ref: nv_rating, required: true }
+    - { name: title, value_ref: nv_review_title, required: false }
+    - { name: text, value_ref: nv_review_text, required: false }
+    provides: [playlist_review_id]
+  playlist_review_update:
+    description: Update a playlist review.
+    kind: update
+    entity: PlaylistReview
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: rating, value_ref: nv_rating, required: false }
+    - { name: title, value_ref: nv_review_title, required: false }
+    - { name: text, value_ref: nv_review_text, required: false }
+  playlist_review_delete:
+    description: Delete a playlist review.
+    kind: delete
+    entity: PlaylistReview
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+  payment_card_query:
+    description: List saved payment cards.
+    kind: query
+    entity: PaymentCard
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    provides: [payment_card_id, card_name, owner_name, card_number, expiry_year, expiry_month, cvv_number]
+  payment_card_create:
+    description: Add a payment card.
+    kind: create
+    entity: PaymentCard
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: card_name, value_ref: nv_str, required: true }
+    - { name: owner_name, value_ref: nv_str, required: true }
+    - { name: card_number, value_ref: nv_int, required: true }
+    - { name: expiry_year, value_ref: nv_int, required: true }
+    - { name: expiry_month, value_ref: nv_int, required: true }
+    - { name: cvv_number, value_ref: nv_int, required: true }
+    provides: [payment_card_id]
+  payment_card_update:
+    description: Rename a payment card.
+    kind: update
+    entity: PaymentCard
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: card_name, value_ref: nv_str, required: true }
+  payment_card_delete:
+    description: Delete a payment card.
+    kind: delete
+    entity: PaymentCard
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+values:
+  nv_str: { type: string, description: Free-form string. }
+  nv_login_username: { type: string, description: Account-holder login id for this service — not a counterparty. }
+  nv_email: { type: email, description: Email address of a user or counterparty. }
+  nv_password: { type: string, description: Account-holder password for this service. }
+  nv_access_token: { type: string, description: Bearer access token from login. }
+  nv_song_id: { type: integer, description: Song primary key. }
+  nv_album_id: { type: integer, description: Album primary key. }
+  nv_artist_id: { type: integer, description: Artist primary key. }
+  nv_playlist_id: { type: integer, description: Playlist primary key. }
+  nv_song_review_id: { type: integer, description: Song review primary key. }
+  nv_album_review_id: { type: integer, description: Album review primary key. }
+  nv_playlist_review_id: { type: integer, description: Playlist review primary key. }
+  nv_payment_card_id: { type: integer, description: Payment card primary key. }
+  nv_rating: { type: integer, description: Star rating from 1 to 5. }
+  nv_review_title: { type: string, description: Review title. }
+  nv_review_text: { type: string, description: Review body text. }
+  nv_number: { type: number, description: Rating or numeric value. }
+  nv_bool: { type: boolean, description: Boolean flag. }
+  nv_int: { type: integer, description: Integer. }
+  nv_datetime: { type: rfc3339, description: ISO datetime string. }

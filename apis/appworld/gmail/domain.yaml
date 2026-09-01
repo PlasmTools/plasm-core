@@ -1,0 +1,985 @@
+version: 5
+entry_id: gmail
+auth:
+  scheme: none
+http_backend: http://127.0.0.1:9000
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  pii_email:
+    description: Email address treated as personally identifiable.
+    severity: sensitive
+  external_send:
+    description: Outbound email body delivered outside the mailbox.
+    severity: critical
+entities:
+  AuthSession:
+    id_field: access_token
+    description: Login session for Gmail (Bearer token).
+    discovery:
+      names:
+      - login
+      - auth
+      - access token
+      seed_class: primary
+      co_seed_with: catalog_primary
+    fields:
+      access_token:
+        required: true
+        value_ref: nv_access_token
+      token_type:
+        required: false
+        value_ref: nv_str
+  EmailThread:
+    id_field: email_thread_id
+    description: Gmail conversation thread (inbox/outbox/spam/archived/snoozed).
+    discovery:
+      names:
+      - thread
+      - inbox
+      - email thread
+      - snoozed
+      seed_class: primary
+    fields:
+      email_thread_id:
+        required: true
+        value_ref: nv_thread_id
+      subject:
+        required: false
+        value_ref: nv_str
+      label:
+        required: false
+        value_ref: nv_str
+      read:
+        required: false
+        value_ref: nv_bool
+      starred:
+        required: false
+        value_ref: nv_bool
+      archived:
+        required: false
+        value_ref: nv_bool
+      spam:
+        required: false
+        value_ref: nv_bool
+      incoming:
+        required: false
+        value_ref: nv_bool
+      outgoing:
+        required: false
+        value_ref: nv_bool
+      created_at:
+        required: false
+        value_ref: nv_datetime
+      updated_at:
+        required: false
+        value_ref: nv_datetime
+  Email:
+    id_field: email_id
+    description: A single email message with subject and body.
+    discovery:
+      names:
+      - email
+      - message
+      - mail
+      seed_class: primary
+    fields:
+      email_id:
+        required: true
+        value_ref: nv_email_id
+      subject:
+        required: false
+        value_ref: nv_str
+      body:
+        required: false
+        value_ref: nv_body
+        data_class: untrusted
+      response_to_email_id:
+        required: false
+        value_ref: nv_email_id
+      created_at:
+        required: false
+        value_ref: nv_datetime
+  Draft:
+    id_field: draft_id
+    description: Unsent draft email.
+    discovery:
+      names:
+      - draft
+      - drafts
+      seed_class: primary
+    fields:
+      draft_id:
+        required: true
+        value_ref: nv_draft_id
+      subject:
+        required: false
+        value_ref: nv_str
+      body:
+        required: false
+        value_ref: nv_body
+        data_class: untrusted
+      scheduled_send_at:
+        required: false
+        value_ref: nv_datetime
+      created_at:
+        required: false
+        value_ref: nv_datetime
+  Profile:
+    id_field: email
+    description: Gmail user profile.
+    fields:
+      first_name:
+        required: false
+        value_ref: nv_str
+      last_name:
+        required: false
+        value_ref: nv_str
+      email:
+        required: true
+        value_ref: nv_email
+      registered_at:
+        required: false
+        value_ref: nv_datetime
+  Attachment:
+    id_field: attachment_id
+    description: File attachment on an email message.
+    discovery:
+      names:
+      - attachment
+      - attachments
+      seed_class: dependent
+    fields:
+      attachment_id:
+        required: true
+        value_ref: nv_attachment_id
+capabilities:
+  login:
+    description: Login to Gmail; returns access_token for Bearer auth.
+    kind: action
+    entity: AuthSession
+    parameters:
+    - name: username
+      value_ref: nv_login_username
+      required: true
+    - name: password
+      value_ref: nv_password
+      required: true
+    provides:
+    - access_token
+    - token_type
+    output:
+      type: side_effect
+      description: Creates an authenticated Gmail session.
+  logout:
+    description: Logout and invalidate the access token.
+    kind: action
+    entity: AuthSession
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    output:
+      type: side_effect
+      description: Ends the Gmail session for this token.
+  email_thread_query:
+    description: Search inbox threads (query/filters/pagination).
+    kind: search
+    entity: EmailThread
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+      role: search
+    - name: label
+      value_ref: nv_str
+      required: false
+      role: filter
+    - name: starred
+      value_ref: nv_bool
+      required: false
+      role: filter
+    - name: read
+      value_ref: nv_bool
+      required: false
+      role: filter
+    - name: archived
+      value_ref: nv_bool
+      required: false
+      role: filter
+    - name: from_email
+      value_ref: nv_email
+      required: false
+      role: filter
+    - name: to_email
+      value_ref: nv_email
+      required: false
+      role: filter
+    - name: page_index
+      value_ref: nv_int
+      required: false
+      role: response_control
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+      role: response_control
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+      role: sort
+    provides:
+    - email_thread_id
+    - subject
+    - label
+    - read
+    - starred
+    - archived
+    - spam
+    - incoming
+    - outgoing
+    - created_at
+    - updated_at
+  email_thread_outbox_query:
+    description: Search outbox / sent threads.
+    kind: search
+    entity: EmailThread
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+      role: search
+    - name: label
+      value_ref: nv_str
+      required: false
+      role: filter
+    - name: starred
+      value_ref: nv_bool
+      required: false
+      role: filter
+    - name: read
+      value_ref: nv_bool
+      required: false
+      role: filter
+    - name: archived
+      value_ref: nv_bool
+      required: false
+      role: filter
+    - name: from_email
+      value_ref: nv_email
+      required: false
+      role: filter
+    - name: to_email
+      value_ref: nv_email
+      required: false
+      role: filter
+    - name: page_index
+      value_ref: nv_int
+      required: false
+      role: response_control
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+      role: response_control
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+      role: sort
+    provides:
+    - email_thread_id
+    - subject
+    - label
+    - read
+    - starred
+    - archived
+    - spam
+    - incoming
+    - outgoing
+    - created_at
+    - updated_at
+  email_thread_archived_query:
+    description: Search archived threads.
+    kind: search
+    entity: EmailThread
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+      role: search
+    - name: label
+      value_ref: nv_str
+      required: false
+      role: filter
+    - name: starred
+      value_ref: nv_bool
+      required: false
+      role: filter
+    - name: read
+      value_ref: nv_bool
+      required: false
+      role: filter
+    - name: from_email
+      value_ref: nv_email
+      required: false
+      role: filter
+    - name: to_email
+      value_ref: nv_email
+      required: false
+      role: filter
+    - name: page_index
+      value_ref: nv_int
+      required: false
+      role: response_control
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+      role: response_control
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+      role: sort
+    provides:
+    - email_thread_id
+    - subject
+    - label
+    - read
+    - starred
+    - archived
+    - spam
+    - incoming
+    - outgoing
+    - created_at
+    - updated_at
+  email_thread_get:
+    description: Show one email thread including messages.
+    kind: get
+    entity: EmailThread
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - email_thread_id
+    - subject
+    - label
+    - read
+    - starred
+    - archived
+    - spam
+    - incoming
+    - outgoing
+    - created_at
+    - updated_at
+  email_thread_delete:
+    description: Delete an email thread.
+    kind: delete
+    entity: EmailThread
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+  email_thread_mark_read:
+    description: Mark a thread as read.
+    kind: action
+    entity: EmailThread
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    output:
+      type: side_effect
+      description: Marks the thread read.
+  email_thread_mark_unread:
+    description: Mark a thread as unread.
+    kind: action
+    entity: EmailThread
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    output:
+      type: side_effect
+      description: Marks the thread unread.
+  email_thread_star:
+    description: Star a thread.
+    kind: action
+    entity: EmailThread
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    output:
+      type: side_effect
+      description: Stars the thread.
+  email_thread_unstar:
+    description: Unstar a thread.
+    kind: action
+    entity: EmailThread
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    output:
+      type: side_effect
+      description: Removes the star from the thread.
+  email_thread_archive:
+    description: Archive a thread.
+    kind: action
+    entity: EmailThread
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    output:
+      type: side_effect
+      description: Archives the thread.
+  email_thread_unarchive:
+    description: Unarchive a thread.
+    kind: action
+    entity: EmailThread
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    output:
+      type: side_effect
+      description: Moves the thread out of archive.
+  email_thread_snooze:
+    description: Snooze a thread until a future datetime.
+    kind: action
+    entity: EmailThread
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: snooze_until
+      value_ref: nv_snooze_until
+      required: true
+    output:
+      type: side_effect
+      description: Hides the thread until snooze_until, then returns it unread.
+  email_thread_unsnooze:
+    description: Cancel snooze on a thread.
+    kind: action
+    entity: EmailThread
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    output:
+      type: side_effect
+      description: Clears snooze so the thread is visible again.
+  email_get:
+    description: Show one email including body.
+    kind: get
+    entity: Email
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - email_id
+    - subject
+    - body
+    - response_to_email_id
+    - created_at
+  email_send:
+    description: Send a new email to one or more addresses.
+    kind: action
+    entity: Email
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: email_addresses
+      value_ref: nv_email_list
+      required: true
+    - name: subject
+      value_ref: nv_str
+      required: true
+    - name: body
+      value_ref: nv_body
+      required: true
+      sink_class: external_send
+    output:
+      type: side_effect
+      description: Sends an email to the given addresses.
+  email_reply:
+    description: Reply to this email (entity id) within its thread.
+    kind: action
+    entity: Email
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: email_thread_id
+      value_ref: nv_thread_id
+      required: true
+    - name: body
+      value_ref: nv_body
+      required: true
+      sink_class: external_send
+    - name: email_addresses
+      value_ref: nv_email_list
+      required: false
+    output:
+      type: side_effect
+      description: Posts a reply on the thread.
+  email_delete_in_thread:
+    description: Delete one email from its thread.
+    kind: delete
+    entity: Email
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: email_thread_id
+      value_ref: nv_thread_id
+      required: true
+  draft_query:
+    description: List drafts.
+    kind: query
+    entity: Draft
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: page_index
+      value_ref: nv_int
+      required: false
+      role: response_control
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+      role: response_control
+    provides:
+    - draft_id
+    - subject
+    - body
+    - scheduled_send_at
+    - created_at
+  draft_get:
+    description: Show one draft.
+    kind: get
+    entity: Draft
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - draft_id
+    - subject
+    - body
+    - scheduled_send_at
+    - created_at
+  draft_create:
+    description: Create a draft.
+    kind: create
+    entity: Draft
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: recipient_email_addresses
+      value_ref: nv_email_list
+      required: false
+    - name: subject
+      value_ref: nv_str
+      required: false
+    - name: body
+      value_ref: nv_body
+      required: false
+    - name: belongs_to_email_thread_id
+      value_ref: nv_thread_id
+      required: false
+    - name: response_to_email_id
+      value_ref: nv_email_id
+      required: false
+    - name: scheduled_send_at
+      value_ref: nv_datetime
+      required: false
+    provides:
+    - draft_id
+  draft_update:
+    description: Update a draft.
+    kind: update
+    entity: Draft
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: email_addresses
+      value_ref: nv_email_list
+      required: false
+    - name: subject
+      value_ref: nv_str
+      required: false
+    - name: body
+      value_ref: nv_body
+      required: false
+    - name: scheduled_send_at
+      value_ref: nv_datetime
+      required: false
+  draft_delete:
+    description: Delete a draft.
+    kind: delete
+    entity: Draft
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+  draft_send:
+    description: Send an existing draft.
+    kind: action
+    entity: Draft
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    output:
+      type: side_effect
+      description: Sends the draft as an email.
+  profile_get:
+    description: Show Gmail profile for an email.
+    kind: get
+    entity: Profile
+    parameters:
+    - name: email
+      value_ref: nv_email
+      required: true
+    provides:
+    - first_name
+    - last_name
+    - email
+    - registered_at
+  email_thread_spam_query:
+    description: Search spam threads.
+    kind: search
+    entity: EmailThread
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+      role: search
+    - name: label
+      value_ref: nv_str
+      required: false
+      role: filter
+    - name: starred
+      value_ref: nv_bool
+      required: false
+      role: filter
+    - name: read
+      value_ref: nv_bool
+      required: false
+      role: filter
+    - name: archived
+      value_ref: nv_bool
+      required: false
+      role: filter
+    - name: from_email
+      value_ref: nv_email
+      required: false
+      role: filter
+    - name: to_email
+      value_ref: nv_email
+      required: false
+      role: filter
+    - name: page_index
+      value_ref: nv_int
+      required: false
+      role: response_control
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+      role: response_control
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+      role: sort
+    provides:
+    - email_thread_id
+    - subject
+    - label
+    - read
+    - starred
+    - archived
+    - spam
+    - incoming
+    - outgoing
+    - created_at
+    - updated_at
+  email_thread_snoozed_query:
+    description: Search snoozed threads.
+    kind: search
+    entity: EmailThread
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+      role: search
+    - name: label
+      value_ref: nv_str
+      required: false
+      role: filter
+    - name: starred
+      value_ref: nv_bool
+      required: false
+      role: filter
+    - name: read
+      value_ref: nv_bool
+      required: false
+      role: filter
+    - name: from_email
+      value_ref: nv_email
+      required: false
+      role: filter
+    - name: to_email
+      value_ref: nv_email
+      required: false
+      role: filter
+    - name: page_index
+      value_ref: nv_int
+      required: false
+      role: response_control
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+      role: response_control
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+      role: sort
+    provides:
+    - email_thread_id
+    - subject
+    - label
+    - read
+    - starred
+    - archived
+    - spam
+    - incoming
+    - outgoing
+    - created_at
+    - updated_at
+  email_thread_label:
+    description: Assign a label to a thread.
+    kind: action
+    entity: EmailThread
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: label
+      value_ref: nv_str
+      required: true
+    output:
+      type: side_effect
+      description: Applies the label to the thread.
+  email_thread_unlabel:
+    description: Remove the label from a thread.
+    kind: action
+    entity: EmailThread
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    output:
+      type: side_effect
+      description: Removes the label from the thread.
+  email_thread_mark_spam:
+    description: Mark a thread as spam.
+    kind: action
+    entity: EmailThread
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    output:
+      type: side_effect
+      description: Moves the thread to spam.
+  email_thread_mark_not_spam:
+    description: Mark a thread as not spam.
+    kind: action
+    entity: EmailThread
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    output:
+      type: side_effect
+      description: Removes the thread from spam.
+  email_forward:
+    description: Forward this email to one or more addresses.
+    kind: action
+    entity: Email
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: email_thread_id
+      value_ref: nv_thread_id
+      required: true
+    - name: email_addresses
+      value_ref: nv_email_list
+      required: true
+      sink_class: external_send
+    - name: draft_not_send
+      value_ref: nv_bool
+      required: false
+    output:
+      type: side_effect
+      description: Forwards the email to the given addresses.
+  email_thread_forward:
+    description: Forward an entire thread to one or more addresses.
+    kind: action
+    entity: EmailThread
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: email_addresses
+      value_ref: nv_email_list
+      required: true
+      sink_class: external_send
+    - name: draft_not_send
+      value_ref: nv_bool
+      required: false
+    output:
+      type: side_effect
+      description: Forwards the thread to the given addresses.
+  attachment_download:
+    description: Download an attachment to a file-system path.
+    kind: action
+    entity: Attachment
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: download_to_file_path
+      value_ref: nv_file_path
+      required: false
+    - name: overwrite
+      value_ref: nv_bool
+      required: false
+    - name: file_system_access_token
+      value_ref: nv_access_token
+      required: true
+    output:
+      type: side_effect
+      description: Writes the attachment bytes to the given file path.
+  draft_attachment_upload:
+    description: Upload file-system paths as attachments on a draft.
+    kind: action
+    entity: Attachment
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: draft_id
+      value_ref: nv_draft_id
+      required: true
+      role: scope
+    - name: attachment_file_paths
+      value_ref: nv_file_path_list
+      required: true
+    - name: overwrite
+      value_ref: nv_bool
+      required: false
+    - name: file_system_access_token
+      value_ref: nv_access_token
+      required: true
+    output:
+      type: side_effect
+      description: Attaches the given file-system paths onto the draft.
+  draft_attachment_remove:
+    description: Remove an attachment from a draft.
+    kind: delete
+    entity: Attachment
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: draft_id
+      value_ref: nv_draft_id
+      required: true
+      role: scope
+values:
+  nv_str:
+    type: string
+
+    description: Free-form string.
+  nv_email:
+    type: email
+
+    description: Email address of a user or counterparty.
+  nv_login_username:
+    type: string
+
+    description: Account-holder login id for this service — not a counterparty.
+  nv_password:
+    type: string
+
+    description: Account-holder password for this service.
+  nv_access_token:
+    type: string
+
+    description: Bearer access token from login.
+  nv_body:
+    type: markdown
+
+    description: Email body text.
+  nv_thread_id:
+    type: integer
+    description: Email thread primary key.
+  nv_email_id:
+    type: integer
+    description: Email primary key.
+  nv_draft_id:
+    type: integer
+    description: Draft primary key.
+  nv_email_list:
+    type: array
+    items:
+      value_ref: nv_email
+    description: List of email addresses.
+  nv_bool:
+    type: boolean
+    description: Boolean flag.
+  nv_int:
+    type: integer
+    description: Integer.
+  nv_datetime:
+    type: rfc3339
+
+    description: ISO datetime string.
+  nv_snooze_until:
+    type: string
+    description: "Future datetime to unsnooze a thread, as YYYY-MM-DD|HH:MM:SS."
+  nv_attachment_id:
+    type: integer
+    description: Attachment primary key.
+  nv_file_path:
+    type: string
+
+    description: File-system path for download or save.
+  nv_file_path_list:
+    type: array
+    items:
+      value_ref: nv_file_path
+    description: Absolute file-system paths to attach from the file_system app.

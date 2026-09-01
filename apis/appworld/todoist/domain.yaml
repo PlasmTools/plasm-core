@@ -1,0 +1,655 @@
+version: 4
+entry_id: todoist
+auth:
+  scheme: none
+http_backend: http://127.0.0.1:9000
+data_classes:
+  untrusted:
+    description: User-authored task or comment text.
+    severity: untrusted
+entities:
+  AuthSession:
+    id_field: access_token
+    description: Login session for Todoist (Bearer token).
+    discovery:
+      names:
+      - login
+      - auth
+      - access token
+      seed_class: primary
+      co_seed_with: catalog_primary
+    fields:
+      access_token:
+        required: true
+        value_ref: nv_access_token
+      token_type:
+        required: false
+        value_ref: nv_str
+  Project:
+    id_field: project_id
+    description: Todoist project container for tasks and sections.
+    discovery:
+      names:
+      - project
+      - projects
+      seed_class: primary
+    fields:
+      project_id:
+        required: true
+        value_ref: nv_project_id
+      name:
+        required: true
+        value_ref: nv_str
+      color:
+        required: false
+        value_ref: nv_str
+      is_inbox:
+        required: false
+        value_ref: nv_bool
+      description:
+        required: false
+        value_ref: nv_str
+    relations:
+      tasks:
+        description: Tasks in this project.
+        target: Task
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: task_query
+          param: project_id
+      sections:
+        description: Sections in this project.
+        target: Section
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: section_query
+          param: project_id
+  Task:
+    id_field: task_id
+    description: A Todoist task within a project.
+    discovery:
+      names:
+      - task
+      - tasks
+      - todo
+      seed_class: primary
+    fields:
+      task_id:
+        required: true
+        value_ref: nv_task_id
+      project_id:
+        required: false
+        value_ref: nv_project_id
+      section_id:
+        required: false
+        value_ref: nv_section_id
+      title:
+        required: true
+        value_ref: nv_str
+        data_class: untrusted
+      description:
+        required: false
+        value_ref: nv_task_description
+        data_class: untrusted
+      due_date:
+        required: false
+        value_ref: nv_due_date
+      priority:
+        required: false
+        value_ref: nv_int
+      is_completed:
+        required: false
+        value_ref: nv_bool
+      assignee_email:
+        required: false
+        value_ref: nv_email
+    relations:
+      comments:
+        description: Comments on this task.
+        target: TaskComment
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: task_comment_query
+          param: task_id
+      sub_tasks:
+        description: Sub-tasks under this task.
+        target: SubTask
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: sub_task_query
+          param: task_id
+  Section:
+    id_field: section_id
+    description: Named section within a project.
+    fields:
+      section_id:
+        required: true
+        value_ref: nv_section_id
+      project_id:
+        required: false
+        value_ref: nv_project_id
+      name:
+        required: true
+        value_ref: nv_str
+  Label:
+    id_field: label_id
+    description: Task label.
+    fields:
+      label_id:
+        required: true
+        value_ref: nv_label_id
+      name:
+        required: true
+        value_ref: nv_str
+      color:
+        required: false
+        value_ref: nv_str
+  TaskComment:
+    id_field: task_comment_id
+    description: Comment on a task.
+    fields:
+      task_comment_id:
+        required: true
+        value_ref: nv_comment_id
+      task_id:
+        required: false
+        value_ref: nv_task_id
+      content:
+        required: true
+        value_ref: nv_str
+        data_class: untrusted
+      attachment_file_name:
+        required: false
+        value_ref: nv_str
+  SubTask:
+    id_field: sub_task_id
+    description: Sub-task under a parent task.
+    fields:
+      sub_task_id:
+        required: true
+        value_ref: nv_sub_task_id
+      task_id:
+        required: false
+        value_ref: nv_task_id
+      title:
+        required: true
+        value_ref: nv_str
+      is_completed:
+        required: false
+        value_ref: nv_bool
+  User:
+    id_field: email
+    description: Todoist user searchable for invites/assignment.
+    fields:
+      email:
+        required: true
+        value_ref: nv_email
+      first_name:
+        required: false
+        value_ref: nv_str
+      last_name:
+        required: false
+        value_ref: nv_str
+capabilities:
+  login:
+    description: Login to Todoist; returns access_token for Bearer auth.
+    kind: action
+    entity: AuthSession
+    parameters:
+    - name: username
+      value_ref: nv_login_username
+      required: true
+    - name: password
+      value_ref: nv_password
+      required: true
+    provides:
+    - access_token
+    - token_type
+    output:
+      type: side_effect
+      description: Creates an authenticated Todoist session.
+  logout:
+    description: Logout Todoist session.
+    kind: action
+    entity: AuthSession
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    output:
+      type: side_effect
+      description: Ends the Todoist session.
+  project_query:
+    description: List projects for the authenticated user.
+    kind: query
+    entity: Project
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+  project_get:
+    description: Show one project.
+    kind: get
+    entity: Project
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+  project_create:
+    description: Create a project.
+    kind: create
+    entity: Project
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: name
+      value_ref: nv_str
+      required: true
+    - name: color
+      value_ref: nv_str
+      required: false
+    - name: description
+      value_ref: nv_str
+      required: false
+  project_update:
+    description: Update a project.
+    kind: update
+    entity: Project
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: name
+      value_ref: nv_str
+      required: false
+    - name: color
+      value_ref: nv_str
+      required: false
+    - name: description
+      value_ref: nv_str
+      required: false
+  project_delete:
+    description: Delete a project.
+    kind: delete
+    entity: Project
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+  task_query:
+    description: List tasks in a project.
+    kind: query
+    entity: Task
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: project_id
+      value_ref: nv_project_id
+      required: true
+      role: scope
+  task_get:
+    description: Show one task.
+    kind: get
+    entity: Task
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+  task_create:
+    description: Create a task in a project.
+    kind: create
+    entity: Task
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: project_id
+      value_ref: nv_project_id
+      required: true
+      role: scope
+    - name: title
+      value_ref: nv_str
+      required: true
+    - name: description
+      value_ref: nv_str
+      required: false
+    - name: due_date
+      value_ref: nv_due_date
+      required: false
+    - name: priority
+      value_ref: nv_int
+      required: false
+    - name: section_id
+      value_ref: nv_section_id
+      required: false
+  task_update:
+    description: Update a task (title, due date, completion, etc.).
+    kind: update
+    entity: Task
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: title
+      value_ref: nv_str
+      required: false
+    - name: description
+      value_ref: nv_str
+      required: false
+    - name: due_date
+      value_ref: nv_due_date
+      required: false
+    - name: priority
+      value_ref: nv_int
+      required: false
+    - name: is_completed
+      value_ref: nv_bool
+      required: false
+  task_delete:
+    description: Delete a task.
+    kind: delete
+    entity: Task
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+  task_assign:
+    description: Assign or unassign a task to a collaborator email.
+    kind: action
+    entity: Task
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: assignee_email
+      value_ref: nv_email
+      required: false
+      description: Email to assign; omit or null to unassign.
+    output:
+      type: side_effect
+      description: Changes task assignee.
+  label_query:
+    description: Search labels.
+    kind: search
+    entity: Label
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+      role: search
+  label_create:
+    description: Create a label.
+    kind: create
+    entity: Label
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: name
+      value_ref: nv_str
+      required: true
+    - name: color
+      value_ref: nv_str
+      required: false
+  label_delete:
+    description: Delete a label.
+    kind: delete
+    entity: Label
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+  task_add_label:
+    description: Attach a label to a task.
+    kind: action
+    entity: Task
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: label_id
+      value_ref: nv_label_id
+      required: true
+    output:
+      type: side_effect
+      description: Adds label to task.
+  task_remove_label:
+    description: Remove a label from a task.
+    kind: action
+    entity: Task
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: label_id
+      value_ref: nv_label_id
+      required: true
+    output:
+      type: side_effect
+      description: Removes label from task.
+  section_query:
+    description: List sections in a project.
+    kind: query
+    entity: Section
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: project_id
+      value_ref: nv_project_id
+      required: true
+      role: scope
+  section_create:
+    description: Create a section in a project.
+    kind: create
+    entity: Section
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: project_id
+      value_ref: nv_project_id
+      required: true
+      role: scope
+    - name: name
+      value_ref: nv_str
+      required: true
+  section_delete:
+    description: Delete a section.
+    kind: delete
+    entity: Section
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+  task_comment_query:
+    description: List comments on a task.
+    kind: query
+    entity: TaskComment
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: task_id
+      value_ref: nv_task_id
+      required: true
+      role: scope
+  task_comment_create:
+    description: Post a comment on a task.
+    kind: create
+    entity: TaskComment
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: task_id
+      value_ref: nv_task_id
+      required: true
+      role: scope
+    - name: content
+      value_ref: nv_str
+      required: true
+  task_comment_update:
+    description: Update a task comment's content.
+    kind: update
+    entity: TaskComment
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: content
+      value_ref: nv_str
+      required: false
+  task_comment_delete:
+    description: Delete a task comment.
+    kind: delete
+    entity: TaskComment
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+  task_comment_upload_attachment:
+    description: Upload a file-system file as an attachment on a task comment.
+    kind: action
+    entity: TaskComment
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: upload_from_file_path
+      value_ref: nv_file_path
+      required: true
+    - name: overwrite
+      value_ref: nv_bool
+      required: false
+    - name: file_system_access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - attachment_file_name
+    output:
+      type: side_effect
+      description: Attaches the file-system file onto the task comment.
+  task_comment_delete_attachment:
+    description: Delete an attachment from a task comment by file name.
+    kind: action
+    entity: TaskComment
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: attachment_file_name
+      value_ref: nv_str
+      required: true
+    output:
+      type: side_effect
+      description: Removes the named attachment from the task comment.
+  sub_task_query:
+    description: List sub-tasks under a task.
+    kind: query
+    entity: SubTask
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: task_id
+      value_ref: nv_task_id
+      required: true
+      role: scope
+  sub_task_create:
+    description: Create a sub-task.
+    kind: create
+    entity: SubTask
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: task_id
+      value_ref: nv_task_id
+      required: true
+      role: scope
+    - name: title
+      value_ref: nv_str
+      required: true
+  sub_task_delete:
+    description: Delete a sub-task.
+    kind: delete
+    entity: SubTask
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+  user_query:
+    description: Search Todoist users (for invites / assignment).
+    kind: search
+    entity: User
+    parameters:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+      role: search
+values:
+  nv_str:
+    type: string
+
+    description: Free-form string.
+  nv_email:
+    type: email
+
+    description: Email address of a user or counterparty.
+  nv_login_username:
+    type: string
+
+    description: Account-holder login id for this service — not a counterparty.
+  nv_password:
+    type: string
+
+    description: Account-holder password for this service.
+  nv_access_token:
+    type: string
+    description: Bearer access token from login.
+  nv_due_date:
+    type: iso8601_date
+    description: Task due date (YYYY-MM-DD).
+  nv_task_description:
+    type: markdown
+    description: Task description body.
+  nv_bool:
+    type: boolean
+    description: Boolean.
+  nv_int:
+    type: integer
+    description: Integer.
+  nv_project_id:
+    type: integer
+    description: Project id.
+  nv_task_id:
+    type: integer
+    description: Task id.
+  nv_section_id:
+    type: integer
+    description: Section id.
+  nv_label_id:
+    type: integer
+    description: Label id.
+  nv_comment_id:
+    type: integer
+    description: Task comment id.
+  nv_sub_task_id:
+    type: integer
+    description: Sub-task id.
+  nv_file_path:
+    type: string
+    description: Absolute file-system path for attachment upload.

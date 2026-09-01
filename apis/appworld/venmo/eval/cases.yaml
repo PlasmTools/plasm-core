@@ -1,0 +1,41 @@
+- id: authenticate_and_find_user
+  schema: venmo
+  goal: Log in to Venmo and find the user whose name is Jordan
+  covers: [invoke, search]
+  expect:
+    entities_any: [AuthSession, User]
+
+- id: inspect_friend_transactions
+  schema: venmo
+  goal: Find my friend alex@example.com and show transactions with that user over 20 dollars
+  covers: [query, query_filtered, multi_step]
+  expect:
+    entities_any: [Friend, Transaction]
+
+- id: pay_friend
+  schema: venmo
+  goal: Pay sam@example.com 18.50 dollars for dinner and keep the transaction private
+  covers: [create]
+  expect:
+    entities_any: [Transaction]
+
+- id: create_payment_request
+  schema: venmo
+  goal: Request 35 dollars from taylor@example.com for concert tickets
+  covers: [create]
+  expect:
+    entities_any: [PaymentRequest]
+
+- id: approve_received_request
+  schema: venmo
+  goal: Show my pending received payment requests and approve one using a linked payment card
+  covers: [query_filtered, invoke, multi_step]
+  expect:
+    entities_any: [PaymentRequest, PaymentCard]
+
+- id: remove_friend
+  schema: venmo
+  goal: Remove former.friend@example.com from my Venmo friends
+  covers: [delete]
+  expect:
+    entities_any: [Friend]
