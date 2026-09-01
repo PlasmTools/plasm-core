@@ -7,7 +7,6 @@ pub(crate) enum ExecResponseKind {
     Json,
     Ndjson,
     Table,
-    Toon,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -151,15 +150,6 @@ pub(crate) fn respond_plan_payload(kind: ExecResponseKind, preview: serde_json::
             )
                 .into_response()
         }
-        ExecResponseKind::Toon => {
-            let s = toon::encode(&preview, None);
-            (
-                StatusCode::OK,
-                [(CONTENT_TYPE, "text/toon; charset=utf-8")],
-                s,
-            )
-                .into_response()
-        }
         ExecResponseKind::Table => {
             let text = format!("{:#}", preview);
             (
@@ -176,8 +166,8 @@ pub(crate) fn negotiate_accept(
     raw: Option<&str>,
 ) -> Result<ExecResponseKind, AcceptNegotiationError> {
     let raw = match raw {
-        None => return Ok(ExecResponseKind::Toon),
-        Some(s) if s.trim().is_empty() => return Ok(ExecResponseKind::Toon),
+        None => return Ok(ExecResponseKind::Json),
+        Some(s) if s.trim().is_empty() => return Ok(ExecResponseKind::Json),
         Some(s) => s,
     };
     let mut items: Vec<(f32, &str)> = Vec::new();
@@ -205,7 +195,7 @@ pub(crate) fn negotiate_accept(
     let mut saw_specific = false;
     for (_, mime) in &items {
         match *mime {
-            "*/*" => return Ok(ExecResponseKind::Toon),
+            "*/*" => return Ok(ExecResponseKind::Json),
             _ => saw_specific = true,
         }
         match *mime {
@@ -214,7 +204,6 @@ pub(crate) fn negotiate_accept(
                 return Ok(ExecResponseKind::Ndjson);
             }
             "text/plain" => return Ok(ExecResponseKind::Table),
-            "text/toon" | "application/x-toon" => return Ok(ExecResponseKind::Toon),
             _ => {}
         }
     }
@@ -222,8 +211,25 @@ pub(crate) fn negotiate_accept(
     if saw_specific {
         Err(AcceptNegotiationError::NoSupportedMediaType)
     } else {
-        Ok(ExecResponseKind::Toon)
+        Ok(ExecResponseKind::Json)
     }
+}
+
+pub(crate) fn unsupported_accept_response() -> Response {
+    problem_response(
+        Problem::custom(
+            ProblemStatus::NOT_ACCEPTABLE,
+            Uri::from_static(problem_types::EXECUTE_UNSUPPORTED_ACCEPT),
+        )
+        .with_title("Not Acceptable")
+        .with_detail(
+            "supported Accept values include application/json (default when Accept is omitted), application/x-ndjson, text/plain",
+        ),
+    )
+}
+
+pub(crate) fn negotiate_accept_or_406(raw: Option<&str>) -> Option<ExecResponseKind> {
+    negotiate_accept(raw).ok()
 }
 
 pub(crate) fn respond_execute_result(
@@ -282,15 +288,6 @@ pub(crate) fn respond_execute_result(
             )
                 .into_response()
         }
-        ExecResponseKind::Toon => {
-            let s = toon::encode(&json_value, None);
-            (
-                StatusCode::OK,
-                [(CONTENT_TYPE, "text/toon; charset=utf-8")],
-                s,
-            )
-                .into_response()
-        }
     };
     attach_plasm_run_headers(res, artifact)
 }
@@ -341,16 +338,6 @@ pub(crate) fn respond_staged_lines_execute_result(
                 StatusCode::OK,
                 [(CONTENT_TYPE, "application/x-ndjson; charset=utf-8")],
                 lines.join("\n") + "\n",
-            )
-                .into_response()
-        }
-        ExecResponseKind::Toon => {
-            let body = serde_json::Value::Array(step_values);
-            let s = toon::encode(&body, None);
-            (
-                StatusCode::OK,
-                [(CONTENT_TYPE, "text/toon; charset=utf-8")],
-                s,
             )
                 .into_response()
         }

@@ -57,7 +57,6 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 object_store = { workspace = true }
 url = { workspace = true }
-toon = { workspace = true }
 rust-mcp-sdk = { workspace = true }
 async-trait = { workspace = true }
 futures-util = { workspace = true }

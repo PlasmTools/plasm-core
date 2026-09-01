@@ -210,7 +210,11 @@ impl AgentContent {
         let body = if body.is_empty() {
             None
         } else {
-            Some(format!("{}\n\n{}", Self::CONTEXT_LANGUAGE_CARD_BANNER, body))
+            Some(format!(
+                "{}\n\n{}",
+                Self::CONTEXT_LANGUAGE_CARD_BANNER,
+                body
+            ))
         };
         Self {
             kind: AgentResultKind::Context,

@@ -149,10 +149,7 @@ fn required_filter_like_param_names(cap: &CapabilitySchema) -> Vec<String> {
 
 /// Exactly one pathless zero-arity Get on `entity`, and every Get on that entity is such a Get;
 /// no Query/Search. Shared by teaching and bare-`e#` normalize.
-pub fn sole_nullary_singleton_get<'a>(
-    cgs: &'a CGS,
-    entity: &str,
-) -> Option<&'a CapabilitySchema> {
+pub fn sole_nullary_singleton_get<'a>(cgs: &'a CGS, entity: &str) -> Option<&'a CapabilitySchema> {
     if !cgs
         .find_capabilities(entity, CapabilityKind::Query)
         .is_empty()

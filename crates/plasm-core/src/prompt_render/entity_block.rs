@@ -20,9 +20,7 @@ use super::query_teaching::{
     compound_get_expr_line, query_expr_filters_only, query_expr_maximal, query_expr_scope_only,
     search_expr_with_filters, unary_entity_id_teaching_expr_line,
 };
-use super::relation_teaching::{
-    receiver_for_dotted_suffix, try_emit_relation_nav_teaching_row,
-};
+use super::relation_teaching::{receiver_for_dotted_suffix, try_emit_relation_nav_teaching_row};
 use super::row_producer::RowProducerProjection;
 use super::row_producer_teaching::{
     enrich_row_producer_teaching_line, row_producer_projection_for_query_line,

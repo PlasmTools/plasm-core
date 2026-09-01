@@ -1,0 +1,149 @@
+# NL eval cases for τ³ banking — CLI workflow buckets + catalog entity coverage.
+# Coverage: `cargo run -p plasm-eval --features baml -- coverage --schema apis/tau3_banking --cases apis/tau3_banking/eval/cases.yaml`
+#
+# Harness note: live execution uses the τ² shim (`scripts/tau3_banking/`); cases lock teaching-table
+# coverage buckets, not DB grading.
+
+- id: tau3-01
+  schema: tau3_banking
+  goal: "Look up a banking customer profile before starting account servicing"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [User]
+
+- id: tau3-02
+  schema: tau3_banking
+  goal: "Review credit limit increase eligibility for a card — utilization, payment months, disputes, and pending replacements"
+  tags: [query, composed]
+  covers: [query_filtered, multi_step]
+  expect:
+    entities_any: [CreditLimitEligibility, CreditLimitRequest, PaymentHistory]
+
+- id: tau3-03
+  schema: tau3_banking
+  goal: "Submit a credit limit increase request for a Bronze Rewards Card customer"
+  tags: [invoke, cli]
+  covers: [invoke]
+  expect:
+    entities_any: [CreditLimitRequest, CreditCardAccount]
+
+- id: tau3-04
+  schema: tau3_banking
+  goal: "Approve a pending credit limit increase at the new total limit after eligibility review"
+  tags: [invoke, cli]
+  covers: [invoke, multi_step]
+  expect:
+    entities_any: [CreditLimitRequest, CreditLimitEligibility]
+
+- id: tau3-05
+  schema: tau3_banking
+  goal: "Deny a pending credit limit increase for cooldown_period_active after reading eligibility"
+  tags: [invoke, cli]
+  covers: [invoke]
+  expect:
+    entities_any: [CreditLimitRequest]
+
+- id: tau3-06
+  schema: tau3_banking
+  goal: "After CLI is decided, file a credit card transaction dispute for the customer"
+  tags: [invoke, dispute]
+  covers: [invoke, chain]
+  expect:
+    entities_any: [CreditCardDispute, CreditCardTransaction]
+
+- id: tau3-07
+  schema: tau3_banking
+  goal: "Order a replacement credit card once CLI is complete"
+  tags: [invoke]
+  covers: [invoke]
+  expect:
+    entities_any: [CreditCardOrder, CreditCardAccount]
+
+- id: tau3-08
+  schema: tau3_banking
+  goal: "From the customer, navigate to their credit card account balance and limit"
+  tags: [chain]
+  covers: [chain]
+  expect:
+    entities_any: [User, CreditCardAccount]
+
+- id: tau3-09
+  schema: tau3_banking
+  goal: "List recent credit card transactions but only transaction id and amount for a summary"
+  tags: [query, projection]
+  covers: [query_filtered, projection]
+  expect:
+    entities_any: [CreditCardTransaction]
+
+- id: tau3-10
+  schema: tau3_banking
+  goal: "List debit card disputes for a customer under Regulation E review"
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [DebitCardDispute, DebitCard]
+
+- id: tau3-11
+  schema: tau3_banking
+  goal: "Open a new checking account for an existing customer"
+  tags: [invoke]
+  covers: [invoke]
+  expect:
+    entities_any: [BankAccount, User]
+
+- id: tau3-12
+  schema: tau3_banking
+  goal: "Retrieve ATM deposit images for a specific bank transaction"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [BankTransaction]
+
+- id: tau3-13
+  schema: tau3_banking
+  goal: "Log why a customer wants to close their credit card before retention offers"
+  tags: [invoke]
+  covers: [invoke]
+  expect:
+    entities_any: [ClosureReason, CreditCardAccount]
+
+- id: tau3-14
+  schema: tau3_banking
+  goal: "Apply a retention statement credit on a locked credit card account"
+  tags: [invoke]
+  covers: [invoke]
+  expect:
+    entities_any: [CreditCardAccountLocked]
+
+- id: tau3-15
+  schema: tau3_banking
+  goal: "Waive a foreign transaction fee on a locked credit card transaction"
+  tags: [update]
+  covers: [update]
+  expect:
+    entities_any: [CreditCardTransactionLocked]
+
+- id: tau3-16
+  schema: tau3_banking
+  goal: "Change a customer's email address after verification"
+  tags: [update]
+  covers: [update]
+  expect:
+    entities_any: [User]
+
+- id: tau3-17
+  schema: tau3_banking
+  goal: "List referral history for a customer onboarding review"
+  tags: [chain]
+  covers: [chain]
+  expect:
+    entities_any: [Referral, User]
+
+- id: tau3-18
+  schema: tau3_banking
+  goal: "Hand the customer a dual-control portal tool for last-four confirmation"
+  tags: [invoke]
+  covers: [invoke]
+  expect:
+    entities_any: [AgentToolkit]

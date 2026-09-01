@@ -629,6 +629,14 @@ song_library_remove:
   - { type: var, name: id }
   headers: *auth_header
 
+song_recommendation_query:
+  method: GET
+  path:
+  - { type: literal, value: spotify }
+  - { type: literal, value: recommendations }
+  headers: *auth_header
+  query: *page_query
+
 album_library_query:
   method: GET
   path:

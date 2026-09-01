@@ -35,7 +35,10 @@ impl ViewNodeRunnerAsync for LiveViewNodeRunner<'_> {
         pred: &Predicate,
         _node_fields: &ViewNodeFieldMap,
     ) -> Result<ExecutionResult, RuntimeError> {
-        let q = QueryExpr::filtered(cap.domain.as_str(), pred.clone());
+        let mut q = QueryExpr::filtered(cap.domain.as_str(), pred.clone());
+        // Inner view DAG queries must not hydrate via an outer view-backed get on the
+        // same entity (list → get → list recursion).
+        q.hydrate = Some(false);
         self.engine
             .execute_query(
                 &q,

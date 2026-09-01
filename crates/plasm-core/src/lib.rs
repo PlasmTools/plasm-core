@@ -331,9 +331,11 @@ pub use relation_segment::{
 pub use relation_validation_expr::relation_validation_expr;
 pub use schema::{
     capability_is_zero_arity_action, capability_is_zero_arity_invoke,
-    capability_method_label_kebab, capability_template_all_var_names, flow_control_param_names,
+    capability_mapping_is_view_transport, capability_method_label_kebab,
+    capability_template_all_var_names, flow_control_param_names,
     is_flow_control_param_name, template_domain_exemplar_requires_entity_anchor,
-    template_invoke_requires_explicit_anchor_id, AgentPresentation, ArrayItemsSchema,
+    template_invoke_requires_explicit_anchor_id, view_node_field_where_output_detail,
+    AgentPresentation, ArrayItemsSchema,
     AttachmentMediaKind, AuthScheme, CapabilityKind, CapabilityManifest, CapabilityMapping,
     CapabilitySchema, CapabilityTemplateJson, Cardinality, CgsCapabilityIndex, CrossFieldRule,
     CrossFieldRuleType, DataClassDimension, DataClassName, DataClassSchema, DataClassSeverity,

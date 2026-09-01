@@ -41,6 +41,11 @@ group_query:
   query:
     type: object
     fields:
+    - - delete
+      - type: if
+        condition: { type: exists, var: delete }
+        then_expr: { type: var, name: delete }
+        else_expr: { type: const, value: null }
     - - page_index
       - type: if
         condition: { type: exists, var: page_index }

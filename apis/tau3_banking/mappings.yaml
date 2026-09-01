@@ -1,0 +1,1326 @@
+get_user_information_by_id:
+  response:
+    items: result
+    single: true
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: get_user_information_by_id
+  body:
+    type: object
+    fields:
+    - - user_id
+      - name: user_id
+        type: var
+get_user_information_by_email:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: get_user_information_by_email
+  body:
+    type: object
+    fields:
+    - - email
+      - name: email
+        type: var
+  response:
+    items: result
+    single: true
+get_user_information_by_name:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: get_user_information_by_name
+  body:
+    type: object
+    fields:
+    - - customer_name
+      - name: customer_name
+        type: var
+  response:
+    items: result
+    single: true
+get_referrals_by_user:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: get_referrals_by_user
+  body:
+    type: object
+    fields:
+    - - user_id
+      - name: user_id
+        type: var
+  response:
+    items: result
+get_credit_card_accounts_by_user:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: get_credit_card_accounts_by_user
+  body:
+    type: object
+    fields:
+    - - user_id
+      - name: user_id
+        type: var
+    - - credit_card_account_id
+      - name: credit_card_account_id
+        type: var
+        if:
+          exists: credit_card_account_id
+  response:
+    items: result
+get_credit_card_transactions_by_user:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: get_credit_card_transactions_by_user
+  body:
+    type: object
+    fields:
+    - - user_id
+      - name: user_id
+        type: var
+  response:
+    items: result
+change_user_email:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: change_user_email
+  body:
+    type: object
+    fields:
+    - - user_id
+      - name: user_id
+        type: var
+    - - new_email
+      - name: new_email
+        type: var
+log_verification:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: log_verification
+  body:
+    type: object
+    fields:
+    - - name
+      - name: name
+        type: var
+    - - user_id
+      - name: user_id
+        type: var
+    - - address
+      - name: address
+        type: var
+    - - email
+      - name: email
+        type: var
+    - - phone_number
+      - name: phone_number
+        type: var
+    - - date_of_birth
+      - name: date_of_birth
+        type: var
+    - - time_verified
+      - name: time_verified
+        type: var
+get_current_time:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: get_current_time
+  body:
+    type: object
+    fields: []
+transfer_to_human_agents:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: transfer_to_human_agents
+  body:
+    type: object
+    fields:
+    - - summary
+      - name: summary
+        type: var
+    - - reason
+      - name: reason
+        type: var
+give_discoverable_user_tool:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: give_discoverable_user_tool
+  body:
+    type: object
+    fields:
+    - - discoverable_tool_name
+      - name: discoverable_tool_name
+        type: var
+    - - arguments
+      - name: arguments
+        type: var
+AgentToolkit_example_noop:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: example_agent_tool_0000
+  body:
+    type: object
+    fields: []
+CreditCardTransaction_update_rewards:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: update_transaction_rewards_3847
+  body:
+    type: object
+    fields:
+    - - transaction_id
+      - name: transaction_id
+        type: var
+    - - new_rewards_earned
+      - name: new_rewards_earned
+        type: var
+AgentToolkit_initial_transfer_0218:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: initial_transfer_to_human_agent_0218
+  body:
+    type: object
+    fields: []
+AgentToolkit_initial_transfer_1822:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: initial_transfer_to_human_agent_1822
+  body:
+    type: object
+    fields: []
+AgentToolkit_emergency_bureau_transfer:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: emergency_credit_bureau_incident_transfer_1114
+  body:
+    type: object
+    fields: []
+CreditCardDispute_file:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: file_credit_card_transaction_dispute_4829
+  body:
+    type: object
+    fields:
+    - - transaction_id
+      - name: transaction_id
+        type: var
+    - - card_action
+      - name: card_action
+        type: var
+    - - card_last_4_digits
+      - name: card_last_4_digits
+        type: var
+    - - full_name
+      - name: full_name
+        type: var
+    - - user_id
+      - name: user_id
+        type: var
+    - - phone
+      - name: phone
+        type: var
+    - - email
+      - name: email
+        type: var
+    - - address
+      - name: address
+        type: var
+    - - contacted_merchant
+      - name: contacted_merchant
+        type: var
+    - - purchase_date
+      - name: purchase_date
+        type: var
+    - - issue_noticed_date
+      - name: issue_noticed_date
+        type: var
+    - - dispute_reason
+      - name: dispute_reason
+        type: var
+    - - resolution_requested
+      - name: resolution_requested
+        type: var
+    - - eligible_for_provisional_credit
+      - name: eligible_for_provisional_credit
+        type: var
+    - - partial_refund_amount
+      - type: if
+        condition:
+          type: exists
+          var: partial_refund_amount
+        then_expr:
+          type: var
+          name: partial_refund_amount
+        else_expr:
+          type: const
+          value: null
+  response:
+    items: result
+    single: true
+DebitCardDispute_file:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: file_debit_card_transaction_dispute_6281
+  body:
+    type: object
+    fields:
+    - - transaction_id
+      - name: transaction_id
+        type: var
+    - - account_id
+      - name: account_id
+        type: var
+    - - card_id
+      - name: card_id
+        type: var
+    - - user_id
+      - name: user_id
+        type: var
+    - - dispute_category
+      - name: dispute_category
+        type: var
+    - - transaction_date
+      - name: transaction_date
+        type: var
+    - - discovery_date
+      - name: discovery_date
+        type: var
+    - - disputed_amount
+      - name: disputed_amount
+        type: var
+    - - transaction_type
+      - name: transaction_type
+        type: var
+    - - card_in_possession
+      - name: card_in_possession
+        type: var
+    - - pin_compromised
+      - name: pin_compromised
+        type: var
+    - - contacted_merchant
+      - name: contacted_merchant
+        type: var
+    - - police_report_filed
+      - name: police_report_filed
+        type: var
+    - - written_statement_provided
+      - name: written_statement_provided
+        type: var
+    - - provisional_credit_eligible
+      - name: provisional_credit_eligible
+        type: var
+    - - customer_max_liability_amount
+      - name: customer_max_liability_amount
+        type: var
+    - - card_action
+      - name: card_action
+        type: var
+  response:
+    items: result
+    single: true
+DebitCard_set_recurring_block:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: set_debit_card_recurring_block_7382
+  body:
+    type: object
+    fields:
+    - - card_id
+      - name: card_id
+        type: var
+    - - block_recurring
+      - name: block_recurring
+        type: var
+DebitCardDispute_list_by_user:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: get_debit_dispute_status_7483
+  body:
+    type: object
+    fields:
+    - - user_id
+      - name: user_id
+        type: var
+  response:
+    items: result
+BankTransaction_get_atm_images:
+  response: single
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: get_atm_deposit_images_8473
+  body:
+    type: object
+    fields:
+    - - transaction_id
+      - name: transaction_id
+        type: var
+CreditCardOrder_order_replacement:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: order_replacement_credit_card_7291
+  body:
+    type: object
+    fields:
+    - - credit_card_account_id
+      - name: credit_card_account_id
+        type: var
+    - - user_id
+      - name: user_id
+        type: var
+    - - shipping_address
+      - name: shipping_address
+        type: var
+    - - reason
+      - name: reason
+        type: var
+    - - expedited_shipping
+      - name: expedited_shipping
+        type: var
+  response:
+    items: result
+    single: true
+CreditCardDispute_list_by_user:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: get_user_dispute_history_7291
+  body:
+    type: object
+    fields:
+    - - user_id
+      - name: user_id
+        type: var
+  response:
+    items: result
+CreditCardOrder_list_pending:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: get_pending_replacement_orders_5765
+  body:
+    type: object
+    fields:
+    - - credit_card_account_id
+      - name: credit_card_account_id
+        type: var
+  response:
+    items: result
+ClosureReason_log:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: log_credit_card_closure_reason_4521
+  body:
+    type: object
+    fields:
+    - - credit_card_account_id
+      - name: credit_card_account_id
+        type: var
+    - - user_id
+      - name: user_id
+        type: var
+    - - closure_reason
+      - name: closure_reason
+        type: var
+ClosureReason_list_by_account:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: get_closure_reason_history_8293
+  body:
+    type: object
+    fields:
+    - - credit_card_account_id
+      - name: credit_card_account_id
+        type: var
+  response:
+    items: result
+CreditCardAccountLocked_apply_statement_credit:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: apply_statement_credit_8472
+  body:
+    type: object
+    fields:
+    - - user_id
+      - name: user_id
+        type: var
+    - - credit_card_account_id
+      - name: credit_card_account_id
+        type: var
+    - - amount
+      - name: amount
+        type: var
+    - - reason
+      - name: reason
+        type: var
+CreditCardAccountLocked_apply_flag:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: apply_credit_card_account_flag_6147
+  body:
+    type: object
+    fields:
+    - - credit_card_account_id
+      - name: credit_card_account_id
+        type: var
+    - - user_id
+      - name: user_id
+        type: var
+    - - flag_type
+      - name: flag_type
+        type: var
+    - - expiration_date
+      - name: expiration_date
+        type: var
+    - - reason
+      - name: reason
+        type: var
+CreditCardAccountLocked_close:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: close_credit_card_account_7834
+  body:
+    type: object
+    fields:
+    - - credit_card_account_id
+      - name: credit_card_account_id
+        type: var
+    - - user_id
+      - name: user_id
+        type: var
+CreditCardAccountLocked_pay_from_checking:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: pay_credit_card_from_checking_9182
+  body:
+    type: object
+    fields:
+    - - user_id
+      - name: user_id
+        type: var
+    - - checking_account_id
+      - name: checking_account_id
+        type: var
+    - - credit_card_account_id
+      - name: credit_card_account_id
+        type: var
+    - - amount
+      - name: amount
+        type: var
+  response:
+    items: result
+    single: true
+CreditLimitRequest_submit:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: submit_credit_limit_increase_request_7392
+  body:
+    type: object
+    fields:
+    - - credit_card_account_id
+      - name: credit_card_account_id
+        type: var
+    - - user_id
+      - name: user_id
+        type: var
+    - - requested_increase_amount
+      - name: requested_increase_amount
+        type: var
+  response:
+    items: result
+    single: true
+CreditLimitRequest_list_by_account:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: get_credit_limit_increase_history_4829
+  body:
+    type: object
+    fields:
+    - - credit_card_account_id
+      - name: credit_card_account_id
+        type: var
+    - - status
+      - name: status
+        type: var
+        if:
+          exists: status
+  response:
+    items: result
+PaymentHistory_list_by_account:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: get_payment_history_6183
+  body:
+    type: object
+    fields:
+    - - credit_card_account_id
+      - name: credit_card_account_id
+        type: var
+    - - months
+      - name: months
+        type: var
+  response:
+    items: result
+CreditLimitRequest_deny:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: deny_credit_limit_increase_5848
+  body:
+    type: object
+    fields:
+    - - request_id
+      - name: request_id
+        type: var
+    - - credit_card_account_id
+      - name: credit_card_account_id
+        type: var
+    - - user_id
+      - name: user_id
+        type: var
+    - - denial_reason
+      - name: denial_reason
+        type: var
+  response:
+    items: result
+    single: true
+CreditLimitRequest_approve:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: approve_credit_limit_increase_5847
+  body:
+    type: object
+    fields:
+    - - request_id
+      - name: request_id
+        type: var
+    - - credit_card_account_id
+      - name: credit_card_account_id
+        type: var
+    - - user_id
+      - name: user_id
+        type: var
+    - - new_credit_limit
+      - name: new_credit_limit
+        type: var
+  response:
+    items: result
+    single: true
+CreditLimitEligibility_query:
+  transport: view
+  view: credit_limit_eligibility
+CreditCardClosureEligibility_query:
+  transport: view
+  view: credit_card_closure_eligibility
+BankAccount_open:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: open_bank_account_4821
+  body:
+    type: object
+    fields:
+    - - user_id
+      - name: user_id
+        type: var
+    - - account_type
+      - name: account_type
+        type: var
+    - - account_class
+      - name: account_class
+        type: var
+BankAccount_close:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: close_bank_account_7392
+  body:
+    type: object
+    fields:
+    - - account_id
+      - name: account_id
+        type: var
+    - - reason
+      - name: reason
+        type: var
+    - - waive_early_closure_fee
+      - name: waive_early_closure_fee
+        type: var
+BankAccount_list_by_user:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: get_all_user_accounts_by_user_id_3847
+  body:
+    type: object
+    fields:
+    - - user_id
+      - name: user_id
+        type: var
+  response:
+    items: result
+BankAccount_transfer:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: transfer_funds_between_bank_accounts_7291
+  body:
+    type: object
+    fields:
+    - - source_account_id
+      - name: source_account_id
+        type: var
+    - - destination_account_id
+      - name: destination_account_id
+        type: var
+    - - amount
+      - name: amount
+        type: var
+BankAccount_apply_checking_credit:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: apply_checking_account_credit_5829
+  body:
+    type: object
+    fields:
+    - - account_id
+      - name: account_id
+        type: var
+    - - amount
+      - name: amount
+        type: var
+    - - credit_type
+      - name: credit_type
+        type: var
+BankAccount_apply_savings_credit:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: apply_savings_account_credit_6831
+  body:
+    type: object
+    fields:
+    - - account_id
+      - name: account_id
+        type: var
+    - - amount
+      - name: amount
+        type: var
+    - - credit_type
+      - name: credit_type
+        type: var
+BankAccount_report_interest_discrepancy:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: submit_interest_discrepancy_report_7294
+  body:
+    type: object
+    fields:
+    - - account_id
+      - name: account_id
+        type: var
+    - - user_id
+      - name: user_id
+        type: var
+    - - expected_apy
+      - name: expected_apy
+        type: var
+    - - actual_apy
+      - name: actual_apy
+        type: var
+    - - amount_difference
+      - name: amount_difference
+        type: var
+BankTransaction_list_by_account:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: get_bank_account_transactions_9173
+  body:
+    type: object
+    fields:
+    - - account_id
+      - name: account_id
+        type: var
+  response:
+    items: result
+DebitCard_order:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: order_debit_card_5739
+  body:
+    type: object
+    fields:
+    - - account_id
+      - name: account_id
+        type: var
+    - - user_id
+      - name: user_id
+        type: var
+    - - delivery_option
+      - name: delivery_option
+        type: var
+    - - delivery_fee
+      - name: delivery_fee
+        type: var
+    - - card_design
+      - name: card_design
+        type: var
+    - - design_fee
+      - name: design_fee
+        type: var
+    - - shipping_address
+      - name: shipping_address
+        type: var
+    - - excess_replacement_fee
+      - name: excess_replacement_fee
+        type: var
+  response:
+    items: result
+    single: true
+DebitCard_activate_new:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: activate_debit_card_8291
+  body:
+    type: object
+    fields:
+    - - card_id
+      - name: card_id
+        type: var
+    - - last_4_digits
+      - name: last_4_digits
+        type: var
+    - - expiration_date
+      - name: expiration_date
+        type: var
+    - - cvv
+      - name: cvv
+        type: var
+    - - pin
+      - name: pin
+        type: var
+DebitCard_activate_replacement:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: activate_debit_card_8292
+  body:
+    type: object
+    fields:
+    - - card_id
+      - name: card_id
+        type: var
+    - - last_4_digits
+      - name: last_4_digits
+        type: var
+    - - expiration_date
+      - name: expiration_date
+        type: var
+    - - cvv
+      - name: cvv
+        type: var
+    - - pin
+      - name: pin
+        type: var
+DebitCard_activate_reissue:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: activate_debit_card_8293
+  body:
+    type: object
+    fields:
+    - - card_id
+      - name: card_id
+        type: var
+    - - last_4_digits
+      - name: last_4_digits
+        type: var
+    - - expiration_date
+      - name: expiration_date
+        type: var
+    - - cvv
+      - name: cvv
+        type: var
+    - - pin
+      - name: pin
+        type: var
+DebitCard_close:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: close_debit_card_4721
+  body:
+    type: object
+    fields:
+    - - card_id
+      - name: card_id
+        type: var
+    - - reason
+      - name: reason
+        type: var
+DebitCard_freeze:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: freeze_debit_card_3892
+  body:
+    type: object
+    fields:
+    - - card_id
+      - name: card_id
+        type: var
+DebitCard_unfreeze:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: unfreeze_debit_card_3893
+  body:
+    type: object
+    fields:
+    - - card_id
+      - name: card_id
+        type: var
+DebitCard_clear_fraud_alert:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: clear_debit_card_fraud_alert_4892
+  body:
+    type: object
+    fields:
+    - - card_id
+      - name: card_id
+        type: var
+    - - reason
+      - name: reason
+        type: var
+DebitCard_reset_pin:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: reset_debit_card_pin_6284
+  body:
+    type: object
+    fields:
+    - - card_id
+      - name: card_id
+        type: var
+    - - last_4_digits
+      - name: last_4_digits
+        type: var
+    - - new_pin
+      - name: new_pin
+        type: var
+DebitCard_change_pin:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: change_debit_card_pin_6285
+  body:
+    type: object
+    fields:
+    - - card_id
+      - name: card_id
+        type: var
+    - - current_pin
+      - name: current_pin
+        type: var
+    - - new_pin
+      - name: new_pin
+        type: var
+DebitCard_list_by_account:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: get_debit_cards_by_account_id_7823
+  body:
+    type: object
+    fields:
+    - - account_id
+      - name: account_id
+        type: var
+  response:
+    items: result
+DebitCard_request_limit_increase:
+  method: POST
+  path:
+  - type: literal
+    value: v1
+  - type: literal
+    value: tau3
+  - type: literal
+    value: banking
+  - type: literal
+    value: request_temporary_debit_card_limit_increase_8374
+  body:
+    type: object
+    fields:
+    - - card_id
+      - name: card_id
+        type: var
+    - - limit_type
+      - name: limit_type
+        type: var
+    - - new_limit
+      - name: new_limit
+        type: var

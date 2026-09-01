@@ -61,20 +61,8 @@ pub(crate) async fn post_run_execute_session_inner(
     }
 
     let accept = headers.get(ACCEPT).and_then(|v| v.to_str().ok());
-    let kind = match negotiate_accept(accept) {
-        Ok(k) => k,
-        Err(AcceptNegotiationError::NoSupportedMediaType) => {
-            return problem_response(
-            Problem::custom(
-                ProblemStatus::NOT_ACCEPTABLE,
-                Uri::from_static(problem_types::EXECUTE_UNSUPPORTED_ACCEPT),
-            )
-            .with_title("Not Acceptable")
-            .with_detail(
-                "supported Accept values include application/json, application/x-ndjson, text/plain, text/toon (default when Accept is omitted: text/toon)",
-            ),
-        );
-        }
+    let Some(kind) = negotiate_accept_or_406(accept) else {
+        return unsupported_accept_response();
     };
 
     let content_type = headers.get(CONTENT_TYPE).and_then(|v| v.to_str().ok());

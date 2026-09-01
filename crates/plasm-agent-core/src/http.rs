@@ -6,7 +6,7 @@
 //! - `GET /v1/health`, `GET /v1/auth/status` (liveness + auth-framework probe: `200` when [`AuthFramework`] is initialized, else `503`), `GET /v1/registry`, …, `POST /v1/discover`. Listen address: `--listen-host` + `--port` (see [`crate::listen_endpoint`]).
 //! - `POST /execute` — JSON `{ entry_id, entities, principal? }` → `303` + `Location` only (no body); ids are in the URL (`principal` required when `PLASM_AUTH_RESOLUTION=delegated`)
 //! - `GET /execute/:prompt_hash/:session` — `200` + JSON (`prompt`, `entry_id`, `entities`, …)
-//! - `POST /execute/:prompt_hash/:session` — `text/plain` or JSON program string (`{"program": "..."}`); `Accept`: json | ndjson | table | toon (**default** when omitted: **toon**, entity rows only; no duration/cache metadata)
+//! - `POST /execute/:prompt_hash/:session` — `text/plain` or JSON program string (`{"program": "..."}`); `Accept`: json | ndjson | table (**default** when omitted: **json**)
 
 use axum::extract::Extension;
 use axum::routing::get;
@@ -256,7 +256,7 @@ pub fn format_http_route_help(port: u16) -> String {
         "  GET  /oauth/link/callback   POST /internal/oauth-link/v1/start   POST /internal/oauth-link/v1/device/start   POST /internal/oauth-link/v1/device/poll   POST /internal/outbound-secrets/v1/put   POST /internal/outbound-secrets/v1/delete (when outbound OAuth KV is configured)".into(),
         "  When DATABASE_URL / PLASM_MCP_CONFIG_DATABASE_URL is set: POST /internal/mcp-config/v1/upsert (+ MCP API key routes) with X-Plasm-Control-Plane-Secret — same contract as hosted control plane".into(),
         "  POST /execute — { entry_id, entities } → 303 Location only → GET that URL for session JSON + teaching prompt".into(),
-        "  POST /execute/:prompt_hash/:session — text/plain or JSON program; default Accept: text/toon (results only); also json | x-ndjson | text/plain".into(),
+        "  POST /execute/:prompt_hash/:session — text/plain or JSON program; default Accept: application/json; also x-ndjson | text/plain".into(),
         "  GET  /execute/:prompt_hash/:session/artifacts/:run_id — stored run artifact bytes (served from active session memory or durable storage)".into(),
         "  GET  /execute/:prompt_hash/:session/plans/:plan_id — archived serialized program plan IR / evaluation artifact (or /plans/by-index/:n)".into(),
     ]

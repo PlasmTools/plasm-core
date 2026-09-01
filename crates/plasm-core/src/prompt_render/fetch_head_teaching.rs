@@ -150,8 +150,8 @@ fn push_sole_nullary_bare_head(
             row.teaching_expr.arrow = super::ReturnArrow::Single;
         }
     }
-    if let Some(line_base) =
-        (!ent.id_field.is_empty()).then(|| unary_entity_id_teaching_expr_line(es, ent, map, catalog_entry_id))
+    if let Some(line_base) = (!ent.id_field.is_empty())
+        .then(|| unary_entity_id_teaching_expr_line(es, ent, map, catalog_entry_id))
     {
         let _ = try_push_teaching_example(
             gloss_emit,

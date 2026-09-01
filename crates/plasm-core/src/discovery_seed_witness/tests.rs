@@ -359,6 +359,231 @@ fn unbranded_keeps_only_top_catalogs_by_lexical_score() {
 }
 
 #[test]
+fn unbranded_top_catalog_cut_preserves_federated_co_seed_seats() {
+    use crate::discovery_intent_class::DiscoveryIntentClass;
+    use crate::discovery_seed_catalog::CatalogWorkflowContext;
+    use crate::identity::{CapabilityName, EntityFieldName, EntityName};
+    use crate::schema::{
+        CapabilityKind, CapabilityMapping, CapabilitySchema, CapabilityTemplateJson,
+        DiscoveryCoSeedWith, DiscoveryEntityHints, DiscoverySeedClass, EntityDef, CGS,
+    };
+    use indexmap::IndexMap;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    fn entity(
+        name: &str,
+        seed_class: Option<DiscoverySeedClass>,
+        co_seed: Option<DiscoveryCoSeedWith>,
+    ) -> (EntityName, EntityDef) {
+        let en = EntityName::from(name);
+        (
+            en.clone(),
+            EntityDef {
+                name: en,
+                description: format!("{name} desc"),
+                id_field: EntityFieldName::from("id"),
+                id_format: None,
+                id_from: None,
+                fields: IndexMap::new(),
+                relations: IndexMap::new(),
+                expression_aliases: vec![],
+                implicit_request_identity: false,
+                key_vars: vec![],
+                abstract_entity: false,
+                domain_projection_examples: true,
+                primary_read: None,
+                discovery: Some(DiscoveryEntityHints {
+                    names: vec![name.to_ascii_lowercase()],
+                    qualifier_names: vec![],
+                    seed_class,
+                    co_seed_with: co_seed,
+                }),
+            },
+        )
+    }
+
+    fn query_cap(ent: &str) -> (CapabilityName, CapabilitySchema) {
+        let cn = CapabilityName::from(format!("{ent}_query"));
+        (
+            cn.clone(),
+            CapabilitySchema {
+                name: cn,
+                description: format!("query {ent}"),
+                kind: CapabilityKind::Query,
+                domain: EntityName::from(ent),
+                mapping: CapabilityMapping {
+                    template: CapabilityTemplateJson(serde_json::json!({ "method": "GET" })),
+                },
+                input_schema: None,
+                output_schema: None,
+                provides: vec![],
+                sanitizes: vec![],
+                deterministic: None,
+                scope_aggregate_key_policy: Default::default(),
+                preflight: None,
+                discovery: None,
+                identity_key: None,
+                invalidates_entities: vec![],
+            },
+        )
+    }
+
+    fn cgs_with(
+        entities: Vec<(
+            &str,
+            Option<DiscoverySeedClass>,
+            Option<DiscoveryCoSeedWith>,
+        )>,
+    ) -> CGS {
+        let mut ents = IndexMap::new();
+        let mut caps = IndexMap::new();
+        for (name, seed, co) in entities {
+            let (en, def) = entity(name, seed, co);
+            ents.insert(en, def);
+            let (cn, cap) = query_cap(name);
+            caps.insert(cn, cap);
+        }
+        let mut cgs = CGS::new();
+        cgs.entities = ents;
+        cgs.capabilities = caps;
+        cgs
+    }
+
+    let app = Arc::new(cgs_with(vec![(
+        "Directory",
+        Some(DiscoverySeedClass::Primary),
+        None,
+    )]));
+    let creds = Arc::new(cgs_with(vec![
+        (
+            "Profile",
+            Some(DiscoverySeedClass::Primary),
+            Some(DiscoveryCoSeedWith::FederatedPrimary),
+        ),
+        (
+            "Secret",
+            Some(DiscoverySeedClass::Primary),
+            Some(DiscoveryCoSeedWith::SessionPrimary),
+        ),
+    ]));
+    let noise_a = Arc::new(cgs_with(vec![(
+        "NoiseA",
+        Some(DiscoverySeedClass::Primary),
+        None,
+    )]));
+    let noise_b = Arc::new(cgs_with(vec![(
+        "NoiseB",
+        Some(DiscoverySeedClass::Primary),
+        None,
+    )]));
+    let noise_c = Arc::new(cgs_with(vec![(
+        "NoiseC",
+        Some(DiscoverySeedClass::Primary),
+        None,
+    )]));
+    let noise_d = Arc::new(cgs_with(vec![(
+        "NoiseD",
+        Some(DiscoverySeedClass::Primary),
+        None,
+    )]));
+
+    let mut catalog_refs = HashMap::new();
+    catalog_refs.insert("app".to_string(), app.as_ref());
+    catalog_refs.insert("creds".to_string(), creds.as_ref());
+    catalog_refs.insert("noise_a".to_string(), noise_a.as_ref());
+    catalog_refs.insert("noise_b".to_string(), noise_b.as_ref());
+    catalog_refs.insert("noise_c".to_string(), noise_c.as_ref());
+    catalog_refs.insert("noise_d".to_string(), noise_d.as_ref());
+    let ctx = CatalogWorkflowContext::build(
+        &catalog_refs,
+        "reorganize directories on the app filesystem",
+        &DiscoveryIntentClass::default(),
+        &[],
+    );
+
+    let bundles = vec![
+        bundle(
+            "app:Directory",
+            "app",
+            "Directory",
+            vec![cap("app:Directory:Query", "Query", "Query", 100)],
+            100,
+        ),
+        bundle(
+            "noise_a:NoiseA",
+            "noise_a",
+            "NoiseA",
+            vec![cap("noise_a:NoiseA:Query", "Query", "Query", 90)],
+            90,
+        ),
+        bundle(
+            "noise_b:NoiseB",
+            "noise_b",
+            "NoiseB",
+            vec![cap("noise_b:NoiseB:Query", "Query", "Query", 80)],
+            80,
+        ),
+        bundle(
+            "noise_c:NoiseC",
+            "noise_c",
+            "NoiseC",
+            vec![cap("noise_c:NoiseC:Query", "Query", "Query", 70)],
+            70,
+        ),
+        bundle(
+            "noise_d:NoiseD",
+            "noise_d",
+            "NoiseD",
+            vec![cap("noise_d:NoiseD:Query", "Query", "Query", 60)],
+            60,
+        ),
+        // Low lexical score — would be cut by top-3 catalogs without co-seed stamp exemption.
+        bundle(
+            "creds:Profile",
+            "creds",
+            "Profile",
+            vec![cap("creds:Profile:Query", "Query", "Query", 2)],
+            2,
+        ),
+        bundle(
+            "creds:Secret",
+            "creds",
+            "Secret",
+            vec![cap("creds:Secret:Query", "Query", "Query", 1)],
+            1,
+        ),
+    ];
+    let graph = empty_graph(&bundles);
+    let corpus = build_witness_corpus(&bundles, &[], &graph, Some(&ctx)).expect("corpus");
+
+    let entities: std::collections::BTreeSet<&str> = corpus
+        .witnesses
+        .iter()
+        .filter_map(|w| match &w.kind {
+            WitnessKind::DirectCapability { entity, .. } => Some(entity.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        entities.contains("Profile"),
+        "federated_primary seat must survive unbranded cut; got {entities:?}"
+    );
+    assert!(
+        entities.contains("Secret"),
+        "session_primary seat must survive unbranded cut; got {entities:?}"
+    );
+    assert!(
+        entities.contains("Directory"),
+        "trigger primary must remain; got {entities:?}"
+    );
+    assert!(
+        !entities.contains("NoiseD"),
+        "unstamped low catalog must still be cut; got {entities:?}"
+    );
+}
+
+#[test]
 fn shortlist_prefers_higher_lexical_score_within_cap() {
     let mut bundles = Vec::new();
     // One brand-locked catalog with many low-score caps would previously crowd out others.

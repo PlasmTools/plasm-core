@@ -207,6 +207,17 @@ impl ExecutionEngine {
             return Ok((ordered_entities.to_vec(), 0));
         };
 
+        // List + view-backed get (e.g. AccountPassword vault): hydrating each summary row
+        // would re-enter the same composed view (query → get → query → …). Skip.
+        if get_cap.is_view_transport() {
+            tracing::debug!(
+                entity = %entity_type,
+                capability = %get_cap.name,
+                event = "hydrate_skipped_view_backed_get"
+            );
+            return Ok((ordered_entities.to_vec(), 0));
+        }
+
         let inherit = CapabilityParamEnv::from_cml_env(parent_env, get_cap);
         let identity = identity_keys_for_entity(cgs, entity_type);
         let missing = inherit.missing_required(get_cap, &identity);

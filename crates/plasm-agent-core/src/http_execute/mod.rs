@@ -2,7 +2,7 @@
 //! clients open a session with `entry_id` + entity seeds, then run one Plasm program.
 //!
 //! HTTP: `POST /execute` → `GET /execute/:prompt_hash/:session` → `POST` that path (default `Accept`:
-//! **text/toon**, entity rows only); optional `GET .../artifacts/:run_id` for run snapshots. MCP uses
+//! **application/json**); optional `GET .../artifacts/:run_id` for run snapshots. MCP uses
 //! [`publish_plasm_result_steps`] for live run Markdown + `_meta` / resource links.
 
 mod operations;
@@ -260,8 +260,8 @@ pub(crate) use mcp_publish::{
     publish_plasm_result_steps, publish_with_shared_meta_index, tool_meta_from_handles,
 };
 pub(crate) use response::{
-    negotiate_accept, respond_execute_result, respond_plan_payload,
-    respond_staged_lines_execute_result, run_mode_is_plan, AcceptNegotiationError,
+    negotiate_accept_or_406, respond_execute_result, respond_plan_payload,
+    respond_staged_lines_execute_result, run_mode_is_plan, unsupported_accept_response,
     ExecResponseKind,
 };
 pub(crate) use response::{ExecuteRunQuery, RunArtifactQuery};

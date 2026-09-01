@@ -94,8 +94,7 @@ pub(crate) fn mutating_capability_admitted(
 /// True when `entity` declares at least one teachable read (`get` / `query` / `search`).
 #[inline]
 pub(crate) fn entity_declares_readable_capability(cgs: &crate::CGS, entity: &str) -> bool {
-    !cgs
-        .find_capabilities(entity, CapabilityKind::Get)
+    !cgs.find_capabilities(entity, CapabilityKind::Get)
         .is_empty()
         || !cgs
             .find_capabilities(entity, CapabilityKind::Query)

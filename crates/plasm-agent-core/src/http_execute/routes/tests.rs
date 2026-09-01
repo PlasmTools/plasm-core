@@ -1,3 +1,4 @@
+use super::super::response::negotiate_accept;
 use super::super::*;
 use crate::http;
 use crate::http_execute::context::{
@@ -443,9 +444,9 @@ async fn staged_table_response_joins_sections() {
 }
 
 #[tokio::test]
-async fn staged_toon_response_is_outer_array() {
+async fn staged_json_response_is_outer_array() {
     let res = respond_staged_lines_execute_result(
-        ExecResponseKind::Toon,
+        ExecResponseKind::Json,
         vec![serde_json::json!(["a"]), serde_json::json!([])],
         None,
         None,
@@ -458,9 +459,14 @@ async fn staged_toon_response_is_outer_array() {
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
     assert!(
-        ct.starts_with("text/toon"),
-        "expected text/toon, got {ct:?}"
+        ct.starts_with("application/json"),
+        "expected application/json, got {ct:?}"
     );
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(value.is_array(), "expected outer JSON array, got {value:?}");
 }
 
 #[tokio::test]
@@ -842,11 +848,11 @@ async fn unknown_entity_parse_error_includes_session_bounds() {
 
 #[test]
 fn negotiate_accept_variants() {
-    assert_eq!(negotiate_accept(None).unwrap(), ExecResponseKind::Toon);
-    assert_eq!(negotiate_accept(Some("")).unwrap(), ExecResponseKind::Toon);
+    assert_eq!(negotiate_accept(None).unwrap(), ExecResponseKind::Json);
+    assert_eq!(negotiate_accept(Some("")).unwrap(), ExecResponseKind::Json);
     assert_eq!(
         negotiate_accept(Some("*/*")).unwrap(),
-        ExecResponseKind::Toon
+        ExecResponseKind::Json
     );
     assert_eq!(
         negotiate_accept(Some("application/json")).unwrap(),
@@ -856,10 +862,8 @@ fn negotiate_accept_variants() {
         negotiate_accept(Some("text/plain")).unwrap(),
         ExecResponseKind::Table
     );
-    assert_eq!(
-        negotiate_accept(Some("text/toon")).unwrap(),
-        ExecResponseKind::Toon
-    );
+    assert!(negotiate_accept(Some("text/toon")).is_err());
+    assert!(negotiate_accept(Some("application/x-toon")).is_err());
     assert_eq!(
         negotiate_accept(Some("application/x-ndjson")).unwrap(),
         ExecResponseKind::Ndjson

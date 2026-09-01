@@ -199,4 +199,3 @@ pub(crate) fn try_push_teaching_example(
     });
     true
 }
-

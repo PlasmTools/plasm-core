@@ -1,5 +1,6 @@
 //! Capability **preflight** orchestration (ordered steps before CML compile).
 
+use crate::value_match::value_to_match_string;
 use crate::execution::{ExecutionEngine, ExecutionMode, StreamConsumeOpts};
 use crate::materialization::SessionMaterialization;
 use crate::view_plan::ViewAmbientContext;
@@ -492,17 +493,6 @@ fn value_at_preflight_path(env: &CmlEnv, path: &PreflightFieldPath) -> Result<Va
         };
     }
     Ok(cur)
-}
-
-fn value_to_match_string(v: &Value) -> String {
-    match v {
-        Value::String(s) => s.clone(),
-        Value::Integer(i) => i.to_string(),
-        Value::Float(f) => f.to_string(),
-        Value::Bool(b) => b.to_string(),
-        Value::Null => String::new(),
-        other => format!("{other:?}"),
-    }
 }
 
 #[allow(clippy::too_many_arguments)]

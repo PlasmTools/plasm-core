@@ -1,0 +1,25 @@
+securednote_search:
+  method: GET
+  path:
+  - type: literal
+    value: secured
+  - type: literal
+    value: notes
+  headers:
+    type: object
+    fields:
+    - - Authorization
+      - type: format
+        template: "Bearer {token}"
+        vars:
+          token:
+            type: var
+            name: access_token
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }

@@ -386,7 +386,7 @@ Wire shape for each parameter is `values[value_ref]`.
 | `response_control` | Payload shape/detail control — does not filter results | `embed`, `fields`, `inc`, `exc` |
 | `scope` | Parent-entity pivot wired into the URL path (always `entity_ref`, required) | `team_id`, `space_id` |
 
-`role:` is informational metadata — it does not change how the parameter is transmitted over HTTP. Transmission is controlled entirely by the CML `query:` or `path:` block in mappings.yaml.
+`role:` is informational metadata — it does not change how the parameter is transmitted over HTTP. Transmission is controlled entirely by the CML `query:` or `path:` block in mappings.yaml. **`validate_cgs_capability_templates` rejects capability parameters that never appear as CML vars** (or pagination keys), so declaring `role: filter` without wiring it is a catalog load error — do not fabricate filters the vendor does not expose.
 
 ### Foreign key fields (`entity_ref`)
 
@@ -506,6 +506,7 @@ Expose **next hops as relations** (`relation_outputs:` → decoded `Ref` edges o
     - `kind: scope` `param:` — copy a scope parameter into the row
     - `kind: node_row_count` `node:` — integer count
     - `kind: node_field` `node:` `field:` — take a field from one row (first row for query nodes)
+    - `kind: node_field_where` `node:` `where_field:` `equals_scope:` `field:` — take `field` from the **unique** row on `node` where `where_field` equals view scope `equals_scope` (fail on 0 or >1 matches; same semantics as write `query_pick`). Use for keyed get over a list-only vendor endpoint (e.g. AppWorld AccountPassword).
     - `kind: node_field_histogram_json` — JSON object of distinct values → counts
     - `kind: node_any_row_field_equals` — boolean
     - `kind: node_row_count_positive` — boolean

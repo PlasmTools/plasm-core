@@ -55,10 +55,7 @@ pub(crate) fn teaching_expr_for_validation(expr: &str) -> String {
         if bytes[i] == b'<' {
             if let Some(rel) = s[i + 1..].find('>') {
                 let inner = &s[i + 1..i + 1 + rel];
-                if !inner.is_empty()
-                    && inner
-                        .chars()
-                        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                if !inner.is_empty() && inner.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
                 {
                     out.push('$');
                     i = i + 2 + rel;
@@ -78,14 +75,8 @@ mod tests {
 
     #[test]
     fn validation_proxy_rewrites_angle_holes() {
-        assert_eq!(
-            teaching_expr_for_validation(r#"e7(<id>)"#),
-            "e7($)"
-        );
-        assert_eq!(
-            teaching_expr_for_validation(r#"e7~"<query>""#),
-            r#"e7~"q""#
-        );
+        assert_eq!(teaching_expr_for_validation(r#"e7(<id>)"#), "e7($)");
+        assert_eq!(teaching_expr_for_validation(r#"e7~"<query>""#), r#"e7~"q""#);
         assert_eq!(
             teaching_expr_for_validation("e1{title=<wire>}.m2(body=<wire>)"),
             "e1{title=$}.m2(body=$)"

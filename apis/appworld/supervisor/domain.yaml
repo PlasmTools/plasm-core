@@ -1,4 +1,4 @@
-version: 3
+version: 5
 entry_id: supervisor
 auth:
   scheme: none
@@ -36,7 +36,8 @@ entities:
     relations: {}
   AccountPassword:
     id_field: account_name
-    description: Per-app password for the task principal — account_name is the app key, not a login email; query before using a password.
+    primary_read: account_password_get
+    description: Per-app password for the task principal — account_name is the app key, not a login email; get by app key before login.
     discovery:
       names:
       - password
@@ -131,8 +132,15 @@ capabilities:
     - birthday
     - sex
   account_password_query:
-    description: List per-app passwords for the task principal (needed before logging into each app).
+    description: List all per-app passwords for the task principal.
     kind: query
+    entity: AccountPassword
+    provides:
+    - account_name
+    - password
+  account_password_get:
+    description: Show the password for one app key (account_name).
+    kind: get
     entity: AccountPassword
     provides:
     - account_name
@@ -191,7 +199,7 @@ values:
     description: App key in the password list (e.g. simple_note, gmail, venmo) — not a login id.
   nv_password:
     type: string
-    description: Password for one app key; pair with the matching account_name after querying.
+    description: Password for one app key; pair with the matching account_name after get.
   nv_int:
     type: integer
     description: Integer field.
@@ -207,3 +215,26 @@ values:
     enum:
     - success
     - fail
+views:
+  account_password_by_key:
+    description: Single password row for one app key, selected from the list-only vault endpoint.
+    capability: account_password_get
+    entity: AccountPassword
+    scope:
+    - name: account_name
+      value_ref: nv_account_name
+      required: true
+    nodes:
+    - id: vault
+      capability: account_password_query
+      bind: {}
+    output:
+      account_name:
+        kind: scope
+        param: account_name
+      password:
+        kind: node_field_where
+        node: vault
+        where_field: account_name
+        equals_scope: account_name
+        field: password

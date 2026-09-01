@@ -1,4 +1,4 @@
-version: 6
+version: 8
 entry_id: splitwise
 auth:
   scheme: none
@@ -35,6 +35,15 @@ entities:
       deleted: { required: false, value_ref: nv_bool }
       invitation_code: { required: false, value_ref: nv_str }
     relations:
+      members:
+        description: People belonging to this group.
+        target: GroupMember
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: members
+          - wildcard: true
       expenses:
         target: Expense
         cardinality: many
@@ -56,6 +65,16 @@ entities:
           kind: query_scoped
           capability: balance_group_query
           param: group_id
+  GroupMember:
+    abstract: true
+    id_field: email
+    description: Member of a shared expense group.
+    discovery:
+      names: [group member, member, members]
+      seed_class: dependent
+    fields:
+      email: { required: true, value_ref: nv_email }
+      name: { required: false, value_ref: nv_str }
   Expense:
     id_field: expense_id
     description: Shared expense with payer and debtors.
@@ -167,6 +186,7 @@ capabilities:
     entity: Group
     parameters:
     - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: delete, value_ref: nv_bool, required: false, role: filter }
     - { name: page_index, value_ref: nv_int, required: false, role: response_control }
     - { name: page_limit, value_ref: nv_int, required: false, role: response_control }
     provides: [group_id, name, description, created_at, deleted, invitation_code]

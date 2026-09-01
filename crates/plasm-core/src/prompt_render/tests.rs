@@ -105,9 +105,7 @@ fn count_projection_teaching_witness_rows(
 
 /// First executable teaching row with a trailing projection bracket (wires by first use).
 #[cfg(test)]
-fn first_bracketed_executable_row(
-    block: &EntityTeachingBlock,
-) -> Option<&EntityTeachingExprRow> {
+fn first_bracketed_executable_row(block: &EntityTeachingBlock) -> Option<&EntityTeachingExprRow> {
     block.teaching_rows.iter().find(|r| {
         !r.teaching_expr.is_projection_teaching
             && parse_trailing_projection_bracket(r.teaching_expr.expression.trim()).is_some()
@@ -835,8 +833,8 @@ fn linear_issue_heading_projection_despite_method_style_get() {
         surface,
         None,
     );
-    let witness = first_bracketed_executable_row(&block)
-        .expect("Linear Issue bracket on executable");
+    let witness =
+        first_bracketed_executable_row(&block).expect("Linear Issue bracket on executable");
     let canon_syms = projection_bracket_syms(
         &parse_trailing_projection_bracket(witness.teaching_expr.expression.trim())
             .expect("witness bracket"),
@@ -2351,7 +2349,8 @@ fn sole_nullary_get_fixture_teaches_bare_e_first_with_gloss() {
     });
     let (first_expr, first_meaning) = e_rows.next().expect("Profile e# row");
     assert_eq!(
-        first_expr, e.as_str(),
+        first_expr,
+        e.as_str(),
         "first e# must be bare executable singleton fetch, got {first_expr:?}\n{body}"
     );
     assert!(
@@ -2361,7 +2360,9 @@ fn sole_nullary_get_fixture_teaches_bare_e_first_with_gloss() {
         "expected →e + gloss without materialize mark, got {first_meaning:?}"
     );
     assert!(
-        !body.lines().any(|l| l.contains(&format!("{e}.m")) && l.contains("()\t")),
+        !body
+            .lines()
+            .any(|l| l.contains(&format!("{e}.m")) && l.contains("()\t")),
         "must not teach redundant e#.m#() for sole singleton Get:\n{body}"
     );
     assert!(
@@ -2697,7 +2698,11 @@ fn clickup_user_singleton_get_me_line_in_domain() {
     let first_user_e = sym.lines().find_map(|l| {
         l.split_once('\t').and_then(|(expr, meaning)| {
             let expr = expr.trim();
-            if expr == user_sym.as_str() || expr.starts_with(&format!("{user_sym}[")) || expr.starts_with(&format!("{user_sym}.")) || expr.starts_with(&format!("{user_sym}(")) {
+            if expr == user_sym.as_str()
+                || expr.starts_with(&format!("{user_sym}["))
+                || expr.starts_with(&format!("{user_sym}."))
+                || expr.starts_with(&format!("{user_sym}("))
+            {
                 Some((expr.to_string(), meaning.to_string()))
             } else {
                 None
@@ -2706,7 +2711,8 @@ fn clickup_user_singleton_get_me_line_in_domain() {
     });
     let (expr, meaning) = first_user_e.expect("User must have an e# teaching row");
     assert_eq!(
-        expr, user_sym.as_str(),
+        expr,
+        user_sym.as_str(),
         "sole singleton Get: first e# row must be bare {user_sym}, got {expr:?}"
     );
     assert!(

@@ -4,9 +4,9 @@ use std::collections::{HashMap, HashSet};
 
 use crate::relation_nav::relation_nav_admissible;
 use crate::schema::{Cardinality, EntityDef, RelationSchema};
-use crate::symbol_tuning::SymbolMap;
 #[cfg(test)]
 use crate::symbol_tuning::ExposureSurface;
+use crate::symbol_tuning::SymbolMap;
 use crate::{CapabilityKind, CGS};
 
 use super::gloss_collect::GlossScratch;
@@ -20,9 +20,9 @@ use super::query_teaching::{
 };
 #[cfg(test)]
 use super::surface_filter::{surface_allows_relation_nav, surface_includes_exposed_entity};
+use super::symbol_tokens::id_sym_rel;
 #[cfg(test)]
 use super::symbol_tokens::{ent_sym, id_sym_entity};
-use super::symbol_tokens::id_sym_rel;
 use super::teaching_push::try_push_teaching_example;
 use super::teaching_util::truncate_inline_desc;
 use super::tsv_emit::{teaching_relation_field_gloss, write_teaching_tsv_row, DomainTsvRow};

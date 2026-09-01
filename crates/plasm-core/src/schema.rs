@@ -1023,6 +1023,34 @@ pub fn capability_template_all_var_names(template: &serde_json::Value) -> Vec<St
     out
 }
 
+/// True when CML mapping uses `transport: view` (composed view DAG, no direct HTTP).
+pub fn capability_mapping_is_view_transport(template: &serde_json::Value) -> bool {
+    template.get("transport").and_then(|t| t.as_str()) == Some("view")
+}
+
+/// Returns a validation detail when invalid; `None` when the binding is well-formed.
+pub fn view_node_field_where_output_detail(
+    view: &ViewDefinition,
+    equals_scope: &str,
+    where_field: &str,
+    row_field: &str,
+) -> Option<String> {
+    if equals_scope.trim().is_empty()
+        || where_field.trim().is_empty()
+        || row_field.trim().is_empty()
+    {
+        return Some(
+            "node_field_where requires non-empty where_field, equals_scope, and field".into(),
+        );
+    }
+    if !view.scope.iter().any(|s| s.name == equals_scope) {
+        return Some(format!(
+            "equals_scope `{equals_scope}` is not a view scope param"
+        ));
+    }
+    None
+}
+
 /// True when the mapping sends the whole create/invoke aggregate via `body: { type: var, name: input }`.
 pub fn mapping_body_is_whole_var_input(template: &serde_json::Value) -> bool {
     template.get("body").is_some_and(|body| {
@@ -2185,6 +2213,14 @@ pub enum ViewOutputBinding {
         node: String,
         field: String,
     },
+    /// Field from the unique row on `node` where `where_field` equals view scope `equals_scope`.
+    /// Fails at runtime when zero or more than one rows match (same semantics as write `query_pick`).
+    NodeFieldWhere {
+        node: String,
+        where_field: String,
+        equals_scope: String,
+        field: String,
+    },
     /// JSON object mapping distinct `field` values to occurrence counts across node rows.
     NodeFieldHistogramJson {
         node: String,
@@ -2988,6 +3024,32 @@ impl CGS {
                                 view: view_key.clone(),
                                 field: field_name.clone(),
                                 node: node.clone(),
+                            });
+                        }
+                    }
+                    ViewOutputBinding::NodeFieldWhere {
+                        node,
+                        where_field,
+                        equals_scope,
+                        field: row_field,
+                    } => {
+                        if !view.nodes.iter().any(|n| n.id == *node) {
+                            return Err(SchemaError::ViewOutputUnknownNode {
+                                view: view_key.clone(),
+                                field: field_name.clone(),
+                                node: node.clone(),
+                            });
+                        }
+                        if let Some(detail) = view_node_field_where_output_detail(
+                            view,
+                            equals_scope,
+                            where_field,
+                            row_field,
+                        ) {
+                            return Err(SchemaError::ViewCapabilityMappingInvalid {
+                                view: view_key.clone(),
+                                capability: view.capability.clone(),
+                                detail: format!("output field `{field_name}`: {detail}"),
                             });
                         }
                     }
@@ -5374,6 +5436,12 @@ impl CapabilitySchema {
     #[inline]
     pub fn invoke_requires_explicit_anchor_id(&self) -> bool {
         template_invoke_requires_explicit_anchor_id(&self.mapping.template.0)
+    }
+
+    /// True when this capability's CML mapping uses `transport: view`.
+    #[inline]
+    pub fn is_view_transport(&self) -> bool {
+        capability_mapping_is_view_transport(&self.mapping.template.0)
     }
 
     /// Minimal capability shell for unit tests in downstream crates.

@@ -245,9 +245,7 @@ fn prompt_matrix_tsv_teaching_surface_invariants() {
     assert!(
         !tsv.lines().any(|l| {
             let c: Vec<&str> = l.split('\t').collect();
-            c.len() == 2
-                && expr_starts_with_entity_sym(c[0], &ruleset_es)
-                && c[1].contains("noun")
+            c.len() == 2 && expr_starts_with_entity_sym(c[0], &ruleset_es) && c[1].contains("noun")
         }),
         "Ruleset teaching must not emit noun cards:\n{tsv}"
     );

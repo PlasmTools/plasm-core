@@ -350,9 +350,8 @@ fn prune_entities_without_capabilities(surface: &mut ExposureSurface) {
         .collect();
     surface.entities.retain(|e| taught.contains(e));
     surface.slots.retain(|s| match s {
-        ExposureSlotKey::EntityField { entity, .. } | ExposureSlotKey::Relation { source: entity, .. } => {
-            taught.contains(entity)
-        }
+        ExposureSlotKey::EntityField { entity, .. }
+        | ExposureSlotKey::Relation { source: entity, .. } => taught.contains(entity),
         ExposureSlotKey::CapabilityParam { capability, .. } => {
             surface.capabilities.contains(capability)
         }

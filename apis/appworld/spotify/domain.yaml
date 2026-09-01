@@ -1,4 +1,4 @@
-version: 5
+version: 6
 entry_id: spotify
 auth:
   scheme: none
@@ -23,9 +23,11 @@ entities:
       token_type: { required: false, value_ref: nv_str }
   Song:
     id_field: song_id
-    description: A Spotify song track.
+    description: >
+      A Spotify track — search the catalog, browse the user's library or liked songs,
+      or like/unlike. Not the playback queue (use Player / QueueEntry).
     discovery:
-      names: [song, songs, track, music]
+      names: [song, songs, track, music, liked song, liked songs, song library, library songs]
       seed_class: primary
     fields:
       song_id: { required: true, value_ref: nv_song_id }
@@ -103,9 +105,11 @@ entities:
       downloaded_at: { required: false, value_ref: nv_datetime }
   Player:
     id_field: song_id
-    description: Music player / queue / volume state.
+    description: >
+      Playback control — play/pause, previous/next, seek, loop, volume, and shuffle or
+      clear/rebuild the queue. Distinct from browsing songs or playlists.
     discovery:
-      names: [player, queue, volume]
+      names: [player, queue, volume, playback, shuffle, previous song, next song, play]
       seed_class: primary
     fields:
       song_id: { required: false, value_ref: nv_song_id }
@@ -339,13 +343,16 @@ capabilities:
     - { name: is_public, value_ref: nv_bool, required: false }
     provides: [playlist_id]
   playlist_update:
-    description: Update playlist title or visibility.
+    description: Update a playlist's title and/or public visibility.
     kind: update
     entity: Playlist
     parameters:
     - { name: access_token, value_ref: nv_access_token, required: true }
     - { name: title, value_ref: nv_str, required: false }
     - { name: is_public, value_ref: nv_bool, required: false }
+    discovery:
+      operation_terms: [update, rename, retitle, change title]
+      target_terms: [playlist, playlist title]
   playlist_delete:
     description: Delete a playlist.
     kind: delete
@@ -390,7 +397,7 @@ capabilities:
     - { name: access_token, value_ref: nv_access_token, required: true }
     provides: [song_id, title, position, is_playing, volume]
   player_play:
-    description: Start or resume playback.
+    description: Start or resume playback (optionally of a song, album, or playlist).
     kind: action
     entity: Player
     parameters:
@@ -398,6 +405,9 @@ capabilities:
     - { name: song_id, value_ref: nv_song_id, required: false }
     - { name: album_id, value_ref: nv_album_id, required: false }
     - { name: playlist_id, value_ref: nv_playlist_id, required: false }
+    discovery:
+      operation_terms: [play, resume, start]
+      target_terms: [player, song, playback]
     output: { type: side_effect, description: Starts playback. }
   player_pause:
     description: Pause playback.
@@ -407,20 +417,26 @@ capabilities:
     - { name: access_token, value_ref: nv_access_token, required: true }
     output: { type: side_effect, description: Pauses playback. }
   player_previous:
-    description: Go to the previous song in the queue.
+    description: Skip to the previous song in the playback queue.
     kind: action
     entity: Player
     parameters:
     - { name: access_token, value_ref: nv_access_token, required: true }
     provides: [song_id]
+    discovery:
+      operation_terms: [previous, back, skip back]
+      target_terms: [song, queue, player]
     output: { type: side_effect, description: Moves playback to the previous song in the queue. }
   player_next:
-    description: Go to the next song in the queue.
+    description: Skip to the next song in the playback queue.
     kind: action
     entity: Player
     parameters:
     - { name: access_token, value_ref: nv_access_token, required: true }
     provides: [song_id]
+    discovery:
+      operation_terms: [next, skip, skip forward]
+      target_terms: [song, queue, player]
     output: { type: side_effect, description: Moves playback to the next song in the queue. }
   player_queue:
     description: Show the song queue.
@@ -440,11 +456,14 @@ capabilities:
     - { name: playlist_id, value_ref: nv_playlist_id, required: false }
     output: { type: side_effect, description: Appends to the playback queue. }
   player_queue_clear:
-    description: Clear the song queue.
+    description: Clear (reset) the playback queue of all songs.
     kind: action
     entity: Player
     parameters:
     - { name: access_token, value_ref: nv_access_token, required: true }
+    discovery:
+      operation_terms: [clear, reset, empty]
+      target_terms: [queue]
     output: { type: side_effect, description: Clears the playback queue. }
   player_queue_remove:
     description: Remove a song at a queue position.
@@ -480,11 +499,14 @@ capabilities:
     - { name: loop, value_ref: nv_bool, required: true }
     output: { type: side_effect, description: Enables or disables looping the current song. }
   player_shuffle:
-    description: Shuffle songs in the music player queue.
+    description: Shuffle the order of songs currently in the playback queue.
     kind: action
     entity: Player
     parameters:
     - { name: access_token, value_ref: nv_access_token, required: true }
+    discovery:
+      operation_terms: [shuffle, randomize]
+      target_terms: [queue, player]
     output: { type: side_effect, description: Shuffles the playback queue. }
   player_volume_get:
     description: Get player volume.
@@ -502,7 +524,9 @@ capabilities:
     - { name: volume, value_ref: nv_int, required: true }
     output: { type: side_effect, description: Sets the playback volume. }
   liked_song_query:
-    description: List songs the user has liked.
+    description: >
+      List songs the user has liked (heart/favorite). Distinct from the broader song library
+      and from catalog search — use this when the goal is liked tracks.
     kind: query
     entity: Song
     parameters:
@@ -510,15 +534,23 @@ capabilities:
     - { name: page_index, value_ref: nv_int, required: false, role: response_control }
     - { name: page_limit, value_ref: nv_int, required: false, role: response_control }
     - { name: sort_by, value_ref: nv_str, required: false, role: sort }
+    discovery:
+      operation_terms: [list, show, liked]
+      target_terms: [liked song, liked songs, favorites]
     provides: [song_id, title, album_id, album_title, duration, genre, release_date, play_count, rating, like_count, shareable_link]
   song_library_query:
-    description: List songs saved to the user's library.
+    description: >
+      List songs saved in the user's song library (library shelf — not the same as liked songs,
+      and not a free-text catalog search).
     kind: query
     entity: Song
     parameters:
     - { name: access_token, value_ref: nv_access_token, required: true }
     - { name: page_index, value_ref: nv_int, required: false, role: response_control }
     - { name: page_limit, value_ref: nv_int, required: false, role: response_control }
+    discovery:
+      operation_terms: [list, show, library]
+      target_terms: [song library, library songs, my library]
     provides: [song_id, title, album_id, album_title, duration, genre, release_date, play_count, rating, like_count, shareable_link]
   song_library_add:
     description: Add a song to the user's library.
@@ -534,6 +566,20 @@ capabilities:
     parameters:
     - { name: access_token, value_ref: nv_access_token, required: true }
     output: { type: side_effect, description: Removes this song from the library. }
+  song_recommendation_query:
+    description: >
+      Personalized song recommendations for the authenticated user (suggested tracks —
+      not the current queue and not the liked/library shelves).
+    kind: query
+    entity: Song
+    parameters:
+    - { name: access_token, value_ref: nv_access_token, required: true }
+    - { name: page_index, value_ref: nv_int, required: false, role: response_control }
+    - { name: page_limit, value_ref: nv_int, required: false, role: response_control }
+    discovery:
+      operation_terms: [recommend, suggest, recommendations]
+      target_terms: [song, songs, track]
+    provides: [song_id, title, album_id, album_title, duration, genre, release_date, play_count, rating, like_count, shareable_link]
   album_library_query:
     description: List albums saved to the user's library.
     kind: query

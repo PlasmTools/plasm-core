@@ -1,4 +1,4 @@
-version: 6
+version: 8
 entry_id: venmo
 
 data_classes:
@@ -83,8 +83,8 @@ entities:
         materialize: { kind: query_scoped, capability: friend_query, param: user_email }
   Friend:
     id_field: email
-    description: Search and manage Venmo friendships.
-    discovery: { names: [friend, contact], seed_class: primary }
+    description: Search Venmo friends and add or remove friendships.
+    discovery: { names: [friend, friends, friendship, befriend, unfriend, contact], seed_class: primary }
     fields:
       email: { value_ref: nv_email, required: true }
       first_name: { value_ref: nv_person_name }
@@ -93,8 +93,8 @@ entities:
       friends_since: { value_ref: nv_timestamp }
   Balance:
     id_field: venmo_balance
-    description: Inspect or move money through the authenticated user's Venmo balance.
-    discovery: { names: [balance, wallet, funds], seed_class: primary }
+    description: Inspect Venmo cash on hand, or move it to/from a linked payment card (deposit or withdraw).
+    discovery: { names: [balance, wallet, funds, withdraw, deposit, cash out], seed_class: primary }
     fields:
       venmo_balance: { value_ref: nv_amount, required: true }
   Transaction:
@@ -111,10 +111,39 @@ entities:
       like_count: { value_ref: nv_count }
       payment_card_digits: { value_ref: nv_card_digits, data_class: pii_payment }
       comment_count: { value_ref: nv_count }
+      sender_email:
+        value_ref: nv_email
+        required: false
+        path: [sender, email]
+      sender_name:
+        value_ref: nv_person_name
+        required: false
+        path: [sender, name]
+      receiver_email:
+        value_ref: nv_email
+        required: false
+        path: [receiver, email]
+      receiver_name:
+        value_ref: nv_person_name
+        required: false
+        path: [receiver, name]
   PaymentRequest:
     id_field: payment_request_id
-    description: Ask someone to pay you (request money) or track/resolve those requests — not for sending your own funds.
-    discovery: { names: [payment request, money request, charge, request money], seed_class: primary }
+    description: >
+      Money someone asked you to pay (received) or money you asked someone else to pay (sent).
+      List and resolve pending requests here — not for completed transfers (use Transaction) and not for
+      moving Venmo balance to a card (use Balance).
+    discovery:
+      names:
+      - payment request
+      - money request
+      - charge request
+      - requested money
+      - been requested
+      - request money
+      - approve request
+      - pending request
+      seed_class: primary
     fields:
       payment_request_id: { value_ref: nv_payment_request_id, required: true }
       amount: { value_ref: nv_amount, required: true }
@@ -126,8 +155,8 @@ entities:
       private: { value_ref: nv_private }
   PaymentCard:
     id_field: payment_card_id
-    description: Select a linked payment source for balance and request operations.
-    discovery: { names: [payment card, card, funding source], seed_class: primary }
+    description: A linked payment card used to fund balance moves and approve payment requests (match by last digits when needed).
+    discovery: { names: [payment card, card, funding source, card ending, last four], seed_class: primary }
     fields:
       payment_card_id: { value_ref: nv_payment_card_id, required: true }
       card_name: { value_ref: nv_card_name }
@@ -200,19 +229,25 @@ capabilities:
     - { name: user_email, value_ref: nv_email, role: scope }
     provides: [email, first_name, last_name, registered_at, friends_since]
   friend_add:
-    description: Add a Venmo user as a friend.
+    description: Add a Venmo user as a friend (befriend).
     kind: action
     entity: Friend
     parameters:
     - { name: access_token, value_ref: nv_access_token, required: true }
     - { name: user_email, value_ref: nv_email, required: true }
+    discovery:
+      operation_terms: [add, befriend, friend]
+      target_terms: [friend, friendship]
     output: { type: side_effect, description: Creates a friendship with the specified Venmo user. }
   friend_remove:
-    description: Remove an existing Venmo friendship.
+    description: Remove an existing Venmo friendship (unfriend).
     kind: delete
     entity: Friend
     parameters:
     - { name: access_token, value_ref: nv_access_token, required: true }
+    discovery:
+      operation_terms: [remove, unfriend, delete]
+      target_terms: [friend, friendship]
   balance_get:
     description: Show the authenticated user's current Venmo balance.
     kind: get
@@ -230,14 +265,17 @@ capabilities:
     - { name: payment_card_id, value_ref: nv_payment_card_id, required: true }
     output: { type: side_effect, description: Increases the authenticated user's Venmo balance. }
   balance_withdraw:
-    description: Withdraw money from the Venmo balance to a linked payment card.
+    description: Withdraw (cash out) Venmo balance to a linked payment card.
     kind: action
     entity: Balance
     parameters:
     - { name: access_token, value_ref: nv_access_token, required: true }
     - { name: amount, value_ref: nv_amount, required: true }
     - { name: payment_card_id, value_ref: nv_payment_card_id, required: true }
-    output: { type: side_effect, description: Decreases the authenticated user's Venmo balance. }
+    discovery:
+      operation_terms: [withdraw, cash out, transfer out]
+      target_terms: [balance, payment card]
+    output: { type: side_effect, description: Moves balance from Venmo onto the chosen payment card. }
   transaction_query:
     description: Find the authenticated user's sent and received transactions.
     kind: search
@@ -265,6 +303,10 @@ capabilities:
     - like_count
     - payment_card_digits
     - comment_count
+    - sender_email
+    - sender_name
+    - receiver_email
+    - receiver_name
   transaction_get:
     description: Show the details of one Venmo transaction.
     kind: get
@@ -285,12 +327,17 @@ capabilities:
     - { name: private, value_ref: nv_private }
     provides: [transaction_id]
   payment_request_received_query:
-    description: List payment requests received from other Venmo users.
+    description: >
+      List payment requests other people sent to you (money you have been asked to pay).
+      Filter by status (pending / approved / denied) when needed.
     kind: query
     entity: PaymentRequest
     parameters:
     - { name: access_token, value_ref: nv_access_token, required: true }
     - { name: status, value_ref: nv_status }
+    discovery:
+      operation_terms: [list, show, received, pending]
+      target_terms: [payment request, requested money, charge]
     provides: &payment_request_fields
     - payment_request_id
     - amount
@@ -301,15 +348,20 @@ capabilities:
     - denied_at
     - private
   payment_request_sent_query:
-    description: List payment requests sent to other Venmo users.
+    description: >
+      List payment requests you sent to others (money you asked them to pay you).
+      Filter by status (pending / approved / denied) when needed.
     kind: query
     entity: PaymentRequest
     parameters:
     - { name: access_token, value_ref: nv_access_token, required: true }
     - { name: status, value_ref: nv_status }
+    discovery:
+      operation_terms: [list, show, sent]
+      target_terms: [payment request, money request]
     provides: *payment_request_fields
   payment_request_create:
-    description: Request money from another Venmo user (they pay you); keep the request public unless the task asks for private.
+    description: Ask another Venmo user to pay you (create a sent payment request).
     kind: create
     entity: PaymentRequest
     parameters:
@@ -320,12 +372,15 @@ capabilities:
     - { name: private, value_ref: nv_private }
     provides: [payment_request_id]
   payment_request_approve:
-    description: Approve and pay a received payment request.
+    description: Approve and pay a received payment request (you pay them).
     kind: action
     entity: PaymentRequest
     parameters:
     - { name: access_token, value_ref: nv_access_token, required: true }
     - { name: payment_card_id, value_ref: nv_payment_card_id }
+    discovery:
+      operation_terms: [approve, accept, pay]
+      target_terms: [payment request, received request]
     output: { type: side_effect, description: Approves the payment request and transfers the requested money. }
   payment_request_deny:
     description: Deny a received payment request.

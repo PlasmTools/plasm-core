@@ -165,6 +165,18 @@ entities:
         required: false
         value_ref: nv_wire_int
     relations: {}
+  LangKeyPick:
+    id_field: key
+    primary_read: lang_key_pick_get
+    description: Keyed singleton over a list-only query via node_field_where (AccountPassword pattern).
+    fields:
+      key:
+        required: true
+        value_ref: nv_lang_key_pick_key
+      title:
+        required: true
+        value_ref: nv_lang_key_pick_title
+    relations: {}
   LangItemLink:
     id_field: item_id
     primary_read: lang_item_link_get
@@ -586,6 +598,13 @@ capabilities:
     provides:
     - item_id
     - tag_count
+  lang_key_pick_get:
+    kind: get
+    entity: LangKeyPick
+    description: Get one LangKeyPick by key over list-only langitem_query (node_field_where).
+    provides:
+    - key
+    - title
   langviewer_get:
     kind: get
     entity: LangViewer
@@ -719,6 +738,10 @@ values:
     type: boolean
   nv_wire_int:
     type: integer
+  nv_lang_key_pick_key:
+    type: string
+  nv_lang_key_pick_title:
+    type: string
 
 views:
   lang_digest:
@@ -895,6 +918,28 @@ views:
       tag_count:
         kind: node_row_count
         node: tagged_rows
+  lang_key_pick:
+    description: Pick one LangItem title by key from an unfiltered list (node_field_where).
+    capability: lang_key_pick_get
+    entity: LangKeyPick
+    scope:
+    - name: key
+      value_ref: nv_lang_key_pick_key
+      required: true
+    nodes:
+    - id: items
+      capability: langitem_query
+      bind: {}
+    output:
+      key:
+        kind: scope
+        param: key
+      title:
+        kind: node_field_where
+        node: items
+        where_field: id
+        equals_scope: key
+        field: title
   lang_work_snapshot:
     description: Parameterless dashboard snapshot with assigned LangItems (MyWorkSnapshot pattern).
     capability: lang_work_snapshot_query

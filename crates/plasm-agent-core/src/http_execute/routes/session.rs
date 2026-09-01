@@ -1,8 +1,6 @@
 //! Session sub-resource Axum handlers (`/context`, `/symbols`, `/status`, `/runs`, `/plan`).
 
-use super::super::response::{
-    negotiate_accept, respond_plan_payload, AcceptNegotiationError, ExecResponseKind,
-};
+use super::super::response::{respond_plan_payload, ExecResponseKind};
 use super::super::*;
 
 pub(crate) async fn post_execute_session_context(
@@ -290,9 +288,8 @@ pub(crate) async fn post_execute_session_plan(
     match outcome {
         Ok(result) => {
             let accept = headers.get(ACCEPT).and_then(|v| v.to_str().ok());
-            let kind = match negotiate_accept(accept) {
-                Ok(k) => k,
-                Err(AcceptNegotiationError::NoSupportedMediaType) => ExecResponseKind::Json,
+            let Some(kind) = negotiate_accept_or_406(accept) else {
+                return unsupported_accept_response();
             };
             let payload = crate::resolved_plan_http::ResolvedPlanResponse {
                 plan: true,
@@ -308,7 +305,7 @@ pub(crate) async fn post_execute_session_plan(
                 meta: result.run_plasm_meta.map(serde_json::Value::Object),
             };
             if run_live {
-                if let ExecResponseKind::Toon | ExecResponseKind::Ndjson = kind {
+                if let ExecResponseKind::Ndjson = kind {
                     return respond_plan_payload(
                         kind,
                         serde_json::to_value(&payload).unwrap_or_default(),

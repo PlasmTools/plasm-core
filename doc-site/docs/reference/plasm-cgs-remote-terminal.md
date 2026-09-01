@@ -49,7 +49,7 @@ No active plasm context for http://127.0.0.1:3000. Run `plasm context -i "…" a
 | `plasm doctor` | Profile + `GET /v1/health` |
 | `plasm search <INTENT>` | Discover; merge `discovery.tsv` |
 | `plasm context [OPTIONS] <CATALOG:ENTITY>…` | Client expose; see `plasm context --help` |
-| `plasm run [OPTIONS]` | Expand locally; HTTP execute (`--mode plan\|run`, `--accept plain\|toon\|json\|ndjson`) |
+| `plasm run [OPTIONS]` | Expand locally; HTTP execute (`--mode plan\|run`, `--accept plain\|json\|ndjson`) |
 
 With **`--new`**, every seed must be `entry_id:Entity` (e.g. `pokeapi:Pokemon`). Without **`--new`**, unqualified entity names resolve via discovery cache when unique; ambiguous names error with `api:Entity` options.
 
@@ -79,7 +79,7 @@ With **`--new`**, every seed must be `entry_id:Entity` (e.g. `pokeapi:Pokemon`).
 
 **Removed:** server-root `active_context.txt`, server `session.txt` as symbol source of truth.
 
-Default **`run`** `--accept` is **`plain`** (`text/plain`). HTTP server default when `Accept` is omitted remains **`text/toon`**.
+Default **`run`** `--accept` is **`plain`** (`text/plain`). HTTP server default when `Accept` is omitted is **`application/json`**.
 
 ## Example
 

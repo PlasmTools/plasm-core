@@ -53,12 +53,18 @@ pub type CompileQueryHook =
 ///
 /// Call after loading a [`plasm_core::CGS`] so invalid templates fail at validation time
 /// instead of first execution.
+///
+/// Also rejects **fabricated wire params**: every declared capability parameter must appear
+/// as a CML `var` (path/query/body/headers/multipart) or as a pagination param key, unless
+/// the template uses the aggregate `input` body var (params splat into env) or `transport: view`
+/// (params bind via view scope / node binds, not this HTTP template).
 pub fn validate_cgs_capability_templates(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
     for (name, cap) in &cgs.capabilities {
         let template_json = &cap.mapping.template.0;
-        parse_capability_template(template_json).map_err(|e| CmlError::InvalidTemplate {
-            message: format!("capability `{name}`: {e}"),
-        })?;
+        let template =
+            parse_capability_template(template_json).map_err(|e| CmlError::InvalidTemplate {
+                message: format!("capability `{name}`: {e}"),
+            })?;
         let template_text = template_json
             .as_str()
             .map(str::to_string)
@@ -70,6 +76,53 @@ pub fn validate_cgs_capability_templates(cgs: &plasm_core::CGS) -> Result<(), Cm
         .map_err(|e| CmlError::InvalidTemplate {
             message: e.to_string(),
         })?;
+
+        validate_capability_params_wired_in_cml(name, cap, &template)?;
+    }
+    Ok(())
+}
+
+/// Every declared capability parameter must appear in the CML template (or pagination keys).
+fn validate_capability_params_wired_in_cml(
+    name: &str,
+    cap: &CapabilitySchema,
+    template: &CapabilityTemplate,
+) -> Result<(), CmlError> {
+    if matches!(template, CapabilityTemplate::View(_)) {
+        return Ok(());
+    }
+
+    let Some(params) = cap.object_params() else {
+        return Ok(());
+    };
+    if params.is_empty() {
+        return Ok(());
+    }
+
+    let mut wired: std::collections::HashSet<String> =
+        template_var_names(template).into_iter().collect();
+    if let Some(pconf) = template_pagination(template) {
+        for key in pconf.params.keys() {
+            wired.insert(key.clone());
+        }
+    }
+    if wired.contains("input") {
+        return Ok(());
+    }
+
+    let mut missing: Vec<&str> = params
+        .iter()
+        .filter(|p| !wired.contains(p.name.as_str()))
+        .map(|p| p.name.as_str())
+        .collect();
+    missing.sort_unstable();
+    if !missing.is_empty() {
+        return Err(CmlError::InvalidTemplate {
+            message: format!(
+                "capability `{name}`: parameter(s) [{}] are declared in domain.yaml but not referenced in CML (path/query/body/headers/multipart/pagination). Fabricated filters/params that never hit the wire are forbidden — wire them in mappings.yaml or remove them from the capability.",
+                missing.join(", ")
+            ),
+        });
     }
     Ok(())
 }
@@ -215,6 +268,7 @@ pub fn validate_cgs_views(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
             match binding {
                 ViewOutputBinding::NodeRowCount { node }
                 | ViewOutputBinding::NodeField { node, .. }
+                | ViewOutputBinding::NodeFieldWhere { node, .. }
                 | ViewOutputBinding::NodeFieldHistogramJson { node, .. }
                 | ViewOutputBinding::NodeAnyRowFieldEquals { node, .. }
                 | ViewOutputBinding::NodeRowCountPositive { node }
@@ -236,6 +290,27 @@ pub fn validate_cgs_views(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
                     )?;
                 }
                 ViewOutputBinding::Scope { .. } => {}
+            }
+        }
+
+        for (field, binding) in &view.output {
+            if let ViewOutputBinding::NodeFieldWhere {
+                equals_scope,
+                where_field,
+                field: row_field,
+                ..
+            } = binding
+            {
+                if let Some(detail) = plasm_core::view_node_field_where_output_detail(
+                    view,
+                    equals_scope,
+                    where_field,
+                    row_field,
+                ) {
+                    return Err(CmlError::InvalidTemplate {
+                        message: format!("view `{view_key}` output `{field}`: {detail}"),
+                    });
+                }
             }
         }
 
@@ -372,7 +447,59 @@ mod tests {
             &root.join("../../fixtures/schemas/plasm_language_matrix_views"),
         )
         .expect("load matrix views");
+        validate_cgs_capability_templates(&cgs).expect("templates");
         validate_cgs_views(&cgs).expect("views valid");
+    }
+
+    #[test]
+    fn validate_rejects_capability_param_not_referenced_in_cml() {
+        use plasm_core::schema::{InputFieldSchema, InputFieldWire, InputSchema, InputType, ParameterRole};
+
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut cgs = plasm_core::load_schema_dir(
+            &root.join("../../fixtures/schemas/plasm_language_matrix_views"),
+        )
+        .expect("load matrix views");
+        let cap = cgs
+            .capabilities
+            .get_mut("langitem_query")
+            .expect("langitem_query");
+        cap.input_schema = Some(InputSchema {
+            input_type: InputType::Object {
+                fields: vec![InputFieldSchema {
+                    name: "fabricated_filter".into(),
+                    wire: InputFieldWire::Registry(
+                        plasm_core::ValueDomainKey::new("nv_lang_item_title").expect("key"),
+                    ),
+                    required: false,
+                    description: None,
+                    default: None,
+                    role: Some(ParameterRole::Filter),
+                    sink_class: None,
+                    wire_json_path: None,
+                    wire_array_element_key: None,
+                }],
+                additional_fields: false,
+            },
+            validation: Default::default(),
+            description: None,
+            examples: vec![],
+        });
+        let err = validate_cgs_capability_templates(&cgs).expect_err("fabricated");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("fabricated_filter") && msg.contains("not referenced in CML"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn supervisor_account_password_catalog_validates() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs =
+            plasm_core::load_schema(&root.join("../../apis/appworld/supervisor")).expect("load");
+        validate_cgs_capability_templates(&cgs).expect("templates");
+        validate_cgs_views(&cgs).expect("views");
     }
 
     #[test]

@@ -473,6 +473,10 @@ fn admit_primary_parents_for_attach_leaves(
 }
 
 /// Keep only the N catalogs with the highest max witness lexical score.
+///
+/// Catalog-authored `co_seed_with: federated_primary|session_primary` seats always
+/// survive (same stamp exemption as brand-lock bundle retention) so later
+/// [`admit_co_seed_with_primary`] can force-admit them — never entity English.
 fn filter_top_catalogs_by_score(
     drafted: Vec<RequirementWitness>,
     max_catalogs: usize,
@@ -482,6 +486,10 @@ fn filter_top_catalogs_by_score(
     }
     let mut best: HashMap<String, u32> = HashMap::new();
     for w in &drafted {
+        // Federated/session co-seed seats do not compete for the soft catalog budget.
+        if w.co_seed_with.admits_on_federated_primary() {
+            continue;
+        }
         let cat = witness_catalog(w).to_string();
         let entry = best.entry(cat).or_insert(0);
         *entry = (*entry).max(w.lexical_score);
@@ -498,7 +506,9 @@ fn filter_top_catalogs_by_score(
         .collect();
     drafted
         .into_iter()
-        .filter(|w| keep.contains(witness_catalog(w)))
+        .filter(|w| {
+            keep.contains(witness_catalog(w)) || w.co_seed_with.admits_on_federated_primary()
+        })
         .collect()
 }
 

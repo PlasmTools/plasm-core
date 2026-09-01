@@ -48,7 +48,9 @@ pub(in crate::plasm_dag) fn validate_compute_paths_for_schema(
         }
         return Err(agent_program_error(
             format!("`{wire}` is not a row field on this binding's compute output."),
-            Some("Use wire field names from the language card (e.g. `.sort(height)`, `[title,…]`)."),
+            Some(
+                "Use wire field names from the language card (e.g. `.sort(height)`, `[title,…]`).",
+            ),
         ));
     }
     Ok(())

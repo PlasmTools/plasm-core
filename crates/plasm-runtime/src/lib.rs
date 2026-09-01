@@ -130,9 +130,11 @@ pub mod session_graph_cache;
 pub mod top_k;
 pub mod workflow_reconcile;
 
+mod value_match;
 mod view_dag_run;
 mod view_execution;
 mod view_matrix_fixture;
+mod view_output;
 mod view_plan;
 mod view_preflight;
 mod view_stub_rows;

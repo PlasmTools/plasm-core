@@ -28,8 +28,6 @@ pub enum AcceptMediaCli {
     /// Table-oriented text (`text/plain`).
     #[value(name = "plain")]
     Plain,
-    #[value(name = "toon")]
-    Toon,
     #[value(name = "json")]
     Json,
     #[value(name = "ndjson")]
@@ -40,7 +38,6 @@ impl AcceptMediaCli {
     pub fn as_accept_header(self) -> &'static str {
         match self {
             Self::Plain => "text/plain",
-            Self::Toon => "text/toon",
             Self::Json => "application/json",
             Self::Ndjson => "application/x-ndjson",
         }

@@ -176,9 +176,8 @@ pub(crate) fn render_prompt_tsv_from_bundle(bundle: &TeachingPromptBundle) -> St
         let union_ctor_row_set: HashSet<usize> = union_ctor_row_idxs.iter().copied().collect();
         let identity_idx = compute_tsv_identity_row_index(&teaching_expr_rows);
         // Entity banner on the first executable teaching row (identity get preferred).
-        let entity_desc_attach_idx = identity_idx.or_else(|| {
-            (0..teaching_expr_rows.len()).find(|&i| !union_ctor_row_set.contains(&i))
-        });
+        let entity_desc_attach_idx = identity_idx
+            .or_else(|| (0..teaching_expr_rows.len()).find(|&i| !union_ctor_row_set.contains(&i)));
         // Projection symbols for field-gloss ordering: trailing brackets on get/query rows.
         let mut proj =
             projection_bracket_from_teaching_rows(&teaching_expr_rows).unwrap_or_default();
