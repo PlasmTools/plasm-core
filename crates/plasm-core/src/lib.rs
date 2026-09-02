@@ -109,6 +109,7 @@ pub mod discovery_seed_symbol_map;
 pub mod discovery_seed_witness;
 pub mod domain_lexicon;
 pub mod entity_ref_value;
+pub mod enum_teaching_meaning;
 pub mod error;
 pub mod error_render;
 pub mod expr;
@@ -138,6 +139,7 @@ pub mod result_gloss;
 pub mod row_composition;
 pub mod row_plan;
 pub mod row_predicate;
+pub mod rowset;
 pub mod schema;
 pub mod schema_overlay;
 pub mod scope_entity_ref_infer;
@@ -257,6 +259,7 @@ pub use preflight::{
     ScopeBind,
 };
 pub use prompt_pipeline::{PromptFocus, PromptPipelineConfig};
+pub use prompt_render::catalog_teaching_fence_info;
 pub use prompt_render::grammar_frontmatter_stats_from_contract;
 pub use prompt_render::grammar_frontmatter_stats_from_prompt;
 pub use prompt_render::prompt_symbol_inflation_stats_from_prompt;
@@ -264,6 +267,7 @@ pub use prompt_render::render_teaching_bundle;
 pub use prompt_render::teaching_tsv_agent_body_from_wrapped_prompt;
 pub use prompt_render::teaching_tsv_from_wrapped_prompt;
 pub use prompt_render::teaching_tsv_table_from_wrapped_prompt;
+pub use prompt_render::teaching_tsv_table_from_wrapped_prompt_any;
 pub use prompt_render::GrammarFrontmatterStats;
 pub use prompt_render::PromptRenderMode;
 pub use prompt_render::PromptSymbolInflationStats;
@@ -280,9 +284,8 @@ pub use query_resolve::{
 };
 pub use resolved_identity::ResolvedIdentity;
 pub use row_composition::{
-    parse_row_suffix_stream_tail, resolve_relation_target_id, row_identity_from_parts,
-    row_identity_from_ref, IdEncoding, PreflightToken, ResolutionHint, RowIdentity, RowProvenance,
-    RowState, RowSuffix,
+    resolve_relation_target_id, row_identity_from_parts, row_identity_from_ref, IdEncoding,
+    PreflightToken, ResolutionHint, RowIdentity, RowProvenance, RowState, RowSuffix,
 };
 pub use row_plan::{
     fold_compute_ops, parse_with_body, CatalogFilter, CollectCardinality, CollectReason,
@@ -294,6 +297,11 @@ pub use row_plan::{
 pub use row_predicate::{
     entity_def_for_row_predicate, parse_row_predicate_list, row_predicate_from_expr,
     type_check_row_predicate, RowComparison, RowPredicate, RowPredicateTypeCtx,
+};
+pub use rowset::{
+    normalize_query_expr_to_rowset, BackendSelection, BackendSelectionBinding, ExecutionContext,
+    ExecutionContextRef, InvocationControls, ParentScope, ResolvedRowset, RowSource, RowTerminal,
+    RowTransform,
 };
 pub use teaching_term::{
     method_ref_for_capability, method_ref_for_domain_segment, resolve_parameter_slot, EntityRef,
@@ -335,19 +343,20 @@ pub use schema::{
     capability_template_all_var_names, flow_control_param_names, is_flow_control_param_name,
     template_domain_exemplar_requires_entity_anchor, template_invoke_requires_explicit_anchor_id,
     view_node_field_where_output_detail, AgentPresentation, ArrayItemsSchema, AttachmentMediaKind,
-    AuthScheme, CapabilityKind, CapabilityManifest, CapabilityMapping, CapabilitySchema,
-    CapabilityTemplateJson, Cardinality, CgsCapabilityIndex, CrossFieldRule, CrossFieldRuleType,
-    DataClassDimension, DataClassName, DataClassSchema, DataClassSeverity,
+    AuthScheme, BackendSelectionSchema, CapabilityExecutionSchema, CapabilityInputs,
+    CapabilityKind, CapabilityManifest, CapabilityMapping, CapabilitySchema,
+    CapabilityTemplateJson, Cardinality, CgsCapabilityIndex, ContextRequirement, CrossFieldRule,
+    CrossFieldRuleType, DataClassDimension, DataClassName, DataClassSchema, DataClassSeverity,
     DiscoveryCapabilityHints, DiscoveryCoSeedWith, DiscoveryEntityHints, DiscoveryRelationHints,
     DiscoverySeedClass, DiscoverySeedNav, EmbedOnMissPolicy, EntityDef, FieldDeriveRule,
     FieldSchema, FieldValueKind, IdFormat, InputFieldSchema, InputFieldWire, InputSchema,
-    InputType, InputValidation, InputVariantSchema, JsonPathSegment, NamedValueSchema,
-    OauthDefaultScopeSet, OauthExtension, OauthRequirements, OauthScopeEntry, OutputSchema,
-    OutputType, ParameterRole, RelationMaterialization, RelationSchema, RelationScopedFallback,
-    ResourceSchema, ScopeAggregateKeyPolicy, ScopeRequirement, SinkClassName, ValueDomainKey,
-    ValueDomainSlot, ViewDefinition, ViewNodeSpec, ViewOutputBinding, ViewParamBinding,
-    ViewRelationBinding, ViewRelationOutputSpec, ViewScopeInject, ViewScopeParam,
-    WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
+    InputType, InputValidation, InputVariantSchema, InvocationControlsSchema, JsonPathSegment,
+    NamedValueSchema, OauthDefaultScopeSet, OauthExtension, OauthRequirements, OauthScopeEntry,
+    OutputSchema, OutputType, ParentScopeSchema, RelationMaterialization, RelationSchema,
+    RelationScopedFallback, ResourceSchema, ScopeAggregateKeyPolicy, ScopeRequirement,
+    SinkClassName, ValueDomainKey, ValueDomainSlot, ViewDefinition, ViewNodeSpec,
+    ViewOutputBinding, ViewParamBinding, ViewRelationBinding, ViewRelationOutputSpec,
+    ViewScopeInject, ViewScopeParam, WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
 };
 pub use schema_overlay::{
     build_decode_scope_key, build_schema_overlay, overlay_bind_cache_suffix, overlay_collect_rows,
@@ -403,7 +412,8 @@ pub use value::{
 pub use value_domain::{
     compile_pattern, parse_type_name, validate_constraints_on_number,
     validate_constraints_on_string, validate_number_constraints, validate_string_constraints,
-    validate_string_profile, Constraints, KernelKind, ProfileId, ValueDomain,
+    validate_string_profile, Constraints, EnumMembership, KernelKind, ProfileId, ValueDomain,
+    ENUM_GLOSS_FORBIDDEN_CHARS,
 };
 pub use view_embed_proof::ValidatedViewEmbedProof;
 pub use workflow_identity::{

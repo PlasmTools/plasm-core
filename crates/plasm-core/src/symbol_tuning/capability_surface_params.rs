@@ -2,13 +2,10 @@
 
 use std::collections::{BTreeSet, HashSet};
 
-use crate::schema::{CapabilitySchema, InputFieldSchema, InputFieldWire, InputType, ParameterRole};
+use crate::schema::{CapabilitySchema, InputFieldSchema, InputFieldWire, InputType};
 use crate::{FieldType, CGS};
 
-use super::{
-    field_is_filter_like_gloss, ExposureCapabilityKey, ExposureSlotKey, SymbolMap,
-    TeachingExposureSession,
-};
+use super::{ExposureCapabilityKey, ExposureSlotKey, SymbolMap, TeachingExposureSession};
 
 /// Which capability input params to include when building wire→`p#` pairs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22,15 +19,23 @@ pub enum CapabilityParamSurfaceFilter {
 }
 
 fn iter_cap_input_fields(cap: &CapabilitySchema) -> Vec<&InputFieldSchema> {
-    let Some(is) = &cap.input_schema else {
-        return Vec::new();
-    };
     let mut seen = HashSet::new();
-    let raw: Vec<&InputFieldSchema> = match &is.input_type {
-        InputType::Object { fields, .. } => fields.iter().collect(),
-        InputType::Union { variants } => variants.iter().flat_map(|v| v.fields.iter()).collect(),
-        _ => return Vec::new(),
-    };
+    let raw = cap
+        .selection_params()
+        .iter()
+        .chain(cap.control_params())
+        .chain(
+            cap.invocation_input_schemas()
+                .flat_map(|schema| match &schema.input_type {
+                    InputType::Object { fields, .. } => {
+                        Box::new(fields.iter()) as Box<dyn Iterator<Item = &InputFieldSchema>>
+                    }
+                    InputType::Union { variants } => {
+                        Box::new(variants.iter().flat_map(|variant| variant.fields.iter()))
+                    }
+                    _ => Box::new(std::iter::empty()),
+                }),
+        );
     let mut out = Vec::new();
     for f in raw {
         if seen.insert(f.name.as_str()) {
@@ -41,12 +46,6 @@ fn iter_cap_input_fields(cap: &CapabilitySchema) -> Vec<&InputFieldSchema> {
 }
 
 fn field_matches_filter(f: &InputFieldSchema, filter: CapabilityParamSurfaceFilter) -> bool {
-    if matches!(f.role, Some(ParameterRole::Scope)) {
-        return false;
-    }
-    if !field_is_filter_like_gloss(f) {
-        return false;
-    }
     match filter {
         CapabilityParamSurfaceFilter::OptionalLegend
         | CapabilityParamSurfaceFilter::OptionalOnSurface => !f.required,

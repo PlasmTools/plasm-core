@@ -637,7 +637,6 @@ mod tests {
                 required: true,
                 description: None,
                 default: None,
-                role: None,
                 wire_json_path: None,
                 wire_array_element_key: None,
                 sink_class: None,

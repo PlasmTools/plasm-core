@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use plasm_core::CgsCatalog;
-use plasm_core::{flow_control_param_names, DataClassSeverity, CGS};
+use plasm_core::{DataClassSeverity, CGS};
 use serde::Serialize;
 
 use crate::catalog_runtime::CatalogRuntime;
@@ -121,11 +121,11 @@ pub fn vocabulary_from_cgs(entry_id: &str, cgs: &CGS) -> CatalogVocabulary {
             .collect();
         sink_classes_cap.sort();
         sink_classes_cap.dedup();
-        let control_params = cap
-            .input_schema
-            .as_ref()
-            .map(flow_control_param_names)
-            .unwrap_or_default();
+        let control_params: Vec<String> = cap
+            .control_params()
+            .iter()
+            .map(|f| f.name.clone())
+            .collect();
         let kind = format!("{:?}", cap.kind).to_ascii_lowercase();
         let effect_class = match kind.as_str() {
             "query" | "get" | "search" => "read",

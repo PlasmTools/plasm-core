@@ -642,7 +642,7 @@ impl ExecutionEngine {
         }
 
         let capability_name = cap.name.clone();
-        let cap_params: Vec<_> = cap.object_params().map(|f| f.to_vec()).unwrap_or_default();
+        let cap_params: Vec<_> = cap.selection_params().to_vec();
         let parent_def = parent_entity_def;
         let binds = bindings;
 

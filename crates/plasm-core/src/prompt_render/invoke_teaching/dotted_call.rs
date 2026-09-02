@@ -7,10 +7,10 @@ use crate::scope_entity_ref_infer::{
     field_omitted_from_path_inject, should_omit_invoke_teaching_arg,
 };
 use crate::symbol_tuning::SymbolMap;
-use crate::{CapabilityKind, FieldType, InputType, ParameterRole, ValueWireFormat, CGS};
+use crate::{CapabilityKind, FieldType, InputType, ValueWireFormat, CGS};
 
 use super::super::line_validate::{DomainLineValidCacheKey, DomainLineValidEntry};
-use super::super::query_teaching::{entity_ref_id_example, field_is_filter_like, scope_param_slot};
+use super::super::query_teaching::{entity_ref_id_example, scope_param_slot};
 use super::super::relation_teaching::receiver_for_dotted_suffix;
 use super::super::symbol_tokens::{id_sym_cap, met_sym};
 use super::super::teaching_util::TEACHING_PARAM_VALUE_PLACEHOLDER;
@@ -119,8 +119,11 @@ pub(crate) fn build_dotted_call_paren_args(
     catalog_entry_id: &str,
 ) -> Option<String> {
     let ent = cgs.get_entity(anchor_entity)?;
-    let is = cap.input_schema.as_ref()?;
-    if let InputType::Union { variants } = &is.input_type {
+    if let Some(InputType::Union { variants }) = cap
+        .invocation_input_schemas()
+        .map(|schema| &schema.input_type)
+        .find(|ty| matches!(ty, InputType::Union { .. }))
+    {
         if !union_variants_teachable(variants) {
             return None;
         }
@@ -134,13 +137,10 @@ pub(crate) fn build_dotted_call_paren_args(
             cap.name.as_str(),
         );
     }
-    let InputType::Object { fields, .. } = &is.input_type else {
-        return None;
-    };
     let mut parts: Vec<String> = Vec::new();
     let mut required_example_failed = false;
-    for f in fields {
-        if !f.required || !matches!(f.role, Some(ParameterRole::Scope)) {
+    for f in cap.scope_params() {
+        if !f.required {
             continue;
         }
         if should_omit_invoke_teaching_arg(ent, cap, f, cgs) {
@@ -148,13 +148,15 @@ pub(crate) fn build_dotted_call_paren_args(
         }
         parts.push(scope_param_slot(f, cap, cgs, map, catalog_entry_id));
     }
-    for f in fields {
-        if matches!(f.role, Some(ParameterRole::Scope)) {
-            continue;
-        }
-        if !field_is_filter_like(f) {
-            continue;
-        }
+    let invoke_fields = cap.control_params().iter().chain(
+        cap.invocation_input_schemas()
+            .filter_map(|schema| match &schema.input_type {
+                InputType::Object { fields, .. } => Some(fields.as_slice()),
+                _ => None,
+            })
+            .flatten(),
+    );
+    for f in invoke_fields {
         if field_omitted_from_path_inject(ent, cap, f.name.as_str()) {
             continue;
         }
@@ -175,9 +177,8 @@ pub(crate) fn build_dotted_call_paren_args(
     Some(parts.join(", "))
 }
 
-/// Parentheses for **standalone** `Entity.create(…)` when the capability has required `role: scope`
-/// parameters (no anchor to inject them). [`build_dotted_call_paren_args`] skips scope fields;
-/// without scope slots, lines like `Comment.create(text=…)` fail validation for nested REST creates.
+/// Parentheses for **standalone** `Entity.create(…)` when the capability has required parent-scope
+/// parameters and therefore no anchor from which to inject them.
 pub(crate) fn build_standalone_create_paren_args(
     ename: &str,
     cap: &crate::CapabilitySchema,
@@ -188,13 +189,7 @@ pub(crate) fn build_standalone_create_paren_args(
     if cap.kind != CapabilityKind::Create {
         return build_dotted_call_paren_args(ename, cap, cgs, map, catalog_entry_id);
     }
-    let is = cap.input_schema.as_ref()?;
-    let InputType::Object { fields, .. } = &is.input_type else {
-        return None;
-    };
-    let has_required_scope = fields
-        .iter()
-        .any(|f| f.required && matches!(f.role, Some(ParameterRole::Scope)));
+    let has_required_scope = cap.scope_params().iter().any(|f| f.required);
     if !has_required_scope {
         return build_dotted_call_paren_args(ename, cap, cgs, map, catalog_entry_id);
     }
@@ -202,16 +197,20 @@ pub(crate) fn build_standalone_create_paren_args(
     let ent = cgs.get_entity(ename)?;
     let mut parts: Vec<String> = Vec::new();
     let mut required_failed = false;
-    for f in fields {
-        if matches!(f.role, Some(ParameterRole::Scope)) {
-            if f.required {
-                parts.push(scope_param_slot(f, cap, cgs, map, catalog_entry_id));
-            }
-            continue;
+    for f in cap.scope_params() {
+        if f.required {
+            parts.push(scope_param_slot(f, cap, cgs, map, catalog_entry_id));
         }
-        if !field_is_filter_like(f) {
-            continue;
-        }
+    }
+    let invoke_fields = cap.control_params().iter().chain(
+        cap.invocation_input_schemas()
+            .filter_map(|schema| match &schema.input_type {
+                InputType::Object { fields, .. } => Some(fields.as_slice()),
+                _ => None,
+            })
+            .flatten(),
+    );
+    for f in invoke_fields {
         if field_omitted_from_path_inject(ent, cap, f.name.as_str()) {
             continue;
         }

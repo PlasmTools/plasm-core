@@ -9,10 +9,11 @@ use crate::schema::{EntityDef, CGS};
 use crate::symbol_tuning::SymbolSession;
 use crate::type_checker::type_check_predicate;
 use crate::{CompOp, Expr, TypeError, TypedComparisonValue};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// One row-local comparison clause.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RowComparison {
     pub field: String,
     pub op: CompOp,
@@ -20,7 +21,7 @@ pub struct RowComparison {
 }
 
 /// Flat AND of comparisons applied to materialized row JSON (v1).
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct RowPredicate(pub Vec<RowComparison>);
 
 /// Type-check context for row filters against a catalog entity schema.

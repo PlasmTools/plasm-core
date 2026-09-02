@@ -13,14 +13,14 @@ use crate::schema::{
 };
 use crate::{
     capability_template_all_var_names, AgentPresentation, ArrayItemsSchema, AttachmentMediaKind,
-    AuthScheme, CapabilityKind, CapabilityMapping, CapabilitySchema, CapabilityTemplateJson,
-    Cardinality, FieldDeriveRule, FieldSchema, FieldType, InputFieldSchema, InputSchema, InputType,
-    InputValidation, OauthExtension, ParameterRole, RelationSchema, ResourceSchema,
+    AuthScheme, BackendSelectionSchema, CapabilityExecutionSchema, CapabilityInputs,
+    CapabilityKind, CapabilityMapping, CapabilitySchema, CapabilityTemplateJson, Cardinality,
+    FieldDeriveRule, FieldSchema, FieldType, InputFieldSchema, InputSchema, InputType,
+    InvocationControlsSchema, OauthExtension, ParentScopeSchema, RelationSchema, ResourceSchema,
     ScopeAggregateKeyPolicy, CGS,
 };
 use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer};
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, trace, warn};
 
@@ -176,6 +176,36 @@ fn default_domain_projection_examples() -> bool {
     true
 }
 
+/// `values.*.enum` — token list, or token→English gloss map for teaching Meaning.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum EnumMembershipYaml {
+    List(Vec<String>),
+    /// Keys are wire tokens; values are optional English glosses (empty = token only).
+    Map(IndexMap<String, String>),
+}
+
+impl EnumMembershipYaml {
+    fn into_tokens_and_glosses(self) -> (Vec<String>, Option<IndexMap<String, String>>) {
+        match self {
+            EnumMembershipYaml::List(v) => (v, None),
+            EnumMembershipYaml::Map(m) => {
+                let tokens: Vec<String> = m.keys().cloned().collect();
+                let glosses: IndexMap<String, String> = m
+                    .into_iter()
+                    .filter(|(_, g)| !g.trim().is_empty())
+                    .collect();
+                let glosses = if glosses.is_empty() {
+                    None
+                } else {
+                    Some(glosses)
+                };
+                (tokens, glosses)
+            }
+        }
+    }
+}
+
 /// `values:` entry — same typing keys as a field, without per-field response metadata.
 #[derive(Debug, Deserialize)]
 pub struct DomainNamedValue {
@@ -186,10 +216,12 @@ pub struct DomainNamedValue {
     #[serde(default)]
     pub target: Option<String>,
     /// Enum membership for `type: enum` / `multi_enum` (legacy key `allowed_values` still accepted).
+    ///
+    /// List form: `enum: [a, b]` · Map form: `enum: { a: "gloss", b: "gloss" }` (glosses feed teaching Meaning).
     #[serde(default, alias = "allowed_values")]
-    pub enum_values: Option<Vec<String>>,
+    pub enum_values: Option<EnumMembershipYaml>,
     #[serde(default, rename = "enum")]
-    pub enum_key: Option<Vec<String>>,
+    pub enum_key: Option<EnumMembershipYaml>,
     #[serde(default)]
     pub items: Option<DomainItems>,
     /// Default ISO-like currency token for [`FieldType::Money`] rows.
@@ -308,6 +340,7 @@ pub struct DomainRelation {
 /// `invoke_preflight` is rejected at deserialize time via [`deserialize_forbidden_invoke_preflight_key`].
 #[allow(clippy::manual_non_exhaustive)]
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DomainCapability {
     #[serde(default)]
     pub description: String,
@@ -316,8 +349,24 @@ pub struct DomainCapability {
     /// Policy for compound `entity_ref` scope parameters after runtime splat (`retain` default).
     #[serde(default)]
     pub scope_aggregate_key_policy: Option<ScopeAggregateKeyPolicy>,
+    /// Execution-only requirements, including explicit context-row bindings.
     #[serde(default)]
-    pub parameters: Option<Vec<DomainParameter>>,
+    pub execution: CapabilityExecutionSchema,
+    /// Parameters derived exclusively from a typed parent row.
+    #[serde(default)]
+    pub scope: Vec<DomainParameter>,
+    /// Query/search source-selection parameters.
+    #[serde(default)]
+    pub selection: Vec<DomainParameter>,
+    /// Pagination, sorting, and response-shape controls.
+    #[serde(default)]
+    pub controls: Vec<DomainParameter>,
+    /// Named invocation arguments which are not payload fields.
+    #[serde(default)]
+    pub arguments: Option<InputSchema>,
+    /// Create/update/action body payload.
+    #[serde(default)]
+    pub payload: Option<InputSchema>,
     /// Entity fields this capability populates in its response.
     /// When absent, defaults are applied by `CGS::effective_provides` (same ordered field list as
     /// teaching table exemplars when `provides` is empty: `id_field` first, then lexicographic rest).
@@ -332,16 +381,6 @@ pub struct DomainCapability {
     /// Declared response shape for validation (required for `action` unless `provides` is set).
     #[serde(default)]
     pub output: Option<crate::OutputSchema>,
-    /// Optional structured input beyond `parameters` (same shape as CGS [`InputSchema`]).
-    ///
-    /// **Merge when `parameters` is also set:** `input_schema.input_type` must be [`InputType::Object`].
-    /// Field order is **parameter-derived fields first** (stable HTTP-ish order from `parameters:`),
-    /// then **`input_schema.input_type.fields`** (body-only / extra slots). `additional_fields` on
-    /// that object is carried into the merged schema; `validation` / `description` / `examples` on
-    /// this block apply to the merged [`InputSchema`]. A parameter `name` that also appears in
-    /// `input_schema` object `fields` is a **load error** (no silent override).
-    #[serde(default)]
-    pub input_schema: Option<InputSchema>,
     #[serde(default)]
     pub preflight: Option<crate::preflight::PreflightPlan>,
     #[serde(
@@ -358,6 +397,7 @@ pub struct DomainCapability {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DomainParameter {
     pub name: String,
     /// Catalog-local key into `values:` when this parameter is registry-backed.
@@ -368,10 +408,6 @@ pub struct DomainParameter {
     pub input_type: Option<Box<InputType>>,
     #[serde(default)]
     pub required: bool,
-    /// Semantic role of this parameter. One of:
-    /// `filter` (default), `search`, `sort`, `sort_direction`, `response_control`, `scope`.
-    #[serde(default)]
-    pub role: Option<String>,
     /// Human-readable hint for prompts; teaching gloss uses `type · description`, else `type · name`.
     #[serde(default)]
     pub description: String,
@@ -627,21 +663,37 @@ fn compile_one_named_value(
     let (kernel, profile) = crate::value_domain::parse_type_name(vt, d.target.as_deref())
         .map_err(|e| format!("{ctx}: {e}"))?;
 
-    let enum_values = d
-        .enum_key
-        .clone()
-        .or_else(|| d.enum_values.clone())
-        .filter(|v| !v.is_empty());
+    let enum_membership = {
+        let membership_yaml = d.enum_key.clone().or_else(|| d.enum_values.clone());
+        match membership_yaml {
+            None => None,
+            Some(m) => {
+                let (tokens, glosses) = m.into_tokens_and_glosses();
+                if tokens.is_empty() {
+                    None
+                } else {
+                    Some(
+                        crate::value_domain::EnumMembership::try_new(tokens, glosses)
+                            .map_err(|e| format!("{ctx}: {e}"))?,
+                    )
+                }
+            }
+        }
+    };
 
     if matches!(profile, Some(crate::value_domain::ProfileId::MultiEnum))
-        && enum_values.as_ref().is_none_or(|v| v.is_empty())
+        && enum_membership
+            .as_ref()
+            .is_none_or(|m| m.tokens().is_empty())
     {
         return Err(format!(
             "{ctx}: type 'multi_enum' requires non-empty `enum:` membership list"
         ));
     }
     if matches!(profile, Some(crate::value_domain::ProfileId::Enum))
-        && enum_values.as_ref().is_none_or(|v| v.is_empty())
+        && enum_membership
+            .as_ref()
+            .is_none_or(|m| m.tokens().is_empty())
     {
         return Err(format!(
             "{ctx}: type 'enum' requires non-empty `enum:` membership list"
@@ -685,9 +737,14 @@ fn compile_one_named_value(
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
-    let domain =
-        crate::value_domain::ValueDomain::new(kernel, profile, constraints, enum_values, currency)
-            .map_err(|e| format!("{ctx}: {e}"))?;
+    let domain = crate::value_domain::ValueDomain::new(
+        kernel,
+        profile,
+        constraints,
+        enum_membership,
+        currency,
+    )
+    .map_err(|e| format!("{ctx}: {e}"))?;
 
     Ok(NamedValueSchema::from_domain(
         d.description.clone(),
@@ -743,7 +800,6 @@ fn input_field_schema_from_domain_parameter(
 ) -> Result<InputFieldSchema, String> {
     let ctx = format!("capability '{cap_name}', parameter '{}'", p.name);
     let vr = p.value_ref.trim();
-    let role = p.role.as_deref().map(parse_parameter_role);
     match (vr.is_empty(), p.input_type.as_ref()) {
         (false, None) => {
             let nv = values
@@ -766,7 +822,6 @@ fn input_field_schema_from_domain_parameter(
                 required: p.required,
                 description,
                 default: None,
-                role,
                 sink_class: p.sink_class.clone(),
                 wire_json_path: None,
                 wire_array_element_key: None,
@@ -782,7 +837,6 @@ fn input_field_schema_from_domain_parameter(
                 Some(p.description.clone())
             },
             default: None,
-            role,
             sink_class: p.sink_class.clone(),
             wire_json_path: None,
             wire_array_element_key: None,
@@ -807,63 +861,28 @@ fn input_fields_from_domain_parameters(
         .collect()
 }
 
-/// Combine `parameters:` rows with an optional explicit `input_schema:` from domain YAML.
-///
-/// **Ordering:** all parameter-derived fields first, then explicit object fields.
-/// **Duplicates:** same `name` in both sources → [`Err`].
-/// **Metadata:** when merging, `validation` / `description` / `examples` come from `input_schema`.
-fn merge_domain_capability_input_schema(
+fn capability_inputs_from_domain(
     cap_name: &str,
-    parameters: Option<&Vec<DomainParameter>>,
-    explicit: Option<&InputSchema>,
+    cap: &DomainCapability,
     values: &IndexMap<String, NamedValueSchema>,
-) -> Result<Option<InputSchema>, String> {
-    let param_fields = parameters
-        .map(|ps| input_fields_from_domain_parameters(cap_name, ps, values))
-        .transpose()?;
-
-    Ok(match (param_fields, explicit) {
-        (None, None) => None,
-        (Some(fields), None) => Some(InputSchema {
-            input_type: InputType::Object {
-                fields,
-                additional_fields: true,
-            },
-            validation: InputValidation::default(),
-            description: None,
-            examples: vec![],
-        }),
-        (None, Some(schema)) => Some(schema.clone()),
-        (Some(mut fields), Some(explicit_schema)) => {
-            let InputType::Object {
-                fields: extra_fields,
-                additional_fields,
-            } = &explicit_schema.input_type
-            else {
-                return Err(format!(
-                    "capability '{cap_name}': when both `parameters` and `input_schema` are set, `input_schema.input_type` must be `type: object` (cannot merge with non-object input_type)"
-                ));
-            };
-            let names: HashSet<&str> = fields.iter().map(|f| f.name.as_str()).collect();
-            for ef in extra_fields {
-                if names.contains(ef.name.as_str()) {
-                    return Err(format!(
-                        "capability '{cap_name}': input field '{}' is declared in both `parameters` and `input_schema.input_type.fields`",
-                        ef.name
-                    ));
-                }
-            }
-            fields.extend(extra_fields.iter().cloned());
-            Some(InputSchema {
-                input_type: InputType::Object {
-                    fields,
-                    additional_fields: *additional_fields,
-                },
-                validation: explicit_schema.validation.clone(),
-                description: explicit_schema.description.clone(),
-                examples: explicit_schema.examples.clone(),
-            })
-        }
+) -> Result<CapabilityInputs, String> {
+    Ok(CapabilityInputs {
+        execution: cap.execution.clone(),
+        scope: ParentScopeSchema(input_fields_from_domain_parameters(
+            cap_name, &cap.scope, values,
+        )?),
+        selection: BackendSelectionSchema(input_fields_from_domain_parameters(
+            cap_name,
+            &cap.selection,
+            values,
+        )?),
+        controls: InvocationControlsSchema(input_fields_from_domain_parameters(
+            cap_name,
+            &cap.controls,
+            values,
+        )?),
+        arguments: cap.arguments.clone(),
+        payload: cap.payload.clone(),
     })
 }
 
@@ -982,12 +1001,7 @@ fn assemble_cgs_core(
             )
         })?;
 
-        let input_schema = merge_domain_capability_input_schema(
-            cap_name,
-            cap.parameters.as_ref(),
-            cap.input_schema.as_ref(),
-            &cgs.values,
-        )?;
+        let inputs = capability_inputs_from_domain(cap_name, cap, &cgs.values)?;
 
         let capability = CapabilitySchema {
             name: CapabilityName::from(cap_name.clone()),
@@ -997,7 +1011,7 @@ fn assemble_cgs_core(
             mapping: CapabilityMapping {
                 template: CapabilityTemplateJson(template),
             },
-            input_schema,
+            inputs,
             output_schema: cap.output.clone(),
             provides: cap.provides.clone(),
             sanitizes: cap.sanitizes.clone(),
@@ -1068,16 +1082,7 @@ fn warn_scope_aggregate_policy_template_mismatches(cgs: &CGS) {
             continue;
         }
         let vars = capability_template_all_var_names(&cap.mapping.template.0);
-        let Some(schema) = cap.input_schema.as_ref() else {
-            continue;
-        };
-        let InputType::Object { fields, .. } = &schema.input_type else {
-            continue;
-        };
-        for param in fields {
-            if !matches!(param.role, Some(ParameterRole::Scope)) {
-                continue;
-            }
+        for param in cap.scope_params() {
             let Ok(nv) = param.named_value(cgs) else {
                 continue;
             };
@@ -1141,17 +1146,6 @@ fn parse_capability_kind(s: &str) -> CapabilityKind {
         // e.g. GET /user — no row id; treated like Get for typing and tooling.
         "singleton" => CapabilityKind::Get,
         _ => CapabilityKind::Action,
-    }
-}
-
-fn parse_parameter_role(s: &str) -> ParameterRole {
-    match s {
-        "search" => ParameterRole::Search,
-        "sort" => ParameterRole::Sort,
-        "sort_direction" => ParameterRole::SortDirection,
-        "response_control" => ParameterRole::ResponseControl,
-        "scope" => ParameterRole::Scope,
-        _ => ParameterRole::Filter,
     }
 }
 
@@ -1716,7 +1710,7 @@ capabilities:
   q:
     kind: query
     entity: E
-    parameters:
+    selection:
       - name: x
         value_ref: nv_x_bad
         required: false
@@ -1819,7 +1813,7 @@ capabilities:
   q:
     kind: query
     entity: E
-    parameters:
+    selection:
       - name: s
         value_ref: nv_ms_bad
         required: false
@@ -1892,7 +1886,7 @@ capabilities:
   q:
     kind: query
     entity: E
-    parameters:
+    selection:
       - name: x
         value_ref: nv_x
         required: false
@@ -1904,7 +1898,7 @@ capabilities:
     }
 
     #[test]
-    fn merges_parameters_with_input_schema_object_fields_in_order() {
+    fn loads_structurally_disjoint_query_input_lanes() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("domain.yaml"),
@@ -1914,7 +1908,7 @@ values:
     type: string
   nv_filter_q:
     type: string
-  nv_body_extra:
+  nv_page:
     type: integer
 entities:
   Widget:
@@ -1927,40 +1921,140 @@ capabilities:
   q:
     kind: query
     entity: Widget
-    parameters:
+    selection:
       - name: filter_q
         value_ref: nv_filter_q
         required: true
-    input_schema:
-      input_type:
-        type: object
-        additional_fields: false
-        fields:
-          - name: body_extra
-            value_ref: nv_body_extra
-            field_type: integer
-            required: false
+    controls:
+      - name: page
+        value_ref: nv_page
+        required: false
 "#,
         )
         .unwrap();
         std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
         let cgs = load_schema_dir(dir.path()).unwrap();
         let cap = cgs.get_capability("q").expect("cap q");
-        let fields = cap.object_params().expect("object params");
-        assert_eq!(fields.len(), 2);
-        assert_eq!(fields[0].name, "filter_q");
-        assert_eq!(fields[1].name, "body_extra");
-        let InputType::Object {
-            additional_fields, ..
-        } = &cap.input_schema.as_ref().expect("input").input_type
-        else {
-            panic!("expected object input");
-        };
-        assert!(!additional_fields);
+        assert_eq!(cap.selection_params()[0].name, "filter_q");
+        assert_eq!(cap.control_params()[0].name, "page");
+        assert!(cap.scope_params().is_empty());
     }
 
     #[test]
-    fn rejects_duplicate_field_in_parameters_and_input_schema() {
+    fn enum_map_authoring_loads_token_glosses_for_teaching() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("domain.yaml"),
+            r#"http_backend: http://localhost:1080
+values:
+  nv_id:
+    type: string
+  nv_status:
+    type: enum
+    enum:
+      pending: awaiting settlement
+      approved: fully settled
+      denied: refused end-to-end
+entities:
+  Widget:
+    id_field: id
+    fields:
+      id:
+        value_ref: nv_id
+        required: true
+      status:
+        value_ref: nv_status
+        required: false
+capabilities:
+  q:
+    kind: query
+    entity: Widget
+    selection:
+      - name: status
+        value_ref: nv_status
+        required: false
+"#,
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
+        let cgs = load_schema_dir(dir.path()).unwrap();
+        let nv = cgs.values.get("nv_status").expect("nv_status");
+        let membership = nv.domain.enum_membership.as_ref().expect("membership");
+        assert_eq!(
+            membership.tokens(),
+            &[
+                "pending".to_string(),
+                "approved".to_string(),
+                "denied".to_string()
+            ][..]
+        );
+        let glosses = membership.glosses().expect("glosses");
+        assert_eq!(
+            glosses.get("pending").map(String::as_str),
+            Some("awaiting settlement")
+        );
+        let meta = crate::symbol_tuning::IdentMetadata::RegistryBacked {
+            catalog_entry_id: String::new(),
+            entity: crate::identity::EntityName::from("Widget".to_string()),
+            role: crate::symbol_tuning::IdentRegistryRole::EntityField,
+            value_registry_key: crate::schema::ValueDomainKey::new("nv_status").expect("key"),
+            field_type: crate::FieldType::Select,
+            profile: None,
+            array_items: None,
+            allowed_values: nv.allowed_values.clone(),
+            wire_name: "status".into(),
+            description: String::new(),
+        };
+        let meaning = meta
+            .render_value_domain_row_gloss("", None, Some(&cgs))
+            .expect("meaning");
+        assert_eq!(
+            meaning,
+            "enum · pending: awaiting settlement; approved: fully settled; denied: refused end-to-end"
+        );
+    }
+
+    #[test]
+    fn rejects_enum_gloss_with_reserved_delimiter() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("domain.yaml"),
+            r#"http_backend: http://localhost:1080
+values:
+  nv_id:
+    type: string
+  nv_status:
+    type: enum
+    enum:
+      pending: awaiting settlement; not yet
+entities:
+  Widget:
+    id_field: id
+    fields:
+      id:
+        value_ref: nv_id
+        required: true
+capabilities:
+  q:
+    kind: query
+    entity: Widget
+    selection:
+      - name: id
+        value_ref: nv_id
+        required: true
+"#,
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
+        let err = load_schema_dir(dir.path()).unwrap_err();
+        assert!(
+            err.to_string().contains("must not contain ';'"),
+            "unexpected err: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_field_across_structural_lanes() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("domain.yaml"),
@@ -1970,8 +2064,6 @@ values:
     type: string
   nv_overlap_str:
     type: string
-  nv_overlap_int:
-    type: integer
 entities:
   Widget:
     id_field: id
@@ -1983,28 +2075,163 @@ capabilities:
   q:
     kind: query
     entity: Widget
-    parameters:
+    selection:
       - name: overlap
         value_ref: nv_overlap_str
         required: true
-    input_schema:
-      input_type:
-        type: object
-        additional_fields: true
-        fields:
-          - name: overlap
-            value_ref: nv_overlap_int
-            field_type: integer
-            required: false
+    controls:
+      - name: overlap
+        value_ref: nv_overlap_str
+        required: false
 "#,
         )
         .unwrap();
         std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
         let err = load_schema_dir(dir.path()).unwrap_err();
         assert!(
-            err.contains("overlap") && err.contains("parameters") && err.contains("input_schema"),
+            err.contains("overlap") && err.contains("selection") && err.contains("controls"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn validates_execution_context_binding_integrity() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("domain.yaml"),
+            r#"http_backend: http://localhost:1080
+values:
+  nv_id:
+    type: string
+entities:
+  Session:
+    id_field: id
+    fields:
+      id:
+        value_ref: nv_id
+        required: true
+  Widget:
+    id_field: id
+    fields:
+      id:
+        value_ref: nv_id
+        required: true
+capabilities:
+  session_get:
+    kind: get
+    entity: Session
+  widget_get:
+    kind: get
+    entity: Widget
+  q:
+    kind: query
+    entity: Widget
+    execution:
+      context:
+        entity: Session
+        bindings:
+          session_id: id
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("mappings.yaml"),
+            "session_get: {}\nwidget_get: {}\nq:\n  query:\n    session:\n      type: var\n      name: session_id\n",
+        )
+        .unwrap();
+        let cgs = load_schema_dir(dir.path()).expect("valid context binding");
+        let context = cgs.capabilities["q"]
+            .inputs
+            .execution
+            .context
+            .as_ref()
+            .expect("context");
+        assert_eq!(context.entity.as_str(), "Session");
+        assert_eq!(context.bindings["session_id"].as_str(), "id");
+    }
+
+    #[test]
+    fn rejects_execution_context_binding_to_unknown_row_field() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("domain.yaml"),
+            r#"http_backend: http://localhost:1080
+values:
+  nv_id:
+    type: string
+entities:
+  Session:
+    id_field: id
+    fields:
+      id:
+        value_ref: nv_id
+        required: true
+  Widget:
+    id_field: id
+    fields:
+      id:
+        value_ref: nv_id
+        required: true
+capabilities:
+  session_get:
+    kind: get
+    entity: Session
+  widget_get:
+    kind: get
+    entity: Widget
+  q:
+    kind: query
+    entity: Widget
+    execution:
+      context:
+        entity: Session
+        bindings:
+          session_id: missing
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("mappings.yaml"),
+            "session_get: {}\nwidget_get: {}\nq:\n  query:\n    session:\n      type: var\n      name: session_id\n",
+        )
+        .unwrap();
+        let err = load_schema_dir(dir.path()).unwrap_err();
+        assert!(
+            err.contains("Session.missing") && err.contains("execution.context"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_legacy_parameter_role() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("domain.yaml"),
+            r#"http_backend: http://localhost:1080
+values:
+  nv_id:
+    type: string
+entities:
+  E:
+    id_field: id
+    fields:
+      id:
+        value_ref: nv_id
+        required: true
+capabilities:
+  q:
+    kind: query
+    entity: E
+    selection:
+      - name: id
+        value_ref: nv_id
+        role: filter
+"#,
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
+        let err = load_schema_dir(dir.path()).unwrap_err();
+        assert!(err.contains("role"), "unexpected error: {err}");
     }
 
     #[test]
@@ -2064,7 +2291,7 @@ capabilities:
   upd:
     kind: update
     entity: E
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: false

@@ -713,7 +713,7 @@ mod tests {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/github");
         let cgs = crate::loader::load_schema_dir(&dir).expect("github catalog");
         let cap = cgs.capabilities.get("pr_create").expect("pr_create");
-        let schema = cap.input_schema.as_ref().expect("pr_create input_schema");
+        let schema = cap.inputs.payload.as_ref().expect("pr_create payload");
         assert!(
             schema
                 .validation

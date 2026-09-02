@@ -241,15 +241,3 @@ pub(in crate::plasm_dag) fn single_unknown_schema(entity: &str) -> SyntheticResu
         }],
     }
 }
-
-pub(in crate::plasm_dag) fn looks_like_plasm_effect_template(rhs: &str) -> bool {
-    // Distinguish for-each side effects from `source => { … }` derive. `.m#` (teaching-table methods) and
-    // all readable verbs must register here—`.label(`, `.update(`, etc.—not just `.m`.
-    rhs.contains(".m")
-        || rhs.contains("=>")
-        || rhs.contains(".update(")
-        || rhs.contains(".create(")
-        || rhs.contains(".delete(")
-        || rhs.contains(".label(")
-        || rhs.contains(".invoke(")
-}

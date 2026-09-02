@@ -139,16 +139,12 @@ pub fn choose_strategy(
 ) -> CrossEntityStrategy {
     // Check if the source entity's Query capability has the FK field as a parameter.
     if let Some(query_cap) = cgs.find_capability(source_entity_name, CapabilityKind::Query) {
-        if let Some(ref input) = query_cap.input_schema {
-            if let crate::InputType::Object { ref fields, .. } = input.input_type {
-                for f in fields {
-                    if f.name == cross.ref_field {
-                        return CrossEntityStrategy::PushLeft {
-                            cross: cross.clone(),
-                            source_fk_param: f.name.clone(),
-                        };
-                    }
-                }
+        for field in query_cap.selection_params() {
+            if field.name == cross.ref_field {
+                return CrossEntityStrategy::PushLeft {
+                    cross: cross.clone(),
+                    source_fk_param: field.name.clone(),
+                };
             }
         }
     }
@@ -218,7 +214,7 @@ mod tests {
     use super::*;
     use crate::schema::registry_test_util;
     use crate::{
-        CapabilityMapping, CapabilitySchema, InputSchema, InputType, InputValidation,
+        BackendSelectionSchema, CapabilityInputs, CapabilityMapping, CapabilitySchema,
         NamedValueSchema, ResourceSchema,
     };
 
@@ -340,20 +336,17 @@ mod tests {
             mapping: CapabilityMapping {
                 template: serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "pet"}]}).into(),
             },
-            input_schema: Some(InputSchema {
-                input_type: InputType::Object {
-                    fields: vec![registry_test_util::object_input_field_from_values(
+            inputs: CapabilityInputs {
+                selection: BackendSelectionSchema(vec![
+                    registry_test_util::object_input_field_from_values(
                         &cgs,
                         "fx_pet_status",
                         "status",
                         false,
-                    )],
-                    additional_fields: true,
-                },
-                validation: InputValidation::default(),
-                description: None,
-                examples: vec![],
-            }),
+                    ),
+                ]),
+                ..CapabilityInputs::default()
+            },
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
@@ -374,20 +367,17 @@ mod tests {
             mapping: CapabilityMapping {
                 template: serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "store"}, {"type": "literal", "value": "order"}]}).into(),
             },
-            input_schema: Some(InputSchema {
-                input_type: InputType::Object {
-                    fields: vec![registry_test_util::object_input_field_from_values(
+            inputs: CapabilityInputs {
+                selection: BackendSelectionSchema(vec![
+                    registry_test_util::object_input_field_from_values(
                         &cgs,
                         "fx_ref_pet",
                         "petId",
                         false,
-                    )],
-                    additional_fields: true,
-                },
-                validation: InputValidation::default(),
-                description: None,
-                examples: vec![],
-            }),
+                    ),
+                ]),
+                ..CapabilityInputs::default()
+            },
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),

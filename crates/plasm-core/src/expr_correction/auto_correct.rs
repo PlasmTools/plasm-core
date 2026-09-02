@@ -1,6 +1,6 @@
 use crate::domain_lexicon::{tokens, DomainLexicon};
 use crate::expr_parser::{self, predicate_surface};
-use crate::{CapabilityKind, FieldType, InputType, CGS};
+use crate::{CapabilityKind, FieldType, CGS};
 
 use super::RecoveryHint;
 
@@ -205,17 +205,8 @@ fn collect_all_scopes(cgs: &CGS, entity_name: &str) -> Vec<(String, String)> {
     let mut scopes: Vec<(String, String)> = Vec::new();
 
     for cap in cgs.find_capabilities(entity_name, CapabilityKind::Query) {
-        let Some(is) = &cap.input_schema else {
-            continue;
-        };
-        let InputType::Object { fields, .. } = &is.input_type else {
-            continue;
-        };
-        for f in fields {
+        for f in cap.scope_params() {
             if !f.required {
-                continue;
-            }
-            if !matches!(f.role, Some(crate::ParameterRole::Scope)) {
                 continue;
             }
             let Ok(nv) = f.named_value(cgs) else {
@@ -242,12 +233,8 @@ fn collect_valid_names<'a>(cgs: &'a CGS, entity_name: &str) -> std::collections:
         }
     }
     for cap in cgs.find_capabilities(entity_name, CapabilityKind::Query) {
-        if let Some(is) = &cap.input_schema {
-            if let InputType::Object { fields, .. } = &is.input_type {
-                for f in fields {
-                    names.insert(f.name.as_str());
-                }
-            }
+        for field in cap.selection_params() {
+            names.insert(field.name.as_str());
         }
     }
     names

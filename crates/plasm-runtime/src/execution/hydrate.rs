@@ -2,8 +2,8 @@
 //! synthesized identity GETs.
 //!
 //! A GET is a continuation of the parent fetch's capability-parameter scope, not a
-//! new identity-only program. Bearer tokens and any other required GET params must
-//! arrive via [`CapabilityParamEnv`] — never via `ViewAmbientContext`.
+//! new identity-only program. Domain parameters may arrive via [`CapabilityParamEnv`],
+//! never via `ViewAmbientContext`; transport credentials remain in [`AuthResolver`].
 
 use super::*;
 use plasm_core::{CapabilityKind, CapabilitySchema};
@@ -173,14 +173,8 @@ fn capability_param_name_set(capability: &CapabilitySchema) -> HashSet<String> {
 }
 
 fn required_capability_param_names(capability: &CapabilitySchema) -> Vec<String> {
-    let Some(input) = &capability.input_schema else {
-        return Vec::new();
-    };
-    let InputType::Object { fields, .. } = &input.input_type else {
-        return Vec::new();
-    };
-    fields
-        .iter()
+    capability
+        .input_fields()
         .filter(|f| f.required)
         .map(|f| f.name.clone())
         .collect()

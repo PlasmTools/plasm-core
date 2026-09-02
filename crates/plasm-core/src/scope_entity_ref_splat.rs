@@ -7,7 +7,7 @@ use crate::entity_ref_value::{
     normalize_entity_ref_value_for_target, EntityRefPayload, ScopeEntityRefNormalizeError,
 };
 use crate::identity::EntityFieldName;
-use crate::schema::{CapabilitySchema, InputType, ParameterRole, ScopeAggregateKeyPolicy};
+use crate::schema::{CapabilitySchema, ScopeAggregateKeyPolicy};
 use crate::value::Value;
 use crate::FieldType;
 use crate::CGS;
@@ -19,15 +19,7 @@ pub fn apply_entity_ref_scope_splat(
     cgs: &CGS,
     cap: &CapabilitySchema,
 ) -> Result<(), ScopeEntityRefNormalizeError> {
-    let Some(InputType::Object { fields, .. }) = cap.input_schema.as_ref().map(|s| &s.input_type)
-    else {
-        return Ok(());
-    };
-
-    for param in fields {
-        if !matches!(param.role, Some(ParameterRole::Scope)) {
-            continue;
-        }
+    for param in cap.scope_params() {
         let Ok(nv) = param.named_value(cgs) else {
             continue;
         };
@@ -189,9 +181,8 @@ mod tests {
     use super::*;
     use crate::identity::{CapabilityName, EntityName};
     use crate::schema::{
-        registry_test_util, CapabilityKind, CapabilityMapping, CapabilitySchema,
-        CapabilityTemplateJson, FieldSchema, InputSchema, InputType, InputValidation,
-        NamedValueSchema, ResourceSchema,
+        registry_test_util, CapabilityInputs, CapabilityKind, CapabilityMapping, CapabilitySchema,
+        CapabilityTemplateJson, FieldSchema, NamedValueSchema, ParentScopeSchema, ResourceSchema,
     };
     use crate::FieldType;
 
@@ -230,13 +221,12 @@ mod tests {
     }
 
     fn repo_scope_cap(cgs: &CGS, policy: ScopeAggregateKeyPolicy) -> CapabilitySchema {
-        let mut repository_param = registry_test_util::object_input_field_from_values(
+        let repository_param = registry_test_util::object_input_field_from_values(
             cgs,
             "fx_repo_ref",
             "repository",
             true,
         );
-        repository_param.role = Some(ParameterRole::Scope);
         CapabilitySchema {
             name: CapabilityName::from("repo_forks_query"),
             description: String::new(),
@@ -247,15 +237,10 @@ mod tests {
             mapping: CapabilityMapping {
                 template: CapabilityTemplateJson(serde_json::json!({})),
             },
-            input_schema: Some(InputSchema {
-                input_type: InputType::Object {
-                    fields: vec![repository_param],
-                    additional_fields: true,
-                },
-                validation: InputValidation::default(),
-                description: None,
-                examples: vec![],
-            }),
+            inputs: CapabilityInputs {
+                scope: ParentScopeSchema(vec![repository_param]),
+                ..CapabilityInputs::default()
+            },
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: policy,

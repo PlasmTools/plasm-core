@@ -5,6 +5,7 @@
 
 use crate::money::MoneyWireFormat;
 use crate::value::{CompOp, FieldType, TemporalWireFormat, ValueWireFormat};
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
@@ -205,6 +206,86 @@ pub fn compile_pattern(pattern: &str) -> Result<regex::Regex, String> {
         .map_err(|e| format!("invalid pattern: {e}"))
 }
 
+/// Characters forbidden inside teaching gloss text (pair / token delimiters).
+pub const ENUM_GLOSS_FORBIDDEN_CHARS: &[char] = &[';', '|', '=', '‖'];
+
+/// Enum token membership plus optional English teaching glosses.
+///
+/// Serialized flattened onto [`ValueDomain`] as `"enum"` (token list) and optional
+/// `"enum_glosses"` (map). Teaching glosses are part of catalog identity
+/// (`catalog_cgs_hash_hex`); they do not affect wire validation beyond membership.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnumMembership {
+    #[serde(rename = "enum")]
+    tokens: Vec<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "enum_glosses"
+    )]
+    glosses: Option<IndexMap<String, String>>,
+}
+
+impl EnumMembership {
+    /// Tokens only (no teaching glosses).
+    pub fn tokens_only(tokens: Vec<String>) -> Self {
+        Self {
+            tokens,
+            glosses: None,
+        }
+    }
+
+    /// Tokens plus glosses; rejects empty tokens and gloss text containing
+    /// [`ENUM_GLOSS_FORBIDDEN_CHARS`].
+    pub fn try_new(
+        tokens: Vec<String>,
+        glosses: Option<IndexMap<String, String>>,
+    ) -> Result<Self, String> {
+        if tokens.is_empty() {
+            return Err("enum membership requires at least one token".into());
+        }
+        let glosses = match glosses {
+            None => None,
+            Some(g) => {
+                let mut cleaned = IndexMap::new();
+                for (tok, raw) in g {
+                    let gloss = raw.trim();
+                    if gloss.is_empty() {
+                        continue;
+                    }
+                    if let Some(bad) = gloss
+                        .chars()
+                        .find(|c| ENUM_GLOSS_FORBIDDEN_CHARS.contains(c))
+                    {
+                        return Err(format!(
+                            "enum gloss for token '{tok}' must not contain '{bad}' (reserved teaching delimiter)"
+                        ));
+                    }
+                    cleaned.insert(tok, gloss.to_string());
+                }
+                if cleaned.is_empty() {
+                    None
+                } else {
+                    Some(cleaned)
+                }
+            }
+        };
+        Ok(Self { tokens, glosses })
+    }
+
+    pub fn tokens(&self) -> &[String] {
+        &self.tokens
+    }
+
+    pub fn glosses(&self) -> Option<&IndexMap<String, String>> {
+        self.glosses.as_ref()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.tokens.is_empty()
+    }
+}
+
 /// Resolved value domain for one `values:` row.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValueDomain {
@@ -213,9 +294,9 @@ pub struct ValueDomain {
     pub profile: Option<ProfileId>,
     #[serde(default, skip_serializing_if = "Constraints::is_empty")]
     pub constraints: Constraints,
-    /// Enum membership (`type: enum` / `multi_enum`).
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "enum")]
-    pub enum_values: Option<Vec<String>>,
+    /// Enum membership (`type: enum` / `multi_enum`) — flattened as `"enum"` + optional `"enum_glosses"`.
+    #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
+    pub enum_membership: Option<EnumMembership>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub currency: Option<String>,
     #[serde(skip)]
@@ -227,7 +308,7 @@ impl PartialEq for ValueDomain {
         self.kernel == other.kernel
             && self.profile == other.profile
             && self.constraints == other.constraints
-            && self.enum_values == other.enum_values
+            && self.enum_membership == other.enum_membership
             && self.currency == other.currency
             && self.constraints.pattern == other.constraints.pattern
     }
@@ -323,7 +404,7 @@ impl Default for ValueDomain {
             kernel: KernelKind::String,
             profile: None,
             constraints: Constraints::default(),
-            enum_values: None,
+            enum_membership: None,
             currency: None,
             pattern_re: None,
         }
@@ -391,11 +472,14 @@ impl ValueDomain {
                 None,
             ),
         };
+        let enum_membership = allowed_values
+            .filter(|v| !v.is_empty())
+            .map(EnumMembership::tokens_only);
         Self {
             kernel,
             profile,
             constraints: Constraints::default(),
-            enum_values: allowed_values,
+            enum_membership,
             currency,
             pattern_re: None,
         }
@@ -406,7 +490,7 @@ impl ValueDomain {
         kernel: KernelKind,
         profile: Option<ProfileId>,
         mut constraints: Constraints,
-        enum_values: Option<Vec<String>>,
+        enum_membership: Option<EnumMembership>,
         currency: Option<String>,
     ) -> Result<Self, String> {
         let pattern_re = match constraints.pattern.as_deref() {
@@ -420,10 +504,18 @@ impl ValueDomain {
             kernel,
             profile,
             constraints,
-            enum_values,
+            enum_membership,
             currency,
             pattern_re,
         })
+    }
+
+    /// Enum tokens when this domain is `enum` / `multi_enum`.
+    pub fn enum_tokens(&self) -> Option<&[String]> {
+        self.enum_membership
+            .as_ref()
+            .map(EnumMembership::tokens)
+            .filter(|t| !t.is_empty())
     }
 
     /// Effective legacy [`FieldType`] for shape / operator call sites.
@@ -563,7 +655,7 @@ impl ValueDomain {
         }
         validate_string_constraints(s, &self.constraints, self.pattern_re.as_ref())?;
         if matches!(self.profile, Some(ProfileId::Enum)) {
-            let Some(allowed) = self.enum_values.as_ref() else {
+            let Some(allowed) = self.enum_tokens() else {
                 return Err("enum profile requires `enum:` membership list".into());
             };
             if !allowed.iter().any(|a| a == s) {
@@ -851,5 +943,45 @@ mod tests {
             Some(ValueWireFormat::Temporal(TemporalWireFormat::Rfc3339))
         ));
         assert!(d.compatible_operators().contains(&CompOp::Gt));
+    }
+
+    #[test]
+    fn enum_membership_flattens_as_enum_and_enum_glosses_keys() {
+        let mut glosses = IndexMap::new();
+        glosses.insert("pending".into(), "awaiting settlement".into());
+        let m = EnumMembership::try_new(vec!["pending".into(), "approved".into()], Some(glosses))
+            .unwrap();
+        let d = ValueDomain::new(
+            KernelKind::String,
+            Some(ProfileId::Enum),
+            Constraints::default(),
+            Some(m),
+            None,
+        )
+        .unwrap();
+        let v = serde_json::to_value(&d).unwrap();
+        assert_eq!(
+            v.get("enum"),
+            Some(&serde_json::json!(["pending", "approved"]))
+        );
+        assert_eq!(
+            v.get("enum_glosses"),
+            Some(&serde_json::json!({"pending": "awaiting settlement"}))
+        );
+        assert!(v.get("enum_membership").is_none());
+        let back: ValueDomain = serde_json::from_value(v).unwrap();
+        assert_eq!(back.enum_tokens(), d.enum_tokens());
+        assert_eq!(
+            back.enum_membership.as_ref().and_then(|m| m.glosses()),
+            d.enum_membership.as_ref().and_then(|m| m.glosses())
+        );
+    }
+
+    #[test]
+    fn enum_membership_rejects_reserved_gloss_delimiter() {
+        let mut glosses = IndexMap::new();
+        glosses.insert("a".into(), "x = y".into());
+        let err = EnumMembership::try_new(vec!["a".into()], Some(glosses)).unwrap_err();
+        assert!(err.contains("'='"), "{err}");
     }
 }

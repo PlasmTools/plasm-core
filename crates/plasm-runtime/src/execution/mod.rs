@@ -26,10 +26,9 @@ use plasm_core::{
     reject_domain_placeholder_in_executable as reject_domain_placeholder_core,
     resolve_query_capability as resolve_query_capability_core, type_check_expr,
     type_check_expr_federated, CapabilityKind, CapabilityParamName, CapabilitySchema, ChainStep,
-    EntityDef, EntityFieldName, EntityKey, EntityName, Expr, FieldType, GetExpr, InputType,
-    InvokeExpr, InvokeInputPayload, ParameterRole, Predicate, PromptPipelineConfig, QueryExpr, Ref,
-    RelationMaterialization, RelationRowResolution, RelationSchema, RelationScopedFallback, Value,
-    CGS,
+    EntityDef, EntityFieldName, EntityKey, EntityName, Expr, FieldType, GetExpr, InvokeExpr,
+    InvokeInputPayload, Predicate, PromptPipelineConfig, QueryExpr, Ref, RelationMaterialization,
+    RelationRowResolution, RelationSchema, RelationScopedFallback, Value, CGS,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -85,8 +84,8 @@ fn resolve_query_capability<'a>(
 pub struct ExecuteSessionMaterial {
     pub prompt_hash: String,
     pub session_id: String,
-    /// When set (e.g. after a catalog-specific session bind), merged into CML env as `share_token`
-    /// so mappings can emit `?token=` mirrors without repeating the secret in every program line.
+    /// Session-bound transport Bearer consumed only by the host's [`AuthResolver`].
+    /// Runtime CML and predicate environments must never receive this credential.
     pub share_token: Option<String>,
     /// Proof (and similar catalogs): merged into CML env as `base_token` before invoke parameters
     /// so `/ops` bodies can send `baseToken` after `editor_state_get` without repeating it every line.
@@ -449,11 +448,17 @@ tokio::task_local! {
 }
 
 tokio::task_local! {
-    /// When [`ExecuteOptions::execute_session`] is set, identity keys plus optional session mirrors
-    /// (`share_token`, Proof `proof_base_token` → `base_token`) are merged via
-    /// [`merge_plasm_execute_session_identity_env`], [`merge_plasm_execute_session_share_token_env`],
+    /// When [`ExecuteOptions::execute_session`] is set, identity keys plus the Proof
+    /// `proof_base_token` domain precondition are merged via
+    /// [`merge_plasm_execute_session_identity_env`] and
     /// [`merge_plasm_execute_session_proof_base_token_env`].
     static EXECUTION_EXECUTE_SESSION: Option<std::sync::Arc<ExecuteSessionMaterial>>;
+}
+
+tokio::task_local! {
+    /// Frame-scoped materialized source contexts for query CML env construction
+    /// ([`ExecuteOptions::source_contexts`]).
+    static EXECUTION_SOURCE_CONTEXTS: indexmap::IndexMap<String, plasm_core::ExecutionContext>;
 }
 
 /// Session material for the current execute task (view ambient scope injection).
@@ -465,33 +470,87 @@ pub(crate) fn try_current_execute_session_material(
         .flatten()
 }
 
+/// Source contexts for the current execute / preflight task scope (empty when unset).
+pub(crate) fn current_source_execution_contexts(
+) -> indexmap::IndexMap<String, plasm_core::ExecutionContext> {
+    EXECUTION_SOURCE_CONTEXTS
+        .try_with(|c| c.clone())
+        .unwrap_or_default()
+}
+
+/// Run `f` with frame-scoped [`ExecuteOptions::source_contexts`] (sync preflight path).
+pub fn with_source_execution_contexts_sync<R>(
+    contexts: indexmap::IndexMap<String, plasm_core::ExecutionContext>,
+    f: impl FnOnce() -> R,
+) -> R {
+    EXECUTION_SOURCE_CONTEXTS.sync_scope(contexts, f)
+}
+
+/// Apply capability `inputs.execution.context.bindings` from the frame-scoped context map.
+///
+/// Rules (no ambient fallback):
+/// - `query.context` Some → look up by binding name (missing → ConfigurationError)
+/// - capability has context requirement → insert env[slot] = context.fields[field]
+/// - query.context Some but capability has no context requirement → ConfigurationError
+/// - capability requires context but query.context is None → ConfigurationError
+pub(crate) fn apply_query_source_execution_context(
+    env: &mut CmlEnv,
+    query: &QueryExpr,
+    capability: &CapabilitySchema,
+) -> Result<(), RuntimeError> {
+    let requirement = capability.inputs.execution.context.as_ref();
+    match (&query.context, requirement) {
+        (None, None) => Ok(()),
+        (Some(_), None) => Err(RuntimeError::ConfigurationError {
+            message: format!(
+                "query on `{}` supplies execution context, but capability `{}` does not declare inputs.execution.context",
+                query.entity,
+                capability.name
+            ),
+        }),
+        (None, Some(_)) => Err(RuntimeError::ConfigurationError {
+            message: format!(
+                "capability `{}` requires inputs.execution.context, but query on `{}` has no context= binding",
+                capability.name, query.entity
+            ),
+        }),
+        (Some(reference), Some(req)) => {
+            let contexts = current_source_execution_contexts();
+            let binding = reference.binding().as_str();
+            let context = contexts.get(binding).ok_or_else(|| RuntimeError::ConfigurationError {
+                message: format!(
+                    "execution context `{binding}` is not available on this invocation frame"
+                ),
+            })?;
+            let required_entity = req.entity.as_str();
+            let got_entity = context.qualified_entity.entity.as_str();
+            if got_entity != required_entity {
+                return Err(RuntimeError::ConfigurationError {
+                    message: format!(
+                        "RA-5: execution context `{binding}` has entity `{got_entity}`, but capability `{}` requires context entity `{required_entity}`",
+                        capability.name
+                    ),
+                });
+            }
+            for (slot, field) in &req.bindings {
+                let field_name = field.as_str();
+                let value = context.fields.get(field_name).ok_or_else(|| {
+                    RuntimeError::ConfigurationError {
+                        message: format!(
+                            "execution context `{binding}` is missing required field `{field_name}` for CML slot `{slot}`"
+                        ),
+                    }
+                })?;
+                env.insert(slot.clone(), value.clone());
+            }
+            Ok(())
+        }
+    }
+}
+
 tokio::task_local! {
     /// Entity name for the current HTTP op (matches [`plasm_core::FederationDispatch`] keys); selects backend when federated.
     static EXECUTION_DISPATCH_ENTITY: Option<String>;
-}
-
-/// Merge session-bound `share_token` into CML env **before** flattened invoke/create parameters
-/// so explicit capability parameters can override it (escape hatch).
-///
-/// No-op when [`ExecuteOptions::execute_session`] is unset or `share_token` is absent/blank.
-pub fn merge_plasm_execute_session_share_token_env(env: &mut CmlEnv) {
-    let Ok(material) = EXECUTION_EXECUTE_SESSION.try_with(|s| s.clone()) else {
-        return;
-    };
-    let Some(m) = material else {
-        return;
-    };
-    let Some(ref token) = m.share_token else {
-        return;
-    };
-    let trimmed = token.trim();
-    if trimmed.is_empty() {
-        return;
-    }
-    env.insert(
-        "share_token".to_string(),
-        Value::String(trimmed.to_string()),
-    );
 }
 
 /// Merge session-bound Proof precondition token into CML env as `base_token` **before** flattened
@@ -611,8 +670,7 @@ pub struct ExecuteOptions {
     /// When set, agent-core preflight already type-checked and placeholder-gated this expression.
     pub preflight: Option<plasm_core::PreflightToken>,
     /// When set, CML compilation for outbound HTTP sees reserved `plasm_execute_*` env keys
-    /// ([`merge_plasm_execute_session_env`]) plus optional session-bound `share_token`
-    /// ([`merge_plasm_execute_session_share_token_env`]) and Proof `proof_base_token` as `base_token`
+    /// ([`merge_plasm_execute_session_env`]) plus Proof `proof_base_token` as `base_token`
     /// ([`merge_plasm_execute_session_proof_base_token_env`]).
     pub execute_session: Option<std::sync::Arc<ExecuteSessionMaterial>>,
     /// Cooperative cancellation checked between pagination/hydration batches.
@@ -621,6 +679,9 @@ pub struct ExecuteOptions {
     pub graph_page_spill: Option<crate::graph_page_spill::GraphPageSpillHandle>,
     /// Incremental row materialization callback (async plan progress during pagination).
     pub rows_progress: Option<RowsProgressFn>,
+    /// Materialized source execution contexts keyed by binding name (`context=session` → `"session"`).
+    /// Applied at CML env construction for queries; never lives on the AST.
+    pub source_contexts: indexmap::IndexMap<String, plasm_core::ExecutionContext>,
 }
 
 impl std::fmt::Debug for ExecuteOptions {
@@ -640,6 +701,7 @@ impl std::fmt::Debug for ExecuteOptions {
             .field("execute_session", &self.execute_session.is_some())
             .field("graph_page_spill", &self.graph_page_spill.is_some())
             .field("rows_progress", &self.rows_progress.is_some())
+            .field("source_contexts", &self.source_contexts.is_empty())
             .finish()
     }
 }
@@ -709,25 +771,32 @@ impl ExecutionEngine {
         execute_session: Option<std::sync::Arc<ExecuteSessionMaterial>>,
         cancel: Option<CancelSignal>,
         rows_progress: Option<RowsProgressFn>,
+        source_contexts: indexmap::IndexMap<String, plasm_core::ExecutionContext>,
         fut: Fut,
     ) -> T
     where
         Fut: std::future::Future<Output = T> + Send,
         T: Send,
     {
-        EXECUTION_EXECUTE_SESSION
-            .scope(execute_session, async move {
-                EXECUTION_FEDERATION
-                    .scope(federation, async move {
-                        EXECUTION_FINGERPRINT_SINK
-                            .scope(request_fingerprint_sink, async move {
-                                EXECUTION_AUTH_RESOLVER
-                                    .scope(auth_override, async move {
-                                        EXECUTION_CANCEL
-                                            .scope(cancel, async move {
-                                                EXECUTION_ROWS_PROGRESS
-                                                    .scope(rows_progress, async move {
-                                                        EXECUTION_HTTP_BASE.scope(base, fut).await
+        EXECUTION_SOURCE_CONTEXTS
+            .scope(source_contexts, async move {
+                EXECUTION_EXECUTE_SESSION
+                    .scope(execute_session, async move {
+                        EXECUTION_FEDERATION
+                            .scope(federation, async move {
+                                EXECUTION_FINGERPRINT_SINK
+                                    .scope(request_fingerprint_sink, async move {
+                                        EXECUTION_AUTH_RESOLVER
+                                            .scope(auth_override, async move {
+                                                EXECUTION_CANCEL
+                                                    .scope(cancel, async move {
+                                                        EXECUTION_ROWS_PROGRESS
+                                                            .scope(rows_progress, async move {
+                                                                EXECUTION_HTTP_BASE
+                                                                    .scope(base, fut)
+                                                                    .await
+                                                            })
+                                                            .await
                                                     })
                                                     .await
                                             })
@@ -898,6 +967,7 @@ impl ExecutionEngine {
             None,
             None,
             None,
+            indexmap::IndexMap::new(),
             async move {
                 self.execute_with_replay(&compiled, mode, None)
                     .await
@@ -1087,6 +1157,7 @@ impl ExecutionEngine {
             let execute_session = opts.execute_session.clone();
             let cancel = opts.cancel.clone();
             let rows_progress = opts.rows_progress.clone();
+            let source_contexts = opts.source_contexts.clone();
             let mut result = Self::run_in_execute_task_scopes(
                 base,
                 auth_override,
@@ -1095,6 +1166,7 @@ impl ExecutionEngine {
                 execute_session,
                 cancel,
                 rows_progress,
+                source_contexts,
                 async move {
                     let mut stream =
                         self.execute_stream(expr, cgs, mat, mode, consume.clone(), opts)?;
@@ -1680,7 +1752,6 @@ impl ExecutionEngine {
     ) -> Result<(CachedEntity, ExecutionSource), RuntimeError> {
         let mut env = CmlEnv::new();
         if inject_execute_session_env {
-            merge_plasm_execute_session_share_token_env(&mut env);
             merge_plasm_execute_session_proof_base_token_env(&mut env);
         }
         let target_ent = cgs.get_entity(get.reference.entity_type.as_str());
@@ -1991,16 +2062,7 @@ fn normalize_cml_env_scope_entity_refs(
     cgs: &CGS,
     capability: &CapabilitySchema,
 ) -> Result<(), RuntimeError> {
-    let Some(schema) = capability.input_schema.as_ref() else {
-        return Ok(());
-    };
-    let InputType::Object { fields, .. } = &schema.input_type else {
-        return Ok(());
-    };
-    for field in fields {
-        if !matches!(field.role, Some(ParameterRole::Scope)) {
-            continue;
-        }
+    for field in capability.scope_params() {
         let nv = field
             .named_value(cgs)
             .map_err(|e| RuntimeError::ConfigurationError {
@@ -2193,13 +2255,7 @@ fn entity_field_predicate(
 }
 
 fn capability_param_names(capability: &plasm_core::CapabilitySchema) -> HashSet<String> {
-    let Some(input) = &capability.input_schema else {
-        return HashSet::new();
-    };
-    let InputType::Object { fields, .. } = &input.input_type else {
-        return HashSet::new();
-    };
-    fields.iter().map(|f| f.name.clone()).collect()
+    capability.input_fields().map(|f| f.name.clone()).collect()
 }
 
 /// Extract an EntityRef field or declared-relation target ID from a cached entity.
@@ -2305,7 +2361,7 @@ fn build_scoped_query_from_fallback(
                     message: format!("unknown fallback capability '{capability}'"),
                 }
             })?;
-            let cap_params: Vec<_> = cap.object_params().map(|f| f.to_vec()).unwrap_or_default();
+            let cap_params: Vec<_> = cap.selection_params().to_vec();
             let preds: Vec<Predicate> = bindings
                 .iter()
                 .map(|(cap_param, parent_field)| {
@@ -3164,8 +3220,8 @@ mod tests {
     use plasm_core::value_domain::ValueDomain;
     use plasm_core::{
         CapabilityKind, CapabilityMapping, CapabilitySchema, Expr, FieldSchema, FieldType,
-        FieldValueKind, GetExpr, InputFieldSchema, InputFieldWire, InputSchema, InputValidation,
-        JsonPathSegment, NamedValueSchema, QueryPagination, Ref, ResourceSchema, ValueDomainKey,
+        FieldValueKind, GetExpr, InputFieldSchema, InputFieldWire, JsonPathSegment,
+        NamedValueSchema, QueryPagination, Ref, ResourceSchema, ValueDomainKey,
     };
     use std::collections::BTreeMap;
 
@@ -3234,6 +3290,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         };
 
@@ -3260,7 +3318,7 @@ mod tests {
                 })
                 .into(),
             },
-            input_schema: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
@@ -3292,7 +3350,7 @@ mod tests {
                 })
                 .into(),
             },
-            input_schema: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
@@ -3361,6 +3419,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .expect("workspace resource");
@@ -3382,27 +3442,21 @@ mod tests {
                 })
                 .into(),
             },
-            input_schema: Some(InputSchema {
-                input_type: InputType::Object {
-                    fields: vec![InputFieldSchema {
-                        name: "workspace_id".to_string(),
-                        wire: InputFieldWire::Registry(
-                            ValueDomainKey::new("rt_workspace_ref").expect("workspace ref key"),
-                        ),
-                        required: true,
-                        description: None,
-                        default: None,
-                        role: Some(ParameterRole::Scope),
-                        wire_json_path: None,
-                        wire_array_element_key: None,
-                        sink_class: None,
-                    }],
-                    additional_fields: false,
-                },
-                validation: InputValidation::default(),
-                description: None,
-                examples: vec![],
-            }),
+            inputs: plasm_core::CapabilityInputs {
+                scope: plasm_core::ParentScopeSchema(vec![InputFieldSchema {
+                    name: "workspace_id".to_string(),
+                    wire: InputFieldWire::Registry(
+                        ValueDomainKey::new("rt_workspace_ref").expect("workspace ref key"),
+                    ),
+                    required: true,
+                    description: None,
+                    default: None,
+                    wire_json_path: None,
+                    wire_array_element_key: None,
+                    sink_class: None,
+                }]),
+                ..Default::default()
+            },
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
@@ -3876,6 +3930,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: true,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         };
 
@@ -4135,6 +4191,121 @@ mod tests {
                 .iter()
                 .any(|kv| kv.key.as_str() == "http.method"),
             "expected http.method on compiled_request"
+        );
+    }
+
+    #[tokio::test]
+    async fn session_bearer_is_not_merged_into_cml_env() {
+        let material = Arc::new(ExecuteSessionMaterial {
+            prompt_hash: "a".repeat(64),
+            session_id: "b".repeat(32),
+            share_token: Some("transport-secret".into()),
+            proof_base_token: Some("domain-precondition".into()),
+            transport_origin: None,
+            ui_origin: None,
+            catalog_bind: None,
+        });
+
+        ExecutionEngine::run_in_execute_task_scopes(
+            "https://api.example.test".into(),
+            None,
+            None,
+            None,
+            Some(material),
+            None,
+            None,
+            indexmap::IndexMap::new(),
+            async {
+                let mut env = CmlEnv::new();
+                merge_plasm_execute_session_proof_base_token_env(&mut env);
+                merge_plasm_execute_session_env(&mut env);
+
+                assert!(
+                    !env.contains_key("share_token"),
+                    "transport bearer must never enter CML env"
+                );
+                assert_eq!(
+                    env.get("base_token"),
+                    Some(&Value::String("domain-precondition".into()))
+                );
+            },
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn empty_cml_env_still_sends_resolver_bearer() {
+        use crate::auth::ResolvedAuth;
+        use crate::http_transport::HttpTransport;
+        use async_trait::async_trait;
+        use plasm_compile::{CompiledRequest, HttpBodyFormat, HttpMethod};
+        use plasm_core::AuthScheme;
+        use std::sync::{Arc, Mutex};
+
+        struct RecordingTransport {
+            last_auth: Arc<Mutex<Option<ResolvedAuth>>>,
+        }
+
+        #[async_trait]
+        impl HttpTransport for RecordingTransport {
+            async fn send_compiled_http(
+                &self,
+                _base_url: &str,
+                _request: &CompiledRequest,
+                auth: Option<ResolvedAuth>,
+            ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+                *self.last_auth.lock().unwrap() = auth;
+                Ok((serde_json::json!({}), None))
+            }
+
+            async fn get_json_absolute(
+                &self,
+                _url: &str,
+                _auth: Option<ResolvedAuth>,
+            ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+                Ok((serde_json::json!({}), None))
+            }
+        }
+
+        let last = Arc::new(Mutex::new(None));
+        let resolver = crate::AuthResolver::new(
+            AuthScheme::BearerToken {
+                env: None,
+                hosted_kv: None,
+                optional_env: true,
+            },
+            Arc::new(crate::EnvSecretProvider),
+        )
+        .with_session_bearer_override(Some("resolver-secret".into()));
+        let engine = ExecutionEngine::new_with_transport(
+            ExecutionConfig {
+                base_url: Some("https://api.example.test".into()),
+                ..ExecutionConfig::default()
+            },
+            Arc::new(RecordingTransport {
+                last_auth: last.clone(),
+            }),
+            Some(resolver),
+        );
+        let request = CompiledRequest {
+            method: HttpMethod::Get,
+            path: "/v1/items".into(),
+            query: None,
+            body: None,
+            body_format: HttpBodyFormat::Json,
+            multipart: None,
+            headers: None,
+        };
+
+        engine
+            .execute_operation_full(&CompiledOperation::Http(request))
+            .await
+            .expect("HTTP execution");
+
+        let resolved = last.lock().unwrap().clone().expect("resolved auth");
+        assert_eq!(
+            resolved.headers,
+            vec![("Authorization".into(), "Bearer resolver-secret".into())]
         );
     }
 
@@ -5201,6 +5372,159 @@ mod tests {
         assert_eq!(flat[0].reference.primary_slot_str(), "a");
         assert_eq!(flat[1].reference.primary_slot_str(), "b");
         assert_eq!(flat[2].reference.primary_slot_str(), "c");
+    }
+
+    #[test]
+    fn apply_query_source_execution_context_binds_cml_slots_from_frame() {
+        use indexmap::IndexMap;
+        use plasm_core::{
+            CapabilityExecutionSchema, CapabilityInputs, CapabilityKind, CapabilityMapping,
+            CapabilitySchema, ContextRequirement, ExecutionContext, ExecutionContextRef,
+            ParentScopeSchema, QueryExpr, Value,
+        };
+
+        let mut cgs = CGS::new();
+        cgs.add_resource(ResourceSchema {
+            name: "Session".into(),
+            description: String::new(),
+            id_field: "id".into(),
+            id_format: None,
+            id_from: None,
+            fields: vec![FieldSchema {
+                name: "id".into(),
+                kind: FieldValueKind::Registry(ValueDomainKey::new("rt_str").expect("key")),
+                description: String::new(),
+                required: true,
+                agent_presentation: None,
+                mime_type_hint: None,
+                attachment_media: None,
+                wire_path: None,
+                derive: None,
+                data_class: None,
+                currency_field: None,
+            }],
+            relations: vec![],
+            expression_aliases: vec![],
+            implicit_request_identity: false,
+            key_vars: vec![],
+            abstract_entity: false,
+            domain_projection_examples: false,
+            primary_read: None,
+            primary_query: None,
+            primary_search: None,
+            discovery: None,
+        })
+        .expect("session");
+        cgs.add_resource(ResourceSchema {
+            name: "Request".into(),
+            description: String::new(),
+            id_field: "id".into(),
+            id_format: None,
+            id_from: None,
+            fields: vec![FieldSchema {
+                name: "id".into(),
+                kind: FieldValueKind::Registry(ValueDomainKey::new("rt_str").expect("key")),
+                description: String::new(),
+                required: true,
+                agent_presentation: None,
+                mime_type_hint: None,
+                attachment_media: None,
+                wire_path: None,
+                derive: None,
+                data_class: None,
+                currency_field: None,
+            }],
+            relations: vec![],
+            expression_aliases: vec![],
+            implicit_request_identity: false,
+            key_vars: vec![],
+            abstract_entity: false,
+            domain_projection_examples: false,
+            primary_read: None,
+            primary_query: None,
+            primary_search: None,
+            discovery: None,
+        })
+        .expect("request");
+
+        let mut bindings = IndexMap::new();
+        bindings.insert("session_id".into(), "id".into());
+        cgs.add_capability(CapabilitySchema {
+            name: "request_query".into(),
+            description: String::new(),
+            kind: CapabilityKind::Query,
+            domain: "Request".into(),
+            identity_key: None,
+            invalidates_entities: vec![],
+            mapping: CapabilityMapping {
+                template: serde_json::json!({
+                    "method": "GET",
+                    "path": [{"type": "var", "name": "session_id"}, {"type": "literal", "value": "requests"}]
+                })
+                .into(),
+            },
+            inputs: CapabilityInputs {
+                execution: CapabilityExecutionSchema {
+                    context: Some(ContextRequirement {
+                        entity: "Session".into(),
+                        bindings,
+                    }),
+                },
+                scope: ParentScopeSchema(vec![]),
+                ..Default::default()
+            },
+            output_schema: None,
+            provides: vec![],
+            scope_aggregate_key_policy: Default::default(),
+            preflight: None,
+            discovery: None,
+            sanitizes: vec![],
+            deterministic: None,
+        })
+        .expect("cap");
+
+        let cap = cgs.get_capability("request_query").expect("cap");
+        let mut query = QueryExpr::all("Request");
+        query.capability_name = Some("request_query".into());
+        query.context = Some(ExecutionContextRef::new("session").unwrap());
+
+        let mut fields = IndexMap::new();
+        fields.insert("id".into(), Value::String("sess-1".into()));
+        let mut contexts = IndexMap::new();
+        contexts.insert(
+            "session".into(),
+            ExecutionContext {
+                reference: ExecutionContextRef::new("session").unwrap(),
+                qualified_entity: plasm_core::QualifiedEntityKey::new("app", "Session"),
+                fields,
+            },
+        );
+
+        let mut env = CmlEnv::new();
+        with_source_execution_contexts_sync(contexts, || {
+            apply_query_source_execution_context(&mut env, &query, cap).expect("apply");
+        });
+        assert_eq!(env.get("session_id"), Some(&Value::String("sess-1".into())));
+
+        let mut wrong = IndexMap::new();
+        wrong.insert("id".into(), Value::String("x".into()));
+        let mut bad_contexts = IndexMap::new();
+        bad_contexts.insert(
+            "session".into(),
+            ExecutionContext {
+                reference: ExecutionContextRef::new("session").unwrap(),
+                qualified_entity: plasm_core::QualifiedEntityKey::new("app", "Request"),
+                fields: wrong,
+            },
+        );
+        let err = with_source_execution_contexts_sync(bad_contexts, || {
+            apply_query_source_execution_context(&mut CmlEnv::new(), &query, cap)
+        })
+        .expect_err("entity mismatch");
+        assert!(
+            err.to_string().contains("RA-5") && err.to_string().contains("Session"),
+            "{err}"
+        );
     }
 
     #[test]

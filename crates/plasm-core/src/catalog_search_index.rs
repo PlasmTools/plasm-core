@@ -294,8 +294,8 @@ fn capability_document_text(cgs: &CGS, cap: &CapabilitySchema) -> String {
 mod tests {
     use super::*;
     use crate::schema::{
-        CapabilityKind, CapabilityMapping, CapabilityTemplateJson, DiscoveryCapabilityHints,
-        DiscoveryEntityHints, EntityDef,
+        CapabilityInputs, CapabilityKind, CapabilityMapping, CapabilityTemplateJson,
+        DiscoveryCapabilityHints, DiscoveryEntityHints, EntityDef,
     };
     use crate::{CapabilityName, EntityFieldName, EntityName};
     use indexmap::IndexMap;
@@ -338,7 +338,7 @@ mod tests {
                 mapping: CapabilityMapping {
                     template: CapabilityTemplateJson(serde_json::json!({ "method": "POST" })),
                 },
-                input_schema: None,
+                inputs: CapabilityInputs::default(),
                 output_schema: None,
                 provides: vec![],
                 sanitizes: vec![],

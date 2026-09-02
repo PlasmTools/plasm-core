@@ -115,14 +115,14 @@ pub use capability_delta::{
     render_teaching_new_capabilities_delta_tsv_federated,
 };
 pub use contract::{
-    markdown_fence_body_inner, split_tsv_teaching_contract_and_table,
+    catalog_teaching_fence_info, markdown_fence_body_inner, split_tsv_teaching_contract_and_table,
     teaching_tsv_agent_body_from_wrapped_prompt, teaching_tsv_from_wrapped_prompt,
-    teaching_tsv_table_from_wrapped_prompt, TeachingFenceSlice, ROW_COMPUTE_EXEMPLAR_THRESHOLD,
+    teaching_tsv_table_from_wrapped_prompt, teaching_tsv_table_from_wrapped_prompt_any,
+    TeachingFenceSlice, ROW_COMPUTE_EXEMPLAR_THRESHOLD,
 };
 pub use mcp_prompt_fragments::{
     format_ranked_replay_diagnostics, render_active_mutator_surface_recap,
-    render_compact_exposure_symbol_map, DISCOVER_DECISION_CLARIFY, DISCOVER_DECISION_MATCH,
-    DISCOVER_DECISION_NO_MATCH, DISCOVER_TSV_LANGUAGE_PREAMBLE,
+    render_compact_exposure_symbol_map,
 };
 pub use mcp_tool_descriptions::{
     program_param_contract_violations, DISCOVER_TOOL_DESCRIPTION, MCP_INITIALIZE_WORKFLOW,

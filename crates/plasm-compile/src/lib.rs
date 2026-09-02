@@ -92,9 +92,7 @@ fn validate_capability_params_wired_in_cml(
         return Ok(());
     }
 
-    let Some(params) = cap.object_params() else {
-        return Ok(());
-    };
+    let params: Vec<_> = cap.input_fields().collect();
     if params.is_empty() {
         return Ok(());
     }
@@ -453,9 +451,7 @@ mod tests {
 
     #[test]
     fn validate_rejects_capability_param_not_referenced_in_cml() {
-        use plasm_core::schema::{
-            InputFieldSchema, InputFieldWire, InputSchema, InputType, ParameterRole,
-        };
+        use plasm_core::schema::{InputFieldSchema, InputFieldWire};
 
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let mut cgs = plasm_core::load_schema_dir(
@@ -466,26 +462,17 @@ mod tests {
             .capabilities
             .get_mut("langitem_query")
             .expect("langitem_query");
-        cap.input_schema = Some(InputSchema {
-            input_type: InputType::Object {
-                fields: vec![InputFieldSchema {
-                    name: "fabricated_filter".into(),
-                    wire: InputFieldWire::Registry(
-                        plasm_core::ValueDomainKey::new("nv_lang_item_title").expect("key"),
-                    ),
-                    required: false,
-                    description: None,
-                    default: None,
-                    role: Some(ParameterRole::Filter),
-                    sink_class: None,
-                    wire_json_path: None,
-                    wire_array_element_key: None,
-                }],
-                additional_fields: false,
-            },
-            validation: Default::default(),
+        cap.inputs.selection.0.push(InputFieldSchema {
+            name: "fabricated_filter".into(),
+            wire: InputFieldWire::Registry(
+                plasm_core::ValueDomainKey::new("nv_lang_item_title").expect("key"),
+            ),
+            required: false,
             description: None,
-            examples: vec![],
+            default: None,
+            sink_class: None,
+            wire_json_path: None,
+            wire_array_element_key: None,
         });
         let err = validate_cgs_capability_templates(&cgs).expect_err("fabricated");
         let msg = err.to_string();

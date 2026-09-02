@@ -239,6 +239,28 @@ langsecuredgroup_query:
             type: var
             name: access_token
 
+langsecuredgroup_get:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: secured_groups
+  - type: var
+    name: group_id
+  headers:
+    type: object
+    fields:
+    - - Authorization
+      - type: format
+        template: "Bearer {token}"
+        vars:
+          token:
+            type: var
+            name: access_token
+
 langtag_query:
   method: GET
   path:

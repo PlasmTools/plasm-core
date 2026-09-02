@@ -796,6 +796,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -860,6 +862,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -891,9 +895,7 @@ mod tests {
                 })
                 .into(),
             },
-            input_schema: Some(InputSchema {
-                input_type: InputType::Object {
-                    fields: vec![InputFieldSchema {
+            inputs: plasm_core::CapabilityInputs { selection: plasm_core::BackendSelectionSchema(vec![InputFieldSchema {
                         name: "region".into(),
                         wire: InputFieldWire::Registry(
                             ValueDomainKey::new("cb_account_region").expect("key"),
@@ -901,17 +903,10 @@ mod tests {
                         required: false,
                         description: Some("Filter by region".into()),
                         default: None,
-                        role: None,
                         sink_class: None,
                         wire_json_path: None,
                         wire_array_element_key: None,
-                }],
-                    additional_fields: false,
-                },
-                validation: InputValidation::default(),
-                description: None,
-                examples: vec![],
-            }),
+                }]), ..Default::default() },
             output_schema: None,
             provides: vec![],
             sanitizes: vec![],
@@ -942,25 +937,16 @@ mod tests {
                 })
                 .into(),
             },
-            input_schema: Some(InputSchema {
-                input_type: InputType::Object {
-                    fields: vec![InputFieldSchema {
+            inputs: plasm_core::CapabilityInputs { selection: plasm_core::BackendSelectionSchema(vec![InputFieldSchema {
                         name: "role".into(),
                         wire: InputFieldWire::Registry(ValueDomainKey::new("cb_contact_role").expect("key")),
                         required: false,
                         description: Some("Filter by role".into()),
                         default: None,
-                        role: None,
                         sink_class: None,
                         wire_json_path: None,
                         wire_array_element_key: None,
-                }],
-                    additional_fields: false,
-                },
-                validation: InputValidation::default(),
-                description: None,
-                examples: vec![],
-            }),
+                }]), ..Default::default() },
             output_schema: None,
             provides: vec![],
             sanitizes: vec![],
@@ -1168,6 +1154,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -1190,7 +1178,7 @@ mod tests {
                 })
                 .into(),
             },
-            input_schema: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             sanitizes: vec![],
@@ -1256,6 +1244,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -1303,6 +1293,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -1321,7 +1313,7 @@ mod tests {
                 })
                 .into(),
             },
-            input_schema: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             sanitizes: vec![],
@@ -1345,7 +1337,7 @@ mod tests {
                 })
                 .into(),
             },
-            input_schema: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             sanitizes: vec![],
@@ -1392,25 +1384,16 @@ mod tests {
                 })
                 .into(),
             },
-            input_schema: Some(InputSchema {
-                input_type: InputType::Object {
-                    fields: vec![InputFieldSchema {
+            inputs: plasm_core::CapabilityInputs { selection: plasm_core::BackendSelectionSchema(vec![InputFieldSchema {
                         name: "petId".into(),
                         wire: InputFieldWire::Registry(ValueDomainKey::new("cb_order_pet_ref").expect("key")),
                         required: false,
                         description: None,
                         default: None,
-                        role: None,
                         sink_class: None,
                         wire_json_path: None,
                         wire_array_element_key: None,
-                }],
-                    additional_fields: true,
-                },
-                validation: InputValidation::default(),
-                description: None,
-                examples: vec![],
-            }),
+                }]), ..Default::default() },
             output_schema: None,
             provides: vec![],
             sanitizes: vec![],

@@ -489,7 +489,6 @@ mod tests {
                 required: true,
                 description: None,
                 default: None,
-                role: None,
                 wire_json_path: None,
                 wire_array_element_key: None,
                 sink_class: None,
@@ -521,7 +520,8 @@ mod tests {
             .capabilities
             .get("document_edit_v2")
             .expect("document_edit_v2");
-        let InputType::Object { fields, .. } = &cap.input_schema.as_ref().expect("is").input_type
+        let InputType::Object { fields, .. } =
+            &cap.inputs.payload.as_ref().expect("payload").input_type
         else {
             panic!("object input");
         };
@@ -585,7 +585,8 @@ mod tests {
             .capabilities
             .get("document_edit_v2")
             .expect("document_edit_v2");
-        let InputType::Object { fields, .. } = &cap.input_schema.as_ref().expect("is").input_type
+        let InputType::Object { fields, .. } =
+            &cap.inputs.payload.as_ref().expect("payload").input_type
         else {
             panic!("object input");
         };

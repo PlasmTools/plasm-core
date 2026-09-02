@@ -358,12 +358,24 @@ pub async fn apply_capability_seeds(
         } else {
             let mode = st.engine.prompt_pipeline().render_mode;
             if mode.is_tsv() {
-                if let Some(body_tsv) = teaching_tsv_from_wrapped_prompt(
+                if let Some(body_tsv) =
+                    plasm_core::prompt_render::teaching_tsv_table_from_wrapped_prompt_any(
+                        &created.prompt,
+                    )
+                {
+                    open_md.push_str(&wrap_teaching_markdown_literal_block(
+                        &body_tsv,
+                        created.entry_id.as_str(),
+                    ));
+                } else if let Some(body_tsv) = teaching_tsv_from_wrapped_prompt(
                     &created.prompt,
                     mode.markdown_fence_info_string(),
                     TeachingFenceSlice::TableOnly,
                 ) {
-                    open_md.push_str(&wrap_teaching_markdown_literal_block(&body_tsv, mode));
+                    open_md.push_str(&wrap_teaching_markdown_literal_block(
+                        &body_tsv,
+                        created.entry_id.as_str(),
+                    ));
                 } else {
                     open_md.push_str(&created.prompt);
                 }

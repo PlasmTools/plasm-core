@@ -27,12 +27,46 @@ pub fn split_tsv_teaching_contract_and_table(teaching_tsv: &str) -> (Option<Stri
     (None, teaching_tsv.to_string())
 }
 
+/// Registry `entry_id` used as markdown fence info for language-card blocks (` ```venmo ` not ` ```tsv `).
+pub fn catalog_teaching_fence_info(entry_id: &str) -> &str {
+    let trimmed = entry_id.trim();
+    if trimmed.is_empty() {
+        "tsv"
+    } else {
+        trimmed
+    }
+}
+
 /// Strip a leading markdown fenced block ` ```{fence_info}\\n … \\n``` ` and return inner body.
 pub fn markdown_fence_body_inner<'a>(markdown: &'a str, fence_info: &str) -> Option<&'a str> {
     let open = format!("```{fence_info}\n");
     let rest = markdown.strip_prefix(&open)?;
     let end = rest.find("\n```")?;
     Some(&rest[..end])
+}
+
+/// Extract the first fenced language-card block regardless of fence label (`venmo`, legacy `tsv`, …).
+pub fn teaching_tsv_table_from_wrapped_prompt_any(prompt: &str) -> Option<String> {
+    let mut cursor = prompt;
+    while let Some(open_idx) = cursor.find("```") {
+        let after_ticks = &cursor[open_idx + 3..];
+        let Some(nl) = after_ticks.find('\n') else {
+            break;
+        };
+        let body_start = open_idx + 3 + nl + 1;
+        let Some(body_region) = cursor.get(body_start..) else {
+            break;
+        };
+        let Some(close_rel) = body_region.find("\n```") else {
+            break;
+        };
+        let inner = &body_region[..close_rel];
+        if inner.contains(TSV_TEACHING_TABLE_HEADER) {
+            return Some(split_tsv_teaching_contract_and_table(inner).1);
+        }
+        cursor = &body_region[close_rel + 1..];
+    }
+    None
 }
 
 /// Extract a language card slice from a markdown-fenced session prompt.

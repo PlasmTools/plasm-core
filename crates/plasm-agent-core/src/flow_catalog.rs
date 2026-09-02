@@ -2,7 +2,7 @@
 
 use crate::plan_flow::{QualifiedCapabilityKey, SinkParamRef};
 use plasm_core::schema::ViewDefinition;
-use plasm_core::{flow_control_param_names, CapabilityKind, CapabilitySchema, DataClassName, CGS};
+use plasm_core::{CapabilityKind, CapabilitySchema, DataClassName, CGS};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -207,11 +207,9 @@ fn ingest_capability(
     }
 
     let control_params: BTreeSet<String> = cap
-        .input_schema
-        .as_ref()
-        .map(flow_control_param_names)
-        .unwrap_or_default()
-        .into_iter()
+        .control_params()
+        .iter()
+        .map(|f| f.name.clone())
         .collect();
     if !control_params.is_empty() {
         view.capability_control_params.insert(key, control_params);

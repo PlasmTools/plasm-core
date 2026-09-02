@@ -356,12 +356,15 @@ impl ClientSymbolSession {
         };
 
         let mode = self.pipeline.render_mode;
-        let tsv = teaching_tsv_from_wrapped_prompt(
-            &rendered,
-            mode.markdown_fence_info_string(),
-            TeachingFenceSlice::TableOnly,
-        )
-        .unwrap_or(rendered);
+        let tsv = plasm_core::teaching_tsv_table_from_wrapped_prompt_any(&rendered)
+            .or_else(|| {
+                teaching_tsv_from_wrapped_prompt(
+                    &rendered,
+                    mode.markdown_fence_info_string(),
+                    TeachingFenceSlice::TableOnly,
+                )
+            })
+            .unwrap_or(rendered);
         Ok(tsv)
     }
 

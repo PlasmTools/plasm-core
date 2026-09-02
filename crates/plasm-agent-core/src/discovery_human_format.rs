@@ -244,27 +244,17 @@ fn discovery_cgs_for_entry<'a>(
     })
 }
 
+/// Machine-metadata header for discovery browse TSV (`# decision:` / `# routed:` only).
+/// Language-flow and seed instructions belong on tool cards / language cards — not here.
 fn discovery_tsv_preamble(
     decision: DiscoveryDecision,
     catalog_route: Option<&plasm_core::CatalogRoute>,
 ) -> String {
-    let mut lines = vec![plasm_core::prompt_render::DISCOVER_TSV_LANGUAGE_PREAMBLE.to_string()];
-    lines.push(format!("# decision: {}", decision.as_str()));
+    let mut lines = vec![format!("# decision: {}", decision.as_str())];
     if let Some(route) = catalog_route {
         if !route.is_empty() {
             lines.push(format!("# routed: {}", route.join_display()));
         }
-    }
-    match decision {
-        DiscoveryDecision::Clarify => lines.push(
-            "# choose the api/entity rows that match the user goal, then call plasm_context once with all seeds"
-                .to_string(),
-        ),
-        DiscoveryDecision::NoMatch => lines.push(
-            "# evidence: no loaded catalog matched the intent; narrow the intent or check registry availability"
-                .to_string(),
-        ),
-        DiscoveryDecision::Match => {}
     }
     lines.join("\n")
 }
@@ -351,7 +341,7 @@ fn discovery_markdown_body(
     s.push_str("\n```\n\n");
     if omission.truncated && omission.decision != DiscoveryDecision::NoMatch {
         s.push_str(&format!(
-            "_Showing top {} discovery rows ({} omitted). Narrow `intent` or pass seeds you already know._\n\n",
+            "_Showing top {} discovery rows ({} omitted). Narrow `intent`._\n\n",
             omission.shown, omission.omitted
         ));
     }
@@ -471,9 +461,10 @@ mod tests {
             capability_description: "List widgets".into(),
         }]);
         let tsv = discovery_capability_tsv(&r);
-        assert!(tsv.contains("# Plasm is a source language"));
-        assert!(tsv.contains("# decision: match"));
-        assert!(tsv.contains("api\tentity\tdescription\toutgoing_relations\n"));
+        assert_eq!(
+            tsv.lines().take(2).collect::<Vec<_>>().join("\n"),
+            "# decision: match\napi\tentity\tdescription\toutgoing_relations"
+        );
         assert!(tsv.contains("demo\tWidget\tWidget summary.\t"));
     }
 
@@ -489,7 +480,8 @@ mod tests {
         }]);
         let md = format_discovery_markdown(&r);
         assert!(md.contains("```tsv"));
-        assert!(md.contains("# Plasm is a source language"));
+        assert!(md.contains("# decision: match\napi\tentity\tdescription\toutgoing_relations"));
+        assert!(!md.contains("pass seeds"));
         assert!(md.contains("demo\tWidget\tWidget summary."));
         assert!(!md.contains("typed:"));
     }
@@ -518,8 +510,9 @@ mod tests {
             catalog_route: CatalogRoute::from(vec!["pokeapi".into(), "proof".into()]),
         };
         let formatted = format_discovery_markdown_for_mcp(&r, &DiscoveryTablePolicy::default());
-        assert!(formatted.markdown.contains("# decision: clarify"));
-        assert!(formatted.markdown.contains("# routed: pokeapi, proof"));
+        assert!(formatted.markdown.contains(
+            "# decision: clarify\n# routed: pokeapi, proof\napi\tentity\tdescription\toutgoing_relations"
+        ));
         assert_eq!(formatted.omission.decision, DiscoveryDecision::Clarify);
     }
 

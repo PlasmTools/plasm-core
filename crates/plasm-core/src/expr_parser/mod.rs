@@ -5,7 +5,8 @@
 //! ```text
 //! expr       = source pipeline* projection?
 //! source     = Entity "(" id ")"               — GetExpr
-//!            | Entity "(" id_field "=" value ")" — GetExpr (shadow sugar; not not taught in the teaching table)
+//!            | Entity "(" id_field "=" value ")" — GetExpr (shadow/repair sugar; normative, deliberately untaught)
+//!            | Entity "(context=" binding ")" selection — QueryExpr with reserved source invocation (RA-5; see `source_invoke`)
 //!            | Entity "{" pred ("," pred)* "}"  — QueryExpr with filters
 //!            | Entity "~" quoted_or_bare         — Search QueryExpr
 //!            | Entity                            — QueryExpr::all
@@ -61,20 +62,22 @@ mod entity_ref_parse;
 pub(crate) mod heredoc_surface;
 pub(crate) mod predicate_surface;
 pub(crate) mod program_surface;
+mod source_invoke;
 mod value;
 
-pub mod postfix;
+pub mod applicator;
+pub mod collect_meta;
+pub mod pipe;
 pub mod program;
 pub mod value_expr;
 
+pub use applicator::{parse_applicator, split_apply_expr, Applicator, RenderApplicator};
+pub use collect_meta::{normalize_nested_projection_field, peel_collect_meta, CollectMeta};
 pub use heredoc_surface::{
     parse_tagged_heredoc_literal, tagged_heredoc_close_kind, HeredocCloseLineKind,
 };
-pub use postfix::{
-    normalize_nested_projection_field, peel_postfix_suffixes, try_parse_bracket_render,
-    try_parse_render_tail, BracketRender, PlasmPostfixOp, RenderTailParse,
-};
-pub use program::{parse_expr_node, parse_program_shape, ExprNode, ParsedProgram, Statement};
+pub use pipe::{parse_pipe_expr, PipeExpr, PipeStage};
+pub use program::{parse_expr_node, parse_program_shape, ExprNode, ParsedProgram, RowExpr, Statement};
 pub use program_surface::{
     collect_program_statement_lines, expand_flattened_program_statements, is_valid_program_label,
     looks_like_domain_symbol, missing_program_roots_error, program_binding_after_return_error,
@@ -100,8 +103,7 @@ use crate::{
     coerce_value_for_field_type_with_policy, ArrayFieldCoercionPolicy, ArrayItemsSchema,
     CapabilityKind, CapabilityName, ChainExpr, CompOp, CreateExpr, DeleteExpr, EntityDef,
     EntityKey, EntityName, Expr, FieldType, GetExpr, InputType, InvokeExpr, InvokeInputPayload,
-    PageExpr, ParameterRole, Predicate, QueryExpr, Ref, SymbolResolveError, Value, ValueWireFormat,
-    CGS,
+    PageExpr, Predicate, QueryExpr, Ref, SymbolResolveError, Value, ValueWireFormat, CGS,
 };
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -888,16 +890,7 @@ impl<'a> Parser<'a> {
         if cap.kind != CapabilityKind::Query {
             return false;
         }
-        let Some(is) = cap.input_schema.as_ref() else {
-            return false;
-        };
-        let InputType::Object { fields, .. } = &is.input_type else {
-            return false;
-        };
-        let scope_fields: Vec<_> = fields
-            .iter()
-            .filter(|f| f.required && matches!(f.role, Some(ParameterRole::Scope)))
-            .collect();
+        let scope_fields: Vec<_> = cap.scope_params().iter().filter(|f| f.required).collect();
         if scope_fields.len() != 1 {
             return false;
         }
@@ -1067,7 +1060,7 @@ impl<'a> Parser<'a> {
         raw_method_label: Option<&str>,
         raw_map: IndexMap<String, Value>,
     ) -> Result<IndexMap<String, Value>, ParseError> {
-        let Some(is) = &cap.input_schema else {
+        let Some(is) = &cap.inputs.arguments else {
             return Ok(raw_map);
         };
         let InputType::Object { fields, .. } = &is.input_type else {
@@ -1101,9 +1094,6 @@ impl<'a> Parser<'a> {
         for (raw_key, val) in raw_map {
             let resolved = if fields.iter().any(|f| f.name == raw_key)
                 || resolve_capability_input_param_field(cap, raw_key.as_str()).is_some()
-                || cap
-                    .object_params()
-                    .is_some_and(|fs| fs.iter().any(|f| f.name.as_str() == raw_key.as_str()))
             {
                 raw_key
             } else if crate::symbol_tuning::SymbolMap::is_opaque_p_sym(&raw_key) {
@@ -1269,7 +1259,7 @@ impl<'a> Parser<'a> {
         raw_method_label: Option<&str>,
         mut map: indexmap::IndexMap<String, Value>,
     ) -> Result<indexmap::IndexMap<String, Value>, ParseError> {
-        let Some(is) = cap.input_schema.as_ref() else {
+        let Some(is) = cap.inputs.arguments.as_ref() else {
             return Ok(map);
         };
         let crate::InputType::Object { fields, .. } = &is.input_type else {
@@ -1296,43 +1286,43 @@ impl<'a> Parser<'a> {
     ) -> Option<(&crate::CapabilitySchema, &crate::schema::InputVariantSchema)> {
         for cgs in self.cgs_layers() {
             for cap in cgs.capabilities.values() {
-                let Some(is) = &cap.input_schema else {
-                    continue;
-                };
-                let variants = match &is.input_type {
-                    crate::InputType::Union { variants } => variants,
-                    crate::InputType::Object { fields, .. } => {
-                        let mut found = None;
-                        for f in fields {
-                            let crate::InputFieldWire::Inline(ty) = &f.wire else {
-                                continue;
-                            };
-                            if let crate::InputType::Array { element_type, .. } = ty.as_ref() {
-                                if let crate::InputType::Union { variants } = element_type.as_ref()
-                                {
-                                    if let Some(v) = variants.iter().find(|v| {
-                                        crate::schema::union_variant_constructor_symbol(v)
-                                            == Some(ctor_label)
-                                    }) {
-                                        found = Some(v);
-                                        break;
+                for is in cap.invocation_input_schemas() {
+                    let variants = match &is.input_type {
+                        crate::InputType::Union { variants } => variants,
+                        crate::InputType::Object { fields, .. } => {
+                            let mut found = None;
+                            for f in fields {
+                                let crate::InputFieldWire::Inline(ty) = &f.wire else {
+                                    continue;
+                                };
+                                if let crate::InputType::Array { element_type, .. } = ty.as_ref() {
+                                    if let crate::InputType::Union { variants } =
+                                        element_type.as_ref()
+                                    {
+                                        if let Some(v) = variants.iter().find(|v| {
+                                            crate::schema::union_variant_constructor_symbol(v)
+                                                == Some(ctor_label)
+                                        }) {
+                                            found = Some(v);
+                                            break;
+                                        }
                                     }
                                 }
                             }
-                        }
-                        match found {
-                            Some(v) => {
-                                return Some((cap, v));
+                            match found {
+                                Some(v) => {
+                                    return Some((cap, v));
+                                }
+                                None => continue,
                             }
-                            None => continue,
                         }
+                        _ => continue,
+                    };
+                    if let Some(v) = variants.iter().find(|v| {
+                        crate::schema::union_variant_constructor_symbol(v) == Some(ctor_label)
+                    }) {
+                        return Some((cap, v));
                     }
-                    _ => continue,
-                };
-                if let Some(v) = variants.iter().find(|v| {
-                    crate::schema::union_variant_constructor_symbol(v) == Some(ctor_label)
-                }) {
-                    return Some((cap, v));
                 }
             }
         }
@@ -1550,7 +1540,9 @@ impl<'a> Parser<'a> {
         Ok(parts)
     }
 
-    /// Shadow sugar (not not taught in the teaching table): `Entity(id_field=value)` on simple-id entities ≡ `Entity(value)`.
+    /// Shadow/repair sugar (normative, deliberately untaught): `Entity(id_field=value)` on simple-id
+    /// entities ≡ canonical `Entity(value)`. Do **not** delete — distinct from reserved
+    /// `Entity(context=binding){…}` source-invocation (RA-5; see `source_invoke`).
     ///
     /// Rejects wrong keys and multi-key maps (compound entities use [`Self::parse_strict_compound_key_value_map`]).
     fn try_parse_simple_id_field_get_sugar(
@@ -1939,17 +1931,13 @@ impl<'a> Parser<'a> {
         }
         for kind in [CapabilityKind::Query, CapabilityKind::Search] {
             for cap in ec.find_capabilities(entity_name, kind) {
-                if let Some(is) = cap.input_schema.as_ref() {
-                    if let InputType::Object { fields, .. } = &is.input_type {
-                        if let Some(f) = fields.iter().find(|f| f.name == field) {
-                            let nv = f.named_value(ec).ok()?;
-                            return Some((
-                                nv.field_type.clone(),
-                                nv.value_format,
-                                nv.array_items.clone(),
-                            ));
-                        }
-                    }
+                if let Some(f) = cap.selection_params().iter().find(|f| f.name == field) {
+                    let nv = f.named_value(ec).ok()?;
+                    return Some((
+                        nv.field_type.clone(),
+                        nv.value_format,
+                        nv.array_items.clone(),
+                    ));
                 }
             }
         }
@@ -2085,7 +2073,7 @@ impl<'a> Parser<'a> {
         map: &mut IndexMap<String, Value>,
         catalog_entry_id: Option<&str>,
     ) -> Result<(), ParseError> {
-        let Some(is) = &cap.input_schema else {
+        let Some(is) = &cap.inputs.arguments else {
             return Ok(());
         };
         let InputType::Object { fields, .. } = &is.input_type else {
@@ -2317,9 +2305,9 @@ impl<'a> Parser<'a> {
     ) -> Result<Expr, ParseError> {
         let label = self.normalize_method_symbol_label(&field_raw);
         let cap = self.resolve_dotted_call_capability(&label, Some(field_raw.as_str()), &source)?;
-        let Some(is) = &cap.input_schema else {
+        let Some(is) = &cap.inputs.payload else {
             return Err(self.err(ParseErrorKind::Other {
-                message: "this capability has no input schema — use `key=value` arguments".into(),
+                message: "this capability has no payload schema — use `key=value` arguments".into(),
             }));
         };
         if !matches!(&is.input_type, crate::InputType::Union { .. }) {
@@ -2335,7 +2323,7 @@ impl<'a> Parser<'a> {
         } = &mut value
         {
             self.inject_path_vars_from_get(cap, &source, ctor_fields);
-            if let Some(is) = &cap.input_schema {
+            if let Some(is) = &cap.inputs.payload {
                 if let InputType::Union { variants } = &is.input_type {
                     if let Some(variant) = variants.iter().find(|v| {
                         crate::schema::union_variant_constructor_symbol(v)
@@ -2484,7 +2472,8 @@ impl<'a> Parser<'a> {
         let cap =
             self.resolve_dotted_call_capability(&label_norm, Some(label.as_str()), &source)?;
         let root_union = cap
-            .input_schema
+            .inputs
+            .payload
             .as_ref()
             .is_some_and(|is| matches!(&is.input_type, InputType::Union { .. }));
         let starts_union_ctor = value::peek_starts_v_numeric_union_ctor_arg(self.input, self.pos);
@@ -2559,20 +2548,14 @@ impl<'a> Parser<'a> {
         let is_query_or_search_param = [CapabilityKind::Query, CapabilityKind::Search]
             .into_iter()
             .flat_map(|kind| cgs.find_capabilities(entity_name, kind))
-            .any(|cap| {
-                cap.object_params()
-                    .is_some_and(|fields| fields.iter().any(|f| f.name == pred_wire))
-            });
+            .any(|cap| cap.selection_params().iter().any(|f| f.name == pred_wire));
         if is_query_or_search_param {
             return Ok(());
         }
         let create_only = cgs
             .find_capabilities(entity_name, CapabilityKind::Create)
             .iter()
-            .any(|cap| {
-                cap.object_params()
-                    .is_some_and(|fields| fields.iter().any(|f| f.name == pred_wire))
-            });
+            .any(|cap| cap.input_fields().any(|f| f.name == pred_wire));
         if create_only {
             return Err(ParseError {
                 kind: ParseErrorKind::PredicateFieldNotFound {
@@ -2877,11 +2860,7 @@ impl<'a> Parser<'a> {
         let member_has_team = team_cgs
             .find_capabilities("Member", CapabilityKind::Query)
             .iter()
-            .any(|cap| {
-                cap.object_params()
-                    .map(|fields| fields.iter().any(|f| f.name == "team_id"))
-                    .unwrap_or(false)
-            });
+            .any(|cap| cap.scope_params().iter().any(|f| f.name == "team_id"));
         if !member_has_team {
             return Ok(None);
         }
@@ -2936,16 +2915,8 @@ impl<'a> Parser<'a> {
                     if capability_path_method_segment(cap).as_str() != label {
                         continue;
                     }
-                    let Some(is) = cap.input_schema.as_ref() else {
-                        continue;
-                    };
-                    let InputType::Object { fields, .. } = &is.input_type else {
-                        continue;
-                    };
-                    let scope_fields: Vec<_> = fields
-                        .iter()
-                        .filter(|f| f.required && matches!(f.role, Some(ParameterRole::Scope)))
-                        .collect();
+                    let scope_fields: Vec<_> =
+                        cap.scope_params().iter().filter(|f| f.required).collect();
                     if scope_fields.len() != 1 {
                         continue;
                     }
@@ -2969,15 +2940,10 @@ impl<'a> Parser<'a> {
             }));
         }
         let cap = matches[0];
-        let Some(is) = cap.input_schema.as_ref() else {
-            return Ok(None);
-        };
-        let InputType::Object { fields, .. } = &is.input_type else {
-            return Ok(None);
-        };
-        let scope_name = fields
+        let scope_name = cap
+            .scope_params()
             .iter()
-            .find(|f| f.required && matches!(f.role, Some(ParameterRole::Scope)))
+            .find(|f| f.required)
             .map(|f| f.name.as_str())
             .ok_or_else(|| {
                 self.err(ParseErrorKind::Other {
@@ -3193,6 +3159,7 @@ impl<'a> Parser<'a> {
             return self.ok_stamped(expr);
         }
 
+        let context = self.try_parse_source_context()?;
         self.skip_ws();
         let expr = match self.peek_char() {
             Some('(') => {
@@ -3311,35 +3278,26 @@ impl<'a> Parser<'a> {
                     Value::Integer(n) => n.to_string(),
                     _ => return Err(self.err(ParseErrorKind::SearchTextMustBeString)),
                 };
-                // Primary search-text param: prefer `role: search` only. Never fall through to the
-                // first `required` param — AppWorld-style catalogs put Bearer `access_token`
-                // (required, no search role) ahead of the optional `query` search slot; binding
-                // `e#~"text"` to `access_token` corrupts auth CML env / hole fill.
-                let q_field = {
+                // The primary Search capability and its structural selection lane identify the
+                // search-text input. Names and required-position heuristics are forbidden.
+                let (cap_name, q_field) = {
                     let c = self.cgs_for_entity_required(&entity)?;
-                    c.find_capabilities(&entity, CapabilityKind::Search)
-                        .first()
-                        .and_then(|cap| cap.object_params())
-                        .and_then(|fields| {
-                            fields
-                                .iter()
-                                .find(|f| matches!(f.role, Some(crate::ParameterRole::Search)))
-                                .or_else(|| {
-                                    fields.iter().find(|f| {
-                                        f.required
-                                            && !matches!(f.role, Some(crate::ParameterRole::Scope))
-                                    })
-                                })
-                                .map(|f| f.name.clone())
+                    let cap = c.primary_search_capability(&entity).ok_or_else(|| {
+                        self.err(ParseErrorKind::Other {
+                            message: format!(
+                                "search capability for `{entity}` is structurally ambiguous"
+                            ),
                         })
-                        .unwrap_or_else(|| "q".to_string())
-                };
-
-                let cap_name = {
-                    let c = self.cgs_for_entity_required(&entity)?;
-                    c.find_capabilities(&entity, CapabilityKind::Search)
-                        .first()
-                        .map(|c| c.name.clone())
+                    })?;
+                    let field = cap.selection_params().first().ok_or_else(|| {
+                        self.err(ParseErrorKind::Other {
+                            message: format!(
+                                "search capability `{}` must declare a selection parameter",
+                                cap.name
+                            ),
+                        })
+                    })?;
+                    (Some(cap.name.clone()), field.name.clone())
                 };
 
                 let mut preds = vec![Predicate::eq(q_field, text_str)];
@@ -3368,6 +3326,7 @@ impl<'a> Parser<'a> {
                 Ok(Expr::Query(QueryExpr::all(entity)))
             }
         }?;
+        let expr = self.attach_source_context(expr, context)?;
         self.ok_stamped(expr)
     }
 
@@ -3646,13 +3605,11 @@ impl<'a> Parser<'a> {
         // First: check query capability parameters
         for c in self.cgs_layers() {
             for cap in c.find_capabilities(target_entity, CapabilityKind::Query) {
-                if let Some(fields) = cap.object_params() {
-                    for f in fields {
-                        if let Ok(nv) = f.named_value(c) {
-                            if let FieldType::EntityRef { target, .. } = &nv.field_type {
-                                if target.as_str() == source_entity {
-                                    return Ok(f.name.clone());
-                                }
+                for f in cap.scope_params() {
+                    if let Ok(nv) = f.named_value(c) {
+                        if let FieldType::EntityRef { target, .. } = &nv.field_type {
+                            if target.as_str() == source_entity {
+                                return Ok(f.name.clone());
                             }
                         }
                     }
@@ -3841,7 +3798,7 @@ mod tests {
 
     /// GraphQL `issue_get` has `variables.id` but no HTTP `path` vars; pipeline must not default id to "0".
     #[test]
-    fn linear_issue_get_pipeline_preserves_uuid() {
+    fn linear_issue_get_preserves_uuid() {
         let dir = std::path::Path::new("../../apis/linear");
         if !dir.exists() {
             return;
@@ -3871,7 +3828,7 @@ mod tests {
         }
     }
 
-    /// Shadow sugar: `Entity(id_field=value)` ≡ `Entity(value)` when `id_field` is the sole identity slot.
+    /// Shadow/repair sugar (deliberately untaught): `Entity(id_field=value)` ≡ canonical `Entity(value)`.
     #[test]
     fn parse_get_simple_id_field_named_sugar() {
         let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
@@ -4306,7 +4263,7 @@ mod tests {
                 })
                 .into(),
             },
-            input_schema: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec!["slug".into()],
             scope_aggregate_key_policy: Default::default(),
@@ -4336,35 +4293,37 @@ mod tests {
                 })
                 .into(),
             },
-            input_schema: Some(InputSchema {
-                input_type: InputType::Union {
-                    variants: vec![InputVariantSchema {
-                        name: "insert".into(),
-                        description: None,
-                        constructor_symbol: Some("v111".into()),
-                        fields: vec![InputFieldSchema {
-                            name: "content".into(),
-                            wire: InputFieldWire::Registry(
-                                crate::schema::ValueDomainKey::new("fx_str").unwrap(),
-                            ),
-                            required: true,
+            inputs: crate::schema::CapabilityInputs {
+                payload: Some(InputSchema {
+                    input_type: InputType::Union {
+                        variants: vec![InputVariantSchema {
+                            name: "insert".into(),
                             description: None,
-                            default: None,
-                            role: None,
-                            wire_json_path: None,
-                            wire_array_element_key: None,
-                            sink_class: None,
+                            constructor_symbol: Some("v111".into()),
+                            fields: vec![InputFieldSchema {
+                                name: "content".into(),
+                                wire: InputFieldWire::Registry(
+                                    crate::schema::ValueDomainKey::new("fx_str").unwrap(),
+                                ),
+                                required: true,
+                                description: None,
+                                default: None,
+                                wire_json_path: None,
+                                wire_array_element_key: None,
+                                sink_class: None,
+                            }],
+                            wire: WireVariantDiscriminator {
+                                field: "kind".into(),
+                                value: "insert".into(),
+                            },
                         }],
-                        wire: WireVariantDiscriminator {
-                            field: "kind".into(),
-                            value: "insert".into(),
-                        },
-                    }],
-                },
-                validation: Default::default(),
-                description: None,
-                examples: vec![],
-            }),
+                    },
+                    validation: Default::default(),
+                    description: None,
+                    examples: vec![],
+                }),
+                ..Default::default()
+            },
             output_schema: Some(OutputSchema {
                 output_type: OutputType::SideEffect {
                     description: "adds a suggestion".into(),
@@ -5288,7 +5247,7 @@ mod tests {
             mapping: CapabilityMapping {
                 template: serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "widget"}]}).into(),
             },
-            input_schema: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
@@ -5405,7 +5364,7 @@ mod tests {
                     serde_json::json!({"method":"GET","path":[{"type":"literal","value":"books"}]})
                         .into(),
             },
-            input_schema: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
@@ -5434,7 +5393,7 @@ mod tests {
                 })
                 .into(),
             },
-            input_schema: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
@@ -5628,7 +5587,7 @@ mod tests {
                 })
                 .into(),
             },
-            input_schema: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
@@ -5768,7 +5727,7 @@ mod tests {
                 })
                 .into(),
             },
-            input_schema: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
@@ -5867,7 +5826,7 @@ mod tests {
                 ]})
                 .into(),
             },
-            input_schema: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
@@ -5891,7 +5850,7 @@ mod tests {
                 ]})
                 .into(),
             },
-            input_schema: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
@@ -6091,13 +6050,13 @@ mod tests {
     }
 
     #[test]
-    fn search_tilde_text_binds_search_role_not_first_required_auth_param() {
+    fn search_tilde_text_binds_the_structural_selection_parameter() {
         let dir = std::path::Path::new("../../fixtures/schemas/auth_bearer_search");
         if !dir.exists() {
             return;
         }
         let cgs = load_schema_dir(dir).unwrap();
-        let r = parse(r#"SecuredNote~"trip"{access_token="tok"}"#, &cgs).expect("parse search");
+        let r = parse(r#"SecuredNote~"trip""#, &cgs).expect("parse search");
         let Expr::Query(q) = &r.expr else {
             panic!("expected Query, got {:?}", r.expr);
         };
@@ -6116,16 +6075,12 @@ mod tests {
         }
         assert!(
             !access_token_eq_trip(pred),
-            "search text must bind role:search `query`, not required `access_token`; pred={pred:?}"
+            "search text must bind the selection lane, not an authentication input; pred={pred:?}"
         );
         let fields = pred.referenced_fields();
         assert!(
             fields.iter().any(|f| f == "query"),
             "expected query field from tilde text; fields={fields:?}"
-        );
-        assert!(
-            fields.iter().any(|f| f == "access_token"),
-            "expected brace access_token; fields={fields:?}"
         );
     }
 
@@ -6538,7 +6493,7 @@ mod tests {
                 })
                 .into(),
             },
-            input_schema: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
@@ -6646,6 +6601,60 @@ mod tests {
             panic!("expected Get, got {:?}", r.expr);
         };
         assert_eq!(g.reference.primary_slot_str(), "PLA-1");
+    }
+
+    #[test]
+    fn ra5_source_context_parses_as_reserved_invocation_argument() {
+        use std::sync::Arc;
+
+        let cgs = simple_name_id_get_fixture_cgs();
+        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
+        let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
+        let stack = test_layer(&cgs);
+        let labels = BTreeSet::from(["session".to_string()]);
+        let parsed = parse_with_cgs_layers_program(
+            "Pet(context=session){name=\"pikachu\"}[name]",
+            &stack,
+            sym_map,
+            Some(&labels),
+            false,
+        )
+        .expect("context-bound source query");
+        assert_eq!(parsed.projection, Some(vec!["name".to_string()]));
+        assert_eq!(
+            crate::expr_surface_render::render_expr_surface(&parsed.expr, &cgs),
+            "Pet(context=session){name=pikachu}"
+        );
+        let Expr::Query(query) = parsed.expr else {
+            panic!("expected Query");
+        };
+        assert_eq!(
+            query
+                .context
+                .as_ref()
+                .map(|context| context.binding().as_str()),
+            Some("session")
+        );
+    }
+
+    #[test]
+    fn ra5_source_context_rejects_unknown_binding() {
+        use std::sync::Arc;
+
+        let cgs = simple_name_id_get_fixture_cgs();
+        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
+        let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
+        let stack = test_layer(&cgs);
+        let labels = BTreeSet::from(["session".to_string()]);
+        let err = parse_with_cgs_layers_program(
+            "Pet(context=missing){name=\"pikachu\"}",
+            &stack,
+            sym_map,
+            Some(&labels),
+            false,
+        )
+        .expect_err("unknown context binding");
+        assert!(err.to_string().contains("not an in-scope program binding"));
     }
 }
 

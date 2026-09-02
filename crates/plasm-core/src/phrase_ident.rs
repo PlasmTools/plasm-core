@@ -269,13 +269,7 @@ fn validate_predicate_phrase_idents(
 }
 
 fn cap_params_for_capability(cap: &CapabilitySchema) -> Vec<InputFieldSchema> {
-    let Some(is) = &cap.input_schema else {
-        return Vec::new();
-    };
-    match &is.input_type {
-        crate::InputType::Object { fields, .. } => fields.clone(),
-        _ => Vec::new(),
-    }
+    cap.input_fields().cloned().collect()
 }
 
 fn cap_params_for_query(cgs: &CGS, capability_name: Option<&str>) -> Vec<InputFieldSchema> {

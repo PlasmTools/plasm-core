@@ -47,6 +47,12 @@ pub(in crate::plasm_dag) fn collect_expr_for_template_uses(
 ) {
     match expr {
         Expr::Query(q) => {
+            if let Some(context) = &q.context {
+                acc.push(serde_json::json!({
+                    "node": context.binding().as_str(),
+                    "as": context.binding().as_str(),
+                }));
+            }
             if let Some(pred) = &q.predicate {
                 collect_predicate_for_template_uses(acc, pred, ctx);
             }
@@ -269,4 +275,23 @@ fn source_node_qualified_entity_json(source: &serde_json::Value) -> Option<serde
         .get("effect_template")
         .and_then(|t| t.get("qualified_entity"))
         .cloned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ra5_source_context_is_an_explicit_plan_dependency() {
+        let context = plasm_core::ExecutionContextRef::new("session").expect("context ref");
+        let expr = Expr::Query(plasm_core::QueryExpr::all("Request").with_context(context));
+        let uses = collect_template_uses_from_expr(&expr);
+        assert_eq!(
+            uses,
+            vec![serde_json::json!({
+                "node": "session",
+                "as": "session",
+            })]
+        );
+    }
 }

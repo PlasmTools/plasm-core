@@ -101,8 +101,10 @@ pub(in crate::plasm_dag) enum DagNodeSource {
 }
 
 pub(in crate::plasm_dag) struct CompileState<'a> {
-    pub(in crate::plasm_dag) nodes: Vec<DagNode>,
-    pub(in crate::plasm_dag) labels: BTreeMap<String, usize>,
+    /// Shared node bodies — scratch overlays Arc-clone this vec instead of deep-copying DAG payloads.
+    pub(in crate::plasm_dag) nodes: Vec<Arc<DagNode>>,
+    /// Copy-on-write label index (Arc::make_mut on insert / scratch extend).
+    pub(in crate::plasm_dag) labels: Arc<BTreeMap<String, usize>>,
     pub(in crate::plasm_dag) pipeline: &'a PromptPipelineConfig,
     pub(in crate::plasm_dag) cross_cache: Option<&'a SymbolMapCrossRequestCache>,
     pub(in crate::plasm_dag) sym_map: RefCell<Option<Arc<dyn plasm_core::SymbolSession>>>,
@@ -115,7 +117,7 @@ impl<'a> CompileState<'a> {
     ) -> Self {
         Self {
             nodes: Vec::new(),
-            labels: BTreeMap::new(),
+            labels: Arc::new(BTreeMap::new()),
             pipeline,
             cross_cache,
             sym_map: RefCell::new(None),
@@ -135,7 +137,8 @@ impl<'a> CompileState<'a> {
     }
 
     pub(in crate::plasm_dag) fn insert(&mut self, node: DagNode) -> Result<(), String> {
-        if self.labels.contains_key(&node.id) {
+        let labels = Arc::make_mut(&mut self.labels);
+        if labels.contains_key(&node.id) {
             if node.id.starts_with("return_") {
                 return Err(program_duplicate_return_node_error());
             }
@@ -144,13 +147,15 @@ impl<'a> CompileState<'a> {
                 label = node.id
             ));
         }
-        self.labels.insert(node.id.clone(), self.nodes.len());
-        self.nodes.push(node);
+        labels.insert(node.id.clone(), self.nodes.len());
+        self.nodes.push(Arc::new(node));
         Ok(())
     }
 
     pub(in crate::plasm_dag) fn get(&self, id: &str) -> Option<&DagNode> {
-        self.labels.get(id).and_then(|i| self.nodes.get(*i))
+        self.labels
+            .get(id)
+            .and_then(|i| self.nodes.get(*i).map(|n| n.as_ref()))
     }
 
     pub(in crate::plasm_dag) fn contains(&self, id: &str) -> bool {

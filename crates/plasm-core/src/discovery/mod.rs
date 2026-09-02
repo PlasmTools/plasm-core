@@ -1415,7 +1415,7 @@ mod tests {
     #[test]
     fn discovery_hints_score_and_surface_in_capability_description() {
         use crate::schema::{
-            CapabilityMapping, CapabilityTemplateJson, DiscoveryCapabilityHints,
+            CapabilityInputs, CapabilityMapping, CapabilityTemplateJson, DiscoveryCapabilityHints,
             DiscoveryEntityHints, EntityDef,
         };
         use crate::{CapabilityName, EntityFieldName, EntityName};
@@ -1455,7 +1455,7 @@ mod tests {
             mapping: CapabilityMapping {
                 template: CapabilityTemplateJson(serde_json::json!({ "method": "GET" })),
             },
-            input_schema: None,
+            inputs: CapabilityInputs::default(),
             output_schema: None,
             provides: vec![],
             sanitizes: vec![],

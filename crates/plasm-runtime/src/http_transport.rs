@@ -286,8 +286,6 @@ fn build_compiled_reqwest(
         }
     }
 
-    req_builder = apply_resolved_auth(req_builder, auth);
-
     if let Some(headers) = &request.headers {
         let json_val = plasm_value_to_json(headers)?;
         if let Some(obj) = json_val.as_object() {
@@ -307,12 +305,24 @@ fn build_compiled_reqwest(
                 if header_val.trim().is_empty() {
                     continue;
                 }
+                if let Some((resolved_key, _)) = auth.as_ref().and_then(|resolved| {
+                    resolved
+                        .headers
+                        .iter()
+                        .find(|(resolved_key, _)| resolved_key.eq_ignore_ascii_case(key))
+                }) {
+                    return Err(RuntimeError::ConfigurationError {
+                        message: format!(
+                            "CML template header `{key}` conflicts with resolver-owned authentication header `{resolved_key}`"
+                        ),
+                    });
+                }
                 req_builder = req_builder.header(key, header_val);
             }
         }
     }
 
-    Ok(req_builder)
+    Ok(apply_resolved_auth(req_builder, auth))
 }
 
 #[async_trait]
@@ -1326,6 +1336,7 @@ mod multipart_wire_tests {
 #[cfg(test)]
 mod json_wire_tests {
     use super::build_compiled_reqwest;
+    use crate::auth::ResolvedAuth;
     use indexmap::IndexMap;
     use plasm_compile::{CompiledRequest, HttpBodyFormat, HttpMethod};
     use plasm_core::Value;
@@ -1368,6 +1379,40 @@ mod json_wire_tests {
         assert!(
             !decoded.contains("PokÃ"),
             "mojibake must not appear in wire JSON: {decoded}"
+        );
+    }
+
+    #[test]
+    fn compiled_request_rejects_template_override_of_resolver_auth_header() {
+        let request = CompiledRequest {
+            method: HttpMethod::Get,
+            path: "/v1/items".into(),
+            query: None,
+            body: None,
+            body_format: HttpBodyFormat::Json,
+            multipart: None,
+            headers: Some(Value::Object(IndexMap::from([(
+                "authorization".into(),
+                Value::String("Bearer template-secret".into()),
+            )]))),
+        };
+        let auth = ResolvedAuth {
+            headers: vec![("Authorization".into(), "Bearer resolver-secret".into())],
+            query_params: Vec::new(),
+        };
+
+        let err = build_compiled_reqwest(
+            &reqwest::Client::new(),
+            "https://api.example.test/v1/items",
+            &request,
+            Some(auth),
+        )
+        .expect_err("template must not override resolver auth");
+
+        assert!(
+            err.to_string()
+                .contains("resolver-owned authentication header"),
+            "unexpected error: {err}"
         );
     }
 }

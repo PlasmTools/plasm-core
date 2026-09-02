@@ -11,6 +11,13 @@ use sha2::{Digest, Sha256};
 use std::ops::Deref;
 use std::sync::{Arc, OnceLock};
 
+#[path = "capability_inputs.rs"]
+mod capability_inputs;
+pub use capability_inputs::{
+    BackendSelectionSchema, CapabilityExecutionSchema, CapabilityInputs, ContextRequirement,
+    InvocationControlsSchema, ParentScopeSchema,
+};
+
 /// Opaque CML mapping payload (HTTP or EVM); validated at load via `plasm_compile::parse_capability_template`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -552,7 +559,7 @@ impl NamedValueSchema {
     ) -> Self {
         let field_type = domain.to_field_type();
         let value_format = domain.to_value_format();
-        let allowed_values = domain.enum_values.clone();
+        let allowed_values = domain.enum_membership.as_ref().map(|m| m.tokens().to_vec());
         let currency = domain.currency.clone();
         Self {
             description,
@@ -847,9 +854,9 @@ pub struct CapabilitySchema {
     pub kind: CapabilityKind,
     pub domain: EntityName, // Entity this capability operates on
     pub mapping: CapabilityMapping,
-    /// Input schema for invoke capabilities (optional for query/get)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub input_schema: Option<InputSchema>,
+    /// Structurally disjoint capability-input lanes.
+    #[serde(flatten)]
+    pub inputs: CapabilityInputs,
     /// Output schema specification (for validation and projection)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_schema: Option<OutputSchema>,
@@ -930,34 +937,6 @@ impl std::fmt::Display for CapabilityKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
     }
-}
-
-/// Semantic role of a capability parameter.
-///
-/// All roles produce the same HTTP transport (a query param or path segment),
-/// but carry different meaning for agents and LLM tooling:
-/// - [`Filter`]: equality/range predicate on entity field values
-/// - [`Search`]: free-text relevance query (`q`, `query`, `search`)
-/// - [`Sort`]: selects a sort field (`order_by`)
-/// - [`SortDirection`]: ascending/descending companion to Sort
-/// - [`ResponseControl`]: modifies payload shape (`embed`, `fields`, `inc`)
-/// - [`Scope`]: parent-entity pivot wired into the URL path (entity_ref, required)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum ParameterRole {
-    /// Default. Equality or range predicate on entity field values.
-    #[default]
-    Filter,
-    /// Free-text relevance query (`q`, `query`, `search`).
-    Search,
-    /// Sort field selector (`order_by`, `sort_by`).
-    Sort,
-    /// Sort direction (`sort`, `asc`/`desc`) — companion to [`Sort`].
-    SortDirection,
-    /// Payload shape control (`embed`, `fields`, `inc`, `exc`).
-    ResponseControl,
-    /// Parent-entity FK pivot wired into the URL path segment.
-    Scope,
 }
 
 /// Mapping configuration for how this capability translates to backend calls.
@@ -1170,23 +1149,23 @@ pub fn capability_method_label_kebab(cap: &CapabilitySchema) -> String {
 /// invalid, so such a capability is **not** zero-arity even when every individual field is optional —
 /// the teaching surface must synthesize `method(field=…)`, never a bare `method()`.
 pub fn capability_is_zero_arity_invoke(cap: &CapabilitySchema) -> bool {
-    let Some(is) = &cap.input_schema else {
-        return true;
-    };
-    let no_required_field = match &is.input_type {
-        InputType::Object { fields, .. } => !fields.iter().any(|f| f.required),
-        InputType::None => true,
-        _ => false,
-    };
-    if !no_required_field {
-        return false;
-    }
-    !is.validation.cross_field_rules.iter().any(|rule| {
-        matches!(
-            rule.rule_type,
-            CrossFieldRuleType::AtLeastOne | CrossFieldRuleType::ExactlyOne
-        )
-    })
+    [cap.inputs.arguments.as_ref(), cap.inputs.payload.as_ref()]
+        .into_iter()
+        .flatten()
+        .all(|schema| {
+            let no_required_field = match &schema.input_type {
+                InputType::Object { fields, .. } => !fields.iter().any(|f| f.required),
+                InputType::None => true,
+                _ => false,
+            };
+            no_required_field
+                && !schema.validation.cross_field_rules.iter().any(|rule| {
+                    matches!(
+                        rule.rule_type,
+                        CrossFieldRuleType::AtLeastOne | CrossFieldRuleType::ExactlyOne
+                    )
+                })
+        })
 }
 
 /// Deprecated alias for [`capability_is_zero_arity_invoke`].
@@ -1339,9 +1318,6 @@ pub struct InputFieldSchema {
     pub description: Option<String>,
     /// Default value if not provided
     pub default: Option<crate::Value>,
-    /// Semantic role of this parameter. Defaults to `filter`.
-    /// Agents and LLM tooling use this to understand how the param affects results.
-    pub role: Option<ParameterRole>,
     /// Optional sink class for information-flow validation on this parameter.
     pub sink_class: Option<SinkClassName>,
     /// When set on a union variant body field: nest this field's JSON under these segments when
@@ -1353,6 +1329,7 @@ pub struct InputFieldSchema {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct InputFieldSchemaDeHelper {
     name: String,
     #[serde(default)]
@@ -1365,8 +1342,6 @@ struct InputFieldSchemaDeHelper {
     description: Option<String>,
     #[serde(default)]
     default: Option<crate::Value>,
-    #[serde(default)]
-    role: Option<ParameterRole>,
     #[serde(default)]
     sink_class: Option<SinkClassName>,
     #[serde(default)]
@@ -1400,7 +1375,6 @@ impl TryFrom<InputFieldSchemaDeHelper> for InputFieldSchema {
             required: h.required,
             description: h.description,
             default: h.default,
-            role: h.role,
             sink_class: h.sink_class,
             wire_json_path: h.wire_json_path,
             wire_array_element_key: h.wire_array_element_key,
@@ -1410,7 +1384,7 @@ impl TryFrom<InputFieldSchemaDeHelper> for InputFieldSchema {
 
 impl Serialize for InputFieldSchema {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut state = serializer.serialize_struct("InputFieldSchema", 10)?;
+        let mut state = serializer.serialize_struct("InputFieldSchema", 9)?;
         state.serialize_field("name", &self.name)?;
         match &self.wire {
             InputFieldWire::Registry(k) => state.serialize_field("value_ref", k)?,
@@ -1422,9 +1396,6 @@ impl Serialize for InputFieldSchema {
         }
         if self.default.is_some() {
             state.serialize_field("default", &self.default)?;
-        }
-        if !is_default_role(&self.role) {
-            state.serialize_field("role", &self.role)?;
         }
         if self.sink_class.is_some() {
             state.serialize_field("sink_class", &self.sink_class)?;
@@ -1446,10 +1417,6 @@ impl<'de> Deserialize<'de> for InputFieldSchema {
     }
 }
 
-fn is_default_role(r: &Option<ParameterRole>) -> bool {
-    matches!(r, None | Some(ParameterRole::Filter))
-}
-
 /// [`InputType::Object`] view of a union variant payload (no wire discriminator in the surface form).
 #[inline]
 pub fn input_variant_body_type(v: &InputVariantSchema) -> InputType {
@@ -1465,28 +1432,37 @@ pub fn union_variant_constructor_symbol(v: &InputVariantSchema) -> Option<&str> 
     v.constructor_symbol.as_deref()
 }
 
-/// Resolve a dotted capability input path (`operations.replace_block.ref`) against `cap.input_schema`.
+/// Resolve a dotted capability input path (`operations.replace_block.ref`) against invocation
+/// arguments and payload. Structural source lanes are resolved through their dedicated accessors.
 pub(crate) fn resolve_capability_input_param_field<'a>(
     cap: &'a CapabilitySchema,
     path: &str,
 ) -> Option<&'a InputFieldSchema> {
-    let is = cap.input_schema.as_ref()?;
     if path.is_empty() {
         return None;
     }
     let segments: Vec<&str> = path.split('.').collect();
-    match &is.input_type {
-        InputType::Object { fields, .. } => resolve_input_fields_path(fields, segments.as_slice()),
-        InputType::Union { variants } => {
-            for v in variants {
-                if let Some(f) = resolve_input_fields_path(&v.fields, segments.as_slice()) {
-                    return Some(f);
+    for schema in [cap.inputs.arguments.as_ref(), cap.inputs.payload.as_ref()]
+        .into_iter()
+        .flatten()
+    {
+        match &schema.input_type {
+            InputType::Object { fields, .. } => {
+                if let Some(field) = resolve_input_fields_path(fields, segments.as_slice()) {
+                    return Some(field);
                 }
             }
-            None
+            InputType::Union { variants } => {
+                for v in variants {
+                    if let Some(f) = resolve_input_fields_path(&v.fields, segments.as_slice()) {
+                        return Some(f);
+                    }
+                }
+            }
+            _ => {}
         }
-        _ => None,
     }
+    None
 }
 
 fn resolve_input_fields_path<'a>(
@@ -2950,12 +2926,8 @@ impl CGS {
                     }
                 }
 
-                let mut allowed_params: HashSet<String> = HashSet::new();
-                if let Some(fields) = nc.object_params() {
-                    for f in fields {
-                        allowed_params.insert(f.name.clone());
-                    }
-                }
+                let mut allowed_params: HashSet<String> =
+                    nc.input_fields().map(|f| f.name.clone()).collect();
                 if nc.kind == CapabilityKind::Get {
                     allowed_params.insert("id".to_string());
                 }
@@ -3174,12 +3146,8 @@ impl CGS {
                 });
             }
             if let Some(keys) = &cap.identity_key {
-                let params: std::collections::HashSet<String> = cap
-                    .object_params()
-                    .into_iter()
-                    .flatten()
-                    .map(|f| f.name.clone())
-                    .collect();
+                let params: std::collections::HashSet<String> =
+                    cap.input_fields().map(|f| f.name.clone()).collect();
                 for key in keys {
                     if !params.contains(key.as_str()) {
                         return Err(SchemaError::IdentityKeyUnknownParam {
@@ -3544,13 +3512,9 @@ impl CGS {
 
         // EntityRef on capability parameters, name-alignment for query capabilities
         for (cap_name, cap) in &self.capabilities {
-            let Some(fields) = cap.object_params() else {
-                continue;
-            };
-
             let domain_entity = self.entities.get(&cap.domain);
 
-            for param in fields {
+            for param in cap.input_fields() {
                 match &param.wire {
                     InputFieldWire::Inline(ty) => {
                         Self::validate_input_type_capability_param_shapes(
@@ -3610,6 +3574,7 @@ impl CGS {
         self.validate_closed_data_class_refs()?;
         self.validate_registry_denormalization()?;
         self.validate_pipeline_segment_disjointness()?;
+        self.validate_capability_input_lanes()?;
 
         // At most one parameterless (no required params at all) query/search per entity.
         // Multiple unscoped query/search caps require explicit primary_query / primary_search on the entity.
@@ -3687,6 +3652,118 @@ impl CGS {
         Ok(())
     }
 
+    fn validate_capability_input_lanes(&self) -> Result<(), SchemaError> {
+        for (cap_name, cap) in &self.capabilities {
+            if matches!(cap.kind, CapabilityKind::Query | CapabilityKind::Search)
+                && (cap.inputs.arguments.is_some() || cap.inputs.payload.is_some())
+            {
+                return Err(SchemaError::SchemaConstraint {
+                    message: format!(
+                        "capability '{cap_name}': query/search inputs may only use execution, scope, selection, and controls"
+                    ),
+                });
+            }
+            if !matches!(cap.kind, CapabilityKind::Query | CapabilityKind::Search)
+                && !cap.selection_params().is_empty()
+            {
+                return Err(SchemaError::SchemaConstraint {
+                    message: format!(
+                        "capability '{cap_name}': selection is only valid on query/search capabilities"
+                    ),
+                });
+            }
+
+            let mut owners = std::collections::BTreeMap::<String, &'static str>::new();
+            let mut register = |name: &str, lane: &'static str| -> Result<(), SchemaError> {
+                if name.trim().is_empty() {
+                    return Err(SchemaError::SchemaConstraint {
+                        message: format!(
+                            "capability '{cap_name}': {lane} contains an empty input name"
+                        ),
+                    });
+                }
+                if let Some(previous) = owners.insert(name.to_string(), lane) {
+                    return Err(SchemaError::SchemaConstraint {
+                        message: format!(
+                            "capability '{cap_name}': input '{name}' appears in both {previous} and {lane}; capability input lanes must be disjoint"
+                        ),
+                    });
+                }
+                Ok(())
+            };
+
+            for field in cap.scope_params() {
+                register(&field.name, "scope")?;
+            }
+            for field in cap.selection_params() {
+                register(&field.name, "selection")?;
+            }
+            for field in cap.control_params() {
+                register(&field.name, "controls")?;
+            }
+            for field in cap
+                .inputs
+                .arguments
+                .as_ref()
+                .into_iter()
+                .flat_map(input_schema_top_level_fields)
+            {
+                register(&field.name, "arguments")?;
+            }
+            for field in cap
+                .inputs
+                .payload
+                .as_ref()
+                .into_iter()
+                .flat_map(input_schema_top_level_fields)
+            {
+                register(&field.name, "payload")?;
+            }
+
+            let Some(context) = cap.inputs.execution.context.as_ref() else {
+                continue;
+            };
+            if context.bindings.is_empty() {
+                return Err(SchemaError::SchemaConstraint {
+                    message: format!(
+                        "capability '{cap_name}': execution.context.bindings must not be empty"
+                    ),
+                });
+            }
+            let entity = self.entities.get(&context.entity).ok_or_else(|| {
+                SchemaError::SchemaConstraint {
+                    message: format!(
+                        "capability '{cap_name}': execution.context.entity '{}' does not exist",
+                        context.entity
+                    ),
+                }
+            })?;
+            let template_vars = capability_template_all_var_names(&cap.mapping.template.0);
+            for (slot, row_field) in &context.bindings {
+                register(slot, "execution.context")?;
+                if !template_vars.iter().any(|name| name == slot) {
+                    return Err(SchemaError::SchemaConstraint {
+                        message: format!(
+                            "capability '{cap_name}': execution.context binding slot '{slot}' is not referenced by its CML template"
+                        ),
+                    });
+                }
+                let field_exists = row_field == &entity.id_field
+                    || entity.fields.contains_key(row_field)
+                    || entity.key_vars.iter().any(|key| key == row_field);
+                if !field_exists {
+                    return Err(SchemaError::SchemaConstraint {
+                        message: format!(
+                            "capability '{cap_name}': execution.context binding '{slot}' references unknown field '{}.{}'",
+                            context.entity, row_field
+                        ),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Reject `body: { type: var, name: input }` when a scalar capability parameter is also named
     /// `input`. [`execute_create`](../../crates/plasm-runtime/src/execution.rs) splats each param key
     /// into the CML env after binding the aggregate, overwriting `env["input"]` with the scalar.
@@ -3695,10 +3772,7 @@ impl CGS {
             if !mapping_body_is_whole_var_input(&cap.mapping.template.0) {
                 continue;
             }
-            let Some(fields) = cap.object_params() else {
-                continue;
-            };
-            for param in fields {
+            for param in cap.input_fields() {
                 if param.name.as_str() != "input" {
                     continue;
                 }
@@ -4349,7 +4423,20 @@ impl CGS {
         }
 
         for (cap_name, cap) in &self.capabilities {
-            if let Some(ref is) = cap.input_schema {
+            for field in cap
+                .scope_params()
+                .iter()
+                .chain(cap.selection_params())
+                .chain(cap.control_params())
+            {
+                Self::validate_input_field_closed_value_refs(
+                    self,
+                    field,
+                    &format!("capability '{cap_name}'"),
+                    &check_array_items,
+                )?;
+            }
+            for is in cap.invocation_input_schemas() {
                 Self::validate_input_type_closed_value_refs(
                     self,
                     &is.input_type,
@@ -4479,7 +4566,20 @@ impl CGS {
         }
 
         let mut out = Vec::new();
-        if let Some(input_schema) = cap.input_schema.as_ref() {
+        for field in cap
+            .scope_params()
+            .iter()
+            .chain(cap.selection_params())
+            .chain(cap.control_params())
+        {
+            if field.sink_class.is_some() {
+                out.push(field);
+            }
+            if let InputFieldWire::Inline(ty) = &field.wire {
+                collect_sink_params(ty.as_ref(), &mut out);
+            }
+        }
+        for input_schema in cap.invocation_input_schemas() {
             collect_sink_params(&input_schema.input_type, &mut out);
         }
         out
@@ -4548,7 +4648,20 @@ impl CGS {
         }
 
         for (cap_name, cap) in &self.capabilities {
-            if let Some(ref is) = cap.input_schema {
+            for field in cap
+                .scope_params()
+                .iter()
+                .chain(cap.selection_params())
+                .chain(cap.control_params())
+            {
+                Self::validate_input_field_registry_denormalization(
+                    self,
+                    field,
+                    &format!("capability '{cap_name}'"),
+                    &array_items_agree_with_values,
+                )?;
+            }
+            for is in cap.invocation_input_schemas() {
                 Self::validate_input_type_registry_denormalization(
                     self,
                     &is.input_type,
@@ -4613,10 +4726,17 @@ impl CGS {
         }
 
         for (cap_name, cap) in &self.capabilities {
-            let Some(input) = cap.input_schema.as_ref() else {
-                continue;
-            };
-            Self::validate_input_type_temporal_params(self, &input.input_type, cap_name, "")?;
+            for field in cap
+                .scope_params()
+                .iter()
+                .chain(cap.selection_params())
+                .chain(cap.control_params())
+            {
+                Self::validate_input_field_temporal_params(self, field, cap_name, "")?;
+            }
+            for input in cap.invocation_input_schemas() {
+                Self::validate_input_type_temporal_params(self, &input.input_type, cap_name, "")?;
+            }
         }
 
         Ok(())
@@ -4704,10 +4824,7 @@ impl CGS {
             if cap.kind != CapabilityKind::Query {
                 continue;
             }
-            let Some(fields) = cap.object_params() else {
-                continue;
-            };
-            for p in fields {
+            for p in cap.scope_params() {
                 let Ok(nv) = p.named_value(self) else {
                     continue;
                 };
@@ -5287,12 +5404,13 @@ impl CGS {
                 cap.kind
             ));
         }
-        let Some(fields) = cap.object_params() else {
+        let fields = cap.scope_params();
+        if fields.is_empty() {
             return err(
-                "capability has no object-typed input parameters; query_scoped materialization requires them"
+                "capability has no parent-scope parameters; query_scoped materialization requires them"
                     .into(),
             );
-        };
+        }
         for name in required_param_names {
             if !fields.iter().any(|f| f.name == *name) {
                 return err(format!(
@@ -5321,15 +5439,16 @@ impl CGS {
                 detail: "no such capability".into(),
             }
         })?;
-        let fields = cap.object_params().ok_or_else(|| {
-            SchemaError::RelationMaterializeCapabilityInvalid {
+        let fields = cap.scope_params();
+        if fields.is_empty() {
+            return Err(SchemaError::RelationMaterializeCapabilityInvalid {
                 entity: parent_entity.to_string(),
                 relation: relation.to_string(),
                 target: cap.domain.to_string(),
                 capability: capability.to_string(),
-                detail: "capability has no object input".into(),
-            }
-        })?;
+                detail: "capability has no parent-scope input".into(),
+            });
+        }
         for (cap_param, parent_field) in bindings {
             let Some(param_schema) = fields.iter().find(|f| cap_param.as_str() == f.name) else {
                 continue;
@@ -5403,12 +5522,13 @@ impl CGS {
         if cap.kind != CapabilityKind::Get {
             return err(format!("capability kind must be get (got {:?})", cap.kind));
         }
-        let Some(fields) = cap.object_params() else {
+        let fields = cap.scope_params();
+        if fields.is_empty() {
             return err(
-                "capability has no object-typed input parameters; get_scoped_bindings requires them"
+                "capability has no parent-scope parameters; get_scoped_bindings requires them"
                     .into(),
             );
-        };
+        }
         for name in required_param_names {
             if !fields.iter().any(|f| f.name == *name) {
                 return err(format!(
@@ -5430,8 +5550,10 @@ impl CGS {
         for kind in [CapabilityKind::Query, CapabilityKind::Search] {
             for cap in self.find_capabilities(entity, kind) {
                 if cap
-                    .object_params()
-                    .is_some_and(|fields| fields.iter().any(|f| f.name == param_name.as_str()))
+                    .scope_params()
+                    .iter()
+                    .chain(cap.selection_params())
+                    .any(|f| f.name == param_name.as_str())
                 {
                     return Some(cap);
                 }
@@ -5454,9 +5576,11 @@ impl CGS {
         let required: HashSet<&str> = param_names.iter().map(|p| p.as_str()).collect();
         for kind in [CapabilityKind::Query, CapabilityKind::Search] {
             for cap in self.find_capabilities(entity, kind) {
-                let Some(fields) = cap.object_params() else {
-                    continue;
-                };
+                let fields: Vec<_> = cap
+                    .scope_params()
+                    .iter()
+                    .chain(cap.selection_params())
+                    .collect();
                 let mut ok = true;
                 for p in &required {
                     if !fields.iter().any(|f| f.name == *p) {
@@ -5542,35 +5666,66 @@ impl CapabilitySchema {
         self.deterministic.unwrap_or(true)
     }
 
-    /// Object-typed input parameters for this capability, if any.
-    ///
-    /// Returns `None` when there is no input schema or the input is not `InputType::Object`.
-    pub fn object_params(&self) -> Option<&[InputFieldSchema]> {
-        self.input_schema
+    pub fn scope_params(&self) -> &[InputFieldSchema] {
+        &self.inputs.scope.0
+    }
+
+    pub fn selection_params(&self) -> &[InputFieldSchema] {
+        &self.inputs.selection.0
+    }
+
+    pub fn control_params(&self) -> &[InputFieldSchema] {
+        &self.inputs.controls.0
+    }
+
+    pub fn invocation_input_schemas(&self) -> impl Iterator<Item = &InputSchema> {
+        [self.inputs.arguments.as_ref(), self.inputs.payload.as_ref()]
+            .into_iter()
+            .flatten()
+    }
+
+    /// Top-level object fields from `inputs.arguments` / `inputs.payload` (invoke/create body).
+    pub fn invocation_object_fields(&self) -> impl Iterator<Item = &InputFieldSchema> {
+        self.invocation_input_schemas()
+            .flat_map(input_schema_top_level_fields)
+    }
+
+    /// Scope + selection + control params (query/search surface braces and CLI flags).
+    pub fn query_surface_fields(&self) -> impl Iterator<Item = &InputFieldSchema> {
+        self.scope_params()
+            .iter()
+            .chain(self.selection_params().iter())
+            .chain(self.control_params().iter())
+    }
+
+    /// Preferred create/invoke body schema: `inputs.payload`, else `inputs.arguments`.
+    pub fn primary_invocation_schema(&self) -> Option<&InputSchema> {
+        self.inputs
+            .payload
             .as_ref()
-            .and_then(|input| match &input.input_type {
-                InputType::Object { fields, .. } => Some(fields.as_slice()),
-                _ => None,
-            })
+            .or(self.inputs.arguments.as_ref())
     }
 
-    /// Whether this capability has at least one required parameter with `role: scope`.
-    ///
-    /// Scoped capabilities (e.g. `GET /classes/{class_index}/spells`) use the scope
-    /// param in the URL path. In the CLI they get named subcommands (not the generic
-    /// `query` verb) because they require a parent-entity pivot.
+    pub fn input_fields(&self) -> impl Iterator<Item = &InputFieldSchema> {
+        self.scope_params()
+            .iter()
+            .chain(self.selection_params())
+            .chain(self.control_params())
+            .chain(
+                self.invocation_input_schemas()
+                    .flat_map(input_schema_top_level_fields),
+            )
+    }
+
+    /// Whether this capability has a required typed parent-scope parameter.
     pub fn has_required_scope_param(&self) -> bool {
-        self.object_params().is_some_and(|fields| {
-            fields
-                .iter()
-                .any(|f| f.required && matches!(f.role, Some(ParameterRole::Scope)))
-        })
+        self.scope_params().iter().any(|f| f.required)
     }
 
-    /// Whether this capability has at least one required parameter (any role).
+    /// Whether this capability has at least one required parameter in any structural lane,
+    /// or declares `inputs.execution.context` (a required source-invocation binding).
     pub fn has_any_required_param(&self) -> bool {
-        self.object_params()
-            .is_some_and(|fields| fields.iter().any(|f| f.required))
+        self.inputs.execution.context.is_some() || self.input_fields().any(|f| f.required)
     }
 
     /// See [`template_domain_exemplar_requires_entity_anchor`].
@@ -5621,7 +5776,7 @@ impl CapabilitySchema {
             mapping: CapabilityMapping {
                 template: CapabilityTemplateJson(serde_json::json!({ "method": "POST" })),
             },
-            input_schema: None,
+            inputs: CapabilityInputs::default(),
             output_schema: None,
             provides: vec![],
             sanitizes: vec![],
@@ -5632,6 +5787,13 @@ impl CapabilitySchema {
             identity_key: None,
             invalidates_entities: vec![],
         }
+    }
+}
+
+fn input_schema_top_level_fields(schema: &InputSchema) -> &[InputFieldSchema] {
+    match &schema.input_type {
+        InputType::Object { fields, .. } => fields,
+        _ => &[],
     }
 }
 
@@ -5763,7 +5925,6 @@ pub mod registry_test_util {
             required,
             description: None,
             default: None,
-            role: None,
             sink_class: None,
             wire_json_path: None,
             wire_array_element_key: None,

@@ -29,49 +29,49 @@ capabilities:
     description: Update account fields
     kind: update
     entity: Account
-    input_schema:
+    scope:
+    - name: id
+      value_ref: nv_account_id
+      required: false
+      description: Account id (path-bound; injected from the receiver, not a body field)
+    payload:
       description: Update account fields
       input_type:
         type: object
         additional_fields: false
         fields:
-          - name: id
-            value_ref: nv_account_id
-            required: false
-            role: scope
-            description: Account id (path-bound; injected from the receiver, not a body field)
-          - name: name
-            value_ref: nv_update_name
-            required: false
-            description: Updated account name
-          - name: revenue
-            value_ref: nv_update_revenue
-            required: false
-            description: Updated revenue amount
-          - name: priority
-            value_ref: nv_update_priority
-            required: false
-            description: Account priority level
-          - name: artifact
-            value_ref: nv_update_artifact
-            required: false
-            description: Optional opaque attachment bytes
+        - name: name
+          value_ref: nv_update_name
+          required: false
+          description: Updated account name
+        - name: revenue
+          value_ref: nv_update_revenue
+          required: false
+          description: Updated revenue amount
+        - name: priority
+          value_ref: nv_update_priority
+          required: false
+          description: Account priority level
+        - name: artifact
+          value_ref: nv_update_artifact
+          required: false
+          description: Optional opaque attachment bytes
       validation:
         allow_null: false
         cross_field_rules:
-          - rule_type: at_least_one
-            fields:
-              - name
-              - revenue
-              - priority
-            error_message: At least one field must be provided for update
+        - rule_type: at_least_one
+          fields:
+          - name
+          - revenue
+          - priority
+          error_message: At least one field must be provided for update
       examples:
-        - name: Updated Corp
-          revenue: 1500
-        - priority: high
-        - name: New Name
-          priority: medium
-          revenue: 2000
+      - name: Updated Corp
+        revenue: 1500
+      - priority: high
+      - name: New Name
+        priority: medium
+        revenue: 2000
 values:
   nv_account_id:
     type: string
@@ -88,8 +88,8 @@ values:
   nv_update_priority:
     type: enum
     enum:
-      - low
-      - medium
-      - high
+    - low
+    - medium
+    - high
   nv_update_artifact:
     type: blob

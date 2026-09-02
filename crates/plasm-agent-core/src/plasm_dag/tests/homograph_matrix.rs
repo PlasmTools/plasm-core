@@ -60,7 +60,7 @@ fn matrix_homograph_projection_resolves_entity_scoped_p_symbols() {
         // Distinct symbols — still verify each entity resolves its own wire.
     }
     let source_a = format!(
-        "rows_a = {row_a}\nrows_a[{p_headline}]",
+        "rows_a = {row_a}\nrows_a | select {p_headline}",
         row_a = row_a,
         p_headline = p_headline
     );
@@ -85,7 +85,7 @@ fn matrix_homograph_projection_resolves_entity_scoped_p_symbols() {
         .contains_key("headline"));
 
     let source_b = format!(
-        "rows_b = {row_b}\nrows_b[{p_caption}]",
+        "rows_b = {row_b}\nrows_b | select {p_caption}",
         row_b = row_b,
         p_caption = p_caption
     );
@@ -448,7 +448,7 @@ fn matrix_update_accepts_column_projection_array_from_plural_tags() {
     let p_item_id = map.ident_sym_entity_field_for("langmatrix", "LangItem", "id");
     let source = format!(
         r#"created = {item_e}.{create_m}({p_create_title}="matrix item", {p_create_score}=1, {p_create_owner}="bot")
-tags = {tag_e}{{{p_tag_item}=created.{p_item_id}}}[{p_tag_label}]
+tags = from {tag_e}{{{p_tag_item}=created.{p_item_id}}} | select {p_tag_label}
 updated = {item_e}({p_item_id}=created.{p_item_id}).{update_m}({p_update_tags}=tags.{p_tag_label})
 updated"#,
         item_e = item_e,

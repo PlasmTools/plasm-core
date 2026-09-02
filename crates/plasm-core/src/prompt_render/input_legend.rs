@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 ///
 /// The glyph is chosen at the arrow so an agent can read *chainability* directly from the arrow:
 /// - [`ReturnArrow::Single`] `→` — one record; a chainable anchor (`.r#` / `.m#` / get-head reuse).
-/// - [`ReturnArrow::List`] `↣` — a list of rows; chainable via postfix (`.filter{…}` / `.sort` / `[field,…]`).
+/// - [`ReturnArrow::List`] `↣` — a list of rows; transformable via `| where` / `| select` /
+///   `| summarize` / `| order by` / `| take` / `| distinct`.
 /// - [`ReturnArrow::Terminal`] `↠` — a terminal write result (or unit `()`); **not** an expression
 ///   anchor. To keep operating, reconstruct the entity with a get (`e#(id=…)`) then chain `.m#`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

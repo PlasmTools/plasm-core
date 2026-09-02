@@ -44,11 +44,10 @@ capabilities:
     description: Search products
     kind: search
     entity: Product
-    parameters:
+    selection:
     - name: q
       value_ref: nv_product_search_q
       required: true
-      role: search
   product_get:
     description: Fetch a product by id
     kind: get

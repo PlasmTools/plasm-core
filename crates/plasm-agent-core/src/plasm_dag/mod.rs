@@ -8,7 +8,7 @@ mod binding_continuation;
 mod binding_contract;
 mod invoke_cardinality;
 mod plan_serialize;
-mod postfix;
+mod row_suffix;
 mod prelude;
 mod relation;
 mod schema_validate;
@@ -39,7 +39,7 @@ pub(in crate::plasm_dag) use binding_contract::binding_contract;
 #[allow(unused_imports)]
 pub(in crate::plasm_dag) use pipeline::{
     compile_node_expr, longest_matching_bound_prefix, relation_wire_names_for_source, require_node,
-    rewrite_binding_field_projection_root, split_return_list,
+    split_return_list,
 };
 #[allow(unused_imports)]
 pub(in crate::plasm_dag) use plan_serialize::{node_to_json, parse_aggregates};
@@ -48,7 +48,7 @@ pub(in crate::plasm_dag) use plasm_core::expr_parser::{
     collect_program_statement_lines, split_top_level,
 };
 #[allow(unused_imports)]
-pub(in crate::plasm_dag) use postfix::postfix_op_to_compute;
+pub(in crate::plasm_dag) use row_suffix::row_suffix_to_compute;
 #[allow(unused_imports)]
 pub(in crate::plasm_dag) use relation::{
     lookup_relation_chain_meta, resolve_relation_segment_for_continuation,

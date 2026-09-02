@@ -491,7 +491,7 @@ fn intent_surface_ranked_list_does_not_cage_scored_seeded_create() {
 
 #[test]
 fn intent_only_admits_mutators_on_readless_seeded_auth_session() {
-    use crate::schema::{CapabilityMapping, CapabilityTemplateJson, EntityDef};
+    use crate::schema::{CapabilityInputs, CapabilityMapping, CapabilityTemplateJson, EntityDef};
     use crate::{CapabilityName, EntityFieldName, EntityName};
     use indexmap::IndexMap;
 
@@ -526,7 +526,7 @@ fn intent_only_admits_mutators_on_readless_seeded_auth_session() {
         mapping: CapabilityMapping {
             template: CapabilityTemplateJson(serde_json::json!({ "method": "POST" })),
         },
-        input_schema: None,
+        inputs: CapabilityInputs::default(),
         output_schema: None,
         provides: vec![],
         sanitizes: vec![],

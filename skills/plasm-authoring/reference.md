@@ -81,7 +81,7 @@ Split **`domain.yaml`** declares a catalog-local registry of **named semantic sl
 - **`type:`** — a **kernel** name (`string`, `integer`, `number`, `boolean`, `array`, `json`, `entity_ref`, `blob`, `money`) or a **core profile** name (`markdown`, `document`, `html`, `json_text`, `uuid`, `email`, `url`, `http_url`, `hostname`, `e164`, `ipv4`, `ipv6`, `hex`, `base64`, `base64url`, `rfc3339`, `iso8601_date`, `unix_ms`, `unix_sec`, `enum`, `multi_enum`). See [Field Types](#field-types).
 - Type-specific keys on the **value row**: `target` (`entity_ref`), **`enum:`** (`enum` / `multi_enum`; multi_enum must be non-empty), **`constraints:`** (length, pattern, min/max — see Field Types), `currency` (`money`), **`items: { value_ref: <key> }`** (`array` — element shape is another `values` row).
 
-**Entity `fields:`** and **`capabilities.*.parameters:`** list entries declare **only** how that slot uses a shape:
+**Entity `fields:`** and capability **lane** field lists (`selection` / `scope` / `controls` / …) declare **only** how that slot uses a shape:
 
 - **`value_ref: <key>`** — required; must exist in **`values:`**.
 - **`required`**, **`description`**, **`path`**, **`derive`** — on fields (and parameter-specific keys: **`role`**, **`description`** on parameters).
@@ -270,7 +270,21 @@ In split `domain.yaml`, the **`type:`** on a **`values:`** row is either a **ker
 | Presentation | `markdown`, `document`, `html`, `json_text` | string / heredoc | Multiline or structured text — not `blob` |
 | Canned string | `uuid`, `email`, `url`, `http_url`, `hostname`, `e164`, `ipv4`, `ipv6`, `hex`, `base64`, `base64url` | string | Validated string shapes |
 | Temporal | `rfc3339`, `iso8601_date`, `unix_ms`, `unix_sec` | string or integer per profile | Predicate inputs normalize to wire shape (UTC) |
-| Enum | `enum`, `multi_enum` | enum token(s) | Requires non-empty **`enum:`** list |
+| Enum | `enum`, `multi_enum` | enum token(s) | Requires non-empty **`enum:`** list **or** token→gloss map |
+
+**`enum:` teaching glosses (optional map form):**
+
+```yaml
+values:
+  nv_status:
+    type: enum
+    enum:
+      pending: awaiting settlement, not yet resolved
+      approved: fully settled / closed
+      denied: refused end-to-end
+```
+
+List form `enum: [pending, approved, denied]` still works (tokens-only Meaning: `enum · pending | approved | denied`). Map form feeds the compact English→token Meaning `enum · pending: …; approved: …` (no duplicated token list, no `=`). Glosses truncate at 48 UTF-8 bytes. Gloss text must not contain `;` / `|` / `=` / `‖` — the loader rejects them (reserved teaching delimiters).
 
 **Author constraints** — optional on any `values:` row (loader rejects retired keys):
 
@@ -362,7 +376,7 @@ entities:
 
 ### Authoring surface: Plasm expressions
 
-Validate catalogs with `plasm-repl`, MCP `execute`, or any host that evaluates Plasm programs against CGS — not by designing command-line flag matrices. Capability `parameters:`, `input_schema`, relations, and `mappings.yaml` define what the compiler and runtime wire to HTTP; teaching table teaches the `e#` / `m#` / `r#` (+ wire names) shapes agents actually emit.
+Validate catalogs with `plasm-repl`, MCP `execute`, or any host that evaluates Plasm programs against CGS — not by designing command-line flag matrices. Capability **input lanes**, relations, and `mappings.yaml` define what the compiler and runtime wire to HTTP; teaching table teaches the `e#` / `m#` / `r#` (+ wire names) shapes agents actually emit. Surface programs are a **SQL-shaped rowset algebra** — see [docs/plasm-language-definition.md](../../../docs/plasm-language-definition.md#relational-reading).
 
 `entity_ref` enables forward relation navigation and reverse traversal when query parameters align with FK fields (see [Foreign key fields](#foreign-key-fields-entity_ref)).
 
@@ -375,32 +389,46 @@ capabilities:
   <entity>_<operation>:       # unique name, conventionally entity_verb
     kind: <kind>              # see Capability Kinds below
     entity: <EntityName>      # must be a defined entity
-    parameters:               # optional
+    execution:                # optional — see Capability input lanes
+      context:
+        entity: <EntityName>
+        bindings: { <cml_slot>: <field> }
+    scope:                    # parent pivots (path / parent row)
       - name: <param>
         value_ref: <value_key>
         required: <bool>
-        description: <string> # optional
-        role: <role>          # optional — see Parameter Roles
+    selection:                # backend WHERE / search slots (brace predicates)
+      - name: <param>
+        value_ref: <value_key>
+        required: <bool>
+    controls:                 # sort, pagination, response shape — not WHERE
+      - name: <param>
+        value_ref: <value_key>
+        required: <bool>
+    arguments:                # optional InputSchema (non-body args)
+    payload:                  # optional InputSchema (create/update/action body)
 ```
 
-Wire shape for each parameter is `values[value_ref]`.
+Wire shape for each slot is `values[value_ref]`.
 
 **Capability-level `description:`** (the operation, not each parameter): keep short and imperative; see [Teaching-table-facing descriptions](#teaching-table-facing-descriptions-entities-and-capabilities).
 
-**`description` on capability parameters:** Optional. When the prompt uses a symbolic `PromptRenderMode` (compact or tsv, via `--symbol-tuning compact|tsv` on `plasm-mcp` / `plasm-repl` / `plasm-eval`), each parameter gets a wire-name gloss line in teaching table. The gloss shows the parameter type and, after a middle dot, either this `description` or the wire `name`. Use the same style as entity field descriptions: short domain prose. **Do not** restate `name:`, wire type, or enum members.
+**`description` on lane fields:** Optional. When the prompt uses a symbolic `PromptRenderMode` (compact or tsv, via `--symbol-tuning compact|tsv` on `plasm-mcp` / `plasm-repl` / `plasm-eval`), each parameter gets a wire-name gloss line in teaching table. The gloss shows the parameter type and, after a middle dot, either this `description` or the wire `name`. Use the same style as entity field descriptions: short domain prose. **Do not** restate `name:`, wire type, or enum members.
 
-### Parameter Roles
+### Capability input lanes
 
-| `role:` | Semantics | Examples |
-|---------|-----------|----------|
-| `filter` | Equality/range predicate on entity field values **(default)** | `status`, `archived`, `due_date_gt` |
-| `search` | Free-text relevance query — server ranks results | `q`, `query`, `search` |
-| `sort` | Sort field selector | `order_by`, `sort_by` |
-| `sort_direction` | Ascending/descending companion to `sort` | `sort`, `direction` |
-| `response_control` | Payload shape/detail control — does not filter results | `embed`, `fields`, `inc`, `exc` |
-| `scope` | Parent-entity pivot wired into the URL path (always `entity_ref`, required) | `team_id`, `space_id` |
+Lanes are **structurally disjoint** (RA-1). Legacy flat `parameters:` / `role:` is a **hard load error**.
 
-`role:` is informational metadata — it does not change how the parameter is transmitted over HTTP. Transmission is controlled entirely by the CML `query:` or `path:` block in mappings.yaml. **`validate_cgs_capability_templates` rejects capability parameters that never appear as CML vars** (or pagination keys), so declaring `role: filter` without wiring it is a catalog load error — do not fabricate filters the vendor does not expose.
+| Lane | Semantics | Agent surface |
+|------|-----------|---------------|
+| `execution.context` | Optional singleton frame row spliced into CML for this source | `e#(context=ℓ){…}` only when declared |
+| `scope` | Parent-entity pivots (often `entity_ref`) | Relation parent / scoped query keys |
+| `selection` | Backend pushdown WHERE / search predicates | `e#{wire=…}` braces |
+| `controls` | Sort, page size, embed/shape — not predicates | Host/controls; not brace WHERE |
+| `arguments` | Named non-body args | Method / action args |
+| `payload` | Create/update/action body | Method payload fields |
+
+Transmission over HTTP is still controlled by CML `query:` / `path:` / body in `mappings.yaml`. **`validate_cgs_capability_templates` rejects slots that never appear as CML vars** (or pagination keys) — do not invent selection wires the vendor does not expose.
 
 ### Foreign key fields (`entity_ref`)
 
@@ -433,7 +461,7 @@ capabilities:
   order_findByPetId:
     kind: query
     entity: Order
-    parameters:
+    selection:
       - name: petId
         value_ref: pet_entity_ref
         required: true
@@ -842,7 +870,7 @@ Declare on **`input_schema`** object fields **or** top-level capability **`param
 | `permission_grant` | Share link, add collaborator, elevate role |
 | `payment_transfer` | Charge, payout, subscription change |
 
-`sink_class` is **orthogonal** to `ParameterRole` — it does not replace `role: filter` / `scope` on queries.
+`sink_class` is **orthogonal** to capability **input lanes** — it does not replace `selection` / `scope` / `controls` on queries.
 
 Nested `input_schema` objects and union variant fields may each carry `sink_class`; capability `parameters:` rows may carry `sink_class` directly. `CGS::capability_sink_params` collects them recursively.
 
@@ -880,19 +908,19 @@ After semantic modeling, run a **flow annotation pass**:
 
 ### Multiple query capabilities per entity (disambiguation)
 
-An entity can have multiple `kind: query` (or `kind: search`) capabilities. The compiler and planner pick among them using capability identity, parameter shapes, and `role:` metadata.
+An entity can have multiple `kind: query` (or `kind: search`) capabilities. The compiler and planner pick among them using capability identity and **lane** shapes (`scope` / `selection` / `controls`).
 
 | Capability shape | Resolution hint |
 |------------------|-----------------|
-| No required params (or only optional filters) | Often the default list capability for the entity |
-| Required params but no `role: scope` | Additional caps need distinct parameter signatures |
-| Required `role: scope` param | Scoped list — typically combined with relation `materialize` |
+| No required selection/scope (or only optional selection) | Often the default list capability for the entity |
+| Required selection keys, empty `scope` | Additional caps need distinct selection signatures |
+| Required `scope` slots | Scoped list — typically combined with relation `materialize` |
 
 Among non-scoped caps, at most one may be parameterless (validation rule).
 
 ### Required Parameters
 
-When a capability declares `required: true` on a parameter, Plasm expressions must supply that predicate key (or the planner rejects). Types must match the `value_ref` slot (`enum` values must be members of `enum:`, etc.).
+When a capability declares `required: true` on a lane field, Plasm expressions must supply that predicate key (or the planner rejects). Types must match the `value_ref` slot (`enum` values must be members of `enum:`, etc.).
 
 ```yaml
 values:

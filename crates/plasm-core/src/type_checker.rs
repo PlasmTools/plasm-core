@@ -51,17 +51,15 @@ fn type_check_page(page: &PageExpr) -> Result<(), TypeError> {
     Ok(())
 }
 
-/// Union of `object` parameters from every Query and Search capability on `entity`.
+/// Union of selection parameters from every Query and Search capability on `entity`.
 fn union_query_and_search_params(cgs: &CGS, entity: &str) -> Vec<InputFieldSchema> {
     let mut seen: HashSet<String> = HashSet::new();
     let mut out = Vec::new();
     for kind in [CapabilityKind::Query, CapabilityKind::Search] {
         for cap in cgs.find_capabilities(entity, kind) {
-            if let Some(fields) = cap.object_params() {
-                for f in fields {
-                    if seen.insert(f.name.clone()) {
-                        out.push(f.clone());
-                    }
+            for f in cap.selection_params() {
+                if seen.insert(f.name.clone()) {
+                    out.push(f.clone());
                 }
             }
         }
@@ -416,7 +414,7 @@ pub fn type_check_query(query: &QueryExpr, cgs: &CGS) -> Result<(), TypeError> {
     // expose multiple scoped queries with different params, e.g. `team_id` vs `space_id`).
     let cap_params: Vec<InputFieldSchema> = if let Some(name) = query.capability_name.as_deref() {
         cgs.get_capability(name)
-            .and_then(|cap| cap.object_params().map(|f| f.to_vec()))
+            .map(|cap| cap.selection_params().to_vec())
             .unwrap_or_default()
     } else {
         union_query_and_search_params(cgs, &query.entity)
@@ -437,6 +435,18 @@ pub fn type_check_query(query: &QueryExpr, cgs: &CGS) -> Result<(), TypeError> {
                 });
             }
         }
+    }
+
+    // When a query capability is resolvable, enforce ResolvedRowset lane checks early.
+    if crate::resolve_query_capability(query, cgs).is_ok() {
+        let entry_id = query
+            .catalog_entry_id
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .or(cgs.entry_id.as_deref())
+            .unwrap_or("");
+        crate::rowset::normalize_query_expr_to_rowset(query, cgs, entry_id)
+            .map_err(|message| TypeError::RowsetNormalize { message })?;
     }
 
     Ok(())
@@ -524,7 +534,7 @@ pub fn type_check_create(create: &CreateExpr, cgs: &CGS) -> Result<(), TypeError
                 capability: create.capability.to_string(),
             })?;
 
-    if let Some(input_schema) = &capability.input_schema {
+    if let Some(input_schema) = &capability.inputs.payload {
         let raw = create.input.to_value();
         let effective = prepare_create_capability_input(capability, create, raw, cgs);
         validate_capability_input(&effective, input_schema, cgs)?;
@@ -564,7 +574,14 @@ pub fn type_check_invoke(invoke: &InvokeExpr, cgs: &CGS) -> Result<(), TypeError
             })?;
 
     // Validate input against capability input schema if present (same-entity scope EntityRef inferred).
-    if let Some(input_schema) = &capability.input_schema {
+    let input_schema = invoke.input.as_ref().and_then(|input| match input {
+        crate::InvokeInputPayload::Raw(Value::UnionCtor { .. })
+        | crate::InvokeInputPayload::Typed(crate::TypedInvokeInput::Union { .. }) => {
+            capability.inputs.payload.as_ref()
+        }
+        _ => capability.inputs.arguments.as_ref(),
+    });
+    if let Some(input_schema) = input_schema {
         let raw = invoke
             .input
             .as_ref()
@@ -1067,7 +1084,7 @@ mod tests {
                 })
                 .into(),
             },
-            input_schema: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
@@ -1093,7 +1110,7 @@ mod tests {
                 })
                 .into(),
             },
-            input_schema: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
@@ -1327,7 +1344,7 @@ mod tests {
     /// (GitHub `RepositoryTag`). teaching lines use `$` in those slots; they must type-check.
     #[test]
     fn placeholder_dollar_ok_when_scope_param_shadows_entity_field() {
-        use crate::schema::{FieldSchema, InputFieldSchema, NamedValueSchema, ParameterRole};
+        use crate::schema::{FieldSchema, InputFieldSchema, NamedValueSchema};
         use indexmap::IndexMap;
 
         let mut cgs = CGS::new();
@@ -1392,7 +1409,6 @@ mod tests {
             required: true,
             description: None,
             default: None,
-            role: Some(ParameterRole::Scope),
             wire_json_path: None,
             wire_array_element_key: None,
             sink_class: None,
@@ -1481,7 +1497,6 @@ mod tests {
             required: false,
             description: None,
             default: None,
-            role: None,
             wire_json_path: None,
             wire_array_element_key: None,
             sink_class: None,
@@ -1521,7 +1536,6 @@ mod tests {
             required: false,
             description: None,
             default: None,
-            role: None,
             wire_json_path: None,
             wire_array_element_key: None,
             sink_class: None,
@@ -1580,7 +1594,6 @@ mod tests {
             required: false,
             description: None,
             default: None,
-            role: None,
             wire_json_path: None,
             wire_array_element_key: None,
             sink_class: None,
@@ -1637,7 +1650,6 @@ mod tests {
             required: false,
             description: None,
             default: None,
-            role: None,
             wire_json_path: None,
             wire_array_element_key: None,
             sink_class: None,
@@ -1866,8 +1878,12 @@ mod tests {
 
     fn proof_document_edit_v2_operations_element_type(cgs: &CGS) -> crate::InputType {
         let cap = cgs.capabilities.get("document_edit_v2").expect("cap");
-        let crate::InputType::Object { fields, .. } =
-            &cap.input_schema.as_ref().expect("schema").input_type
+        let crate::InputType::Object { fields, .. } = &cap
+            .inputs
+            .payload
+            .as_ref()
+            .expect("payload schema")
+            .input_type
         else {
             panic!("object input");
         };

@@ -79,6 +79,7 @@ async fn fetch_entity_get_by_ref(
         session_id,
         "relation hydrate get",
         parsed,
+        indexmap::IndexMap::new(),
         trace,
         0,
         None,

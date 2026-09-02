@@ -245,7 +245,7 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
             row_identity,
         )?;
         let wire_coercion_by_alias = wire_coercion_by_alias_from_inputs(es, &mut input_rows)?;
-        let parsed = instantiate_parsed_expr_plan_inputs_with_rows(
+        let (parsed, source_contexts) = instantiate_parsed_expr_plan_inputs_with_rows(
             pe.clone(),
             &input_rows,
             &wire_coercion_by_alias,
@@ -258,6 +258,7 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
             row_index,
             expr_label,
             parsed,
+            source_contexts,
         )?;
     }
     if !scoped_jobs.is_empty() {

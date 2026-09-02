@@ -547,7 +547,7 @@ mod tests {
             mapping: CapabilityMapping {
                 template: CapabilityTemplateJson(serde_json::json!({ "method": "POST" })),
             },
-            input_schema: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             sanitizes: vec![],

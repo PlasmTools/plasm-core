@@ -179,7 +179,7 @@ pub fn compile_query(
             resolve_query_capability(query, cgs).map_err(|e| CompileError::CompilationFailed {
                 message: e.to_string(),
             })?;
-        cap.object_params().map(|f| f.to_vec()).unwrap_or_default()
+        cap.selection_params().to_vec()
     };
 
     if let Some(predicate) = &query.predicate {

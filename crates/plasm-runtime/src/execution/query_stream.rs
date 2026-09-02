@@ -29,6 +29,7 @@ impl ExecutionEngine {
         let filter = compile_query_dispatch(query, cgs)?;
         let capability = resolve_query_capability(query, cgs)?;
         let mut env = CmlEnv::new();
+        apply_query_source_execution_context(&mut env, query, capability)?;
         if let Some(f) = &filter {
             let json_val = f.to_json();
             env.insert("filter".to_string(), json_to_plasm_value(&json_val));

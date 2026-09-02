@@ -457,8 +457,8 @@ fn seeded_pokemon_teaching_includes_bare_query_row() {
 #[test]
 fn simple_string_id_identity_row_uses_id_hole() {
     use crate::schema::{
-        CapabilityKind, CapabilityMapping, CapabilitySchema, FieldSchema, FieldValueKind,
-        NamedValueSchema, ResourceSchema, ValueDomainKey, CGS,
+        CapabilityInputs, CapabilityKind, CapabilityMapping, CapabilitySchema, FieldSchema,
+        FieldValueKind, NamedValueSchema, ResourceSchema, ValueDomainKey, CGS,
     };
     use crate::FieldType;
 
@@ -524,7 +524,7 @@ fn simple_string_id_identity_row_uses_id_hole() {
         mapping: CapabilityMapping {
             template: tmpl.into(),
         },
-        input_schema: None,
+        inputs: CapabilityInputs::default(),
         output_schema: None,
         provides: vec!["name".into()],
         scope_aggregate_key_policy: Default::default(),

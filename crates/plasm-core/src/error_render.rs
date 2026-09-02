@@ -46,17 +46,15 @@ fn feedback_predicate_ident_symbol(
     }
     for kind in [CapabilityKind::Query, CapabilityKind::Search] {
         for cap in cgs.find_capabilities(entity, kind) {
-            if let Some(fields) = cap.object_params() {
-                for f in fields {
-                    if f.name != ident {
-                        continue;
-                    }
-                    let sym = map.ident_sym_cap_param_for("", entity, cap.name.as_str(), ident);
-                    match &resolved {
-                        None => resolved = Some(sym),
-                        Some(prev) if prev == &sym => {}
-                        Some(_) => return ident.to_string(),
-                    }
+            for field in cap.selection_params() {
+                if field.name != ident {
+                    continue;
+                }
+                let sym = map.ident_sym_cap_param_for("", entity, cap.name.as_str(), ident);
+                match &resolved {
+                    None => resolved = Some(sym),
+                    Some(prev) if prev == &sym => {}
+                    Some(_) => return ident.to_string(),
                 }
             }
         }
@@ -191,6 +189,10 @@ pub fn render_query_resolve_error_for_feedback(
                         "{msg}. See the query example lines in the prompt for `{es}` for which scope and filter wire names apply.{scope_hint}"
                     )
                 }
+                QueryCapabilityResolveError::RowsetNormalize { entity, message } => {
+                    let es = map.entity_sym_for("", entity);
+                    format!("rowset normalize failed for `{es}`: {message}")
+                }
             };
             format!("{PREFIX}{body}")
         }
@@ -295,11 +297,10 @@ fn wire_param_is_structured_or_multiline(
                 Some(c) => c,
                 None => return false,
             };
-            let fields = match cap.object_params() {
-                Some(f) => f,
-                None => return false,
-            };
-            let f = match fields.iter().find(|p| p.name.as_str() == param.as_str()) {
+            let f = match cap
+                .input_fields()
+                .find(|field| field.name.as_str() == param.as_str())
+            {
                 Some(f) => f,
                 None => return false,
             };
@@ -1409,23 +1410,21 @@ fn correction_no_entity_ref_bridge(
             }
         }
         for cap in cgs.find_capabilities(target, CapabilityKind::Query) {
-            if let Some(fields) = cap.object_params() {
-                for f in fields {
-                    let Ok(nv) = f.named_value(cgs) else {
-                        continue;
-                    };
-                    if let FieldType::EntityRef { target: t, .. } = &nv.field_type {
-                        pivots.push(match style {
-                            FeedbackStyle::CanonicalDev => {
-                                format!("{} (→ {})", f.name, t)
-                            }
-                            FeedbackStyle::SymbolicLlm { map } => {
-                                let ps = feedback_ident_symbol(map, f.name.as_str());
-                                let ts = map.entity_sym_for("", t.as_str());
-                                format!("{ps} (→ {ts})")
-                            }
-                        });
-                    }
+            for field in cap.scope_params().iter().chain(cap.selection_params()) {
+                let Ok(nv) = field.named_value(cgs) else {
+                    continue;
+                };
+                if let FieldType::EntityRef { target: t, .. } = &nv.field_type {
+                    pivots.push(match style {
+                        FeedbackStyle::CanonicalDev => {
+                            format!("{} (→ {})", field.name, t)
+                        }
+                        FeedbackStyle::SymbolicLlm { map } => {
+                            let ps = feedback_ident_symbol(map, field.name.as_str());
+                            let ts = map.entity_sym_for("", t.as_str());
+                            format!("{ps} (→ {ts})")
+                        }
+                    });
                 }
             }
         }
@@ -1620,10 +1619,8 @@ fn query_object_param_names(cgs: &CGS, entity: &str) -> Vec<String> {
     let mut names = Vec::new();
     for kind in [CapabilityKind::Query, CapabilityKind::Search] {
         for cap in cgs.find_capabilities(entity, kind) {
-            if let Some(fields) = cap.object_params() {
-                for f in fields {
-                    names.push(f.name.clone());
-                }
+            for field in cap.selection_params() {
+                names.push(field.name.clone());
             }
         }
     }
@@ -2158,6 +2155,10 @@ For example: `{te}(<id>)` when you already know the id, instead of relying on `{
                 inner.correction
             );
             StepError::type_correction(correction, nested)
+        }
+        TypeError::RowsetNormalize { message } => {
+            let correction = format!("Fix the rowset normalize failure: {message}");
+            StepError::type_correction(correction, error)
         }
     }
 }

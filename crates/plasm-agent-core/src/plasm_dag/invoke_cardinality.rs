@@ -29,9 +29,10 @@ pub(in crate::plasm_dag) fn validate_invoke_scalar_field_refs(
     let Some(cap) = cgs.get_capability(inv.capability.as_str()) else {
         return Ok(());
     };
-    let Some(fields) = cap.object_params() else {
+    let fields: Vec<_> = cap.invocation_object_fields().collect();
+    if fields.is_empty() {
         return Ok(());
-    };
+    }
     let value = input.to_value();
     let Some(obj) = value.as_object() else {
         return Ok(());

@@ -1,7 +1,7 @@
 //! Intent-filtered exposure surface for MCP `plasm_context` / incremental expand waves.
 
 use crate::identity::{CapabilityParamName, EntityFieldName, EntityName};
-use crate::schema::{CapabilityKind, CapabilitySchema, InputType, CGS};
+use crate::schema::{CapabilityKind, CapabilitySchema, CGS};
 use crate::symbol_tuning::{
     ExposureCapabilityKey, ExposureEntityKey, ExposureSlotKey, ExposureSurface,
     ExposureSurfaceDelta,
@@ -189,15 +189,11 @@ pub fn derive_intent_exposure_surface_batch(
             };
             surface.capabilities.insert(ckey.clone());
 
-            if let Some(is) = &cap.input_schema {
-                if let InputType::Object { fields, .. } = &is.input_type {
-                    for f in fields {
-                        surface.slots.insert(ExposureSlotKey::CapabilityParam {
-                            capability: ckey.clone(),
-                            param: CapabilityParamName::new(f.name.clone()),
-                        });
-                    }
-                }
+            for field in cap.input_fields() {
+                surface.slots.insert(ExposureSlotKey::CapabilityParam {
+                    capability: ckey.clone(),
+                    param: CapabilityParamName::new(field.name.clone()),
+                });
             }
 
             if matches!(

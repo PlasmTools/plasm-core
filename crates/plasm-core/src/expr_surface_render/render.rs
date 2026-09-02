@@ -64,18 +64,23 @@ impl<'a> RenderCtx<'a> {
 
     fn render_query(&self, q: &QueryExpr) -> String {
         let entry_id = q.catalog_entry_id.as_deref();
-        let head = q.entity.as_str();
-        let cgs = self.cgs_for_entity(entry_id, head);
+        let entity = q.entity.as_str();
+        let head = q
+            .context
+            .as_ref()
+            .map(|context| format!("{entity}(context={})", context.binding()))
+            .unwrap_or_else(|| entity.to_string());
+        let cgs = self.cgs_for_entity(entry_id, entity);
         if self.is_search_query(q, cgs) {
-            return self.render_search_query(head, q, entry_id, cgs);
+            return self.render_search_query(head.as_str(), q, entry_id, cgs);
         }
         if let Some(pred) = &q.predicate {
             return format!(
                 "{head}{{{}}}",
-                render_predicate_wire(pred, head, entry_id, None, None)
+                render_predicate_wire(pred, entity, entry_id, None, None)
             );
         }
-        head.to_string()
+        head
     }
 
     fn is_search_query(&self, q: &QueryExpr, cgs: &CGS) -> bool {
@@ -94,16 +99,16 @@ impl<'a> RenderCtx<'a> {
         cgs: &CGS,
     ) -> String {
         let cap_name = q.capability_name.as_deref().unwrap_or("");
-        let cap = cgs.get_capability(cap_name);
-        let q_field = cap
-            .and_then(|c| c.object_params())
-            .and_then(|fields| {
-                fields
-                    .iter()
-                    .find(|f| matches!(f.role, Some(crate::ParameterRole::Search)) || f.required)
-                    .map(|f| f.name.as_str())
-            })
-            .unwrap_or("q");
+        let cap = cgs
+            .get_capability(cap_name)
+            .expect("rendered search query must name a capability");
+        let q_field = cap.selection_params().first().unwrap_or_else(|| {
+            panic!(
+                "search capability `{}` has no selection parameter",
+                cap.name
+            )
+        });
+        let q_field = q_field.name.as_str();
         let mut text = String::new();
         let mut filters = Vec::new();
         if let Some(pred) = &q.predicate {

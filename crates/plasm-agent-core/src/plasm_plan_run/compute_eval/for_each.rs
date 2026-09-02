@@ -1,5 +1,8 @@
 use super::super::*;
-use super::eval::{instantiate_raw_expr_template, wire_coercion_by_alias_from_inputs};
+use super::eval::{
+    collect_materialized_execution_contexts, instantiate_raw_expr_template,
+    wire_coercion_by_alias_from_inputs,
+};
 use super::materialized_result_use_inputs;
 
 pub(crate) fn for_each_cross_uses(for_each: &ValidatedForEachNode) -> Vec<PlanResultUse> {
@@ -87,12 +90,15 @@ pub(crate) async fn materialize_for_each_node(
             .get(row_index)
             .cloned()
             .unwrap_or_else(|| "<ir>".to_string());
+        let source_contexts =
+            collect_materialized_execution_contexts(&parsed_expr.expr, &input_rows)?;
         super::super::plan_fanout_parallel::push_row_job(
             &mut jobs,
             node_index,
             row_index,
             expr_label,
             parsed_expr,
+            source_contexts,
         );
     }
     let fold = super::super::plan_fanout_parallel::execute_row_fanout(

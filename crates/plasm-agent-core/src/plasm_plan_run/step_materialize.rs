@@ -228,11 +228,12 @@ impl IoPort for LiveIoPort<'_> {
                         materialized_result_use_inputs(materialized, &surface.uses_result, None)?;
                     let wire_coercion_by_alias =
                         wire_coercion_by_alias_from_inputs(ctx.es, &mut input_rows)?;
-                    instantiate_parsed_expr_plan_inputs_with_rows(
+                    let (parsed, source_contexts) = instantiate_parsed_expr_plan_inputs_with_rows(
                         pe,
                         &input_rows,
                         &wire_coercion_by_alias,
-                    )?
+                    )?;
+                    (parsed, source_contexts)
                 } else if let Some(template) = &surface.ir_template {
                     let mut input_rows = materialized_result_use_inputs(
                         materialized,
@@ -252,13 +253,17 @@ impl IoPort for LiveIoPort<'_> {
                         inputs,
                         wire_coercion_by_alias: &wire_coercion_by_alias,
                     };
-                    instantiate_expr_template(template, &env)?
+                    let parsed = instantiate_expr_template(template, &env)?;
+                    let source_contexts =
+                        collect_materialized_execution_contexts(&parsed.expr, &input_rows)?;
+                    (parsed, source_contexts)
                 } else {
                     return Err(format!(
                         "plan node {} has no executable IR",
                         surface.id.as_str()
                     ));
                 };
+                let (parsed, source_contexts) = parsed;
                 let expr_label = surface
                     .ir
                     .as_ref()
@@ -274,6 +279,7 @@ impl IoPort for LiveIoPort<'_> {
                     ctx.session_id,
                     expr_label,
                     parsed,
+                    source_contexts,
                     ctx.trace,
                     step_idx as i64,
                     host_page,

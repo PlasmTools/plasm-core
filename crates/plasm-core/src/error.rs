@@ -62,6 +62,10 @@ pub enum TypeError {
         #[source]
         source: Box<TypeError>,
     },
+
+    /// Surface query failed lane-typed [`crate::ResolvedRowset`] normalization (RA-1 / RA-5).
+    #[error("rowset normalize: {message}")]
+    RowsetNormalize { message: String },
 }
 
 impl From<crate::money::CrossCurrencyError> for TypeError {

@@ -6,7 +6,7 @@ use std::time::Instant;
 use crate::loader::load_schema_dir;
 use crate::prompt_pipeline::PromptPipelineConfig;
 use crate::schema::{
-    CapabilityMapping, CapabilitySchema, FieldSchema, FieldValueKind, NamedValueSchema,
+    CapabilityMapping, CapabilitySchema, FieldSchema, FieldValueKind, InputType, NamedValueSchema,
     RelationSchema, ResourceSchema, ValueDomainKey,
 };
 use crate::symbol_tuning::{
@@ -395,11 +395,13 @@ fn proof_bug_report_capabilities_require_report_parameter() {
             cap.has_any_required_param(),
             "{cap_name}: expected at least one required parameter so teaching table cannot teach a no-arg bug report"
         );
-        let fields = cap.object_params().unwrap_or_else(|| {
-            panic!("{cap_name}: expected merged object input schema from parameters:")
-        });
-        let report = fields
-            .iter()
+        let report = cap
+            .invocation_input_schemas()
+            .filter_map(|schema| match &schema.input_type {
+                InputType::Object { fields, .. } => Some(fields.as_slice()),
+                _ => None,
+            })
+            .flatten()
             .find(|f| f.name == "report")
             .unwrap_or_else(|| panic!("{cap_name}: missing `report` parameter"));
         assert!(report.required, "{cap_name}: `report` must be required");
@@ -500,9 +502,9 @@ fn teaching_tsv_return_glyphs_and_terminal_chain_hint_language_matrix() {
         meanings.join("\n")
     );
     assert!(
-        meanings.iter().any(|m| {
-            m.contains("↠ ()") && m.contains('·') && !m.contains("chain:")
-        }),
+        meanings
+            .iter()
+            .any(|m| { m.contains("↠ ()") && m.contains('·') && !m.contains("chain:") }),
         "expected void write row with capability gloss and no chain hint; meanings:\n{}",
         meanings.join("\n")
     );
@@ -539,12 +541,8 @@ fn query_only_primary_query_teaching_order_and_gloss() {
             .any(|c| c.capability.as_str() == "queryonly_request_received_query"),
         "seeded QueryOnlyRequest must expose primary query on surface"
     );
-    let exp = TeachingExposureSession::new_with_intent_delta(
-        &cgs,
-        "",
-        &["QueryOnlyRequest"],
-        delta,
-    );
+    let exp =
+        TeachingExposureSession::new_with_intent_delta(&cgs, "", &["QueryOnlyRequest"], delta);
     let config = RenderConfig::for_eval_seeds(&["QueryOnlyRequest"]);
     let bundle = render_teaching_prompt_bundle_for_exposure(&cgs, config, &exp, None);
     let block_idx = bundle
@@ -566,8 +564,7 @@ fn query_only_primary_query_teaching_order_and_gloss() {
         .iter()
         .position(|r| {
             r.meta.kind == DomainLineKind::Query
-                && r.meta.source_capability.as_deref()
-                    == Some("queryonly_request_received_query")
+                && r.meta.source_capability.as_deref() == Some("queryonly_request_received_query")
         })
         .expect("primary query witness row");
     let first_mutator_idx = block
@@ -580,7 +577,10 @@ fn query_only_primary_query_teaching_order_and_gloss() {
         "primary query row must precede mutators (query={query_idx}, mutator={first_mutator_idx})"
     );
 
-    let query_line = block.teaching_rows[query_idx].teaching_expr.expression.as_str();
+    let query_line = block.teaching_rows[query_idx]
+        .teaching_expr
+        .expression
+        .as_str();
     let query_meaning = tsv
         .lines()
         .find(|l| l.starts_with(query_line.split('[').next().unwrap_or(query_line)))
@@ -601,8 +601,7 @@ fn query_only_primary_query_teaching_order_and_gloss() {
         .filter(|r| r.meta.kind == DomainLineKind::Method)
         .filter_map(|r| {
             let expr = r.teaching_expr.expression.as_str();
-            tsv
-                .lines()
+            tsv.lines()
                 .find(|l| l.split_once('\t').is_some_and(|(e, _)| e == expr))?
                 .split_once('\t')
                 .map(|(_, m)| m)
@@ -667,6 +666,88 @@ fn proof_document_tsv_topo_p_gloss_before_union_ctor_and_summary_after() {
     assert!(
         first_ctor < u,
         "union ctor exemplars must precede union summary; first_ctor={first_ctor} summary={u}"
+    );
+}
+
+#[test]
+fn venmo_payment_request_primary_query_federated_teaching() {
+    use crate::discovery::{
+        derive_intent_exposure_surface_batch, ExposureSurfaceOptions, MutatorAdmit,
+    };
+    use indexmap::IndexMap;
+
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/appworld/venmo");
+    if !dir.is_dir() {
+        return;
+    }
+    let mut cgs = load_schema_dir(&dir).unwrap();
+    cgs.bind_registry_entry_id("venmo");
+    let intent = "How much money have I been requested on Venmo in the last 7 days including today";
+    let seeds = ["AuthSession".to_string(), "PaymentRequest".to_string()];
+    let delta = derive_intent_exposure_surface_batch(
+        &cgs,
+        "venmo",
+        intent,
+        &[],
+        &seeds,
+        None,
+        ExposureSurfaceOptions {
+            mutator_admit: MutatorAdmit::IntentOnly,
+        },
+    );
+    assert!(
+        delta.required.capabilities.iter().any(|c| {
+            c.capability.as_str() == "payment_request_received_query"
+                && c.domain.as_str() == "PaymentRequest"
+        }),
+        "seeded PaymentRequest must expose primary query on surface; caps={:?}",
+        delta
+            .required
+            .capabilities
+            .iter()
+            .filter(|c| c.domain.as_str() == "PaymentRequest")
+            .collect::<Vec<_>>()
+    );
+    let exp = TeachingExposureSession::new_with_intent_delta(
+        &cgs,
+        "venmo",
+        &["AuthSession", "PaymentRequest"],
+        delta,
+    );
+    let mut by_entry: IndexMap<String, &CGS> = IndexMap::new();
+    by_entry.insert("venmo".into(), &cgs);
+    let config = RenderConfig::for_eval_seeds(&["AuthSession", "PaymentRequest"]);
+    let bundle =
+        render_teaching_prompt_bundle_for_exposure_federated(&by_entry, config, &exp, None);
+    let block_idx = bundle
+        .model
+        .entities
+        .iter()
+        .position(|e| e.entity == "PaymentRequest")
+        .expect("PaymentRequest block");
+    let block = &bundle.teaching_blocks[block_idx];
+    let query_idx = block.teaching_rows.iter().position(|r| {
+        r.meta.kind == DomainLineKind::Query
+            && r.meta.source_capability.as_deref() == Some("payment_request_received_query")
+    });
+    let first_mutator_idx = block
+        .teaching_rows
+        .iter()
+        .position(|r| r.meta.kind == DomainLineKind::Method);
+    assert!(
+        query_idx.is_some(),
+        "expected primary query witness row; teaching_rows={:?}",
+        block
+            .teaching_rows
+            .iter()
+            .map(|r| (&r.meta.kind, r.meta.source_capability.as_deref()))
+            .collect::<Vec<_>>()
+    );
+    let query_idx = query_idx.unwrap();
+    let first_mutator_idx = first_mutator_idx.expect("mutators under IntentOnly");
+    assert!(
+        query_idx < first_mutator_idx,
+        "primary query row must precede mutators (query={query_idx}, mutator={first_mutator_idx})"
     );
 }
 
@@ -2074,20 +2155,22 @@ fn plasm_tool_description_snapshot() {
 }
 
 #[test]
-fn plasm_tool_description_includes_row_compute_worked_example() {
+fn plasm_tool_description_includes_composition_strata() {
     let frontmatter = super::PLASM_TOOL_DESCRIPTION;
-    assert!(frontmatter.contains(".filter{"));
-    assert!(frontmatter.contains(".limit(10)"));
-    assert!(frontmatter.contains("Core surface:"));
+    assert!(frontmatter.contains("Three strata"));
+    assert!(frontmatter.contains("| where"));
+    assert!(frontmatter.contains("| select"));
+    assert!(frontmatter.contains("| take"));
+    assert!(frontmatter.contains("=>"));
+    assert!(frontmatter.contains("<<TAG"));
     assert!(
-        frontmatter.contains("Worked transform") || frontmatter.contains("Worked shape"),
-        "expected worked transform/shape example"
+        frontmatter.contains("membership")
+            || frontmatter.contains("Membership")
+            || frontmatter.contains("membership holes"),
+        "must teach typed membership hole fill"
     );
     assert!(
-        frontmatter.contains("Replace teaching placeholders") || frontmatter.contains("substitute")
-    );
-    assert!(
-        frontmatter.contains("e#~\"<query>\"") || frontmatter.contains("e#~\"alice\""),
+        frontmatter.contains("e#~\"q\"") || frontmatter.contains("e#~\"<query>\""),
         "search exemplar must show a real-query hole, not metasyntax text/$"
     );
     assert!(
@@ -2100,54 +2183,45 @@ fn plasm_tool_description_includes_row_compute_worked_example() {
     );
     assert!(
         !frontmatter.contains(" ::="),
-        "full pseudo-EBNF block retired; canonical syntax is Core surface + worked examples"
+        "full pseudo-EBNF block retired; canonical syntax is three-strata surface"
     );
     assert!(
-        frontmatter.contains("label = e#"),
-        "pitfalls must teach bind-before-filter preference"
+        frontmatter.contains("label = e#") || frontmatter.contains("rows = e#"),
+        "must teach bind-before-filter preference"
     );
     assert!(
-        frontmatter.contains("Entity heads vs rows:")
-            && frontmatter.contains("→ e")
-            && frontmatter.contains("executable"),
-        "must teach copying executable card e# patterns with singleton-row arrow"
+        !frontmatter.contains("Entity heads vs rows:"),
+        "P06/P07 entity-head pedagogy is CEILING DROP — omit from rewrite"
     );
     assert!(
-        frontmatter.contains("PLASM_RPT_TAG"),
-        "row-to-text worked example must show explicit bracket + Minijinja wire body"
+        !frontmatter.contains("**SQL map:**"),
+        "P08 SQL map is DROP — omit from rewrite"
     );
     assert!(
-        frontmatter.contains("r.name"),
-        "row-to-text worked example must use wire field names in template body"
+        !frontmatter.contains("PLASM_RPT_TAG"),
+        "worked row-to-text few-shot removed — composition_ladder owns template teachability"
     );
     assert!(
-        frontmatter.contains("wire names in bracket"),
-        "row-to-text contract must note wire names in projection brackets"
-    );
-    assert!(
-        frontmatter.contains("source binding name also works"),
-        "row-to-text contract must note source alias for collection iteration"
-    );
-    assert!(
-        frontmatter.contains("or \"—\""),
-        "row-to-text worked example must show nullable field coalescing"
+        !frontmatter.contains("Worked row-to-text"),
+        "problem-shaped worked examples purged from production card"
     );
     assert!(
         !frontmatter.contains("e2(p10="),
         "canonical frontmatter must not hardcode catalog-specific symbol indices"
     );
     assert!(
-        frontmatter.contains("bind-ordered")
-            && frontmatter.contains("e2.m2")
-            && frontmatter.contains("e3.m3")
-            && frontmatter.contains("label.wire")
+        frontmatter.contains("label.wire")
             && !frontmatter.contains("label.field")
             && !frontmatter.contains("e_issue.m_create"),
-        "write-batch guidance must prefer one multi-write program with domain-neutral create chain"
+        "post-write label.wire rite is LOAD-BEARING (P11); multi-write few-shot is DROP (P10)"
     );
     assert!(
-        frontmatter.contains("never invent a `.wire` postfix")
-            || frontmatter.contains("never invent a .wire postfix"),
+        !frontmatter.contains("e2.m2") && !frontmatter.contains("e3.m3"),
+        "P10 multi-write worked block must stay omitted"
+    );
+    assert!(
+        frontmatter.contains("never invent a `.wire`")
+            || frontmatter.contains("never invent a .wire"),
         "must warn against inventing .wire from binding.wire prose"
     );
     assert!(
@@ -2155,15 +2229,16 @@ fn plasm_tool_description_includes_row_compute_worked_example() {
         "worked examples must stay domain-neutral (no github-shaped repo/issue)"
     );
     assert!(
-        frontmatter.contains("```tsv")
-            && frontmatter.contains("→ e1")
-            && frontmatter.contains("↣ [e2]")
-            && frontmatter.contains("↠ e3")
-            && !frontmatter.contains("noun ·")
-            && !frontmatter.contains("verb ·")
-            && frontmatter.contains("a.w1")
-            && frontmatter.contains("e2~\"q\""),
-        "lookup example must pair a live-shaped mini language card with opaque program wires"
+        !frontmatter.contains("```tsv"),
+        "P14 lookup mini-card few-shot is CEILING DROP"
+    );
+    assert!(
+        frontmatter.contains("| summarize") && frontmatter.contains("summarize [by keys]"),
+        "P19 Q5 row-op signatures must spell pipe summarize forms"
+    );
+    assert!(
+        frontmatter.contains("binding.content"),
+        "P21 R3 must teach .content for string params"
     );
     assert!(
         !frontmatter.contains("access_token=sess.")
@@ -2218,7 +2293,10 @@ fn mcp_static_tool_descriptions_byte_budget() {
         context.len()
     );
     assert!(plasm_tool.contains(super::MCP_TOOL_SYNTAX_CONTRACT_MARKER));
-    assert!(plasm_tool.contains("literal no-op"));
+    assert!(
+        plasm_tool.contains("logical_session_ref") && plasm_tool.contains("run_ref"),
+        "P01 MCP session/tool split must remain in plasm_tool"
+    );
 
     let violations = super::program_param_contract_violations(param);
     assert!(
@@ -2243,7 +2321,7 @@ fn plasm_tool_description_truncation_prefix_has_composition_mandate() {
         "multi-root return example must be in first {prefix_n} bytes"
     );
     assert!(
-        prefix.contains("run_ref") && prefix.contains("approval"),
+        prefix.contains("run_ref") && (prefix.contains("review") || prefix.contains("approval")),
         "mutation/gate policy must be in first {prefix_n} bytes"
     );
     assert!(
@@ -2262,12 +2340,12 @@ fn plasm_tool_description_truncation_prefix_has_composition_mandate() {
     let wide_n = super::PLASM_TOOL_DESCRIPTION_WIDE_PREFIX_BYTES;
     let wide = &full[..full.len().min(wide_n)];
     assert!(
-        wide.contains("Composition rules:"),
-        "composition rules must be in first {wide_n} bytes (host truncation)"
+        wide.contains("Composition:") || wide.contains("Three strata"),
+        "composition strata must be in first {wide_n} bytes (host truncation)"
     );
     assert!(
-        wide.contains("Worked transform") || wide.contains("Worked shape"),
-        "a worked composition example must be in first {wide_n} bytes"
+        wide.contains("| where") && wide.contains("=>"),
+        "pipe + apply surface must be in first {wide_n} bytes"
     );
 }
 
@@ -2292,10 +2370,18 @@ fn plasm_tool_description_stats() {
     assert!(
         full_stats
             .section_bytes
-            .get("symbol_rules")
+            .get("composition")
             .copied()
             .unwrap_or(0)
-            > 500
+            > 100
+    );
+    assert!(
+        full_stats
+            .section_bytes
+            .get("tsv_semantics")
+            .copied()
+            .unwrap_or(0)
+            > 100
     );
 
     let dir = fixtures_schemas_dir("plasm_prompt_matrix");
@@ -2429,15 +2515,16 @@ fn static_grammar_includes_symbols_only_rule() {
         "canonical static grammar must teach wire names"
     );
     assert!(
-        g.contains("Entity heads vs rows:")
-            && g.contains("→ e")
-            && g.contains("executable")
-            && g.contains("eN.field"),
-        "canonical static grammar must teach copying executable card e# patterns"
+        g.contains("Never emit `v#`") || g.contains("Never emit v#"),
+        "canonical static grammar must forbid emitting v#"
     );
     assert!(
-        g.contains("↣ [e]") && g.contains("→ e") && g.contains("↠") && !g.contains("materialize"),
-        "canonical static grammar must teach arrow legend without obsolete materialize mark"
+        g.contains("→ e") && g.contains("label = e#"),
+        "bare-entity / bind-before-project rite must remain (P17)"
+    );
+    assert!(
+        !g.contains("Entity heads vs rows:") && !g.contains("↣ [e]"),
+        "P06/P07/P13 entity-head and arrow-legend pedagogy are CEILING DROP"
     );
 }
 
@@ -3004,7 +3091,7 @@ fn prompt_stats_fixture_cgs() -> CGS {
             mapping: CapabilityMapping {
                 template: tmpl.clone().into(),
             },
-            input_schema: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
@@ -3137,7 +3224,7 @@ fn p_slot_redefinition_fixture_cgs(id_desc_a: &str, id_desc_b: &str) -> CGS {
                 })
                 .into(),
             },
-            input_schema: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),

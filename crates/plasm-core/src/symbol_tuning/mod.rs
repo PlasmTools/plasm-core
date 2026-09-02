@@ -68,7 +68,7 @@ use crate::identity::{
 use crate::schema::{
     input_variant_body_type, resolve_capability_input_param_field,
     union_variant_constructor_symbol, ArrayItemsSchema, CapabilitySchema, InputFieldSchema,
-    InputFieldWire, InputType, ParameterRole, ValueDomainKey, CGS,
+    InputFieldWire, InputType, ValueDomainKey, CGS,
 };
 use crate::teaching_term::{method_ref_for_capability, EntityRef, ParameterSlot, TeachingTerm};
 use crate::value_domain::ProfileId;
@@ -396,9 +396,17 @@ pub fn legacy_exposure_surface_for_entities(
                 capability: cap_name.clone(),
             };
             out.capabilities.insert(ckey.clone());
-            if let Some(is) = &cap.input_schema {
-                let mut paths = BTreeSet::new();
-                match &is.input_type {
+            let mut paths = BTreeSet::new();
+            for field in cap
+                .scope_params()
+                .iter()
+                .chain(cap.selection_params())
+                .chain(cap.control_params())
+            {
+                insert_capability_param_paths(field, "", &mut paths);
+            }
+            for schema in cap.invocation_input_schemas() {
+                match &schema.input_type {
                     InputType::Object { fields, .. } => {
                         for f in fields {
                             insert_capability_param_paths(f, "", &mut paths);
@@ -412,12 +420,12 @@ pub fn legacy_exposure_surface_for_entities(
                     }
                     _ => {}
                 }
-                for path in paths {
-                    out.slots.insert(ExposureSlotKey::CapabilityParam {
-                        capability: ckey.clone(),
-                        param: CapabilityParamName::new(path),
-                    });
-                }
+            }
+            for path in paths {
+                out.slots.insert(ExposureSlotKey::CapabilityParam {
+                    capability: ckey.clone(),
+                    param: CapabilityParamName::new(path),
+                });
             }
         }
     }
@@ -574,18 +582,6 @@ pub(crate) fn ident_metadata_for_capability_input_path(
             description: f.description.clone().unwrap_or_default(),
         }),
     }
-}
-
-/// Same 2-hop focus neighbourhood as prompt rendering: `Some(set)` when focus is set.
-#[inline]
-pub(crate) fn field_is_filter_like_gloss(f: &InputFieldSchema) -> bool {
-    !matches!(
-        f.role,
-        Some(ParameterRole::Search)
-            | Some(ParameterRole::Sort)
-            | Some(ParameterRole::SortDirection)
-            | Some(ParameterRole::ResponseControl)
-    )
 }
 
 /// Union of [`build_focus_set`] for each seed (same rules as single focus).
@@ -745,13 +741,7 @@ pub(crate) fn collect_ident_names(cgs: &CGS, full_entities: &[&str]) -> BTreeSet
             let Some(cap) = cgs.capabilities.get(cap_name) else {
                 continue;
             };
-            let Some(is) = &cap.input_schema else {
-                continue;
-            };
-            let InputType::Object { fields, .. } = &is.input_type else {
-                continue;
-            };
-            for f in fields {
+            for f in cap.input_fields() {
                 idents.insert(f.name.clone());
             }
         }
@@ -1030,14 +1020,8 @@ pub(crate) fn build_ident_metadata(
             let Some(cap) = cgs.capabilities.get(cap_name) else {
                 continue;
             };
-            let Some(is) = &cap.input_schema else {
-                continue;
-            };
-            let InputType::Object { fields, .. } = &is.input_type else {
-                continue;
-            };
             let en = cap.domain.clone();
-            for f in fields {
+            for f in cap.input_fields() {
                 let Ok(nv) = f.named_value(cgs) else {
                     continue;
                 };
@@ -1217,15 +1201,20 @@ impl IdentMetadata {
                 allowed_values,
                 wire_name,
                 role,
+                value_registry_key,
                 ..
             } => {
                 let type_label = registry_gloss_type_label(self, cgs, map);
                 if matches!(field_type, FieldType::Select | FieldType::MultiSelect) {
-                    if let Some(ref av) = allowed_values {
-                        if !av.is_empty() {
-                            let joined = av.join(", ");
-                            return format!("{type_label} · {joined}");
-                        }
+                    if let Some(meaning) =
+                        crate::enum_teaching_meaning::enum_meaning_from_registry_row(
+                            &type_label,
+                            value_registry_key.as_str(),
+                            allowed_values.as_deref(),
+                            cgs,
+                        )
+                    {
+                        return meaning;
                     }
                 }
                 let desc = self.description_trimmed();
@@ -1301,11 +1290,19 @@ impl IdentMetadata {
         }
         let type_label = registry_gloss_type_label(self, cgs, map);
         if matches!(field_type, FieldType::Select | FieldType::MultiSelect) {
-            if let Some(ref av) = allowed_values {
-                if !av.is_empty() {
-                    let joined = av.join(", ");
-                    return Some(format!("{type_label} · {joined}"));
-                }
+            let value_registry_key = match self {
+                IdentMetadata::RegistryBacked {
+                    value_registry_key, ..
+                } => value_registry_key.as_str(),
+                _ => "",
+            };
+            if let Some(meaning) = crate::enum_teaching_meaning::enum_meaning_from_registry_row(
+                &type_label,
+                value_registry_key,
+                allowed_values.as_deref(),
+                cgs,
+            ) {
+                return Some(meaning);
             }
         }
         let desc = value_row_description.trim();
@@ -1553,13 +1550,7 @@ fn resolve_ident_type_string(
         if !full_set.contains(cap.domain.as_str()) {
             continue;
         }
-        let Some(is) = &cap.input_schema else {
-            continue;
-        };
-        let InputType::Object { fields, .. } = &is.input_type else {
-            continue;
-        };
-        for f in fields {
+        for f in cap.input_fields() {
             if f.name == name {
                 let nv = f.named_value(cgs).ok()?;
                 return Some(match nv.field_type {
@@ -2356,12 +2347,6 @@ impl SymbolMap {
         cap: &CapabilitySchema,
     ) -> String {
         const MAX_SIG: usize = 96;
-        let Some(is) = &cap.input_schema else {
-            return String::new();
-        };
-        let InputType::Object { fields, .. } = &is.input_type else {
-            return String::new();
-        };
         if cap.kind == CapabilityKind::Query {
             return String::new();
         }
@@ -2369,10 +2354,7 @@ impl SymbolMap {
         let mut scope_parts: Vec<String> = Vec::new();
         let domain = cap.domain.as_str();
         let cap_name = cap.name.as_str();
-        for f in fields {
-            if !matches!(f.role, Some(ParameterRole::Scope)) {
-                continue;
-            }
+        for f in cap.scope_params() {
             let Ok(nv) = f.named_value(cgs) else {
                 continue;
             };
@@ -2404,7 +2386,7 @@ impl SymbolMap {
         cgs: &CGS,
         cap: &CapabilitySchema,
     ) -> String {
-        if cap.input_schema.is_none() {
+        if cap.input_fields().next().is_none() {
             return String::new();
         };
         let mut scope_s = self.capability_scope_legend_gloss(cgs, cap);
@@ -2492,13 +2474,7 @@ pub fn build_ident_gloss_map(cgs: &CGS) -> HashMap<String, String> {
         }
     }
     for cap in cgs.capabilities.values() {
-        let Some(is) = &cap.input_schema else {
-            continue;
-        };
-        let InputType::Object { fields, .. } = &is.input_type else {
-            continue;
-        };
-        for f in fields {
+        for f in cap.input_fields() {
             if let Some(d) = &f.description {
                 if !d.is_empty() {
                     ident_gloss
@@ -4624,7 +4600,7 @@ mod tests {
         };
         assert_eq!(
             m.render_gloss(None),
-            "enum · completed, reopened, not_planned, duplicate"
+            "enum · completed | reopened | not_planned | duplicate"
         );
     }
 
@@ -4729,7 +4705,7 @@ mod tests {
             mapping: CapabilityMapping {
                 template: serde_json::json!({"method":"GET","path":[{"type":"literal","value":"w"},{"type":"var","name":"id"}]}).into(),
             },
-            input_schema: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
@@ -4789,8 +4765,8 @@ mod tests {
             description: String::new(),
         }
         .render_gloss(None);
-        assert_eq!(gloss_a, "enum · a, b");
-        assert_eq!(gloss_b, "enum · a, b");
+        assert_eq!(gloss_a, "enum · a | b");
+        assert_eq!(gloss_b, "enum · a | b");
         assert!(
             !gloss_a.contains("same values as"),
             "peer-gloss path must stay removed"

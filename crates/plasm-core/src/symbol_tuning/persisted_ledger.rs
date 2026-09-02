@@ -184,6 +184,16 @@ struct PersistedSlotBindingV2 {
     kind: PersistedSlotKindV2,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+enum PersistedParamLaneV2 {
+    Filter,
+    Search,
+    Sort,
+    SortDirection,
+    ResponseControl,
+    Scope,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 enum PersistedSlotKindV2 {
     EntityField {
@@ -194,7 +204,7 @@ enum PersistedSlotKindV2 {
         domain: EntityName,
         capability: CapabilityName,
         param_wire: CapabilityParamName,
-        param_role: Option<crate::schema::ParameterRole>,
+        param_role: Option<PersistedParamLaneV2>,
         capability_kind: crate::CapabilityKind,
         scope_target_entity: Option<EntityName>,
     },

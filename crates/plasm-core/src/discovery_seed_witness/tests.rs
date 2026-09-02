@@ -364,8 +364,9 @@ fn unbranded_top_catalog_cut_preserves_federated_co_seed_seats() {
     use crate::discovery_seed_catalog::CatalogWorkflowContext;
     use crate::identity::{CapabilityName, EntityFieldName, EntityName};
     use crate::schema::{
-        CapabilityKind, CapabilityMapping, CapabilitySchema, CapabilityTemplateJson,
-        DiscoveryCoSeedWith, DiscoveryEntityHints, DiscoverySeedClass, EntityDef, CGS,
+        CapabilityInputs, CapabilityKind, CapabilityMapping, CapabilitySchema,
+        CapabilityTemplateJson, DiscoveryCoSeedWith, DiscoveryEntityHints, DiscoverySeedClass,
+        EntityDef, CGS,
     };
     use indexmap::IndexMap;
     use std::collections::HashMap;
@@ -417,7 +418,7 @@ fn unbranded_top_catalog_cut_preserves_federated_co_seed_seats() {
                 mapping: CapabilityMapping {
                     template: CapabilityTemplateJson(serde_json::json!({ "method": "GET" })),
                 },
-                input_schema: None,
+                inputs: CapabilityInputs::default(),
                 output_schema: None,
                 provides: vec![],
                 sanitizes: vec![],
@@ -634,9 +635,9 @@ fn corpus_stamps_attach_on_label_and_prune_drops_label_read() {
     use crate::discovery_seed_catalog::CatalogWorkflowContext;
     use crate::identity::{CapabilityName, EntityFieldName, EntityName, RelationName};
     use crate::schema::{
-        CapabilityKind, CapabilityMapping, CapabilitySchema, CapabilityTemplateJson, Cardinality,
-        DiscoveryEntityHints, DiscoveryRelationHints, DiscoverySeedClass, DiscoverySeedNav,
-        EntityDef, RelationSchema, CGS,
+        CapabilityInputs, CapabilityKind, CapabilityMapping, CapabilitySchema,
+        CapabilityTemplateJson, Cardinality, DiscoveryEntityHints, DiscoveryRelationHints,
+        DiscoverySeedClass, DiscoverySeedNav, EntityDef, RelationSchema, CGS,
     };
     use indexmap::IndexMap;
     use std::collections::HashMap;
@@ -728,7 +729,7 @@ fn corpus_stamps_attach_on_label_and_prune_drops_label_read() {
                 mapping: CapabilityMapping {
                     template: CapabilityTemplateJson(serde_json::json!({ "method": "GET" })),
                 },
-                input_schema: None,
+                inputs: CapabilityInputs::default(),
                 output_schema: None,
                 provides: vec![],
                 sanitizes: vec![],
@@ -826,9 +827,9 @@ fn corpus_stamps_own_pair_on_both_ends_of_own_edge() {
     use crate::discovery_seed_catalog::CatalogWorkflowContext;
     use crate::identity::{CapabilityName, EntityFieldName, EntityName, RelationName};
     use crate::schema::{
-        CapabilityKind, CapabilityMapping, CapabilitySchema, CapabilityTemplateJson, Cardinality,
-        DiscoveryEntityHints, DiscoveryRelationHints, DiscoverySeedClass, DiscoverySeedNav,
-        EntityDef, RelationSchema, CGS,
+        CapabilityInputs, CapabilityKind, CapabilityMapping, CapabilitySchema,
+        CapabilityTemplateJson, Cardinality, DiscoveryEntityHints, DiscoveryRelationHints,
+        DiscoverySeedClass, DiscoverySeedNav, EntityDef, RelationSchema, CGS,
     };
     use indexmap::IndexMap;
     use std::collections::HashMap;
@@ -920,7 +921,7 @@ fn corpus_stamps_own_pair_on_both_ends_of_own_edge() {
                 mapping: CapabilityMapping {
                     template: CapabilityTemplateJson(serde_json::json!({ "method": "GET" })),
                 },
-                input_schema: None,
+                inputs: CapabilityInputs::default(),
                 output_schema: None,
                 provides: vec![],
                 sanitizes: vec![],

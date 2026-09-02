@@ -47,6 +47,9 @@ entities:
       label:
         required: true
         value_ref: nv_lang_tag_label
+      seq:
+        required: false
+        value_ref: nv_langtag_by_score_query_seq
     relations: {}
   CompoundBranch:
     id_field: name
@@ -107,7 +110,8 @@ entities:
     relations: {}
   LangAuthSession:
     id_field: access_token
-    description: Login session whose primary key is access_token (AppWorld AuthSession-shaped; federated provides + hole fill).
+    description: Login session whose primary key is access_token (AppWorld AuthSession-shaped; federated
+      provides + hole fill).
     fields:
       access_token:
         required: true
@@ -132,7 +136,8 @@ entities:
     relations: {}
   LangSecuredGroup:
     id_field: group_id
-    description: Group list requiring Bearer access_token from a second LangAuthSession (CUGA dual-login hole-fill witness).
+    description: Group list requiring Bearer access_token from a second LangAuthSession (CUGA dual-login
+      hole-fill witness).
     fields:
       group_id:
         required: true
@@ -201,7 +206,8 @@ entities:
           - key: lines
           - wildcard: true
       tags:
-        description: Tags embedded on LangItem GET when present; scoped query per item when embed is absent or incomplete
+        description: Tags embedded on LangItem GET when present; scoped query per item when embed is absent
+          or incomplete
         target: LangTag
         cardinality: many
         materialize:
@@ -263,9 +269,10 @@ entities:
   QueryOnlyRequest:
     id_field: request_id
     primary_query: queryonly_request_received_query
-    description: >
-      Matrix query-only entity — money someone asked you to pay (received requests).
-      Query anchor must precede void action mutators in the teaching table.
+    description: 'Matrix query-only entity — money someone asked you to pay (received requests). Query
+      anchor must precede void action mutators in the teaching table.
+
+      '
     fields:
       request_id:
         required: true
@@ -282,11 +289,10 @@ capabilities:
     description: List LangItem rows (optional tags filter homographs tags relation wire)
     kind: query
     entity: LangItem
-    parameters:
+    selection:
     - name: tags
       value_ref: nv_langitem_query_tags
       required: false
-      role: filter
     provides:
     - id
     - title
@@ -296,11 +302,10 @@ capabilities:
     description: List LangItem rows filtered by owner (required query param)
     kind: query
     entity: LangItem
-    parameters:
+    selection:
     - name: owner
       value_ref: nv_langitem_query_owner_owner
       required: true
-      role: filter
     provides:
     - id
     - title
@@ -310,15 +315,13 @@ capabilities:
     description: Search LangItem rows
     kind: search
     entity: LangItem
-    parameters:
+    selection:
     - name: q
       value_ref: nv_langitem_search_q
       required: true
-      role: search
     - name: team_key
       value_ref: nv_langitem_search_team_key
       required: false
-      role: filter
     provides:
     - id
     - title
@@ -338,19 +341,22 @@ capabilities:
     description: Create LangItem
     kind: create
     entity: LangItem
-    parameters:
-    - name: title
-      value_ref: nv_langitem_create_title
-      required: true
-    - name: score
-      value_ref: nv_langitem_create_score
-      required: false
-    - name: owner
-      value_ref: nv_langitem_create_owner
-      required: false
-    - name: tags
-      value_ref: nv_langitem_create_tags
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: title
+          value_ref: nv_langitem_create_title
+          required: true
+        - name: score
+          value_ref: nv_langitem_create_score
+          required: false
+        - name: owner
+          value_ref: nv_langitem_create_owner
+          required: false
+        - name: tags
+          value_ref: nv_langitem_create_tags
+          required: false
     provides:
     - id
     - title
@@ -360,22 +366,25 @@ capabilities:
     description: Patch LangItem
     kind: update
     entity: LangItem
-    parameters:
-    - name: title
-      value_ref: nv_langitem_update_title
-      required: false
-    - name: score
-      value_ref: nv_langitem_update_score
-      required: false
-    - name: owner
-      value_ref: nv_langitem_update_owner
-      required: false
-    - name: active
-      value_ref: nv_langitem_update_active
-      required: false
-    - name: tags
-      value_ref: nv_langitem_create_tags
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: title
+          value_ref: nv_langitem_update_title
+          required: false
+        - name: score
+          value_ref: nv_langitem_update_score
+          required: false
+        - name: owner
+          value_ref: nv_langitem_update_owner
+          required: false
+        - name: active
+          value_ref: nv_langitem_update_active
+          required: false
+        - name: tags
+          value_ref: nv_langitem_create_tags
+          required: false
     provides:
     - id
     - title
@@ -397,24 +406,31 @@ capabilities:
     description: Pathless side-effect broadcast on LangItem (federated stamp regression; no path id).
     kind: action
     entity: LangItem
-    parameters:
-    - name: message
-      value_ref: nv_langitem_broadcast_message
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: message
+          value_ref: nv_langitem_broadcast_message
+          required: false
     output:
       type: side_effect
       description: Broadcasts an optional message for the catalog (no entity id in path).
   langauthsession_login:
-    description: Pathless login returning LangAuthSession (provides access_token; MutationResult under federation).
+    description: Pathless login returning LangAuthSession (provides access_token; MutationResult under
+      federation).
     kind: action
     entity: LangAuthSession
-    parameters:
-    - name: username
-      value_ref: nv_lang_auth_username
-      required: false
-    - name: password
-      value_ref: nv_lang_auth_password
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: username
+          value_ref: nv_lang_auth_username
+          required: false
+        - name: password
+          value_ref: nv_lang_auth_password
+          required: false
     provides:
     - access_token
     - token_type
@@ -425,14 +441,15 @@ capabilities:
     description: Search secured notes; Bearer access_token required ahead of optional search text.
     kind: search
     entity: LangSecuredNote
-    parameters:
-    - name: access_token
-      value_ref: nv_lang_auth_access_token
-      required: true
+    execution:
+      context:
+        entity: LangAuthSession
+        bindings:
+          access_token: access_token
+    selection:
     - name: query
       value_ref: nv_lang_secured_note_query
       required: false
-      role: search
     provides:
     - note_id
     - title
@@ -440,25 +457,44 @@ capabilities:
     description: Get a secured note including body; Bearer access_token required (summary-hydrate witness).
     kind: get
     entity: LangSecuredNote
-    parameters:
-    - name: access_token
-      value_ref: nv_lang_auth_access_token
-      required: true
     provides:
     - note_id
     - title
     - body
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_lang_auth_access_token
+          required: true
   langsecuredgroup_query:
     description: List secured groups; Bearer access_token required (second federated auth consumer).
     kind: query
     entity: LangSecuredGroup
-    parameters:
-    - name: access_token
-      value_ref: nv_lang_auth_access_token
-      required: true
+    execution:
+      context:
+        entity: LangAuthSession
+        bindings:
+          access_token: access_token
     provides:
     - group_id
     - name
+  langsecuredgroup_get:
+    description: Get a secured group by id; Bearer access_token required (anchors LangSecuredGroup under
+      context).
+    kind: get
+    entity: LangSecuredGroup
+    provides:
+    - group_id
+    - name
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_lang_auth_access_token
+          required: true
   langoffer_query:
     description: List LangOffer rows
     kind: query
@@ -471,13 +507,16 @@ capabilities:
     description: Create LangOffer
     kind: create
     entity: LangOffer
-    parameters:
-    - name: price
-      value_ref: nv_lang_offer_price
-      required: true
-    - name: quote_currency
-      value_ref: nv_lang_offer_currency
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: price
+          value_ref: nv_lang_offer_price
+          required: true
+        - name: quote_currency
+          value_ref: nv_lang_offer_currency
+          required: true
     provides:
     - id
     - price
@@ -486,10 +525,12 @@ capabilities:
     description: List payment requests other people sent to you (query anchor witness).
     kind: query
     entity: QueryOnlyRequest
-    parameters:
-    - name: access_token
-      value_ref: nv_lang_auth_access_token
-      required: true
+    execution:
+      context:
+        entity: LangAuthSession
+        bindings:
+          access_token: access_token
+    selection:
     - name: status
       value_ref: nv_lang_item_status
       required: false
@@ -501,35 +542,44 @@ capabilities:
     description: Approve and pay a received payment request
     kind: action
     entity: QueryOnlyRequest
-    parameters:
-    - name: access_token
-      value_ref: nv_lang_auth_access_token
-      required: true
     output:
       type: side_effect
       description: Approves the request and transfers money.
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_lang_auth_access_token
+          required: true
   queryonly_request_deny:
     description: Deny a received payment request
     kind: action
     entity: QueryOnlyRequest
-    parameters:
-    - name: access_token
-      value_ref: nv_lang_auth_access_token
-      required: true
     output:
       type: side_effect
       description: Marks the request as denied.
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_lang_auth_access_token
+          required: true
   queryonly_request_remind:
     description: Send a reminder about a pending payment request
     kind: action
     entity: QueryOnlyRequest
-    parameters:
-    - name: access_token
-      value_ref: nv_lang_auth_access_token
-      required: true
     output:
       type: side_effect
       description: Notifies the recipient about the outstanding request.
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_lang_auth_access_token
+          required: true
   langtag_get:
     description: Get LangTag by id (batch relation resolution for prefer_from_parent_get)
     kind: get
@@ -565,11 +615,10 @@ capabilities:
     description: List tags scoped to one LangItem
     kind: query
     entity: LangTag
-    parameters:
+    scope:
     - name: item_id
       value_ref: nv_langtag_query_item_id
       required: true
-      role: scope
     provides:
     - id
     - item_id
@@ -578,11 +627,10 @@ capabilities:
     description: List tags filtered by parent LangItem score (integer scope param)
     kind: query
     entity: LangTag
-    parameters:
+    scope:
     - name: seq
       value_ref: nv_langtag_by_score_query_seq
       required: true
-      role: scope
     provides:
     - id
     - item_id
@@ -613,19 +661,14 @@ capabilities:
     description: List lines scoped to one LangItem (optional list path; also on item GET)
     kind: query
     entity: LangLine
-    parameters:
+    scope:
     - name: item_id
       value_ref: nv_langline_query_item_id
       required: true
-      role: scope
     provides:
     - id
     - item_id
     - note
-# Host continuations (language matrix parse smoke; not CGS capabilities):
-#   page(sN_pgM) — paginated query batch (see language-card preamble)
-#   wait(sN_oM)  — poll async plan run (see docs/plasm-long-operations.md)
-#   cancel(sN_oM) — cooperative cancel of that operation
 values:
   nv_lang_detail_id:
     type: string
@@ -704,7 +747,7 @@ values:
   nv_lang_item_code:
     type: string
     min_length: 3
-    pattern: '^[A-Z]{3}$'
+    pattern: ^[A-Z]{3}$
   nv_langitem_query_owner_owner:
     type: string
   nv_langitem_query_tags:

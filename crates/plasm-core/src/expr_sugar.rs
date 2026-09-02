@@ -33,7 +33,7 @@ pub fn rewrite_id_field_brace_query_to_get(expr: Expr, cgs: &CGS) -> Expr {
 }
 
 fn try_brace_query_to_get(q: &QueryExpr, cgs: &CGS) -> Option<GetExpr> {
-    if q.capability_name.is_some() {
+    if q.context.is_some() || q.capability_name.is_some() {
         return None;
     }
     let ent = cgs.get_entity(q.entity.as_str())?;

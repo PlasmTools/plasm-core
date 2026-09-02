@@ -9,9 +9,7 @@ use std::collections::HashSet;
 use thiserror::Error;
 
 use crate::expr::QueryExpr;
-use crate::schema::{
-    capability_is_zero_arity_invoke, CapabilityKind, CapabilitySchema, ParameterRole, CGS,
-};
+use crate::schema::{capability_is_zero_arity_invoke, CapabilityKind, CapabilitySchema, CGS};
 
 /// Failure to pick exactly one query/search capability for a [`QueryExpr`].
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
@@ -24,16 +22,16 @@ pub enum QueryCapabilityResolveError {
     Ambiguous { entity: String, names: String },
     #[error("no query capability matches for entity '{entity}': {message}")]
     NoMatchingCapability { entity: String, message: String },
+    #[error("rowset normalize for entity '{entity}': {message}")]
+    RowsetNormalize { entity: String, message: String },
 }
 
-/// Required `role: scope` parameter names for `cap`, in stable order.
+/// Required parent-scope parameter names for `cap`, in stable order.
 pub fn required_scope_param_names(cap: &CapabilitySchema) -> Vec<String> {
-    let Some(fields) = cap.object_params() else {
-        return Vec::new();
-    };
-    let mut names: Vec<String> = fields
+    let mut names: Vec<String> = cap
+        .scope_params()
         .iter()
-        .filter(|f| f.required && matches!(f.role, Some(ParameterRole::Scope)))
+        .filter(|f| f.required)
         .map(|f| f.name.to_string())
         .collect();
     names.sort();
@@ -108,11 +106,11 @@ fn try_resolve_search_for_filter_query<'a>(
     search_caps.sort_by_key(|c| c.name.as_str());
     let mut matching: Vec<&CapabilitySchema> = Vec::new();
     for cap in &search_caps {
-        let Some(params) = cap.object_params() else {
-            matching.push(*cap);
-            continue;
-        };
-        let names: HashSet<String> = params.iter().map(|f| f.name.to_string()).collect();
+        let names: HashSet<String> = cap
+            .selection_params()
+            .iter()
+            .map(|f| f.name.to_string())
+            .collect();
         if pred_fields.iter().all(|f| names.contains(f)) {
             matching.push(*cap);
         }
@@ -125,22 +123,10 @@ fn try_resolve_search_for_filter_query<'a>(
 }
 
 fn required_filter_like_param_names(cap: &CapabilitySchema) -> Vec<String> {
-    let Some(fields) = cap.object_params() else {
-        return Vec::new();
-    };
-    let mut names: Vec<String> = fields
+    let mut names: Vec<String> = cap
+        .selection_params()
         .iter()
-        .filter(|f| {
-            f.required
-                && !matches!(f.role, Some(ParameterRole::Scope))
-                && !matches!(
-                    f.role,
-                    Some(ParameterRole::Search)
-                        | Some(ParameterRole::Sort)
-                        | Some(ParameterRole::SortDirection)
-                        | Some(ParameterRole::ResponseControl)
-                )
-        })
+        .filter(|f| f.required)
         .map(|f| f.name.to_string())
         .collect();
     names.sort();
@@ -211,22 +197,38 @@ fn normalize_query_arm(
     let crate::Expr::Query(q) = expr else {
         return Ok(());
     };
-    if q.capability_name.is_some() {
+    if q.capability_name.is_none() {
+        match resolve_query_capability(q, cgs) {
+            Ok(cap) => {
+                q.capability_name = Some(cap.name.clone());
+            }
+            Err(err) => {
+                let Some(get_cap) = sole_nullary_singleton_get_for_bare_query(q, cgs) else {
+                    return Err(err);
+                };
+                *expr = rewrite_bare_query_to_sole_get(q, get_cap);
+                return Ok(());
+            }
+        }
+    }
+
+    // Capability stamped — enforce the ResolvedRowset seam (lane checks) before compile.
+    let crate::Expr::Query(q) = expr else {
         return Ok(());
-    }
-    match resolve_query_capability(q, cgs) {
-        Ok(cap) => {
-            q.capability_name = Some(cap.name.clone());
-            Ok(())
+    };
+    let entry_id = q
+        .catalog_entry_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .or(cgs.entry_id.as_deref())
+        .unwrap_or("");
+    crate::rowset::normalize_query_expr_to_rowset(q, cgs, entry_id).map_err(|message| {
+        QueryCapabilityResolveError::RowsetNormalize {
+            entity: q.entity.to_string(),
+            message,
         }
-        Err(err) => {
-            let Some(get_cap) = sole_nullary_singleton_get_for_bare_query(q, cgs) else {
-                return Err(err);
-            };
-            *expr = rewrite_bare_query_to_sole_get(q, get_cap);
-            Ok(())
-        }
-    }
+    })?;
+    Ok(())
 }
 
 /// Resolve the **query** capability that executes `query`.
@@ -286,6 +288,11 @@ pub fn resolve_query_capability<'a>(
             best.sort_by_key(|c| c.name.as_str());
             if best.len() == 1 {
                 return Ok(best[0]);
+            }
+            if let Some(primary) = cgs.primary_query_capability(&query.entity) {
+                if let Some(cap) = best.iter().copied().find(|c| c.name == primary.name) {
+                    return Ok(cap);
+                }
             }
             if best.len() > 1 {
                 let mut names: Vec<String> = best.iter().map(|c| c.name.to_string()).collect();
@@ -516,6 +523,20 @@ mod tests {
     }
 
     #[test]
+    fn venmo_payment_request_access_token_resolves_primary_query() {
+        let dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/appworld/venmo");
+        if !dir.is_dir() {
+            return;
+        }
+        let mut cgs = load_schema_dir(&dir).unwrap();
+        cgs.bind_registry_entry_id("venmo");
+        let q = QueryExpr::filtered("PaymentRequest", Predicate::eq("access_token", "tok"));
+        let cap = resolve_query_capability(&q, &cgs).unwrap();
+        assert_eq!(cap.name.as_str(), "payment_request_received_query");
+    }
+
+    #[test]
     fn normalize_sets_capability_name() {
         let dir = std::path::Path::new("../../apis/clickup");
         if !dir.exists() {
@@ -722,5 +743,159 @@ mod tests {
             }
             other => panic!("expected Get desugar, got {other:?}"),
         }
+    }
+
+    /// Inline CGS: resolve stamps capability then `normalize_query_arm` must build a
+    /// [`crate::ResolvedRowset`] (RA seam) — no live `apis/` catalog required.
+    #[test]
+    fn normalize_expr_invokes_resolved_rowset_seam() {
+        use crate::schema::{
+            registry_test_util, BackendSelectionSchema, CapabilityInputs, CapabilityKind,
+            CapabilityMapping, CapabilitySchema, NamedValueSchema, ParentScopeSchema,
+            ResourceSchema,
+        };
+        use crate::FieldType;
+
+        let mut cgs = CGS::new();
+        cgs.values.insert(
+            "fx_str".into(),
+            NamedValueSchema {
+                domain: Default::default(),
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                array_items: None,
+                currency: None,
+            },
+        );
+        cgs.bind_registry_entry_id("app");
+        cgs.add_resource(ResourceSchema {
+            name: "Task".into(),
+            description: String::new(),
+            id_field: "id".into(),
+            id_format: None,
+            id_from: None,
+            fields: vec![
+                registry_test_util::entity_field_from_values(&cgs, "fx_str", "id", true, ""),
+                registry_test_util::entity_field_from_values(&cgs, "fx_str", "title", false, ""),
+            ],
+            relations: vec![],
+            expression_aliases: vec![],
+            implicit_request_identity: false,
+            key_vars: vec![],
+            abstract_entity: false,
+            domain_projection_examples: false,
+            primary_read: None,
+            primary_query: None,
+            primary_search: None,
+            discovery: None,
+        })
+        .unwrap();
+
+        cgs.add_capability(CapabilitySchema {
+            name: "task_get".into(),
+            description: String::new(),
+            kind: CapabilityKind::Get,
+            domain: "Task".into(),
+            identity_key: None,
+            invalidates_entities: vec![],
+            mapping: CapabilityMapping {
+                template: serde_json::json!({
+                    "method": "GET",
+                    "path": [
+                        {"type": "literal", "value": "tasks"},
+                        {"type": "var", "name": "id"}
+                    ]
+                })
+                .into(),
+            },
+            inputs: CapabilityInputs::default(),
+            output_schema: None,
+            provides: vec![],
+            scope_aggregate_key_policy: Default::default(),
+            preflight: None,
+            discovery: None,
+            sanitizes: vec![],
+            deterministic: None,
+        })
+        .unwrap();
+
+        cgs.add_capability(CapabilitySchema {
+            name: "list_task_query".into(),
+            description: String::new(),
+            kind: CapabilityKind::Query,
+            domain: "Task".into(),
+            identity_key: None,
+            invalidates_entities: vec![],
+            mapping: CapabilityMapping {
+                template: serde_json::json!({
+                    "method": "GET",
+                    "path": [{"type": "literal", "value": "tasks"}]
+                })
+                .into(),
+            },
+            inputs: CapabilityInputs {
+                scope: ParentScopeSchema(vec![registry_test_util::object_input_field_from_values(
+                    &cgs, "fx_str", "list_id", true,
+                )]),
+                selection: BackendSelectionSchema(vec![
+                    registry_test_util::object_input_field_from_values(
+                        &cgs, "fx_str", "status", false,
+                    ),
+                ]),
+                ..CapabilityInputs::default()
+            },
+            output_schema: None,
+            provides: vec![],
+            scope_aggregate_key_policy: Default::default(),
+            preflight: None,
+            discovery: None,
+            sanitizes: vec![],
+            deterministic: None,
+        })
+        .unwrap();
+        cgs.validate().expect("fixture");
+
+        let mut expr = crate::Expr::Query(QueryExpr::filtered(
+            "Task",
+            Predicate::and(vec![
+                Predicate::eq("list_id", "1"),
+                Predicate::eq("status", "open"),
+            ]),
+        ));
+        normalize_expr_query_capabilities(&mut expr, &cgs).unwrap();
+        let crate::Expr::Query(q) = &expr else {
+            panic!("expected Query");
+        };
+        assert_eq!(q.capability_name.as_deref(), Some("list_task_query"));
+
+        let rowset = crate::normalize_query_expr_to_rowset(q, &cgs, "app").unwrap();
+        let slots: Vec<&str> = rowset.selection.0.iter().map(|b| b.slot.as_str()).collect();
+        assert_eq!(slots, vec!["list_id", "status"]);
+        match &rowset.source {
+            crate::RowSource::External {
+                capability,
+                parent_scope,
+                context,
+                ..
+            } => {
+                assert_eq!(capability.as_str(), "list_task_query");
+                assert_eq!(*parent_scope, crate::ParentScope::Root);
+                assert!(context.is_none());
+            }
+            other => panic!("expected External, got {other:?}"),
+        }
+
+        // Entity-row field in braces must fail the seam (RA-2).
+        let mut bad = crate::Expr::Query(QueryExpr::filtered("Task", Predicate::eq("title", "x")));
+        if let crate::Expr::Query(q) = &mut bad {
+            q.capability_name = Some("list_task_query".into());
+        }
+        let err = normalize_expr_query_capabilities(&mut bad, &cgs).unwrap_err();
+        assert!(
+            matches!(err, QueryCapabilityResolveError::RowsetNormalize { .. }),
+            "expected RowsetNormalize, got {err:?}"
+        );
     }
 }

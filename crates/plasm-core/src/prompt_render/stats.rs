@@ -172,8 +172,8 @@ const GRAMMAR_SECTION_MARKERS: &[(&str, &str)] = &[
     ("output", "Output:"),
     ("tsv_semantics", "Language-card Meaning"),
     ("symbol_rules", "Symbol and fill rules:"),
-    ("core_surface", "Core surface:"),
-    ("composition", "Composition rules:"),
+    ("core_surface", "Three strata"),
+    ("composition", "Composition:"),
     ("pitfalls", "Common pitfalls:"),
 ];
 

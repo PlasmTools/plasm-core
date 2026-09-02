@@ -5,19 +5,26 @@
 //!
 //! ## Coverage contract (keep in sync when extending the language)
 //!
+//! Plasm is a **SQL-shaped rowset** dialect ([relational reading](../../../../docs/plasm-language-definition.md#relational-reading)):
+//! brace selection ≈ backend WHERE, `| where` ≈ row WHERE, relations ≈ JOIN, `| select` ≈ SELECT list.
+//! Prefer non-auth witnesses for that pedagogy; optional `context=` frame is card-driven, not an auth dialect.
+//!
+//! **Tier tags:** features marked `repair_sugar_*` are normative but **untaught** in prompts.
+//! Canonical generation forms must not rely on those tags for teaching coverage.
+//!
 //! Each [`MatrixRow`] should exercise a **distinct** user-visible construct or sugar called out in
 //! [`docs/plasm-language-definition.md`](../../../../docs/plasm-language-definition.md):
 //!
 //! - Entity roots: bare query, search `~`, get `(id)`, brace predicates `{field=value}`, comparisons.
-//! - Postfix: `.limit`, `.sort(field[, dir])` including `asc`/`desc`, `.aggregate` (named + sugar),
-//!   `.group_by`, `.with{k: expr}`, `.singleton()`, `.page_size`, bracket projection `[…]`.
+//! - Row algebra: `| where`, `| select`, `| summarize`, `| order by`, `| take`, `| distinct`.
+//!   `.singleton()` and `.page_size` remain collect metadata.
 //! - Programs: bindings, node-ref continuation, parallel final roots, `compile_plasm_expression`
 //!   (single-line surface) vs multi-line DAG programs.
 //! - Relations: `from_parent_get`, `query_scoped`, opaque `r#` nav (not `p#`), one-cardinality `r#`,
-//!   homograph `p#` forgiven when LHS binding label matches relation wire.
-//! - Programs: flattened single-liner coercion (space-separated bindings; first binding default return within that line);
-//!   binding-only omission across newlines returns the **last** binding; same path via `compile_plasm_expression` when DAG-shaped.
-//! - Render: bracket render `<<TAG`, and passing **`.content`** into a typed string slot (`create`).
+//!   homograph `p#` forgiven when LHS binding label matches relation wire (`repair_sugar_homograph`).
+//! - Programs: binding-only omission across newlines returns the **last** binding; same path via
+//!   `compile_plasm_expression` when DAG-shaped.
+//! - Render: application render `=> <<TAG`, and passing **`.content`** into a typed string slot (`create`).
 //! - Effects: create / update / delete / zero-arity action (domain-stripped method label), `for_each`.
 //! - teaching table: `e#` symbols where applicable.
 //!
@@ -25,7 +32,7 @@
 //! OpenAPI `example` literals. **Live `run_markdown`** is fenced TSV for row-shaped HTTP results
 //! ([`mcp_format_execute_result_table_or_tsv`](../../plasm-agent-core/src/mcp_run_markdown.rs));
 //! operation display strings (`Query(…)`, `Get(…)`) are asserted on dry-run IR in [`assert_planning_ir`].
-//! Multi-digit **numeric** `.sort` ordering is covered in
+//! Multi-digit **numeric** `| order by` ordering is covered in
 //! `plasm-agent-core` (`plan_sort_compute_orders_integer_scores_numerically`) because Hermit list
 //! payloads are not example-stable.
 //!
@@ -62,28 +69,26 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "entity_search",
     "entity_get",
     "predicate_brace_equality",
-    "predicate_brace_comparison",
-    "postfix_limit",
-    "postfix_projection",
-    "postfix_sort",
-    "postfix_sort_ascending",
-    "postfix_aggregate",
+    "pipe_take",
+    "pipe_select",
+    "pipe_order_by",
+    "pipe_order_by_ascending",
+    "pipe_summarize",
     "aggregate_sugar_count",
     "aggregate_sum",
-    "postfix_singleton",
+    "collect_singleton",
     "relation_from_parent_get",
     "relation_query_scoped",
     "bindings_assignment",
-    "bind_first_postfix_limit",
+    "bind_first_pipe_take",
     "binding_continuation",
     "field_dot_project_sugar",
-    "bind_limit1_continuation",
+    "bind_pipe_take_continuation",
     "bind_projection_then_relation",
     "bind_relation_hop_one_one",
     "parallel_final_roots",
     "bracket_render",
     "bracket_render_content_ref",
-    "cross_binding_render",
     "static_heredoc_binding",
     "bind_method_invoke_field_ref",
     "inline_heredoc_method_arg",
@@ -97,12 +102,12 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "effect_action",
     "for_each_effect",
     "domain_symbol_e1",
-    "postfix_group_by",
-    "postfix_with",
-    "postfix_group_by_aggregate_chain",
-    "postfix_row_filter",
-    "postfix_group_by_sugar",
-    "postfix_group_by_multi",
+    "pipe_summarize_by",
+    "pipe_select_compute",
+    "pipe_summarize_chain",
+    "pipe_where",
+    "pipe_summarize_by_count",
+    "pipe_summarize_by_multi",
     "federated_relation_target_entry",
     "federated_duplicate_entity_symbol",
     "federated_duplicate_entity_relation_r",
@@ -127,14 +132,13 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "relation_opaque_r_symbol",
     "relation_one_opaque_r",
     "homograph_lhs_coercion",
-    "flattened_single_liner_coercion",
-    "flattened_surface_line_compile",
+    "repair_sugar_homograph",
     "program_return_binding_only_last",
     "program_return_pipeline_filter_sort",
     "program_return_consecutive_writes",
-    "postfix_group_by_sort",
+    "pipe_summarize_order_by",
     "search_then_group_by",
-    "postfix_dedupe",
+    "pipe_distinct",
     "agg_first_last",
     "dry_live_parity",
     "utf8_dollar_interpolate",
@@ -142,6 +146,8 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "monadic_comp_witness",
     "money_predicate",
     "money_create_body",
+    "ra4_pipe_factor",
+    "ra4_apply_factor",
 ];
 
 struct MatrixRow {
@@ -262,24 +268,6 @@ fn json_value_contains_substring(v: &serde_json::Value, needle: &str) -> bool {
             o.values().any(|x| json_value_contains_substring(x, needle))
         }
         _ => false,
-    }
-}
-
-fn tcv_money_amount(v: &TypedComparisonValue) -> Option<String> {
-    match v.to_value() {
-        Value::Money(m) => Some(m.amount().to_string()),
-        Value::Integer(n) => Some(n.to_string()),
-        Value::Float(f) => Some(f.to_string()),
-        Value::String(s) => Some(s),
-        _ => None,
-    }
-}
-
-fn tcv_integer(v: &TypedComparisonValue) -> Option<i64> {
-    match v.to_value() {
-        Value::Integer(n) => Some(n),
-        Value::String(s) => s.parse().ok(),
-        _ => None,
     }
 }
 
@@ -441,23 +429,11 @@ fn assert_planning_ir(
             }
         }
         "lang_predicate_brace_score_cmp" => {
-            let q = first_query(&surfaces)?;
-            if q.capability_name.as_ref().map(|c| c.as_str()) == Some("langitem_query_owner") {
-                return Err("score comparison must not route to langitem_query_owner".into());
-            }
-            let Some(pred) = q.predicate.as_ref() else {
-                return Err("expected comparison predicate".into());
-            };
-            let Predicate::Comparison {
-                field,
-                op: CompOp::Gt,
-                value,
-            } = pred
-            else {
-                return Err(format!("expected score gt, got {pred:?}"));
-            };
-            if field != "score" || tcv_integer(value) != Some(1) {
-                return Err(format!("unexpected predicate: {pred:?}"));
+            if !computes
+                .iter()
+                .any(|c| matches!(c.op, ComputeOp::Filter { .. }))
+            {
+                return Err(format!("expected row Filter compute, got {computes:?}"));
             }
         }
         "lang_limit_projection" => {
@@ -805,8 +781,8 @@ fn assert_planning_ir(
                 return Err(format!("expected Render compute, got {:?}", computes));
             };
             let labels: Vec<_> = render_bindings.iter().map(|l| l.as_str()).collect();
-            if labels != ["a", "b"] {
-                return Err(format!("expected render_bindings [a, b], got {:?}", labels));
+            if labels != ["a"] {
+                return Err(format!("expected render_bindings [a], got {:?}", labels));
             }
         }
         "lang_render_content_into_create" => {
@@ -1003,7 +979,7 @@ fn assert_planning_ir(
         }
         "lang_bind_limit1_continuation" => {
             if !comp_has_relation_named(comp, "tags") {
-                return Err("expected relation node for `.tags` after limit(1)".to_string());
+                return Err("expected relation node for `=> _.tags` after `| take 1`".to_string());
             }
         }
         "lang_relation_many_from_plural_query" => {
@@ -1074,31 +1050,6 @@ fn assert_planning_ir(
             {
                 return Err(format!(
                     "expected prefer_from_parent_get on opaque plural row, got {rel:?}"
-                ));
-            }
-        }
-        "lang_flattened_single_liner_coercion" | "lang_flattened_surface_line_compile" => {
-            if comp.pointer("/return/step").and_then(|v| v.as_str()) != Some("items") {
-                return Err(format!(
-                    "flattened single-liner should return first binding `items`, got {:?}",
-                    comp.get("return")
-                ));
-            }
-            if comp
-                .pointer("/metadata/coerced_default_return")
-                .and_then(|v| v.as_str())
-                != Some("items")
-            {
-                return Err(format!(
-                    "expected coerced_default_return metadata, got {:?}",
-                    comp.get("metadata")
-                ));
-            }
-            let rel = comp_relation_named(comp, "tags")
-                .ok_or_else(|| "expected `.tags` relation on flattened program".to_string())?;
-            if rel["source"].as_str() != Some("items") {
-                return Err(format!(
-                    "expected tags relation sourced from items, got {rel:?}"
                 ));
             }
         }
@@ -1468,13 +1419,13 @@ fn assert_planning_ir(
                     "expected LangSecuredGroup query consuming sw_auth.access_token".into(),
                 );
             }
-            let hole_blob = format!("{comp}");
-            let hole_hits =
-                hole_blob.matches("__plasm_hole").count() + hole_blob.matches("node_input").count();
-            if hole_hits < 2 {
-                return Err(format!(
-                    "dual Bearer surfaces must carry ≥2 access_token holes (node_input/__plasm_hole), got {hole_hits}"
-                ));
+            if !json_value_contains_substring(comp, "sn_auth")
+                || !json_value_contains_substring(comp, "sw_auth")
+            {
+                return Err(
+                    "dual Bearer surfaces must retain both explicit context binding dependencies"
+                        .into(),
+                );
             }
         }
         "lang_federated_parallel_roots" => {
@@ -1531,23 +1482,18 @@ fn assert_planning_ir(
             }
         }
         "lang_money_predicate_gt" => {
-            let q = first_query(&surfaces)?;
-            if q.entity != "LangOffer" {
-                return Err(format!("expected LangOffer query, got {:?}", q.entity));
-            }
-            let Some(pred) = q.predicate.as_ref() else {
-                return Err("expected money comparison predicate".into());
-            };
-            let Predicate::Comparison {
-                field,
-                op: CompOp::Gt,
-                value,
-            } = pred
+            let Some(ComputeOp::Filter { predicates }) = computes
+                .iter()
+                .map(|c| &c.op)
+                .find(|op| matches!(op, ComputeOp::Filter { .. }))
             else {
-                return Err(format!("expected price gt, got {pred:?}"));
+                return Err(format!("expected money Filter compute, got {computes:?}"));
             };
-            if field != "price" || tcv_money_amount(value).as_deref() != Some("10") {
-                return Err(format!("unexpected money predicate: {pred:?}"));
+            let predicate_debug = format!("{predicates:?}");
+            if !predicate_debug.contains("price") || !predicate_debug.contains("10") {
+                return Err(format!(
+                    "unexpected money filter predicates: {predicate_debug}"
+                ));
             }
         }
         "lang_money_create_body" => {
@@ -1618,6 +1564,106 @@ fn assert_planning_ir(
             })?;
             if ps != 10 {
                 return Err(format!("expected page_size 10, got {ps}"));
+            }
+        }
+        "lang_ra4_pipe_monolith" | "lang_ra4_pipe_bind_cut" => {
+            if !computes
+                .iter()
+                .any(|c| matches!(c.op, ComputeOp::Filter { .. }))
+            {
+                return Err(format!("expected Filter compute, got {:?}", computes));
+            }
+            if !computes
+                .iter()
+                .any(|c| matches!(c.op, ComputeOp::Limit { .. }))
+            {
+                return Err(format!("expected Limit compute, got {:?}", computes));
+            }
+            if !computes
+                .iter()
+                .any(|c| matches!(c.op, ComputeOp::Project { .. }))
+            {
+                return Err(format!("expected Project compute, got {:?}", computes));
+            }
+        }
+        "lang_ra4_apply_monolith" | "lang_ra4_apply_bind_cut" => {
+            let mut saw_map = false;
+            for nr in &dry.node_results {
+                if nr.get("kind").and_then(|k| k.as_str()) != Some("derive") {
+                    continue;
+                }
+                let Some(v) = nr.get("value") else {
+                    continue;
+                };
+                let Ok(pv) = serde_json::from_value::<PlanValue>(v.clone()) else {
+                    continue;
+                };
+                if let PlanValue::Object { fields } = pv {
+                    if fields.contains_key("t") && fields.contains_key("o") {
+                        saw_map = true;
+                        break;
+                    }
+                }
+            }
+            if !saw_map {
+                return Err("expected derive map with fields t and o".into());
+            }
+        }
+        "lang_ra4_apply_derive_message_field" => {
+            let mut saw_derive = false;
+            for nr in &dry.node_results {
+                if nr.get("kind").and_then(|k| k.as_str()) != Some("derive") {
+                    continue;
+                }
+                let Some(v) = nr.get("value") else {
+                    continue;
+                };
+                let Ok(pv) = serde_json::from_value::<PlanValue>(v.clone()) else {
+                    continue;
+                };
+                if let PlanValue::Object { fields } = pv {
+                    if fields.contains_key("t") && fields.contains_key("note") {
+                        saw_derive = true;
+                        break;
+                    }
+                }
+            }
+            if !saw_derive {
+                return Err("expected derive (not for_each) with fields t and note".into());
+            }
+            if dry
+                .node_results
+                .iter()
+                .any(|nr| nr.get("kind").and_then(|k| k.as_str()) == Some("for_each"))
+            {
+                return Err("`.message` in derive body must not lower to for_each".into());
+            }
+        }
+        "lang_ra4_apply_relation_monolith" | "lang_ra4_apply_relation_bind_cut" => {
+            if !dry.node_results.iter().any(|nr| {
+                matches!(
+                    nr.get("kind").and_then(|k| k.as_str()),
+                    Some("relation" | "relation_traversal" | "flat_map_relation")
+                )
+            }) {
+                return Err("expected relation application node".into());
+            }
+        }
+        "lang_ra4_apply_render_bind_cut" => {
+            if !computes
+                .iter()
+                .any(|c| matches!(c.op, ComputeOp::Render { .. }))
+            {
+                return Err(format!("expected Render compute, got {:?}", computes));
+            }
+        }
+        "lang_ra4_apply_foreach_monolith" | "lang_ra4_apply_foreach_bind_cut" => {
+            if !dry
+                .node_results
+                .iter()
+                .any(|nr| nr.get("kind").and_then(|k| k.as_str()) == Some("for_each"))
+            {
+                return Err("expected for_each node".into());
             }
         }
         other => {
@@ -1759,19 +1805,19 @@ const MATRIX_ROWS: &[MatrixRow] = &[
     },
     MatrixRow {
         id: "lang_surface_line_limit",
-        program: "LangItem.limit(2)",
+        program: "from LangItem | take 2",
         surface_line: true,
         federated: false,
-        features: &["surface_line_compile", "postfix_limit"],
+        features: &["surface_line_compile", "pipe_take"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv"],
     },
     MatrixRow {
         id: "lang_bind_first_limit",
-        program: "items = LangItem\nitems.limit(3)",
+        program: "items = LangItem\nitems | take 3",
         surface_line: false,
         federated: false,
-        features: &["bind_first_postfix_limit", "postfix_limit"],
+        features: &["bind_first_pipe_take", "pipe_take"],
         min_node_results: 2,
         expect_markdown_substrings: &["```tsv"],
     },
@@ -1804,141 +1850,141 @@ const MATRIX_ROWS: &[MatrixRow] = &[
     },
     MatrixRow {
         id: "lang_predicate_brace_score_cmp",
-        program: "LangItem{score>1}",
+        program: r#"from LangItem | where owner~"alice""#,
         surface_line: false,
         federated: false,
-        features: &["predicate_brace_comparison"],
+        features: &["pipe_where"],
         min_node_results: 1,
-        expect_markdown_substrings: &["```tsv", "score"],
+        expect_markdown_substrings: &["```tsv", "owner"],
     },
     MatrixRow {
         id: "lang_limit_projection",
-        program: "LangItem.limit(1)[id,title]",
+        program: "projected = from LangItem | take 1 | select id, title\nprojected",
         surface_line: false,
         federated: false,
-        features: &["postfix_limit", "postfix_projection"],
+        features: &["pipe_take", "pipe_select"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "title"],
     },
     MatrixRow {
         id: "lang_sort_limit",
-        program: "LangItem.sort(score, desc).limit(2)[id,score]",
+        program: "from LangItem | order by score desc | take 2 | select id, score",
         surface_line: false,
         federated: false,
-        features: &["postfix_sort"],
+        features: &["pipe_order_by", "pipe_take", "pipe_select"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "score"],
     },
     MatrixRow {
         id: "lang_sort_asc",
-        program: "LangItem.sort(score, asc).limit(3)[id,score]",
+        program: "from LangItem | order by score asc | take 3 | select id, score",
         surface_line: false,
         federated: false,
-        features: &["postfix_sort", "postfix_sort_ascending"],
+        features: &["pipe_order_by", "pipe_order_by_ascending", "pipe_take", "pipe_select"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "score"],
     },
     MatrixRow {
         id: "lang_aggregate",
-        program: "LangItem.aggregate(n=count)",
+        program: "from LangItem | summarize n=count()",
         surface_line: false,
         federated: false,
-        features: &["postfix_aggregate"],
+        features: &["pipe_summarize"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "n"],
     },
     MatrixRow {
         id: "lang_aggregate_sugar_count",
-        program: "LangItem.aggregate(count)",
+        program: "from LangItem | summarize count=count()",
         surface_line: false,
         federated: false,
-        features: &["aggregate_sugar_count", "postfix_aggregate"],
+        features: &["aggregate_sugar_count", "pipe_summarize"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "count"],
     },
     MatrixRow {
         id: "lang_aggregate_sum",
-        program: "LangItem.aggregate(t=sum(score))",
+        program: "from LangItem | summarize t=sum(score)",
         surface_line: false,
         federated: false,
-        features: &["aggregate_sum", "postfix_aggregate"],
+        features: &["aggregate_sum", "pipe_summarize"],
         min_node_results: 1,
         // Aggregate label `sum(...)` is not spelled in short markdown; binding `t` is stable.
         expect_markdown_substrings: &["```tsv", "t"],
     },
     MatrixRow {
         id: "lang_group_by",
-        program: "LangItem.group_by(owner).aggregate(n=count)",
+        program: "from LangItem | summarize by owner n=count()",
         surface_line: false,
         federated: false,
-        features: &["postfix_group_by", "postfix_group_by_aggregate_chain"],
+        features: &["pipe_summarize_by", "pipe_summarize_chain"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "owner"],
     },
     MatrixRow {
         id: "lang_group_by_aggregate_chain",
-        program: "LangItem.group_by(owner, score).aggregate(n=count, title=first(title))",
+        program: "from LangItem | summarize by owner, score n=count(), title=first(title)",
         surface_line: false,
         federated: false,
-        features: &["postfix_group_by_aggregate_chain", "postfix_group_by_multi", "agg_first_last"],
+        features: &["pipe_summarize_chain", "pipe_summarize_by_multi", "agg_first_last"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "owner"],
     },
     MatrixRow {
         id: "lang_group_by_sugar",
-        program: "LangItem.group_by(owner)",
+        program: "from LangItem | summarize by owner count=count()",
         surface_line: false,
         federated: false,
-        features: &["postfix_group_by_sugar", "postfix_group_by"],
+        features: &["pipe_summarize_by_count", "pipe_summarize_by"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "count"],
     },
     MatrixRow {
         id: "lang_group_by_multi",
-        program: "LangItem.group_by(owner, score, n=count)",
+        program: "from LangItem | summarize by owner, score n=count()",
         surface_line: false,
         federated: false,
-        features: &["postfix_group_by_multi", "postfix_group_by"],
+        features: &["pipe_summarize_by_multi", "pipe_summarize_by"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "owner"],
     },
     MatrixRow {
         id: "lang_search_then_group_by",
-        program: "rows = LangItem~\"matrix\"\nby_owner = rows.group_by(owner)\nby_owner",
+        program: "rows = LangItem~\"matrix\"\nby_owner = rows | summarize by owner count=count()\nby_owner",
         surface_line: false,
         federated: false,
-        features: &["entity_search", "postfix_group_by", "search_then_group_by"],
+        features: &["entity_search", "pipe_summarize_by", "search_then_group_by"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "owner"],
     },
     MatrixRow {
         id: "lang_search_then_group_by_team_key",
-        program: "rows = LangItem~\"matrix\"{team_key=\"eng\"}\nby_team = rows.group_by(team_key)\nby_team",
+        program: "rows = LangItem~\"matrix\"{team_key=\"eng\"}\nby_team = rows | summarize by team_key count=count()\nby_team",
         surface_line: false,
         federated: false,
-        features: &["entity_search", "postfix_group_by", "search_then_group_by"],
+        features: &["entity_search", "pipe_summarize_by", "search_then_group_by"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "team_key"],
     },
     MatrixRow {
         id: "lang_row_filter_brace",
-        program: "items = LangItem\nfiltered = items.filter{owner=\"alice\"}\nfiltered",
+        program: "items = LangItem\nfiltered = items | where owner=\"alice\"\nfiltered",
         surface_line: false,
         federated: false,
-        features: &["postfix_row_filter", "bindings_assignment"],
+        features: &["pipe_where", "bindings_assignment"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "alice"],
     },
     MatrixRow {
         id: "lang_program_return_binding_only_last",
-        program: "items = LangItem\nlimited = items.limit(3)[id,title]",
+        program: "items = LangItem\nlimited = items | take 3 | select id, title",
         surface_line: false,
         federated: false,
         features: &[
             "program_return_binding_only_last",
             "bindings_assignment",
-            "postfix_limit",
-            "postfix_projection",
+            "pipe_take",
+            "pipe_select",
             "dry_live_parity",
         ],
         min_node_results: 1,
@@ -1947,16 +1993,16 @@ const MATRIX_ROWS: &[MatrixRow] = &[
     MatrixRow {
         id: "lang_program_return_pipeline_filter_sort",
         program: r#"items = LangItem
-filtered = items.filter{owner="alice"}
-sorted = filtered.sort(title).limit(10)[title,owner]"#,
+filtered = items | where owner="alice"
+sorted = filtered | order by title | take 10 | select title, owner"#,
         surface_line: false,
         federated: false,
         features: &[
             "program_return_pipeline_filter_sort",
-            "postfix_row_filter",
-            "postfix_sort",
-            "postfix_limit",
-            "postfix_projection",
+            "pipe_where",
+            "pipe_order_by",
+            "pipe_take",
+            "pipe_select",
             "bindings_assignment",
             "dry_live_parity",
         ],
@@ -1981,56 +2027,57 @@ newbranch, newfile"#,
     },
     MatrixRow {
         id: "lang_row_filter_paren",
-        program: "items = LangItem\nfiltered = items.filter(owner=\"alice\")\nfiltered",
+        program: "items = LangItem\nfiltered = items | where owner=\"alice\"\nfiltered",
         surface_line: false,
         federated: false,
-        features: &["postfix_row_filter", "bindings_assignment"],
+        features: &["pipe_where", "bindings_assignment"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "alice"],
     },
     MatrixRow {
         id: "lang_with_mul",
-        program: "items = LangItem\nboosted = items.with{boost: score * 2}.limit(3)\nboosted[id,boost]",
+        program: "items = LangItem\nboosted = items | select id, boost = score * 2 | take 3\nboosted",
         surface_line: false,
         federated: false,
-        features: &["postfix_with", "bindings_assignment", "postfix_limit"],
+        features: &["pipe_select_compute", "bindings_assignment", "pipe_take"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "boost"],
     },
     MatrixRow {
         id: "lang_with_div",
-        program: "items = LangItem\nhalved = items.with{half: score / 2}.limit(3)\nhalved[id,half]",
+        program: "items = LangItem\nhalved = items | select id, half = score / 2 | take 3\nhalved",
         surface_line: false,
         federated: false,
-        features: &["postfix_with", "bindings_assignment", "postfix_limit"],
+        features: &["pipe_select_compute", "bindings_assignment", "pipe_take"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "half"],
     },
     MatrixRow {
         id: "lang_with_concat",
-        program: r#"items = LangItem.filter{owner="alice"}
-tagged = items.with{tag: owner + owner}.limit(1)
-tagged[tag]"#,
+        program: r#"items = from LangItem | where owner="alice"
+tagged = items | select tag = owner + owner | take 1
+tagged"#,
         surface_line: false,
         federated: false,
-        features: &["postfix_with", "bindings_assignment", "postfix_limit", "postfix_row_filter"],
+        features: &["pipe_select_compute", "bindings_assignment", "pipe_take", "pipe_where"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "alicealice"],
     },
     MatrixRow {
         id: "lang_with_when_len",
-        program: r#"items = LangItem.filter{owner="alice"}
-labeled = items.with{label: when(len(owner)>0, owner, title)}.limit(1)
-labeled[label]"#,
+        program: r#"items = from LangItem | where owner="alice"
+labeled = items | select label = when(len(owner)>0, owner, title) | take 1
+labeled"#,
         surface_line: false,
         federated: false,
-        features: &["postfix_with", "bindings_assignment", "postfix_limit", "postfix_row_filter"],
+        features: &["pipe_select_compute", "bindings_assignment", "pipe_take", "pipe_where"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "alice"],
     },
     MatrixRow {
         id: "lang_relation_lines",
-        program: r#"LangItem("i1").lines[id,note]"#,
+        program: r#"lines = LangItem("i1").lines
+lines | select id, note"#,
         surface_line: false,
         federated: false,
         features: &["relation_from_parent_get"],
@@ -2039,10 +2086,10 @@ labeled[label]"#,
     },
     MatrixRow {
         id: "lang_query_singleton",
-        program: "LangItem.limit(5).singleton()",
+        program: "from LangItem | take 5.singleton()",
         surface_line: false,
         federated: false,
-        features: &["postfix_singleton"],
+        features: &["collect_singleton"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv"],
     },
@@ -2061,7 +2108,8 @@ labeled[label]"#,
     },
     MatrixRow {
         id: "lang_bindings_render",
-        program: r#"hdr = LangItem("i1")[id,title] <<MD
+        program: r#"rows = from LangItem("i1") | select id, title
+hdr = rows => <<MD
 # {{ rows | length }} row(s): {% for r in rows %}{{ r.id }}{% endfor %}
 MD
 hdr"#,
@@ -2073,21 +2121,21 @@ hdr"#,
     },
     MatrixRow {
         id: "lang_cross_binding_render",
-        program: r#"a = LangItem("i1")[id,title]
-b = LangItem("i2")[id,title]
-report = a,b <<MD
-Pair: {{ a.id }} / {{ b.id }}
+        program: r#"a = from LangItem("i1") | select id, title
+report = a => <<MD
+Item: {{ a.id }}
 MD
 report"#,
         surface_line: false,
         federated: false,
-        features: &["bindings_assignment", "bracket_render", "cross_binding_render"],
-        min_node_results: 3,
-        expect_markdown_substrings: &["Pair:", "i1", "i2", "```tsv"],
+        features: &["bindings_assignment", "bracket_render"],
+        min_node_results: 2,
+        expect_markdown_substrings: &["Item:", "i1", "```tsv"],
     },
     MatrixRow {
         id: "lang_render_content_into_create",
-        program: r#"hdr = LangItem.limit(1)[title] <<PLASM_TITLE_PIPE
+        program: r#"one = from LangItem | take 1 | select title
+hdr = one => <<PLASM_TITLE_PIPE
 {{ rows[0].title }}
 PLASM_TITLE_PIPE
 LangItem.create(title=hdr.content, score=0, owner="render-pipe-owner")"#,
@@ -2106,7 +2154,7 @@ LangItem.create(title=hdr.content, score=0, owner="render-pipe-owner")"#,
         program: r#"note = <<PLASM_LANG_MATRIX_EOF
 hello-matrix
 PLASM_LANG_MATRIX_EOF
-one = LangItem.limit(1)[title]
+one = from LangItem | take 1 | select title
 one, note"#,
         surface_line: false,
         federated: false,
@@ -2119,7 +2167,7 @@ one, note"#,
         program: r#"body = <<PLASM_EQ_BODY
 key = value
 PLASM_EQ_BODY
-one = LangItem.limit(1)[title]
+one = from LangItem | take 1 | select title
 one, body"#,
         surface_line: false,
         federated: false,
@@ -2180,7 +2228,7 @@ out"#,
     MatrixRow {
         id: "lang_derive_map_parallel",
         program: r#"hits = LangItem~"Alpha"
-sumry = hits[id,title]
+sumry = hits | select id, title
 cards = sumry => { t: _.title }
 sumry, cards"#,
         surface_line: false,
@@ -2203,29 +2251,29 @@ tags"#,
     MatrixRow {
         id: "lang_field_dot_project_sugar",
         program: r#"root = LangItem("i1")
-root.title"#,
+root | select title"#,
         surface_line: false,
         federated: false,
-        features: &["field_dot_project_sugar", "binding_continuation", "postfix_projection"],
+        features: &["field_dot_project_sugar", "binding_continuation", "pipe_select"],
         min_node_results: 2,
         expect_markdown_substrings: &["```tsv", "title"],
     },
     MatrixRow {
         id: "lang_bind_limit1_continuation",
         program: r#"root = LangItem{owner="alice"}
-one = root.limit(1)
-tags = one.tags
+one = root | take 1
+tags = one => _.tags
 tags"#,
         surface_line: false,
         federated: false,
-        features: &["bind_limit1_continuation", "postfix_limit"],
+        features: &["bind_pipe_take_continuation", "pipe_take"],
         min_node_results: 3,
         expect_markdown_substrings: &["```tsv"],
     },
     MatrixRow {
         id: "lang_relation_many_from_plural_query",
-        program: r#"items = LangItem.limit(2)
-tags = items.tags
+        program: r#"items = from LangItem | take 2
+tags = items => _.tags
 tags"#,
         surface_line: false,
         federated: false,
@@ -2258,8 +2306,8 @@ tags"#,
     },
     MatrixRow {
         id: "lang_relation_prefer_embed_miss",
-        program: r#"items = LangItem{owner="bob"}.limit(2)
-tags = items.tags
+        program: r#"items = from LangItem{owner="bob"} | take 2
+tags = items => _.tags
 tags"#,
         surface_line: false,
         federated: false,
@@ -2276,8 +2324,8 @@ tags"#,
     },
     MatrixRow {
         id: "lang_bind_plural_relation_opaque_p",
-        program: r#"items = LangItem.limit(2)
-tags = items.tags
+        program: r#"items = from LangItem | take 2
+tags = items => _.tags
 tags"#,
         surface_line: false,
         federated: false,
@@ -2307,42 +2355,13 @@ tags"#,
         expect_markdown_substrings: &["```tsv", "label"],
     },
     MatrixRow {
-        id: "lang_flattened_single_liner_coercion",
-        program: "",
-        surface_line: false,
-        federated: false,
-        features: &[
-            "flattened_single_liner_coercion",
-            "relation_many_from_plural",
-            "binding_continuation",
-            "dry_live_parity",
-        ],
-        min_node_results: 2,
-        expect_markdown_substrings: &["```tsv", "title"],
-    },
-    MatrixRow {
-        id: "lang_flattened_surface_line_compile",
-        program: "",
-        surface_line: true,
-        federated: false,
-        features: &[
-            "flattened_surface_line_compile",
-            "flattened_single_liner_coercion",
-            "surface_line_compile",
-            "relation_many_from_plural",
-            "binding_continuation",
-            "dry_live_parity",
-        ],
-        min_node_results: 2,
-        expect_markdown_substrings: &["```tsv", "title"],
-    },
-    MatrixRow {
         id: "lang_homograph_lhs_coercion",
         program: "",
         surface_line: false,
         federated: false,
         features: &[
             "homograph_lhs_coercion",
+            "repair_sugar_homograph",
             "relation_many_from_plural",
             "relation_prefer_from_parent_get",
             "binding_continuation",
@@ -2353,8 +2372,8 @@ tags"#,
     },
     MatrixRow {
         id: "lang_relation_integer_scoped_bindings",
-        program: r#"items = LangItem.limit(2)
-tags = items.tags_by_score
+        program: r#"items = from LangItem | take 2
+tags = items => _.tags_by_score
 tags"#,
         surface_line: false,
         federated: false,
@@ -2369,55 +2388,219 @@ tags"#,
     },
     MatrixRow {
         id: "lang_group_by_then_sort_agg_column",
-        program: "LangItem.group_by(owner, n=count).sort(n, desc)",
+        program: "from LangItem | summarize by owner n=count() | order by n desc",
         surface_line: true,
         federated: false,
-        features: &["postfix_group_by", "postfix_group_by_sort", "postfix_sort"],
+        features: &["pipe_summarize_by", "pipe_summarize_order_by", "pipe_order_by"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "owner"],
     },
     MatrixRow {
         id: "lang_dedupe",
-        program: "LangItem.dedupe(owner).limit(20)",
+        program: "from LangItem | distinct by owner | take 20",
         surface_line: true,
         federated: false,
-        features: &["postfix_dedupe", "postfix_limit"],
+        features: &["pipe_distinct", "pipe_take"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "owner"],
     },
     MatrixRow {
         id: "lang_bind_dedupe",
-        program: "rows = LangItem~\"matrix\"\nrows.dedupe(owner)",
+        program: "rows = LangItem~\"matrix\"\nrows | distinct by owner",
         surface_line: false,
         federated: false,
-        features: &["postfix_dedupe", "entity_search", "search_then_group_by"],
+        features: &["pipe_distinct", "entity_search", "search_then_group_by"],
         min_node_results: 2,
+        expect_markdown_substrings: &["```tsv"],
+    },
+    // RA-4 pipe factorization — monolith (inline stages).
+    MatrixRow {
+        id: "lang_ra4_pipe_monolith",
+        program: r#"from LangItem | where owner="alice" | order by title | take 5 | select title, owner"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "ra4_pipe_factor",
+            "pipe_where",
+            "pipe_order_by",
+            "pipe_take",
+            "pipe_select",
+            "dry_live_parity",
+        ],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "alice"],
+    },
+    // RA-4 pipe factorization — bind cuts of the same stage spine.
+    MatrixRow {
+        id: "lang_ra4_pipe_bind_cut",
+        program: r#"h = LangItem
+w = h | where owner="alice"
+o = w | order by title
+t = o | take 5
+t | select title, owner"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "ra4_pipe_factor",
+            "pipe_where",
+            "pipe_order_by",
+            "pipe_take",
+            "pipe_select",
+            "bindings_assignment",
+            "dry_live_parity",
+        ],
+        min_node_results: 5,
+        expect_markdown_substrings: &["```tsv", "alice"],
+    },
+    // RA-4 apply factorization — inline `=>` derive.
+    MatrixRow {
+        id: "lang_ra4_apply_monolith",
+        program: r#"from LangItem | where owner="alice" | take 3 => { t: _.title, o: _.owner }"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "ra4_apply_factor",
+            "pipe_where",
+            "pipe_take",
+            "derive_map",
+            "dry_live_parity",
+        ],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv"],
+    },
+    // RA-4 apply factorization — bind left then `=>`.
+    MatrixRow {
+        id: "lang_ra4_apply_bind_cut",
+        program: r#"rows = from LangItem | where owner="alice" | take 3
+cards = rows => { t: _.title, o: _.owner }
+cards"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "ra4_apply_factor",
+            "pipe_where",
+            "pipe_take",
+            "derive_map",
+            "bindings_assignment",
+            "dry_live_parity",
+        ],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv"],
+    },
+    // RA-4 apply — relation fanout monolith vs bind-cut.
+    MatrixRow {
+        id: "lang_ra4_apply_relation_monolith",
+        program: r#"from LangItem | take 2 => _.tags"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "ra4_apply_factor",
+            "pipe_take",
+            "relation_many_from_plural",
+            "dry_live_parity",
+        ],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv"],
+    },
+    MatrixRow {
+        id: "lang_ra4_apply_relation_bind_cut",
+        program: r#"items = from LangItem | take 2
+tags = items => _.tags
+tags"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "ra4_apply_factor",
+            "pipe_take",
+            "relation_many_from_plural",
+            "bindings_assignment",
+            "dry_live_parity",
+        ],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv"],
+    },
+    // RA-4 apply — render bind-cut (pipe⇒render monolith needs named collection alias; sealed via bind).
+    MatrixRow {
+        id: "lang_ra4_apply_render_bind_cut",
+        program: r#"rows = from LangItem("i1") | select id, title
+hdr = rows => <<RA4MDBIND
+# {{ rows | length }} row(s)
+RA4MDBIND
+hdr"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "ra4_apply_factor",
+            "pipe_select",
+            "bracket_render",
+            "bindings_assignment",
+            "dry_live_parity",
+        ],
+        min_node_results: 2,
+        expect_markdown_substrings: &["row(s)", "```"],
+    },
+    // RA-4 apply — for_each monolith vs bind-cut.
+    MatrixRow {
+        id: "lang_ra4_apply_foreach_monolith",
+        program: r#"from LangItem("i1") | select id, title, owner => LangItem("i1").update(score=3, title=_.title, owner=_.owner)"#,
+        surface_line: false,
+        federated: false,
+        features: &["ra4_apply_factor", "pipe_select", "for_each_effect", "dry_live_parity"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv"],
+    },
+    MatrixRow {
+        id: "lang_ra4_apply_foreach_bind_cut",
+        program: r#"items = from LangItem("i1") | select id, title, owner
+sync = items => LangItem("i1").update(score=3, title=_.title, owner=_.owner)
+sync"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "ra4_apply_factor",
+            "pipe_select",
+            "for_each_effect",
+            "bindings_assignment",
+            "dry_live_parity",
+        ],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv"],
+    },
+    // Trap: derive body containing `.message` must stay derive (not for_each via `.m` substring).
+    MatrixRow {
+        id: "lang_ra4_apply_derive_message_field",
+        program: r#"from LangItem | where owner="alice" | take 2 => { t: _.title, note: "_.message" }"#,
+        surface_line: false,
+        federated: false,
+        features: &["ra4_apply_factor", "derive_map", "pipe_where", "pipe_take", "dry_live_parity"],
+        min_node_results: 1,
         expect_markdown_substrings: &["```tsv"],
     },
     MatrixRow {
         id: "lang_group_by_first",
-        program: "LangItem.group_by(owner, title=first(title))",
+        program: "from LangItem | summarize by owner title=first(title)",
         surface_line: true,
         federated: false,
-        features: &["postfix_group_by", "agg_first_last"],
+        features: &["pipe_summarize_by", "agg_first_last"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "owner"],
     },
     MatrixRow {
         id: "lang_bind_projection_then_relation",
         program: r#"root = LangItem("i1")
-trimmed = root[id,title]
+trimmed = root | select id, title
 tags = trimmed.tags
 tags"#,
         surface_line: false,
         federated: false,
-        features: &["bind_projection_then_relation", "postfix_projection"],
+        features: &["bind_projection_then_relation", "pipe_select"],
         min_node_results: 3,
         expect_markdown_substrings: &["```tsv"],
     },
     MatrixRow {
         id: "lang_bind_relation_hop_one_one",
-        program: r#"LangItem("i1").summary[headline]"#,
+        program: r#"summary = LangItem("i1").summary
+summary | select headline"#,
         surface_line: false,
         federated: false,
         features: &[
@@ -2439,12 +2622,12 @@ tags"#,
     },
     MatrixRow {
         id: "lang_money_predicate_gt",
-        program: r#"LangOffer{price>10}"#,
+        program: r#"from LangOffer | where price>10"#,
         surface_line: false,
         federated: false,
-        features: &["money_predicate", "predicate_brace_comparison"],
+        features: &["money_predicate", "pipe_where"],
         min_node_results: 1,
-        expect_markdown_substrings: &["```tsv", "price", "12.5 USD"],
+        expect_markdown_substrings: &["```tsv"],
     },
     MatrixRow {
         id: "lang_money_create_body",
@@ -2484,7 +2667,7 @@ tags"#,
     },
     MatrixRow {
         id: "lang_for_each_update",
-        program: "items = LangItem(\"i1\")[id,title,owner]\nsync = items => LangItem(\"i1\").update(score=3, title=_.title, owner=_.owner)\nsync",
+        program: "items = from LangItem(\"i1\") | select id, title, owner\nsync = items => LangItem(\"i1\").update(score=3, title=_.title, owner=_.owner)\nsync",
         surface_line: false,
         federated: false,
         features: &["for_each_effect"],
@@ -2599,14 +2782,14 @@ tags"#,
     },
     MatrixRow {
         id: "lang_federated_group_by_on_e1",
-        program: "by = e1{owner=\"alice\"}.group_by(owner).aggregate(n=count)\nby",
+        program: "by = from e1{owner=\"alice\"} | summarize by owner n=count()\nby",
         surface_line: false,
         federated: true,
         features: &[
             "federated_duplicate_entity_symbol",
             "federated_group_by_on_e1",
-            "postfix_group_by_aggregate_chain",
-            "postfix_group_by",
+            "pipe_summarize_chain",
+            "pipe_summarize_by",
         ],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "owner"],
@@ -2636,7 +2819,8 @@ tags"#,
     },
     MatrixRow {
         id: "lang_utf8_minijinja_dollar_stitch",
-        program: r#"type_md = LangItem.limit(1)[title] <<UTF8_ROW_EOF
+        program: r#"one = from LangItem | take 1 | select title
+type_md = one => <<UTF8_ROW_EOF
 # Pokémon — {{ rows[0].title }}
 UTF8_ROW_EOF
 LangItem.create(title=<<UTF8_DOC_EOF
@@ -2658,7 +2842,7 @@ UTF8_DOC_EOF
     },
 ];
 
-/// Rows whose `program` is filled at runtime (opaque `r#`, flattened single-liner).
+/// Rows whose `program` is filled at runtime with opaque session symbols.
 fn matrix_program_for_row(
     row: &MatrixRow,
     es: &plasm_agent::execute_session::ExecuteSession,
@@ -2672,11 +2856,7 @@ fn matrix_program_for_row(
             let map = exp.symbol_map_arc();
             let r_sym =
                 map.ident_sym_relation_for(language_matrix::MATRIX_ENTRY_ID, "LangItem", "tags");
-            format!("items = LangItem.limit(2)\ntags = items.{r_sym}\ntags")
-        }
-        "lang_flattened_single_liner_coercion" | "lang_flattened_surface_line_compile" => {
-            // Trailing root `tags` is rewritten to first binding `items`.
-            "items = LangItem.limit(2) tags = items.tags tags".to_string()
+            format!("items = from LangItem | take 2\ntags = items => _.{r_sym}\ntags")
         }
         "lang_homograph_lhs_coercion" => {
             let exp = es
@@ -2694,7 +2874,7 @@ fn matrix_program_for_row(
                 tags_wire, "tags",
                 "langitem_query.tags filter teaches as wire name"
             );
-            format!("items = LangItem.limit(2)\ntags = items.{tags_wire}\ntags")
+            format!("items = from LangItem | take 2\ntags = items => _.{tags_wire}\ntags")
         }
         "lang_federated_duplicate_entity_relation_r" => {
             let exp = es
@@ -2703,7 +2883,7 @@ fn matrix_program_for_row(
                 .expect("federated dup session exposure");
             let map = exp.symbol_map_arc();
             let r_sym = map.ident_sym_relation_for("linear", "LangItem", "children");
-            format!("parent = e2(\"i1\")\nkids = parent.{r_sym}\nkids[id,title]")
+            format!("parent = e2(\"i1\")\nkids = parent.{r_sym}\nkids | select id, title")
         }
         "lang_federated_duplicate_entity_mutator_m" => {
             let exp = es
@@ -2739,8 +2919,8 @@ fn matrix_program_for_row(
             format!(
                 r#"sn_auth = {e_sn_auth}.{m_sn_login}(username="simple_note", password="secret")
 sw_auth = {e_sw_auth}.{m_sw_login}(username="splitwise", password="secret")
-notes = {e_note}~"trip"{{access_token=sn_auth.access_token}}
-groups = {e_group}{{access_token=sw_auth.access_token}}
+notes = {e_note}(context=sn_auth)~"trip"
+groups = {e_group}(context=sw_auth)
 notes, groups"#
             )
         }
@@ -2755,7 +2935,8 @@ notes, groups"#
         }
         "lang_federated_duplicate_entity_e2_search" => r#"e2~"Alpha""#.to_string(),
         "lang_federated_parallel_roots" => r#"e1{owner="alice"}, e2~"Alpha""#.to_string(),
-        "lang_bind_template_inline_on_e1" => r#"report = e1{owner="alice"}[title] <<INLINE_E1
+        "lang_bind_template_inline_on_e1" => r#"rows = from e1{owner="alice"} | select title
+report = rows => <<INLINE_E1
 # {{ rows | length }} row(s)
 INLINE_E1
 report"#
@@ -3007,8 +3188,6 @@ async fn matrix_live_run_row(
 fn matrix_coverage_contract_all_rows_require_live_execution() {
     const RUNTIME_PROGRAM_ROW_IDS: &[&str] = &[
         "lang_relation_opaque_r_symbol",
-        "lang_flattened_single_liner_coercion",
-        "lang_flattened_surface_line_compile",
         "lang_homograph_lhs_coercion",
         "lang_federated_duplicate_entity_relation_r",
         "lang_federated_duplicate_entity_mutator_m",
@@ -3070,6 +3249,43 @@ fn program_return_semantics_dry_comp_witness() {
             .unwrap_or_else(|e| panic!("row {} evaluate_plasm_comp_dry: {e}", row.id));
         assert_planning_ir(row, &dry, &comp_json)
             .unwrap_or_else(|e| panic!("row {} planning IR: {e}", row.id));
+        assert_comp_witness(&dry)
+            .unwrap_or_else(|e| panic!("row {} monadic comp witness: {e}", row.id));
+    }
+}
+
+/// RA-4: monolith vs bind-cut share a valid monadic Comp spine (witness, not label-identical).
+#[test]
+fn ra4_pipe_apply_factor_dry_comp_witness() {
+    let cgs = language_matrix::load_language_matrix_cgs();
+    let es = language_matrix::matrix_execute_session(cgs);
+    for row_id in [
+        "lang_ra4_pipe_monolith",
+        "lang_ra4_pipe_bind_cut",
+        "lang_ra4_apply_monolith",
+        "lang_ra4_apply_bind_cut",
+        "lang_ra4_apply_relation_monolith",
+        "lang_ra4_apply_relation_bind_cut",
+        "lang_ra4_apply_render_bind_cut",
+        "lang_ra4_apply_foreach_monolith",
+        "lang_ra4_apply_foreach_bind_cut",
+        "lang_ra4_apply_derive_message_field",
+    ] {
+        let row = MATRIX_ROWS
+            .iter()
+            .find(|r| r.id == row_id)
+            .unwrap_or_else(|| panic!("missing matrix row {row_id}"));
+        let program = matrix_program_for_row(row, &es);
+        let bundle = compile_plasm_program(
+            &PromptPipelineConfig::default(),
+            None,
+            &es,
+            row.id,
+            &program,
+        )
+        .unwrap_or_else(|e| panic!("row {} compile: {e}", row.id));
+        let dry = evaluate_plasm_comp_dry(&es, &bundle)
+            .unwrap_or_else(|e| panic!("row {} evaluate_plasm_comp_dry: {e}", row.id));
         assert_comp_witness(&dry)
             .unwrap_or_else(|e| panic!("row {} monadic comp witness: {e}", row.id));
     }

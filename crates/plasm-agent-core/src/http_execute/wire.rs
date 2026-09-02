@@ -40,6 +40,18 @@ pub(crate) fn wire_execute_session_prompt(
     stored_prompt: &str,
     render_mode: PromptRenderMode,
 ) -> String {
+    if let Some(table) =
+        plasm_core::prompt_render::teaching_tsv_table_from_wrapped_prompt_any(stored_prompt)
+    {
+        if let Some(fence) = stored_prompt
+            .split("```")
+            .nth(1)
+            .and_then(|s| s.lines().next())
+            .filter(|s| !s.is_empty())
+        {
+            return format!("```{fence}\n{}\n```\n", table.trim_end());
+        }
+    }
     let fence = render_mode.markdown_fence_info_string();
     if let Some(table) = teaching_tsv_table_from_wrapped_prompt(stored_prompt, fence) {
         format!("```{fence}\n{}\n```\n", table.trim_end())

@@ -128,13 +128,7 @@ pub(in crate::plasm_dag) fn agent_program_error(
 pub(in crate::plasm_dag) fn capability_input_param_wires(
     cap: &CapabilitySchema,
 ) -> BTreeSet<String> {
-    let Some(is) = &cap.input_schema else {
-        return BTreeSet::new();
-    };
-    let InputType::Object { fields, .. } = &is.input_type else {
-        return BTreeSet::new();
-    };
-    fields.iter().map(|f| f.name.clone()).collect()
+    cap.input_fields().map(|f| f.name.clone()).collect()
 }
 
 #[allow(clippy::too_many_arguments)]

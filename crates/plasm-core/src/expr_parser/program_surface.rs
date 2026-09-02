@@ -473,7 +473,11 @@ impl FlattenedProgram {
 /// Split one physical line that contains space-separated bindings / trailing roots into logical statements.
 pub fn split_flattened_program_line(line: &str) -> FlattenedProgramLine {
     let line = strip_line_comment(line).trim();
-    if line.is_empty() || line.contains("<<") || !line_has_flattened_program_shape(line) {
+    if line.is_empty()
+        || line.contains("<<")
+        || line.contains('|')
+        || !line_has_flattened_program_shape(line)
+    {
         return FlattenedProgramLine {
             statements: vec![line.to_string()],
             coerced_default_return: None,
@@ -666,7 +670,7 @@ pub fn program_intermediate_return_must_be_binding_error(stmt: &str) -> String {
 }
 
 pub fn program_duplicate_return_node_error() -> String {
-    "Program has multiple return expressions — bind each step (`filtered = comments.filter{{…}}`), then one final return line."
+    "Program has multiple return expressions — bind each step (`filtered = from e# | where …`), then one final return line."
         .to_string()
 }
 

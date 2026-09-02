@@ -622,14 +622,9 @@ fn explorer_arg_from_input_field(
 }
 
 fn predicate_args_from_capability(cgs: &CGS, cap: &CapabilitySchema) -> Vec<ExplorerVerbArg> {
-    cap.object_params()
-        .map(|fields| {
-            fields
-                .iter()
-                .map(|f| explorer_arg_from_input_field(cgs, f, "predicate"))
-                .collect()
-        })
-        .unwrap_or_default()
+    cap.query_surface_fields()
+        .map(|f| explorer_arg_from_input_field(cgs, f, "predicate"))
+        .collect()
 }
 
 fn invoke_args_from_capability(
@@ -655,10 +650,8 @@ fn invoke_args_from_capability(
             cli_flag: String::new(),
         });
     }
-    if let Some(fields) = cap.object_params() {
-        for f in fields {
-            out.push(explorer_arg_from_input_field(cgs, f, "input"));
-        }
+    for f in cap.invocation_object_fields() {
+        out.push(explorer_arg_from_input_field(cgs, f, "input"));
     }
     out
 }

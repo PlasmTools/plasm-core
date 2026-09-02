@@ -14,7 +14,10 @@ pub fn build_invoke_args(cap: &CapabilitySchema, cgs: &CGS) -> Vec<clap::Arg> {
 
 /// Extract matched invoke arguments into a `Value::Object` for `InvokeExpr::input`.
 pub fn args_to_input(matches: &ArgMatches, cap: &CapabilitySchema, cgs: &CGS) -> Option<Value> {
-    let fields = cap.object_params()?;
+    let fields: Vec<_> = cap.invocation_object_fields().collect();
+    if fields.is_empty() {
+        return None;
+    }
 
     let mut obj = IndexMap::new();
 
@@ -87,58 +90,58 @@ mod tests {
             mapping: CapabilityMapping {
                 template: serde_json::json!({}).into(),
             },
-            input_schema: Some(InputSchema {
-                input_type: InputType::Object {
-                    fields: vec![
-                        InputFieldSchema {
-                            name: "name".into(),
-                            wire: InputFieldWire::Registry(
-                                ValueDomainKey::new("invoke_upd_name").expect("key"),
-                            ),
-                            required: false,
-                            description: Some("Account name".into()),
-                            default: None,
-                            role: None,
-                            sink_class: None,
-                            wire_json_path: None,
-                            wire_array_element_key: None,
-                        },
-                        InputFieldSchema {
-                            name: "revenue".into(),
-                            wire: InputFieldWire::Registry(
-                                ValueDomainKey::new("invoke_upd_revenue").expect("key"),
-                            ),
-                            required: false,
-                            description: Some("Annual revenue".into()),
-                            default: None,
-                            role: None,
-                            sink_class: None,
-                            wire_json_path: None,
-                            wire_array_element_key: None,
-                        },
-                        InputFieldSchema {
-                            name: "priority".into(),
-                            wire: InputFieldWire::Registry(
-                                ValueDomainKey::new("invoke_upd_priority").expect("key"),
-                            ),
-                            required: false,
-                            description: Some("Priority level".into()),
-                            default: None,
-                            role: None,
-                            sink_class: None,
-                            wire_json_path: None,
-                            wire_array_element_key: None,
-                        },
-                    ],
-                    additional_fields: false,
-                },
-                validation: InputValidation {
-                    allow_null: false,
-                    cross_field_rules: vec![],
-                },
-                description: None,
-                examples: vec![],
-            }),
+            inputs: plasm_core::CapabilityInputs {
+                payload: Some(InputSchema {
+                    input_type: InputType::Object {
+                        fields: vec![
+                            InputFieldSchema {
+                                name: "name".into(),
+                                wire: InputFieldWire::Registry(
+                                    ValueDomainKey::new("invoke_upd_name").expect("key"),
+                                ),
+                                required: false,
+                                description: Some("Account name".into()),
+                                default: None,
+                                sink_class: None,
+                                wire_json_path: None,
+                                wire_array_element_key: None,
+                            },
+                            InputFieldSchema {
+                                name: "revenue".into(),
+                                wire: InputFieldWire::Registry(
+                                    ValueDomainKey::new("invoke_upd_revenue").expect("key"),
+                                ),
+                                required: false,
+                                description: Some("Annual revenue".into()),
+                                default: None,
+                                sink_class: None,
+                                wire_json_path: None,
+                                wire_array_element_key: None,
+                            },
+                            InputFieldSchema {
+                                name: "priority".into(),
+                                wire: InputFieldWire::Registry(
+                                    ValueDomainKey::new("invoke_upd_priority").expect("key"),
+                                ),
+                                required: false,
+                                description: Some("Priority level".into()),
+                                default: None,
+                                sink_class: None,
+                                wire_json_path: None,
+                                wire_array_element_key: None,
+                            },
+                        ],
+                        additional_fields: false,
+                    },
+                    validation: InputValidation {
+                        allow_null: false,
+                        cross_field_rules: vec![],
+                    },
+                    description: None,
+                    examples: vec![],
+                }),
+                ..Default::default()
+            },
             output_schema: None,
             provides: vec![],
             sanitizes: vec![],

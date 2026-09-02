@@ -11,7 +11,8 @@ use super::gloss_dedup::{
 };
 use super::{
     DomainLineKind, EntityTeachingExprRow, ReturnArrow, TeachingExprLine, TeachingFieldGloss,
-    TeachingHeading, TeachingPromptBundle, TEACHING_OPTIONAL_LEGEND_MARK, TSV_TEACHING_TABLE_HEADER,
+    TeachingHeading, TeachingPromptBundle, TEACHING_OPTIONAL_LEGEND_MARK,
+    TSV_TEACHING_TABLE_HEADER,
 };
 
 fn tsv_expr_has_symbolic_method_call(expr: &str) -> bool {
@@ -37,7 +38,9 @@ fn tsv_identity_expr_is_entity_get(expr: &str) -> bool {
     !t[..open].contains('.')
 }
 
-pub(crate) fn compute_tsv_identity_row_index(teaching_expr_rows: &[&TeachingExprLine]) -> Option<usize> {
+pub(crate) fn compute_tsv_identity_row_index(
+    teaching_expr_rows: &[&TeachingExprLine],
+) -> Option<usize> {
     teaching_expr_rows
         .iter()
         .position(|row| {
@@ -70,7 +73,10 @@ pub(crate) fn compute_entity_desc_attach_idx(
     union_ctor_row_set: &HashSet<usize>,
 ) -> Option<usize> {
     if let Some(i) = compute_tsv_identity_row_index(teaching_expr_rows) {
-        if teaching_rows.get(i).is_some_and(|r| r.meta.kind != DomainLineKind::Method) {
+        if teaching_rows
+            .get(i)
+            .is_some_and(|r| r.meta.kind != DomainLineKind::Method)
+        {
             return Some(i);
         }
     }
@@ -80,7 +86,9 @@ pub(crate) fn compute_entity_desc_attach_idx(
         }
         match row.meta.kind {
             DomainLineKind::Query | DomainLineKind::Search | DomainLineKind::Get => return Some(i),
-            DomainLineKind::Method | DomainLineKind::RelationNav | DomainLineKind::Projection
+            DomainLineKind::Method
+            | DomainLineKind::RelationNav
+            | DomainLineKind::Projection
             | DomainLineKind::Other => {}
         }
     }

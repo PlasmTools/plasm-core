@@ -8,7 +8,7 @@ use crate::error::SchemaError;
 use crate::identity::{EntityFieldName, EntityName};
 use crate::schema::{
     CapabilityKind, CapabilitySchema, EntityDef, FieldDeriveRule, FieldSchema, FieldValueKind,
-    InputType, NamedValueSchema, ValueDomainKey, CGS,
+    NamedValueSchema, ValueDomainKey, CGS,
 };
 use indexmap::IndexMap;
 use minijinja::{Environment, UndefinedBehavior, Value as MjValue};
@@ -203,15 +203,7 @@ pub fn overlay_entity_for_scope<'a>(cgs: &'a CGS, scope_value: &str) -> Option<&
 }
 
 fn capability_input_field_names(cap: &CapabilitySchema) -> Vec<String> {
-    cap.input_schema
-        .as_ref()
-        .and_then(|schema| match &schema.input_type {
-            InputType::Object { fields, .. } => {
-                Some(fields.iter().map(|f| f.name.clone()).collect())
-            }
-            _ => None,
-        })
-        .unwrap_or_default()
+    cap.input_fields().map(|field| field.name.clone()).collect()
 }
 
 /// Resolve `bind` templates from an API row (`{ row, parent, bind }`).

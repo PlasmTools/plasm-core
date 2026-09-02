@@ -20,13 +20,13 @@ impl ExecutionEngine {
 
         let capability_template = parse_capability_template(&capability.mapping.template)?;
 
-        let payload = if let Some(schema) = &capability.input_schema {
+        let payload = if let Some(schema) = &capability.inputs.payload {
             InvokeInputPayload::lift(&create.input.to_value(), &schema.input_type, cgs)
         } else {
             create.input.clone()
         };
 
-        let input = match capability.input_schema.as_ref() {
+        let input = match capability.inputs.payload.as_ref() {
             Some(schema) => plasm_core::normalize_structured_string_inputs(
                 payload.to_value(),
                 &schema.input_type,
@@ -38,7 +38,6 @@ impl ExecutionEngine {
         let input = plasm_core::prepare_create_capability_input(capability, create, input, cgs);
 
         let mut env = CmlEnv::new();
-        merge_plasm_execute_session_share_token_env(&mut env);
         merge_plasm_execute_session_proof_base_token_env(&mut env);
         env.insert("input".to_string(), input.clone());
         if let Value::Object(ref map) = input {
@@ -165,7 +164,6 @@ impl ExecutionEngine {
         let capability_template = parse_capability_template(&capability.mapping.template)?;
 
         let mut env = CmlEnv::new();
-        merge_plasm_execute_session_share_token_env(&mut env);
         merge_plasm_execute_session_proof_base_token_env(&mut env);
         let target_ent = cgs.get_entity(delete.target.entity_type.as_str());
         populate_template_path_env(
@@ -247,12 +245,12 @@ impl ExecutionEngine {
             let raw = match &invoke.input {
                 None => Value::Object(indexmap::IndexMap::new()),
                 Some(input) => {
-                    let payload = if let Some(schema) = &capability.input_schema {
+                    let payload = if let Some(schema) = &capability.inputs.payload {
                         InvokeInputPayload::lift(&input.to_value(), &schema.input_type, cgs)
                     } else {
                         input.clone()
                     };
-                    match capability.input_schema.as_ref() {
+                    match capability.inputs.payload.as_ref() {
                         Some(schema) => plasm_core::normalize_structured_string_inputs(
                             payload.to_value(),
                             &schema.input_type,
@@ -272,7 +270,6 @@ impl ExecutionEngine {
         };
 
         let mut env = CmlEnv::new();
-        merge_plasm_execute_session_share_token_env(&mut env);
         merge_plasm_execute_session_proof_base_token_env(&mut env);
         populate_template_path_env(
             &mut env,

@@ -53,7 +53,7 @@ pub(crate) fn format_union_constructor_invoke_example(
     ))
 }
 
-/// Root-level invoke union (`input_schema.type: union`): ctor body uses flat param paths (`p5`, …).
+/// Root-level invocation union: ctor body uses flat param paths (`p5`, …).
 pub(crate) fn format_root_union_constructor_invoke_example(
     variant: &crate::schema::InputVariantSchema,
     cgs: &CGS,
@@ -168,35 +168,33 @@ pub(crate) fn emit_array_of_union_constructor_teaching_gloss(
     gs: &mut GlossScratch<'_>,
     cap: &crate::CapabilitySchema,
 ) {
-    let Some(is) = cap.input_schema.as_ref() else {
-        return;
-    };
-    if let crate::InputType::Union { variants } = &is.input_type {
-        if !union_variants_teachable(variants) {
+    for schema in cap.invocation_input_schemas() {
+        if let crate::InputType::Union { variants } = &schema.input_type {
+            if union_variants_teachable(variants) {
+                emit_union_array_constructor_teaching_gloss(gs, &schema.input_type);
+            }
             return;
         }
-        emit_union_array_constructor_teaching_gloss(gs, &is.input_type);
-        return;
-    }
-    let crate::InputType::Object { fields, .. } = &is.input_type else {
-        return;
-    };
-    for field in fields {
-        let crate::InputFieldWire::Inline(ty) = &field.wire else {
+        let crate::InputType::Object { fields, .. } = &schema.input_type else {
             continue;
         };
-        let crate::InputType::Array { element_type, .. } = ty.as_ref() else {
-            continue;
-        };
-        let el = element_type.as_ref();
-        let crate::InputType::Union { variants } = el else {
-            continue;
-        };
-        if !union_variants_teachable(variants) {
-            continue;
+        for field in fields {
+            let crate::InputFieldWire::Inline(ty) = &field.wire else {
+                continue;
+            };
+            let crate::InputType::Array { element_type, .. } = ty.as_ref() else {
+                continue;
+            };
+            let el = element_type.as_ref();
+            let crate::InputType::Union { variants } = el else {
+                continue;
+            };
+            if !union_variants_teachable(variants) {
+                continue;
+            }
+            emit_union_array_constructor_teaching_gloss(gs, el);
+            return;
         }
-        emit_union_array_constructor_teaching_gloss(gs, el);
-        return;
     }
 }
 
@@ -214,91 +212,90 @@ pub(crate) fn try_push_union_constructor_teaching_expr_rows(
     line_valid_cache_seed: u64,
     map_arc: Option<&std::sync::Arc<SymbolMap>>,
 ) {
-    let Some(is) = cap.input_schema.as_ref() else {
-        return;
-    };
-    if let crate::InputType::Union { variants } = &is.input_type {
-        if !union_variants_teachable(variants) {
+    for schema in cap.invocation_input_schemas() {
+        if let crate::InputType::Union { variants } = &schema.input_type {
+            if !union_variants_teachable(variants) {
+                return;
+            }
+            for v in variants {
+                let Some(expr_line) = format_root_union_constructor_invoke_example(
+                    v,
+                    cgs,
+                    map,
+                    catalog_entry_id,
+                    cap.domain.as_str(),
+                    cap.name.as_str(),
+                ) else {
+                    continue;
+                };
+                let legend = format_union_constructor_gloss_legend(v);
+                let _ = try_push_teaching_example(
+                    gloss_emit,
+                    teaching_rows,
+                    collect_meta,
+                    cgs,
+                    &expr_line,
+                    Some(legend),
+                    None,
+                    None,
+                    Some(&cap.name),
+                    false,
+                    line_valid_cache,
+                    line_valid_cache_seed,
+                    map_arc,
+                    None,
+                );
+            }
             return;
         }
-        for v in variants {
-            let Some(expr_line) = format_root_union_constructor_invoke_example(
-                v,
-                cgs,
-                map,
-                catalog_entry_id,
-                cap.domain.as_str(),
-                cap.name.as_str(),
-            ) else {
+        let crate::InputType::Object { fields, .. } = &schema.input_type else {
+            continue;
+        };
+        for field in fields {
+            let crate::InputFieldWire::Inline(ty) = &field.wire else {
                 continue;
             };
-            let legend = format_union_constructor_gloss_legend(v);
-            let _ = try_push_teaching_example(
-                gloss_emit,
-                teaching_rows,
-                collect_meta,
-                cgs,
-                &expr_line,
-                Some(legend),
-                None,
-                None,
-                Some(&cap.name),
-                false,
-                line_valid_cache,
-                line_valid_cache_seed,
-                map_arc,
-                None,
-            );
-        }
-        return;
-    }
-    let crate::InputType::Object { fields, .. } = &is.input_type else {
-        return;
-    };
-    for field in fields {
-        let crate::InputFieldWire::Inline(ty) = &field.wire else {
-            continue;
-        };
-        let crate::InputType::Array { element_type, .. } = ty.as_ref() else {
-            continue;
-        };
-        let el = element_type.as_ref();
-        let crate::InputType::Union { variants } = el else {
-            continue;
-        };
-        if !union_variants_teachable(variants) {
+            let crate::InputType::Array { element_type, .. } = ty.as_ref() else {
+                continue;
+            };
+            let el = element_type.as_ref();
+            let crate::InputType::Union { variants } = el else {
+                continue;
+            };
+            if !union_variants_teachable(variants) {
+                return;
+            }
+            for v in variants {
+                let Some(expr_line) = format_union_constructor_invoke_example(
+                    v,
+                    cgs,
+                    map,
+                    catalog_entry_id,
+                    cap.domain.as_str(),
+                    cap.name.as_str(),
+                    field.name.as_str(),
+                ) else {
+                    continue;
+                };
+                let legend = format_union_constructor_gloss_legend(v);
+                let _ = try_push_teaching_example(
+                    gloss_emit,
+                    teaching_rows,
+                    collect_meta,
+                    cgs,
+                    &expr_line,
+                    Some(legend),
+                    None,
+                    None,
+                    Some(&cap.name),
+                    false,
+                    line_valid_cache,
+                    line_valid_cache_seed,
+                    map_arc,
+                    None,
+                );
+            }
             return;
         }
-        for v in variants {
-            let Some(expr_line) = format_union_constructor_invoke_example(
-                v,
-                cgs,
-                map,
-                catalog_entry_id,
-                cap.domain.as_str(),
-                cap.name.as_str(),
-                field.name.as_str(),
-            ) else {
-                continue;
-            };
-            let legend = format_union_constructor_gloss_legend(v);
-            let _ = try_push_teaching_example(
-                gloss_emit,
-                teaching_rows,
-                collect_meta,
-                cgs,
-                &expr_line,
-                Some(legend),
-                None,
-                None,
-                Some(&cap.name),
-                false,
-                line_valid_cache,
-                line_valid_cache_seed,
-                map_arc,
-                None,
-            );
-        }
-        return;
     }
 }

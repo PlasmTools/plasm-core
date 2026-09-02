@@ -68,7 +68,7 @@ fn label_query_projection_resolves_entity_scoped_p_symbols() {
     let source = format!(
         r#"repo = {repo_e}({repo_owner}="ryan-s-roberts", {repo_name}="tool-test")
 labels = {label_e}{{{p_repository}=repo.full_name}}
-labels[{p_name},{p_color},{p_desc}]"#,
+labels | select {p_name},{p_color},{p_desc}"#,
         repo_e = repo_e,
         repo_owner = repo_owner,
         repo_name = repo_name,
@@ -911,11 +911,12 @@ fn github_six_seed_tsv_verbatim_program_compiles() {
     let p_issue_title = map.ident_sym_entity_field_for("github", "Issue", "title");
     let source = format!(
         r#"repo = {repo_e}({repo_owner}="ryan-s-roberts", {repo_name}="tool-test")
-labels = {label_e}{{{p_label_repo}=repo.{repo_full}}}[{p_label_name}]
+labels = from {label_e}{{{p_label_repo}=repo.{repo_full}}} | select {p_label_name}
 created = {issue_e}.{issue_create_m}({p_issue_create_repo}=repo.{repo_full}, {p_issue_create_title}="Label guide", {p_issue_create_body}="Demonstration issue")
 updated = {issue_e}({repo_owner}="ryan-s-roberts", {repo_name}="tool-test", {issue_number}=created.{issue_number}).{issue_update_m}({p_issue_update_labels}=labels.{p_label_name})
 comment = {comment_e}.{issue_comment_m}({p_comment_repo}=repo.{repo_full}, {p_comment_issue}=created.{issue_number}, {p_comment_body}="Applied all labels")
-labels, created[{issue_number}, {p_issue_title}]"#,
+proj = created | select {issue_number}, {p_issue_title}
+labels, proj"#,
         repo_e = repo_e,
         repo_owner = repo_owner,
         repo_name = repo_name,

@@ -73,6 +73,7 @@ fn run_artifact_doc(
         parsed_preimage: ParsedExpr {
             expr: Expr::Query(QueryExpr {
                 entity: "Profile".into(),
+                context: None,
                 predicate: None,
                 projection: None,
                 pagination: None,

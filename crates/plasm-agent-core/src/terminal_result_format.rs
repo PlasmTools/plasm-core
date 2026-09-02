@@ -172,6 +172,7 @@ mod tests {
             parsed_preimage: ParsedExpr {
                 expr: Expr::Query(QueryExpr {
                     entity: "Pet".into(),
+                    context: None,
                     predicate: None,
                     projection: None,
                     pagination: None,

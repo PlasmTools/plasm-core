@@ -142,15 +142,16 @@ pub(crate) fn try_push_teaching_example(
     if let (Some(map), Some(cap_name)) = (map_arc.as_ref(), source_capability) {
         if let Some(cap) = cgs.get_capability(cap_name.as_str()) {
             let entry_id = cgs.entry_id.as_deref().unwrap_or("");
-            let mut wires: Vec<String> = crate::symbol_tuning::capability_optional_legend_param_pairs(
-                map.as_ref(),
-                entry_id,
-                cap.domain.as_str(),
-                cap,
-            )
-            .into_iter()
-            .map(|(wire, _)| wire)
-            .collect();
+            let mut wires: Vec<String> =
+                crate::symbol_tuning::capability_optional_legend_param_pairs(
+                    map.as_ref(),
+                    entry_id,
+                    cap.domain.as_str(),
+                    cap,
+                )
+                .into_iter()
+                .map(|(wire, _)| wire)
+                .collect();
             wires.sort();
             wires.dedup();
             if !wires.is_empty() {

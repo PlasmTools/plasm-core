@@ -248,7 +248,7 @@ fn mcp_server_initialize_workflow_uses_session_mode_not_intent_key() {
 fn mcp_tool_descriptions_are_self_contained_without_initialize() {
     let plasm_desc = plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION;
     assert!(plasm_desc.contains(plasm_core::prompt_render::MCP_TOOL_SYNTAX_CONTRACT_MARKER));
-    assert!(plasm_desc.contains("literal no-op"));
+    assert!(plasm_desc.contains("logical_session_ref") && plasm_desc.contains("run_ref"));
     assert!(plasm_desc.contains("<<TAG"));
     assert!(plasm_desc.contains("Row text:"));
     assert!(plasm_desc.contains("binding.content"));
@@ -256,7 +256,6 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
 
     assert!(plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION
         .contains(plasm_core::prompt_render::MCP_TOOL_SYNTAX_CONTRACT_MARKER));
-    assert!(plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.contains("literal no-op"));
     assert!(plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.contains("pcN"));
     assert!(plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("symbol table"));
     assert!(

@@ -2,7 +2,7 @@
 //!
 //! Runtime orchestration lives in `plasm-runtime::preflight`.
 
-use crate::schema::{CapabilityKind, CapabilitySchema, InputSchema, InputType, CGS};
+use crate::schema::{CapabilityKind, CapabilitySchema, CGS};
 use crate::FieldType;
 use crate::SchemaError;
 use crate::Value;
@@ -101,16 +101,6 @@ fn preflight_err(cap: &CapabilitySchema, message: String) -> SchemaError {
     SchemaError::PreflightInvalid {
         capability: cap.name.to_string(),
         message,
-    }
-}
-
-fn input_field<'a>(
-    schema: &'a InputSchema,
-    param: &str,
-) -> Option<&'a crate::schema::InputFieldSchema> {
-    match &schema.input_type {
-        InputType::Object { fields, .. } => fields.iter().find(|f| f.name == param),
-        _ => None,
     }
 }
 
@@ -274,13 +264,7 @@ fn validate_param_exists(
     param: &str,
     step_label: &str,
 ) -> Result<(), SchemaError> {
-    let Some(schema) = cap.input_schema.as_ref() else {
-        return Err(preflight_err(
-            cap,
-            format!("{step_label} references param '{param}' but capability has no input_schema"),
-        ));
-    };
-    if input_field(schema, param).is_none() {
+    if !cap.input_fields().any(|field| field.name == param) {
         return Err(preflight_err(
             cap,
             format!("{step_label} references unknown param '{param}'"),
@@ -357,11 +341,9 @@ fn param_entity_ref_target(
     param: &str,
     step_label: &str,
 ) -> Result<String, SchemaError> {
-    let schema = cap
-        .input_schema
-        .as_ref()
-        .ok_or_else(|| preflight_err(cap, format!("{step_label} missing input_schema")))?;
-    let field = input_field(schema, param)
+    let field = cap
+        .input_fields()
+        .find(|field| field.name == param)
         .ok_or_else(|| preflight_err(cap, format!("{step_label} unknown param '{param}'")))?;
     let nv = field
         .named_value(cgs)

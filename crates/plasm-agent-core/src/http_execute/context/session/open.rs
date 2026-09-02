@@ -173,10 +173,7 @@ pub(crate) async fn execute_session_create_response_inner(
         .engine
         .prompt_pipeline()
         .render_teaching_first_wave_for_session(cgs.as_ref(), &teaching_exposure, Some(sym_cross));
-    let mut prompt = wrap_teaching_markdown_literal_block(
-        &teaching_prompt,
-        st.engine.prompt_pipeline().render_mode,
-    );
+    let mut prompt = wrap_teaching_markdown_literal_block(&teaching_prompt, body.entry_id.as_str());
     if symbol_space_reset {
         prompt = format!(
             "{}{}",

@@ -5,7 +5,8 @@ http_backend: http://127.0.0.1
 entities:
   RecordedContent:
     id_field: id
-    description: A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text.
+    description: A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI
+      text.
     fields:
       id:
         required: true
@@ -143,14 +144,13 @@ entities:
         value_ref: nv_prompt_run_output
 capabilities:
   recorded_content_search:
+    description: Search recorded OCR, transcripts, and UI text.
     kind: search
     entity: RecordedContent
-    description: Search recorded OCR, transcripts, and UI text.
-    parameters:
+    selection:
     - name: q
       value_ref: nv_recorded_content_search_q
       required: true
-      role: search
     - name: content_type
       value_ref: nv_recorded_content_search_content_type
       required: false
@@ -179,14 +179,14 @@ capabilities:
       value_ref: nv_recorded_content_search_max_length
       required: false
   recorded_content_query_by_profile:
+    description: Search content scoped to one profile.
     kind: query
     entity: RecordedContent
-    description: Search content scoped to one profile.
-    parameters:
+    scope:
     - name: profile_id
       value_ref: nv_recorded_content_query_by_profile_profile_id
       required: true
-      role: scope
+    selection:
     - name: query
       value_ref: nv_recorded_content_query_by_profile_query
       required: false
@@ -199,7 +199,7 @@ capabilities:
   detected_question_query:
     kind: query
     entity: DetectedQuestion
-    parameters:
+    selection:
     - name: unresolved_only
       value_ref: nv_detected_question_query_unresolved_only
       required: false
@@ -224,7 +224,7 @@ capabilities:
   meeting_query:
     kind: query
     entity: Meeting
-    parameters:
+    selection:
     - name: status
       value_ref: nv_meeting_query_status
       required: false
@@ -243,29 +243,32 @@ capabilities:
   prompt_run_create:
     kind: create
     entity: PromptRun
-    parameters:
-    - name: slug
-      value_ref: nv_prompt_run_create_slug
-      required: true
-    - name: meeting_id
-      value_ref: nv_prompt_run_create_meeting_id
-      required: false
-    - name: meeting_uuid
-      value_ref: nv_prompt_run_create_meeting_uuid
-      required: false
-    - name: meeting_ids
-      value_ref: nv_prompt_run_create_meeting_ids
-      required: false
-    - name: start_time
-      value_ref: nv_prompt_run_create_start_time
-      required: false
-    - name: end_time
-      value_ref: nv_prompt_run_create_end_time
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: slug
+          value_ref: nv_prompt_run_create_slug
+          required: true
+        - name: meeting_id
+          value_ref: nv_prompt_run_create_meeting_id
+          required: false
+        - name: meeting_uuid
+          value_ref: nv_prompt_run_create_meeting_uuid
+          required: false
+        - name: meeting_ids
+          value_ref: nv_prompt_run_create_meeting_ids
+          required: false
+        - name: start_time
+          value_ref: nv_prompt_run_create_start_time
+          required: false
+        - name: end_time
+          value_ref: nv_prompt_run_create_end_time
+          required: false
   profile_query:
     kind: query
     entity: Profile
-    parameters:
+    selection:
     - name: profile_type
       value_ref: nv_profile_query_profile_type
       required: false
@@ -281,7 +284,7 @@ capabilities:
   capture_item_query:
     kind: query
     entity: CaptureItem
-    parameters:
+    selection:
     - name: limit
       value_ref: nv_capture_item_query_limit
       required: false
@@ -303,7 +306,7 @@ capabilities:
   pipeline_event_query:
     kind: query
     entity: PipelineEvent
-    parameters:
+    selection:
     - name: names
       value_ref: nv_pipeline_event_query_names
       required: false

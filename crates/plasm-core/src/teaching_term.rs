@@ -149,13 +149,7 @@ pub fn resolve_parameter_slot(
         if !full_set.contains(cap.domain.as_str()) {
             continue;
         }
-        let Some(is) = &cap.input_schema else {
-            continue;
-        };
-        let crate::schema::InputType::Object { fields, .. } = &is.input_type else {
-            continue;
-        };
-        for field in fields {
+        for field in cap.input_fields() {
             if field.name == name {
                 return Some(ParameterSlot::CapabilityInput {
                     domain: cap.domain.clone(),

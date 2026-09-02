@@ -8,16 +8,42 @@ use super::super::schema_validate::{
     passthrough_identity_projection_fields, synthetic_schema_passthrough_rows,
 };
 use super::super::types::{CompileState, DagNode, DagNodeSource, ExpandedProgramSurface};
-use super::postfix_op::postfix_op_to_compute;
+use super::to_compute::row_suffix_to_compute;
 
-pub(in crate::plasm_dag) fn lower_row_expression(
+/// When `expr` carries suffixes, lower the full DAG spine.
+/// Returns `None` for pure surface heads (no row suffix stream).
+pub(in crate::plasm_dag) fn try_lower_row_suffix_expression(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    id: &str,
+    expr: &str,
+) -> Result<Option<Vec<DagNode>>, String> {
+    let expr_trim = expr.trim();
+    let expanded = ExpandedProgramSurface::new(session, state.pipeline, expr_trim);
+    let (head, suffixes) = decompose_row_suffix_stream(session, state, expanded.as_str())?;
+    if suffixes.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(lower_row_expression_with_suffixes(
+        session,
+        state,
+        id,
+        expr_trim,
+        Some(id),
+        head,
+        suffixes,
+    )?))
+}
+
+fn lower_row_expression_with_suffixes(
     session: &ExecuteSession,
     state: &CompileState<'_>,
     binding_id: &str,
     full_rhs: &str,
     final_id: Option<&str>,
+    head: String,
+    suffixes: Vec<RowSuffix>,
 ) -> Result<Vec<DagNode>, String> {
-    let (head, suffixes) = decompose_row_suffix_stream(session, state, full_rhs)?;
     if suffixes.is_empty() {
         return Ok(vec![compile_surface_node(
             session, state, binding_id, full_rhs,
@@ -28,30 +54,7 @@ pub(in crate::plasm_dag) fn lower_row_expression(
     )
 }
 
-/// When `expr` carries postfix and/or relation suffixes, lower the full DAG spine.
-/// Returns `None` for pure surface heads (no row suffix stream).
-pub(in crate::plasm_dag) fn try_lower_row_suffix_expression(
-    session: &ExecuteSession,
-    state: &CompileState<'_>,
-    id: &str,
-    expr: &str,
-) -> Result<Option<Vec<DagNode>>, String> {
-    let expr_trim = expr.trim();
-    let expanded = ExpandedProgramSurface::new(session, state.pipeline, expr_trim);
-    let (_, suffixes) = decompose_row_suffix_stream(session, state, expanded.as_str())?;
-    if suffixes.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(lower_row_expression(
-        session,
-        state,
-        id,
-        expr_trim,
-        Some(id),
-    )?))
-}
-
-/// Classify interleaved relation + transform suffixes after peeling postfix transforms and relation hops from the right.
+/// Classify interleaved relation + transform suffixes after peeling collect metadata and relation hops from the right.
 pub(in crate::plasm_dag) fn decompose_row_suffix_stream(
     session: &ExecuteSession,
     state: &CompileState<'_>,
@@ -61,10 +64,10 @@ pub(in crate::plasm_dag) fn decompose_row_suffix_stream(
     let mut suffixes_rev: Vec<RowSuffix> = Vec::new();
 
     loop {
-        let (core, ops) =
-            peel_postfix_suffixes(&cur).map_err(|e| format!("row suffix stream: {e}"))?;
-        for op in ops.iter().rev() {
-            suffixes_rev.push(RowSuffix::from_postfix_op(op)?);
+        let (core, collect_meta) =
+            peel_collect_meta(&cur).map_err(|e| format!("row suffix stream: {e}"))?;
+        for meta in collect_meta.iter().rev() {
+            suffixes_rev.push(RowSuffix::from(meta));
         }
         cur = core;
 
@@ -80,40 +83,26 @@ pub(in crate::plasm_dag) fn decompose_row_suffix_stream(
     Ok((cur, suffixes_rev))
 }
 
-pub(in crate::plasm_dag) fn row_suffix_to_postfix(suffix: &RowSuffix) -> Option<PlasmPostfixOp> {
-    match suffix {
-        RowSuffix::Limit { count } => Some(PlasmPostfixOp::Limit(*count as usize)),
-        RowSuffix::Project { fields } => Some(PlasmPostfixOp::Projection {
-            fields: fields.join(","),
-        }),
-        RowSuffix::Sort { args } => Some(PlasmPostfixOp::Sort { args: args.clone() }),
-        RowSuffix::Filter { body } => Some(PlasmPostfixOp::Filter { body: body.clone() }),
-        RowSuffix::Aggregate { args } => Some(PlasmPostfixOp::Aggregate { args: args.clone() }),
-        RowSuffix::GroupBy { args } => Some(PlasmPostfixOp::GroupBy { args: args.clone() }),
-        RowSuffix::Dedupe { keys } => Some(PlasmPostfixOp::Dedupe { keys: keys.clone() }),
-        RowSuffix::Distinct { keys } => Some(PlasmPostfixOp::Distinct { keys: keys.clone() }),
-        RowSuffix::With { body } => Some(PlasmPostfixOp::With { body: body.clone() }),
-        RowSuffix::Singleton => Some(PlasmPostfixOp::Singleton),
-        RowSuffix::PageSize { n } => Some(PlasmPostfixOp::PageSize(*n as usize)),
-        RowSuffix::Relation { .. } => None,
-    }
-}
-
 pub(in crate::plasm_dag) fn compile_state_with_nodes<'a>(
     state: &'a CompileState<'a>,
     nodes: &[DagNode],
 ) -> CompileState<'a> {
+    // Share base node payloads via Arc; only newly staged nodes are deep-cloned once.
     let mut scratch = CompileState {
         nodes: state.nodes.clone(),
-        labels: state.labels.clone(),
+        labels: Arc::clone(&state.labels),
         pipeline: state.pipeline,
         cross_cache: state.cross_cache,
         sym_map: RefCell::new(state.sym_map.borrow().clone()),
     };
+    if nodes.is_empty() {
+        return scratch;
+    }
+    let labels = Arc::make_mut(&mut scratch.labels);
     for node in nodes {
         let idx = scratch.nodes.len();
-        scratch.labels.insert(node.id.clone(), idx);
-        scratch.nodes.push(node.clone());
+        labels.insert(node.id.clone(), idx);
+        scratch.nodes.push(Arc::new(node.clone()));
     }
     scratch
 }
@@ -254,11 +243,10 @@ pub(in crate::plasm_dag) fn lower_suffix_stream(
             continue;
         }
 
-        if let Some(op) = row_suffix_to_postfix(suffix) {
-            let node = postfix_op_to_compute(session, state, &out, &op, &cur_id, &nid, full_rhs)?;
-            out.push(node);
-            cur_id = nid;
-        }
+        let node =
+            row_suffix_to_compute(session, state, &out, suffix, &cur_id, &nid, full_rhs)?;
+        out.push(node);
+        cur_id = nid;
     }
 
     if let Some(ps) = tail_page_size {

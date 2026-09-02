@@ -4,72 +4,72 @@ auth:
   scheme: api_key_header
   header: Authorization
   env: JIRA_AUTH
-
 schema_overlay:
   source:
     steps:
-      - capability: project_query
-        collect: projects
-        items_path:
-          - values
-      - capability: issue_createmeta_get
-        for_each: projects
-        bind:
-          id: "{{ row.key }}"
-        merge:
-          kind: append_array
-          path:
-            - projects
+    - capability: project_query
+      collect: projects
+      items_path:
+      - values
+    - capability: issue_createmeta_get
+      for_each: projects
+      bind:
+        id: '{{ row.key }}'
+      merge:
+        kind: append_array
+        path:
+        - projects
   projection:
     mode: per_scope_entity
     items_path:
-      - projects
+    - projects
     nested_items_path:
-      - issuetypes
+    - issuetypes
   entity:
     from_template: Issue
     name:
-      template: "Issue__{{ parent.key | sanitize_identifier }}__{{ row.name | join_sanitize('__', ' ') }}"
+      template: Issue__{{ parent.key | sanitize_identifier }}__{{ row.name | join_sanitize('__', ' ')
+        }}
     scope_key:
-      template: "{{ parent.key }}:{{ row.name }}"
+      template: '{{ parent.key }}:{{ row.name }}'
     static_fields:
       project_key:
-        template: "{{ parent.key }}"
+        template: '{{ parent.key }}'
         value_ref: nv_issue_project_key
       issuetype:
-        template: "{{ row.name }}"
+        template: '{{ row.name }}'
         value_ref: nv_wire_str_short
     dynamic_fields:
       from:
         kind: object_map
         path:
-          - fields
+        - fields
       skip:
         wire_name_path: []
         values_in:
-          - summary
-          - description
-          - issuetype
-          - project
-          - reporter
-          - assignee
-          - priority
-          - labels
-          - attachment
-          - duedate
-          - components
-          - fixVersions
-          - versions
-          - environment
-          - timetracking
-          - security
-          - parent
+        - summary
+        - description
+        - issuetype
+        - project
+        - reporter
+        - assignee
+        - priority
+        - labels
+        - attachment
+        - duedate
+        - components
+        - fixVersions
+        - versions
+        - environment
+        - timetracking
+        - security
+        - parent
       wire_name_path: []
       wire_type_path:
-        - schema
-        - type
+      - schema
+      - type
       name:
-        template: "{{ field_key | sanitize_identifier }}"
+        template: '{{ field_key | sanitize_identifier }}'
       type_map:
         string: nv_wire_str_short
         number: nv_wire_num
@@ -86,18 +86,17 @@ schema_overlay:
       extract:
         kind: path_segments
         segments:
-          - fields
-          - "{{ field_key }}"
+        - fields
+        - '{{ field_key }}'
   decode:
     scope:
       params:
-        - project
-        - issuetype
+      - project
+      - issuetype
       key:
-        template: "{{ ambient.project }}:{{ ambient.issuetype }}"
+        template: '{{ ambient.project }}:{{ ambient.issuetype }}'
     capabilities:
-      - issue_createmeta_get
-
+    - issue_createmeta_get
 entities:
   Issue:
     id_field: key
@@ -125,7 +124,6 @@ entities:
       projects:
         required: false
         value_ref: nv_issue_edit_meta_fields
-
 capabilities:
   project_query:
     description: Search projects.
@@ -135,14 +133,16 @@ capabilities:
     description: Fetch create form field metadata for a project.
     kind: get
     entity: IssueCreateMetaBundle
-    parameters:
-      - name: id
-        value_ref: nv_issue_project_key
-        required: true
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: id
+          value_ref: nv_issue_project_key
+          required: true
   issue_get:
     kind: get
     entity: Issue
-
 values:
   nv_issue_project_key:
     type: string

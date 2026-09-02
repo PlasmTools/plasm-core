@@ -1,14 +1,17 @@
 //! Unified Plasm program AST.
 //!
-//! This parser owns the statement/root shape and postfix syntax for multi-line Plasm programs. It
-//! intentionally keeps catalogue-specific path expressions as source fragments; callers that have a
-//! CGS continue to parse those leaves with [`super::parse`].
+//! Owns statement/root shape for multi-line programs: bindings, pipe / primary row surfaces,
+//! collect-meta tails, and `=>` applicators. Catalogue path leaves remain opaque strings until
+//! parsed with a CGS via [`super::parse`].
 
 use super::program_surface::{
     collect_program_statement_lines, split_assignment_at_top_level, split_top_level,
     validate_program_label,
 };
-use super::{peel_postfix_suffixes, PlasmPostfixOp};
+use super::{
+    parse_pipe_expr, peel_collect_meta, split_apply_expr, Applicator, CollectMeta, PipeExpr,
+};
+use crate::row_composition::RowSuffix;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedProgram {
@@ -22,9 +25,37 @@ pub enum Statement {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RowExpr {
+    Primary {
+        head: String,
+        collect_meta: Vec<CollectMeta>,
+    },
+    Pipe(PipeExpr),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExprNode {
-    pub primary: String,
-    pub postfix: Vec<PlasmPostfixOp>,
+    pub row: RowExpr,
+    /// Stratum-3 applicator when the surface contains top-level `=>`.
+    pub apply: Option<Applicator>,
+}
+
+impl ExprNode {
+    pub fn row_suffixes(&self) -> Result<Vec<RowSuffix>, String> {
+        match &self.row {
+            RowExpr::Pipe(p) => p.row_suffixes(),
+            RowExpr::Primary { collect_meta, .. } => {
+                Ok(collect_meta.iter().map(RowSuffix::from).collect())
+            }
+        }
+    }
+
+    pub fn primary_head(&self) -> &str {
+        match &self.row {
+            RowExpr::Primary { head, .. } => head.as_str(),
+            RowExpr::Pipe(p) => p.head.as_str(),
+        }
+    }
 }
 
 /// Parse line-oriented Plasm program shape (bindings, final roots, postfix transforms).
@@ -51,14 +82,16 @@ pub fn parse_program_shape(source: &str) -> Result<ParsedProgram, String> {
             if line.starts_with("return ") {
                 return Err("return is not Plasm syntax; use bare final roots".into());
             }
-            roots = Some(
+            roots = Some(if parse_pipe_expr(line)?.is_some() {
+                vec![parse_expr_node(line)?]
+            } else {
                 split_top_level(line, ',')?
                     .into_iter()
                     .map(|s| s.trim())
                     .filter(|s| !s.is_empty())
                     .map(parse_expr_node)
-                    .collect::<Result<Vec<_>, _>>()?,
-            );
+                    .collect::<Result<Vec<_>, _>>()?
+            });
         }
     }
 
@@ -70,11 +103,21 @@ pub fn parse_program_shape(source: &str) -> Result<ParsedProgram, String> {
 }
 
 pub fn parse_expr_node(raw: &str) -> Result<ExprNode, String> {
-    let (primary, postfix) = peel_postfix_suffixes(raw)?;
-    if primary.trim().is_empty() {
+    let (row_surface, apply) = split_apply_expr(raw)?;
+    if let Some(pipe) = parse_pipe_expr(&row_surface)? {
+        return Ok(ExprNode {
+            row: RowExpr::Pipe(pipe),
+            apply,
+        });
+    }
+    let (head, collect_meta) = peel_collect_meta(&row_surface)?;
+    if head.trim().is_empty() {
         return Err("expression primary is empty".into());
     }
-    Ok(ExprNode { primary, postfix })
+    Ok(ExprNode {
+        row: RowExpr::Primary { head, collect_meta },
+        apply,
+    })
 }
 
 #[cfg(test)]
@@ -82,22 +125,57 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_binding_and_direct_limit_root() {
-        let p =
-            parse_program_shape("repo = e2(owner=\"ryan\", repo=\"plasm\")\ne1{p4=repo}.limit(20)")
-                .expect("program");
+    fn parses_binding_and_direct_pipe_root() {
+        let p = parse_program_shape(
+            "repo = e2(owner=\"ryan\", repo=\"plasm\")\nfrom e1{p4=repo} | take 20",
+        )
+        .expect("program");
         assert_eq!(p.statements.len(), 1);
         assert_eq!(p.roots.len(), 1);
-        assert_eq!(p.roots[0].primary, "e1{p4=repo}");
-        assert!(matches!(p.roots[0].postfix[0], PlasmPostfixOp::Limit(20)));
+        assert_eq!(p.roots[0].primary_head(), "e1{p4=repo}");
+        assert!(matches!(
+            p.roots[0].row_suffixes().unwrap().as_slice(),
+            [RowSuffix::Limit { count: 20 }]
+        ));
     }
 
     #[test]
-    fn parses_label_postfix_chain() {
-        let p = parse_program_shape("commits = e1{}\ncommits.sort(date, desc).limit(10)")
+    fn parses_label_pipe_chain() {
+        let p = parse_program_shape("commits = e1{}\ncommits | order by date desc | take 10")
             .expect("program");
-        assert_eq!(p.roots[0].primary, "commits");
-        assert_eq!(p.roots[0].postfix.len(), 2);
+        assert_eq!(p.roots[0].primary_head(), "commits");
+        assert_eq!(p.roots[0].row_suffixes().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn preserves_commas_inside_direct_pipe_root() {
+        let p = parse_program_shape("from e1 | select id, title").expect("program");
+        assert_eq!(p.roots.len(), 1);
+        assert_eq!(p.roots[0].primary_head(), "e1");
+        assert!(matches!(
+            p.roots[0].row_suffixes().unwrap().as_slice(),
+            [RowSuffix::Project { fields }] if fields == &vec!["id".to_string(), "title".to_string()]
+        ));
+    }
+
+    #[test]
+    fn retains_apply_stratum_on_pipe_root() {
+        let node = parse_expr_node(
+            "from e1 | where owner=\"alice\" | take 2 => { t: _.message, o: _.owner }",
+        )
+        .expect("expr");
+        assert!(matches!(
+            node.apply,
+            Some(Applicator::Derive { ref body }) if body.contains("_.message")
+        ));
+        assert!(matches!(
+            node.row_suffixes().unwrap().first(),
+            Some(RowSuffix::Filter { .. })
+        ));
+        assert!(matches!(
+            node.row_suffixes().unwrap().last(),
+            Some(RowSuffix::Limit { count: 2 })
+        ));
     }
 
     #[test]
@@ -115,7 +193,7 @@ mod tests {
         let p = parse_program_shape(src).expect("program");
         assert_eq!(p.statements.len(), 1);
         assert_eq!(p.roots.len(), 1);
-        assert_eq!(p.roots[0].primary, "body");
+        assert_eq!(p.roots[0].primary_head(), "body");
     }
 
     /// Regression: heredoc bodies must stay opaque — prose starting with `If` must not break

@@ -66,7 +66,7 @@
             &session,
             "search-group-by-relation",
             r#"rows = LangItem~"probe"
-bad = rows.group_by(summary)
+bad = rows | summarize by summary n=count()
 bad"#,
         )
         .expect_err("search rows omit relation fields from provides");
@@ -87,12 +87,14 @@ bad"#,
             "multi-postfix-roots",
             r#"issue = LangItem("i1")
 comments = issue.lines
-comments.filter{title="a"}
-comments[title]"#,
+comments | where note = "a"
+comments | select note"#,
         )
         .expect_err("intermediate postfix must be bound");
         assert!(
-            err.contains("binding") || err.contains("Intermediate"),
+            err.contains("binding")
+                || err.contains("Intermediate")
+                || err.contains("bind each step"),
             "{err}"
         );
         assert!(!err.contains("return_1"), "{err}");
@@ -108,7 +110,7 @@ comments[title]"#,
             &session,
             "binding-after-return",
             r#"rows = LangItem
-rows[title]
+rows | select title
 lines = rows.lines"#,
         )
         .expect_err("binding after return");
@@ -123,7 +125,7 @@ lines = rows.lines"#,
             None,
             &session,
             "flat-projection-regression",
-            "issue = LangItem(\"i1\") comments = issue.lines comments[note]",
+            "issue = LangItem(\"i1\")\ncomments = issue.lines\ncomments | select note",
         )
         .expect("flat projection return");
         let ret = plan["return"].pointer("/node").and_then(|v| v.as_str());
@@ -139,7 +141,7 @@ lines = rows.lines"#,
             &session,
             "search-group-by-filter-input",
             r#"rows = LangItem~"probe"{team_key="eng"}
-bad = rows.group_by(q)
+bad = rows | summarize by q n=count()
 bad"#,
         )
         .expect_err("search text param q is not a row field");
@@ -163,7 +165,7 @@ bad"#,
             None,
             &session,
             "search-projection-filter-input",
-            r#"rows = LangItem~"probe"{team_key="eng"}[q]
+            r#"rows = from LangItem~"probe"{team_key="eng"} | select q
 rows"#,
         )
         .expect_err("filter params are inputs not row fields for projection");
@@ -179,7 +181,7 @@ rows"#,
             &session,
             "search-group-by-filter-in-provides",
             r#"rows = LangItem~"probe"{team_key="eng"}
-by_team = rows.group_by(team_key)
+by_team = rows | summarize by team_key n=count()
 by_team"#,
         )
         .expect("team_key in provides should be a valid group_by key");
@@ -200,7 +202,11 @@ bad = hits => LangItem(id=_.id)
 bad"#,
         )
         .expect_err("entity ctor on => must not compile as derive literal");
-        assert!(err.contains("derive map does not accept"), "{err}");
+        assert!(
+            err.contains("derive map does not accept")
+                || err.contains("unsupported `=>` applicator"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -214,7 +220,7 @@ bad"#,
             "pika => e2.r3",
         )
         .expect_err("bare source => relation hop must not compile");
-        assert!(err.contains("Relation reads use"), "{err}");
+        assert!(err.contains("relation reads use"), "{err}");
     }
 
     #[test]
@@ -233,7 +239,7 @@ bad"#,
         )
         .expect_err("entity relation hop on => must not compile as derive literal");
         assert!(
-            err.contains("Relation reads use") || err.contains("derive map does not accept"),
+            err.contains("relation reads use") || err.contains("derive map does not accept"),
             "{err}"
         );
     }
@@ -252,7 +258,7 @@ bad"#,
             &program,
         )
         .expect_err("binding relation hop on => must not compile as derive");
-        assert!(err.contains("Relation reads use"), "{err}");
+        assert!(err.contains("relation reads use"), "{err}");
     }
 
     #[test]
@@ -268,7 +274,133 @@ bad = hits => hits.lines
 bad"#,
         )
         .expect_err("wire relation hop on => must not compile as derive");
-        assert!(err.contains("Relation reads use"), "{err}");
+        assert!(
+            err.contains("relation reads use") || err.contains("unsupported `=>` applicator"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn apply_lowers_all_four_applicator_kinds() {
+        let session = test_session();
+        let map = symbol_map_for_plasm_surface_parse(&session, None);
+        let opaque_lines =
+            map.ident_sym_relation_for("langmatrix", "LangItem", "lines");
+        let cases = [
+            (
+                "derive",
+                "rows = LangItem\nout = rows => { title: _.title }\nout".to_string(),
+                "derive",
+            ),
+            (
+                "render",
+                "rows = LangItem\nout = rows => <<MD\n{% for row in rows %}{{ row.title }}{% endfor %}\nMD\nout"
+                    .to_string(),
+                "compute",
+            ),
+            (
+                "relation-wire",
+                "rows = LangItem\nout = rows => _.tags\nout".to_string(),
+                "relation",
+            ),
+            (
+                "relation-opaque",
+                format!("rows = LangItem\nout = rows => _.{opaque_lines}\nout"),
+                "relation",
+            ),
+            (
+                "for-each",
+                "rows = LangItem\nout = rows => LangItem(\"i1\").update(title=_.title, score=1, owner=\"a\")\nout"
+                    .to_string(),
+                "for_each",
+            ),
+        ];
+        for (name, source, expected_kind) in cases {
+            let plan = compile_plasm_dag_to_plan(
+                &PromptPipelineConfig::default(),
+                None,
+                &session,
+                name,
+                &source,
+            )
+            .unwrap_or_else(|err| panic!("{name}: {err}"));
+            let out = plan["nodes"]
+                .as_array()
+                .expect("nodes")
+                .iter()
+                .find(|node| node["id"] == "out")
+                .expect("out node");
+            assert_eq!(out["kind"], expected_kind, "{name}: {out:#}");
+        }
+    }
+
+    #[test]
+    fn apply_rejects_bare_non_applicator_rhs() {
+        let session = test_session();
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "bare-apply-rhs",
+            "rows = LangItem\nbad = rows => tags\nbad",
+        )
+        .expect_err("bare applicator must fail");
+        assert!(err.contains("unsupported `=>` applicator"), "{err}");
+        assert!(err.contains("_.r#"), "{err}");
+    }
+
+    #[test]
+    fn pipe_rejects_catalog_and_render_stages() {
+        let session = test_session();
+        for source in [
+            "items = LangItem\nbad = items | update(title=\"x\")\nbad",
+            "items = LangItem\nbad = items | m3(title=\"x\")\nbad",
+        ] {
+            let err = compile_plasm_dag_to_plan(
+                &PromptPipelineConfig::default(),
+                None,
+                &session,
+                "invalid-pipe-stage",
+                source,
+            )
+            .expect_err(source);
+            assert!(err.contains("unknown pipe stage"), "source={source} err={err}");
+        }
+    }
+
+    #[test]
+    fn binding_head_pipe_where_lowers_without_from() {
+        let session = test_session();
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "binding-pipe-where",
+            "items = LangItem\nfiltered = items | where score >= 10\nfiltered",
+        )
+        .expect("binding-head pipe");
+        let filtered = plan["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .find(|node| node["id"] == "filtered")
+            .expect("filtered node");
+        assert_eq!(filtered["kind"], "compute", "{filtered:#}");
+        assert_eq!(filtered["compute"]["op"]["kind"], "filter", "{filtered:#}");
+    }
+
+    #[test]
+    fn bare_postfix_render_is_rejected() {
+        let session = test_session();
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "bare-render",
+            "items = LangItem\nbad = items <<MD\ntext\nMD\nbad",
+        )
+        .expect_err("bare postfix render must fail");
+        assert!(err.contains("=>"), "{err}");
     }
 
     #[test]
@@ -344,18 +476,22 @@ bad = hits => e1(p5=_.id)
 bad"#,
         )
         .expect_err("e1(...) on => must not compile as derive literal");
-        assert!(err.contains("derive map does not accept"), "{err}");
+        assert!(
+            err.contains("derive map does not accept")
+                || err.contains("unsupported `=>` applicator"),
+            "{err}"
+        );
     }
 
     #[test]
-    fn surface_relation_chain_with_postfix_compiles() {
+    fn surface_relation_chain_with_pipe_compiles() {
         let session = test_session();
         let plan = compile_plasm_surface_line_to_plan(
             &PromptPipelineConfig::default(),
             None,
             &session,
             "relation-chain-limit",
-            r#"LangItem("i1").lines.limit(2)[id]"#,
+            r#"from LangItem("i1").lines | take 2 | select id"#,
         )
         .expect("direct relation chain with postfix should compile");
         let nodes = plan.get("nodes").and_then(|v| v.as_array()).expect("nodes");
@@ -411,16 +547,17 @@ bad"#,
         let r_lines = map.ident_sym_relation_for("langmatrix", "LangItem", "lines");
         let p_note = map.ident_sym_entity_field_for("langmatrix", "LangLine", "note");
         assert_eq!(p_note, "note", "field teaches as wire name");
-        let session_tokens =
-            format!("item = {e_item}(\"i1\")\nlines = item.{r_lines}.limit(2)\nlines[{p_note}]");
+        let session_tokens = format!(
+            "item = {e_item}(\"i1\")\nlines = item.{r_lines}\nlines | take 2 | select {p_note}"
+        );
         for (what, program) in [
             (
                 "from_parent_get (wire)",
-                "item = LangItem(\"i1\")\nlines = item.lines.limit(2)\nlines[note]",
+                "item = LangItem(\"i1\")\nlines = item.lines\nlines | take 2 | select note",
             ),
             (
                 "query_scoped (wire)",
-                "item = LangItem(\"i1\")\ntags = item.tags.limit(2)\ntags[label]",
+                "item = LangItem(\"i1\")\ntags = item.tags\ntags | take 2 | select label",
             ),
             (
                 "from_parent_get (session e#/r# + wire field)",
@@ -443,8 +580,8 @@ bad"#,
             &session,
             "relation-hop-limit-split-project",
             r#"item = LangItem("i1")
-lines = item.lines.limit(2)
-bad = lines[title]
+lines = item.lines
+bad = lines | take 2 | select title
 bad"#,
         )
         .expect_err("`title` is a LangItem field, not a LangLine row field — must be rejected against the target");
@@ -897,7 +1034,7 @@ kids"#
     }
 
     /// Faithful repro of the live Linear failure: real `apis/linear`, multi-entity opaque session
-    /// (Issue + Label + Comment), `issue.comments.limit(3)[id,body]` written with opaque `e#`/`r#`/`p#`.
+    /// (Issue + Label + Comment), then `comments | take 3 | select id, body` with opaque symbols.
     /// Before the fix this surfaced `team_key` (a receiver Issue field) when validating the Comment
     /// projection after the limit compute.
     #[test]
@@ -942,8 +1079,9 @@ kids"#
         let p_body = map.ident_sym_entity_field_for("linear", "Comment", "body");
         let source = format!(
             r#"issue = {e_issue}("PLASM-1")
-comments = issue.{r_comments}.limit(3)
-comments[{p_id},{p_body}]"#
+all_comments = issue.{r_comments}
+comments = all_comments | take 3
+comments | select {p_id}, {p_body}"#
         );
         assert_relation_limit_projection_targets(
             &session,
@@ -1003,7 +1141,7 @@ comments[{p_id},{p_body}]"#
         let source = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
 commits = repo.commits
 one = commits.singleton()
-author = one.author
+author = one => _.author
 author"#;
         let plan = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
@@ -1036,9 +1174,9 @@ author"#;
             None,
             &session,
             "gb-agg-chain",
-            "LangItem.group_by(owner).aggregate(n=count)",
+            "from LangItem | summarize by owner n=count()",
         )
-        .expect("group_by().aggregate() chain");
+        .expect("summarize-by pipeline");
         let computes: Vec<_> = plan["nodes"]
             .as_array()
             .expect("nodes")
@@ -1188,8 +1326,8 @@ author"#;
             None,
             &session,
             "linear-search-group-by-team",
-            r#"issues = Issue~$
-by_team = issues.group_by(team_key)
+            r#"issues = Issue~"matrix"
+by_team = issues | summarize by team_key n=count()
 by_team"#,
         )
         .expect("compile");
@@ -1222,7 +1360,9 @@ by_team"#,
     #[test]
     fn flat_line_projection_on_binding_returns_projection() {
         let session = test_session();
-        let source = r#"item = LangItem("i1") lines = item.lines lines[note]"#;
+        let source = r#"item = LangItem("i1")
+lines = item.lines
+lines | select note"#;
         let plan = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
             None,
@@ -1278,7 +1418,7 @@ by_team"#,
     #[test]
     fn flattened_dag_assignment_then_root_coerces_first_binding_return() {
         let session = test_session();
-        let source = r#"item = LangItem("i1") LangItem.sort(score, desc).limit(2)"#;
+        let source = r#"item = LangItem("i1") LangItem~"Alpha""#;
         let plan = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
             None,
@@ -1286,7 +1426,7 @@ by_team"#,
             "flattened-root",
             source,
         )
-        .expect("flattened assignment + postfix root compiles on DAG path");
+        .expect("flattened assignment + surface root compiles on DAG path");
         assert_eq!(plan["return"]["node"], "item");
         assert_eq!(plan["metadata"]["coerced_default_return"], "item");
     }
@@ -1415,7 +1555,7 @@ by_team"#,
         let source = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
 commits = repo.commits
 one = commits.singleton()
-author = one.author
+author = one => _.author
 author"#;
         let plan = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
@@ -1573,9 +1713,27 @@ bad"#,
         )
         .expect_err("plural binding must not fan out side effects");
         assert!(
-            err.contains("singleton"),
-            "expected singleton side-effect gate, got: {err}"
+            err.contains("singleton") && err.contains("=>"),
+            "expected singleton side-effect gate with apply steering, got: {err}"
         );
+    }
+
+    #[test]
+    fn take_one_does_not_enable_method_dot_continuation() {
+        let session = test_session();
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "take-one-method-dot",
+            r#"items = LangItem
+one = items | take 1
+bad = one.update(title="x", score=1, owner="a")
+bad"#,
+        )
+        .expect_err("bounded singleton must not prove StaticSingleton");
+        assert!(err.contains("statically singleton"), "{err}");
+        assert!(err.contains("=>"), "{err}");
     }
 
     #[test]
@@ -1587,7 +1745,7 @@ bad"#,
             &session,
             "rt-plp4-unknown",
             r#"items = LangItem
-one = items.limit(1)
+one = items | take 1
 bad = one.foo.bar
 bad"#,
         )
@@ -1802,7 +1960,8 @@ labels"#;
             &session,
             "ml-return-position-limit-projection",
             r#"item = LangItem("i1")
-lines = item.lines.limit(2)
+all_lines = item.lines
+lines = all_lines | take 2
 lines"#,
         )
         .expect("compile multiline program with explicit trailing return");
@@ -1832,13 +1991,13 @@ lines"#,
             p_id = p_id,
         );
         let program_a = format!(
-            "{bindings}item, lines[{p_line_id},{p_note}]",
+            "{bindings}projected = lines | select {p_line_id}, {p_note}\nitem, projected",
             bindings = bindings,
             p_line_id = p_line_id,
             p_note = p_note,
         );
         let program_b = format!(
-            "{bindings}lines[{p_line_id},{p_note}], item",
+            "{bindings}projected = lines | select {p_line_id}, {p_note}\nprojected, item",
             bindings = bindings,
             p_line_id = p_line_id,
             p_note = p_note,
@@ -1871,7 +2030,7 @@ lines"#,
         let p_id = map.ident_sym_entity_field_for("langmatrix", "LangItem", "id");
         let p_note = map.ident_sym_entity_field_for("langmatrix", "LangLine", "note");
         let source = format!(
-            "item = {e_item}({p_id}=\"i1\")\nlines = item.lines\nlines[{p_note}]",
+            "item = {e_item}({p_id}=\"i1\")\nlines = item.lines\nlines | select {p_note}",
             e_item = e_item,
             p_id = p_id,
             p_note = p_note,
@@ -1917,7 +2076,7 @@ lines"#,
     #[test]
     fn surface_line_compile_matches_dag_for_flattened_single_liner() {
         let session = test_session();
-        let source = "items = LangItem tags = items.tags tags";
+        let source = "items = LangItem tags = items => _.tags tags";
         let dag = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
             None,
@@ -1953,7 +2112,7 @@ lines"#,
         let source = format!(
             r#"repo = Repository(owner="octocat", repo="Hello-World")
 issues = Issue{{repository=repo.full_name}}
-labels = issues.{sym}
+labels = issues => _.{sym}
 labels"#
         );
         let plan = compile_plasm_dag_to_plan(
@@ -2017,7 +2176,7 @@ labels"#
         let session = language_matrix_tags_session();
         let map = symbol_map_for_plasm_surface_parse(&session, None);
         let sym = map.ident_sym_relation_for("langmatrix", "LangItem", "tags");
-        let source = format!("items = LangItem\ntags = items.{sym}\ntags");
+        let source = format!("items = LangItem\ntags = items => _.{sym}\ntags");
         let plan = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
             None,
@@ -2044,8 +2203,8 @@ labels"#
         let session = github_repository_commit_session();
         let source = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
 commits = repo.commits
-limited = commits.limit(20)
-projected = limited[sha,message]
+limited = commits | take 20
+projected = limited | select sha, message
 projected"#;
         let plan = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
@@ -2064,7 +2223,8 @@ projected"#;
     fn bare_label_singleton_lowers_to_limit_preserving_commit_entity() {
         let session = github_repository_commit_session();
         let source = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
-commits = repo.commits.limit(3)
+all_commits = repo.commits
+commits = all_commits | take 3
 one = commits.singleton()
 one"#;
         let plan = compile_plasm_dag_to_plan(
@@ -2091,8 +2251,8 @@ one"#;
     fn limit_on_surface_bind_preserves_langitem_entity() {
         let session = test_session();
         let source = r#"root = LangItem{owner="alice"}
-one = root.limit(1)
-tags = one.tags
+one = root | take 1
+tags = one => _.tags
 tags"#;
         let plan = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
@@ -2115,7 +2275,8 @@ tags"#;
     fn bare_label_page_size_lowers_to_identity_project() {
         let session = github_repository_commit_session();
         let source = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
-commits = repo.commits.limit(5)
+raw = repo.commits
+commits = raw | take 5
 paged = commits.page_size(10)
 paged"#;
         let plan = compile_plasm_dag_to_plan(
@@ -2140,7 +2301,7 @@ paged"#;
         let map = symbol_map_for_plasm_surface_parse(&session, None);
         let p_sha = map.ident_sym_entity_field_for("langmatrix", "Commit", "sha");
         let source = format!(
-            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(2)\nmail = commits.singleton()[{p_sha}] <<MD\nx\nMD\nmail"
+            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\nraw = repo.commits\ncommits = raw | take 2 | select {p_sha}\nmail = commits.singleton() => <<MD\nx\nMD\nmail"
         );
         let plan = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
@@ -2170,7 +2331,7 @@ paged"#;
         let map = symbol_map_for_plasm_surface_parse(&session, None);
         let p_sha = map.ident_sym_entity_field_for("langmatrix", "Commit", "sha");
         let source = format!(
-            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(1)\nmail = commits[{p_sha}] <<MD\nx\nMD\nmail.content"
+            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\nraw = repo.commits\ncommits = raw | take 1 | select {p_sha}\nmail = commits => <<MD\nx\nMD\nmail.content"
         );
         let err = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
@@ -2192,7 +2353,7 @@ paged"#;
         let map = symbol_map_for_plasm_surface_parse(&session, None);
         let p_sha = map.ident_sym_entity_field_for("langmatrix", "Commit", "sha");
         let source = format!(
-            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(1)\nmail = commits[{p_sha}] <<MD\nx\nMD\nout = mail => mail.content\nout"
+            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\nraw = repo.commits\ncommits = raw | take 1 | select {p_sha}\nmail = commits => <<MD\nx\nMD\nout = mail => {{ content: mail.content }}\nout"
         );
         let plan = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
@@ -2216,7 +2377,7 @@ paged"#;
         let p_sha = map.ident_sym_entity_field_for("langmatrix", "Commit", "sha");
         let p_msg = map.ident_sym_entity_field_for("langmatrix", "Commit", "message");
         let source = format!(
-            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(2)\ncommits[{p_sha},{p_msg}]"
+            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\nraw = repo.commits\ncommits = raw | take 2\ncommits | select {p_sha}, {p_msg}"
         );
         let plan = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
@@ -2250,7 +2411,7 @@ paged"#;
         let map = symbol_map_for_plasm_surface_parse(&session, None);
         let p_msg = map.ident_sym_entity_field_for("langmatrix", "Commit", "message");
         let source = format!(
-            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(3)\nordered = commits.sort({p_msg}, desc)\nordered"
+            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\nraw = repo.commits\ncommits = raw | take 3\nordered = commits | order by {p_msg} desc\nordered"
         );
         let plan = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
@@ -2277,7 +2438,7 @@ paged"#;
         let map = symbol_map_for_plasm_surface_parse(&session, None);
         let p_msg = map.ident_sym_entity_field_for("langmatrix", "Commit", "message");
         let source = format!(
-            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(3)\nordered = commits.sort({p_msg} desc)\nordered"
+            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\nraw = repo.commits\ncommits = raw | take 3\nordered = commits | order by {p_msg} desc\nordered"
         );
         let plan = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
@@ -2305,7 +2466,7 @@ paged"#;
         let p_id = map.ident_sym_entity_field_for("langmatrix", "LangItem", "id");
         let p_score = map.ident_sym_entity_field_for("langmatrix", "LangItem", "score");
         let source = format!(
-            "rows = LangItem.limit(5)\nnarrow = rows[{p_id},{p_score}]\nordered = narrow.sort({p_score} desc)\nordered"
+            "rows = from LangItem | take 5\nnarrow = rows | select {p_id}, {p_score}\nordered = narrow | order by {p_score} desc\nordered"
         );
         let plan = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
@@ -2337,15 +2498,15 @@ paged"#;
         for (name, source) in [
             (
                 "group_by",
-                format!("rows = LangItem.limit(5)\nout = rows.group_by({p_owner})\nout"),
+                format!("rows = from LangItem | take 5\nout = rows | summarize by {p_owner} count=count()\nout"),
             ),
             (
                 "filter",
-                format!("rows = LangItem.limit(5)\nout = rows.filter{{{p_score}>0}}\nout"),
+                format!("rows = from LangItem | take 5\nout = rows | where {p_score}>0\nout"),
             ),
             (
                 "dedupe",
-                format!("rows = LangItem.limit(5)\nout = rows.dedupe({p_id})\nout"),
+                format!("rows = from LangItem | take 5\nout = rows | distinct by {p_id}\nout"),
             ),
         ] {
             compile_plasm_dag_to_plan(
@@ -2367,7 +2528,7 @@ paged"#;
             None,
             &session,
             "sort-bad-field",
-            "rows = LangItem.limit(2)\nsorted = rows.sort(not_a_field desc)\nsorted",
+            "rows = from LangItem | take 2\nsorted = rows | order by not_a_field desc\nsorted",
         )
         .expect_err("unknown sort field");
         assert!(
@@ -2385,7 +2546,7 @@ paged"#;
         let map = symbol_map_for_plasm_surface_parse(&session, None);
         let p_add = map.ident_sym_entity_field_for("langmatrix", "Commit", "stats_additions");
         let source = format!(
-            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(5)\ntot = commits.aggregate(t=sum({p_add}))\ntot"
+            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\nraw = repo.commits\ncommits = raw | take 5\ntot = commits | summarize t=sum({p_add})\ntot"
         );
         let plan = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
@@ -2415,7 +2576,7 @@ paged"#;
         let p_sha = map.ident_sym_entity_field_for("langmatrix", "Commit", "sha");
         let p_msg = map.ident_sym_entity_field_for("langmatrix", "Commit", "message");
         let source = format!(
-            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(1)\nout = commits[{p_sha},{p_msg}] <<MD\n{{{{ rows | length }}}}\nMD\nout"
+            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\nraw = repo.commits\ncommits = raw | take 1 | select {p_sha}, {p_msg}\nout = commits => <<MD\n{{{{ rows | length }}}}\nMD\nout"
         );
         let plan = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
@@ -2447,7 +2608,7 @@ paged"#;
         let p_sha = map.ident_sym_entity_field_for("langmatrix", "Commit", "sha");
         let p_msg = map.ident_sym_entity_field_for("langmatrix", "Commit", "message");
         let source = format!(
-            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(2)[{p_sha},{p_msg}]\nreport = commits <<MD\n{{{{ rows | length }}}}\nMD\nreport"
+            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\nraw = repo.commits\ncommits = raw | take 2 | select {p_sha}, {p_msg}\nreport = commits => <<MD\n{{{{ rows | length }}}}\nMD\nreport"
         );
         let plan = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
@@ -2477,8 +2638,9 @@ paged"#;
     fn dag_render_infers_entity_row_columns_after_limit_only() {
         let session = github_repository_commit_session();
         let source = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
-commits = repo.commits.limit(20)
-report = commits <<MD
+raw = repo.commits
+commits = raw | take 20
+report = commits => <<MD
 {{ rows | length }}
 MD
 report"#;
@@ -2514,7 +2676,7 @@ report"#;
         let p_sha = map.ident_sym_entity_field_for("langmatrix", "Commit", "sha");
         let p_msg = map.ident_sym_entity_field_for("langmatrix", "Commit", "message");
         let source = format!(
-            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits\nreport = commits.limit(20)[{p_sha},{p_msg}] <<MD\nx\nMD\nreport"
+            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\nraw = repo.commits\ncommits = raw | take 20 | select {p_sha}, {p_msg}\nreport = commits => <<MD\nx\nMD\nreport"
         );
         let plan = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
@@ -2546,7 +2708,7 @@ report"#;
         let p_sha = map.ident_sym_entity_field_for("langmatrix", "Commit", "sha");
         let p_msg = map.ident_sym_entity_field_for("langmatrix", "Commit", "message");
         let source = format!(
-            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(1)\nfirst = commits[{p_sha},{p_msg}] <<MD\n{{{{ r.sha }}}}\nMD\nbad = first <<MD\ny\nMD\nbad"
+            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\nraw = repo.commits\ncommits = raw | take 1 | select {p_sha}, {p_msg}\nfirst = commits => <<MD\n{{{{ r.sha }}}}\nMD\nbad = first => <<MD\ny\nMD\nbad"
         );
         let err = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
@@ -2598,7 +2760,7 @@ commits"#;
         let session = github_repository_commit_session();
         let source = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
 commits = repo.commits
-totals = commits.aggregate(n=count)
+totals = commits | summarize n=count()
 bad = totals.commits"#;
         let err = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
@@ -2609,20 +2771,23 @@ bad = totals.commits"#;
         )
         .expect_err("aggregate is not a Plasm anchor");
         assert!(
-            err.contains("row-preserving projection bindings"),
+            err.contains("row-preserving projection bindings")
+                || err.contains("PLP-4")
+                || err.contains("not a Plasm expression anchor"),
             "unexpected: {err}"
         );
     }
 
-    /// Direct postfix `.limit` on a surface expression must compile with the same plan shape as
-    /// bind-first `label = expr` then `label.limit(n)` (unified language contract).
+    /// Direct `from … | take` must compile with the same plan shape as a bind-first pipeline.
     #[test]
     fn direct_surface_limit_equivalent_to_bind_first_two_node_plan() {
         let session = github_repository_commit_session();
-        let bind_first = r#"commits = Repository(owner="ryan-s-roberts", repo="plasm-core").commits
-x = commits.limit(2)
+        let bind_first = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
+commits = repo.commits
+x = commits | take 2
 x"#;
-        let direct = r#"Repository(owner="ryan-s-roberts", repo="plasm-core").commits.limit(2)"#;
+        let direct =
+            r#"from Repository(owner="ryan-s-roberts", repo="plasm-core").commits | take 2"#;
         let p1 = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
             None,
@@ -2695,14 +2860,14 @@ x"#;
     }
 
     #[test]
-    fn compile_row_filter_brace_on_binding() {
+    fn compile_row_filter_pipe_on_binding() {
         let session = test_session();
         let plan = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
             None,
             &session,
             "lang_row_filter_brace",
-            "items = LangItem\nfiltered = items.filter{owner=\"o1\"}\nfiltered",
+            "items = LangItem\nfiltered = items | where owner=\"o1\"\nfiltered",
         )
         .expect("compile filter program");
         let has_filter = plan["nodes"].as_array().expect("nodes").iter().any(|n| {
@@ -2719,11 +2884,11 @@ x"#;
         let session = test_session();
         let pipeline = PromptPipelineConfig::default();
         let state = super::CompileState::new(&pipeline, None);
-        let node = super::postfix_op_to_compute(
+        let node = super::row_suffix_to_compute(
             &session,
             &state,
             &[],
-            &plasm_core::expr_parser::PlasmPostfixOp::GroupBy {
+            &plasm_core::row_composition::RowSuffix::GroupBy {
                 args: "owner, n=count".into(),
             },
             "src",
@@ -2754,11 +2919,11 @@ x"#;
         let session = test_session();
         let pipeline = PromptPipelineConfig::default();
         let state = super::CompileState::new(&pipeline, None);
-        let err = super::postfix_op_to_compute(
+        let err = super::row_suffix_to_compute(
             &session,
             &state,
             &[],
-            &plasm_core::expr_parser::PlasmPostfixOp::Sort {
+            &plasm_core::row_composition::RowSuffix::Sort {
                 args: "score, newest".into(),
             },
             "src",
@@ -2774,11 +2939,11 @@ x"#;
         let session = test_session();
         let pipeline = PromptPipelineConfig::default();
         let state = super::CompileState::new(&pipeline, None);
-        let asc = super::postfix_op_to_compute(
+        let asc = super::row_suffix_to_compute(
             &session,
             &state,
             &[],
-            &plasm_core::expr_parser::PlasmPostfixOp::Sort {
+            &plasm_core::row_composition::RowSuffix::Sort {
                 args: "score, ascending".into(),
             },
             "src",
@@ -2793,11 +2958,11 @@ x"#;
             } => assert!(!descending),
             _ => panic!("expected compute sort"),
         }
-        let desc = super::postfix_op_to_compute(
+        let desc = super::row_suffix_to_compute(
             &session,
             &state,
             &[],
-            &plasm_core::expr_parser::PlasmPostfixOp::Sort {
+            &plasm_core::row_composition::RowSuffix::Sort {
                 args: "score, descending".into(),
             },
             "src",
@@ -2824,8 +2989,9 @@ x"#;
         let p_sha = map.ident_sym_entity_field_for("langmatrix", "Commit", "sha");
         let source = format!(
             r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
-commits = repo.commits.limit(20)
-commits[{p_repo},{p_sha}]
+all_commits = repo.commits
+commits = all_commits | take 20
+commits | select {p_repo}, {p_sha}
 commits"#,
             p_repo = p_repo,
             p_sha = p_sha,
@@ -2874,8 +3040,9 @@ commits"#,
                 let session = github_session_cached();
                 let source = format!(
                     r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
-commits = repo.commits.limit(3)
-commits[{proj}]
+all_commits = repo.commits
+commits = all_commits | take 3
+commits | select {proj}
 commits"#
                 );
                 compile_plasm_dag_to_plan(
@@ -2895,8 +3062,9 @@ commits"#
                 let session = github_session_cached();
                 let source = format!(
                     r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
-commits = repo.commits.limit(3)
-commits[{bad}]
+all_commits = repo.commits
+commits = all_commits | take 3
+commits | select {bad}
 commits"#
                 );
                 let err = compile_plasm_dag_to_plan(
@@ -2979,7 +3147,7 @@ detail"#;
     #[test]
     fn for_each_heredoc_row_cursor_does_not_depend_on_underscore() {
         let session = test_session();
-        let source = r#"items = LangItem.limit(2)
+        let source = r#"items = from LangItem | take 2
 created = items => LangItem.create(title=<<T
 row ${_.title}
 T
@@ -3015,7 +3183,7 @@ created"#;
         let source = r#"report = <<RPT
 static body
 RPT
-items = LangItem.limit(2)
+items = from LangItem | take 2
 created = items => LangItem.create(title=<<T
 ${report.content}
 T
@@ -3045,12 +3213,11 @@ created"#;
     }
 
     #[test]
-    fn cross_binding_render_compiles_matrix_program() {
+    fn render_applicator_compiles_matrix_program() {
         let session = test_session();
-        let source = r#"a = LangItem("i1")[id,title]
-b = LangItem("i2")[id,title]
-report = a,b <<MD
-Pair: {{ a.id }} / {{ b.id }}
+        let source = r#"a = from LangItem("i1") | select id, title
+report = a => <<MD
+Item: {{ a.id }}
 MD
 report"#;
         let plan = compile_plasm_dag_to_plan(
@@ -3073,12 +3240,8 @@ report"#;
             uses.iter().any(|u| u["node"] == "a"),
             "expected primary source in uses_result: {uses:?}"
         );
-        assert!(
-            uses.iter().any(|u| u["node"] == "b"),
-            "expected cross-binding source in uses_result: {uses:?}"
-        );
         let op = &report["compute"]["op"];
-        assert_eq!(op["render_bindings"].as_array().map(|a| a.len()), Some(2));
+        assert_eq!(op["render_bindings"].as_array().map(|a| a.len()), Some(1));
         let plan_value = crate::plasm_plan::parse_plan_value(&plan).expect("parse plan");
         crate::plasm_plan::validate_plan_artifact(&plan_value).expect("validate plan");
     }
@@ -3086,7 +3249,7 @@ report"#;
     #[test]
     fn lang_for_each_update_matrix_program_compiles_for_each_action() {
         let session = test_session();
-        let source = "items = LangItem(\"i1\")[id,title,owner]\n\
+        let source = "items = from LangItem(\"i1\") | select id, title, owner\n\
             sync = items => LangItem(\"i1\").update(score=3, title=_.title, owner=_.owner)\n\
             sync";
         let plan = compile_plasm_dag_to_plan(
@@ -3122,37 +3285,38 @@ report"#;
     }
 
     #[test]
-    fn binding_field_projection_root_rewrites_paren_to_bracket() {
+    fn binding_field_projection_uses_select_pipe() {
         let session = test_session();
         let plan = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
             None,
             &session,
             "binding-projection-root",
-            "rows = LangItem\npick = rows.limit(1)\npick(id, title)",
+            "rows = LangItem\npick = rows | take 1\npick | select id, title",
         )
-        .expect("compile binding projection root");
+        .expect("compile binding select root");
         let ret = plan["return"].pointer("/node").and_then(|v| v.as_str());
         assert_eq!(
             ret,
             Some("return_1"),
-            "paren root desugars to bracket projection return"
+            "pipe projection compiles as return node"
         );
     }
 
     #[test]
-    fn rewrite_binding_field_projection_root_unit() {
+    fn legacy_binding_field_call_is_not_projection_alias() {
         let session = test_session();
         let pipeline = PromptPipelineConfig::default();
         let mut state = CompileState::new(&pipeline, None);
         for node in compile_node_expr(&session, &state, "rows", "LangItem").expect("rows") {
             state.insert(node).expect("insert rows");
         }
-        for node in compile_node_expr(&session, &state, "pick", "rows.limit(1)").expect("pick") {
+        for node in compile_node_expr(&session, &state, "pick", "rows | take 1").expect("pick") {
             state.insert(node).expect("insert pick");
         }
-        let rewritten = rewrite_binding_field_projection_root("pick(id, title)", &state);
-        assert_eq!(rewritten.as_deref(), Some("pick[id, title]"));
+        let err = compile_node_expr(&session, &state, "bad", "pick(id, title)")
+            .expect_err("binding field call must not alias projection");
+        assert!(err.contains("pick") || err.contains("projection"), "{err}");
     }
 
     #[test]

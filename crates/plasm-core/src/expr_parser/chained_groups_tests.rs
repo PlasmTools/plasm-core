@@ -5,8 +5,8 @@ use crate::cgs_federation::CgsLayer;
 use crate::schema::registry_test_util;
 use crate::symbol_tuning::{SymbolMap, SymbolSession};
 use crate::{
-    CapabilityKind, CapabilityMapping, CapabilitySchema, FieldType, NamedValueSchema,
-    ResourceSchema, CGS,
+    CapabilityInputs, CapabilityKind, CapabilityMapping, CapabilitySchema, FieldType,
+    NamedValueSchema, ResourceSchema, CGS,
 };
 use std::sync::Arc;
 
@@ -62,7 +62,7 @@ fn ticket_query_fixture_cgs() -> CGS {
             })
             .into(),
         },
-        input_schema: None,
+        inputs: CapabilityInputs::default(),
         output_schema: None,
         provides: vec![],
         scope_aggregate_key_policy: Default::default(),

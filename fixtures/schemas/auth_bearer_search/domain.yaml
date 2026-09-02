@@ -3,6 +3,13 @@ auth:
   scheme: none
 http_backend: http://localhost:1080
 entities:
+  AuthSession:
+    id_field: access_token
+    description: Login session whose primary key is access_token (AppWorld AuthSession-shaped Bearer).
+    fields:
+      access_token:
+        required: true
+        value_ref: nv_access_token
   SecuredNote:
     id_field: note_id
     description: Note list requiring Bearer access_token (AppWorld AuthSession-shaped search).
@@ -14,18 +21,52 @@ entities:
         required: true
         value_ref: nv_title
 capabilities:
+  authsession_login:
+    description: Pathless login returning AuthSession (provides access_token).
+    kind: action
+    entity: AuthSession
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: username
+          value_ref: nv_username
+          required: false
+        - name: password
+          value_ref: nv_password
+          required: false
+    provides:
+    - access_token
+    output:
+      type: side_effect
+      description: Creates an authenticated session; use access_token on subsequent calls.
   securednote_search:
     description: Search notes; Bearer token required ahead of optional search text.
     kind: search
     entity: SecuredNote
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    execution:
+      context:
+        entity: AuthSession
+        bindings:
+          access_token: access_token
+    selection:
     - name: query
       value_ref: nv_query
       required: false
-      role: search
+    provides:
+    - note_id
+    - title
+  securednote_get:
+    description: Get a secured note by id; Bearer access_token required (anchors SecuredNote under context search).
+    kind: get
+    entity: SecuredNote
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
     provides:
     - note_id
     - title
@@ -37,4 +78,8 @@ values:
   nv_access_token:
     type: string
   nv_query:
+    type: string
+  nv_username:
+    type: string
+  nv_password:
     type: string

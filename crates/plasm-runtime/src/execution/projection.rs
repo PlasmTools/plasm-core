@@ -34,6 +34,7 @@ impl ExecutionEngine {
         let execute_session = opts.execute_session.clone();
         let cancel = opts.cancel.clone();
         let rows_progress = opts.rows_progress.clone();
+        let source_contexts = opts.source_contexts.clone();
         Self::run_in_execute_task_scopes(
             base,
             auth_override,
@@ -42,6 +43,7 @@ impl ExecutionEngine {
             execute_session,
             cancel,
             rows_progress,
+            source_contexts,
             async {
                 use futures_util::stream::{self, StreamExt};
 

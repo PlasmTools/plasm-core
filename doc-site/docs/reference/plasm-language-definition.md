@@ -392,7 +392,7 @@ Binding lines use `split_assignment_at_top_level` then **`validate_program_label
 
 ### Postfix chain (per `RHS` fragment)
 
-After [`peel_postfix_suffixes`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/postfix.rs), surface postfix applies **inner-to-outer** per the [chaining order](#chaining-order) invariant.
+After [`peel_collect_meta`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/postfix.rs), collect metadata applies **inner-to-outer** per the [chaining order](#chaining-order) invariant.
 
 ```ebnf
 POSTFIX_OP    = "singleton"

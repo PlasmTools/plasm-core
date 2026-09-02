@@ -17,8 +17,8 @@ pub(in crate::plasm_dag) use plan_emit::{
 };
 #[allow(unused_imports)]
 pub(in crate::plasm_dag) use surface_infer::{
-    infer_surface_contract, infer_surface_contract_from_expr, looks_like_plasm_effect_template,
-    schema_from_aggregates, schema_from_group_by, schema_from_output_fields, single_unknown_schema,
+    infer_surface_contract, infer_surface_contract_from_expr, schema_from_aggregates,
+    schema_from_group_by, schema_from_output_fields, single_unknown_schema,
 };
 #[allow(unused_imports)]
 pub(in crate::plasm_dag) use template_uses::{

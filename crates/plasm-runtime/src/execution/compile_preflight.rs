@@ -35,6 +35,7 @@ fn preflight_compile_query(
     let filter = compile_query_dispatch(query, cgs)?;
     let capability = resolve_query_capability(query, cgs)?;
     let mut env = CmlEnv::new();
+    apply_query_source_execution_context(&mut env, query, capability)?;
     if let Some(f) = &filter {
         let json_val = f.to_json();
         env.insert("filter".to_string(), json_to_plasm_value(&json_val));
@@ -79,7 +80,6 @@ fn preflight_compile_get(
         return preflight_view_get(vt.view.as_str(), &get, cgs, ambient, mat);
     }
     let mut env = CmlEnv::new();
-    merge_plasm_execute_session_share_token_env(&mut env);
     merge_plasm_execute_session_proof_base_token_env(&mut env);
     let target_ent = cgs.get_entity(get.reference.entity_type.as_str());
     populate_template_path_env(
@@ -111,12 +111,12 @@ fn preflight_compile_create(
             entity: create.entity.to_string(),
         })?;
     let capability_template = parse_capability_template(&capability.mapping.template)?;
-    let payload = if let Some(schema) = &capability.input_schema {
+    let payload = if let Some(schema) = &capability.inputs.payload {
         InvokeInputPayload::lift(&create.input.to_value(), &schema.input_type, cgs)
     } else {
         create.input.clone()
     };
-    let input = match capability.input_schema.as_ref() {
+    let input = match capability.inputs.payload.as_ref() {
         Some(schema) => plasm_core::normalize_structured_string_inputs(
             payload.to_value(),
             &schema.input_type,
@@ -126,7 +126,6 @@ fn preflight_compile_create(
     };
     let input = plasm_core::prepare_create_capability_input(capability, create, input, cgs);
     let mut env = CmlEnv::new();
-    merge_plasm_execute_session_share_token_env(&mut env);
     merge_plasm_execute_session_proof_base_token_env(&mut env);
     env.insert("input".to_string(), input.clone());
     if let Value::Object(ref map) = input {
@@ -162,7 +161,6 @@ fn preflight_compile_delete(
         })?;
     let capability_template = parse_capability_template(&capability.mapping.template)?;
     let mut env = CmlEnv::new();
-    merge_plasm_execute_session_share_token_env(&mut env);
     merge_plasm_execute_session_proof_base_token_env(&mut env);
     let target_ent = cgs.get_entity(delete.target.entity_type.as_str());
     populate_template_path_env(
@@ -195,12 +193,12 @@ fn preflight_compile_invoke(invoke: &InvokeExpr, cgs: &CGS) -> Result<(), Runtim
         let raw = match &invoke.input {
             None => Value::Object(indexmap::IndexMap::new()),
             Some(input) => {
-                let payload = if let Some(schema) = &capability.input_schema {
+                let payload = if let Some(schema) = &capability.inputs.payload {
                     InvokeInputPayload::lift(&input.to_value(), &schema.input_type, cgs)
                 } else {
                     input.clone()
                 };
-                match capability.input_schema.as_ref() {
+                match capability.inputs.payload.as_ref() {
                     Some(schema) => plasm_core::normalize_structured_string_inputs(
                         payload.to_value(),
                         &schema.input_type,
@@ -218,7 +216,6 @@ fn preflight_compile_invoke(invoke: &InvokeExpr, cgs: &CGS) -> Result<(), Runtim
         }
     };
     let mut env = CmlEnv::new();
-    merge_plasm_execute_session_share_token_env(&mut env);
     merge_plasm_execute_session_proof_base_token_env(&mut env);
     let target_ent = cgs.get_entity(invoke.target.entity_type.as_str());
     populate_template_path_env(

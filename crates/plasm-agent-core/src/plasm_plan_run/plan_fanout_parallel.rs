@@ -48,6 +48,7 @@ pub(crate) struct PlanLineJob {
     pub expr_label: String,
     pub trace_line_index: usize,
     pub parsed: ParsedExpr,
+    pub source_contexts: indexmap::IndexMap<String, plasm_core::ExecutionContext>,
 }
 
 pub(crate) struct PlanLineJobResult {
@@ -187,6 +188,7 @@ pub(crate) fn push_verified_row_job(
     row_index: usize,
     expr_label: String,
     parsed: ParsedExpr,
+    source_contexts: indexmap::IndexMap<String, plasm_core::ExecutionContext>,
 ) -> Result<(), String> {
     crate::execute_pipeline::PlasmPreflight::preflight_parsed_line(
         scoped_es,
@@ -199,6 +201,7 @@ pub(crate) fn push_verified_row_job(
         expr_label,
         trace_line_index: plan_subline_index(node_index, row_index),
         parsed,
+        source_contexts,
     });
     Ok(())
 }
@@ -209,12 +212,14 @@ pub(crate) fn push_row_job(
     row_index: usize,
     expr_label: String,
     parsed: ParsedExpr,
+    source_contexts: indexmap::IndexMap<String, plasm_core::ExecutionContext>,
 ) {
     jobs.push(PlanLineJob {
         index: row_index,
         expr_label,
         trace_line_index: plan_subline_index(node_index, row_index),
         parsed,
+        source_contexts,
     });
 }
 
@@ -379,6 +384,7 @@ async fn run_plan_line_job(
         expr_label,
         trace_line_index,
         parsed,
+        source_contexts,
     } = job;
     let (parsed, result, _artifact) = match preflight {
         PlanLinePreflight::CallerVerified => run_parsed_plasm_line(
@@ -387,6 +393,7 @@ async fn run_plan_line_job(
             st,
             session_id,
             parsed,
+            source_contexts,
             trace,
             trace_line_index as i64,
             None,
@@ -404,6 +411,7 @@ async fn run_plan_line_job(
                 session_id,
                 expr_label.as_str(),
                 parsed,
+                source_contexts,
                 trace,
                 trace_line_index as i64,
                 None,

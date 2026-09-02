@@ -673,12 +673,17 @@ impl AgentEngine {
             )
         };
         let mode = self.pipeline.render_mode;
-        Ok(teaching_tsv_from_wrapped_prompt(
-            &rendered,
-            mode.markdown_fence_info_string(),
-            TeachingFenceSlice::TableOnly,
+        Ok(
+            plasm_core::teaching_tsv_table_from_wrapped_prompt_any(&rendered)
+                .or_else(|| {
+                    teaching_tsv_from_wrapped_prompt(
+                        &rendered,
+                        mode.markdown_fence_info_string(),
+                        TeachingFenceSlice::TableOnly,
+                    )
+                })
+                .unwrap_or(rendered),
         )
-        .unwrap_or(rendered))
     }
 
     fn build_execute_session(&self) -> Result<ExecuteSession> {

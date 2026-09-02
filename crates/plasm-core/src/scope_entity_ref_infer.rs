@@ -9,7 +9,7 @@ use indexmap::IndexMap;
 
 use crate::entity_ref_value::normalize_entity_ref_value_for_target;
 use crate::expr::{CreateExpr, EntityKey, Expr, InvokeExpr, Ref};
-use crate::schema::{CapabilitySchema, EntityDef, InputFieldSchema, InputType, ParameterRole};
+use crate::schema::{CapabilitySchema, EntityDef, InputFieldSchema};
 use crate::value::Value;
 use crate::{FieldType, CGS};
 
@@ -31,7 +31,7 @@ pub fn classify_scope_param_supply(
     field: &InputFieldSchema,
     cgs: &CGS,
 ) -> ScopeParamSupply {
-    if !matches!(field.role, Some(ParameterRole::Scope)) {
+    if !cap.scope_params().iter().any(|scope| scope == field) {
         return ScopeParamSupply::Explicit;
     }
     if field_omitted_from_path_inject(receiver_entity, cap, field.name.as_str()) {
@@ -80,24 +80,20 @@ pub fn field_omitted_from_path_inject(
         return true;
     }
     if ent.key_vars.len() > 1 {
-        if let Some(is) = cap.input_schema.as_ref() {
-            if let InputType::Object { fields, .. } = &is.input_type {
-                let required_scope: HashSet<&str> = fields
-                    .iter()
-                    .filter(|f| f.required && matches!(f.role, Some(ParameterRole::Scope)))
-                    .map(|f| f.name.as_str())
-                    .collect();
-                let path_set: HashSet<&str> = path_vars.iter().map(|s| s.as_str()).collect();
-                let every_path_bound_key_declared = ent.key_vars.iter().all(|kv| {
-                    let k = kv.as_str();
-                    !path_set.contains(k) || required_scope.contains(k)
-                });
-                if every_path_bound_key_declared
-                    && ent.key_vars.iter().any(|kv| kv.as_str() == field_name)
-                {
-                    return true;
-                }
-            }
+        let required_scope: HashSet<&str> = cap
+            .scope_params()
+            .iter()
+            .filter(|f| f.required)
+            .map(|f| f.name.as_str())
+            .collect();
+        let path_set: HashSet<&str> = path_vars.iter().map(|s| s.as_str()).collect();
+        let every_path_bound_key_declared = ent.key_vars.iter().all(|kv| {
+            let k = kv.as_str();
+            !path_set.contains(k) || required_scope.contains(k)
+        });
+        if every_path_bound_key_declared && ent.key_vars.iter().any(|kv| kv.as_str() == field_name)
+        {
+            return true;
         }
     }
     false
@@ -146,20 +142,13 @@ pub fn effective_capability_input(
     input: Value,
     cgs: &CGS,
 ) -> Value {
-    let Some(is) = cap.input_schema.as_ref() else {
-        return input;
-    };
-    let InputType::Object { fields, .. } = &is.input_type else {
-        return input;
-    };
-
     let mut map = match input {
         Value::Object(m) => m,
         Value::Null => IndexMap::new(),
         other => return other,
     };
 
-    for field in fields {
+    for field in cap.scope_params() {
         if map.contains_key(field.name.as_str()) {
             continue;
         }
@@ -235,8 +224,9 @@ mod tests {
     use crate::identity::{CapabilityName, EntityFieldName, EntityName};
     use crate::schema::registry_test_util;
     use crate::schema::{
-        CapabilityMapping, CapabilitySchema, CapabilityTemplateJson, InputSchema, InputValidation,
-        NamedValueSchema, ParameterRole, ResourceSchema, ScopeAggregateKeyPolicy,
+        CapabilityInputs, CapabilityMapping, CapabilitySchema, CapabilityTemplateJson, InputSchema,
+        InputType, InputValidation, NamedValueSchema, ParentScopeSchema, ResourceSchema,
+        ScopeAggregateKeyPolicy,
     };
     use crate::CapabilityKind;
 
@@ -296,13 +286,12 @@ mod tests {
     }
 
     fn repo_branch_create_cap(cgs: &CGS) -> CapabilitySchema {
-        let mut repository = registry_test_util::object_input_field_from_values(
+        let repository = registry_test_util::object_input_field_from_values(
             cgs,
             "fx_repo_ref",
             "repository",
             true,
         );
-        repository.role = Some(ParameterRole::Scope);
         let name = registry_test_util::object_input_field_from_values(cgs, "fx_str", "name", true);
         let sha = registry_test_util::object_input_field_from_values(cgs, "fx_str", "sha", true);
         CapabilitySchema {
@@ -323,15 +312,19 @@ mod tests {
                     ],
                 })),
             },
-            input_schema: Some(InputSchema {
-                input_type: InputType::Object {
-                    fields: vec![repository, name, sha],
-                    additional_fields: false,
-                },
-                validation: InputValidation::default(),
-                description: None,
-                examples: vec![],
-            }),
+            inputs: CapabilityInputs {
+                scope: ParentScopeSchema(vec![repository]),
+                arguments: Some(InputSchema {
+                    input_type: InputType::Object {
+                        fields: vec![name, sha],
+                        additional_fields: false,
+                    },
+                    validation: InputValidation::default(),
+                    description: None,
+                    examples: vec![],
+                }),
+                ..CapabilityInputs::default()
+            },
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: ScopeAggregateKeyPolicy::OmitWhenRedundant,
@@ -431,14 +424,7 @@ mod tests {
             primary_search: None,
             discovery: None,
         };
-        let repo_field = cap
-            .input_schema
-            .as_ref()
-            .and_then(|s| match &s.input_type {
-                InputType::Object { fields, .. } => fields.first(),
-                _ => None,
-            })
-            .expect("repository field");
+        let repo_field = cap.scope_params().first().expect("repository field");
         assert_eq!(
             classify_scope_param_supply(&ent, &cap, repo_field, &cgs),
             ScopeParamSupply::ReceiverEntityRef

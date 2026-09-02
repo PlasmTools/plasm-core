@@ -63,9 +63,9 @@ pub enum DiscoveryDecision {
 impl DiscoveryDecision {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Match => crate::prompt_render::DISCOVER_DECISION_MATCH,
-            Self::Clarify => crate::prompt_render::DISCOVER_DECISION_CLARIFY,
-            Self::NoMatch => crate::prompt_render::DISCOVER_DECISION_NO_MATCH,
+            Self::Match => "match",
+            Self::Clarify => "clarify",
+            Self::NoMatch => "no_match",
         }
     }
 

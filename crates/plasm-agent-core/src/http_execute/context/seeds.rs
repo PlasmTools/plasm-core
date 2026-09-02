@@ -586,12 +586,9 @@ pub(crate) fn build_plasm_context_tool_meta(
 
 /// Wrap teaching table / incremental delta in a Markdown fenced block so MCP and other Markdown UIs
 /// preserve newlines (CommonMark collapses single newlines in ordinary paragraphs).
-pub(super) fn wrap_teaching_markdown_literal_block(
-    body: &str,
-    render_mode: PromptRenderMode,
-) -> String {
+pub(super) fn wrap_teaching_markdown_literal_block(body: &str, catalog_entry_id: &str) -> String {
     let t = body.trim_end();
-    let fence = render_mode.markdown_fence_info_string();
+    let fence = plasm_core::catalog_teaching_fence_info(catalog_entry_id);
     format!("```{fence}\n{t}\n```\n")
 }
 

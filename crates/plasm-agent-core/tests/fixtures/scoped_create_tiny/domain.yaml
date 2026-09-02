@@ -48,15 +48,14 @@ capabilities:
     description: List products
     kind: query
     entity: Product
-    parameters:
+    scope:
     - name: owner
       value_ref: nv_product_query_owner
       required: true
-      role: scope
     - name: repo
       value_ref: nv_product_query_repo
       required: true
-      role: scope
+    selection:
     - name: active
       value_ref: nv_product_query_active
       required: false
@@ -64,11 +63,10 @@ capabilities:
     description: Search products by free text
     kind: search
     entity: Product
-    parameters:
+    selection:
     - name: q
       value_ref: nv_product_search_q
       required: true
-      role: search
     - name: active
       value_ref: nv_product_search_active
       required: false
@@ -76,13 +74,16 @@ capabilities:
     description: Create a product
     kind: create
     entity: Product
-    parameters:
-    - name: name
-      value_ref: nv_product_create_name
-      required: true
-    - name: category_id
-      value_ref: nv_product_create_category_id
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_product_create_name
+          required: true
+        - name: category_id
+          value_ref: nv_product_create_category_id
+          required: false
     provides:
     - id
     - name
@@ -91,13 +92,16 @@ capabilities:
     description: Label a product
     kind: action
     entity: Product
-    parameters:
-    - name: label
-      value_ref: nv_product_label_label
-      required: true
-    - name: notify
-      value_ref: nv_product_label_notify
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: label
+          value_ref: nv_product_label_label
+          required: true
+        - name: notify
+          value_ref: nv_product_label_notify
+          required: false
     output:
       type: side_effect
       description: Applies a label to the product.
@@ -105,10 +109,13 @@ capabilities:
     description: Update a product (e.g. repoint category)
     kind: update
     entity: Product
-    parameters:
-    - name: category_id
-      value_ref: nv_product_update_category_id
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: category_id
+          value_ref: nv_product_update_category_id
+          required: true
     provides:
     - id
     - name
@@ -117,10 +124,13 @@ capabilities:
     description: Post a public reply on the helpdesk case thread
     kind: action
     entity: Product
-    parameters:
-    - name: message
-      value_ref: nv_product_add_support_reply_message
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: message
+          value_ref: nv_product_add_support_reply_message
+          required: true
     output:
       type: side_effect
       description: Customer-visible thread comment; appears on the case timeline.

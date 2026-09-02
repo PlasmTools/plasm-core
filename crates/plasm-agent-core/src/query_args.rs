@@ -26,7 +26,10 @@ pub fn args_to_query_predicate(
     cap: &CapabilitySchema,
     cgs: &CGS,
 ) -> Option<Predicate> {
-    let fields = cap.object_params()?;
+    let fields: Vec<_> = cap.query_surface_fields().collect();
+    if fields.is_empty() {
+        return None;
+    }
 
     let mut comparisons = Vec::new();
 
@@ -178,15 +181,10 @@ mod tests {
             mapping: CapabilityMapping {
                 template: serde_json::json!({}).into(),
             },
-            input_schema: Some(InputSchema {
-                input_type: InputType::Object {
-                    fields: params,
-                    additional_fields: false,
-                },
-                validation: InputValidation::default(),
-                description: None,
-                examples: vec![],
-            }),
+            inputs: plasm_core::CapabilityInputs {
+                selection: plasm_core::BackendSelectionSchema(params),
+                ..Default::default()
+            },
             output_schema: None,
             provides: vec![],
             sanitizes: vec![],
@@ -208,7 +206,7 @@ mod tests {
             mapping: CapabilityMapping {
                 template: serde_json::json!({}).into(),
             },
-            input_schema: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             sanitizes: vec![],
@@ -254,7 +252,6 @@ mod tests {
             required: true,
             description: None,
             default: None,
-            role: None,
             sink_class: None,
             wire_json_path: None,
             wire_array_element_key: None,
@@ -283,7 +280,6 @@ mod tests {
             required: false,
             description: None,
             default: None,
-            role: None,
             sink_class: None,
             wire_json_path: None,
             wire_array_element_key: None,
@@ -306,7 +302,6 @@ mod tests {
             required: true,
             description: None,
             default: None,
-            role: None,
             sink_class: None,
             wire_json_path: None,
             wire_array_element_key: None,
@@ -328,7 +323,6 @@ mod tests {
                 required: false,
                 description: None,
                 default: None,
-                role: None,
                 sink_class: None,
                 wire_json_path: None,
                 wire_array_element_key: None,
@@ -341,7 +335,6 @@ mod tests {
                 required: false,
                 description: None,
                 default: None,
-                role: None,
                 sink_class: None,
                 wire_json_path: None,
                 wire_array_element_key: None,
@@ -361,7 +354,6 @@ mod tests {
             required: false,
             description: None,
             default: None,
-            role: None,
             sink_class: None,
             wire_json_path: None,
             wire_array_element_key: None,
@@ -379,7 +371,6 @@ mod tests {
             required: false,
             description: None,
             default: None,
-            role: None,
             sink_class: None,
             wire_json_path: None,
             wire_array_element_key: None,
@@ -404,7 +395,6 @@ mod tests {
             required: false,
             description: None,
             default: None,
-            role: None,
             sink_class: None,
             wire_json_path: None,
             wire_array_element_key: None,
@@ -429,7 +419,6 @@ mod tests {
             required: false,
             description: None,
             default: None,
-            role: None,
             sink_class: None,
             wire_json_path: None,
             wire_array_element_key: None,

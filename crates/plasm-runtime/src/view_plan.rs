@@ -413,8 +413,9 @@ fn bound_scalar_for_get_param(
     if let Some(v) = bound_param_to_string.get(param) {
         return Some(v.clone());
     }
-    if let Some(fields) = cap.object_params() {
-        let required: Vec<_> = fields.iter().filter(|f| f.required).collect();
+    let fields: Vec<_> = cap.input_fields().collect();
+    if !fields.is_empty() {
+        let required: Vec<_> = fields.iter().copied().filter(|f| f.required).collect();
         if required.len() == 1 && required[0].name == param && bound_param_to_string.len() == 1 {
             return bound_param_to_string.values().next().cloned();
         }
@@ -464,10 +465,7 @@ pub fn ref_from_view_get_node(
     bound_param_to_string: &BTreeMap<String, String>,
 ) -> Result<Ref, RuntimeError> {
     if bound_param_to_string.is_empty() {
-        let required = cap
-            .object_params()
-            .map(|fields| fields.iter().any(|f| f.required))
-            .unwrap_or(false);
+        let required = cap.input_fields().any(|f| f.required);
         if !required {
             return Ok(Ref::new(target_ent.name.clone(), String::new()));
         }

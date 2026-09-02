@@ -703,6 +703,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: true,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .expect("resource");
@@ -717,7 +719,7 @@ mod tests {
                 mapping: CapabilityMapping {
                     template: serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "notes"}]}).into(),
                 },
-                input_schema: None,
+                inputs: Default::default(),
                 output_schema: None,
                 provides: vec![],
                 sanitizes: vec![],
@@ -807,6 +809,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: true,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .expect("resource");
@@ -820,7 +824,7 @@ mod tests {
             mapping: CapabilityMapping {
                 template: serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "spells"}]}).into(),
             },
-            input_schema: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             sanitizes: vec![],
@@ -977,6 +981,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: true,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .expect("resource");
@@ -991,7 +997,7 @@ mod tests {
                 mapping: CapabilityMapping {
                     template: serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "f"}]}).into(),
                 },
-                input_schema: None,
+                inputs: Default::default(),
                 output_schema: None,
                 provides: vec![],
                 sanitizes: vec![],

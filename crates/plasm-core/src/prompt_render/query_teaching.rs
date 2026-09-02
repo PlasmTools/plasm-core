@@ -2,7 +2,7 @@
 
 use crate::schema::{EntityDef, InputFieldSchema};
 use crate::symbol_tuning::SymbolMap;
-use crate::{FieldType, InputType, ParameterRole, CGS};
+use crate::{FieldType, CGS};
 
 use super::symbol_tokens::{ent_sym, id_sym_cap, id_sym_entity};
 use super::teaching_util::{
@@ -62,7 +62,7 @@ pub(crate) fn unseeded_entity_ref_invocation_gloss(
     catalog_entry_id: &str,
 ) -> Option<String> {
     let mut hints = Vec::new();
-    for f in cap.object_params()? {
+    for f in cap.input_fields() {
         let Ok(nv) = f.named_value(cgs) else {
             continue;
         };
@@ -82,6 +82,16 @@ pub(crate) fn unseeded_entity_ref_invocation_gloss(
         None
     } else {
         Some(format!("· {}", hints.join("; ")))
+    }
+}
+
+/// Source head for query/search teaching: bare `e#`, or `e#(context=session)` when the
+/// capability declares `inputs.execution.context` (RA-5 explicit context binding).
+pub(crate) fn query_source_head(cap: &crate::CapabilitySchema, es: &str) -> String {
+    if cap.inputs.execution.context.is_some() {
+        format!("{es}(context=session)")
+    } else {
+        es.to_string()
     }
 }
 
@@ -117,16 +127,6 @@ fn query_param_slot_example(
         FieldType::Array => format!("{n}=[{p}]"),
         FieldType::Json => format!("{n}={p}"),
     }
-}
-
-pub(crate) fn field_is_filter_like(f: &InputFieldSchema) -> bool {
-    !matches!(
-        f.role,
-        Some(ParameterRole::Search)
-            | Some(ParameterRole::Sort)
-            | Some(ParameterRole::SortDirection)
-            | Some(ParameterRole::ResponseControl)
-    )
 }
 
 /// One `p#=value` for a **required scope** parameter (same as filter slots).
@@ -221,7 +221,7 @@ pub(crate) fn unary_entity_id_teaching_expr_line(
     format!("{es}({TEACHING_ID_HOLE})")
 }
 
-/// Scope predicates + all filter-like parameters (required + optional) with CGS-derived placeholders.
+/// Scope predicates + all selection (filter) parameters with CGS-derived placeholders.
 pub(crate) fn query_expr_maximal(
     cap: &crate::CapabilitySchema,
     es: &str,
@@ -229,38 +229,23 @@ pub(crate) fn query_expr_maximal(
     map: Option<&SymbolMap>,
     catalog_entry_id: &str,
 ) -> Option<String> {
-    let Some(is) = &cap.input_schema else {
-        return Some(es.to_string());
-    };
-    let InputType::Object { fields, .. } = &is.input_type else {
-        return None;
-    };
-    let fields = fields.as_slice();
-
-    let scope_fields: Vec<&InputFieldSchema> = fields
-        .iter()
-        .filter(|f| f.required && matches!(f.role, Some(ParameterRole::Scope)))
-        .collect();
+    let head = query_source_head(cap, es);
+    let scope_fields: Vec<&InputFieldSchema> =
+        cap.scope_params().iter().filter(|f| f.required).collect();
 
     let mut inner: Vec<String> = Vec::new();
     for sf in &scope_fields {
         inner.push(scope_param_slot(sf, cap, cgs, map, catalog_entry_id));
     }
 
-    for f in fields {
-        if matches!(f.role, Some(ParameterRole::Scope)) {
-            continue;
-        }
-        if !field_is_filter_like(f) {
-            continue;
-        }
+    for f in cap.selection_params() {
         inner.push(query_param_slot_example(f, cap, cgs, map, catalog_entry_id));
     }
 
     if inner.is_empty() {
-        return Some(es.to_string());
+        return Some(head);
     }
-    Some(format!("{es}{{{}}}", inner.join(", ")))
+    Some(format!("{head}{{{}}}", inner.join(", ")))
 }
 
 /// Filter predicates only (no scope) — one `Entity{p#=…}` line per query cap so teaching table shows **filter**
@@ -272,29 +257,18 @@ pub(crate) fn query_expr_filters_only(
     map: Option<&SymbolMap>,
     catalog_entry_id: &str,
 ) -> Option<String> {
-    let Some(is) = &cap.input_schema else {
-        return None;
-    };
-    let InputType::Object { fields, .. } = &is.input_type else {
-        return None;
-    };
     let mut inner: Vec<String> = Vec::new();
-    for f in fields {
-        if matches!(f.role, Some(ParameterRole::Scope)) {
-            continue;
-        }
-        if !field_is_filter_like(f) {
-            continue;
-        }
+    for f in cap.selection_params() {
         inner.push(query_param_slot_example(f, cap, cgs, map, catalog_entry_id));
     }
     if inner.is_empty() {
         return None;
     }
-    Some(format!("{es}{{{}}}", inner.join(", ")))
+    let head = query_source_head(cap, es);
+    Some(format!("{head}{{{}}}", inner.join(", ")))
 }
 
-/// Search filter slots for `e#~"<query>"{p#=…}` — same param selection as [`query_expr_filters_only`].
+/// Search filter slots for `e#~"<query>"{p#=…}` — selection-lane params (not the free-text `~` hole).
 pub(crate) fn search_expr_with_filters(
     cap: &crate::CapabilitySchema,
     es: &str,
@@ -302,30 +276,16 @@ pub(crate) fn search_expr_with_filters(
     map: Option<&SymbolMap>,
     catalog_entry_id: &str,
 ) -> Option<String> {
-    let Some(is) = &cap.input_schema else {
-        return None;
-    };
-    let InputType::Object { fields, .. } = &is.input_type else {
-        return None;
-    };
     let mut inner: Vec<String> = Vec::new();
-    for f in fields {
-        if matches!(f.role, Some(ParameterRole::Scope)) {
-            continue;
-        }
-        if matches!(f.role, Some(ParameterRole::Search)) {
-            continue;
-        }
-        if !field_is_filter_like(f) {
-            continue;
-        }
+    for f in cap.selection_params() {
         inner.push(query_param_slot_example(f, cap, cgs, map, catalog_entry_id));
     }
     if inner.is_empty() {
         return None;
     }
+    let head = query_source_head(cap, es);
     Some(format!(
-        "{es}~{TEACHING_SEARCH_QUERY_LITERAL}{{{}}}",
+        "{head}~{TEACHING_SEARCH_QUERY_LITERAL}{{{}}}",
         inner.join(", ")
     ))
 }
@@ -338,16 +298,8 @@ pub(crate) fn query_expr_scope_only(
     map: Option<&SymbolMap>,
     catalog_entry_id: &str,
 ) -> Option<String> {
-    let Some(is) = &cap.input_schema else {
-        return None;
-    };
-    let InputType::Object { fields, .. } = &is.input_type else {
-        return None;
-    };
-    let scope_fields: Vec<&InputFieldSchema> = fields
-        .iter()
-        .filter(|f| f.required && matches!(f.role, Some(ParameterRole::Scope)))
-        .collect();
+    let scope_fields: Vec<&InputFieldSchema> =
+        cap.scope_params().iter().filter(|f| f.required).collect();
     if scope_fields.is_empty() {
         return None;
     }
@@ -355,5 +307,6 @@ pub(crate) fn query_expr_scope_only(
     for sf in &scope_fields {
         inner.push(scope_param_slot(sf, cap, cgs, map, catalog_entry_id));
     }
-    Some(format!("{es}{{{}}}", inner.join(", ")))
+    let head = query_source_head(cap, es);
+    Some(format!("{head}{{{}}}", inner.join(", ")))
 }

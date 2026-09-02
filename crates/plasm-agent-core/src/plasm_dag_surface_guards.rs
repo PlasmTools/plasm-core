@@ -3,7 +3,7 @@
 use crate::plasm_plan::PlanValue;
 use crate::program_binding::ContinuationCapability;
 
-pub(crate) const DERIVE_MAP_RELATION_HOP_MSG: &str = "Relation reads use `child = source.r#` (the taught relation symbol from the active TSV), not `source => …`. `=>` is for per-row derive maps `{ … }` or write effects `source => e#.m#(…)`.";
+pub(crate) const DERIVE_MAP_RELATION_HOP_MSG: &str = "Plural relation reads use `child = source => _.r#` (the taught relation symbol from the active TSV), not a bare `r#` applicator. `=>` accepts only derive maps `{ … }`, renders `<<TAG`, per-row effects `Entity.m#(…, _)`, or row relations `_.r#`.";
 
 /// Reject `source => rhs` when `rhs` looks like a relation hop (teaching `r#` or known wire), not derive/write.
 pub(crate) fn reject_relation_arrow_trap(fragment: &str) -> Result<(), String> {
@@ -16,6 +16,9 @@ pub(crate) fn reject_relation_arrow_trap(fragment: &str) -> Result<(), String> {
         return Ok(());
     };
     let rhs = right.trim();
+    if rhs.starts_with("_.") {
+        return Ok(());
+    }
     if rhs_text_looks_like_relation_hop_trap(rhs, &[]) {
         Err(derive_map_invalid_rhs_err(Some(rhs)))
     } else {

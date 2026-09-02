@@ -7,7 +7,13 @@ pub(crate) fn instantiate_parsed_expr_plan_inputs_with_rows(
     parsed: ParsedExpr,
     input_rows: &BTreeMap<InputAlias, MaterializedInputRow>,
     wire_coercion_by_alias: &BTreeMap<InputAlias, WireCoercionCtx<'_>>,
-) -> Result<ParsedExpr, String> {
+) -> Result<
+    (
+        ParsedExpr,
+        indexmap::IndexMap<String, plasm_core::ExecutionContext>,
+    ),
+    String,
+> {
     let scope = EvalScope::Root {
         row: &serde_json::Value::Null,
     };
@@ -23,10 +29,94 @@ pub(crate) fn instantiate_parsed_expr_plan_inputs_with_rows(
     reject_unresolved_plasm_holes(&expr_json)?;
     let expr: Expr = serde_json::from_value(expr_json)
         .map_err(|e| format!("deserialize expr after hole instantiation: {e}"))?;
-    Ok(ParsedExpr {
-        expr,
-        projection: parsed.projection,
-    })
+    let source_contexts = collect_materialized_execution_contexts(&expr, input_rows)?;
+    Ok((
+        ParsedExpr {
+            expr,
+            projection: parsed.projection,
+        },
+        source_contexts,
+    ))
+}
+
+/// Collect frame-scoped [`plasm_core::ExecutionContext`] rows for each `QueryExpr.context` binding.
+/// Validates singleton object rows; walks [`Expr::Chain`] sources and explicit steps.
+pub(crate) fn collect_materialized_execution_contexts(
+    expr: &Expr,
+    input_rows: &BTreeMap<InputAlias, MaterializedInputRow>,
+) -> Result<indexmap::IndexMap<String, plasm_core::ExecutionContext>, String> {
+    let mut out = indexmap::IndexMap::new();
+    collect_materialized_execution_contexts_into(expr, input_rows, &mut out)?;
+    Ok(out)
+}
+
+fn collect_materialized_execution_contexts_into(
+    expr: &Expr,
+    input_rows: &BTreeMap<InputAlias, MaterializedInputRow>,
+    out: &mut indexmap::IndexMap<String, plasm_core::ExecutionContext>,
+) -> Result<(), String> {
+    match expr {
+        Expr::Query(query) => {
+            let Some(reference) = query.context.clone() else {
+                return Ok(());
+            };
+            let binding_key = reference.binding().as_str().to_string();
+            if out.contains_key(&binding_key) {
+                return Ok(());
+            }
+            let alias = InputAlias::new(binding_key.clone())?;
+            let input = input_rows.get(&alias).ok_or_else(|| {
+                format!(
+                    "execution context `{}` is not available to this source invocation",
+                    reference.binding()
+                )
+            })?;
+            if input.rows.len() != 1 {
+                return Err(format!(
+                    "execution context `{}` must be a singleton row, got {} rows",
+                    reference.binding(),
+                    input.rows.len()
+                ));
+            }
+            let object = input.row.as_object().ok_or_else(|| {
+                format!(
+                    "execution context `{}` must materialize an object row",
+                    reference.binding()
+                )
+            })?;
+            let fields = object
+                .iter()
+                .map(|(name, value)| (name.clone(), json_to_plasm_value(value)))
+                .collect();
+            out.insert(
+                binding_key,
+                plasm_core::ExecutionContext {
+                    reference,
+                    qualified_entity: plasm_core::QualifiedEntityKey::new(
+                        input.qualified_entity.entry_id.as_str(),
+                        input.qualified_entity.entity.as_str(),
+                    ),
+                    fields,
+                },
+            );
+            Ok(())
+        }
+        Expr::Chain(chain) => {
+            collect_materialized_execution_contexts_into(chain.source.as_ref(), input_rows, out)?;
+            if let plasm_core::ChainStep::Explicit { expr } = &chain.step {
+                collect_materialized_execution_contexts_into(expr.as_ref(), input_rows, out)?;
+            }
+            Ok(())
+        }
+        Expr::Get(_)
+        | Expr::Create(_)
+        | Expr::Delete(_)
+        | Expr::Invoke(_)
+        | Expr::Page(_)
+        | Expr::Wait(_)
+        | Expr::Cancel(_)
+        | Expr::TeachingValue { .. } => Ok(()),
+    }
 }
 
 /// Deserialize → [`instantiate_expr_template_value`] → deserialize so predicate/CML env holes (e.g.
@@ -36,9 +126,17 @@ pub(crate) fn instantiate_parsed_expr_plan_inputs(
     parsed: ParsedExpr,
     uses_result: &[PlanResultUse],
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
-) -> Result<ParsedExpr, String> {
+) -> Result<
+    (
+        ParsedExpr,
+        indexmap::IndexMap<String, plasm_core::ExecutionContext>,
+    ),
+    String,
+> {
     if uses_result.is_empty() {
-        return Ok(parsed);
+        let source_contexts =
+            collect_materialized_execution_contexts(&parsed.expr, &BTreeMap::new())?;
+        return Ok((parsed, source_contexts));
     }
     let input_rows = materialized_result_use_inputs(materialized, uses_result, None)?;
     let empty = BTreeMap::new();

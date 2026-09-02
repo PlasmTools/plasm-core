@@ -114,6 +114,7 @@ pub(crate) fn push_prefer_hydrate_get_jobs(
             row_index,
             expr_label,
             parsed,
+            indexmap::IndexMap::new(),
         )?;
     }
     Ok(())

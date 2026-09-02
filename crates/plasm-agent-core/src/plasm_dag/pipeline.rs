@@ -4,13 +4,14 @@ use super::binding_continuation;
 use super::binding_contract::binding_contract;
 use super::invoke_cardinality::validate_invoke_scalar_field_refs;
 use super::plan_serialize::{
-    collect_template_uses_from_expr, expr_template_json, infer_surface_contract,
-    looks_like_plasm_effect_template, node_to_json, parse_plan_value_expr,
-    stamp_plan_uses_result_qualified_entities,
+    collect_template_uses_from_expr, expr_template_json, infer_surface_contract, node_to_json,
+    parse_plan_value_expr, stamp_plan_uses_result_qualified_entities,
 };
-use super::postfix::try_lower_row_suffix_expression;
+use super::row_suffix::{
+    compile_state_with_nodes, lower_suffix_stream, try_lower_row_suffix_expression,
+};
 use super::prelude::*;
-use super::render_dag::compile_render_from_tail;
+use super::render_dag::compile_render_from_applicator;
 use super::schema_validate::{cgs_for_qualified_entity, validate_surface_inline_projection};
 use super::types::{CompileState, DagNode, DagNodeSource, ExpandedProgramSurface};
 
@@ -27,8 +28,9 @@ pub(crate) fn is_plasm_dag_source(src: &str) -> bool {
         let line = strip_line_comment(line).trim();
         !line.is_empty() && split_assignment_at_top_level(line).is_some()
     }) || src.contains("=>")
-        || peel_postfix_suffixes(src)
-            .map(|(_, ops)| !ops.is_empty())
+        || parse_pipe_expr(src).is_ok_and(|pipe| pipe.is_some())
+        || peel_collect_meta(src)
+            .map(|(_, meta)| !meta.is_empty())
             .unwrap_or(false)
 }
 
@@ -76,7 +78,7 @@ pub(crate) fn compile_plasm_dag_to_plan_inner(
     validate_program_statement_order(&statements)?;
     let mut final_roots: Option<Vec<String>> = None;
     for stmt in statements {
-        if let Some((id, rhs)) = split_assignment_at_top_level(&stmt) {
+        if let Some((id, rhs)) = split_assignment_for_binding(&stmt) {
             validate_program_label(id)?;
             for node in compile_node_expr(session, &state, id, rhs.trim())? {
                 state.insert(node)?;
@@ -96,7 +98,7 @@ pub(crate) fn compile_plasm_dag_to_plan_inner(
     let nodes = state
         .nodes
         .iter()
-        .map(node_to_json)
+        .map(|n| node_to_json(n.as_ref()))
         .collect::<Result<Vec<_>, _>>()?;
     let return_value = if roots.len() == 1 {
         json!({ "kind": "node", "node": roots[0] })
@@ -148,7 +150,7 @@ pub(crate) fn compile_plasm_surface_line_to_plan(
     let nodes = state
         .nodes
         .iter()
-        .map(node_to_json)
+        .map(|n| node_to_json(n.as_ref()))
         .collect::<Result<Vec<_>, _>>()?;
     let return_value = if roots.len() == 1 {
         json!({ "kind": "node", "node": &roots[0] })
@@ -177,85 +179,316 @@ pub(in crate::plasm_dag) fn compile_node_expr(
         reject_relation_arrow_trap(rhs_display)?;
     }
     let expanded = ExpandedProgramSurface::new(session, state.pipeline, rhs_display);
-    let rhs = expanded.as_str();
+    let node = parse_expr_node(expanded.as_str())?;
+    lower_expr_node(session, state, id, rhs_display, node)
+}
 
-    if let Some((left, right)) = split_token_top_level(rhs, "=>")? {
-        let source = left.trim();
-        require_node(state, source)?;
-        if looks_like_plasm_effect_template(right) {
-            let refs = state.program_node_id_set();
-            let parsed = parse_plasm_program_surface_for_dag(
-                session,
-                state.cross_cache,
-                state.pipeline,
-                right.trim(),
-                &refs,
-                true,
-                Some(id),
-            )?;
-            let uses = collect_template_uses_from_expr(&parsed.expr);
-            let (kind, qualified, _effect, _shape) = infer_surface_contract(session, &parsed.expr)?;
-            if !matches!(
-                kind,
-                PlanNodeKind::Create
-                    | PlanNodeKind::Update
-                    | PlanNodeKind::Delete
-                    | PlanNodeKind::Action
-            ) {
-                return Err(format!(
-                    "Plasm program `{id}` for_each right side must be a write/side-effect expression"
+fn lower_expr_node(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    id: &str,
+    display: &str,
+    node: ExprNode,
+) -> Result<Vec<DagNode>, String> {
+    match node.apply {
+        Some(Applicator::Render {
+            kind: RenderApplicator::CrossBinding { sources, template },
+        }) => compile_render_from_applicator(session, state, id, display, &sources, template),
+        Some(apply) => {
+            // Stage the row plane under a scratch id — never reuse `id` (the apply
+            // node owns that label / return_* slot).
+            let (mut prefix, source) =
+                stage_row_expr_to_source(session, state, id, display, &node.row, None)?;
+            let scratch = if prefix.is_empty() {
+                None
+            } else {
+                Some(compile_state_with_nodes(state, &prefix))
+            };
+            let state = scratch.as_ref().unwrap_or(state);
+            require_node(state, source.as_str())?;
+            let source = source.as_str();
+            let mut applied = match apply {
+                Applicator::Render {
+                    kind: RenderApplicator::Inferred { template },
+                } => compile_render_from_applicator(
+                    session,
+                    state,
+                    id,
+                    display,
+                    &[source.to_string()],
+                    template,
+                )?,
+                Applicator::Render {
+                    kind: RenderApplicator::CrossBinding { .. },
+                } => unreachable!("cross-binding render handled above"),
+                Applicator::ForEach { surface } => {
+                    let refs = state.program_node_id_set();
+                    let parsed = parse_plasm_program_surface_for_dag(
+                        session,
+                        state.cross_cache,
+                        state.pipeline,
+                        surface.trim(),
+                        &refs,
+                        true,
+                        Some(id),
+                    )?;
+                    let uses = collect_template_uses_from_expr(&parsed.expr);
+                    let (kind, qualified, _effect, _shape) =
+                        infer_surface_contract(session, &parsed.expr)?;
+                    if !matches!(
+                        kind,
+                        PlanNodeKind::Create
+                            | PlanNodeKind::Update
+                            | PlanNodeKind::Delete
+                            | PlanNodeKind::Action
+                    ) {
+                        return Err(format!(
+                            "Plasm program `{id}` for_each right side must be a write/side-effect expression"
+                        ));
+                    }
+                    vec![DagNode {
+                        id: id.to_string(),
+                        expr: display.to_string(),
+                        singleton: false,
+                        page_size: None,
+                        source: DagNodeSource::ForEach {
+                            source: source.to_string(),
+                            parsed_template: expr_template_json(&parsed, &uses)?,
+                            display_expr: surface.trim().to_string(),
+                            effect_kind: kind,
+                            qualified_entity: qualified,
+                            uses_result: uses,
+                        },
+                    }]
+                }
+                Applicator::Relation { wire } => {
+                    vec![binding_continuation::lower_relation_application(
+                        session,
+                        state,
+                        id,
+                        display,
+                        source,
+                        wire.as_str(),
+                    )?]
+                }
+                Applicator::Derive { body } => {
+                    let (value, inputs) = parse_plan_value_expr(body.trim(), state, Some("_"))?;
+                    let relation_wires = relation_wire_names_for_source(session, state, source);
+                    reject_derive_map_invalid_rhs(&value, &relation_wires)?;
+                    vec![DagNode {
+                        id: id.to_string(),
+                        expr: display.to_string(),
+                        singleton: false,
+                        page_size: None,
+                        source: DagNodeSource::Derive {
+                            source: source.to_string(),
+                            value,
+                            inputs,
+                        },
+                    }]
+                }
+            };
+            prefix.append(&mut applied);
+            Ok(prefix)
+        }
+        None => lower_row_only_expr(session, state, id, display, node.row),
+    }
+}
+
+fn lower_row_only_expr(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    id: &str,
+    display: &str,
+    row: RowExpr,
+) -> Result<Vec<DagNode>, String> {
+    match row {
+        RowExpr::Pipe(pipe) => lower_pipe_row_expression(session, state, id, display, pipe),
+        RowExpr::Primary { head, collect_meta } => {
+            let head = head.trim();
+            if collect_meta.is_empty() {
+                if let Some(nodes) = try_lower_row_suffix_expression(session, state, id, head)? {
+                    return Ok(nodes);
+                }
+                if let Ok(value) = parse_plan_value_expr(head, state, None) {
+                    if looks_like_data_literal(head) {
+                        return Ok(vec![DagNode {
+                            id: id.to_string(),
+                            expr: display.to_string(),
+                            singleton: true,
+                            page_size: None,
+                            source: DagNodeSource::Data(value.0),
+                        }]);
+                    }
+                }
+                return Ok(vec![compile_surface_node(session, state, id, head)?]);
+            }
+            let suffixes: Vec<RowSuffix> = collect_meta.iter().map(RowSuffix::from).collect();
+            lower_suffix_stream(session, state, id, display, head, suffixes, Some(id))
+        }
+    }
+}
+
+fn stage_row_expr_to_source(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    id: &str,
+    display: &str,
+    row: &RowExpr,
+    final_id: Option<&str>,
+) -> Result<(Vec<DagNode>, String), String> {
+    match row {
+        RowExpr::Pipe(pipe) => {
+            let out_id = final_id
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("__plasm_{id}_apply_src"));
+            if state.contains(pipe.head.as_str()) {
+                if pipe.explicit_from {
+                    return Err(format!(
+                        "`from` is forbidden on binding label `{}`; use `{} | …`",
+                        pipe.head, pipe.head
+                    ));
+                }
+                let suffixes = pipe.row_suffixes()?;
+                if suffixes.is_empty() {
+                    return Ok((Vec::new(), pipe.head.clone()));
+                }
+                return Ok((
+                    lower_suffix_stream(
+                        session,
+                        state,
+                        &out_id,
+                        display,
+                        pipe.head.as_str(),
+                        suffixes,
+                        Some(&out_id),
+                    )?,
+                    out_id,
                 ));
             }
-            return Ok(vec![DagNode {
-                id: id.to_string(),
-                expr: rhs_display.to_string(),
-                singleton: false,
-                page_size: None,
-                source: DagNodeSource::ForEach {
-                    source: source.to_string(),
-                    parsed_template: expr_template_json(&parsed, &uses)?,
-                    display_expr: right.trim().to_string(),
-                    effect_kind: kind,
-                    qualified_entity: qualified,
-                    uses_result: uses,
-                },
-            }]);
+            if !pipe.explicit_from {
+                return Err(format!(
+                    "unknown binding `{}`; catalog pipe heads require `from {} | …`",
+                    pipe.head, pipe.head
+                ));
+            }
+            let suffixes = pipe.row_suffixes()?;
+            if suffixes.is_empty() {
+                return Ok((
+                    vec![compile_surface_node(session, state, &out_id, pipe.head.as_str())?],
+                    out_id,
+                ));
+            }
+            if let Some(mut prefix) =
+                try_lower_row_suffix_expression(session, state, &out_id, pipe.head.as_str())?
+            {
+                let staged_state = compile_state_with_nodes(state, &prefix);
+                let mut lowered = lower_suffix_stream(
+                    session,
+                    &staged_state,
+                    &out_id,
+                    display,
+                    &out_id,
+                    suffixes,
+                    Some(&out_id),
+                )?;
+                prefix.append(&mut lowered);
+                return Ok((prefix, out_id));
+            }
+            Ok((
+                lower_suffix_stream(
+                    session,
+                    state,
+                    &out_id,
+                    display,
+                    pipe.head.as_str(),
+                    suffixes,
+                    Some(&out_id),
+                )?,
+                out_id,
+            ))
         }
-        let (value, inputs) = parse_plan_value_expr(right.trim(), state, Some("_"))?;
-        let relation_wires = relation_wire_names_for_source(session, state, source);
-        reject_derive_map_invalid_rhs(&value, &relation_wires)?;
-        return Ok(vec![DagNode {
-            id: id.to_string(),
-            expr: rhs_display.to_string(),
-            singleton: false,
-            page_size: None,
-            source: DagNodeSource::Derive {
-                source: source.to_string(),
-                value,
-                inputs,
-            },
-        }]);
-    }
-    if let Some(tail) = try_parse_render_tail(rhs)? {
-        return compile_render_from_tail(session, state, id, rhs_display, tail);
-    }
-
-    if let Some(nodes) = try_lower_row_suffix_expression(session, state, id, rhs_display)? {
-        return Ok(nodes);
-    }
-
-    if let Ok(value) = parse_plan_value_expr(rhs, state, None) {
-        if looks_like_data_literal(rhs) {
-            return Ok(vec![DagNode {
-                id: id.to_string(),
-                expr: rhs_display.to_string(),
-                singleton: true,
-                page_size: None,
-                source: DagNodeSource::Data(value.0),
-            }]);
+        RowExpr::Primary { head, collect_meta } => {
+            let head = head.trim();
+            if collect_meta.is_empty() && state.contains(head) {
+                return Ok((Vec::new(), head.to_string()));
+            }
+            let out_id = final_id
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("__plasm_{id}_apply_src"));
+            let suffixes: Vec<RowSuffix> = collect_meta.iter().map(RowSuffix::from).collect();
+            let nodes = if suffixes.is_empty() {
+                if let Some(nodes) = try_lower_row_suffix_expression(session, state, &out_id, head)?
+                {
+                    nodes
+                } else {
+                    vec![compile_surface_node(session, state, &out_id, head)?]
+                }
+            } else {
+                lower_suffix_stream(
+                    session,
+                    state,
+                    &out_id,
+                    display,
+                    head,
+                    suffixes,
+                    Some(&out_id),
+                )?
+            };
+            Ok((nodes, out_id))
         }
     }
-    Ok(vec![compile_surface_node(session, state, id, rhs)?])
+}
+
+fn lower_pipe_row_expression(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    id: &str,
+    display: &str,
+    pipe: PipeExpr,
+) -> Result<Vec<DagNode>, String> {
+    if state.contains(pipe.head.as_str()) {
+        if pipe.explicit_from {
+            return Err(format!(
+                "`from` is forbidden on binding label `{}`; use `{} | …`",
+                pipe.head, pipe.head
+            ));
+        }
+        return binding_continuation::lower_pipe_continuation(session, state, id, display, &pipe);
+    }
+    if !pipe.explicit_from {
+        return Err(format!(
+            "unknown binding `{}`; catalog pipe heads require `from {} | …`",
+            pipe.head, pipe.head
+        ));
+    }
+    let suffixes = pipe.row_suffixes()?;
+    let head_id = format!("__plasm_{id}_pipe_head");
+    if let Some(mut prefix) =
+        try_lower_row_suffix_expression(session, state, &head_id, pipe.head.as_str())?
+    {
+        let scratch = compile_state_with_nodes(state, &prefix);
+        let mut suffix_nodes = lower_suffix_stream(
+            session,
+            &scratch,
+            id,
+            display,
+            head_id.as_str(),
+            suffixes,
+            Some(id),
+        )?;
+        prefix.append(&mut suffix_nodes);
+        return Ok(prefix);
+    }
+    lower_suffix_stream(
+        session,
+        state,
+        id,
+        display,
+        pipe.head.as_str(),
+        suffixes,
+        Some(id),
+    )
 }
 
 /// Longest bound label match so `repos.foo` wins over `repo.foo` when both exist.
@@ -381,13 +614,17 @@ pub(in crate::plasm_dag) fn split_return_list(
     session: &ExecuteSession,
 ) -> Result<Vec<String>, String> {
     let mut roots = Vec::new();
-    for part in split_top_level(line, ',')? {
+    let parts = if parse_pipe_expr(line)?.is_some() {
+        vec![line]
+    } else {
+        split_top_level(line, ',')?
+    };
+    for part in parts {
         let part = part.trim();
         if part.is_empty() {
             continue;
         }
-        let part =
-            rewrite_binding_field_projection_root(part, state).unwrap_or_else(|| part.to_string());
+        let part = part.to_string();
         if state.contains(part.as_str()) {
             roots.push(part);
         } else {
@@ -400,35 +637,6 @@ pub(in crate::plasm_dag) fn split_return_list(
         }
     }
     Ok(roots)
-}
-
-/// When a final root looks like `binding(p10, p9)` and `binding` is a program label, rewrite to
-/// `binding[p10, p9]` (canonical projection postfix).
-pub(in crate::plasm_dag) fn rewrite_binding_field_projection_root(
-    part: &str,
-    state: &CompileState<'_>,
-) -> Option<String> {
-    let open = part.find('(')?;
-    if open == 0 {
-        return None;
-    }
-    let label = part[..open].trim();
-    if !state.contains(label) {
-        return None;
-    }
-    let close = part.rfind(')')?;
-    if close <= open {
-        return None;
-    }
-    let tail = part[open + 1..close].trim();
-    if tail.is_empty() {
-        return None;
-    }
-    if part[close + 1..].trim().is_empty() {
-        Some(format!("{label}[{tail}]"))
-    } else {
-        None
-    }
 }
 
 pub(in crate::plasm_dag) fn require_node(

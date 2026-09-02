@@ -1,4 +1,4 @@
-//! Single postfix op → compute DAG node.
+//! Typed [`RowSuffix`] -> compute DAG node.
 
 use super::super::plan_serialize::{
     parse_aggregates, parse_dedupe_key_paths, parse_field_list,
@@ -14,11 +14,12 @@ use super::super::schema_validate::{
 };
 use super::super::types::{CompileState, DagNode, DagNodeSource};
 
-pub(in crate::plasm_dag) fn postfix_op_to_compute(
+/// Lower one typed [`RowSuffix`] transform into a compute DAG node.
+pub(in crate::plasm_dag) fn row_suffix_to_compute(
     session: &ExecuteSession,
     state: &CompileState<'_>,
     staged: &[DagNode],
-    op: &PlasmPostfixOp,
+    suffix: &RowSuffix,
     source: &str,
     id: &str,
     expr_display: &str,
@@ -37,13 +38,15 @@ pub(in crate::plasm_dag) fn postfix_op_to_compute(
             },
         }
     };
-    match op {
-        PlasmPostfixOp::Limit(n) => Ok(mk(
-            ComputeOp::Limit { count: *n },
+    match suffix {
+        RowSuffix::Limit { count } => Ok(mk(
+            ComputeOp::Limit {
+                count: *count as usize,
+            },
             compute_passthrough_or_fallback_schema(session, state, staged, source, "PlanLimit"),
-            *n <= 1,
+            *count <= 1,
         )),
-        PlasmPostfixOp::Filter { body } => {
+        RowSuffix::Filter { body } => {
             let qe = resolve_qualified_entity_for_dag_source(state, staged, source.to_string())
                 .ok_or_else(|| {
                     format!("filter(...) on `{source}` requires an upstream catalog entity row")
@@ -113,7 +116,7 @@ pub(in crate::plasm_dag) fn postfix_op_to_compute(
             );
             Ok(mk(ComputeOp::Filter { predicates }, schema, false))
         }
-        PlasmPostfixOp::Sort { args } => {
+        RowSuffix::Sort { args } => {
             let (key, descending) = parse_sort_field_and_direction(args)?;
             if key.is_empty() {
                 return Err("sort(...) requires a non-empty field".into());
@@ -146,7 +149,7 @@ pub(in crate::plasm_dag) fn postfix_op_to_compute(
                 false,
             ))
         }
-        PlasmPostfixOp::Aggregate { args } => {
+        RowSuffix::Aggregate { args } => {
             let mut aggregates = parse_aggregates(args)?;
             let qe = resolve_qualified_entity_for_dag_source(state, staged, source.to_string());
             if let Some(qe) = qe.as_ref() {
@@ -174,7 +177,7 @@ pub(in crate::plasm_dag) fn postfix_op_to_compute(
             let schema = schema_from_aggregates("PlanAggregate", &aggregates);
             Ok(mk(ComputeOp::Aggregate { aggregates }, schema, true))
         }
-        PlasmPostfixOp::GroupBy { args } => {
+        RowSuffix::GroupBy { args } => {
             let (key_names, agg_tail) = parse_group_by_key_and_aggregate_tail(args)?;
             let aggregates = if agg_tail.trim().is_empty() {
                 if key_names.len() != 1 {
@@ -230,7 +233,7 @@ pub(in crate::plasm_dag) fn postfix_op_to_compute(
                 false,
             ))
         }
-        PlasmPostfixOp::Dedupe { keys } | PlasmPostfixOp::Distinct { keys: Some(keys) } => {
+        RowSuffix::Dedupe { keys } | RowSuffix::Distinct { keys: Some(keys) } => {
             let qe = resolve_qualified_entity_for_dag_source(state, staged, source.to_string());
             let key_fps = parse_dedupe_key_paths(session, state.cross_cache, qe.as_ref(), keys)?;
             validate_compute_paths_for_dag_source(
@@ -244,11 +247,11 @@ pub(in crate::plasm_dag) fn postfix_op_to_compute(
             let schema = synthetic_schema_passthrough_rows(session, state, staged, source)?;
             Ok(mk(ComputeOp::DedupeBy { keys: key_fps }, schema, false))
         }
-        PlasmPostfixOp::Distinct { keys: None } => {
+        RowSuffix::Distinct { keys: None } => {
             let schema = synthetic_schema_passthrough_rows(session, state, staged, source)?;
             Ok(mk(ComputeOp::DedupeBy { keys: vec![] }, schema, false))
         }
-        PlasmPostfixOp::With { body } => {
+        RowSuffix::With { body } => {
             let columns = plasm_core::parse_with_body(body).map_err(|e| e.to_string())?;
             let schema = synthetic_schema_passthrough_rows(session, state, staged, source)?;
             let mut schema = schema;
@@ -261,16 +264,15 @@ pub(in crate::plasm_dag) fn postfix_op_to_compute(
             }
             Ok(mk(ComputeOp::With { columns }, schema, false))
         }
-        PlasmPostfixOp::Projection { fields } => {
+        RowSuffix::Project { fields } => {
+            let fields_joined = fields.join(",");
             let qe = resolve_qualified_entity_for_dag_source(state, staged, source.to_string());
             let source_schema = resolve_immediate_compute_schema(state, staged, source);
             let mut map = BTreeMap::new();
-            for field in
-                parse_field_list(session, state.cross_cache, qe.as_ref(), fields).or_else(|_| {
+            for field in parse_field_list(session, state.cross_cache, qe.as_ref(), &fields_joined)
+                .or_else(|_| {
                     fields
-                        .split(',')
-                        .map(|s| s.trim())
-                        .filter(|s| !s.is_empty())
+                        .iter()
                         .map(|raw| {
                             let path = FieldPath::from_dotted(raw)?;
                             let resolved = resolve_sort_field_path(
@@ -309,8 +311,11 @@ pub(in crate::plasm_dag) fn postfix_op_to_compute(
                 schema_from_output_fields("PlanProject", map.keys(), SyntheticValueKind::Unknown);
             Ok(mk(ComputeOp::Project { fields: map }, schema, false))
         }
-        PlasmPostfixOp::Singleton | PlasmPostfixOp::PageSize(_) => {
+        RowSuffix::Singleton | RowSuffix::PageSize { .. } => {
             Err("internal: singleton/page_size must be split as tail flags before lowering".into())
         }
+        RowSuffix::Relation { .. } => Err(
+            "internal: relation suffixes lower via binding continuation, not compute".into(),
+        ),
     }
 }

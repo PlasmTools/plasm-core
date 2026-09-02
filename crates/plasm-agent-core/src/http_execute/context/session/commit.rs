@@ -154,7 +154,19 @@ fn render_exposure_wave_markdown(
         String::new()
     };
 
-    wrap_teaching_markdown_literal_block(&delta, pipeline.render_mode)
+    let catalog_entry_id = changes
+        .added_entities
+        .first()
+        .map(|k| k.entry_id.as_str())
+        .or_else(|| {
+            changes
+                .new_capabilities
+                .iter()
+                .next()
+                .map(|c| c.entry_id.as_str())
+        })
+        .unwrap_or(sess.entry_id.as_str());
+    wrap_teaching_markdown_literal_block(&delta, catalog_entry_id)
 }
 
 /// Admit new relation slots, render + append the teaching delta, and persist the session.
