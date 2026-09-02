@@ -519,6 +519,7 @@ entities:
     relations: {}
   Webhook:
     id_field: id
+    primary_query: guild_webhook_list
     description: A channel webhook (management APIs; execute uses token path and is deferred).
     fields:
       id:
@@ -546,6 +547,7 @@ entities:
     relations: {}
   Invite:
     id_field: id
+    primary_query: guild_invite_list
     description: An invite code and metadata.
     fields:
       id:
@@ -621,6 +623,7 @@ entities:
     relations: {}
   Sticker:
     id_field: id
+    primary_read: guild_sticker_get
     description: A sticker (standard or guild-uploaded).
     fields:
       id:
@@ -847,6 +850,7 @@ entities:
     relations: {}
   Thread:
     id_field: id
+    primary_query: guild_active_thread_list
     description: A message thread (forum, public, or private).
     discovery:
       names:
@@ -884,6 +888,8 @@ entities:
     relations: {}
   CustomEmoji:
     id_field: id
+    primary_read: guild_emoji_get
+    primary_query: guild_emoji_list
     description: Custom emoji for a guild or for an application (same wire shape; scope depends on the operation).
     fields:
       id:

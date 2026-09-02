@@ -389,3 +389,103 @@ langoffer_create:
     fields:
     - ["price", { type: var, name: price }]
     - ["quote_currency", { type: var, name: quote_currency }]
+
+queryonly_request_received_query:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: queryonly_requests
+  headers:
+    type: object
+    fields:
+    - - Authorization
+      - type: format
+        template: "Bearer {token}"
+        vars:
+          token:
+            type: var
+            name: access_token
+  query:
+    type: object
+    fields:
+    - - status
+      - type: if
+        condition: { type: exists, var: status }
+        then_expr: { type: var, name: status }
+        else_expr: { type: const, value: null }
+
+queryonly_request_approve:
+  method: POST
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: queryonly_requests
+  - type: var
+    name: request_id
+  - type: literal
+    value: approve
+  headers:
+    type: object
+    fields:
+    - - Authorization
+      - type: format
+        template: "Bearer {token}"
+        vars:
+          token:
+            type: var
+            name: access_token
+
+queryonly_request_deny:
+  method: POST
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: queryonly_requests
+  - type: var
+    name: request_id
+  - type: literal
+    value: deny
+  headers:
+    type: object
+    fields:
+    - - Authorization
+      - type: format
+        template: "Bearer {token}"
+        vars:
+          token:
+            type: var
+            name: access_token
+
+queryonly_request_remind:
+  method: POST
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: queryonly_requests
+  - type: var
+    name: request_id
+  - type: literal
+    value: remind
+  headers:
+    type: object
+    fields:
+    - - Authorization
+      - type: format
+        template: "Bearer {token}"
+        vars:
+          token:
+            type: var
+            name: access_token

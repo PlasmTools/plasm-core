@@ -39,6 +39,8 @@ fn ticket_query_fixture_cgs() -> CGS {
         abstract_entity: false,
         domain_projection_examples: false,
         primary_read: None,
+        primary_query: None,
+        primary_search: None,
         discovery: None,
     })
     .unwrap();

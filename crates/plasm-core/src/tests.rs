@@ -106,6 +106,8 @@ mod property_tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         };
         cgs.add_resource(account).unwrap();

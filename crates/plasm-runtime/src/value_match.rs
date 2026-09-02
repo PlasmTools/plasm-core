@@ -6,7 +6,10 @@ use crate::cache::CachedEntity;
 use crate::RuntimeError;
 
 /// Compare a row field value to a JSON literal from the view binding.
-pub(crate) fn values_semantically_equal(row_val: &Value, expected_json: &serde_json::Value) -> bool {
+pub(crate) fn values_semantically_equal(
+    row_val: &Value,
+    expected_json: &serde_json::Value,
+) -> bool {
     let expected = plasm_core::json_value_to_plasm_value(expected_json);
     row_val == &expected
 }

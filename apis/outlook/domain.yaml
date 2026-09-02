@@ -16,6 +16,7 @@ data_classes:
 entities:
   MailFolder:
     id_field: id
+    primary_query: mail_folder_query
     description: A mail folder in the signed-in mailbox.
     discovery:
       names:
@@ -69,6 +70,7 @@ entities:
             mailFolderId: id
   Message:
     id_field: id
+    primary_query: message_query
     description: An Outlook mail item — list threads/conversations via conversation grouping on messages.
     discovery:
       names:
@@ -252,6 +254,7 @@ entities:
             calendarId: id
   Event:
     id_field: id
+    primary_query: event_query
     description: A calendar event in the signed-in user's schedule.
     discovery:
       names:

@@ -38,6 +38,7 @@ entities:
         value_ref: nv_search_result_favicon
   ExtractResult:
     id_field: url
+    primary_query: url_extract
     description: Extracted or crawled page content from Tavily Extract / Crawl.
     discovery:
       names:

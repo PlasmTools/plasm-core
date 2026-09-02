@@ -69,6 +69,7 @@ entities:
     relations: {}
   LangItem:
     id_field: id
+    primary_query: langitem_query
     description: Primary matrix entity — list, search, CRUD, relations, actions.
     fields:
       id:

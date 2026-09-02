@@ -6,8 +6,7 @@ use indexmap::IndexMap;
 use plasm_compile::DecodedRelation;
 use plasm_core::expr::EntityKey;
 use plasm_core::schema::{
-    EntityDef, ViewDefinition, ViewNodeSpec, ViewParamBinding,
-    ViewRelationBinding, ViewScopeInject,
+    EntityDef, ViewDefinition, ViewNodeSpec, ViewParamBinding, ViewRelationBinding, ViewScopeInject,
 };
 use plasm_core::{
     json_value_to_plasm_value as json_to_plasm_value, CapabilityKind, CapabilitySchema,

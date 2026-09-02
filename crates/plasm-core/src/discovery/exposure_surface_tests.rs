@@ -513,6 +513,8 @@ fn intent_only_admits_mutators_on_readless_seeded_auth_session() {
             abstract_entity: false,
             domain_projection_examples: true,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         },
     );

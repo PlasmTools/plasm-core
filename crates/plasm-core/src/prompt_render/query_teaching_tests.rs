@@ -190,8 +190,8 @@ fn github_pr_merge_zero_arity_invoke_omits_optional_meaning_when_schema_loads() 
         .find(|l| l.contains(&format!(".{ms}()")))
         .unwrap_or_else(|| panic!("expected .{ms}() in full language card"));
     assert!(
-        !merge_line.contains("Merge a pull request"),
-        "rendered merge Meaning must omit capability prose: {merge_line}"
+        merge_line.contains("Merge a pull request"),
+        "rendered merge Meaning must include capability prose: {merge_line}"
     );
 }
 
@@ -502,6 +502,8 @@ fn simple_string_id_identity_row_uses_id_hole() {
         abstract_entity: false,
         domain_projection_examples: true,
         primary_read: None,
+        primary_query: None,
+        primary_search: None,
         discovery: None,
     })
     .unwrap();
@@ -550,14 +552,14 @@ fn simple_string_id_identity_row_uses_id_hole() {
         None,
         None,
     );
-    let want = format!("{es}(<id>)");
-    let identity = block
-        .teaching_rows
-        .iter()
-        .find(|r| r.teaching_expr.expression.contains(&want));
+    let want_brace = format!("{es}{{name=<wire>}}");
+    let identity = block.teaching_rows.iter().find(|r| {
+        r.teaching_expr.expression.contains(&want_brace)
+            || r.teaching_expr.expression.contains(&format!("{es}(<id>)"))
+    });
     assert!(
         identity.is_some(),
-        "string-id identity must teach `{want}`, rows={:?}",
+        "string-id identity must teach `{want_brace}` or `{es}(<id>)`, rows={:?}",
         block
             .teaching_rows
             .iter()

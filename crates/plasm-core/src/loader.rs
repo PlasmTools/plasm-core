@@ -162,6 +162,12 @@ pub struct DomainEntity {
     /// Optional Get capability id for projection exemplar field order (`provides` / default order).
     #[serde(default)]
     pub primary_read: Option<String>,
+    /// Optional Query capability id when the entity declares 2+ unscoped Queries.
+    #[serde(default)]
+    pub primary_query: Option<String>,
+    /// Optional Search capability id when the entity declares 2+ unscoped Searches.
+    #[serde(default)]
+    pub primary_search: Option<String>,
     #[serde(default)]
     pub discovery: Option<crate::DiscoveryEntityHints>,
 }
@@ -953,6 +959,8 @@ fn assemble_cgs_core(
             abstract_entity: entity.abstract_entity,
             domain_projection_examples: entity.domain_projection_examples,
             primary_read: entity.primary_read.clone(),
+            primary_query: entity.primary_query.clone(),
+            primary_search: entity.primary_search.clone(),
             discovery: entity.discovery.clone(),
         };
 
@@ -2079,5 +2087,27 @@ capabilities:
             err.contains("validation.predicates") && err.contains("values:"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn all_apis_packages_validate() {
+        let apis = std::path::Path::new("../../apis");
+        if !apis.is_dir() {
+            return;
+        }
+        for entry in std::fs::read_dir(apis).expect("read apis dir") {
+            let entry = entry.expect("apis entry");
+            if !entry.file_type().expect("file type").is_dir() {
+                continue;
+            }
+            let dir = entry.path();
+            if !dir.join("domain.yaml").is_file() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            load_schema_dir(&dir).unwrap_or_else(|e| {
+                panic!("apis/{name} failed CGS validation: {e}");
+            });
+        }
     }
 }

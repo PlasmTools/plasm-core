@@ -305,6 +305,7 @@ entities:
           param: projectIdOrKey
   User:
     id_field: accountId
+    primary_query: user_myself
     description: A Jira user account.
     fields:
       accountId:

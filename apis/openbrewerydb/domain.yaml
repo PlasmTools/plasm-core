@@ -5,6 +5,7 @@ http_backend: https://api.openbrewerydb.org
 entities:
   Brewery:
     id_field: id
+    primary_search: brewery_search
     description: A beer brewing establishment.
     fields:
       id:

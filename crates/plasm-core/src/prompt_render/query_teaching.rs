@@ -183,6 +183,34 @@ pub(crate) fn compound_get_expr_line(
     Some(format!("{es}({})", parts.join(", ")))
 }
 
+/// True when a Get must be keyed by identity / scope — never bare `e#` or `e#.m#()`.
+pub(crate) fn get_requires_identity_anchor(
+    cap: &crate::CapabilitySchema,
+    cgs: &CGS,
+    _ent: &EntityDef,
+) -> bool {
+    cap.get_requires_identity_anchor(cgs)
+}
+
+/// Identity GET with explicit id wire: `e#{wire=<wire>}` (valid brace→Get sugar).
+pub(crate) fn keyed_identity_get_teaching_expr_line(
+    es: &str,
+    ent: &EntityDef,
+    map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
+) -> Option<String> {
+    if ent.id_field.is_empty() {
+        return None;
+    }
+    let wire = id_sym_entity(
+        map,
+        catalog_entry_id,
+        ent.name.as_str(),
+        ent.id_field.as_str(),
+    );
+    Some(format!("{es}{{{wire}={TEACHING_PARAM_VALUE_PLACEHOLDER}}}"))
+}
+
 /// Unary identity GET teaching: always `e#(<id>)` — never sample ids or bare `$`.
 pub(crate) fn unary_entity_id_teaching_expr_line(
     es: &str,

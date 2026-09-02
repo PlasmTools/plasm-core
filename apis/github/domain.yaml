@@ -16,6 +16,7 @@ data_classes:
 entities:
   Repository:
     id_field: id
+    primary_query: user_repos_query
     key_vars:
     - owner
     - repo
@@ -137,6 +138,7 @@ entities:
             repository: full_name
   Issue:
     id_field: id
+    primary_query: issue_query
     key_vars:
     - owner
     - repo
@@ -310,6 +312,7 @@ entities:
             issue_number: number
   PullRequest:
     id_field: id
+    primary_query: pr_query
     key_vars:
     - owner
     - repo
@@ -716,6 +719,8 @@ entities:
         value_ref: nv_wire_str_markdown
   User:
     id_field: login
+    primary_read: user_get
+    primary_query: repo_collaborators_query
     description: A GitHub user account.
     fields:
       login:
@@ -772,6 +777,7 @@ entities:
     - repo
     - name
     id_field: name
+    primary_query: label_query
     description: Label for issues and PRs.
     discovery:
       names:
@@ -902,6 +908,7 @@ entities:
         cardinality: one
   IssueComment:
     id_field: id
+    primary_query: issue_comment_query
     description: A comment on a GitHub issue or pull request.
     discovery:
       names:
@@ -1245,6 +1252,7 @@ entities:
     - repo
     - id
     id_field: id
+    primary_query: workflow_run_query
     description: One workflow run for a repository.
     fields:
       owner:

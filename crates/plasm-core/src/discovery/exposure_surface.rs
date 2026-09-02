@@ -307,7 +307,15 @@ pub fn derive_intent_exposure_surface_batch(
                 ) || target_ent
                     .primary_read
                     .as_deref()
-                    .is_some_and(|pr| pr == cap.name.as_str());
+                    .is_some_and(|pr| pr == cap.name.as_str())
+                    || target_ent
+                        .primary_query
+                        .as_deref()
+                        .is_some_and(|pq| pq == cap.name.as_str())
+                    || target_ent
+                        .primary_search
+                        .as_deref()
+                        .is_some_and(|ps| ps == cap.name.as_str());
                 if !is_read {
                     continue;
                 }

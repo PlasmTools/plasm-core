@@ -61,6 +61,7 @@ schema_overlay:
 entities:
   Task:
     id_field: id
+    primary_query: team_query
     description: ClickUp task (overlay augments with custom fields).
     fields:
       id:

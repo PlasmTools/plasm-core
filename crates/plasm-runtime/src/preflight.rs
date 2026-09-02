@@ -1,8 +1,8 @@
 //! Capability **preflight** orchestration (ordered steps before CML compile).
 
-use crate::value_match::value_to_match_string;
 use crate::execution::{ExecutionEngine, ExecutionMode, StreamConsumeOpts};
 use crate::materialization::SessionMaterialization;
+use crate::value_match::value_to_match_string;
 use crate::view_plan::ViewAmbientContext;
 use crate::{CachedEntity, EntityCompleteness, RuntimeError};
 use indexmap::IndexMap;

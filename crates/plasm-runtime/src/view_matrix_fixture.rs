@@ -30,10 +30,7 @@ pub fn matrix_view_query(entity: &str) -> QueryExpr {
         return QueryExpr::all(entity);
     }
     if entity == "LangKeyPick" {
-        return QueryExpr::filtered(
-            entity,
-            Predicate::eq("key", Value::String("item-1".into())),
-        );
+        return QueryExpr::filtered(entity, Predicate::eq("key", Value::String("item-1".into())));
     }
     QueryExpr::filtered(
         entity,

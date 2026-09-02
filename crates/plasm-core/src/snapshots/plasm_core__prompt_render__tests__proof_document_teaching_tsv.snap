@@ -46,20 +46,20 @@ v106{ref=<wire>,find=<wire>,replace=<wire>,occurrence=<wire>}	→ find_replace_i
 v107{find=<wire>,replace=<wire>,occurrence=<wire>,fromRef=<wire>,toRef=<wire>,blockFilter=<wire>}	→ find_replace_in_doc — Find and replace text across the document (optional block range or kind filter)
 v10	union · v210 | v211 | v212
 v11	union · v101 | v102 | v103 | v104 | v105 | v106 | v107
-e1(<id>)[slug,markdown,title,links,agent_auth]	→ e1 · Read or edit a shared Proof document
+e1{slug=<wire>}[slug,markdown,title,links,agent_auth]	→ e1
 e1(<id>).m16()	→ e1 · Bind this session to a share URL (preferred: full URL with embedded `?token=`…
-e1(<id>).m1(agent_id=<wire>, by=<wire>, quote=<wire>, text=<wire>, base_token=<wire>, share_token=<wire>)	↠ e1 · chain: e1(<id>).m# · optional: base_token,share_token
-e1(<id>).m2(agent_id=<wire>, by=<wire>, share_token=<wire>, base_token=<wire>, operations=[<wire>])	↠ e1 · chain: e1(<id>).m# · optional: base_token,share_token
-e1(<id>).m3(agent_id=<wire>, by=<wire>, mark_id=<wire>, text=<wire>, resolve=<wire>, base_token=<wire>, share_token=<wire>)	↠ e1 · chain: e1(<id>).m# · optional: base_token,resolve,share_token
-e1(<id>).m4(agent_id=<wire>, by=<wire>, mark_id=<wire>, base_token=<wire>, share_token=<wire>)	↠ e1 · chain: e1(<id>).m# · optional: base_token,share_token
-e1(<id>).m5(agent_id=<wire>, by=<wire>, mark_id=<wire>, base_token=<wire>, share_token=<wire>)	↠ e1 · chain: e1(<id>).m# · optional: base_token,share_token
-e1(<id>).m6(agent_id=<wire>, by=<wire>, mark_id=<wire>, base_token=<wire>, share_token=<wire>)	↠ e1 · chain: e1(<id>).m# · optional: base_token,share_token
-e1(<id>).m7(agent_id=<wire>, by=<wire>, quote=<wire>, base_token=<wire>, idempotency_key=<wire>, share_token=<wire>, status=<wire>)	↠ e1 · chain: e1(<id>).m# · optional: base_token,idempotency_key,share_token,status
-e1(<id>).m8(agent_id=<wire>, by=<wire>, quote=<wire>, content=<wire>, base_token=<wire>, idempotency_key=<wire>, share_token=<wire>, status=<wire>)	↠ e1 · chain: e1(<id>).m# · optional: base_token,idempotency_key,share_token,status
-e1(<id>).m9(agent_id=<wire>, by=<wire>, mark_id=<wire>, base_token=<wire>, share_token=<wire>)	↠ e1 · chain: e1(<id>).m# · optional: base_token,share_token
-e1(<id>).m10(agent_id=<wire>, by=<wire>, quote=<wire>, content=<wire>, base_token=<wire>, idempotency_key=<wire>, share_token=<wire>, status=<wire>)	↠ e1 · chain: e1(<id>).m# · optional: base_token,idempotency_key,share_token,status
-e1(<id>).m11(agent_id=<wire>, up_to_id=<wire>, by=<wire>, share_token=<wire>)	↠ e1 · chain: e1(<id>).m# · optional: share_token
-e1(<id>).m12(report=<wire>)	↠ e1 · chain: e1(<id>).m#
-e1(<id>).m13(agent_id=<wire>, idempotency_key=<wire>, share_token=<wire>, by=<wire>, base_revision=<wire>, operations=[v101{ref=<wire>,markdown=<wire>},v103{ref=<wire>,blocks=<wire>}])	↠ e1 · chain: e1(<id>).m# · optional: idempotency_key,share_token
-e1(<id>).m17(agent_id=<wire>, presence_status=<wire>)	↠ e1 · chain: e1(<id>).m# · optional: presence_status
-e1(<id>).slug	relation e1 → e1
+e1(<id>).m1(agent_id=<wire>, by=<wire>, quote=<wire>, text=<wire>, base_token=<wire>, share_token=<wire>)	↠ e1 · Start a comment thread on quoted text from the document · chain: e1(<id>).m# · optional: base_token,share_token
+e1(<id>).m2(agent_id=<wire>, by=<wire>, share_token=<wire>, base_token=<wire>, operations=[<wire>])	↠ e1 · Apply several comment updates in one request · chain: e1(<id>).m# · optional: base_token,share_token
+e1(<id>).m3(agent_id=<wire>, by=<wire>, mark_id=<wire>, text=<wire>, resolve=<wire>, base_token=<wire>, share_token=<wire>)	↠ e1 · Reply in a thread; optionally mark it resolved in the same step · chain: e1(<id>).m# · optional: base_token,resolve,share_token
+e1(<id>).m4(agent_id=<wire>, by=<wire>, mark_id=<wire>, base_token=<wire>, share_token=<wire>)	↠ e1 · Mark a thread resolved; history stays visible · chain: e1(<id>).m# · optional: base_token,share_token
+e1(<id>).m5(agent_id=<wire>, by=<wire>, mark_id=<wire>, base_token=<wire>, share_token=<wire>)	↠ e1 · Open a resolved thread for more discussion · chain: e1(<id>).m# · optional: base_token,share_token
+e1(<id>).m6(agent_id=<wire>, by=<wire>, mark_id=<wire>, base_token=<wire>, share_token=<wire>)	↠ e1 · Accept a pending suggestion and apply it to the document · chain: e1(<id>).m# · optional: base_token,share_token
+e1(<id>).m7(agent_id=<wire>, by=<wire>, quote=<wire>, base_token=<wire>, idempotency_key=<wire>, share_token=<wire>, status=<wire>)	↠ e1 · Propose deleting a quoted passage for a human to accept or reject · chain: e1(<id>).m# · optional: base_token,idempotency_key,share_token,status
+e1(<id>).m8(agent_id=<wire>, by=<wire>, quote=<wire>, content=<wire>, base_token=<wire>, idempotency_key=<wire>, share_token=<wire>, status=<wire>)	↠ e1 · Propose inserting text after a quoted passage for a human to accept or reject · chain: e1(<id>).m# · optional: base_token,idempotency_key,share_token,status
+e1(<id>).m9(agent_id=<wire>, by=<wire>, mark_id=<wire>, base_token=<wire>, share_token=<wire>)	↠ e1 · Reject a pending suggestion without changing the document body · chain: e1(<id>).m# · optional: base_token,share_token
+e1(<id>).m10(agent_id=<wire>, by=<wire>, quote=<wire>, content=<wire>, base_token=<wire>, idempotency_key=<wire>, share_token=<wire>, status=<wire>)	↠ e1 · Propose replacing a quoted passage with new content for a human to accept or … · chain: e1(<id>).m# · optional: base_token,idempotency_key,share_token,status
+e1(<id>).m11(agent_id=<wire>, up_to_id=<wire>, by=<wire>, share_token=<wire>)	↠ e1 · Tell the server how far you read the collaboration event stream · chain: e1(<id>).m# · optional: share_token
+e1(<id>).m12(report=<wire>)	↠ e1 · Report a bug and include this document as context · chain: e1(<id>).m#
+e1(<id>).m13(agent_id=<wire>, idempotency_key=<wire>, share_token=<wire>, by=<wire>, base_revision=<wire>, operations=[v101{ref=<wire>,markdown=<wire>},v103{ref=<wire>,blocks=<wire>}])	↠ e1 · Apply one batch of block edits. Use base_revision from your latest snapshot (… · chain: e1(<id>).m# · optional: idempotency_key,share_token
+e1(<id>).m17(agent_id=<wire>, presence_status=<wire>)	↠ e1 · You MUST announce presence before you edit or comment—call this once per do… · chain: e1(<id>).m# · optional: presence_status
+e1(<id>).slug	→ relation e1 → e1 · Read or edit a shared Proof document

@@ -219,6 +219,7 @@ entities:
           param: folder_id
   List:
     id_field: id
+    primary_query: list_query
     description: ClickUp list that groups work items.
     discovery:
       names:
@@ -248,6 +249,7 @@ entities:
           param: list_id
   Task:
     id_field: id
+    primary_query: task_query
     description: A ClickUp work item in a list.
     discovery:
       names:
@@ -367,6 +369,7 @@ entities:
     relations: {}
   View:
     id_field: id
+    primary_query: view_query
     description: A saved view configuration.
     fields:
       id:
@@ -444,6 +447,7 @@ entities:
     relations: {}
   Comment:
     id_field: id
+    primary_query: list_comments
     description: A comment on a task or view.
     discovery:
       names:
@@ -464,6 +468,7 @@ entities:
     relations: {}
   CustomField:
     id_field: id
+    primary_query: space_fields
     description: A workspace-level custom field definition.
     fields:
       id:
@@ -489,6 +494,7 @@ entities:
     relations: {}
   Member:
     id_field: id
+    primary_query: team_member_query
     id_from: user.id
     description: A workspace or task member.
     discovery:

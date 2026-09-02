@@ -17,8 +17,9 @@ use super::invoke_teaching::{
 };
 use super::line_validate::{DomainLineValidCacheKey, DomainLineValidEntry};
 use super::query_teaching::{
-    compound_get_expr_line, query_expr_filters_only, query_expr_maximal, query_expr_scope_only,
-    search_expr_with_filters, unary_entity_id_teaching_expr_line,
+    compound_get_expr_line, get_requires_identity_anchor, keyed_identity_get_teaching_expr_line,
+    query_expr_filters_only, query_expr_maximal, query_expr_scope_only, search_expr_with_filters,
+    unary_entity_id_teaching_expr_line,
 };
 use super::relation_teaching::{receiver_for_dotted_suffix, try_emit_relation_nav_teaching_row};
 use super::row_producer::RowProducerProjection;
@@ -198,9 +199,11 @@ pub(crate) fn collect_entity_teaching_block(
     // Compound `key_vars` need `e#(k=…)` identity Gets — never classify as method-style singleton.
     let only_singleton_gets = !get_caps.is_empty()
         && ent.key_vars.len() <= 1
-        && get_caps
-            .iter()
-            .all(|cap| path_vars_empty(cap) && capability_is_zero_arity_invoke(cap));
+        && get_caps.iter().all(|cap| {
+            path_vars_empty(cap)
+                && capability_is_zero_arity_invoke(cap)
+                && !get_requires_identity_anchor(cap, cgs, ent)
+        });
 
     let get_gloss = crate::result_gloss::result_gloss_for_get_entity(ename, map, catalog_entry_id);
     let primary_get_cap = cgs
@@ -275,9 +278,12 @@ pub(crate) fn collect_entity_teaching_block(
                 emitted_primary_get = true;
             }
         }
-        // Unary identity get only when there is no query surface (compound already attempted above).
+        // Keyed identity get only when there is no query surface (compound already attempted above).
         if !emitted_primary_get && query_caps.is_empty() {
-            let line_base = unary_entity_id_teaching_expr_line(&es, ent, map, catalog_entry_id);
+            let line_base = keyed_identity_get_teaching_expr_line(&es, ent, map, catalog_entry_id)
+                .unwrap_or_else(|| {
+                    unary_entity_id_teaching_expr_line(&es, ent, map, catalog_entry_id)
+                });
             if try_push_teaching_example(
                 gloss_emit,
                 &mut teaching_rows,
@@ -297,6 +303,139 @@ pub(crate) fn collect_entity_teaching_block(
                 emitted_primary_get = true;
             }
         }
+    }
+
+    let teach_list_reads_before_mutators = get_caps.is_empty();
+
+    macro_rules! emit_query_capability_rows {
+        () => {
+            if !query_caps.is_empty() {
+                let mut local_seen: HashSet<String> = HashSet::new();
+                let mut query_line_count: usize = 0;
+                const MAX_QUERY_LINES: usize = 2;
+                for cap in &query_caps {
+                    if query_line_count >= MAX_QUERY_LINES {
+                        break;
+                    }
+                    let qgloss = crate::result_gloss::result_gloss_for_capability(
+                        cap,
+                        cgs,
+                        map,
+                        catalog_entry_id,
+                    );
+                    let cap_leg = capability_legend_with_session_gloss(
+                        map,
+                        cgs,
+                        cap,
+                        ename,
+                        ident_meta,
+                        catalog_entry_id,
+                    );
+                    let is_primary_query =
+                        primary_q_name.as_deref() == Some(cap.name.as_str());
+                    let mut added = false;
+                    if let Some(line) = query_expr_maximal(cap, &es, cgs, map, catalog_entry_id) {
+                        let projection = row_producer_projection_for_query_line(cap, &es, &line);
+                        if local_seen.insert(line.clone())
+                            && try_push_row_producer_teaching_example(
+                                gloss_emit,
+                                &mut teaching_rows,
+                                collect_meta,
+                                cgs,
+                                map,
+                                catalog_entry_id,
+                                ename,
+                                surface_filter,
+                                cap,
+                                &line,
+                                qgloss.clone(),
+                                cap_leg.clone(),
+                                None,
+                                !is_primary_query,
+                                line_valid_cache,
+                                line_valid_cache_seed,
+                                map_arc,
+                                projection,
+                                canonical_bracket,
+                                witness_taught,
+                            )
+                        {
+                            added = true;
+                            query_line_count += 1;
+                        }
+                    }
+                    if !added {
+                        if let Some(line) =
+                            query_expr_scope_only(cap, &es, cgs, map, catalog_entry_id)
+                        {
+                            if local_seen.insert(line.clone())
+                                && try_push_row_producer_teaching_example(
+                                    gloss_emit,
+                                    &mut teaching_rows,
+                                    collect_meta,
+                                    cgs,
+                                    map,
+                                    catalog_entry_id,
+                                    ename,
+                                    surface_filter,
+                                    cap,
+                                    &line,
+                                    qgloss.clone(),
+                                    cap_leg.clone(),
+                                    None,
+                                    !is_primary_query,
+                                    line_valid_cache,
+                                    line_valid_cache_seed,
+                                    map_arc,
+                                    RowProducerProjection::CapabilityProvides,
+                                    canonical_bracket,
+                                    witness_taught,
+                                )
+                            {
+                                added = true;
+                                query_line_count += 1;
+                            }
+                        }
+                    }
+                    if !added {
+                        if let Some(line) =
+                            query_expr_filters_only(cap, &es, cgs, map, catalog_entry_id)
+                        {
+                            if local_seen.insert(line.clone())
+                                && try_push_row_producer_teaching_example(
+                                    gloss_emit,
+                                    &mut teaching_rows,
+                                    collect_meta,
+                                    cgs,
+                                    map,
+                                    catalog_entry_id,
+                                    ename,
+                                    surface_filter,
+                                    cap,
+                                    &line,
+                                    qgloss.clone(),
+                                    cap_leg.clone(),
+                                    None,
+                                    !is_primary_query,
+                                    line_valid_cache,
+                                    line_valid_cache_seed,
+                                    map_arc,
+                                    RowProducerProjection::CapabilityProvides,
+                                    canonical_bracket,
+                                    witness_taught,
+                                )
+                            {
+                                query_line_count += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        };
+    }
+
+    if teach_list_reads_before_mutators {
+        emit_query_capability_rows!();
     }
 
     let mut zero_arity_method_caps: Vec<&crate::CapabilitySchema> = manifest
@@ -417,7 +556,7 @@ pub(crate) fn collect_entity_teaching_block(
             cap_leg,
             None,
             Some(&cap_name),
-            true,
+            false,
             line_valid_cache,
             line_valid_cache_seed,
             map_arc,
@@ -425,117 +564,8 @@ pub(crate) fn collect_entity_teaching_block(
         );
     }
 
-    if !query_caps.is_empty() {
-        let mut local_seen: HashSet<String> = HashSet::new();
-        let mut query_line_count: usize = 0;
-        const MAX_QUERY_LINES: usize = 2;
-        for cap in &query_caps {
-            if query_line_count >= MAX_QUERY_LINES {
-                break;
-            }
-            let qgloss =
-                crate::result_gloss::result_gloss_for_capability(cap, cgs, map, catalog_entry_id);
-            let cap_leg = capability_legend_with_session_gloss(
-                map,
-                cgs,
-                cap,
-                ename,
-                ident_meta,
-                catalog_entry_id,
-            );
-            let mut added = false;
-            if let Some(line) = query_expr_maximal(cap, &es, cgs, map, catalog_entry_id) {
-                let projection = row_producer_projection_for_query_line(cap, &es, &line);
-                if local_seen.insert(line.clone())
-                    && try_push_row_producer_teaching_example(
-                        gloss_emit,
-                        &mut teaching_rows,
-                        collect_meta,
-                        cgs,
-                        map,
-                        catalog_entry_id,
-                        ename,
-                        surface_filter,
-                        cap,
-                        &line,
-                        qgloss.clone(),
-                        cap_leg.clone(),
-                        None,
-                        true,
-                        line_valid_cache,
-                        line_valid_cache_seed,
-                        map_arc,
-                        projection,
-                        canonical_bracket,
-                        witness_taught,
-                    )
-                {
-                    added = true;
-                    query_line_count += 1;
-                }
-            }
-            if !added {
-                if let Some(line) = query_expr_scope_only(cap, &es, cgs, map, catalog_entry_id) {
-                    if local_seen.insert(line.clone())
-                        && try_push_row_producer_teaching_example(
-                            gloss_emit,
-                            &mut teaching_rows,
-                            collect_meta,
-                            cgs,
-                            map,
-                            catalog_entry_id,
-                            ename,
-                            surface_filter,
-                            cap,
-                            &line,
-                            qgloss.clone(),
-                            cap_leg.clone(),
-                            None,
-                            true,
-                            line_valid_cache,
-                            line_valid_cache_seed,
-                            map_arc,
-                            RowProducerProjection::CapabilityProvides,
-                            canonical_bracket,
-                            witness_taught,
-                        )
-                    {
-                        added = true;
-                        query_line_count += 1;
-                    }
-                }
-            }
-            if !added {
-                if let Some(line) = query_expr_filters_only(cap, &es, cgs, map, catalog_entry_id) {
-                    if local_seen.insert(line.clone())
-                        && try_push_row_producer_teaching_example(
-                            gloss_emit,
-                            &mut teaching_rows,
-                            collect_meta,
-                            cgs,
-                            map,
-                            catalog_entry_id,
-                            ename,
-                            surface_filter,
-                            cap,
-                            &line,
-                            qgloss.clone(),
-                            cap_leg.clone(),
-                            None,
-                            true,
-                            line_valid_cache,
-                            line_valid_cache_seed,
-                            map_arc,
-                            RowProducerProjection::CapabilityProvides,
-                            canonical_bracket,
-                            witness_taught,
-                        )
-                    {
-                        query_line_count += 1;
-                    }
-                }
-            }
-        }
+    if !teach_list_reads_before_mutators {
+        emit_query_capability_rows!();
     }
 
     // Unary `e#(p…)` after query lines when primary GET was not emitted earlier.
@@ -546,7 +576,8 @@ pub(crate) fn collect_entity_teaching_block(
         && !query_caps.is_empty()
     {
         let primary_name = primary_get_cap.map(|c| &c.name);
-        let keyed = unary_entity_id_teaching_expr_line(&es, ent, map, catalog_entry_id);
+        let keyed = keyed_identity_get_teaching_expr_line(&es, ent, map, catalog_entry_id)
+            .unwrap_or_else(|| unary_entity_id_teaching_expr_line(&es, ent, map, catalog_entry_id));
         let _ = try_push_teaching_example(
             gloss_emit,
             &mut teaching_rows,

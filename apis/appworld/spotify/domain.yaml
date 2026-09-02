@@ -23,6 +23,7 @@ entities:
       token_type: { required: false, value_ref: nv_str }
   Song:
     id_field: song_id
+    primary_query: song_library_query
     description: >
       A Spotify track — search the catalog, browse the user's library or liked songs,
       or like/unlike. Not the playback queue (use Player / QueueEntry).
@@ -43,6 +44,7 @@ entities:
       shareable_link: { required: false, value_ref: nv_str }
   Album:
     id_field: album_id
+    primary_query: album_library_query
     description: Album containing songs.
     discovery:
       names: [album, albums]
@@ -67,6 +69,7 @@ entities:
       follower_count: { required: false, value_ref: nv_int }
   Playlist:
     id_field: playlist_id
+    primary_query: playlist_library_query
     description: User or public playlist.
     discovery:
       names: [playlist, playlists]
@@ -105,6 +108,7 @@ entities:
       downloaded_at: { required: false, value_ref: nv_datetime }
   Player:
     id_field: song_id
+    primary_read: player_current
     description: >
       Playback control — play/pause, previous/next, seek, loop, volume, and shuffle or
       clear/rebuild the queue. Distinct from browsing songs or playlists.

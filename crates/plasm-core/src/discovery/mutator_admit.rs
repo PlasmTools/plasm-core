@@ -133,6 +133,20 @@ pub(crate) fn seeded_entity_cap_always_includes(
     {
         return true;
     }
+    if ent
+        .primary_query
+        .as_deref()
+        .is_some_and(|pq| pq == cap.name.as_str())
+    {
+        return true;
+    }
+    if ent
+        .primary_search
+        .as_deref()
+        .is_some_and(|ps| ps == cap.name.as_str())
+    {
+        return true;
+    }
     let is_mutator = matches!(
         cap.kind,
         CapabilityKind::Create

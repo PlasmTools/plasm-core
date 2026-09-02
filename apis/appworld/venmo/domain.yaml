@@ -129,6 +129,7 @@ entities:
         path: [receiver, name]
   PaymentRequest:
     id_field: payment_request_id
+    primary_query: payment_request_received_query
     description: >
       Money someone asked you to pay (received) or money you asked someone else to pay (sent).
       List and resolve pending requests here — not for completed transfers (use Transaction) and not for

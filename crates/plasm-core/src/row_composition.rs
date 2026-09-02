@@ -255,6 +255,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: true,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         };
         let target_ref =
@@ -288,6 +290,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: true,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         };
         assert!(resolve_relation_target_id(&identity, "evolution_chain", &target).is_err());

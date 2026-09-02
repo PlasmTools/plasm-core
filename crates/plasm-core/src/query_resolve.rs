@@ -170,7 +170,9 @@ pub fn sole_nullary_singleton_get<'a>(cgs: &'a CGS, entity: &str) -> Option<&'a 
         .iter()
         .copied()
         .filter(|c| {
-            !c.domain_exemplar_requires_entity_anchor() && capability_is_zero_arity_invoke(c)
+            !c.domain_exemplar_requires_entity_anchor()
+                && capability_is_zero_arity_invoke(c)
+                && !c.get_requires_identity_anchor(cgs)
         })
         .collect();
     if singleton.len() != get_caps.len() || singleton.len() != 1 {

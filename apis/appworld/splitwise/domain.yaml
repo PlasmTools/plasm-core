@@ -77,6 +77,7 @@ entities:
       name: { required: false, value_ref: nv_str }
   Expense:
     id_field: expense_id
+    primary_search: expense_query
     description: Shared expense with payer and debtors.
     discovery:
       names: [expense, bill, cost, split]
@@ -96,6 +97,7 @@ entities:
         materialize: { kind: query_scoped, capability: expense_comment_query, param: expense_id }
   Payment:
     id_field: payment_id
+    primary_search: payment_query
     description: Settlement payment between members.
     discovery:
       names: [payment, settle, repayment]
@@ -150,6 +152,7 @@ entities:
       created_at: { required: false, value_ref: nv_datetime }
   Balance:
     id_field: you_owe_others
+    primary_query: balance_groups_query
     description: Debt position for a person or group.
     discovery:
       names: [balance, owing, debt]

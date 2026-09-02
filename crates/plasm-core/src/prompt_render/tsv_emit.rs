@@ -10,8 +10,8 @@ use super::gloss_dedup::{
     FieldGlossMeaningAtom, GlossDescription, GlossTsvDedupe,
 };
 use super::{
-    EntityTeachingExprRow, ReturnArrow, TeachingExprLine, TeachingFieldGloss, TeachingHeading,
-    TeachingPromptBundle, TEACHING_OPTIONAL_LEGEND_MARK, TSV_TEACHING_TABLE_HEADER,
+    DomainLineKind, EntityTeachingExprRow, ReturnArrow, TeachingExprLine, TeachingFieldGloss,
+    TeachingHeading, TeachingPromptBundle, TEACHING_OPTIONAL_LEGEND_MARK, TSV_TEACHING_TABLE_HEADER,
 };
 
 fn tsv_expr_has_symbolic_method_call(expr: &str) -> bool {
@@ -37,7 +37,7 @@ fn tsv_identity_expr_is_entity_get(expr: &str) -> bool {
     !t[..open].contains('.')
 }
 
-fn compute_tsv_identity_row_index(teaching_expr_rows: &[&TeachingExprLine]) -> Option<usize> {
+pub(crate) fn compute_tsv_identity_row_index(teaching_expr_rows: &[&TeachingExprLine]) -> Option<usize> {
     teaching_expr_rows
         .iter()
         .position(|row| {
@@ -51,6 +51,7 @@ fn compute_tsv_identity_row_index(teaching_expr_rows: &[&TeachingExprLine]) -> O
             teaching_expr_rows.iter().position(|row| {
                 !row.is_projection_teaching
                     && row.expression.contains('(')
+                    && !tsv_expr_has_symbolic_method_call(row.expression.trim())
                     && !row.expression.contains('{')
                     && !row.expression.contains('~')
                     && !row.result_type.starts_with('[')
@@ -60,6 +61,30 @@ fn compute_tsv_identity_row_index(teaching_expr_rows: &[&TeachingExprLine]) -> O
             (teaching_expr_rows.len() == 1 && !teaching_expr_rows[0].is_projection_teaching)
                 .then_some(0)
         })
+}
+
+/// Entity banner attaches only on identity get, else the first query/search witness — never mutators.
+pub(crate) fn compute_entity_desc_attach_idx(
+    teaching_rows: &[EntityTeachingExprRow],
+    teaching_expr_rows: &[&TeachingExprLine],
+    union_ctor_row_set: &HashSet<usize>,
+) -> Option<usize> {
+    if let Some(i) = compute_tsv_identity_row_index(teaching_expr_rows) {
+        if teaching_rows.get(i).is_some_and(|r| r.meta.kind != DomainLineKind::Method) {
+            return Some(i);
+        }
+    }
+    for (i, row) in teaching_rows.iter().enumerate() {
+        if union_ctor_row_set.contains(&i) {
+            continue;
+        }
+        match row.meta.kind {
+            DomainLineKind::Query | DomainLineKind::Search | DomainLineKind::Get => return Some(i),
+            DomainLineKind::Method | DomainLineKind::RelationNav | DomainLineKind::Projection
+            | DomainLineKind::Other => {}
+        }
+    }
+    None
 }
 
 /// Scalar projection bracket `[wires…]` from a teaching row with a trailing bracket.
@@ -175,9 +200,11 @@ pub(crate) fn render_prompt_tsv_from_bundle(bundle: &TeachingPromptBundle) -> St
             .collect();
         let union_ctor_row_set: HashSet<usize> = union_ctor_row_idxs.iter().copied().collect();
         let identity_idx = compute_tsv_identity_row_index(&teaching_expr_rows);
-        // Entity banner on the first executable teaching row (identity get preferred).
-        let entity_desc_attach_idx = identity_idx
-            .or_else(|| (0..teaching_expr_rows.len()).find(|&i| !union_ctor_row_set.contains(&i)));
+        let entity_desc_attach_idx = compute_entity_desc_attach_idx(
+            &block.teaching_rows,
+            &teaching_expr_rows,
+            &union_ctor_row_set,
+        );
         // Projection symbols for field-gloss ordering: trailing brackets on get/query rows.
         let mut proj =
             projection_bracket_from_teaching_rows(&teaching_expr_rows).unwrap_or_default();
@@ -498,12 +525,16 @@ fn push_teaching_meaning_result_atom(
         arrow: row.arrow,
         gloss: row.result_type.clone(),
     });
-    if row.is_singleton_row_fetch {
-        // `→ e · {capability gloss}` — arrow already means one entity row; no redundant mark.
-        let desc = row.legend.description.trim();
-        if !desc.is_empty() {
+    let desc = row.legend.description.trim();
+    if !desc.is_empty() {
+        if row.is_singleton_row_fetch {
+            // `→ e · {capability gloss}` — arrow already means one entity row; no redundant mark.
+            atoms.push(TeachingMeaningAtom::CapabilityGloss(desc.to_string()));
+        } else if row.arrow == ReturnArrow::Terminal || row.arrow == ReturnArrow::List {
             atoms.push(TeachingMeaningAtom::CapabilityGloss(desc.to_string()));
         }
+    }
+    if row.is_singleton_row_fetch {
         return;
     }
     // Terminal write that yields an entity slice (`↠ e#`, not `()` / list): teach the

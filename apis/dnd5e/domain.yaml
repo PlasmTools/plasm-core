@@ -103,6 +103,7 @@ entities:
         value_ref: nv_language_typical_speakers
   Proficiency:
     id_field: index
+    primary_query: proficiency_query
     description: A skill, saving throw, armor, weapon, or tool proficiency granted by class, race, or background.
     fields:
       index:
@@ -335,6 +336,7 @@ entities:
           param: class_index
   Subclass:
     id_field: index
+    primary_query: subclass_query
     description: A specialisation of a Class (e.g. Evocation Wizard).
     fields:
       index:
@@ -356,6 +358,7 @@ entities:
         cardinality: one
   Spell:
     id_field: index
+    primary_query: spell_query
     description: A magical effect a caster can invoke; identified by kebab-case slug.
     fields:
       index:
@@ -597,6 +600,7 @@ entities:
         value_ref: nv_subrace_desc
   Feature:
     id_field: index
+    primary_query: class_features
     description: A class or race ability gained at a specific level.
     fields:
       index:
@@ -683,6 +687,7 @@ entities:
         value_ref: nv_background_name
   Trait:
     id_field: index
+    primary_query: trait_query
     description: A racial passive ability or characteristic.
     fields:
       index:

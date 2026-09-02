@@ -499,6 +499,131 @@ fn teaching_tsv_return_glyphs_and_terminal_chain_hint_language_matrix() {
         "expected a single-return get row (→ …); meanings:\n{}",
         meanings.join("\n")
     );
+    assert!(
+        meanings.iter().any(|m| {
+            m.contains("↠ ()") && m.contains('·') && !m.contains("chain:")
+        }),
+        "expected void write row with capability gloss and no chain hint; meanings:\n{}",
+        meanings.join("\n")
+    );
+}
+
+#[test]
+fn query_only_primary_query_teaching_order_and_gloss() {
+    use crate::discovery::{
+        derive_intent_exposure_surface_batch, ExposureSurfaceOptions, MutatorAdmit,
+    };
+
+    let dir = fixtures_schemas_dir("plasm_language_matrix");
+    if !dir.exists() {
+        return;
+    }
+    let cgs = load_schema_dir(&dir).unwrap();
+    let intent = "list received payment requests approve deny remind";
+    let delta = derive_intent_exposure_surface_batch(
+        &cgs,
+        "",
+        intent,
+        &[],
+        &["QueryOnlyRequest".to_string()],
+        None,
+        ExposureSurfaceOptions {
+            mutator_admit: MutatorAdmit::IntentOnly,
+        },
+    );
+    assert!(
+        delta
+            .required
+            .capabilities
+            .iter()
+            .any(|c| c.capability.as_str() == "queryonly_request_received_query"),
+        "seeded QueryOnlyRequest must expose primary query on surface"
+    );
+    let exp = TeachingExposureSession::new_with_intent_delta(
+        &cgs,
+        "",
+        &["QueryOnlyRequest"],
+        delta,
+    );
+    let config = RenderConfig::for_eval_seeds(&["QueryOnlyRequest"]);
+    let bundle = render_teaching_prompt_bundle_for_exposure(&cgs, config, &exp, None);
+    let block_idx = bundle
+        .model
+        .entities
+        .iter()
+        .position(|e| e.entity == "QueryOnlyRequest")
+        .expect("QueryOnlyRequest block");
+    let block = &bundle.teaching_blocks[block_idx];
+    let tsv = render_prompt_tsv_from_bundle(&bundle);
+    let entity_banner = block.heading.description.trim();
+    assert!(
+        !entity_banner.is_empty(),
+        "QueryOnlyRequest entity banner must be non-empty"
+    );
+
+    let query_idx = block
+        .teaching_rows
+        .iter()
+        .position(|r| {
+            r.meta.kind == DomainLineKind::Query
+                && r.meta.source_capability.as_deref()
+                    == Some("queryonly_request_received_query")
+        })
+        .expect("primary query witness row");
+    let first_mutator_idx = block
+        .teaching_rows
+        .iter()
+        .position(|r| r.meta.kind == DomainLineKind::Method)
+        .expect("at least one mutator row under IntentOnly");
+    assert!(
+        query_idx < first_mutator_idx,
+        "primary query row must precede mutators (query={query_idx}, mutator={first_mutator_idx})"
+    );
+
+    let query_line = block.teaching_rows[query_idx].teaching_expr.expression.as_str();
+    let query_meaning = tsv
+        .lines()
+        .find(|l| l.starts_with(query_line.split('[').next().unwrap_or(query_line)))
+        .and_then(|l| l.split_once('\t').map(|(_, m)| m))
+        .expect("query row in TSV");
+    assert!(
+        query_meaning.contains("↣ [") && query_meaning.contains(entity_banner),
+        "query anchor must carry list glyph + entity banner; got: {query_meaning}"
+    );
+    assert!(
+        query_meaning.contains("List payment requests other people sent to you"),
+        "primary query row must include capability gloss; got: {query_meaning}"
+    );
+
+    let mutator_meanings: Vec<&str> = block
+        .teaching_rows
+        .iter()
+        .filter(|r| r.meta.kind == DomainLineKind::Method)
+        .filter_map(|r| {
+            let expr = r.teaching_expr.expression.as_str();
+            tsv
+                .lines()
+                .find(|l| l.split_once('\t').is_some_and(|(e, _)| e == expr))?
+                .split_once('\t')
+                .map(|(_, m)| m)
+        })
+        .collect();
+    assert!(
+        mutator_meanings.len() >= 3,
+        "expected at least three void action mutators"
+    );
+    for m in &mutator_meanings {
+        assert!(
+            m.contains("↠ ()") && m.contains('·') && !m.contains(entity_banner),
+            "mutator must have cap gloss, not entity banner: {m}"
+        );
+    }
+    let distinct: std::collections::HashSet<_> = mutator_meanings.iter().copied().collect();
+    assert_eq!(
+        distinct.len(),
+        mutator_meanings.len(),
+        "void mutator Meaning rows must be pairwise distinct"
+    );
 }
 
 #[test]
@@ -2676,8 +2801,12 @@ fn clickup_domain_gloss_and_symbol_map_queries() {
         "query teaching table brace form must not teach concrete ISO datetimes or `>=` date literals"
     );
     assert!(
-        !domain_block.contains("List all accessible workspaces"),
-        "query capability long-form description must not surface in TSV Meaning"
+        domain_block
+            .lines()
+            .filter(|line| line.contains("List all accessible workspaces"))
+            .count()
+            <= 1,
+        "sole primary team_query may carry capability gloss; long descriptions must not duplicate across unrelated rows"
     );
 }
 
@@ -2725,6 +2854,66 @@ fn clickup_user_singleton_get_me_line_in_domain() {
             expr.starts_with(&format!("{user_sym}.m")) && expr.ends_with("()")
         }),
         "sole singleton Get must not also teach redundant e#.m#()"
+    );
+}
+
+/// View-backed keyed Get (`node_field_where`) must teach `e#{id_field=<wire>}`, not `e#.m#()`.
+#[test]
+fn keyed_view_get_teaches_brace_identity_not_method_invoke() {
+    let dir = fixtures_schemas_dir("plasm_language_matrix_views");
+    if !dir.exists() {
+        return;
+    }
+    let cgs = load_schema_dir(&dir).unwrap();
+    let exp = TeachingExposureSession::new(&cgs, "", &["LangKeyPick"]);
+    let body =
+        PromptPipelineConfig::default().render_teaching_first_wave_for_session(&cgs, &exp, None);
+    let (_, table) = split_tsv_teaching_contract_and_table(&body);
+    validate_teaching_tsv_teaching_table(&table).expect("valid teaching rows");
+
+    assert!(
+        table.lines().any(|l| {
+            let expr = l.split('\t').next().unwrap_or("").trim();
+            expr.contains("{key=<wire>}") && !expr.contains(".m") && !expr.ends_with("()")
+        }),
+        "expected keyed get row e#{{key=<wire>}} in teaching table:\n{table}"
+    );
+    assert!(
+        !table.lines().any(|l| {
+            let expr = l.split('\t').next().unwrap_or("");
+            expr.contains(".m") && expr.ends_with("()") && expr.starts_with('e')
+        }),
+        "view-backed keyed Get must not teach invalid e#.m#() invoke:\n{table}"
+    );
+}
+
+/// AppWorld AccountPassword — same keyed view-get pattern as LangKeyPick matrix fixture.
+#[test]
+fn appworld_account_password_teaches_keyed_get_not_method_invoke() {
+    let dir = apis_dir("appworld/supervisor");
+    if !dir.exists() {
+        return;
+    }
+    let cgs = load_schema_dir(&dir).unwrap();
+    let exp = TeachingExposureSession::new(&cgs, "", &["AccountPassword"]);
+    let body =
+        PromptPipelineConfig::default().render_teaching_first_wave_for_session(&cgs, &exp, None);
+    let (_, table) = split_tsv_teaching_contract_and_table(&body);
+    validate_teaching_tsv_teaching_table(&table).expect("valid teaching rows");
+
+    assert!(
+        table.lines().any(|l| {
+            let expr = l.split('\t').next().unwrap_or("").trim();
+            expr.contains("{account_name=<wire>}")
+        }),
+        "AccountPassword must teach e#{{account_name=<wire>}}:\n{table}"
+    );
+    assert!(
+        !table.lines().any(|l| {
+            let expr = l.split('\t').next().unwrap_or("");
+            expr.contains(".m") && expr.ends_with("()") && expr.starts_with('e')
+        }),
+        "AccountPassword must not teach invalid e#.m#():\n{table}"
     );
 }
 
@@ -2779,6 +2968,8 @@ fn prompt_stats_fixture_cgs() -> CGS {
         abstract_entity: false,
         domain_projection_examples: false,
         primary_read: None,
+        primary_query: None,
+        primary_search: None,
         discovery: None,
     })
     .unwrap();
@@ -2796,6 +2987,8 @@ fn prompt_stats_fixture_cgs() -> CGS {
         abstract_entity: false,
         domain_projection_examples: false,
         primary_read: None,
+        primary_query: None,
+        primary_search: None,
         discovery: None,
     })
     .unwrap();
@@ -2921,6 +3114,8 @@ fn p_slot_redefinition_fixture_cgs(id_desc_a: &str, id_desc_b: &str) -> CGS {
             abstract_entity: false,
             domain_projection_examples: true,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();

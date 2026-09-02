@@ -393,6 +393,8 @@ fn unbranded_top_catalog_cut_preserves_federated_co_seed_seats() {
                 abstract_entity: false,
                 domain_projection_examples: true,
                 primary_read: None,
+                primary_query: None,
+                primary_search: None,
                 discovery: Some(DiscoveryEntityHints {
                     names: vec![name.to_ascii_lowercase()],
                     qualifier_names: vec![],
@@ -674,6 +676,8 @@ fn corpus_stamps_attach_on_label_and_prune_drops_label_read() {
             abstract_entity: false,
             domain_projection_examples: true,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: Some(DiscoveryEntityHints {
                 names: vec!["issue".into()],
                 qualifier_names: vec![],
@@ -698,6 +702,8 @@ fn corpus_stamps_attach_on_label_and_prune_drops_label_read() {
             abstract_entity: false,
             domain_projection_examples: true,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: Some(DiscoveryEntityHints {
                 names: vec!["label".into()],
                 qualifier_names: vec![],
@@ -862,6 +868,8 @@ fn corpus_stamps_own_pair_on_both_ends_of_own_edge() {
             abstract_entity: false,
             domain_projection_examples: true,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: Some(DiscoveryEntityHints {
                 names: vec!["thread".into()],
                 qualifier_names: vec![],
@@ -886,6 +894,8 @@ fn corpus_stamps_own_pair_on_both_ends_of_own_edge() {
             abstract_entity: false,
             domain_projection_examples: true,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: Some(DiscoveryEntityHints {
                 names: vec!["message".into()],
                 qualifier_names: vec![],

@@ -33,6 +33,7 @@ entities:
         value_ref: nv_str
   EmailThread:
     id_field: email_thread_id
+    primary_search: email_thread_query
     description: Gmail conversation thread (inbox/outbox/spam/archived/snoozed).
     discovery:
       names:

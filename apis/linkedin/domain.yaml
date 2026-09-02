@@ -97,6 +97,7 @@ entities:
           param: organization
   UgcPost:
     id_field: id
+    primary_query: ugc_post_query
     description: User-generated content post in the LinkedIn feed graph.
     fields:
       id:

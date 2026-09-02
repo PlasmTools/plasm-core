@@ -13,6 +13,7 @@ data_classes:
 entities:
   User:
     id_field: id
+    primary_read: user_get
     description: An X user account (handle, profile, and identifiers).
     fields:
       id:
@@ -80,6 +81,7 @@ entities:
           param: id
   Tweet:
     id_field: id
+    primary_query: tweet_timeline_query
     description: A post on X (tweet), including text, author, and reply metadata.
     fields:
       id:

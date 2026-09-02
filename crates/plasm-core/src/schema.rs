@@ -204,11 +204,15 @@ pub struct ResourceSchema {
         skip_serializing_if = "domain_projection_examples_is_default"
     )]
     pub domain_projection_examples: bool,
-    /// Optional override: capability **id** of a **Get** on this entity that defines ordered `provides` /
-    /// default field order for teaching heading projection teaching. If the id is missing, not a Get, or targets
-    /// another entity, [`CGS::resolved_primary_get_for_projection`] falls back to [`CGS::primary_get_capability`].
+    /// Capability **id** of the canonical **Get** on this entity (required when the entity declares 2+ Gets).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub primary_read: Option<String>,
+    /// Capability **id** of the canonical unscoped **Query** (required when the entity declares 2+ unscoped Queries).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_query: Option<String>,
+    /// Capability **id** of the canonical unscoped **Search** (required when the entity declares 2+ unscoped Searches).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_search: Option<String>,
     /// Typed-discovery vocabulary for this entity (optional).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discovery: Option<DiscoveryEntityHints>,
@@ -2501,9 +2505,15 @@ pub struct EntityDef {
         skip_serializing_if = "domain_projection_examples_is_default"
     )]
     pub domain_projection_examples: bool,
-    /// Optional: capability **id** of a **Get** on this entity for teaching heading projection order (see [`CGS::resolved_primary_get_for_projection`]).
+    /// Capability **id** of the canonical **Get** (required when 2+ Gets).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub primary_read: Option<String>,
+    /// Capability **id** of the canonical unscoped **Query** (required when 2+ unscoped Queries).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_query: Option<String>,
+    /// Capability **id** of the canonical unscoped **Search** (required when 2+ unscoped Searches).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_search: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discovery: Option<DiscoveryEntityHints>,
 }
@@ -2575,6 +2585,8 @@ impl ResourceSchema {
             abstract_entity: self.abstract_entity,
             domain_projection_examples: self.domain_projection_examples,
             primary_read: self.primary_read.clone(),
+            primary_query: self.primary_query.clone(),
+            primary_search: self.primary_search.clone(),
             discovery: self.discovery.clone(),
         })
     }
@@ -3199,24 +3211,71 @@ impl CGS {
     fn validate_core(&self) -> Result<(), SchemaError> {
         for (entity_name, entity) in &self.entities {
             if let Some(ref cap_id) = entity.primary_read {
-                let Some(cap) = self.capabilities.get(cap_id.as_str()) else {
-                    return Err(SchemaError::UnknownPrimaryReadCapability {
-                        entity: entity_name.to_string(),
-                        capability: cap_id.clone(),
-                    });
+                Self::validate_primary_read_ref(self, entity_name.as_str(), cap_id)?;
+            }
+            if let Some(ref cap_id) = entity.primary_query {
+                Self::validate_primary_query_ref(self, entity_name.as_str(), cap_id)?;
+            }
+            if let Some(ref cap_id) = entity.primary_search {
+                Self::validate_primary_search_ref(self, entity_name.as_str(), cap_id)?;
+            }
+
+            let get_caps: Vec<_> = self
+                .find_capabilities(entity_name.as_str(), CapabilityKind::Get)
+                .into_iter()
+                .map(|c| c.name.to_string())
+                .collect();
+            if get_caps.len() > 1 && entity.primary_read.is_none() {
+                return Err(SchemaError::AmbiguousPrimaryRead {
+                    entity: entity_name.to_string(),
+                    capabilities: get_caps,
+                });
+            }
+
+            let query_caps: Vec<_> = self
+                .find_capabilities(entity_name.as_str(), CapabilityKind::Query)
+                .into_iter()
+                .map(|c| c.name.to_string())
+                .collect();
+            let unscoped_queries: Vec<_> = self
+                .unscoped_capabilities(entity_name.as_str(), CapabilityKind::Query)
+                .into_iter()
+                .map(|c| c.name.to_string())
+                .collect();
+            if query_caps.len() > 1 && entity.primary_query.is_none() {
+                let ambiguous = match unscoped_queries.len() {
+                    0 => query_caps.clone(),
+                    1 => Vec::new(),
+                    _ => unscoped_queries.clone(),
                 };
-                if cap.domain != *entity_name {
-                    return Err(SchemaError::PrimaryReadWrongDomain {
+                if ambiguous.len() > 1 {
+                    return Err(SchemaError::AmbiguousPrimaryQuery {
                         entity: entity_name.to_string(),
-                        capability: cap_id.clone(),
-                        domain: cap.domain.to_string(),
+                        capabilities: ambiguous,
                     });
                 }
-                if cap.kind != CapabilityKind::Get {
-                    return Err(SchemaError::PrimaryReadNotGet {
+            }
+
+            let search_caps: Vec<_> = self
+                .find_capabilities(entity_name.as_str(), CapabilityKind::Search)
+                .into_iter()
+                .map(|c| c.name.to_string())
+                .collect();
+            let unscoped_searches: Vec<_> = self
+                .unscoped_capabilities(entity_name.as_str(), CapabilityKind::Search)
+                .into_iter()
+                .map(|c| c.name.to_string())
+                .collect();
+            if search_caps.len() > 1 && entity.primary_search.is_none() {
+                let ambiguous = match unscoped_searches.len() {
+                    0 => search_caps.clone(),
+                    1 => Vec::new(),
+                    _ => unscoped_searches.clone(),
+                };
+                if ambiguous.len() > 1 {
+                    return Err(SchemaError::AmbiguousPrimarySearch {
                         entity: entity_name.to_string(),
-                        capability: cap_id.clone(),
-                        kind: format!("{:?}", cap.kind),
+                        capabilities: ambiguous,
                     });
                 }
             }
@@ -3553,8 +3612,7 @@ impl CGS {
         self.validate_pipeline_segment_disjointness()?;
 
         // At most one parameterless (no required params at all) query/search per entity.
-        // Multiple query caps with required params are fine — the first unscoped one
-        // becomes the `query` verb; others get named subcommands.
+        // Multiple unscoped query/search caps require explicit primary_query / primary_search on the entity.
         // Only flag an error if there are multiple capabilities with zero required params
         // (ambiguous which is the "list all" endpoint).
         //
@@ -4700,6 +4758,98 @@ impl CGS {
     }
 
     /// Find **all** capabilities for a given entity and kind.
+    /// Unscoped read capabilities on `entity` (`Query` or `Search` without required scope params).
+    pub fn unscoped_capabilities(
+        &self,
+        entity: &str,
+        kind: CapabilityKind,
+    ) -> Vec<&CapabilitySchema> {
+        self.find_capabilities(entity, kind)
+            .into_iter()
+            .filter(|c| !c.has_required_scope_param())
+            .collect()
+    }
+
+    fn validate_primary_read_ref(cgs: &CGS, entity: &str, cap_id: &str) -> Result<(), SchemaError> {
+        let Some(cap) = cgs.capabilities.get(cap_id) else {
+            return Err(SchemaError::UnknownPrimaryReadCapability {
+                entity: entity.to_string(),
+                capability: cap_id.to_string(),
+            });
+        };
+        if cap.domain.as_str() != entity {
+            return Err(SchemaError::PrimaryReadWrongDomain {
+                entity: entity.to_string(),
+                capability: cap_id.to_string(),
+                domain: cap.domain.to_string(),
+            });
+        }
+        if cap.kind != CapabilityKind::Get {
+            return Err(SchemaError::PrimaryReadNotGet {
+                entity: entity.to_string(),
+                capability: cap_id.to_string(),
+                kind: format!("{:?}", cap.kind),
+            });
+        }
+        Ok(())
+    }
+
+    fn validate_primary_query_ref(
+        cgs: &CGS,
+        entity: &str,
+        cap_id: &str,
+    ) -> Result<(), SchemaError> {
+        let Some(cap) = cgs.capabilities.get(cap_id) else {
+            return Err(SchemaError::UnknownPrimaryQueryCapability {
+                entity: entity.to_string(),
+                capability: cap_id.to_string(),
+            });
+        };
+        if cap.domain.as_str() != entity {
+            return Err(SchemaError::PrimaryQueryWrongDomain {
+                entity: entity.to_string(),
+                capability: cap_id.to_string(),
+                domain: cap.domain.to_string(),
+            });
+        }
+        if cap.kind != CapabilityKind::Query {
+            return Err(SchemaError::PrimaryQueryNotQuery {
+                entity: entity.to_string(),
+                capability: cap_id.to_string(),
+                kind: format!("{:?}", cap.kind),
+            });
+        }
+        Ok(())
+    }
+
+    fn validate_primary_search_ref(
+        cgs: &CGS,
+        entity: &str,
+        cap_id: &str,
+    ) -> Result<(), SchemaError> {
+        let Some(cap) = cgs.capabilities.get(cap_id) else {
+            return Err(SchemaError::UnknownPrimarySearchCapability {
+                entity: entity.to_string(),
+                capability: cap_id.to_string(),
+            });
+        };
+        if cap.domain.as_str() != entity {
+            return Err(SchemaError::PrimarySearchWrongDomain {
+                entity: entity.to_string(),
+                capability: cap_id.to_string(),
+                domain: cap.domain.to_string(),
+            });
+        }
+        if cap.kind != CapabilityKind::Search {
+            return Err(SchemaError::PrimarySearchNotSearch {
+                entity: entity.to_string(),
+                capability: cap_id.to_string(),
+                kind: format!("{:?}", cap.kind),
+            });
+        }
+        Ok(())
+    }
+
     pub fn find_capabilities(&self, entity: &str, kind: CapabilityKind) -> Vec<&CapabilitySchema> {
         self.capability_index_arc()
             .names_for_domain_kind(entity, kind)
@@ -4721,22 +4871,18 @@ impl CGS {
     /// 3. **Short error / CLI hints** — internal `error_render` projection scalars (scalar-only,
     ///    sorted, `prioritize_projection_scalars`): intentionally **not** the full teaching table projection field list.
     ///
-    /// Primary **Get** for an entity — same selection as teaching table / CLI use for the main fetch pattern.
-    ///
-    /// Picks the first Get (by capability name) that is not a trivial zero-arity pathless invoke,
-    /// or falls back to the first Get when all are trivial.
+    /// Primary **Get** for an entity — explicit [`EntityDef::primary_read`] when 2+ Gets; the sole Get when only one exists.
     pub fn primary_get_capability(&self, entity: &str) -> Option<&CapabilitySchema> {
-        let mut get_caps = self.find_capabilities(entity, CapabilityKind::Get);
-        if get_caps.is_empty() {
-            return None;
+        let get_caps = self.find_capabilities(entity, CapabilityKind::Get);
+        match get_caps.len() {
+            0 => None,
+            1 => Some(get_caps[0]),
+            _ => {
+                let ent = self.get_entity(entity)?;
+                let pid = ent.primary_read.as_deref()?;
+                self.capabilities.get(pid)
+            }
         }
-        get_caps.sort_by(|a, b| a.name.as_str().cmp(b.name.as_str()));
-        if let Some(c) = get_caps.iter().find(|c| {
-            !capability_is_zero_arity_invoke(c) || c.domain_exemplar_requires_entity_anchor()
-        }) {
-            return Some(*c);
-        }
-        Some(get_caps[0])
     }
 
     /// Ordered field names for teaching heading projection teaching: explicit `provides`, or default entity order when empty.
@@ -4770,9 +4916,7 @@ impl CGS {
 
     /// Resolve which **Get** supplies ordered `provides` / default field order for teaching heading projection.
     ///
-    /// When `primary_read` is set it must name a [`CapabilityKind::Get`] whose [`CapabilitySchema::domain`]
-    /// is this entity; otherwise falls back to [`Self::primary_get_capability`] (same anchor as the teaching table
-    /// get exemplar when multiple Gets exist).
+    /// Uses [`EntityDef::primary_read`] when set (required at load when 2+ Gets); otherwise the sole Get.
     pub fn resolved_primary_get_for_projection<'a>(
         &'a self,
         entity_name: &str,
@@ -4813,14 +4957,7 @@ impl CGS {
 
     /// Ordered wire field names for **teaching projection witness** teaching (`e#…[p#,…]`).
     ///
-    /// Same scalar set semantics as [`Self::domain_projection_heading_fields`] when a primary **Get**
-    /// exists; when there is no Get, falls back to **`effective_ordered_response_fields`** from a
-    /// representative **Query** (primary unscoped query when present, else first Query sorted by
-    /// capability name — matching scoped-only entities like zone-scoped lists), then **Search** the
-    /// same way.
-    ///
-    /// Use this for prompt synthesis only; [`Self::domain_projection_heading_fields`] stays Get-only
-    /// for callers that mean “heading bracket from fetch”.
+    /// Primary Get when present; otherwise declared primary Query, then primary Search.
     pub fn domain_projection_teaching_wire_fields(
         &self,
         entity_name: &str,
@@ -4834,27 +4971,18 @@ impl CGS {
             return (!f.is_empty()).then_some(f);
         }
 
-        let query_cap = self.primary_query_capability(entity_name).or_else(|| {
-            let mut qs: Vec<_> = self.find_capabilities(entity_name, CapabilityKind::Query);
-            qs.sort_by(|a, b| a.name.cmp(&b.name));
-            qs.into_iter().next()
-        });
-        if let Some(cap) = query_cap {
+        if let Some(cap) = self.representative_query_for_projection(entity_name) {
             let f = self.effective_ordered_response_fields(cap);
             if !f.is_empty() {
                 return Some(f);
             }
         }
 
-        let search_cap = self.primary_search_capability(entity_name).or_else(|| {
-            let mut ss: Vec<_> = self.find_capabilities(entity_name, CapabilityKind::Search);
-            ss.sort_by(|a, b| a.name.cmp(&b.name));
-            ss.into_iter().next()
-        });
-        search_cap.and_then(|cap| {
-            let f = self.effective_ordered_response_fields(cap);
-            (!f.is_empty()).then_some(f)
-        })
+        self.representative_search_for_projection(entity_name)
+            .and_then(|cap| {
+                let f = self.effective_ordered_response_fields(cap);
+                (!f.is_empty()).then_some(f)
+            })
     }
 
     /// One vector per teaching table projection teaching: the **full** ordered field list **`F`** for the
@@ -4900,39 +5028,58 @@ impl CGS {
         self.capability_index_arc().create_caps_for_anchor(anchor)
     }
 
-    /// Find the **primary** query capability for an entity.
-    ///
-    /// Priority order:
-    /// 1. The unscoped query with no required params (the "list all" endpoint)
-    /// 2. The first unscoped query (has required filter params but no scope)
-    /// 3. None (entity only has scoped sub-resource queries)
-    ///
-    /// The primary gets the `entity query` CLI verb. All others get named subcommands.
+    /// Primary unscoped **Query** — explicit [`EntityDef::primary_query`] when ambiguous; the sole unscoped Query when only one exists.
     pub fn primary_query_capability(&self, entity: &str) -> Option<&CapabilitySchema> {
-        let caps = self.find_capabilities(entity, CapabilityKind::Query);
-        let unscoped: Vec<_> = caps
-            .iter()
-            .filter(|c| !c.has_required_scope_param())
-            .collect();
-        // Prefer the parameterless one
-        if let Some(c) = unscoped.iter().find(|c| !c.has_any_required_param()) {
-            return Some(*c);
+        let unscoped = self.unscoped_capabilities(entity, CapabilityKind::Query);
+        match unscoped.len() {
+            0 => None,
+            1 => Some(unscoped[0]),
+            _ => {
+                let ent = self.get_entity(entity)?;
+                let pid = ent.primary_query.as_deref()?;
+                self.capabilities.get(pid)
+            }
         }
-        // Fallback: first unscoped with required params
-        unscoped.first().map(|c| **c)
     }
 
-    /// Find the **primary** search capability for an entity (same rules as query).
-    pub fn primary_search_capability(&self, entity: &str) -> Option<&CapabilitySchema> {
-        let caps = self.find_capabilities(entity, CapabilityKind::Search);
-        let unscoped: Vec<_> = caps
-            .iter()
-            .filter(|c| !c.has_required_scope_param())
-            .collect();
-        if let Some(c) = unscoped.iter().find(|c| !c.has_any_required_param()) {
-            return Some(*c);
+    /// Query used for projection teaching when there is no Get — includes a sole scoped-only query.
+    pub fn representative_query_for_projection(&self, entity: &str) -> Option<&CapabilitySchema> {
+        if let Some(cap) = self.primary_query_capability(entity) {
+            return Some(cap);
         }
-        unscoped.first().map(|c| **c)
+        let all = self.find_capabilities(entity, CapabilityKind::Query);
+        match all.len() {
+            0 => None,
+            1 => Some(all[0]),
+            _ => None,
+        }
+    }
+
+    /// Primary unscoped **Search** — explicit [`EntityDef::primary_search`] when ambiguous; the sole unscoped Search when only one exists.
+    pub fn primary_search_capability(&self, entity: &str) -> Option<&CapabilitySchema> {
+        let unscoped = self.unscoped_capabilities(entity, CapabilityKind::Search);
+        match unscoped.len() {
+            0 => None,
+            1 => Some(unscoped[0]),
+            _ => {
+                let ent = self.get_entity(entity)?;
+                let pid = ent.primary_search.as_deref()?;
+                self.capabilities.get(pid)
+            }
+        }
+    }
+
+    /// Search used for projection teaching when there is no Get — includes a sole scoped-only search.
+    pub fn representative_search_for_projection(&self, entity: &str) -> Option<&CapabilitySchema> {
+        if let Some(cap) = self.primary_search_capability(entity) {
+            return Some(cap);
+        }
+        let all = self.find_capabilities(entity, CapabilityKind::Search);
+        match all.len() {
+            0 => None,
+            1 => Some(all[0]),
+            _ => None,
+        }
     }
 
     /// All non-primary query/search capabilities for an entity.
@@ -5442,6 +5589,25 @@ impl CapabilitySchema {
     #[inline]
     pub fn is_view_transport(&self) -> bool {
         capability_mapping_is_view_transport(&self.mapping.template.0)
+    }
+
+    /// True when this Get must be keyed (identity / view scope / required body) — not bare `e#` or `e#.m#()`.
+    pub fn get_requires_identity_anchor(&self, cgs: &CGS) -> bool {
+        if self.domain_exemplar_requires_entity_anchor() {
+            return true;
+        }
+        if !capability_is_zero_arity_invoke(self) {
+            return true;
+        }
+        if !self.is_view_transport() {
+            return false;
+        }
+        let Some(view_key) = self.mapping.template.0.get("view").and_then(|v| v.as_str()) else {
+            return false;
+        };
+        cgs.views
+            .get(view_key)
+            .is_some_and(|view| view.scope.iter().any(|s| s.required))
     }
 
     /// Minimal capability shell for unit tests in downstream crates.

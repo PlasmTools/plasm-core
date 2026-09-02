@@ -124,6 +124,72 @@ pub enum SchemaError {
         kind: String,
     },
 
+    #[error(
+        "Entity '{entity}' has multiple Get capabilities {capabilities:?} — set primary_read to the canonical Get capability id"
+    )]
+    AmbiguousPrimaryRead {
+        entity: String,
+        capabilities: Vec<String>,
+    },
+
+    #[error("Entity '{entity}' primary_query '{capability}' is not a defined capability")]
+    UnknownPrimaryQueryCapability { entity: String, capability: String },
+
+    #[error(
+        "Entity '{entity}' primary_query '{capability}' must target this entity (got domain '{domain}')"
+    )]
+    PrimaryQueryWrongDomain {
+        entity: String,
+        capability: String,
+        domain: String,
+    },
+
+    #[error(
+        "Entity '{entity}' primary_query '{capability}' must be a Query capability (got {kind})"
+    )]
+    PrimaryQueryNotQuery {
+        entity: String,
+        capability: String,
+        kind: String,
+    },
+
+    #[error(
+        "Entity '{entity}' has multiple unscoped Query capabilities {capabilities:?} — set primary_query to the canonical list capability id"
+    )]
+    AmbiguousPrimaryQuery {
+        entity: String,
+        capabilities: Vec<String>,
+    },
+
+    #[error("Entity '{entity}' primary_search '{capability}' is not a defined capability")]
+    UnknownPrimarySearchCapability { entity: String, capability: String },
+
+    #[error(
+        "Entity '{entity}' primary_search '{capability}' must target this entity (got domain '{domain}')"
+    )]
+    PrimarySearchWrongDomain {
+        entity: String,
+        capability: String,
+        domain: String,
+    },
+
+    #[error(
+        "Entity '{entity}' primary_search '{capability}' must be a Search capability (got {kind})"
+    )]
+    PrimarySearchNotSearch {
+        entity: String,
+        capability: String,
+        kind: String,
+    },
+
+    #[error(
+        "Entity '{entity}' has multiple unscoped Search capabilities {capabilities:?} — set primary_search to the canonical search capability id"
+    )]
+    AmbiguousPrimarySearch {
+        entity: String,
+        capabilities: Vec<String>,
+    },
+
     #[error("EntityRef target '{target}' is not a defined entity ({context})")]
     EntityRefUnknownTarget { target: String, context: String },
 

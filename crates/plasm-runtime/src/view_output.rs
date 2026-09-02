@@ -51,21 +51,15 @@ pub fn resolve_output_binding(
                 .ok_or_else(|| RuntimeError::ConfigurationError {
                     message: format!("view output references unknown node `{node}`"),
                 })?;
-            let needle = scope
-                .get(equals_scope)
-                .ok_or_else(|| RuntimeError::ConfigurationError {
-                    message: format!(
+            let needle =
+                scope
+                    .get(equals_scope)
+                    .ok_or_else(|| RuntimeError::ConfigurationError {
+                        message: format!(
                         "view node_field_where: missing equals_scope `{equals_scope}` in view scope"
                     ),
-                })?;
-            pick_row_field_where(
-                &r.entities,
-                node,
-                where_field,
-                equals_scope,
-                needle,
-                field,
-            )
+                    })?;
+            pick_row_field_where(&r.entities, node, where_field, equals_scope, needle, field)
         }
         ViewOutputBinding::NodeFieldHistogramJson { node, field } => {
             let r = node_results

@@ -101,14 +101,11 @@ fn apply_node_field_where_stub(
     cgs: &CGS,
     res: &mut ExecutionResult,
 ) -> Result<(), RuntimeError> {
-    let entity = cgs
-        .get_entity(cap.domain.as_str())
-        .ok_or_else(|| RuntimeError::ConfigurationError {
-            message: format!(
-                "node_field_where stub: unknown entity `{}`",
-                cap.domain
-            ),
-        })?;
+    let entity =
+        cgs.get_entity(cap.domain.as_str())
+            .ok_or_else(|| RuntimeError::ConfigurationError {
+                message: format!("node_field_where stub: unknown entity `{}`", cap.domain),
+            })?;
 
     for binding in view.output.values() {
         let ViewOutputBinding::NodeFieldWhere {
@@ -256,10 +253,10 @@ fn stub_entity_ref(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::view_test_support::matrix_views_cgs;
-    use crate::view_preflight::preflight_view_scoped_with_proof;
-    use crate::view_plan::ViewAmbientContext;
     use crate::materialization::SessionMaterialization;
+    use crate::view_plan::ViewAmbientContext;
+    use crate::view_preflight::preflight_view_scoped_with_proof;
+    use crate::view_test_support::matrix_views_cgs;
 
     #[test]
     fn stub_query_uses_provides_fields() {
@@ -283,14 +280,8 @@ mod tests {
         let scope = indexmap::IndexMap::from([("key".into(), Value::String("item-1".into()))]);
         let mat = SessionMaterialization::new();
         let ambient = ViewAmbientContext::default();
-        let proof = preflight_view_scoped_with_proof(
-            "lang_key_pick",
-            scope,
-            &cgs,
-            &ambient,
-            &mat,
-        )
-        .expect("preflight");
+        let proof = preflight_view_scoped_with_proof("lang_key_pick", scope, &cgs, &ambient, &mat)
+            .expect("preflight");
         assert_eq!(
             proof.output_fields.get("title"),
             Some(&Value::String("stub".into()))

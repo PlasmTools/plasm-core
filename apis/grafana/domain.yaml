@@ -544,6 +544,7 @@ entities:
 
   RbacRole:
     id_field: uid
+    primary_query: rbac_role_query
     description: Grafana RBAC custom or fixed role with permission grants.
     primary_read: rbac_role_get
     fields:

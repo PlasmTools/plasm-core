@@ -9,7 +9,7 @@ use crate::{CapabilityKind, CapabilitySchema, CGS};
 use super::gloss_collect::GlossScratch;
 use super::invoke_teaching::{capability_legend_with_session_gloss, path_vars_empty};
 use super::line_validate::{DomainLineValidCacheKey, DomainLineValidEntry};
-use super::query_teaching::unary_entity_id_teaching_expr_line;
+use super::query_teaching::{get_requires_identity_anchor, unary_entity_id_teaching_expr_line};
 use super::surface_filter::surface_allows_capability;
 use super::symbol_tokens::met_sym;
 use super::teaching_push::try_push_teaching_example;
@@ -67,7 +67,11 @@ pub(crate) fn push_entity_fetch_heads(
         .find_capabilities(ename, CapabilityKind::Get)
         .into_iter()
         .filter(|cap| surface_allows_capability(surface_filter, catalog_entry_id, cap))
-        .filter(|cap| path_vars_empty(cap) && crate::capability_is_zero_arity_invoke(cap))
+        .filter(|cap| {
+            path_vars_empty(cap)
+                && crate::capability_is_zero_arity_invoke(cap)
+                && !get_requires_identity_anchor(cap, cgs, ent)
+        })
         .collect();
     singleton_get_caps.sort_by(|a, b| a.name.cmp(&b.name));
 

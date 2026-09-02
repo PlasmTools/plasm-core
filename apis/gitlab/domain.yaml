@@ -83,6 +83,7 @@ entities:
           param: project_id
   Issue:
     id_field: id
+    primary_query: issue_query
     key_vars:
     - project_id
     - iid
@@ -165,6 +166,7 @@ entities:
             iid: iid
   MergeRequest:
     id_field: id
+    primary_query: merge_request_query
     key_vars:
     - project_id
     - iid

@@ -35,6 +35,7 @@ entities:
           - key: detail
   LangTag:
     id_field: id
+    primary_query: langtag_query
     description: Tags scoped to a LangItem (query_scoped relation target).
     fields:
       id:
@@ -142,6 +143,7 @@ entities:
     relations: {}
   LangItem:
     id_field: id
+    primary_query: langitem_query
     description: Primary matrix entity — list, search, CRUD, relations, actions.
     fields:
       id:
@@ -257,6 +259,23 @@ entities:
       quote_currency:
         required: true
         value_ref: nv_lang_offer_currency
+    relations: {}
+  QueryOnlyRequest:
+    id_field: request_id
+    primary_query: queryonly_request_received_query
+    description: >
+      Matrix query-only entity — money someone asked you to pay (received requests).
+      Query anchor must precede void action mutators in the teaching table.
+    fields:
+      request_id:
+        required: true
+        value_ref: nv_queryonly_request_id
+      amount:
+        required: true
+        value_ref: nv_lang_offer_price
+      status:
+        required: false
+        value_ref: nv_lang_item_status
     relations: {}
 capabilities:
   langitem_query:
@@ -463,6 +482,54 @@ capabilities:
     - id
     - price
     - quote_currency
+  queryonly_request_received_query:
+    description: List payment requests other people sent to you (query anchor witness).
+    kind: query
+    entity: QueryOnlyRequest
+    parameters:
+    - name: access_token
+      value_ref: nv_lang_auth_access_token
+      required: true
+    - name: status
+      value_ref: nv_lang_item_status
+      required: false
+    provides:
+    - request_id
+    - amount
+    - status
+  queryonly_request_approve:
+    description: Approve and pay a received payment request
+    kind: action
+    entity: QueryOnlyRequest
+    parameters:
+    - name: access_token
+      value_ref: nv_lang_auth_access_token
+      required: true
+    output:
+      type: side_effect
+      description: Approves the request and transfers money.
+  queryonly_request_deny:
+    description: Deny a received payment request
+    kind: action
+    entity: QueryOnlyRequest
+    parameters:
+    - name: access_token
+      value_ref: nv_lang_auth_access_token
+      required: true
+    output:
+      type: side_effect
+      description: Marks the request as denied.
+  queryonly_request_remind:
+    description: Send a reminder about a pending payment request
+    kind: action
+    entity: QueryOnlyRequest
+    parameters:
+    - name: access_token
+      value_ref: nv_lang_auth_access_token
+      required: true
+    output:
+      type: side_effect
+      description: Notifies the recipient about the outstanding request.
   langtag_get:
     description: Get LangTag by id (batch relation resolution for prefer_from_parent_get)
     kind: get
@@ -683,6 +750,8 @@ values:
   nv_langline_query_item_id:
     type: entity_ref
     target: LangItem
+  nv_queryonly_request_id:
+    type: string
   nv_lang_offer_id:
     type: string
   nv_lang_offer_price:

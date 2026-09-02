@@ -13,6 +13,7 @@ expression: "super::PLASM_TOOL_DESCRIPTION"
 **Language-card Meaning** (static here — not repeated on each `plasm_context` card):
 - Header `plasm_expr<TAB>Meaning`; **left column only is syntax** — never copy Meaning.
 - `↣ [e]` = plural rows · `→ e` = one entity row (chainable; not a scalar) · `↠` = write.
+- Entity banner (entity `description`) appears on the list/get witness row, not on writes.
 - `optional:` = optional params · `chain:` = later-turn write reconstruction (not a ban on in-program chaining).
 - Executable rows start with `e#`; `r#`/`v#` are never roots. Wires appear on field-gloss / bracket rows by first use.
 

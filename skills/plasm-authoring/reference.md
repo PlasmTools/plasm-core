@@ -138,8 +138,22 @@ entities:
         target: <EntityName>  # must be a defined entity
         cardinality: one|many
     domain_projection_examples: false   # optional — default true
-    primary_read: <get_capability_id>    # optional — overrides which Get drives projection teaching
+    primary_read: <get_capability_id>       # required when entity has 2+ Get capabilities
+    primary_query: <query_capability_id>    # required when entity has 2+ competing Query capabilities (see below)
+    primary_search: <search_capability_id>  # required when entity has 2+ competing Search capabilities
 ```
+
+**Primary read/query/search (mandatory when ambiguous):** Load validation **fails** when an entity declares competing read capabilities without an explicit primary:
+
+| Field | Required when | Names |
+|-------|---------------|-------|
+| `primary_read` | 2+ `get` / `singleton` on entity | Get capability id |
+| `primary_query` | 2+ unscoped `query`, **or** 2+ scoped-only queries with no unscoped query | Query capability id |
+| `primary_search` | Same rules for `search` | Search capability id |
+
+Single Get, single unscoped Query/Search, or exactly one unscoped query among several scoped queries — **no annotation needed**. There is **no** YAML-order or lexicographic auto-pick among ambiguous caps.
+
+Optional **`primary_read:`** on entities with one Get still overrides projection witness field order when set explicitly.
 
 #### Teaching-table-facing descriptions (entities and capabilities)
 
@@ -168,9 +182,9 @@ History-browse phrases belong on the **Source** entity `names`. Materialize Quer
 
 **`views:` `description`** on a view definition should state **what composed projection** the agent gets — not list inner capability ids.
 
-**Teaching projection (default on):** For each entity with a primary Get and non-empty ordered **`F`** from `CGS::domain_projection_heading_fields` in [`crates/plasm-core/src/schema.rs`](../../../crates/plasm-core/src/schema.rs), the prompt renderer teaches **`F`** on the **projection witness row** — a validated get/query exemplar with trailing `[field,…]` in `plasm_expr` and `· projection` in Meaning (not a separate entity heading line). Expressions still use `Entity(…)[subset]` for actual reads. **`F`** comes from that Get's explicit **`provides:`** list (order preserved); if `provides` is empty, **`F`** defaults to `id_field` first, then remaining fields lexicographically. Set **`domain_projection_examples: false`** to suppress projection brackets. Optional **`primary_read:`** names the **Get capability id** to override which Get defines **`F`**. Standalone wire-name gloss rows (including alias symbols referenced only in brackets) are emitted before the witness row uses them.
+**Teaching projection (default on):** For each entity with a primary Get and non-empty ordered **`F`** from `CGS::domain_projection_heading_fields` in [`crates/plasm-core/src/schema.rs`](../../../crates/plasm-core/src/schema.rs), the prompt renderer teaches **`F`** on the **projection witness row** — a validated get/query exemplar with trailing `[field,…]` in `plasm_expr` and `· projection` in Meaning (not a separate entity heading line). Expressions still use `Entity(…)[subset]` for actual reads. **`F`** comes from that Get's explicit **`provides:`** list (order preserved); if `provides` is empty, **`F`** defaults to `id_field` first, then remaining fields lexicographically. Set **`domain_projection_examples: false`** to suppress projection brackets. Declare **`primary_read` / `primary_query` / `primary_search`** when the entity has competing read capabilities (see Entities above).
 
-**TSV projection witness (query-only entities):** Symbolic `plasm_expr` / `Meaning` teaching uses `CGS::domain_projection_teaching_wire_fields`, which returns the same **`F`** as the heading when a primary Get exists. If there is no Get, **`F`** still comes from `effective_ordered_response_fields` on a representative read capability: the primary unscoped Query, otherwise the first Query by capability name, then Search the same way.
+**TSV projection witness (query-only entities):** Symbolic `plasm_expr` / `Meaning` teaching uses `CGS::domain_projection_teaching_wire_fields`, which uses the declared primary Query/Search when no Get exists (including a sole scoped-only list when that is the only query on the entity). On query-only entities, the **primary query row** is taught **before** mutators; entity `description` attaches as the banner on that query witness (or on the identity get row when a Get exists) — **never** on `e#(<id>).m#(…)` mutator rows. Each mutator row carries its own capability `description` in Meaning (`↠ () · …` / `↠ e# · …`).
 
 **`from_parent_get` pitfall:** The JSON path must match the **parent GET response** for that relation. Array-of-ref shapes differ by API (e.g. PokéAPI Pokémon `moves[].move` vs Type `moves[]` as bare `{name,url}`). Copying one entity's `materialize.path` to another without checking the wire JSON yields empty relations at decode time.
 

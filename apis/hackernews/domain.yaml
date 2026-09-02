@@ -9,6 +9,7 @@ data_classes:
 entities:
   Item:
     id_field: id
+    primary_search: item_search
     description: A Hacker News story or comment — trending tech discussion, front-page stories, and comment threads.
     discovery:
       names:

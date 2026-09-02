@@ -120,6 +120,7 @@ entities:
           param: channel
   Message:
     id_field: ts
+    primary_query: channel_history
     description: A Slack chat message for post, search, or update.
     discovery:
       names:
@@ -161,6 +162,8 @@ entities:
     relations: {}
   User:
     id_field: id
+    primary_read: user_info
+    primary_query: user_list
     description: A Slack workspace member.
     fields:
       id:

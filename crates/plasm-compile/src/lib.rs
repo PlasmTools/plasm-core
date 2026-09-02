@@ -453,7 +453,9 @@ mod tests {
 
     #[test]
     fn validate_rejects_capability_param_not_referenced_in_cml() {
-        use plasm_core::schema::{InputFieldSchema, InputFieldWire, InputSchema, InputType, ParameterRole};
+        use plasm_core::schema::{
+            InputFieldSchema, InputFieldWire, InputSchema, InputType, ParameterRole,
+        };
 
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let mut cgs = plasm_core::load_schema_dir(

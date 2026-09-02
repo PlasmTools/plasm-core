@@ -8,6 +8,7 @@ http_backend: http://127.0.0.1:18080
 entities:
   User:
     id_field: user_id
+    primary_query: get_user_information_by_email
     description: Banking customer profile (always-on lookups).
     discovery:
       names:

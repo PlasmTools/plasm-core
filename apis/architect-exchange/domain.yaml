@@ -511,6 +511,7 @@ entities:
 
   Ticker:
     id_field: symbol
+    primary_query: ticker_query
     id_from:
     - s
     description: Low-frequency mark, last, and session stats for one symbol.
@@ -663,6 +664,7 @@ entities:
 
   Candle:
     id_field: ts
+    primary_query: candle_query
     id_from:
     - symbol
     - ts
@@ -707,6 +709,7 @@ entities:
 
   BboCandle:
     id_field: ts
+    primary_query: bbo_candle_query
     id_from:
     - symbol
     - ts
@@ -940,6 +943,7 @@ entities:
 
   Fill:
     id_field: trade_id
+    primary_query: fill_query
     description: Private execution against an account, including fees and side. Ad-hoc rollups (fees by symbol, notional) use program postfix on fetched rows, not extra catalog entities.
     discovery:
       names:
@@ -1132,6 +1136,7 @@ entities:
 
   Order:
     id_field: order_id
+    primary_query: order_open_query
     id_from:
     - oid
     description: Working or historical order on the matching engine.

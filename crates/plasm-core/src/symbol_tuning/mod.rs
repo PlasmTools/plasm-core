@@ -2404,7 +2404,6 @@ impl SymbolMap {
         cgs: &CGS,
         cap: &CapabilitySchema,
     ) -> String {
-        const MAX_SIG: usize = 96;
         if cap.input_schema.is_none() {
             return String::new();
         };
@@ -2431,7 +2430,7 @@ impl SymbolMap {
         if scope_s.is_empty() {
             return scope_s;
         }
-        crate::utf8_trunc::truncate_utf8_owned_with_ellipsis(scope_s, MAX_SIG)
+        scope_s
     }
 
     /// Reserved for future SYMBOL MAP content; **FIELDS** moved inline into **teaching table** (see [`build_ident_gloss_map`]).
@@ -4715,6 +4714,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
