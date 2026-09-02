@@ -37,7 +37,8 @@ entities:
   AccountPassword:
     id_field: account_name
     primary_read: account_password_get
-    description: Per-app password for the task principal — account_name is the app key, not a login email; get by app key before login.
+    description: Per-app password for the task principal — account_name is the app key, not a login email;
+      get by app key before login.
     discovery:
       names:
       - password
@@ -163,15 +164,18 @@ capabilities:
     description: Mark the active AppWorld task complete (required termination signal).
     kind: action
     entity: TaskCompletion
-    parameters:
-    - name: answer
-      value_ref: nv_answer
-      required: false
-      description: Concise answer when the instruction is a question; omit for action-only tasks.
-    - name: status
-      value_ref: nv_task_status
-      required: false
-      description: success or fail (default success).
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: answer
+          value_ref: nv_answer
+          required: false
+          description: Concise answer when the instruction is a question; omit for action-only tasks.
+        - name: status
+          value_ref: nv_task_status
+          required: false
+          description: success or fail (default success).
     output:
       type: side_effect
       description: Marks the current task complete in the AppWorld environment so evaluation can run.
