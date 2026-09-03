@@ -231,6 +231,46 @@ pub fn is_valid_program_label(label: &str) -> bool {
         && !looks_like_domain_symbol(label)
 }
 
+/// First identifier token in a pipe head (stops at `{`, `(`, `~`, `.`, etc.).
+fn pipe_head_first_ident(head: &str) -> &str {
+    let head = head.trim();
+    head.char_indices()
+        .find(|(_, c)| !c.is_ascii_alphanumeric() && *c != '_')
+        .map(|(i, _)| &head[..i])
+        .unwrap_or(head)
+}
+
+/// Pipe head uses catalog surface syntax (`e#`, `e#{…}`, `Entity(…)`, `Entity~"q"`, dotted chains).
+pub fn pipe_head_has_catalog_surface_syntax(head: &str) -> bool {
+    let head = head.trim();
+    if head.is_empty() {
+        return false;
+    }
+    let first = pipe_head_first_ident(head);
+    if looks_like_domain_symbol(first) && first.starts_with('e') {
+        return true;
+    }
+    let rest = head[first.len()..].trim_start();
+    !rest.is_empty() && matches!(rest.as_bytes()[0], b'{' | b'(' | b'~' | b'.')
+}
+
+/// Parse-time pipe head: catalog-shaped surface or plain binding label.
+pub fn validate_pipe_head_syntax(head: &str) -> Result<(), String> {
+    let head = head.trim();
+    if head.is_empty() {
+        return Err("pipe head must not be empty".into());
+    }
+    if pipe_head_has_catalog_surface_syntax(head) {
+        return Ok(());
+    }
+    if is_valid_program_label(head) {
+        return Ok(());
+    }
+    Err(format!(
+        "unknown pipe head `{head}`; use a catalog source (`e#{{…}} | …`) or a binding label (`rows | …`)"
+    ))
+}
+
 pub fn validate_program_label(label: &str) -> Result<(), String> {
     if !is_valid_program_label(label) || matches!(label, "_" | "$" | "return") {
         return Err(program_invalid_binding_label_error(label));
@@ -670,7 +710,7 @@ pub fn program_intermediate_return_must_be_binding_error(stmt: &str) -> String {
 }
 
 pub fn program_duplicate_return_node_error() -> String {
-    "Program has multiple return expressions — bind each step (`filtered = from e# | where …`), then one final return line."
+    "Program has multiple return expressions — bind each step (`filtered = e# | where …`), then one final return line."
         .to_string()
 }
 
@@ -1044,5 +1084,27 @@ created"#;
             "comments[p2,p14]".to_string(),
         ])
         .expect("bare label before projection on last line");
+    }
+
+    #[test]
+    fn pipe_head_catalog_surface_syntax() {
+        assert!(pipe_head_has_catalog_surface_syntax("e3{access_token=\"x\"}"));
+        assert!(pipe_head_has_catalog_surface_syntax("LangItem(\"i1\").lines"));
+        assert!(pipe_head_has_catalog_surface_syntax("e1~\"query\""));
+        assert!(!pipe_head_has_catalog_surface_syntax("rows"));
+        assert!(!pipe_head_has_catalog_surface_syntax("items"));
+    }
+
+    #[test]
+    fn validate_pipe_head_syntax_accepts_catalog_and_binding_labels() {
+        validate_pipe_head_syntax("e3{state=\"open\"}").expect("e# brace");
+        validate_pipe_head_syntax("LangItem").expect("plain wire entity label");
+        validate_pipe_head_syntax("rows").expect("binding label");
+    }
+
+    #[test]
+    fn validate_pipe_head_syntax_rejects_empty_and_garbage() {
+        assert!(validate_pipe_head_syntax("").is_err());
+        assert!(validate_pipe_head_syntax("123bad").is_err());
     }
 }

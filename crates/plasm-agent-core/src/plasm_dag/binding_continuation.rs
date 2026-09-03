@@ -4,13 +4,13 @@
 
 use super::binding_contract::binding_contract;
 use super::pipeline::compile_surface_node;
-use super::row_suffix::lower_suffix_stream;
 use super::prelude::*;
 use super::relation::{
     lookup_relation_chain_meta, relation_binding_proofs_for_lower,
     relation_continuation_expr_from_source_row_hole, relation_materialize_for_lower,
     resolve_relation_segment_for_continuation, resolve_relation_wire_on_entity,
 };
+use super::row_suffix::lower_suffix_stream;
 use super::schema_validate::agent_program_error;
 use super::types::{CompileState, DagNode, DagNodeSource};
 use super::view_embed_proof::resolve_view_embed_proof;
@@ -449,7 +449,9 @@ fn looks_like_collect_meta_tail(tail: &str) -> bool {
     is_known_postfix_method(name)
 }
 
-fn parse_collect_meta_tail(tail: &str) -> Result<Option<Vec<plasm_core::expr_parser::CollectMeta>>, String> {
+fn parse_collect_meta_tail(
+    tail: &str,
+) -> Result<Option<Vec<plasm_core::expr_parser::CollectMeta>>, String> {
     let mut rest = tail.trim();
     if rest.is_empty() {
         return Ok(None);
@@ -503,8 +505,12 @@ fn unknown_row_transform_error(id: &str, tail: &str) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum BindingContinuationRoute {
     MethodInvoke,
-    CollectMetaTail { meta: Vec<plasm_core::expr_parser::CollectMeta> },
-    FieldProject { wire: String },
+    CollectMetaTail {
+        meta: Vec<plasm_core::expr_parser::CollectMeta>,
+    },
+    FieldProject {
+        wire: String,
+    },
     RelationSingleHop,
     RelationMultiSegmentReparse,
 }

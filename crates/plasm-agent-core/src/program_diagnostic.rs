@@ -16,8 +16,8 @@ use crate::plasm_plan_run::{
     symbol_map_for_plasm_surface_parse, typecheck_parsed_for_session, DryPlasmPlanEvaluation,
     PlasmPlanRunResult,
 };
-use plasm_trace::TraceCompWire;
 use plasm_core::{PromptPipelineConfig, SymbolMapCrossRequestCache};
+use plasm_trace::TraceCompWire;
 
 /// Stage where a correctable program failure was detected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -424,7 +424,11 @@ impl ProgramDiagnostic {
         out
     }
 
-    pub fn agent_meta(&self, logical_session_ref: &str, domain_revision: u32) -> Map<String, Value> {
+    pub fn agent_meta(
+        &self,
+        logical_session_ref: &str,
+        domain_revision: u32,
+    ) -> Map<String, Value> {
         let mut plasm = Map::new();
         plasm.insert(
             "dry_verdict".into(),
@@ -469,11 +473,7 @@ impl ProgramDiagnostic {
         dry: &DryPlasmPlanEvaluation,
         comp: TraceCompWire,
     ) -> PlasmPlanRunResult {
-        self.into_plan_run_result_inner(
-            logical_session_ref,
-            domain_revision,
-            Some((dry, comp)),
-        )
+        self.into_plan_run_result_inner(logical_session_ref, domain_revision, Some((dry, comp)))
     }
 
     fn into_plan_run_result_inner(
@@ -575,14 +575,8 @@ pub fn plan_run_from_stage(
     logical_session_ref: &str,
     stage: ProgramStageError,
 ) -> PlasmPlanRunResult {
-    ProgramDiagnostic::from_stage(
-        pipeline,
-        symbol_map_cross_cache,
-        session,
-        program,
-        stage,
-    )
-    .into_plan_run_result(logical_session_ref, session.domain_revision)
+    ProgramDiagnostic::from_stage(pipeline, symbol_map_cross_cache, session, program, stage)
+        .into_plan_run_result(logical_session_ref, session.domain_revision)
 }
 
 #[cfg(test)]
@@ -635,7 +629,10 @@ mod tests {
         assert!(!md.contains("run_ref\t"));
         assert!(md.contains("program_score\t0.20") || md.contains("program_score\t0.2"));
         assert!(md.contains("error_category\tparse"));
-        assert_eq!(out.agent_outcome, crate::plasm_plan_run::PlanAgentOutcome::NeedsFix);
+        assert_eq!(
+            out.agent_outcome,
+            crate::plasm_plan_run::PlanAgentOutcome::NeedsFix
+        );
         assert_eq!(out.metrics_label(), "needs_fix");
         assert!(!out.version.as_str().is_some_and(|s| s == "needs_fix"));
         let plasm = out
@@ -657,7 +654,10 @@ mod tests {
         assert_eq!(d.verdict(), PlanDryVerdict::Deny);
         assert!((d.score.overall - 0.7).abs() < f64::EPSILON);
         let out = d.into_plan_run_result("l_ref", 1);
-        assert_eq!(out.agent_outcome, crate::plasm_plan_run::PlanAgentOutcome::Deny);
+        assert_eq!(
+            out.agent_outcome,
+            crate::plasm_plan_run::PlanAgentOutcome::Deny
+        );
         assert_eq!(out.metrics_label(), "deny");
         let md = out.run_markdown.as_deref().unwrap_or("");
         assert!(md.contains("dry_verdict\tdeny"));

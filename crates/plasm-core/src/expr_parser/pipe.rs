@@ -1,8 +1,11 @@
-//! Canonical pipe row algebra (`from source | stage` / `binding | stage`).
+//! Canonical pipe row algebra (`catalog_source | stage` / `binding | stage`).
 
 use crate::row_composition::RowSuffix;
 
-use super::{is_valid_program_label, peel_collect_meta, split_top_level, CollectMeta};
+use super::{
+    is_valid_program_label, peel_collect_meta, split_top_level, validate_pipe_head_syntax,
+    CollectMeta,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PipeStage {
@@ -72,9 +75,7 @@ impl PipeStage {
                     args: format!("{field}, {}", if *descending { "desc" } else { "asc" }),
                 })
                 .collect(),
-            PipeStage::Take(n) => vec![RowSuffix::Limit {
-                count: *n as u32,
-            }],
+            PipeStage::Take(n) => vec![RowSuffix::Limit { count: *n as u32 }],
             PipeStage::Distinct { keys } => {
                 vec![RowSuffix::Distinct { keys: keys.clone() }]
             }
@@ -85,7 +86,6 @@ impl PipeStage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PipeExpr {
     pub head: String,
-    pub explicit_from: bool,
     pub stages: Vec<PipeStage>,
     /// Collect-meta only (`.page_size` / `.singleton`) — not row algebra.
     pub collect_meta: Vec<CollectMeta>,
@@ -124,28 +124,21 @@ pub fn parse_pipe_expr(raw: &str) -> Result<Option<PipeExpr>, String> {
     }
 
     let raw_head = parts[0].trim();
-    let (head, explicit_from) = if let Some(source) = raw_head.strip_prefix("from ") {
-        let source = source.trim();
-        if source.is_empty() {
-            return Err("`from` requires a catalog source before `|`".into());
-        }
-        (source.to_string(), true)
-    } else {
-        if !is_valid_program_label(raw_head) {
-            return Err(format!(
-                "catalog pipe head `{raw_head}` requires `from`; use `from {raw_head} | …`"
-            ));
-        }
-        (raw_head.to_string(), false)
-    };
+    if raw_head.starts_with("from ") {
+        return Err(
+            "`from` is not Plasm syntax; write a catalog head (`e#`, `e#{…}`, `e#(id)`, `e#~\"q\"`, or wire entity) before `|` stages"
+                .into(),
+        );
+    }
+
+    validate_pipe_head_syntax(raw_head)?;
 
     let stages = parts[1..]
         .iter()
         .map(|part| parse_stage(part.trim()))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Some(PipeExpr {
-        head,
-        explicit_from,
+        head: raw_head.to_string(),
         stages,
         collect_meta,
     }))
@@ -340,15 +333,17 @@ fn normalize_count_calls(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::expr_parser::pipe_head_has_catalog_surface_syntax;
 
     #[test]
     fn parses_catalog_pipeline_and_lowers_stages() {
         let parsed = parse_pipe_expr(
-            "from e1{state=\"open\"} | where score >= 10 | select *, age = now - updated_at | summarize by owner n=count(), total=sum(score) | order by total desc | take 10",
+            "e1{state=\"open\"} | where score >= 10 | select *, age = now - updated_at | summarize by owner n=count(), total=sum(score) | order by total desc | take 10",
         )
         .unwrap()
         .unwrap();
         assert_eq!(parsed.head, "e1{state=\"open\"}");
+        assert!(pipe_head_has_catalog_surface_syntax(&parsed.head));
         assert!(matches!(parsed.stages[0], PipeStage::Where { .. }));
         assert!(matches!(parsed.stages[1], PipeStage::Select { .. }));
         assert!(matches!(parsed.stages[2], PipeStage::Summarize { .. }));
@@ -362,11 +357,10 @@ mod tests {
 
     #[test]
     fn strips_apply_arrow_before_stage_parse() {
-        let parsed = parse_pipe_expr(
-            "from e1{state=\"open\"} | where score >= 10 | take 3 => { t: _.title }",
-        )
-        .unwrap()
-        .unwrap();
+        let parsed =
+            parse_pipe_expr("e1{state=\"open\"} | where score >= 10 | take 3 => { t: _.title }")
+                .unwrap()
+                .unwrap();
         assert!(matches!(parsed.stages.last(), Some(PipeStage::Take(3))));
     }
 
@@ -376,7 +370,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(parsed.head, "items");
-        assert!(!parsed.explicit_from);
+        assert!(!pipe_head_has_catalog_surface_syntax(&parsed.head));
         assert!(matches!(
             parsed.stages.as_slice(),
             [PipeStage::Distinct { keys: Some(_) }]
@@ -389,11 +383,36 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(parsed.head, "items");
-        assert!(!parsed.explicit_from);
+        assert!(!pipe_head_has_catalog_surface_syntax(&parsed.head));
         assert!(matches!(
             parsed.stages.as_slice(),
             [PipeStage::Where { predicates }] if predicates == "score >= 10"
         ));
+    }
+
+    #[test]
+    fn parses_catalog_e_symbol_pipe_without_from() {
+        let parsed = parse_pipe_expr("e1 | take 1").unwrap().unwrap();
+        assert_eq!(parsed.head, "e1");
+        assert!(pipe_head_has_catalog_surface_syntax(&parsed.head));
+    }
+
+    #[test]
+    fn parses_catalog_brace_pipe_without_from() {
+        let parsed = parse_pipe_expr("e3{access_token=tok} | where created_at >= \"7d ago\"")
+            .unwrap()
+            .unwrap();
+        assert!(pipe_head_has_catalog_surface_syntax(&parsed.head));
+    }
+
+    #[test]
+    fn rejects_removed_from_keyword() {
+        assert!(parse_pipe_expr("from e1 | take 1")
+            .unwrap_err()
+            .contains("`from` is not Plasm syntax"));
+        assert!(parse_pipe_expr("from items | take 1")
+            .unwrap_err()
+            .contains("`from` is not Plasm syntax"));
     }
 
     #[test]
@@ -415,18 +434,5 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(parsed.stages.len(), 2);
-    }
-
-    #[test]
-    fn enforces_from_head_rules() {
-        assert!(parse_pipe_expr("e1 | take 1")
-            .unwrap_err()
-            .contains("requires `from`"));
-        assert!(
-            parse_pipe_expr("from items | take 1")
-                .unwrap()
-                .unwrap()
-                .explicit_from
-        );
     }
 }

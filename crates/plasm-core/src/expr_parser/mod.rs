@@ -75,10 +75,14 @@ pub use heredoc_surface::{
     parse_tagged_heredoc_literal, tagged_heredoc_close_kind, HeredocCloseLineKind,
 };
 pub use pipe::{parse_pipe_expr, PipeExpr, PipeStage};
-pub use program::{parse_expr_node, parse_program_shape, ExprNode, ParsedProgram, RowExpr, Statement};
+pub use program::{
+    parse_expr_node, parse_program_shape, ExprNode, ParsedProgram, RowExpr, Statement,
+};
 pub use program_surface::{
-    collect_program_statement_lines, expand_flattened_program_statements, is_valid_program_label,
-    looks_like_domain_symbol, missing_program_roots_error, program_binding_after_return_error,
+    collect_program_statement_lines, expand_flattened_program_statements,
+    is_valid_program_label, looks_like_domain_symbol, missing_program_roots_error,
+    pipe_head_has_catalog_surface_syntax, program_binding_after_return_error,
+    validate_pipe_head_syntax,
     program_duplicate_return_node_error, program_empty_error, program_invalid_binding_label_error,
     program_return_keyword_error, scan_physical_line_stmt_state, split_assignment_at_top_level,
     split_assignment_for_binding, split_flattened_program_line, split_token_top_level,
@@ -394,6 +398,57 @@ fn is_root_union_ctor_surface_label(name: &str) -> bool {
     }
     let tail = &name[1..];
     !tail.is_empty() && tail.bytes().all(|x| x.is_ascii_digit())
+}
+
+/// End index (exclusive) of a comparison RHS inside `{…}` / row-filter bodies.
+fn scan_top_level_pred_rhs_end(input: &str, start: usize) -> usize {
+    let bytes = input.as_bytes();
+    let mut i = start;
+    let mut depth_paren = 0i32;
+    let mut depth_brace = 0i32;
+    let mut depth_bracket = 0i32;
+    let mut in_single = false;
+    let mut in_double = false;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if in_single {
+            if b == b'\\' && i + 1 < bytes.len() {
+                i += 2;
+                continue;
+            }
+            if b == b'\'' {
+                in_single = false;
+            }
+            i += 1;
+            continue;
+        }
+        if in_double {
+            if b == b'\\' && i + 1 < bytes.len() {
+                i += 2;
+                continue;
+            }
+            if b == b'"' {
+                in_double = false;
+            }
+            i += 1;
+            continue;
+        }
+        match b {
+            b'\'' => in_single = true,
+            b'"' => in_double = true,
+            b'(' => depth_paren += 1,
+            b')' => depth_paren -= 1,
+            b'{' => depth_brace += 1,
+            b'}' if depth_brace == 0 && depth_paren == 0 && depth_bracket == 0 => break,
+            b'}' => depth_brace -= 1,
+            b'[' => depth_bracket += 1,
+            b']' => depth_bracket -= 1,
+            b',' if depth_paren == 0 && depth_brace == 0 && depth_bracket == 0 => break,
+            _ => {}
+        }
+        i += 1;
+    }
+    i
 }
 
 fn normalize_numeric_id_float(f: f64) -> String {
@@ -2655,9 +2710,40 @@ impl<'a> Parser<'a> {
         self.skip_ws();
         if matches!(self.peek_char(), Some(',') | Some('}')) {
             Ok(Value::Null)
+        } else if let Some(v) = self.try_rewrite_temporal_predicate_rhs()? {
+            Ok(v)
         } else {
             self.parse_predicate_value_rhs()
         }
+    }
+
+    /// If the upcoming RHS is a Kusto/wire temporal expression, rewrite to a string literal.
+    fn try_rewrite_temporal_predicate_rhs(&mut self) -> Result<Option<Value>, ParseError> {
+        let start = self.pos;
+        let end = scan_top_level_pred_rhs_end(self.input, start);
+        if end <= start {
+            return Ok(None);
+        }
+        let raw = self.input[start..end].trim();
+        if raw.is_empty() {
+            return Ok(None);
+        }
+        let rewritten = crate::temporal::rewrite_temporal_aliases_in_predicate_body(raw);
+        if rewritten.as_ref() == raw {
+            return Ok(None);
+        }
+        self.pos = end;
+        // Rewritten surface is either `now` or a quoted English phrase.
+        let t = rewritten.trim();
+        if t.eq_ignore_ascii_case("now") {
+            return Ok(Some(Value::String("now".into())));
+        }
+        if let Some(inner) = t.strip_prefix('"').and_then(|x| x.strip_suffix('"')) {
+            return Ok(Some(Value::String(
+                inner.replace("\\\"", "\"").replace("\\\\", "\\"),
+            )));
+        }
+        Ok(Some(Value::String(t.to_string())))
     }
 
     /// Parse comma-separated predicates inside `{ }`.

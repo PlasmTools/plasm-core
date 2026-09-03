@@ -271,22 +271,21 @@ pub(in crate::plasm_dag) fn row_suffix_to_compute(
             let mut map = BTreeMap::new();
             for field in parse_field_list(session, state.cross_cache, qe.as_ref(), &fields_joined)
                 .or_else(|_| {
-                    fields
-                        .iter()
-                        .map(|raw| {
-                            let path = FieldPath::from_dotted(raw)?;
-                            let resolved = resolve_sort_field_path(
-                                session,
-                                state.cross_cache,
-                                qe.as_ref(),
-                                source_schema.as_ref(),
-                                &path,
-                            )?;
-                            Ok(resolved.dotted())
-                        })
-                        .collect::<Result<Vec<String>, String>>()
-                })?
-            {
+                fields
+                    .iter()
+                    .map(|raw| {
+                        let path = FieldPath::from_dotted(raw)?;
+                        let resolved = resolve_sort_field_path(
+                            session,
+                            state.cross_cache,
+                            qe.as_ref(),
+                            source_schema.as_ref(),
+                            &path,
+                        )?;
+                        Ok(resolved.dotted())
+                    })
+                    .collect::<Result<Vec<String>, String>>()
+            })? {
                 map.insert(
                     OutputName::new(field.clone())?,
                     FieldPath::from_dotted(&field)?,
@@ -314,8 +313,8 @@ pub(in crate::plasm_dag) fn row_suffix_to_compute(
         RowSuffix::Singleton | RowSuffix::PageSize { .. } => {
             Err("internal: singleton/page_size must be split as tail flags before lowering".into())
         }
-        RowSuffix::Relation { .. } => Err(
-            "internal: relation suffixes lower via binding continuation, not compute".into(),
-        ),
+        RowSuffix::Relation { .. } => {
+            Err("internal: relation suffixes lower via binding continuation, not compute".into())
+        }
     }
 }

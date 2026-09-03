@@ -81,6 +81,7 @@ mod context_new_seeds;
 mod discover;
 #[cfg(test)]
 mod future_size_probe;
+mod host_fault;
 mod host_policy;
 mod initialize;
 mod mcp_http_dns_rebinding;
@@ -90,7 +91,6 @@ mod plasm_context;
 mod plasm_tool_dry_meta;
 mod plasm_tool_dry_run;
 mod plasm_tool_handler;
-mod host_fault;
 mod read_run_artifact;
 mod resource_read;
 mod resource_read_trace;

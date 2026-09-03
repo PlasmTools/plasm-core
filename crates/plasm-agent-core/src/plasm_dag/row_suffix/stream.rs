@@ -243,8 +243,7 @@ pub(in crate::plasm_dag) fn lower_suffix_stream(
             continue;
         }
 
-        let node =
-            row_suffix_to_compute(session, state, &out, suffix, &cur_id, &nid, full_rhs)?;
+        let node = row_suffix_to_compute(session, state, &out, suffix, &cur_id, &nid, full_rhs)?;
         out.push(node);
         cur_id = nid;
     }

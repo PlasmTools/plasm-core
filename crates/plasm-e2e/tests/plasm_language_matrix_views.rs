@@ -111,7 +111,7 @@ fn matrix_views_row_to_text_wire_column_aliases() {
             "LangItem.title teaching token is its wire name"
         );
         let program = format!(
-            "items = from LangItem(\"i1\") | select {f_id}, {f_title}\nreport = items => <<PLASM_VIEWS_WIRE_BODY\n{{% for r in rows %}}- {{{{ r.{f_id} }}}}: {{{{ r.{f_title} }}}}\n{{% endfor %}}\nPLASM_VIEWS_WIRE_BODY\nreport"
+            "items = LangItem(\"i1\") | select {f_id}, {f_title}\nreport = items => <<PLASM_VIEWS_WIRE_BODY\n{{% for r in rows %}}- {{{{ r.{f_id} }}}}: {{{{ r.{f_title} }}}}\n{{% endfor %}}\nPLASM_VIEWS_WIRE_BODY\nreport"
         );
         let bundle = compile_plasm_program(
             &PromptPipelineConfig::default(),
@@ -195,7 +195,7 @@ fn matrix_views_row_to_text_source_alias_iteration() {
         let p_title = map.ident_sym_entity_field_for(VIEWS_MATRIX_ENTRY_ID, "LangItem", "title");
         let p_score = map.ident_sym_entity_field_for(VIEWS_MATRIX_ENTRY_ID, "LangItem", "score");
         let program = format!(
-            "items = from LangItem(\"i1\") | select {p_id}, {p_title}, {p_score}\nreport = items => <<PLASM_VIEWS_ALIAS_BODY\n{{% for r in items %}}- {{{{ r.{p_id} }}}}: {{{{ r.{p_title} }}}} (score: {{{{ r.{p_score} or \"—\" }}}})\n{{% endfor %}}\nPLASM_VIEWS_ALIAS_BODY\nreport"
+            "items = LangItem(\"i1\") | select {p_id}, {p_title}, {p_score}\nreport = items => <<PLASM_VIEWS_ALIAS_BODY\n{{% for r in items %}}- {{{{ r.{p_id} }}}}: {{{{ r.{p_title} }}}} (score: {{{{ r.{p_score} or \"—\" }}}})\n{{% endfor %}}\nPLASM_VIEWS_ALIAS_BODY\nreport"
         );
         let bundle = compile_plasm_program(
             &PromptPipelineConfig::default(),
@@ -263,7 +263,7 @@ fn matrix_views_row_to_text_named_loop_cursor() {
         plasm_compile::validate_cgs_capability_templates(&cgs).expect("templates");
         let es = Arc::new(views_execute_session(cgs.clone()));
         // Cursor is named `entry` (not `r`) and iterates the always-bound projected `rows` list.
-        let program = "items = from LangItem(\"i1\") | select id, title\nreport = items => <<PLASM_VIEWS_NAMED_CURSOR\n{% for entry in rows %}- {{ entry.id }}: {{ entry.title or \"—\" }}\n{% endfor %}\nPLASM_VIEWS_NAMED_CURSOR\nreport";
+        let program = "items = LangItem(\"i1\") | select id, title\nreport = items => <<PLASM_VIEWS_NAMED_CURSOR\n{% for entry in rows %}- {{ entry.id }}: {{ entry.title or \"—\" }}\n{% endfor %}\nPLASM_VIEWS_NAMED_CURSOR\nreport";
         let bundle = compile_plasm_program(
             &PromptPipelineConfig::default(),
             None,

@@ -233,6 +233,26 @@ fn markdown_like_payload_near(work: &str, offset: usize) -> bool {
         || slice.contains("\n1. ")
 }
 
+fn looks_like_temporal_now_call(work: &str, offset: usize) -> bool {
+    let start = offset.saturating_sub(64);
+    let end = (offset + 48).min(work.len());
+    if start >= end {
+        return false;
+    }
+    let slice = work[start..end].to_ascii_lowercase();
+    slice.contains("now(")
+        || slice.contains("now ()")
+        || slice.contains("datetime(now")
+        || slice.contains("now -")
+        || slice.contains("now-")
+        || slice.contains("date_trunc(")
+        || slice.contains("date_add(")
+        || slice.contains("dateadd(")
+        || slice.contains("start_of_day(")
+        || slice.contains("end_of_day(")
+        || slice.contains("duration(")
+}
+
 fn looks_like_p_sym_token(name: &str) -> bool {
     name.len() > 1 && name.starts_with('p') && name[1..].chars().all(|c| c.is_ascii_digit())
 }
@@ -418,7 +438,8 @@ pub fn render_parse_error_with_feedback(
                 _ => String::new(),
             };
             format!(
-                "{head}Use a date/time format allowed for that field (ISO-8601, RFC3339, Unix ms, or GNU-style English (chrono-english): e.g. `2024-06-01T12:00:00Z`, `next friday 8pm`, `30 June 2018`)."
+                "{head}{}",
+                crate::temporal::temporal_predicate_alias_hint()
             )
         }
         ParseErrorKind::UnterminatedString | ParseErrorKind::UnterminatedEscape => {
@@ -552,6 +573,15 @@ pub fn render_parse_error_with_feedback(
             } else if markdown_like && !structured_slot {
                 format!(
                     "{base} If the value contains characters that break parsing (e.g. commas or unescaped quotes), wrap it in a quoted string and escape internal double quotes with `\\\"`."
+                )
+            } else if matches!(err.kind, ParseErrorKind::ExpectedValue)
+                && looks_like_temporal_now_call(work, err.offset)
+            {
+                format!(
+                    "{base} Date/time RHS must be a literal value — not `now()`, \
+                     `date_trunc` / `date_add` / `start_of_day`, or other call \
+                     expressions. {}",
+                    crate::temporal::temporal_predicate_alias_hint()
                 )
             } else {
                 base

@@ -120,9 +120,7 @@ async fn execute_plasm_tool_dry_run_inner(
         return Ok(plan_result_from_stage(
             &ctx,
             program,
-            ProgramStageError::plan(
-                "plan dry-run preflight failed — fix errors before run_ref",
-            ),
+            ProgramStageError::plan("plan dry-run preflight failed — fix errors before run_ref"),
         ));
     }
 

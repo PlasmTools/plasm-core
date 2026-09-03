@@ -129,7 +129,9 @@ pub(crate) async fn post_run_execute_session_inner(
                 return (
                     StatusCode::OK,
                     [(CONTENT_TYPE, "application/json; charset=utf-8")],
-                    Json(crate::program_diagnostic::needs_fix_http_payload(&diag, None)),
+                    Json(crate::program_diagnostic::needs_fix_http_payload(
+                        &diag, None,
+                    )),
                 )
                     .into_response();
             }
@@ -158,7 +160,9 @@ pub(crate) async fn post_run_execute_session_inner(
                 return (
                     StatusCode::OK,
                     [(CONTENT_TYPE, "application/json; charset=utf-8")],
-                    Json(crate::program_diagnostic::needs_fix_http_payload(&diag, None)),
+                    Json(crate::program_diagnostic::needs_fix_http_payload(
+                        &diag, None,
+                    )),
                 )
                     .into_response();
             }
@@ -188,7 +192,9 @@ pub(crate) async fn post_run_execute_session_inner(
             return (
                 StatusCode::OK,
                 [(CONTENT_TYPE, "application/json; charset=utf-8")],
-                Json(crate::program_diagnostic::needs_fix_http_payload(&diag, None)),
+                Json(crate::program_diagnostic::needs_fix_http_payload(
+                    &diag, None,
+                )),
             )
                 .into_response();
         }
@@ -216,7 +222,9 @@ pub(crate) async fn post_run_execute_session_inner(
                 return (
                     StatusCode::OK,
                     [(CONTENT_TYPE, "application/json; charset=utf-8")],
-                    Json(crate::program_diagnostic::needs_fix_http_payload(&diag, None)),
+                    Json(crate::program_diagnostic::needs_fix_http_payload(
+                        &diag, None,
+                    )),
                 )
                     .into_response();
             }

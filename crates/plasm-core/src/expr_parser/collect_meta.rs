@@ -64,7 +64,6 @@ pub fn normalize_nested_projection_field(segment: &str) -> Result<String, String
     Ok(format!("{left}.{inner_norm}"))
 }
 
-
 /// Peel trailing collect metadata from `rhs`, returning `(primary, meta)`.
 ///
 /// `meta` is ordered **inner → outer** (first apply `meta[0]` to `primary`, then `meta[1]`, …).
@@ -308,10 +307,7 @@ mod tests {
     fn peel_page_size_and_singleton() {
         let (p, ops) = peel_collect_meta("rows.page_size(50).singleton()").unwrap();
         assert_eq!(p, "rows");
-        assert_eq!(
-            ops,
-            vec![CollectMeta::PageSize(50), CollectMeta::Singleton]
-        );
+        assert_eq!(ops, vec![CollectMeta::PageSize(50), CollectMeta::Singleton]);
     }
 
     #[test]
@@ -358,5 +354,4 @@ mod tests {
         assert!(ops2.is_empty(), "open is not a postfix verb, got {ops2:?}");
         assert!(p2.contains("open"));
     }
-
 }

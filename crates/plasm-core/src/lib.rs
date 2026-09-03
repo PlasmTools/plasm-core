@@ -342,18 +342,17 @@ pub use schema::{
     capability_template_all_var_names, flow_control_param_names, is_flow_control_param_name,
     template_domain_exemplar_requires_entity_anchor, template_invoke_requires_explicit_anchor_id,
     view_node_field_where_output_detail, AgentPresentation, ArrayItemsSchema, AttachmentMediaKind,
-    AuthScheme, BackendSelectionSchema, CapabilityInputs,
-    CapabilityKind, CapabilityManifest, CapabilityMapping, CapabilitySchema,
-    CapabilityTemplateJson, Cardinality, CgsCapabilityIndex, CrossFieldRule,
-    CrossFieldRuleType, DataClassDimension, DataClassName, DataClassSchema, DataClassSeverity,
-    DiscoveryCapabilityHints, DiscoveryCoSeedWith, DiscoveryEntityHints, DiscoveryRelationHints,
-    DiscoverySeedClass, DiscoverySeedNav, EmbedOnMissPolicy, EntityDef, FieldDeriveRule,
-    FieldSchema, FieldValueKind, IdFormat, InputFieldSchema, InputFieldWire, InputSchema,
-    InputType, InputValidation, InputVariantSchema, InvocationControlsSchema, JsonPathSegment,
-    NamedValueSchema, OauthDefaultScopeSet, OauthExtension, OauthRequirements, OauthScopeEntry,
-    OutputSchema, OutputType, ParentScopeSchema, RelationMaterialization, RelationSchema,
-    RelationScopedFallback, ResourceSchema, ScopeAggregateKeyPolicy, ScopeRequirement,
-    SinkClassName, ValueDomainKey, ValueDomainSlot, ViewDefinition, ViewNodeSpec,
+    AuthScheme, BackendSelectionSchema, CapabilityInputs, CapabilityKind, CapabilityManifest,
+    CapabilityMapping, CapabilitySchema, CapabilityTemplateJson, Cardinality, CgsCapabilityIndex,
+    CrossFieldRule, CrossFieldRuleType, DataClassDimension, DataClassName, DataClassSchema,
+    DataClassSeverity, DiscoveryCapabilityHints, DiscoveryCoSeedWith, DiscoveryEntityHints,
+    DiscoveryRelationHints, DiscoverySeedClass, DiscoverySeedNav, EmbedOnMissPolicy, EntityDef,
+    FieldDeriveRule, FieldSchema, FieldValueKind, IdFormat, InputFieldSchema, InputFieldWire,
+    InputSchema, InputType, InputValidation, InputVariantSchema, InvocationControlsSchema,
+    JsonPathSegment, NamedValueSchema, OauthDefaultScopeSet, OauthExtension, OauthRequirements,
+    OauthScopeEntry, OutputSchema, OutputType, ParentScopeSchema, RelationMaterialization,
+    RelationSchema, RelationScopedFallback, ResourceSchema, ScopeAggregateKeyPolicy,
+    ScopeRequirement, SinkClassName, ValueDomainKey, ValueDomainSlot, ViewDefinition, ViewNodeSpec,
     ViewOutputBinding, ViewParamBinding, ViewRelationBinding, ViewRelationOutputSpec,
     ViewScopeInject, ViewScopeParam, WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
 };
@@ -395,7 +394,10 @@ pub use template_ref::{
     for_each_interpolation_path, interpolation_paths, interpolation_roots,
     validate_interpolation_syntax, RefKind, TemplateRefContext,
 };
-pub use temporal::{normalize_temporal_value, temporal_wire_format_from_name, wire_temporal_value};
+pub use temporal::{
+    normalize_temporal_value, rewrite_temporal_aliases, rewrite_temporal_aliases_in_predicate_body,
+    temporal_predicate_alias_hint, temporal_wire_format_from_name, wire_temporal_value,
+};
 pub use type_checker::{
     reject_domain_placeholder_in_executable, type_check_chain, type_check_create,
     type_check_delete, type_check_expr, type_check_expr_federated, type_check_get,

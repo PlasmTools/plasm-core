@@ -31,7 +31,9 @@ pub enum RenderApplicator {
 pub fn parse_applicator(raw: &str) -> Result<Applicator, String> {
     let right = raw.trim();
     if right.is_empty() {
-        return Err("`=>` requires an applicator (`{ … }`, `<<TAG`, `Entity.m#(…)`, or `_.r#`)".into());
+        return Err(
+            "`=>` requires an applicator (`{ … }`, `<<TAG`, `Entity.m#(…)`, or `_.r#`)".into(),
+        );
     }
     if let Some(opener) = right.strip_prefix("<<") {
         let template = parse_render_template_after_tag_opener(opener)?;
@@ -155,13 +157,7 @@ fn is_foreach_surface(rhs: &str) -> bool {
         return true;
     }
     // Wire / domain method verbs used as for_each templates.
-    const VERBS: &[&str] = &[
-        ".update(",
-        ".create(",
-        ".delete(",
-        ".label(",
-        ".invoke(",
-    ];
+    const VERBS: &[&str] = &[".update(", ".create(", ".delete(", ".label(", ".invoke("];
     VERBS.iter().any(|v| t.contains(v))
 }
 

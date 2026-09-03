@@ -126,10 +126,9 @@ mod tests {
 
     #[test]
     fn parses_binding_and_direct_pipe_root() {
-        let p = parse_program_shape(
-            "repo = e2(owner=\"ryan\", repo=\"plasm\")\nfrom e1{p4=repo} | take 20",
-        )
-        .expect("program");
+        let p =
+            parse_program_shape("repo = e2(owner=\"ryan\", repo=\"plasm\")\ne1{p4=repo} | take 20")
+                .expect("program");
         assert_eq!(p.statements.len(), 1);
         assert_eq!(p.roots.len(), 1);
         assert_eq!(p.roots[0].primary_head(), "e1{p4=repo}");
@@ -149,7 +148,7 @@ mod tests {
 
     #[test]
     fn preserves_commas_inside_direct_pipe_root() {
-        let p = parse_program_shape("from e1 | select id, title").expect("program");
+        let p = parse_program_shape("e1 | select id, title").expect("program");
         assert_eq!(p.roots.len(), 1);
         assert_eq!(p.roots[0].primary_head(), "e1");
         assert!(matches!(
@@ -160,10 +159,9 @@ mod tests {
 
     #[test]
     fn retains_apply_stratum_on_pipe_root() {
-        let node = parse_expr_node(
-            "from e1 | where owner=\"alice\" | take 2 => { t: _.message, o: _.owner }",
-        )
-        .expect("expr");
+        let node =
+            parse_expr_node("e1 | where owner=\"alice\" | take 2 => { t: _.message, o: _.owner }")
+                .expect("expr");
         assert!(matches!(
             node.apply,
             Some(Applicator::Derive { ref body }) if body.contains("_.message")

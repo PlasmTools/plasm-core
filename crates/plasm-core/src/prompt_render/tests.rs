@@ -1,6 +1,7 @@
 //! Prompt render integration tests (matrix/proof fixtures; no full-catalog snapshots).
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::time::Instant;
 
 use crate::loader::load_schema_dir;
@@ -3754,5 +3755,56 @@ fn github_prompt_tier1_typed_gloss_dedupe() {
                 "expr with bracket must not duplicate rows: in Meaning: {line}"
             );
         }
+    }
+}
+
+/// Dump actual renderer TSV for `scalar_auth_pipe` ablation (opt-in via `SAP_TSV_OUT`).
+#[test]
+fn dump_scalar_auth_pipe_tsv_for_ablation() {
+    let Ok(out_root) = std::env::var("SAP_TSV_OUT") else {
+        return;
+    };
+    let fixtures = std::env::var("SAP_FIXTURES").unwrap_or_else(|_| {
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../scripts/appworld/cuga/ablation_offline/scalar_auth_pipe/fixtures"
+        )
+        .to_string()
+    });
+    let out = PathBuf::from(out_root);
+    std::fs::create_dir_all(&out).expect("create SAP_TSV_OUT");
+    let fixtures = PathBuf::from(fixtures);
+    for entry in std::fs::read_dir(&fixtures).expect("fixtures dir") {
+        let entry = entry.expect("entry");
+        if !entry.file_type().expect("ft").is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let dir = entry.path();
+        if !dir.join("domain.yaml").is_file() {
+            continue;
+        }
+        let cgs = load_schema_dir(&dir).unwrap_or_else(|e| panic!("load {name}: {e}"));
+        let thing = cgs
+            .entities
+            .keys()
+            .find(|k| k.as_str() != "AuthSession")
+            .map(|s| s.to_string())
+            .expect("ledger entity");
+        let seeds = ["AuthSession".to_string(), thing.clone()];
+        let seed_refs: Vec<&str> = seeds.iter().map(|s| s.as_str()).collect();
+        let cfg = RenderConfig::for_eval_seeds(&seed_refs);
+        let tsv = render_prompt_tsv_with_config(&cgs, cfg);
+        assert!(
+            tsv.contains("access_token"),
+            "{name} TSV must teach access_token"
+        );
+        assert!(
+            !tsv.contains("context="),
+            "{name} TSV must not teach abolished context="
+        );
+        let dest = out.join(format!("{name}.tsv"));
+        std::fs::write(&dest, &tsv).expect("write tsv");
+        eprintln!("wrote {}", dest.display());
     }
 }

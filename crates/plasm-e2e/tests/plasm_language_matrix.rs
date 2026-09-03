@@ -1805,7 +1805,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
     },
     MatrixRow {
         id: "lang_surface_line_limit",
-        program: "from LangItem | take 2",
+        program: "LangItem | take 2",
         surface_line: true,
         federated: false,
         features: &["surface_line_compile", "pipe_take"],
@@ -1850,7 +1850,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
     },
     MatrixRow {
         id: "lang_predicate_brace_score_cmp",
-        program: r#"from LangItem | where owner~"alice""#,
+        program: r#"LangItem | where owner~"alice""#,
         surface_line: false,
         federated: false,
         features: &["pipe_where"],
@@ -1859,7 +1859,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
     },
     MatrixRow {
         id: "lang_limit_projection",
-        program: "projected = from LangItem | take 1 | select id, title\nprojected",
+        program: "projected = LangItem | take 1 | select id, title\nprojected",
         surface_line: false,
         federated: false,
         features: &["pipe_take", "pipe_select"],
@@ -1868,7 +1868,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
     },
     MatrixRow {
         id: "lang_sort_limit",
-        program: "from LangItem | order by score desc | take 2 | select id, score",
+        program: "LangItem | order by score desc | take 2 | select id, score",
         surface_line: false,
         federated: false,
         features: &["pipe_order_by", "pipe_take", "pipe_select"],
@@ -1877,7 +1877,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
     },
     MatrixRow {
         id: "lang_sort_asc",
-        program: "from LangItem | order by score asc | take 3 | select id, score",
+        program: "LangItem | order by score asc | take 3 | select id, score",
         surface_line: false,
         federated: false,
         features: &["pipe_order_by", "pipe_order_by_ascending", "pipe_take", "pipe_select"],
@@ -1886,7 +1886,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
     },
     MatrixRow {
         id: "lang_aggregate",
-        program: "from LangItem | summarize n=count()",
+        program: "LangItem | summarize n=count()",
         surface_line: false,
         federated: false,
         features: &["pipe_summarize"],
@@ -1895,7 +1895,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
     },
     MatrixRow {
         id: "lang_aggregate_sugar_count",
-        program: "from LangItem | summarize count=count()",
+        program: "LangItem | summarize count=count()",
         surface_line: false,
         federated: false,
         features: &["aggregate_sugar_count", "pipe_summarize"],
@@ -1904,7 +1904,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
     },
     MatrixRow {
         id: "lang_aggregate_sum",
-        program: "from LangItem | summarize t=sum(score)",
+        program: "LangItem | summarize t=sum(score)",
         surface_line: false,
         federated: false,
         features: &["aggregate_sum", "pipe_summarize"],
@@ -1914,7 +1914,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
     },
     MatrixRow {
         id: "lang_group_by",
-        program: "from LangItem | summarize by owner n=count()",
+        program: "LangItem | summarize by owner n=count()",
         surface_line: false,
         federated: false,
         features: &["pipe_summarize_by", "pipe_summarize_chain"],
@@ -1923,7 +1923,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
     },
     MatrixRow {
         id: "lang_group_by_aggregate_chain",
-        program: "from LangItem | summarize by owner, score n=count(), title=first(title)",
+        program: "LangItem | summarize by owner, score n=count(), title=first(title)",
         surface_line: false,
         federated: false,
         features: &["pipe_summarize_chain", "pipe_summarize_by_multi", "agg_first_last"],
@@ -1932,7 +1932,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
     },
     MatrixRow {
         id: "lang_group_by_sugar",
-        program: "from LangItem | summarize by owner count=count()",
+        program: "LangItem | summarize by owner count=count()",
         surface_line: false,
         federated: false,
         features: &["pipe_summarize_by_count", "pipe_summarize_by"],
@@ -1941,7 +1941,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
     },
     MatrixRow {
         id: "lang_group_by_multi",
-        program: "from LangItem | summarize by owner, score n=count()",
+        program: "LangItem | summarize by owner, score n=count()",
         surface_line: false,
         federated: false,
         features: &["pipe_summarize_by_multi", "pipe_summarize_by"],
@@ -2054,7 +2054,7 @@ newbranch, newfile"#,
     },
     MatrixRow {
         id: "lang_with_concat",
-        program: r#"items = from LangItem | where owner="alice"
+        program: r#"items = LangItem | where owner="alice"
 tagged = items | select tag = owner + owner | take 1
 tagged"#,
         surface_line: false,
@@ -2065,7 +2065,7 @@ tagged"#,
     },
     MatrixRow {
         id: "lang_with_when_len",
-        program: r#"items = from LangItem | where owner="alice"
+        program: r#"items = LangItem | where owner="alice"
 labeled = items | select label = when(len(owner)>0, owner, title) | take 1
 labeled"#,
         surface_line: false,
@@ -2086,7 +2086,7 @@ lines | select id, note"#,
     },
     MatrixRow {
         id: "lang_query_singleton",
-        program: "from LangItem | take 5.singleton()",
+        program: "LangItem | take 5.singleton()",
         surface_line: false,
         federated: false,
         features: &["collect_singleton"],
@@ -2108,7 +2108,7 @@ lines | select id, note"#,
     },
     MatrixRow {
         id: "lang_bindings_render",
-        program: r#"rows = from LangItem("i1") | select id, title
+        program: r#"rows = LangItem("i1") | select id, title
 hdr = rows => <<MD
 # {{ rows | length }} row(s): {% for r in rows %}{{ r.id }}{% endfor %}
 MD
@@ -2121,7 +2121,7 @@ hdr"#,
     },
     MatrixRow {
         id: "lang_cross_binding_render",
-        program: r#"a = from LangItem("i1") | select id, title
+        program: r#"a = LangItem("i1") | select id, title
 report = a => <<MD
 Item: {{ a.id }}
 MD
@@ -2134,7 +2134,7 @@ report"#,
     },
     MatrixRow {
         id: "lang_render_content_into_create",
-        program: r#"one = from LangItem | take 1 | select title
+        program: r#"one = LangItem | take 1 | select title
 hdr = one => <<PLASM_TITLE_PIPE
 {{ rows[0].title }}
 PLASM_TITLE_PIPE
@@ -2154,7 +2154,7 @@ LangItem.create(title=hdr.content, score=0, owner="render-pipe-owner")"#,
         program: r#"note = <<PLASM_LANG_MATRIX_EOF
 hello-matrix
 PLASM_LANG_MATRIX_EOF
-one = from LangItem | take 1 | select title
+one = LangItem | take 1 | select title
 one, note"#,
         surface_line: false,
         federated: false,
@@ -2167,7 +2167,7 @@ one, note"#,
         program: r#"body = <<PLASM_EQ_BODY
 key = value
 PLASM_EQ_BODY
-one = from LangItem | take 1 | select title
+one = LangItem | take 1 | select title
 one, body"#,
         surface_line: false,
         federated: false,
@@ -2272,7 +2272,7 @@ tags"#,
     },
     MatrixRow {
         id: "lang_relation_many_from_plural_query",
-        program: r#"items = from LangItem | take 2
+        program: r#"items = LangItem | take 2
 tags = items => _.tags
 tags"#,
         surface_line: false,
@@ -2306,7 +2306,7 @@ tags"#,
     },
     MatrixRow {
         id: "lang_relation_prefer_embed_miss",
-        program: r#"items = from LangItem{owner="bob"} | take 2
+        program: r#"items = LangItem{owner="bob"} | take 2
 tags = items => _.tags
 tags"#,
         surface_line: false,
@@ -2324,7 +2324,7 @@ tags"#,
     },
     MatrixRow {
         id: "lang_bind_plural_relation_opaque_p",
-        program: r#"items = from LangItem | take 2
+        program: r#"items = LangItem | take 2
 tags = items => _.tags
 tags"#,
         surface_line: false,
@@ -2372,7 +2372,7 @@ tags"#,
     },
     MatrixRow {
         id: "lang_relation_integer_scoped_bindings",
-        program: r#"items = from LangItem | take 2
+        program: r#"items = LangItem | take 2
 tags = items => _.tags_by_score
 tags"#,
         surface_line: false,
@@ -2388,7 +2388,7 @@ tags"#,
     },
     MatrixRow {
         id: "lang_group_by_then_sort_agg_column",
-        program: "from LangItem | summarize by owner n=count() | order by n desc",
+        program: "LangItem | summarize by owner n=count() | order by n desc",
         surface_line: true,
         federated: false,
         features: &["pipe_summarize_by", "pipe_summarize_order_by", "pipe_order_by"],
@@ -2397,7 +2397,7 @@ tags"#,
     },
     MatrixRow {
         id: "lang_dedupe",
-        program: "from LangItem | distinct by owner | take 20",
+        program: "LangItem | distinct by owner | take 20",
         surface_line: true,
         federated: false,
         features: &["pipe_distinct", "pipe_take"],
@@ -2416,7 +2416,7 @@ tags"#,
     // RA-4 pipe factorization — monolith (inline stages).
     MatrixRow {
         id: "lang_ra4_pipe_monolith",
-        program: r#"from LangItem | where owner="alice" | order by title | take 5 | select title, owner"#,
+        program: r#"LangItem | where owner="alice" | order by title | take 5 | select title, owner"#,
         surface_line: false,
         federated: false,
         features: &[
@@ -2455,7 +2455,7 @@ t | select title, owner"#,
     // RA-4 apply factorization — inline `=>` derive.
     MatrixRow {
         id: "lang_ra4_apply_monolith",
-        program: r#"from LangItem | where owner="alice" | take 3 => { t: _.title, o: _.owner }"#,
+        program: r#"LangItem | where owner="alice" | take 3 => { t: _.title, o: _.owner }"#,
         surface_line: false,
         federated: false,
         features: &[
@@ -2471,7 +2471,7 @@ t | select title, owner"#,
     // RA-4 apply factorization — bind left then `=>`.
     MatrixRow {
         id: "lang_ra4_apply_bind_cut",
-        program: r#"rows = from LangItem | where owner="alice" | take 3
+        program: r#"rows = LangItem | where owner="alice" | take 3
 cards = rows => { t: _.title, o: _.owner }
 cards"#,
         surface_line: false,
@@ -2490,7 +2490,7 @@ cards"#,
     // RA-4 apply — relation fanout monolith vs bind-cut.
     MatrixRow {
         id: "lang_ra4_apply_relation_monolith",
-        program: r#"from LangItem | take 2 => _.tags"#,
+        program: r#"LangItem | take 2 => _.tags"#,
         surface_line: false,
         federated: false,
         features: &[
@@ -2504,7 +2504,7 @@ cards"#,
     },
     MatrixRow {
         id: "lang_ra4_apply_relation_bind_cut",
-        program: r#"items = from LangItem | take 2
+        program: r#"items = LangItem | take 2
 tags = items => _.tags
 tags"#,
         surface_line: false,
@@ -2522,7 +2522,7 @@ tags"#,
     // RA-4 apply — render bind-cut (pipe⇒render monolith needs named collection alias; sealed via bind).
     MatrixRow {
         id: "lang_ra4_apply_render_bind_cut",
-        program: r#"rows = from LangItem("i1") | select id, title
+        program: r#"rows = LangItem("i1") | select id, title
 hdr = rows => <<RA4MDBIND
 # {{ rows | length }} row(s)
 RA4MDBIND
@@ -2542,7 +2542,7 @@ hdr"#,
     // RA-4 apply — for_each monolith vs bind-cut.
     MatrixRow {
         id: "lang_ra4_apply_foreach_monolith",
-        program: r#"from LangItem("i1") | select id, title, owner => LangItem("i1").update(score=3, title=_.title, owner=_.owner)"#,
+        program: r#"LangItem("i1") | select id, title, owner => LangItem("i1").update(score=3, title=_.title, owner=_.owner)"#,
         surface_line: false,
         federated: false,
         features: &["ra4_apply_factor", "pipe_select", "for_each_effect", "dry_live_parity"],
@@ -2551,7 +2551,7 @@ hdr"#,
     },
     MatrixRow {
         id: "lang_ra4_apply_foreach_bind_cut",
-        program: r#"items = from LangItem("i1") | select id, title, owner
+        program: r#"items = LangItem("i1") | select id, title, owner
 sync = items => LangItem("i1").update(score=3, title=_.title, owner=_.owner)
 sync"#,
         surface_line: false,
@@ -2569,7 +2569,7 @@ sync"#,
     // Trap: derive body containing `.message` must stay derive (not for_each via `.m` substring).
     MatrixRow {
         id: "lang_ra4_apply_derive_message_field",
-        program: r#"from LangItem | where owner="alice" | take 2 => { t: _.title, note: "_.message" }"#,
+        program: r#"LangItem | where owner="alice" | take 2 => { t: _.title, note: "_.message" }"#,
         surface_line: false,
         federated: false,
         features: &["ra4_apply_factor", "derive_map", "pipe_where", "pipe_take", "dry_live_parity"],
@@ -2578,7 +2578,7 @@ sync"#,
     },
     MatrixRow {
         id: "lang_group_by_first",
-        program: "from LangItem | summarize by owner title=first(title)",
+        program: "LangItem | summarize by owner title=first(title)",
         surface_line: true,
         federated: false,
         features: &["pipe_summarize_by", "agg_first_last"],
@@ -2622,7 +2622,7 @@ summary | select headline"#,
     },
     MatrixRow {
         id: "lang_money_predicate_gt",
-        program: r#"from LangOffer | where price>10"#,
+        program: r#"LangOffer | where price>10"#,
         surface_line: false,
         federated: false,
         features: &["money_predicate", "pipe_where"],
@@ -2667,7 +2667,7 @@ summary | select headline"#,
     },
     MatrixRow {
         id: "lang_for_each_update",
-        program: "items = from LangItem(\"i1\") | select id, title, owner\nsync = items => LangItem(\"i1\").update(score=3, title=_.title, owner=_.owner)\nsync",
+        program: "items = LangItem(\"i1\") | select id, title, owner\nsync = items => LangItem(\"i1\").update(score=3, title=_.title, owner=_.owner)\nsync",
         surface_line: false,
         federated: false,
         features: &["for_each_effect"],
@@ -2782,7 +2782,7 @@ summary | select headline"#,
     },
     MatrixRow {
         id: "lang_federated_group_by_on_e1",
-        program: "by = from e1{owner=\"alice\"} | summarize by owner n=count()\nby",
+        program: "by = e1{owner=\"alice\"} | summarize by owner n=count()\nby",
         surface_line: false,
         federated: true,
         features: &[
@@ -2819,7 +2819,7 @@ summary | select headline"#,
     },
     MatrixRow {
         id: "lang_utf8_minijinja_dollar_stitch",
-        program: r#"one = from LangItem | take 1 | select title
+        program: r#"one = LangItem | take 1 | select title
 type_md = one => <<UTF8_ROW_EOF
 # Pokémon — {{ rows[0].title }}
 UTF8_ROW_EOF
@@ -2856,7 +2856,7 @@ fn matrix_program_for_row(
             let map = exp.symbol_map_arc();
             let r_sym =
                 map.ident_sym_relation_for(language_matrix::MATRIX_ENTRY_ID, "LangItem", "tags");
-            format!("items = from LangItem | take 2\ntags = items => _.{r_sym}\ntags")
+            format!("items = LangItem | take 2\ntags = items => _.{r_sym}\ntags")
         }
         "lang_homograph_lhs_coercion" => {
             let exp = es
@@ -2874,7 +2874,7 @@ fn matrix_program_for_row(
                 tags_wire, "tags",
                 "langitem_query.tags filter teaches as wire name"
             );
-            format!("items = from LangItem | take 2\ntags = items => _.{tags_wire}\ntags")
+            format!("items = LangItem | take 2\ntags = items => _.{tags_wire}\ntags")
         }
         "lang_federated_duplicate_entity_relation_r" => {
             let exp = es
@@ -2935,7 +2935,7 @@ notes, groups"#
         }
         "lang_federated_duplicate_entity_e2_search" => r#"e2~"Alpha""#.to_string(),
         "lang_federated_parallel_roots" => r#"e1{owner="alice"}, e2~"Alpha""#.to_string(),
-        "lang_bind_template_inline_on_e1" => r#"rows = from e1{owner="alice"} | select title
+        "lang_bind_template_inline_on_e1" => r#"rows = e1{owner="alice"} | select title
 report = rows => <<INLINE_E1
 # {{ rows | length }} row(s)
 INLINE_E1

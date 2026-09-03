@@ -165,7 +165,7 @@ bad"#,
             None,
             &session,
             "search-projection-filter-input",
-            r#"rows = from LangItem~"probe"{team_key="eng"} | select q
+            r#"rows = LangItem~"probe"{team_key="eng"} | select q
 rows"#,
         )
         .expect_err("filter params are inputs not row fields for projection");
@@ -491,7 +491,7 @@ bad"#,
             None,
             &session,
             "relation-chain-limit",
-            r#"from LangItem("i1").lines | take 2 | select id"#,
+            r#"LangItem("i1").lines | take 2 | select id"#,
         )
         .expect("direct relation chain with postfix should compile");
         let nodes = plan.get("nodes").and_then(|v| v.as_array()).expect("nodes");
@@ -1174,7 +1174,7 @@ author"#;
             None,
             &session,
             "gb-agg-chain",
-            "from LangItem | summarize by owner n=count()",
+            "LangItem | summarize by owner n=count()",
         )
         .expect("summarize-by pipeline");
         let computes: Vec<_> = plan["nodes"]
@@ -2466,7 +2466,7 @@ paged"#;
         let p_id = map.ident_sym_entity_field_for("langmatrix", "LangItem", "id");
         let p_score = map.ident_sym_entity_field_for("langmatrix", "LangItem", "score");
         let source = format!(
-            "rows = from LangItem | take 5\nnarrow = rows | select {p_id}, {p_score}\nordered = narrow | order by {p_score} desc\nordered"
+            "rows = LangItem | take 5\nnarrow = rows | select {p_id}, {p_score}\nordered = narrow | order by {p_score} desc\nordered"
         );
         let plan = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
@@ -2498,15 +2498,15 @@ paged"#;
         for (name, source) in [
             (
                 "group_by",
-                format!("rows = from LangItem | take 5\nout = rows | summarize by {p_owner} count=count()\nout"),
+                format!("rows = LangItem | take 5\nout = rows | summarize by {p_owner} count=count()\nout"),
             ),
             (
                 "filter",
-                format!("rows = from LangItem | take 5\nout = rows | where {p_score}>0\nout"),
+                format!("rows = LangItem | take 5\nout = rows | where {p_score}>0\nout"),
             ),
             (
                 "dedupe",
-                format!("rows = from LangItem | take 5\nout = rows | distinct by {p_id}\nout"),
+                format!("rows = LangItem | take 5\nout = rows | distinct by {p_id}\nout"),
             ),
         ] {
             compile_plasm_dag_to_plan(
@@ -2528,7 +2528,7 @@ paged"#;
             None,
             &session,
             "sort-bad-field",
-            "rows = from LangItem | take 2\nsorted = rows | order by not_a_field desc\nsorted",
+            "rows = LangItem | take 2\nsorted = rows | order by not_a_field desc\nsorted",
         )
         .expect_err("unknown sort field");
         assert!(
@@ -2787,7 +2787,7 @@ commits = repo.commits
 x = commits | take 2
 x"#;
         let direct =
-            r#"from Repository(owner="ryan-s-roberts", repo="plasm-core").commits | take 2"#;
+            r#"Repository(owner="ryan-s-roberts", repo="plasm-core").commits | take 2"#;
         let p1 = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
             None,
@@ -3147,7 +3147,7 @@ detail"#;
     #[test]
     fn for_each_heredoc_row_cursor_does_not_depend_on_underscore() {
         let session = test_session();
-        let source = r#"items = from LangItem | take 2
+        let source = r#"items = LangItem | take 2
 created = items => LangItem.create(title=<<T
 row ${_.title}
 T
@@ -3183,7 +3183,7 @@ created"#;
         let source = r#"report = <<RPT
 static body
 RPT
-items = from LangItem | take 2
+items = LangItem | take 2
 created = items => LangItem.create(title=<<T
 ${report.content}
 T
@@ -3215,7 +3215,7 @@ created"#;
     #[test]
     fn render_applicator_compiles_matrix_program() {
         let session = test_session();
-        let source = r#"a = from LangItem("i1") | select id, title
+        let source = r#"a = LangItem("i1") | select id, title
 report = a => <<MD
 Item: {{ a.id }}
 MD
@@ -3249,7 +3249,7 @@ report"#;
     #[test]
     fn lang_for_each_update_matrix_program_compiles_for_each_action() {
         let session = test_session();
-        let source = "items = from LangItem(\"i1\") | select id, title, owner\n\
+        let source = "items = LangItem(\"i1\") | select id, title, owner\n\
             sync = items => LangItem(\"i1\").update(score=3, title=_.title, owner=_.owner)\n\
             sync";
         let plan = compile_plasm_dag_to_plan(

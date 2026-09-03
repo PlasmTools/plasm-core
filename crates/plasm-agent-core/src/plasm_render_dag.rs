@@ -2,7 +2,6 @@
 
 use std::collections::BTreeMap;
 
-
 use crate::execute_session::ExecuteSession;
 use crate::plasm_plan::{
     ComputeOp, OutputName, SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind,
@@ -14,7 +13,9 @@ use crate::plasm_render_compile::{
 };
 
 use super::pipeline::compile_surface_node;
-use super::row_suffix::{compile_state_with_nodes, decompose_row_suffix_stream, lower_suffix_stream};
+use super::row_suffix::{
+    compile_state_with_nodes, decompose_row_suffix_stream, lower_suffix_stream,
+};
 // compile_state_with_nodes: Arc-share base nodes; only prefix payloads are cloned once.
 use super::prelude::*;
 use super::schema_validate::{
@@ -97,7 +98,8 @@ fn compile_render_chain(
             .ok_or_else(|| format!("Plasm program `{id}`: empty render chain"))?
     };
 
-    let spec = if let Some(raw_tokens) = infer_render_column_tokens_from_template(&template, head_core.trim())
+    let spec = if let Some(raw_tokens) =
+        infer_render_column_tokens_from_template(&template, head_core.trim())
     {
         let scratch = compile_state_with_nodes(state, &prefix);
         let qe = resolve_qualified_entity_for_dag_source(&scratch, &prefix, chain_tail_id.clone());

@@ -37,8 +37,7 @@ pub(crate) async fn materialize_relation_singleton_chain(
         expr: relation.relation.ir.expr.clone(),
         projection: relation.relation.ir.projection.clone(),
     };
-    let parsed =
-        instantiate_parsed_expr_plan_inputs(pe, &relation.uses_result, materialized)?;
+    let parsed = instantiate_parsed_expr_plan_inputs(pe, &relation.uses_result, materialized)?;
     let expr_label = relation
         .relation
         .ir
@@ -386,12 +385,7 @@ pub(crate) async fn materialize_relation_scoped_fanout(
         )?;
         let expr_label = format!("{base_display} [row {row_index}]");
         super::super::plan_fanout_parallel::push_verified_row_job(
-            &mut jobs,
-            &scoped_es,
-            node_index,
-            row_index,
-            expr_label,
-            parsed,
+            &mut jobs, &scoped_es, node_index, row_index, expr_label, parsed,
         )?;
     }
     let fold = super::super::plan_fanout_parallel::execute_row_fanout(

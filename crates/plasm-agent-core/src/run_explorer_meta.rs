@@ -113,10 +113,7 @@ pub fn merge_run_explorer_fields_into_plasm(
         plasm.insert("plan_ux_reflection".into(), ux);
     }
     if let Some(verdict) = op.dry_verdict {
-        plasm.insert(
-            "dry_verdict".into(),
-            json!(verdict.as_wire()),
-        );
+        plasm.insert("dry_verdict".into(), json!(verdict.as_wire()));
     }
     if op.auto_async {
         plasm.insert("auto_async".into(), json!(true));

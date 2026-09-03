@@ -8,9 +8,9 @@ mod binding_continuation;
 mod binding_contract;
 mod invoke_cardinality;
 mod plan_serialize;
-mod row_suffix;
 mod prelude;
 mod relation;
+mod row_suffix;
 mod schema_validate;
 mod types;
 mod view_embed_proof;
@@ -48,12 +48,12 @@ pub(in crate::plasm_dag) use plasm_core::expr_parser::{
     collect_program_statement_lines, split_top_level,
 };
 #[allow(unused_imports)]
-pub(in crate::plasm_dag) use row_suffix::row_suffix_to_compute;
-#[allow(unused_imports)]
 pub(in crate::plasm_dag) use relation::{
     lookup_relation_chain_meta, resolve_relation_segment_for_continuation,
     resolve_relation_wire_on_entity,
 };
+#[allow(unused_imports)]
+pub(in crate::plasm_dag) use row_suffix::row_suffix_to_compute;
 #[allow(unused_imports)]
 pub(in crate::plasm_dag) use types::{
     CompileState, DagNode, DagNodeSource, ExpandedProgramSurface,

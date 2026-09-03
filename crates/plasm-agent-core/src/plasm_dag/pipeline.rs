@@ -7,11 +7,11 @@ use super::plan_serialize::{
     collect_template_uses_from_expr, expr_template_json, infer_surface_contract, node_to_json,
     parse_plan_value_expr, stamp_plan_uses_result_qualified_entities,
 };
+use super::prelude::*;
+use super::render_dag::compile_render_from_applicator;
 use super::row_suffix::{
     compile_state_with_nodes, lower_suffix_stream, try_lower_row_suffix_expression,
 };
-use super::prelude::*;
-use super::render_dag::compile_render_from_applicator;
 use super::schema_validate::{cgs_for_qualified_entity, validate_surface_inline_projection};
 use super::types::{CompileState, DagNode, DagNodeSource, ExpandedProgramSurface};
 
@@ -329,6 +329,27 @@ fn lower_row_only_expr(
     }
 }
 
+/// When the pipe head is not a bound label, decide catalog materialization vs unknown binding.
+fn pipe_head_materializes_catalog(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    head: &str,
+) -> Result<bool, String> {
+    if state.contains(head) {
+        return Ok(false);
+    }
+    if pipe_head_has_catalog_surface_syntax(head) {
+        return Ok(true);
+    }
+    if is_valid_program_label(head) {
+        return match crate::catalog_ownership::resolve_cgs_for_entity(session, head, None) {
+            Ok(_) => Ok(true),
+            Err(_) => Err(format!("unknown binding `{head}`")),
+        };
+    }
+    Ok(true)
+}
+
 fn stage_row_expr_to_source(
     session: &ExecuteSession,
     state: &CompileState<'_>,
@@ -343,12 +364,6 @@ fn stage_row_expr_to_source(
                 .map(str::to_string)
                 .unwrap_or_else(|| format!("__plasm_{id}_apply_src"));
             if state.contains(pipe.head.as_str()) {
-                if pipe.explicit_from {
-                    return Err(format!(
-                        "`from` is forbidden on binding label `{}`; use `{} | …`",
-                        pipe.head, pipe.head
-                    ));
-                }
                 let suffixes = pipe.row_suffixes()?;
                 if suffixes.is_empty() {
                     return Ok((Vec::new(), pipe.head.clone()));
@@ -366,16 +381,18 @@ fn stage_row_expr_to_source(
                     out_id,
                 ));
             }
-            if !pipe.explicit_from {
-                return Err(format!(
-                    "unknown binding `{}`; catalog pipe heads require `from {} | …`",
-                    pipe.head, pipe.head
-                ));
+            if !pipe_head_materializes_catalog(session, state, pipe.head.as_str())? {
+                return Err(format!("unknown binding `{}`", pipe.head));
             }
             let suffixes = pipe.row_suffixes()?;
             if suffixes.is_empty() {
                 return Ok((
-                    vec![compile_surface_node(session, state, &out_id, pipe.head.as_str())?],
+                    vec![compile_surface_node(
+                        session,
+                        state,
+                        &out_id,
+                        pipe.head.as_str(),
+                    )?],
                     out_id,
                 ));
             }
@@ -448,19 +465,10 @@ fn lower_pipe_row_expression(
     pipe: PipeExpr,
 ) -> Result<Vec<DagNode>, String> {
     if state.contains(pipe.head.as_str()) {
-        if pipe.explicit_from {
-            return Err(format!(
-                "`from` is forbidden on binding label `{}`; use `{} | …`",
-                pipe.head, pipe.head
-            ));
-        }
         return binding_continuation::lower_pipe_continuation(session, state, id, display, &pipe);
     }
-    if !pipe.explicit_from {
-        return Err(format!(
-            "unknown binding `{}`; catalog pipe heads require `from {} | …`",
-            pipe.head, pipe.head
-        ));
+    if !pipe_head_materializes_catalog(session, state, pipe.head.as_str())? {
+        return Err(format!("unknown binding `{}`", pipe.head));
     }
     let suffixes = pipe.row_suffixes()?;
     let head_id = format!("__plasm_{id}_pipe_head");

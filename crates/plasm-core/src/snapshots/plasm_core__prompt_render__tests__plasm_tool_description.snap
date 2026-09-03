@@ -24,19 +24,19 @@ Batch reads aggressively. After a write use **`label.wire`** from that binding �
 - Executable rows start with `e#`; `r#`/`v#` are never roots. Wires appear on field-gloss / bracket rows by first use.
 - Never emit `v#`. Fill every card hole with a real value.
 
-**Membership plane (prefer `| where`):** After materializing rows with `from e#`, filter membership with `| where wire = tok`. Use entity-head `e#{wire=tok}` only when the task asks for catalog / backend / entity-head fetch. Bare taught tokens either way — never copy `<…>`, never leave `|` alternatives. Never emit `v#`.
+**Membership plane (prefer `| where`):** Materialize with `e#` / `e#{wire=tok}` then filter membership with `| where wire = tok`. Use entity-head `e#{wire=tok}` for catalog / backend selection. Bare taught tokens either way — never copy `<…>`, never leave `|` alternatives. Never emit `v#`.
 
 **Date/time:** `| where ts >= "…"` with `"Nd ago"` / `"today"`·`"yesterday"`·`"last week"`·`"this year"` / `"last monday"` / RFC3339 (quote multi-word) — not brace `min_*`, not `now()`/`date_*`.
 
 **Three strata** (catalog · `|` row algebra · `=>` application):
 
-1. **Catalog source** — `from e#` / `from e#{wire=value}` / `from e#~"q"` / `from e#(<id>)`. Bare `e#{…}` OK with no stages. Backend WHERE only on an **entity head**.
-2. **Row algebra** — `|` stages left-to-right (never after `=>`): `| where …` · `| select fields, name = expr` · `| summarize [by keys] n=count()` · `| order by f [desc]` · `| take n` · `| distinct [by f]`. Bind cuts: `rows = from e# | where …` then `rows | select …` or `rows => …`.
+1. **Catalog source** — `e#` / `e#{wire=value}` / `e#~"q"` / `e#(<id>)` — before `|` stages or bare (no `|`). Backend WHERE only on an **entity head**.
+2. **Row algebra** — `|` stages left-to-right (never after `=>`): `| where …` · `| select fields, name = expr` · `| summarize [by keys] n=count()` · `| order by f [desc]` · `| take n` · `| distinct [by f]`. Bind cuts: `rows = e# | where …` then `rows | select …` or `rows => …`.
 3. **Application `=>`** — when per-row args vary: `{ t: _.f }` · `<<TAG` Jinja · `e#.m#(…, _.f)` · `_.r#` / `_.wire`. Always `_` for row variance. Dots `.m#` / `.r#` only on a proven Get singleton: `item = e#("id"); item.update(…)`.
 
-**Catalog vs row plane:** backend WHERE is `e#{wire=value}` on an entity head; row filter is `from e# | where …` or `rows = e#` then `rows | where …`. Invalid: `rows{wire=…}` on a binding.
+**Catalog vs row plane:** backend WHERE is `e#{wire=value}` on an entity head; row filter is `e# | where …` or `rows = e#` then `rows | where …`. Invalid: `rows{wire=…}` on a binding.
 
-**Forbidden as row algebra:** `.filter` / `.with` / `[proj]` / `.group_by` / `.sort` / `.limit`, `| update`, `| take 1` then `.update` for multi-row, bare `=> tags` without `_`, `from` on a binding label.
+**Forbidden as row algebra:** `.filter` / `.with` / `[proj]` / `.group_by` / `.sort` / `.limit`, `| update`, `| take 1` then `.update` for multi-row, bare `=> tags` without `_`.
 
 **Composition:**
 - Row text: `label = source => <<TAG` … `TAG` — never root `e#[…]<<` or bare `source <<TAG`. String params take **`binding.content`**. Interpolation: `${report.content}` (`$$` escapes `$`).

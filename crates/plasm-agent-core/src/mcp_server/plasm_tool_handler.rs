@@ -210,9 +210,9 @@ impl PlasmMcpHandler {
                 }
             }
             if run_live {
-                let run_target = invocation.run_target().ok_or_else(|| {
-                    HostFault("missing `run_ref` on plasm_run invocation".into())
-                })?;
+                let run_target = invocation
+                    .run_target()
+                    .ok_or_else(|| HostFault("missing `run_ref` on plasm_run invocation".into()))?;
                 let ingress = committed_plasm_run::resolve_mcp_live_run_ingress(
                     &es,
                     &mcp_trace,
