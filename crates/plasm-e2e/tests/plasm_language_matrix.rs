@@ -7,7 +7,7 @@
 //!
 //! Plasm is a **SQL-shaped rowset** dialect ([relational reading](../../../../docs/plasm-language-definition.md#relational-reading)):
 //! brace selection ≈ backend WHERE, `| where` ≈ row WHERE, relations ≈ JOIN, `| select` ≈ SELECT list.
-//! Prefer non-auth witnesses for that pedagogy; optional `context=` frame is card-driven, not an auth dialect.
+//! Prefer non-auth witnesses for that pedagogy; Bearer scalars use selection braces like other wires.
 //!
 //! **Tier tags:** features marked `repair_sugar_*` are normative but **untaught** in prompts.
 //! Canonical generation forms must not rely on those tags for teaching coverage.
@@ -2919,8 +2919,8 @@ fn matrix_program_for_row(
             format!(
                 r#"sn_auth = {e_sn_auth}.{m_sn_login}(username="simple_note", password="secret")
 sw_auth = {e_sw_auth}.{m_sw_login}(username="splitwise", password="secret")
-notes = {e_note}(context=sn_auth)~"trip"
-groups = {e_group}(context=sw_auth)
+notes = {e_note}~"trip"{{access_token=sn_auth.access_token}}
+groups = {e_group}{{access_token=sw_auth.access_token}}
 notes, groups"#
             )
         }

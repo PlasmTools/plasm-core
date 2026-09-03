@@ -65,11 +65,7 @@ impl<'a> RenderCtx<'a> {
     fn render_query(&self, q: &QueryExpr) -> String {
         let entry_id = q.catalog_entry_id.as_deref();
         let entity = q.entity.as_str();
-        let head = q
-            .context
-            .as_ref()
-            .map(|context| format!("{entity}(context={})", context.binding()))
-            .unwrap_or_else(|| entity.to_string());
+        let head = entity.to_string();
         let cgs = self.cgs_for_entity(entry_id, entity);
         if self.is_search_query(q, cgs) {
             return self.render_search_query(head.as_str(), q, entry_id, cgs);

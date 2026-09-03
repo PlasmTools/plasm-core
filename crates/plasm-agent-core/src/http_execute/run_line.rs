@@ -163,7 +163,6 @@ pub(crate) async fn run_parsed_plasm_line(
     st: &PlasmHostState,
     session_id: &str,
     parsed: ParsedExpr,
-    source_contexts: indexmap::IndexMap<String, plasm_core::ExecutionContext>,
     trace: Option<&PlasmTraceContext>,
     line_index: i64,
     host_page_size: Option<usize>,
@@ -273,17 +272,14 @@ pub(crate) async fn run_parsed_plasm_line(
     let root_entity = root_entity_owned.as_str();
     let exec_cgs = crate::catalog_ownership::resolve_cgs_for_entity(sess, root_entity, None)
         .map_err(RunLineError::Parse)?;
-    let parsed =
-        plasm_runtime::with_source_execution_contexts_sync(source_contexts.clone(), || {
-            crate::execute_pipeline::preflight_line_compile_dispatch(
-                sess, sess, &parsed, line, exec_cgs,
-            )
-        })
-        .map_err(RunLineError::Parse)?;
+    let parsed = crate::execute_pipeline::preflight_line_compile_dispatch(
+        sess, sess, &parsed, line, exec_cgs,
+    )
+    .map_err(RunLineError::Parse)?;
     let fp_sink = Arc::new(Mutex::new(Vec::<String>::new()));
     let (_, operation) = trace_expr_api_meta(&parsed.expr);
 
-    let mut exec_opts = match plan_shared {
+    let exec_opts = match plan_shared {
         Some(shared) => {
             shared
                 .build_exec_opts(
@@ -312,7 +308,6 @@ pub(crate) async fn run_parsed_plasm_line(
                 .await
         }
     };
-    exec_opts.source_contexts = source_contexts;
     let graph_spill_active = exec_opts.graph_page_spill.is_some();
     let page_resume_backup = page_resume_owned.clone();
 

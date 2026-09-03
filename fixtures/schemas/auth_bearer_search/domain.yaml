@@ -44,12 +44,10 @@ capabilities:
     description: Search notes; Bearer token required ahead of optional search text.
     kind: search
     entity: SecuredNote
-    execution:
-      context:
-        entity: AuthSession
-        bindings:
-          access_token: access_token
     selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
     - name: query
       value_ref: nv_query
       required: false

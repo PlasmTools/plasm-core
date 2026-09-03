@@ -389,10 +389,6 @@ capabilities:
   <entity>_<operation>:       # unique name, conventionally entity_verb
     kind: <kind>              # see Capability Kinds below
     entity: <EntityName>      # must be a defined entity
-    execution:                # optional — see Capability input lanes
-      context:
-        entity: <EntityName>
-        bindings: { <cml_slot>: <field> }
     scope:                    # parent pivots (path / parent row)
       - name: <param>
         value_ref: <value_key>
@@ -421,9 +417,8 @@ Lanes are **structurally disjoint** (RA-1). Legacy flat `parameters:` / `role:` 
 
 | Lane | Semantics | Agent surface |
 |------|-----------|---------------|
-| `execution.context` | Optional singleton frame row spliced into CML for this source | `e#(context=ℓ){…}` only when declared |
 | `scope` | Parent-entity pivots (often `entity_ref`) | Relation parent / scoped query keys |
-| `selection` | Backend pushdown WHERE / search predicates | `e#{wire=…}` braces |
+| `selection` | Backend pushdown WHERE / search predicates (and other required source scalars) | `e#{wire=…}` braces |
 | `controls` | Sort, page size, embed/shape — not predicates | Host/controls; not brace WHERE |
 | `arguments` | Named non-body args | Method / action args |
 | `payload` | Create/update/action body | Method payload fields |

@@ -6,7 +6,6 @@
 //! expr       = source pipeline* projection?
 //! source     = Entity "(" id ")"               — GetExpr
 //!            | Entity "(" id_field "=" value ")" — GetExpr (shadow/repair sugar; normative, deliberately untaught)
-//!            | Entity "(context=" binding ")" selection — QueryExpr with reserved source invocation (RA-5; see `source_invoke`)
 //!            | Entity "{" pred ("," pred)* "}"  — QueryExpr with filters
 //!            | Entity "~" quoted_or_bare         — Search QueryExpr
 //!            | Entity                            — QueryExpr::all
@@ -62,7 +61,6 @@ mod entity_ref_parse;
 pub(crate) mod heredoc_surface;
 pub(crate) mod predicate_surface;
 pub(crate) mod program_surface;
-mod source_invoke;
 mod value;
 
 pub mod applicator;
@@ -1541,8 +1539,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Shadow/repair sugar (normative, deliberately untaught): `Entity(id_field=value)` on simple-id
-    /// entities ≡ canonical `Entity(value)`. Do **not** delete — distinct from reserved
-    /// `Entity(context=binding){…}` source-invocation (RA-5; see `source_invoke`).
+    /// entities ≡ canonical `Entity(value)`.
     ///
     /// Rejects wrong keys and multi-key maps (compound entities use [`Self::parse_strict_compound_key_value_map`]).
     fn try_parse_simple_id_field_get_sugar(
@@ -3159,7 +3156,6 @@ impl<'a> Parser<'a> {
             return self.ok_stamped(expr);
         }
 
-        let context = self.try_parse_source_context()?;
         self.skip_ws();
         let expr = match self.peek_char() {
             Some('(') => {
@@ -3326,7 +3322,6 @@ impl<'a> Parser<'a> {
                 Ok(Expr::Query(QueryExpr::all(entity)))
             }
         }?;
-        let expr = self.attach_source_context(expr, context)?;
         self.ok_stamped(expr)
     }
 
@@ -6601,60 +6596,6 @@ mod tests {
             panic!("expected Get, got {:?}", r.expr);
         };
         assert_eq!(g.reference.primary_slot_str(), "PLA-1");
-    }
-
-    #[test]
-    fn ra5_source_context_parses_as_reserved_invocation_argument() {
-        use std::sync::Arc;
-
-        let cgs = simple_name_id_get_fixture_cgs();
-        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
-        let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
-        let stack = test_layer(&cgs);
-        let labels = BTreeSet::from(["session".to_string()]);
-        let parsed = parse_with_cgs_layers_program(
-            "Pet(context=session){name=\"pikachu\"}[name]",
-            &stack,
-            sym_map,
-            Some(&labels),
-            false,
-        )
-        .expect("context-bound source query");
-        assert_eq!(parsed.projection, Some(vec!["name".to_string()]));
-        assert_eq!(
-            crate::expr_surface_render::render_expr_surface(&parsed.expr, &cgs),
-            "Pet(context=session){name=pikachu}"
-        );
-        let Expr::Query(query) = parsed.expr else {
-            panic!("expected Query");
-        };
-        assert_eq!(
-            query
-                .context
-                .as_ref()
-                .map(|context| context.binding().as_str()),
-            Some("session")
-        );
-    }
-
-    #[test]
-    fn ra5_source_context_rejects_unknown_binding() {
-        use std::sync::Arc;
-
-        let cgs = simple_name_id_get_fixture_cgs();
-        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
-        let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
-        let stack = test_layer(&cgs);
-        let labels = BTreeSet::from(["session".to_string()]);
-        let err = parse_with_cgs_layers_program(
-            "Pet(context=missing){name=\"pikachu\"}",
-            &stack,
-            sym_map,
-            Some(&labels),
-            false,
-        )
-        .expect_err("unknown context binding");
-        assert!(err.to_string().contains("not an in-scope program binding"));
     }
 }
 

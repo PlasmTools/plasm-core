@@ -120,7 +120,6 @@ impl PlanLineExecuteShared {
             cancel: self.cancel.clone(),
             graph_page_spill: self.graph_page_spill.clone(),
             rows_progress,
-            source_contexts: indexmap::IndexMap::new(),
         }
     }
 }

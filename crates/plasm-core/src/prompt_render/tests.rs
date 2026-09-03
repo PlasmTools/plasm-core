@@ -2164,6 +2164,10 @@ fn plasm_tool_description_includes_composition_strata() {
     assert!(frontmatter.contains("=>"));
     assert!(frontmatter.contains("<<TAG"));
     assert!(
+        !frontmatter.contains("context=ℓ") && !frontmatter.contains("(context="),
+        "RA-5 source frame abolished — no context= in tool card"
+    );
+    assert!(
         frontmatter.contains("membership")
             || frontmatter.contains("Membership")
             || frontmatter.contains("membership holes"),
@@ -2309,7 +2313,8 @@ fn mcp_static_tool_descriptions_byte_budget() {
 fn plasm_tool_description_truncation_prefix_has_composition_mandate() {
     let full = super::PLASM_TOOL_DESCRIPTION;
     let prefix_n = super::PLASM_TOOL_DESCRIPTION_PREFIX_BYTES;
-    let prefix = &full[..full.len().min(prefix_n)];
+    let end = full.floor_char_boundary(full.len().min(prefix_n));
+    let prefix = &full[..end];
     assert!(
         prefix.contains("Batch independent reads"),
         "batching mandate must be in first {prefix_n} bytes (host truncation)"
@@ -2338,7 +2343,8 @@ fn plasm_tool_description_truncation_prefix_has_composition_mandate() {
     );
 
     let wide_n = super::PLASM_TOOL_DESCRIPTION_WIDE_PREFIX_BYTES;
-    let wide = &full[..full.len().min(wide_n)];
+    let wide_end = full.floor_char_boundary(full.len().min(wide_n));
+    let wide = &full[..wide_end];
     assert!(
         wide.contains("Composition:") || wide.contains("Three strata"),
         "composition strata must be in first {wide_n} bytes (host truncation)"

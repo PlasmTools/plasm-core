@@ -93,7 +93,6 @@ impl ExecutePipeline {
             st,
             session_id,
             parsed,
-            indexmap::IndexMap::new(),
             trace,
             line_index,
             None,

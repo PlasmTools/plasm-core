@@ -299,9 +299,8 @@ pub use row_predicate::{
     type_check_row_predicate, RowComparison, RowPredicate, RowPredicateTypeCtx,
 };
 pub use rowset::{
-    normalize_query_expr_to_rowset, BackendSelection, BackendSelectionBinding, ExecutionContext,
-    ExecutionContextRef, InvocationControls, ParentScope, ResolvedRowset, RowSource, RowTerminal,
-    RowTransform,
+    normalize_query_expr_to_rowset, BackendSelection, BackendSelectionBinding, InvocationControls,
+    ParentScope, ResolvedRowset, RowSource, RowTerminal, RowTransform,
 };
 pub use teaching_term::{
     method_ref_for_capability, method_ref_for_domain_segment, resolve_parameter_slot, EntityRef,
@@ -343,9 +342,9 @@ pub use schema::{
     capability_template_all_var_names, flow_control_param_names, is_flow_control_param_name,
     template_domain_exemplar_requires_entity_anchor, template_invoke_requires_explicit_anchor_id,
     view_node_field_where_output_detail, AgentPresentation, ArrayItemsSchema, AttachmentMediaKind,
-    AuthScheme, BackendSelectionSchema, CapabilityExecutionSchema, CapabilityInputs,
+    AuthScheme, BackendSelectionSchema, CapabilityInputs,
     CapabilityKind, CapabilityManifest, CapabilityMapping, CapabilitySchema,
-    CapabilityTemplateJson, Cardinality, CgsCapabilityIndex, ContextRequirement, CrossFieldRule,
+    CapabilityTemplateJson, Cardinality, CgsCapabilityIndex, CrossFieldRule,
     CrossFieldRuleType, DataClassDimension, DataClassName, DataClassSchema, DataClassSeverity,
     DiscoveryCapabilityHints, DiscoveryCoSeedWith, DiscoveryEntityHints, DiscoveryRelationHints,
     DiscoverySeedClass, DiscoverySeedNav, EmbedOnMissPolicy, EntityDef, FieldDeriveRule,

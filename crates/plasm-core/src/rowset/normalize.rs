@@ -1,7 +1,6 @@
 //! Surface [`QueryExpr`] → canonical [`ResolvedRowset`] (read-query seam).
 //!
-//! Lane discipline (RA-1 / RA-2 / RA-5):
-//! - `context=` is a binding ref on [`RowSource::External`], never a selection slot.
+//! Lane discipline (RA-1 / RA-2):
 //! - Source braces bind catalog selection and root scope pivots → [`BackendSelection`].
 //! - Capability control params in braces are rejected (RA-1); pagination/hydrate use
 //!   [`InvocationControls`].
@@ -32,24 +31,6 @@ pub fn normalize_query_expr_to_rowset(
     entry_id: &str,
 ) -> Result<ResolvedRowset, String> {
     let cap = resolve_query_capability(query, cgs).map_err(|e| e.to_string())?;
-
-    let requires_context = cap.inputs.execution.context.is_some();
-    match (requires_context, query.context.as_ref()) {
-        (true, None) => {
-            return Err(format!(
-                "RA-5: capability '{}' declares inputs.execution.context; source must supply context=<binding> (no ambient fallback)",
-                cap.name
-            ));
-        }
-        (false, Some(ctx)) => {
-            return Err(format!(
-                "RA-5: capability '{}' does not declare inputs.execution.context; context={} is forbidden (no ambient/fallback)",
-                cap.name,
-                ctx.binding()
-            ));
-        }
-        (true, Some(_)) | (false, None) => {}
-    }
 
     let selection_names: HashSet<&str> = cap
         .selection_params()
@@ -120,7 +101,6 @@ pub fn normalize_query_expr_to_rowset(
         source: RowSource::External {
             qualified_entity: QualifiedEntityKey::new(effective_entry, query.entity.clone()),
             capability: CapabilityName::from(cap.name.as_str()),
-            context: query.context.clone(),
             parent_scope: ParentScope::Root,
             controls: InvocationControls {
                 pagination: query.pagination.clone(),
@@ -172,12 +152,10 @@ fn collect_source_comparisons(
 mod tests {
     use super::*;
     use crate::schema::{
-        registry_test_util, BackendSelectionSchema, CapabilityExecutionSchema, CapabilityInputs,
-        CapabilityKind, CapabilityMapping, CapabilitySchema, ContextRequirement, NamedValueSchema,
-        ParentScopeSchema, ResourceSchema,
+        registry_test_util, BackendSelectionSchema, CapabilityInputs, CapabilityKind,
+        CapabilityMapping, CapabilitySchema, NamedValueSchema, ParentScopeSchema, ResourceSchema,
     };
-    use crate::{ExecutionContextRef, FieldType, InvocationControlsSchema, QueryPagination};
-    use indexmap::IndexMap;
+    use crate::{FieldType, InvocationControlsSchema, QueryPagination};
 
     fn seed_values(cgs: &mut CGS) {
         cgs.values.insert(
@@ -194,33 +172,10 @@ mod tests {
         );
     }
 
-    fn fixture_cgs(with_context: bool, with_selection: bool) -> CGS {
+    fn fixture_cgs(with_selection: bool) -> CGS {
         let mut cgs = CGS::new();
         seed_values(&mut cgs);
         cgs.bind_registry_entry_id("app");
-
-        cgs.add_resource(ResourceSchema {
-            name: "Session".into(),
-            description: String::new(),
-            id_field: "id".into(),
-            id_format: None,
-            id_from: None,
-            fields: vec![
-                registry_test_util::entity_field_from_values(&cgs, "fx_str", "id", true, ""),
-                registry_test_util::entity_field_from_values(&cgs, "fx_str", "token", true, ""),
-            ],
-            relations: vec![],
-            expression_aliases: vec![],
-            implicit_request_identity: false,
-            key_vars: vec![],
-            abstract_entity: true,
-            domain_projection_examples: false,
-            primary_read: None,
-            primary_query: None,
-            primary_search: None,
-            discovery: None,
-        })
-        .unwrap();
 
         cgs.add_resource(ResourceSchema {
             name: "Request".into(),
@@ -246,16 +201,7 @@ mod tests {
         })
         .unwrap();
 
-        let mut bindings = IndexMap::new();
-        bindings.insert("access_token".into(), "token".into());
-
-        let mut path = vec![serde_json::json!({"type": "literal", "value": "requests"})];
-        if with_context {
-            path.insert(
-                0,
-                serde_json::json!({"type": "var", "name": "access_token"}),
-            );
-        }
+        let path = vec![serde_json::json!({"type": "literal", "value": "requests"})];
 
         let selection = if with_selection {
             BackendSelectionSchema(vec![registry_test_util::object_input_field_from_values(
@@ -295,16 +241,6 @@ mod tests {
                 .into(),
             },
             inputs: CapabilityInputs {
-                execution: CapabilityExecutionSchema {
-                    context: if with_context {
-                        Some(ContextRequirement {
-                            entity: "Session".into(),
-                            bindings,
-                        })
-                    } else {
-                        None
-                    },
-                },
                 scope,
                 selection,
                 controls,
@@ -320,7 +256,6 @@ mod tests {
         })
         .unwrap();
 
-        // Context-required queries are non-anchoring; a Get keeps Request teachable under validate().
         cgs.add_capability(CapabilitySchema {
             name: "request_get".into(),
             description: String::new(),
@@ -354,52 +289,19 @@ mod tests {
     }
 
     #[test]
-    fn context_required_and_present() {
-        let cgs = fixture_cgs(true, true);
+    fn selection_braces_bind_backend_slots() {
+        let cgs = fixture_cgs(true);
         let mut q = QueryExpr::filtered("Request", Predicate::eq("status", "open"));
-        q.context = Some(ExecutionContextRef::new("session").unwrap());
         q.capability_name = Some("request_query".into());
 
         let rowset = normalize_query_expr_to_rowset(&q, &cgs, "app").expect("normalize");
-        match &rowset.source {
-            RowSource::External { context, .. } => {
-                assert_eq!(
-                    context.as_ref().map(|c| c.binding().as_str()),
-                    Some("session")
-                );
-            }
-            other => panic!("expected External source, got {other:?}"),
-        }
         assert_eq!(rowset.selection.0.len(), 1);
         assert_eq!(rowset.selection.0[0].slot.as_str(), "status");
     }
 
     #[test]
-    fn context_required_missing_rejects() {
-        let cgs = fixture_cgs(true, true);
-        let mut q = QueryExpr::all("Request");
-        q.capability_name = Some("request_query".into());
-
-        let err = normalize_query_expr_to_rowset(&q, &cgs, "app").unwrap_err();
-        assert!(err.contains("RA-5"), "{err}");
-        assert!(err.contains("context="), "{err}");
-    }
-
-    #[test]
-    fn context_forbidden_when_capability_has_none() {
-        let cgs = fixture_cgs(false, true);
-        let mut q = QueryExpr::filtered("Request", Predicate::eq("status", "open"));
-        q.context = Some(ExecutionContextRef::new("session").unwrap());
-        q.capability_name = Some("request_query".into());
-
-        let err = normalize_query_expr_to_rowset(&q, &cgs, "app").unwrap_err();
-        assert!(err.contains("RA-5"), "{err}");
-        assert!(err.contains("forbidden"), "{err}");
-    }
-
-    #[test]
     fn selection_only_braces_reject_entity_field() {
-        let cgs = fixture_cgs(false, true);
+        let cgs = fixture_cgs(true);
         let mut q = QueryExpr::filtered("Request", Predicate::eq("name", "x"));
         q.capability_name = Some("request_query".into());
 
@@ -410,7 +312,7 @@ mod tests {
 
     #[test]
     fn ra1_root_scope_pivot_becomes_selection_not_parent_scope() {
-        let cgs = fixture_cgs(false, true);
+        let cgs = fixture_cgs(true);
         let mut q = QueryExpr::filtered("Request", Predicate::eq("parent_id", "p1"));
         q.capability_name = Some("request_query".into());
 
@@ -427,7 +329,7 @@ mod tests {
 
     #[test]
     fn ra1_rejects_control_param_in_braces() {
-        let cgs = fixture_cgs(false, true);
+        let cgs = fixture_cgs(true);
         let mut q = QueryExpr::filtered("Request", Predicate::eq("page_token", "abc"));
         q.capability_name = Some("request_query".into());
 
@@ -440,34 +342,8 @@ mod tests {
     }
 
     #[test]
-    fn ra1_context_not_smuggled_into_selection() {
-        let cgs = fixture_cgs(true, true);
-        let mut q = QueryExpr::filtered("Request", Predicate::eq("status", "open"));
-        q.context = Some(ExecutionContextRef::new("session").unwrap());
-        q.capability_name = Some("request_query".into());
-
-        let rowset = normalize_query_expr_to_rowset(&q, &cgs, "app").unwrap();
-        let json = serde_json::to_value(&rowset).unwrap();
-        assert_eq!(
-            json.pointer("/source/context").and_then(|v| v.as_str()),
-            Some("session")
-        );
-        let slots: Vec<&str> = json
-            .pointer("/selection")
-            .and_then(|v| v.as_array())
-            .into_iter()
-            .flatten()
-            .filter_map(|b| b.get("slot").and_then(|s| s.as_str()))
-            .collect();
-        assert_eq!(slots, vec!["status"]);
-        assert!(!slots
-            .iter()
-            .any(|s| *s == "session" || *s == "access_token"));
-    }
-
-    #[test]
     fn ra2_pagination_and_hydrate_land_in_invocation_controls() {
-        let cgs = fixture_cgs(false, true);
+        let cgs = fixture_cgs(true);
         let mut q = QueryExpr::filtered("Request", Predicate::eq("status", "open"));
         q.capability_name = Some("request_query".into());
         q.pagination = Some(QueryPagination {
@@ -485,11 +361,5 @@ mod tests {
             other => panic!("expected External source, got {other:?}"),
         }
         assert!(rowset.selection.0.iter().all(|b| b.slot.as_str() != "page"));
-    }
-
-    #[test]
-    fn ra5_context_ref_is_binding_identifier() {
-        assert!(ExecutionContextRef::new("session").is_ok());
-        assert!(ExecutionContextRef::new("login.result").is_err());
     }
 }

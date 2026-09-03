@@ -424,12 +424,10 @@ capabilities:
     description: Search Venmo users by name or email.
     kind: search
     entity: User
-    execution:
-      context:
-        entity: AuthSession
-        bindings:
-          access_token: access_token
     selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
     - name: query
       value_ref: nv_search_query
       required: true
@@ -460,15 +458,13 @@ capabilities:
     description: Search the authenticated user's friends or another user's friends.
     kind: query
     entity: Friend
-    execution:
-      context:
-        entity: AuthSession
-        bindings:
-          access_token: access_token
     scope:
     - name: user_email
       value_ref: nv_email
     selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
     - name: query
       value_ref: nv_search_query
     provides:
@@ -586,12 +582,10 @@ capabilities:
     description: Find the authenticated user's sent and received transactions.
     kind: search
     entity: Transaction
-    execution:
-      context:
-        entity: AuthSession
-        bindings:
-          access_token: access_token
     selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
     - name: query
       value_ref: nv_search_query
     - name: user_email
@@ -684,12 +678,10 @@ capabilities:
       - payment request
       - requested money
       - charge
-    execution:
-      context:
-        entity: AuthSession
-        bindings:
-          access_token: access_token
     selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
     - name: status
       value_ref: nv_status
     provides: &id002
@@ -716,12 +708,10 @@ capabilities:
       target_terms:
       - payment request
       - money request
-    execution:
-      context:
-        entity: AuthSession
-        bindings:
-          access_token: access_token
     selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
     - name: status
       value_ref: nv_status
     provides: *id002
@@ -921,11 +911,10 @@ capabilities:
     description: List payment cards linked to the authenticated user's account.
     kind: query
     entity: PaymentCard
-    execution:
-      context:
-        entity: AuthSession
-        bindings:
-          access_token: access_token
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
     provides:
     - payment_card_id
     - card_name

@@ -46,12 +46,7 @@ fn query_intent_line(q: &crate::QueryExpr, cgs: &CGS) -> String {
     } else {
         "Query"
     };
-    let context_note = q
-        .context
-        .as_ref()
-        .map(|context| format!(" with context `{}`", context.binding()))
-        .unwrap_or_default();
-    let mut s = format!("{search} {}{context_note}{cap_note}{pred}", q.entity);
+    let mut s = format!("{search} {}{cap_note}{pred}", q.entity);
     if q.hydrate == Some(false) {
         s.push_str(" (summary rows, no per-row hydrate)");
     }
@@ -185,7 +180,6 @@ pub fn expr_simulation_bindings(expr: &Expr) -> serde_json::Value {
             json!({
                 "op": "query",
                 "entity": q.entity,
-                "context": q.context,
                 "capability_name": q.capability_name,
                 "predicate": q.predicate,
                 "pagination": q.pagination,

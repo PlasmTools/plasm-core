@@ -104,11 +104,6 @@ pub struct QueryPagination {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct QueryExpr {
     pub entity: EntityName,
-    /// Explicit source-invocation context (`Entity(context=session){…}`).
-    /// Materialized [`crate::rowset::ExecutionContext`] lives on the runtime invocation frame
-    /// (`ExecuteOptions::source_contexts`), never on this AST.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context: Option<crate::rowset::ExecutionContextRef>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub predicate: Option<Predicate>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -296,7 +291,6 @@ impl QueryExpr {
     pub fn all(entity: impl Into<EntityName>) -> Self {
         Self {
             entity: entity.into(),
-            context: None,
             predicate: None,
             projection: None,
             pagination: None,
@@ -310,7 +304,6 @@ impl QueryExpr {
     pub fn filtered(entity: impl Into<EntityName>, predicate: Predicate) -> Self {
         Self {
             entity: entity.into(),
-            context: None,
             predicate: Some(predicate),
             projection: None,
             pagination: None,
@@ -328,7 +321,6 @@ impl QueryExpr {
     ) -> Self {
         Self {
             entity: entity.into(),
-            context: None,
             predicate,
             projection: Some(fields),
             pagination: None,
@@ -341,12 +333,6 @@ impl QueryExpr {
     /// Attach the name of the specific capability to use for execution.
     pub fn with_capability(mut self, name: impl Into<CapabilityName>) -> Self {
         self.capability_name = Some(name.into());
-        self
-    }
-
-    /// Attach one explicit source execution context.
-    pub fn with_context(mut self, context: crate::rowset::ExecutionContextRef) -> Self {
-        self.context = Some(context);
         self
     }
 

@@ -441,12 +441,10 @@ capabilities:
     description: Search secured notes; Bearer access_token required ahead of optional search text.
     kind: search
     entity: LangSecuredNote
-    execution:
-      context:
-        entity: LangAuthSession
-        bindings:
-          access_token: access_token
     selection:
+    - name: access_token
+      value_ref: nv_lang_auth_access_token
+      required: true
     - name: query
       value_ref: nv_lang_secured_note_query
       required: false
@@ -472,11 +470,10 @@ capabilities:
     description: List secured groups; Bearer access_token required (second federated auth consumer).
     kind: query
     entity: LangSecuredGroup
-    execution:
-      context:
-        entity: LangAuthSession
-        bindings:
-          access_token: access_token
+    selection:
+    - name: access_token
+      value_ref: nv_lang_auth_access_token
+      required: true
     provides:
     - group_id
     - name
@@ -525,12 +522,10 @@ capabilities:
     description: List payment requests other people sent to you (query anchor witness).
     kind: query
     entity: QueryOnlyRequest
-    execution:
-      context:
-        entity: LangAuthSession
-        bindings:
-          access_token: access_token
     selection:
+    - name: access_token
+      value_ref: nv_lang_auth_access_token
+      required: true
     - name: status
       value_ref: nv_lang_item_status
       required: false

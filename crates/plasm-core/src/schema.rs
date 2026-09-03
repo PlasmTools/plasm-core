@@ -14,8 +14,7 @@ use std::sync::{Arc, OnceLock};
 #[path = "capability_inputs.rs"]
 mod capability_inputs;
 pub use capability_inputs::{
-    BackendSelectionSchema, CapabilityExecutionSchema, CapabilityInputs, ContextRequirement,
-    InvocationControlsSchema, ParentScopeSchema,
+    BackendSelectionSchema, CapabilityInputs, InvocationControlsSchema, ParentScopeSchema,
 };
 
 /// Opaque CML mapping payload (HTTP or EVM); validated at load via `plasm_compile::parse_capability_template`.
@@ -3659,7 +3658,7 @@ impl CGS {
             {
                 return Err(SchemaError::SchemaConstraint {
                     message: format!(
-                        "capability '{cap_name}': query/search inputs may only use execution, scope, selection, and controls"
+                        "capability '{cap_name}': query/search inputs may only use scope, selection, and controls"
                     ),
                 });
             }
@@ -3718,47 +3717,6 @@ impl CGS {
                 .flat_map(input_schema_top_level_fields)
             {
                 register(&field.name, "payload")?;
-            }
-
-            let Some(context) = cap.inputs.execution.context.as_ref() else {
-                continue;
-            };
-            if context.bindings.is_empty() {
-                return Err(SchemaError::SchemaConstraint {
-                    message: format!(
-                        "capability '{cap_name}': execution.context.bindings must not be empty"
-                    ),
-                });
-            }
-            let entity = self.entities.get(&context.entity).ok_or_else(|| {
-                SchemaError::SchemaConstraint {
-                    message: format!(
-                        "capability '{cap_name}': execution.context.entity '{}' does not exist",
-                        context.entity
-                    ),
-                }
-            })?;
-            let template_vars = capability_template_all_var_names(&cap.mapping.template.0);
-            for (slot, row_field) in &context.bindings {
-                register(slot, "execution.context")?;
-                if !template_vars.iter().any(|name| name == slot) {
-                    return Err(SchemaError::SchemaConstraint {
-                        message: format!(
-                            "capability '{cap_name}': execution.context binding slot '{slot}' is not referenced by its CML template"
-                        ),
-                    });
-                }
-                let field_exists = row_field == &entity.id_field
-                    || entity.fields.contains_key(row_field)
-                    || entity.key_vars.iter().any(|key| key == row_field);
-                if !field_exists {
-                    return Err(SchemaError::SchemaConstraint {
-                        message: format!(
-                            "capability '{cap_name}': execution.context binding '{slot}' references unknown field '{}.{}'",
-                            context.entity, row_field
-                        ),
-                    });
-                }
             }
         }
         Ok(())
@@ -5722,10 +5680,9 @@ impl CapabilitySchema {
         self.scope_params().iter().any(|f| f.required)
     }
 
-    /// Whether this capability has at least one required parameter in any structural lane,
-    /// or declares `inputs.execution.context` (a required source-invocation binding).
+    /// Whether this capability has at least one required parameter in any structural lane.
     pub fn has_any_required_param(&self) -> bool {
-        self.inputs.execution.context.is_some() || self.input_fields().any(|f| f.required)
+        self.input_fields().any(|f| f.required)
     }
 
     /// See [`template_domain_exemplar_requires_entity_anchor`].

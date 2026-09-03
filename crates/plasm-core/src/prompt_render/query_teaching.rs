@@ -85,16 +85,6 @@ pub(crate) fn unseeded_entity_ref_invocation_gloss(
     }
 }
 
-/// Source head for query/search teaching: bare `e#`, or `e#(context=session)` when the
-/// capability declares `inputs.execution.context` (RA-5 explicit context binding).
-pub(crate) fn query_source_head(cap: &crate::CapabilitySchema, es: &str) -> String {
-    if cap.inputs.execution.context.is_some() {
-        format!("{es}(context=session)")
-    } else {
-        es.to_string()
-    }
-}
-
 /// One `p#=value` in `Entity{p#=,…}` — opaque param symbols on the LHS (not wire names).
 fn query_param_slot_example(
     f: &InputFieldSchema,
@@ -229,7 +219,6 @@ pub(crate) fn query_expr_maximal(
     map: Option<&SymbolMap>,
     catalog_entry_id: &str,
 ) -> Option<String> {
-    let head = query_source_head(cap, es);
     let scope_fields: Vec<&InputFieldSchema> =
         cap.scope_params().iter().filter(|f| f.required).collect();
 
@@ -243,9 +232,9 @@ pub(crate) fn query_expr_maximal(
     }
 
     if inner.is_empty() {
-        return Some(head);
+        return Some(es.to_string());
     }
-    Some(format!("{head}{{{}}}", inner.join(", ")))
+    Some(format!("{es}{{{}}}", inner.join(", ")))
 }
 
 /// Filter predicates only (no scope) — one `Entity{p#=…}` line per query cap so teaching table shows **filter**
@@ -264,8 +253,7 @@ pub(crate) fn query_expr_filters_only(
     if inner.is_empty() {
         return None;
     }
-    let head = query_source_head(cap, es);
-    Some(format!("{head}{{{}}}", inner.join(", ")))
+    Some(format!("{es}{{{}}}", inner.join(", ")))
 }
 
 /// Search filter slots for `e#~"<query>"{p#=…}` — selection-lane params (not the free-text `~` hole).
@@ -283,9 +271,8 @@ pub(crate) fn search_expr_with_filters(
     if inner.is_empty() {
         return None;
     }
-    let head = query_source_head(cap, es);
     Some(format!(
-        "{head}~{TEACHING_SEARCH_QUERY_LITERAL}{{{}}}",
+        "{es}~{TEACHING_SEARCH_QUERY_LITERAL}{{{}}}",
         inner.join(", ")
     ))
 }
@@ -307,6 +294,5 @@ pub(crate) fn query_expr_scope_only(
     for sf in &scope_fields {
         inner.push(scope_param_slot(sf, cap, cgs, map, catalog_entry_id));
     }
-    let head = query_source_head(cap, es);
-    Some(format!("{head}{{{}}}", inner.join(", ")))
+    Some(format!("{es}{{{}}}", inner.join(", ")))
 }

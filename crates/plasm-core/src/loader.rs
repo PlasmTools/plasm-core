@@ -13,7 +13,7 @@ use crate::schema::{
 };
 use crate::{
     capability_template_all_var_names, AgentPresentation, ArrayItemsSchema, AttachmentMediaKind,
-    AuthScheme, BackendSelectionSchema, CapabilityExecutionSchema, CapabilityInputs,
+    AuthScheme, BackendSelectionSchema, CapabilityInputs,
     CapabilityKind, CapabilityMapping, CapabilitySchema, CapabilityTemplateJson, Cardinality,
     FieldDeriveRule, FieldSchema, FieldType, InputFieldSchema, InputSchema, InputType,
     InvocationControlsSchema, OauthExtension, ParentScopeSchema, RelationSchema, ResourceSchema,
@@ -338,6 +338,7 @@ pub struct DomainRelation {
 }
 
 /// `invoke_preflight` is rejected at deserialize time via [`deserialize_forbidden_invoke_preflight_key`].
+/// Abolished `execution:` (RA-5 context frame) is rejected here via `deny_unknown_fields`.
 #[allow(clippy::manual_non_exhaustive)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -349,9 +350,6 @@ pub struct DomainCapability {
     /// Policy for compound `entity_ref` scope parameters after runtime splat (`retain` default).
     #[serde(default)]
     pub scope_aggregate_key_policy: Option<ScopeAggregateKeyPolicy>,
-    /// Execution-only requirements, including explicit context-row bindings.
-    #[serde(default)]
-    pub execution: CapabilityExecutionSchema,
     /// Parameters derived exclusively from a typed parent row.
     #[serde(default)]
     pub scope: Vec<DomainParameter>,
@@ -867,7 +865,6 @@ fn capability_inputs_from_domain(
     values: &IndexMap<String, NamedValueSchema>,
 ) -> Result<CapabilityInputs, String> {
     Ok(CapabilityInputs {
-        execution: cap.execution.clone(),
         scope: ParentScopeSchema(input_fields_from_domain_parameters(
             cap_name, &cap.scope, values,
         )?),
@@ -2095,7 +2092,7 @@ capabilities:
     }
 
     #[test]
-    fn validates_execution_context_binding_integrity() {
+    fn rejects_removed_execution_context_lane() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("domain.yaml"),
@@ -2139,66 +2136,10 @@ capabilities:
             "session_get: {}\nwidget_get: {}\nq:\n  query:\n    session:\n      type: var\n      name: session_id\n",
         )
         .unwrap();
-        let cgs = load_schema_dir(dir.path()).expect("valid context binding");
-        let context = cgs.capabilities["q"]
-            .inputs
-            .execution
-            .context
-            .as_ref()
-            .expect("context");
-        assert_eq!(context.entity.as_str(), "Session");
-        assert_eq!(context.bindings["session_id"].as_str(), "id");
-    }
-
-    #[test]
-    fn rejects_execution_context_binding_to_unknown_row_field() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            dir.path().join("domain.yaml"),
-            r#"http_backend: http://localhost:1080
-values:
-  nv_id:
-    type: string
-entities:
-  Session:
-    id_field: id
-    fields:
-      id:
-        value_ref: nv_id
-        required: true
-  Widget:
-    id_field: id
-    fields:
-      id:
-        value_ref: nv_id
-        required: true
-capabilities:
-  session_get:
-    kind: get
-    entity: Session
-  widget_get:
-    kind: get
-    entity: Widget
-  q:
-    kind: query
-    entity: Widget
-    execution:
-      context:
-        entity: Session
-        bindings:
-          session_id: missing
-"#,
-        )
-        .unwrap();
-        std::fs::write(
-            dir.path().join("mappings.yaml"),
-            "session_get: {}\nwidget_get: {}\nq:\n  query:\n    session:\n      type: var\n      name: session_id\n",
-        )
-        .unwrap();
         let err = load_schema_dir(dir.path()).unwrap_err();
         assert!(
-            err.contains("Session.missing") && err.contains("execution.context"),
-            "unexpected error: {err}"
+            err.contains("execution") || err.contains("unknown field"),
+            "expected unknown-field reject for execution:; got: {err}"
         );
     }
 

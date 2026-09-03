@@ -63,7 +63,7 @@ pub enum TypeError {
         source: Box<TypeError>,
     },
 
-    /// Surface query failed lane-typed [`crate::ResolvedRowset`] normalization (RA-1 / RA-5).
+    /// Surface query failed lane-typed [`crate::ResolvedRowset`] normalization (RA-1).
     #[error("rowset normalize: {message}")]
     RowsetNormalize { message: String },
 }

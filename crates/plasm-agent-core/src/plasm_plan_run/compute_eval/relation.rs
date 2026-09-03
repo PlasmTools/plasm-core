@@ -37,7 +37,7 @@ pub(crate) async fn materialize_relation_singleton_chain(
         expr: relation.relation.ir.expr.clone(),
         projection: relation.relation.ir.projection.clone(),
     };
-    let (parsed, source_contexts) =
+    let parsed =
         instantiate_parsed_expr_plan_inputs(pe, &relation.uses_result, materialized)?;
     let expr_label = relation
         .relation
@@ -52,7 +52,6 @@ pub(crate) async fn materialize_relation_singleton_chain(
         session_id,
         expr_label,
         parsed,
-        source_contexts,
         trace,
         node_index as i64,
         None,
@@ -380,7 +379,7 @@ pub(crate) async fn materialize_relation_scoped_fanout(
             row_identity,
         )?;
         let wire_coercion_by_alias = wire_coercion_by_alias_from_inputs(es, &mut input_rows)?;
-        let (parsed, source_contexts) = instantiate_parsed_expr_plan_inputs_with_rows(
+        let parsed = instantiate_parsed_expr_plan_inputs_with_rows(
             pe.clone(),
             &input_rows,
             &wire_coercion_by_alias,
@@ -393,7 +392,6 @@ pub(crate) async fn materialize_relation_scoped_fanout(
             row_index,
             expr_label,
             parsed,
-            source_contexts,
         )?;
     }
     let fold = super::super::plan_fanout_parallel::execute_row_fanout(

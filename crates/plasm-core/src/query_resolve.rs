@@ -877,12 +877,10 @@ mod tests {
             crate::RowSource::External {
                 capability,
                 parent_scope,
-                context,
                 ..
             } => {
                 assert_eq!(capability.as_str(), "list_task_query");
                 assert_eq!(*parent_scope, crate::ParentScope::Root);
-                assert!(context.is_none());
             }
             other => panic!("expected External, got {other:?}"),
         }
