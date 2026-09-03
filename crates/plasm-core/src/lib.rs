@@ -395,8 +395,9 @@ pub use template_ref::{
     validate_interpolation_syntax, RefKind, TemplateRefContext,
 };
 pub use temporal::{
-    normalize_temporal_value, rewrite_temporal_aliases, rewrite_temporal_aliases_in_predicate_body,
-    temporal_predicate_alias_hint, temporal_wire_format_from_name, wire_temporal_value,
+    normalize_temporal_value, parse_temporal_now_env, rewrite_temporal_aliases,
+    rewrite_temporal_aliases_in_predicate_body, temporal_predicate_alias_hint,
+    temporal_reference_now, temporal_wire_format_from_name, wire_temporal_value,
 };
 pub use type_checker::{
     reject_domain_placeholder_in_executable, type_check_chain, type_check_create,
