@@ -78,13 +78,16 @@ capabilities:
     description: Authenticate as this Simple Note account holder with their email and password.
     kind: action
     entity: AuthSession
-    parameters:
-    - name: username
-      value_ref: nv_login_username
-      required: true
-    - name: password
-      value_ref: nv_password
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: username
+          value_ref: nv_login_username
+          required: true
+        - name: password
+          value_ref: nv_password
+          required: true
     provides:
     - access_token
     - token_type
@@ -95,10 +98,13 @@ capabilities:
     description: Logout and invalidate the access token.
     kind: action
     entity: AuthSession
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
     output:
       type: side_effect
       description: Ends the Simple Note session for this token.
@@ -106,34 +112,29 @@ capabilities:
     description: Search notes (titles/tags; content omitted in list).
     kind: search
     entity: Note
-    parameters:
+    selection:
     - name: access_token
       value_ref: nv_access_token
       required: true
     - name: query
       value_ref: nv_str
       required: false
-      role: search
     - name: tags
       value_ref: nv_tags
       required: false
-      role: filter
     - name: pinned
       value_ref: nv_bool
       required: false
-      role: filter
+    controls:
     - name: page_index
       value_ref: nv_int
       required: false
-      role: response_control
     - name: page_limit
       value_ref: nv_int
       required: false
-      role: response_control
     - name: sort_by
       value_ref: nv_str
       required: false
-      role: sort
     provides:
     - note_id
     - title
@@ -145,10 +146,13 @@ capabilities:
     description: Show one note including full content.
     kind: get
     entity: Note
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
     provides:
     - note_id
     - title
@@ -161,58 +165,67 @@ capabilities:
     description: Create a new note.
     kind: create
     entity: Note
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: title
-      value_ref: nv_title
-      required: true
-    - name: content
-      value_ref: nv_content
-      required: true
-    - name: tags
-      value_ref: nv_tags
-      required: false
-    - name: pinned
-      value_ref: nv_bool
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: title
+          value_ref: nv_title
+          required: true
+        - name: content
+          value_ref: nv_content
+          required: true
+        - name: tags
+          value_ref: nv_tags
+          required: false
+        - name: pinned
+          value_ref: nv_bool
+          required: false
     provides:
     - note_id
   note_update:
     description: Update note title, content, tags, or pinned flag.
     kind: update
     entity: Note
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: title
-      value_ref: nv_title
-      required: false
-    - name: content
-      value_ref: nv_content
-      required: false
-    - name: tags
-      value_ref: nv_tags
-      required: false
-    - name: pinned
-      value_ref: nv_bool
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: title
+          value_ref: nv_title
+          required: false
+        - name: content
+          value_ref: nv_content
+          required: false
+        - name: tags
+          value_ref: nv_tags
+          required: false
+        - name: pinned
+          value_ref: nv_bool
+          required: false
   note_append_content:
     description: Append or prepend text to an existing note body.
     kind: action
     entity: Note
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: append_or_prepend
-      value_ref: nv_append_mode
-      required: true
-    - name: content
-      value_ref: nv_content
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: append_or_prepend
+          value_ref: nv_append_mode
+          required: true
+        - name: content
+          value_ref: nv_content
+          required: true
     output:
       type: side_effect
       description: Mutates note content by appending or prepending text.
@@ -220,49 +233,48 @@ capabilities:
     description: Delete a note.
     kind: delete
     entity: Note
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
   profile_get:
     description: Show Simple Note profile for an email (public lookup).
     kind: get
     entity: Profile
-    parameters:
-    - name: email
-      value_ref: nv_email
-      required: true
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: email
+          value_ref: nv_email
+          required: true
 values:
   nv_str:
     type: string
-
     description: Free-form string.
   nv_email:
     type: email
-
     description: Email address of a user or counterparty.
   nv_login_username:
     type: string
-
     description: Account-holder login id for this service — not a counterparty.
   nv_password:
     type: string
-
     description: Account-holder password for this service.
   nv_access_token:
     type: string
-
     description: Bearer access token from login.
   nv_note_id:
     type: integer
     description: Note primary key.
   nv_title:
     type: string
-
     description: Note title.
   nv_content:
     type: document
-
     description: Note body text.
   nv_tags:
     type: array
@@ -277,11 +289,9 @@ values:
     description: Integer.
   nv_datetime:
     type: rfc3339
-
     description: ISO datetime string.
   nv_append_mode:
     type: enum
-
     description: Whether to append or prepend content.
     enum:
     - append

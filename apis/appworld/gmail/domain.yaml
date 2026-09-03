@@ -160,13 +160,16 @@ capabilities:
     description: Login to Gmail; returns access_token for Bearer auth.
     kind: action
     entity: AuthSession
-    parameters:
-    - name: username
-      value_ref: nv_login_username
-      required: true
-    - name: password
-      value_ref: nv_password
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: username
+          value_ref: nv_login_username
+          required: true
+        - name: password
+          value_ref: nv_password
+          required: true
     provides:
     - access_token
     - token_type
@@ -177,10 +180,13 @@ capabilities:
     description: Logout and invalidate the access token.
     kind: action
     entity: AuthSession
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
     output:
       type: side_effect
       description: Ends the Gmail session for this token.
@@ -188,50 +194,41 @@ capabilities:
     description: Search inbox threads (query/filters/pagination).
     kind: search
     entity: EmailThread
-    parameters:
+    selection:
     - name: access_token
       value_ref: nv_access_token
       required: true
     - name: query
       value_ref: nv_str
       required: false
-      role: search
     - name: label
       value_ref: nv_str
       required: false
-      role: filter
     - name: starred
       value_ref: nv_bool
       required: false
-      role: filter
     - name: read
       value_ref: nv_bool
       required: false
-      role: filter
     - name: archived
       value_ref: nv_bool
       required: false
-      role: filter
     - name: from_email
       value_ref: nv_email
       required: false
-      role: filter
     - name: to_email
       value_ref: nv_email
       required: false
-      role: filter
+    controls:
     - name: page_index
       value_ref: nv_int
       required: false
-      role: response_control
     - name: page_limit
       value_ref: nv_int
       required: false
-      role: response_control
     - name: sort_by
       value_ref: nv_str
       required: false
-      role: sort
     provides:
     - email_thread_id
     - subject
@@ -248,50 +245,41 @@ capabilities:
     description: Search outbox / sent threads.
     kind: search
     entity: EmailThread
-    parameters:
+    selection:
     - name: access_token
       value_ref: nv_access_token
       required: true
     - name: query
       value_ref: nv_str
       required: false
-      role: search
     - name: label
       value_ref: nv_str
       required: false
-      role: filter
     - name: starred
       value_ref: nv_bool
       required: false
-      role: filter
     - name: read
       value_ref: nv_bool
       required: false
-      role: filter
     - name: archived
       value_ref: nv_bool
       required: false
-      role: filter
     - name: from_email
       value_ref: nv_email
       required: false
-      role: filter
     - name: to_email
       value_ref: nv_email
       required: false
-      role: filter
+    controls:
     - name: page_index
       value_ref: nv_int
       required: false
-      role: response_control
     - name: page_limit
       value_ref: nv_int
       required: false
-      role: response_control
     - name: sort_by
       value_ref: nv_str
       required: false
-      role: sort
     provides:
     - email_thread_id
     - subject
@@ -308,46 +296,38 @@ capabilities:
     description: Search archived threads.
     kind: search
     entity: EmailThread
-    parameters:
+    selection:
     - name: access_token
       value_ref: nv_access_token
       required: true
     - name: query
       value_ref: nv_str
       required: false
-      role: search
     - name: label
       value_ref: nv_str
       required: false
-      role: filter
     - name: starred
       value_ref: nv_bool
       required: false
-      role: filter
     - name: read
       value_ref: nv_bool
       required: false
-      role: filter
     - name: from_email
       value_ref: nv_email
       required: false
-      role: filter
     - name: to_email
       value_ref: nv_email
       required: false
-      role: filter
+    controls:
     - name: page_index
       value_ref: nv_int
       required: false
-      role: response_control
     - name: page_limit
       value_ref: nv_int
       required: false
-      role: response_control
     - name: sort_by
       value_ref: nv_str
       required: false
-      role: sort
     provides:
     - email_thread_id
     - subject
@@ -364,10 +344,13 @@ capabilities:
     description: Show one email thread including messages.
     kind: get
     entity: EmailThread
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
     provides:
     - email_thread_id
     - subject
@@ -384,18 +367,24 @@ capabilities:
     description: Delete an email thread.
     kind: delete
     entity: EmailThread
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
   email_thread_mark_read:
     description: Mark a thread as read.
     kind: action
     entity: EmailThread
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
     output:
       type: side_effect
       description: Marks the thread read.
@@ -403,10 +392,13 @@ capabilities:
     description: Mark a thread as unread.
     kind: action
     entity: EmailThread
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
     output:
       type: side_effect
       description: Marks the thread unread.
@@ -414,10 +406,13 @@ capabilities:
     description: Star a thread.
     kind: action
     entity: EmailThread
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
     output:
       type: side_effect
       description: Stars the thread.
@@ -425,10 +420,13 @@ capabilities:
     description: Unstar a thread.
     kind: action
     entity: EmailThread
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
     output:
       type: side_effect
       description: Removes the star from the thread.
@@ -436,10 +434,13 @@ capabilities:
     description: Archive a thread.
     kind: action
     entity: EmailThread
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
     output:
       type: side_effect
       description: Archives the thread.
@@ -447,10 +448,13 @@ capabilities:
     description: Unarchive a thread.
     kind: action
     entity: EmailThread
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
     output:
       type: side_effect
       description: Moves the thread out of archive.
@@ -458,13 +462,16 @@ capabilities:
     description: Snooze a thread until a future datetime.
     kind: action
     entity: EmailThread
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: snooze_until
-      value_ref: nv_snooze_until
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: snooze_until
+          value_ref: nv_snooze_until
+          required: true
     output:
       type: side_effect
       description: Hides the thread until snooze_until, then returns it unread.
@@ -472,10 +479,13 @@ capabilities:
     description: Cancel snooze on a thread.
     kind: action
     entity: EmailThread
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
     output:
       type: side_effect
       description: Clears snooze so the thread is visible again.
@@ -483,10 +493,13 @@ capabilities:
     description: Show one email including body.
     kind: get
     entity: Email
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
     provides:
     - email_id
     - subject
@@ -497,20 +510,23 @@ capabilities:
     description: Send a new email to one or more addresses.
     kind: action
     entity: Email
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: email_addresses
-      value_ref: nv_email_list
-      required: true
-    - name: subject
-      value_ref: nv_str
-      required: true
-    - name: body
-      value_ref: nv_body
-      required: true
-      sink_class: external_send
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: email_addresses
+          value_ref: nv_email_list
+          required: true
+        - name: subject
+          value_ref: nv_str
+          required: true
+        - name: body
+          value_ref: nv_body
+          required: true
+          sink_class: external_send
     output:
       type: side_effect
       description: Sends an email to the given addresses.
@@ -518,20 +534,23 @@ capabilities:
     description: Reply to this email (entity id) within its thread.
     kind: action
     entity: Email
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: email_thread_id
-      value_ref: nv_thread_id
-      required: true
-    - name: body
-      value_ref: nv_body
-      required: true
-      sink_class: external_send
-    - name: email_addresses
-      value_ref: nv_email_list
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: email_thread_id
+          value_ref: nv_thread_id
+          required: true
+        - name: body
+          value_ref: nv_body
+          required: true
+          sink_class: external_send
+        - name: email_addresses
+          value_ref: nv_email_list
+          required: false
     output:
       type: side_effect
       description: Posts a reply on the thread.
@@ -539,29 +558,31 @@ capabilities:
     description: Delete one email from its thread.
     kind: delete
     entity: Email
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: email_thread_id
-      value_ref: nv_thread_id
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: email_thread_id
+          value_ref: nv_thread_id
+          required: true
   draft_query:
     description: List drafts.
     kind: query
     entity: Draft
-    parameters:
+    selection:
     - name: access_token
       value_ref: nv_access_token
       required: true
+    controls:
     - name: page_index
       value_ref: nv_int
       required: false
-      role: response_control
     - name: page_limit
       value_ref: nv_int
       required: false
-      role: response_control
     provides:
     - draft_id
     - subject
@@ -572,10 +593,13 @@ capabilities:
     description: Show one draft.
     kind: get
     entity: Draft
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
     provides:
     - draft_id
     - subject
@@ -586,66 +610,78 @@ capabilities:
     description: Create a draft.
     kind: create
     entity: Draft
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: recipient_email_addresses
-      value_ref: nv_email_list
-      required: false
-    - name: subject
-      value_ref: nv_str
-      required: false
-    - name: body
-      value_ref: nv_body
-      required: false
-    - name: belongs_to_email_thread_id
-      value_ref: nv_thread_id
-      required: false
-    - name: response_to_email_id
-      value_ref: nv_email_id
-      required: false
-    - name: scheduled_send_at
-      value_ref: nv_datetime
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: recipient_email_addresses
+          value_ref: nv_email_list
+          required: false
+        - name: subject
+          value_ref: nv_str
+          required: false
+        - name: body
+          value_ref: nv_body
+          required: false
+        - name: belongs_to_email_thread_id
+          value_ref: nv_thread_id
+          required: false
+        - name: response_to_email_id
+          value_ref: nv_email_id
+          required: false
+        - name: scheduled_send_at
+          value_ref: nv_datetime
+          required: false
     provides:
     - draft_id
   draft_update:
     description: Update a draft.
     kind: update
     entity: Draft
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: email_addresses
-      value_ref: nv_email_list
-      required: false
-    - name: subject
-      value_ref: nv_str
-      required: false
-    - name: body
-      value_ref: nv_body
-      required: false
-    - name: scheduled_send_at
-      value_ref: nv_datetime
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: email_addresses
+          value_ref: nv_email_list
+          required: false
+        - name: subject
+          value_ref: nv_str
+          required: false
+        - name: body
+          value_ref: nv_body
+          required: false
+        - name: scheduled_send_at
+          value_ref: nv_datetime
+          required: false
   draft_delete:
     description: Delete a draft.
     kind: delete
     entity: Draft
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
   draft_send:
     description: Send an existing draft.
     kind: action
     entity: Draft
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
     output:
       type: side_effect
       description: Sends the draft as an email.
@@ -653,10 +689,13 @@ capabilities:
     description: Show Gmail profile for an email.
     kind: get
     entity: Profile
-    parameters:
-    - name: email
-      value_ref: nv_email
-      required: true
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: email
+          value_ref: nv_email
+          required: true
     provides:
     - first_name
     - last_name
@@ -666,50 +705,41 @@ capabilities:
     description: Search spam threads.
     kind: search
     entity: EmailThread
-    parameters:
+    selection:
     - name: access_token
       value_ref: nv_access_token
       required: true
     - name: query
       value_ref: nv_str
       required: false
-      role: search
     - name: label
       value_ref: nv_str
       required: false
-      role: filter
     - name: starred
       value_ref: nv_bool
       required: false
-      role: filter
     - name: read
       value_ref: nv_bool
       required: false
-      role: filter
     - name: archived
       value_ref: nv_bool
       required: false
-      role: filter
     - name: from_email
       value_ref: nv_email
       required: false
-      role: filter
     - name: to_email
       value_ref: nv_email
       required: false
-      role: filter
+    controls:
     - name: page_index
       value_ref: nv_int
       required: false
-      role: response_control
     - name: page_limit
       value_ref: nv_int
       required: false
-      role: response_control
     - name: sort_by
       value_ref: nv_str
       required: false
-      role: sort
     provides:
     - email_thread_id
     - subject
@@ -726,46 +756,38 @@ capabilities:
     description: Search snoozed threads.
     kind: search
     entity: EmailThread
-    parameters:
+    selection:
     - name: access_token
       value_ref: nv_access_token
       required: true
     - name: query
       value_ref: nv_str
       required: false
-      role: search
     - name: label
       value_ref: nv_str
       required: false
-      role: filter
     - name: starred
       value_ref: nv_bool
       required: false
-      role: filter
     - name: read
       value_ref: nv_bool
       required: false
-      role: filter
     - name: from_email
       value_ref: nv_email
       required: false
-      role: filter
     - name: to_email
       value_ref: nv_email
       required: false
-      role: filter
+    controls:
     - name: page_index
       value_ref: nv_int
       required: false
-      role: response_control
     - name: page_limit
       value_ref: nv_int
       required: false
-      role: response_control
     - name: sort_by
       value_ref: nv_str
       required: false
-      role: sort
     provides:
     - email_thread_id
     - subject
@@ -782,13 +804,16 @@ capabilities:
     description: Assign a label to a thread.
     kind: action
     entity: EmailThread
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: label
-      value_ref: nv_str
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: label
+          value_ref: nv_str
+          required: true
     output:
       type: side_effect
       description: Applies the label to the thread.
@@ -796,10 +821,13 @@ capabilities:
     description: Remove the label from a thread.
     kind: action
     entity: EmailThread
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
     output:
       type: side_effect
       description: Removes the label from the thread.
@@ -807,10 +835,13 @@ capabilities:
     description: Mark a thread as spam.
     kind: action
     entity: EmailThread
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
     output:
       type: side_effect
       description: Moves the thread to spam.
@@ -818,10 +849,13 @@ capabilities:
     description: Mark a thread as not spam.
     kind: action
     entity: EmailThread
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
     output:
       type: side_effect
       description: Removes the thread from spam.
@@ -829,20 +863,23 @@ capabilities:
     description: Forward this email to one or more addresses.
     kind: action
     entity: Email
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: email_thread_id
-      value_ref: nv_thread_id
-      required: true
-    - name: email_addresses
-      value_ref: nv_email_list
-      required: true
-      sink_class: external_send
-    - name: draft_not_send
-      value_ref: nv_bool
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: email_thread_id
+          value_ref: nv_thread_id
+          required: true
+        - name: email_addresses
+          value_ref: nv_email_list
+          required: true
+          sink_class: external_send
+        - name: draft_not_send
+          value_ref: nv_bool
+          required: false
     output:
       type: side_effect
       description: Forwards the email to the given addresses.
@@ -850,17 +887,20 @@ capabilities:
     description: Forward an entire thread to one or more addresses.
     kind: action
     entity: EmailThread
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: email_addresses
-      value_ref: nv_email_list
-      required: true
-      sink_class: external_send
-    - name: draft_not_send
-      value_ref: nv_bool
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: email_addresses
+          value_ref: nv_email_list
+          required: true
+          sink_class: external_send
+        - name: draft_not_send
+          value_ref: nv_bool
+          required: false
     output:
       type: side_effect
       description: Forwards the thread to the given addresses.
@@ -868,19 +908,22 @@ capabilities:
     description: Download an attachment to a file-system path.
     kind: action
     entity: Attachment
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: download_to_file_path
-      value_ref: nv_file_path
-      required: false
-    - name: overwrite
-      value_ref: nv_bool
-      required: false
-    - name: file_system_access_token
-      value_ref: nv_access_token
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: download_to_file_path
+          value_ref: nv_file_path
+          required: false
+        - name: overwrite
+          value_ref: nv_bool
+          required: false
+        - name: file_system_access_token
+          value_ref: nv_access_token
+          required: true
     output:
       type: side_effect
       description: Writes the attachment bytes to the given file path.
@@ -888,23 +931,26 @@ capabilities:
     description: Upload file-system paths as attachments on a draft.
     kind: action
     entity: Attachment
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    scope:
     - name: draft_id
       value_ref: nv_draft_id
       required: true
-      role: scope
-    - name: attachment_file_paths
-      value_ref: nv_file_path_list
-      required: true
-    - name: overwrite
-      value_ref: nv_bool
-      required: false
-    - name: file_system_access_token
-      value_ref: nv_access_token
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: attachment_file_paths
+          value_ref: nv_file_path_list
+          required: true
+        - name: overwrite
+          value_ref: nv_bool
+          required: false
+        - name: file_system_access_token
+          value_ref: nv_access_token
+          required: true
     output:
       type: side_effect
       description: Attaches the given file-system paths onto the draft.
@@ -912,38 +958,35 @@ capabilities:
     description: Remove an attachment from a draft.
     kind: delete
     entity: Attachment
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    scope:
     - name: draft_id
       value_ref: nv_draft_id
       required: true
-      role: scope
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
 values:
   nv_str:
     type: string
-
     description: Free-form string.
   nv_email:
     type: email
-
     description: Email address of a user or counterparty.
   nv_login_username:
     type: string
-
     description: Account-holder login id for this service — not a counterparty.
   nv_password:
     type: string
-
     description: Account-holder password for this service.
   nv_access_token:
     type: string
-
     description: Bearer access token from login.
   nv_body:
     type: markdown
-
     description: Email body text.
   nv_thread_id:
     type: integer
@@ -967,17 +1010,15 @@ values:
     description: Integer.
   nv_datetime:
     type: rfc3339
-
     description: ISO datetime string.
   nv_snooze_until:
     type: string
-    description: "Future datetime to unsnooze a thread, as YYYY-MM-DD|HH:MM:SS."
+    description: Future datetime to unsnooze a thread, as YYYY-MM-DD|HH:MM:SS.
   nv_attachment_id:
     type: integer
     description: Attachment primary key.
   nv_file_path:
     type: string
-
     description: File-system path for download or save.
   nv_file_path_list:
     type: array

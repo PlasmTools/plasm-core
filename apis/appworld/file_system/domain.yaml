@@ -58,9 +58,10 @@ entities:
         value_ref: nv_path
   DirectoryEntry:
     id_field: path
-    description: >
-      A path returned when listing a directory (files and/or subfolders under a folder).
-      Use this to discover what is in a directory before reading or moving files.
+    description: 'A path returned when listing a directory (files and/or subfolders under a folder). Use
+      this to discover what is in a directory before reading or moving files.
+
+      '
     discovery:
       names:
       - directory
@@ -92,13 +93,16 @@ capabilities:
     description: Login to File System; returns access_token for Bearer auth.
     kind: action
     entity: AuthSession
-    parameters:
-    - name: username
-      value_ref: nv_login_username
-      required: true
-    - name: password
-      value_ref: nv_password
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: username
+          value_ref: nv_login_username
+          required: true
+        - name: password
+          value_ref: nv_password
+          required: true
     provides:
     - access_token
     - token_type
@@ -109,58 +113,69 @@ capabilities:
     description: Logout and invalidate the access token.
     kind: action
     entity: AuthSession
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
     output:
       type: side_effect
       description: Ends the File System session for this token.
   directory_query:
-    description: >
-      List file and subdirectory paths under a directory (optional substring match,
-      entry_type filter, or recursive walk).
+    description: 'List file and subdirectory paths under a directory (optional substring match, entry_type
+      filter, or recursive walk).
+
+      '
     kind: search
     entity: DirectoryEntry
-    parameters:
+    discovery:
+      operation_terms:
+      - list
+      - show
+      - ls
+      - browse
+      target_terms:
+      - directory
+      - folder
+      - files
+      - paths
+    selection:
     - name: access_token
       value_ref: nv_access_token
       required: true
     - name: directory_path
       value_ref: nv_path
       required: false
-      role: filter
     - name: substring
       value_ref: nv_str
       required: false
-      role: search
     - name: entry_type
       value_ref: nv_str
       required: false
-      role: filter
     - name: recursive
       value_ref: nv_bool
       required: false
-      role: filter
-    discovery:
-      operation_terms: [list, show, ls, browse]
-      target_terms: [directory, folder, files, paths]
     provides:
     - path
   directory_create:
     description: Create a directory.
     kind: action
     entity: DirectoryEntry
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: directory_path
-      value_ref: nv_path
-      required: true
-    - name: recursive
-      value_ref: nv_bool
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: directory_path
+          value_ref: nv_path
+          required: true
+        - name: recursive
+          value_ref: nv_bool
+          required: false
     output:
       type: side_effect
       description: Creates a directory at directory_path.
@@ -168,13 +183,16 @@ capabilities:
     description: Delete a directory.
     kind: action
     entity: DirectoryEntry
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: directory_path
-      value_ref: nv_path
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: directory_path
+          value_ref: nv_path
+          required: true
     output:
       type: side_effect
       description: Deletes the directory at directory_path.
@@ -182,13 +200,16 @@ capabilities:
     description: Check whether a directory path exists.
     kind: action
     entity: PathExists
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: directory_path
-      value_ref: nv_path
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: directory_path
+          value_ref: nv_path
+          required: true
     provides:
     - exists
     output:
@@ -198,16 +219,19 @@ capabilities:
     description: Copy a directory to a destination path.
     kind: action
     entity: DirectoryEntry
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: source_directory_path
-      value_ref: nv_path
-      required: true
-    - name: destination_directory_path
-      value_ref: nv_path
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: source_directory_path
+          value_ref: nv_path
+          required: true
+        - name: destination_directory_path
+          value_ref: nv_path
+          required: true
     output:
       type: side_effect
       description: Copies a directory tree to the destination.
@@ -215,16 +239,19 @@ capabilities:
     description: Move a directory to a destination path.
     kind: action
     entity: DirectoryEntry
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: source_directory_path
-      value_ref: nv_path
-      required: true
-    - name: destination_directory_path
-      value_ref: nv_path
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: source_directory_path
+          value_ref: nv_path
+          required: true
+        - name: destination_directory_path
+          value_ref: nv_path
+          required: true
     output:
       type: side_effect
       description: Moves a directory to the destination.
@@ -232,22 +259,25 @@ capabilities:
     description: Compress a directory into an archive file.
     kind: action
     entity: File
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: directory_path
-      value_ref: nv_path
-      required: true
-    - name: compressed_file_path
-      value_ref: nv_path
-      required: false
-    - name: delete_directory
-      value_ref: nv_bool
-      required: false
-    - name: overwrite
-      value_ref: nv_bool
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: directory_path
+          value_ref: nv_path
+          required: true
+        - name: compressed_file_path
+          value_ref: nv_path
+          required: false
+        - name: delete_directory
+          value_ref: nv_bool
+          required: false
+        - name: overwrite
+          value_ref: nv_bool
+          required: false
     provides:
     - compressed_file_path
     output:
@@ -257,10 +287,13 @@ capabilities:
     description: Show file content by path (entity id is the path).
     kind: get
     entity: File
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
     provides:
     - file_id
     - path
@@ -271,19 +304,22 @@ capabilities:
     description: Create a file with content.
     kind: create
     entity: File
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: file_path
-      value_ref: nv_path
-      required: true
-    - name: content
-      value_ref: nv_content
-      required: true
-    - name: overwrite
-      value_ref: nv_bool
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: file_path
+          value_ref: nv_path
+          required: true
+        - name: content
+          value_ref: nv_content
+          required: true
+        - name: overwrite
+          value_ref: nv_bool
+          required: false
     provides:
     - file_id
     - path
@@ -291,32 +327,41 @@ capabilities:
     description: Update file content at the entity path (id).
     kind: update
     entity: File
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: content
-      value_ref: nv_content
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: content
+          value_ref: nv_content
+          required: true
   file_delete:
     description: Delete a file by path (entity id).
     kind: delete
     entity: File
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
   file_exists:
     description: Check whether a file path exists.
     kind: action
     entity: PathExists
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: file_path
-      value_ref: nv_path
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: file_path
+          value_ref: nv_path
+          required: true
     provides:
     - exists
     output:
@@ -326,16 +371,19 @@ capabilities:
     description: Copy a file to a destination path.
     kind: action
     entity: File
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: source_file_path
-      value_ref: nv_path
-      required: true
-    - name: destination_file_path
-      value_ref: nv_path
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: source_file_path
+          value_ref: nv_path
+          required: true
+        - name: destination_file_path
+          value_ref: nv_path
+          required: true
     output:
       type: side_effect
       description: Copies a file to the destination path.
@@ -343,16 +391,19 @@ capabilities:
     description: Move a file to a destination path.
     kind: action
     entity: File
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: source_file_path
-      value_ref: nv_path
-      required: true
-    - name: destination_file_path
-      value_ref: nv_path
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: source_file_path
+          value_ref: nv_path
+          required: true
+        - name: destination_file_path
+          value_ref: nv_path
+          required: true
     output:
       type: side_effect
       description: Moves a file to the destination path.
@@ -360,22 +411,25 @@ capabilities:
     description: Decompress an archive file into a directory.
     kind: action
     entity: DirectoryEntry
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: compressed_file_path
-      value_ref: nv_path
-      required: true
-    - name: decompressed_directory_path
-      value_ref: nv_path
-      required: false
-    - name: retain_dates
-      value_ref: nv_bool
-      required: false
-    - name: delete_compressed_file
-      value_ref: nv_bool
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: compressed_file_path
+          value_ref: nv_path
+          required: true
+        - name: decompressed_directory_path
+          value_ref: nv_path
+          required: false
+        - name: retain_dates
+          value_ref: nv_bool
+          required: false
+        - name: delete_compressed_file
+          value_ref: nv_bool
+          required: false
     provides:
     - decompressed_directory_path
     output:
@@ -384,31 +438,24 @@ capabilities:
 values:
   nv_str:
     type: string
-
     description: Free-form string.
   nv_email:
     type: email
-
     description: Email address of a user or counterparty.
   nv_login_username:
     type: string
-
     description: Account-holder login id for this service — not a counterparty.
   nv_password:
     type: string
-
     description: Account-holder password for this service.
   nv_access_token:
     type: string
-
     description: Bearer access token from login.
   nv_path:
     type: string
-
     description: Absolute or ~/ relative filesystem path.
   nv_content:
     type: document
-
     description: File body text.
   nv_file_id:
     type: integer
@@ -418,5 +465,4 @@ values:
     description: Boolean flag.
   nv_datetime:
     type: rfc3339
-
     description: ISO datetime string.

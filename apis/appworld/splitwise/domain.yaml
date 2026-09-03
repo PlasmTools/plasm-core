@@ -15,25 +15,49 @@ entities:
     id_field: access_token
     description: Login session for Splitwise (Bearer token).
     discovery:
-      names: [login, auth, access token]
+      names:
+      - login
+      - auth
+      - access token
       seed_class: primary
       co_seed_with: catalog_primary
     fields:
-      access_token: { required: true, value_ref: nv_access_token }
-      token_type: { required: false, value_ref: nv_str }
+      access_token:
+        required: true
+        value_ref: nv_access_token
+      token_type:
+        required: false
+        value_ref: nv_str
   Group:
     id_field: group_id
     description: Shared expense group.
     discovery:
-      names: [group, groups, trip, household]
+      names:
+      - group
+      - groups
+      - trip
+      - household
       seed_class: primary
     fields:
-      group_id: { required: true, value_ref: nv_group_id }
-      name: { required: true, value_ref: nv_str }
-      description: { required: false, value_ref: nv_body, data_class: untrusted }
-      created_at: { required: false, value_ref: nv_datetime }
-      deleted: { required: false, value_ref: nv_bool }
-      invitation_code: { required: false, value_ref: nv_str }
+      group_id:
+        required: true
+        value_ref: nv_group_id
+      name:
+        required: true
+        value_ref: nv_str
+      description:
+        required: false
+        value_ref: nv_body
+        data_class: untrusted
+      created_at:
+        required: false
+        value_ref: nv_datetime
+      deleted:
+        required: false
+        value_ref: nv_bool
+      invitation_code:
+        required: false
+        value_ref: nv_str
     relations:
       members:
         description: People belonging to this group.
@@ -70,548 +94,1211 @@ entities:
     id_field: email
     description: Member of a shared expense group.
     discovery:
-      names: [group member, member, members]
+      names:
+      - group member
+      - member
+      - members
       seed_class: dependent
     fields:
-      email: { required: true, value_ref: nv_email }
-      name: { required: false, value_ref: nv_str }
+      email:
+        required: true
+        value_ref: nv_email
+      name:
+        required: false
+        value_ref: nv_str
   Expense:
     id_field: expense_id
     primary_search: expense_query
     description: Shared expense with payer and debtors.
     discovery:
-      names: [expense, bill, cost, split]
+      names:
+      - expense
+      - bill
+      - cost
+      - split
       seed_class: primary
     fields:
-      expense_id: { required: true, value_ref: nv_expense_id }
-      group_id: { required: false, value_ref: nv_group_id }
-      description: { required: true, value_ref: nv_body, data_class: untrusted }
-      paid_amount: { required: false, value_ref: nv_number }
-      deleted: { required: false, value_ref: nv_bool }
-      created_at: { required: false, value_ref: nv_datetime }
+      expense_id:
+        required: true
+        value_ref: nv_expense_id
+      group_id:
+        required: false
+        value_ref: nv_group_id
+      description:
+        required: true
+        value_ref: nv_body
+        data_class: untrusted
+      paid_amount:
+        required: false
+        value_ref: nv_number
+      deleted:
+        required: false
+        value_ref: nv_bool
+      created_at:
+        required: false
+        value_ref: nv_datetime
     relations:
       comments:
         target: ExpenseComment
         cardinality: many
         description: Comments posted on this expense.
-        materialize: { kind: query_scoped, capability: expense_comment_query, param: expense_id }
+        materialize:
+          kind: query_scoped
+          capability: expense_comment_query
+          param: expense_id
   Payment:
     id_field: payment_id
     primary_search: payment_query
     description: Settlement payment between members.
     discovery:
-      names: [payment, settle, repayment]
+      names:
+      - payment
+      - settle
+      - repayment
       seed_class: primary
     fields:
-      payment_id: { required: true, value_ref: nv_payment_id }
-      group_id: { required: false, value_ref: nv_group_id }
-      description: { required: false, value_ref: nv_body, data_class: untrusted }
-      paid_amount: { required: false, value_ref: nv_number }
-      deleted: { required: false, value_ref: nv_bool }
-      created_at: { required: false, value_ref: nv_datetime }
+      payment_id:
+        required: true
+        value_ref: nv_payment_id
+      group_id:
+        required: false
+        value_ref: nv_group_id
+      description:
+        required: false
+        value_ref: nv_body
+        data_class: untrusted
+      paid_amount:
+        required: false
+        value_ref: nv_number
+      deleted:
+        required: false
+        value_ref: nv_bool
+      created_at:
+        required: false
+        value_ref: nv_datetime
     relations:
       comments:
         target: PaymentComment
         cardinality: many
         description: Comments posted on this payment.
-        materialize: { kind: query_scoped, capability: payment_comment_query, param: payment_id }
+        materialize:
+          kind: query_scoped
+          capability: payment_comment_query
+          param: payment_id
   ExpenseComment:
     id_field: expense_comment_id
     description: Comment on a shared expense.
     discovery:
-      names: [expense comment, comment on expense]
+      names:
+      - expense comment
+      - comment on expense
       seed_class: dependent
     fields:
-      expense_comment_id: { required: true, value_ref: nv_expense_comment_id }
-      expense_id: { required: true, value_ref: nv_expense_id }
-      comment: { required: true, value_ref: nv_comment, data_class: untrusted }
-      created_at: { required: false, value_ref: nv_datetime }
+      expense_comment_id:
+        required: true
+        value_ref: nv_expense_comment_id
+      expense_id:
+        required: true
+        value_ref: nv_expense_id
+      comment:
+        required: true
+        value_ref: nv_comment
+        data_class: untrusted
+      created_at:
+        required: false
+        value_ref: nv_datetime
   PaymentComment:
     id_field: payment_comment_id
     description: Comment on a settlement payment.
     discovery:
-      names: [payment comment, comment on payment]
+      names:
+      - payment comment
+      - comment on payment
       seed_class: dependent
     fields:
-      payment_comment_id: { required: true, value_ref: nv_payment_comment_id }
-      payment_id: { required: true, value_ref: nv_payment_id }
-      comment: { required: true, value_ref: nv_comment, data_class: untrusted }
-      created_at: { required: false, value_ref: nv_datetime }
+      payment_comment_id:
+        required: true
+        value_ref: nv_payment_comment_id
+      payment_id:
+        required: true
+        value_ref: nv_payment_id
+      comment:
+        required: true
+        value_ref: nv_comment
+        data_class: untrusted
+      created_at:
+        required: false
+        value_ref: nv_datetime
   Notification:
     id_field: notification_id
     description: Inbox notification for the authenticated Splitwise user.
     discovery:
-      names: [notification, alert, inbox]
+      names:
+      - notification
+      - alert
+      - inbox
       seed_class: ambient
     fields:
-      notification_id: { required: true, value_ref: nv_notification_id }
-      type: { required: false, value_ref: nv_notification_type }
-      title: { required: false, value_ref: nv_notification_title }
-      message: { required: false, value_ref: nv_notification_message, data_class: untrusted }
-      read: { required: false, value_ref: nv_read }
-      created_at: { required: false, value_ref: nv_datetime }
+      notification_id:
+        required: true
+        value_ref: nv_notification_id
+      type:
+        required: false
+        value_ref: nv_notification_type
+      title:
+        required: false
+        value_ref: nv_notification_title
+      message:
+        required: false
+        value_ref: nv_notification_message
+        data_class: untrusted
+      read:
+        required: false
+        value_ref: nv_read
+      created_at:
+        required: false
+        value_ref: nv_datetime
   Balance:
     id_field: you_owe_others
     primary_query: balance_groups_query
     description: Debt position for a person or group.
     discovery:
-      names: [balance, owing, debt]
+      names:
+      - balance
+      - owing
+      - debt
       seed_class: primary
     fields:
-      you_owe_others: { required: false, value_ref: nv_number }
-      others_owe_you: { required: false, value_ref: nv_number }
-      email: { required: false, value_ref: nv_email }
-      name: { required: false, value_ref: nv_str }
-      group_id: { required: false, value_ref: nv_group_id }
-      group_name: { required: false, value_ref: nv_str }
-      direction: { required: false, value_ref: nv_str }
-      amount: { required: false, value_ref: nv_number }
+      you_owe_others:
+        required: false
+        value_ref: nv_number
+      others_owe_you:
+        required: false
+        value_ref: nv_number
+      email:
+        required: false
+        value_ref: nv_email
+      name:
+        required: false
+        value_ref: nv_str
+      group_id:
+        required: false
+        value_ref: nv_group_id
+      group_name:
+        required: false
+        value_ref: nv_str
+      direction:
+        required: false
+        value_ref: nv_str
+      amount:
+        required: false
+        value_ref: nv_number
 capabilities:
   login:
     description: Login to Splitwise; returns access_token for Bearer auth.
     kind: action
     entity: AuthSession
-    parameters:
-    - { name: username, value_ref: nv_login_username, required: true }
-    - { name: password, value_ref: nv_password, required: true }
-    provides: [access_token, token_type]
-    output: { type: side_effect, description: Creates an authenticated Splitwise session. }
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: username
+          value_ref: nv_login_username
+          required: true
+        - name: password
+          value_ref: nv_password
+          required: true
+    provides:
+    - access_token
+    - token_type
+    output:
+      type: side_effect
+      description: Creates an authenticated Splitwise session.
   logout:
     description: Logout and invalidate the access token.
     kind: action
     entity: AuthSession
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    output: { type: side_effect, description: Ends the Splitwise session for this token. }
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Ends the Splitwise session for this token.
   group_query:
     description: List expense groups.
     kind: query
     entity: Group
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    - { name: delete, value_ref: nv_bool, required: false, role: filter }
-    - { name: page_index, value_ref: nv_int, required: false, role: response_control }
-    - { name: page_limit, value_ref: nv_int, required: false, role: response_control }
-    provides: [group_id, name, description, created_at, deleted, invitation_code]
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: delete
+      value_ref: nv_bool
+      required: false
+    controls:
+    - name: page_index
+      value_ref: nv_int
+      required: false
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+    provides:
+    - group_id
+    - name
+    - description
+    - created_at
+    - deleted
+    - invitation_code
   group_get:
     description: Show one group.
     kind: get
     entity: Group
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    provides: [group_id, name, description, created_at, deleted, invitation_code]
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - group_id
+    - name
+    - description
+    - created_at
+    - deleted
+    - invitation_code
   group_create:
     description: Create a group with member emails.
     kind: create
     entity: Group
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    - { name: name, value_ref: nv_str, required: true }
-    - { name: member_emails, value_ref: nv_email_list, required: true }
-    - { name: description, value_ref: nv_body, required: false }
-    provides: [group_id]
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: name
+          value_ref: nv_str
+          required: true
+        - name: member_emails
+          value_ref: nv_email_list
+          required: true
+        - name: description
+          value_ref: nv_body
+          required: false
+    provides:
+    - group_id
   group_update:
     description: Rename or describe a group.
     kind: update
     entity: Group
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    - { name: name, value_ref: nv_str, required: false }
-    - { name: description, value_ref: nv_body, required: false }
-    provides: [group_id]
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: name
+          value_ref: nv_str
+          required: false
+        - name: description
+          value_ref: nv_body
+          required: false
+    provides:
+    - group_id
   group_delete:
     description: Delete a group.
     kind: delete
     entity: Group
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
   group_add_member:
     description: Add a member to a group by email.
     kind: action
     entity: Group
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    - { name: user_email, value_ref: nv_email, required: true }
-    output: { type: side_effect, description: Adds the email as a group member. }
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: user_email
+          value_ref: nv_email
+          required: true
+    output:
+      type: side_effect
+      description: Adds the email as a group member.
   group_remove_member:
     description: Remove a member from a group.
     kind: action
     entity: Group
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    - { name: user_email, value_ref: nv_email, required: true }
-    output: { type: side_effect, description: Removes the email from the group. }
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: user_email
+          value_ref: nv_email
+          required: true
+    output:
+      type: side_effect
+      description: Removes the email from the group.
   group_exit:
     description: Exit a group you belong to.
     kind: action
     entity: Group
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    output: { type: side_effect, description: Removes the current user from the group. }
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Removes the current user from the group.
   group_undelete:
     description: Restore a deleted group (and its expenses/payments).
     kind: action
     entity: Group
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    output: { type: side_effect, description: Clears the deleted flag on the group and related items. }
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Clears the deleted flag on the group and related items.
   group_accept_invitation:
     description: Accept a group invitation by invitation code.
     kind: action
     entity: Group
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    - { name: invitation_code, value_ref: nv_str, required: true }
-    output: { type: side_effect, description: Joins the current user to the invited group. }
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: invitation_code
+          value_ref: nv_str
+          required: true
+    output:
+      type: side_effect
+      description: Joins the current user to the invited group.
   group_regenerate_invitation:
     description: Regenerate a group's invitation code.
     kind: action
     entity: Group
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    provides: [invitation_code]
-    output: { type: side_effect, description: Issues a new invitation code for the group. }
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - invitation_code
+    output:
+      type: side_effect
+      description: Issues a new invitation code for the group.
   expense_query:
     description: List expenses in a group.
     kind: search
     entity: Expense
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    - { name: group_id, value_ref: nv_group_id, required: true, role: filter }
-    - { name: query, value_ref: nv_str, required: false, role: search }
-    - { name: participant_email, value_ref: nv_email, required: false, role: filter }
-    - { name: min_amount, value_ref: nv_number, required: false, role: filter }
-    - { name: max_amount, value_ref: nv_number, required: false, role: filter }
-    - { name: page_index, value_ref: nv_int, required: false, role: response_control }
-    - { name: page_limit, value_ref: nv_int, required: false, role: response_control }
-    - { name: sort_by, value_ref: nv_str, required: false, role: sort }
-    provides: [expense_id, group_id, description, paid_amount, deleted, created_at]
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+    - name: participant_email
+      value_ref: nv_email
+      required: false
+    - name: min_amount
+      value_ref: nv_number
+      required: false
+    - name: max_amount
+      value_ref: nv_number
+      required: false
+    controls:
+    - name: page_index
+      value_ref: nv_int
+      required: false
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+    provides:
+    - expense_id
+    - group_id
+    - description
+    - paid_amount
+    - deleted
+    - created_at
+    scope:
+    - name: group_id
+      value_ref: nv_group_id
+      required: true
   expense_ungrouped_query:
     description: List expenses not attached to a group.
     kind: search
     entity: Expense
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    - { name: query, value_ref: nv_str, required: false, role: search }
-    - { name: participant_email, value_ref: nv_email, required: false, role: filter }
-    - { name: page_index, value_ref: nv_int, required: false, role: response_control }
-    - { name: page_limit, value_ref: nv_int, required: false, role: response_control }
-    - { name: sort_by, value_ref: nv_str, required: false, role: sort }
-    provides: [expense_id, group_id, description, paid_amount, deleted, created_at]
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+    - name: participant_email
+      value_ref: nv_email
+      required: false
+    controls:
+    - name: page_index
+      value_ref: nv_int
+      required: false
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+    provides:
+    - expense_id
+    - group_id
+    - description
+    - paid_amount
+    - deleted
+    - created_at
   expense_get:
     description: Show one expense.
     kind: get
     entity: Expense
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    provides: [expense_id, group_id, description, paid_amount, deleted, created_at]
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - expense_id
+    - group_id
+    - description
+    - paid_amount
+    - deleted
+    - created_at
   expense_create:
     description: Create a shared expense with payer and debtors.
     kind: create
     entity: Expense
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    - { name: description, value_ref: nv_body, required: true }
-    - { name: paid_amount, value_ref: nv_number, required: true }
-    - { name: payer_email, value_ref: nv_email, required: true }
-    - { name: debtor_emails, value_ref: nv_email_list, required: true }
-    - { name: debt_amounts, value_ref: nv_number_list, required: false }
-    - { name: group_id, value_ref: nv_group_id, required: false }
-    provides: [expense_id]
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: description
+          value_ref: nv_body
+          required: true
+        - name: paid_amount
+          value_ref: nv_number
+          required: true
+        - name: payer_email
+          value_ref: nv_email
+          required: true
+        - name: debtor_emails
+          value_ref: nv_email_list
+          required: true
+        - name: debt_amounts
+          value_ref: nv_number_list
+          required: false
+        - name: group_id
+          value_ref: nv_group_id
+          required: false
+    provides:
+    - expense_id
   expense_update:
     description: Update an expense.
     kind: update
     entity: Expense
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    - { name: description, value_ref: nv_body, required: false }
-    - { name: paid_amount, value_ref: nv_number, required: false }
-    - { name: payer_email, value_ref: nv_email, required: false }
-    - { name: debtor_emails, value_ref: nv_email_list, required: false }
-    - { name: debt_amounts, value_ref: nv_number_list, required: false }
-    provides: [expense_id]
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: description
+          value_ref: nv_body
+          required: false
+        - name: paid_amount
+          value_ref: nv_number
+          required: false
+        - name: payer_email
+          value_ref: nv_email
+          required: false
+        - name: debtor_emails
+          value_ref: nv_email_list
+          required: false
+        - name: debt_amounts
+          value_ref: nv_number_list
+          required: false
+    provides:
+    - expense_id
   expense_delete:
     description: Delete an expense.
     kind: delete
     entity: Expense
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
   expense_undelete:
     description: Restore a previously deleted expense.
     kind: action
     entity: Expense
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    output: { type: side_effect, description: Clears the deleted flag on the expense. }
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Clears the deleted flag on the expense.
   expense_attach_receipt:
     description: Attach a file-system receipt file to an expense.
     kind: action
     entity: Expense
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    - { name: receipt_file_path, value_ref: nv_file_path, required: true }
-    - { name: overwrite, value_ref: nv_bool, required: false }
-    - { name: file_system_access_token, value_ref: nv_access_token, required: true }
-    output: { type: side_effect, description: Copies the file-system file onto the expense as a receipt. }
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: receipt_file_path
+          value_ref: nv_file_path
+          required: true
+        - name: overwrite
+          value_ref: nv_bool
+          required: false
+        - name: file_system_access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Copies the file-system file onto the expense as a receipt.
   expense_delete_receipt:
     description: Delete the receipt file attached to an expense.
     kind: action
     entity: Expense
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    output: { type: side_effect, description: Removes the receipt file from the expense. }
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Removes the receipt file from the expense.
   payment_query:
     description: List payments in a group.
     kind: search
     entity: Payment
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    - { name: group_id, value_ref: nv_group_id, required: true, role: filter }
-    - { name: query, value_ref: nv_str, required: false, role: search }
-    - { name: participant_email, value_ref: nv_email, required: false, role: filter }
-    - { name: page_index, value_ref: nv_int, required: false, role: response_control }
-    - { name: page_limit, value_ref: nv_int, required: false, role: response_control }
-    - { name: sort_by, value_ref: nv_str, required: false, role: sort }
-    provides: [payment_id, group_id, description, paid_amount, deleted, created_at]
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+    - name: participant_email
+      value_ref: nv_email
+      required: false
+    controls:
+    - name: page_index
+      value_ref: nv_int
+      required: false
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+    provides:
+    - payment_id
+    - group_id
+    - description
+    - paid_amount
+    - deleted
+    - created_at
+    scope:
+    - name: group_id
+      value_ref: nv_group_id
+      required: true
   payment_ungrouped_query:
     description: List payments not attached to a group.
     kind: search
     entity: Payment
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    - { name: query, value_ref: nv_str, required: false, role: search }
-    - { name: participant_email, value_ref: nv_email, required: false, role: filter }
-    - { name: page_index, value_ref: nv_int, required: false, role: response_control }
-    - { name: page_limit, value_ref: nv_int, required: false, role: response_control }
-    - { name: sort_by, value_ref: nv_str, required: false, role: sort }
-    provides: [payment_id, group_id, description, paid_amount, deleted, created_at]
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+    - name: participant_email
+      value_ref: nv_email
+      required: false
+    controls:
+    - name: page_index
+      value_ref: nv_int
+      required: false
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+    provides:
+    - payment_id
+    - group_id
+    - description
+    - paid_amount
+    - deleted
+    - created_at
   payment_get:
     description: Show one payment.
     kind: get
     entity: Payment
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    provides: [payment_id, group_id, description, paid_amount, deleted, created_at]
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - payment_id
+    - group_id
+    - description
+    - paid_amount
+    - deleted
+    - created_at
   payment_create:
     description: Record a payment from one member to another.
     kind: create
     entity: Payment
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    - { name: payer_email, value_ref: nv_email, required: true }
-    - { name: receiver_email, value_ref: nv_email, required: true }
-    - { name: amount, value_ref: nv_number, required: true, sink_class: external_settle }
-    - { name: group_id, value_ref: nv_group_id, required: false }
-    - { name: description, value_ref: nv_body, required: false, sink_class: external_settle }
-    provides: [payment_id]
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: payer_email
+          value_ref: nv_email
+          required: true
+        - name: receiver_email
+          value_ref: nv_email
+          required: true
+        - name: amount
+          value_ref: nv_number
+          required: true
+          sink_class: external_settle
+        - name: group_id
+          value_ref: nv_group_id
+          required: false
+        - name: description
+          value_ref: nv_body
+          required: false
+          sink_class: external_settle
+    provides:
+    - payment_id
   payment_delete:
     description: Delete a payment.
     kind: delete
     entity: Payment
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
   payment_update:
     description: Update payment amount or description.
     kind: update
     entity: Payment
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    - { name: amount, value_ref: nv_number, required: false }
-    - { name: description, value_ref: nv_str, required: false }
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: amount
+          value_ref: nv_number
+          required: false
+        - name: description
+          value_ref: nv_str
+          required: false
   payment_undelete:
     description: Restore a previously deleted payment.
     kind: action
     entity: Payment
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    output: { type: side_effect, description: Restores the deleted payment. }
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Restores the deleted payment.
   payment_attach_receipt:
     description: Attach a file-system receipt file to a payment.
     kind: action
     entity: Payment
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    - { name: receipt_file_path, value_ref: nv_file_path, required: true }
-    - { name: overwrite, value_ref: nv_bool, required: false }
-    - { name: file_system_access_token, value_ref: nv_access_token, required: true }
-    output: { type: side_effect, description: Copies the file-system file onto the payment as a receipt. }
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: receipt_file_path
+          value_ref: nv_file_path
+          required: true
+        - name: overwrite
+          value_ref: nv_bool
+          required: false
+        - name: file_system_access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Copies the file-system file onto the payment as a receipt.
   payment_delete_receipt:
     description: Delete the receipt file attached to a payment.
     kind: action
     entity: Payment
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    output: { type: side_effect, description: Removes the receipt file from the payment. }
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Removes the receipt file from the payment.
   balance_person_query:
     description: Show one person's total balance and per-group breakdown.
     kind: query
     entity: Balance
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    - { name: email, value_ref: nv_email, required: true }
-    provides: [email, group_id, group_name, direction, amount]
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: email
+      value_ref: nv_email
+      required: true
+    provides:
+    - email
+    - group_id
+    - group_name
+    - direction
+    - amount
   balance_people_query:
     description: List balances between the current user and other people.
     kind: query
     entity: Balance
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    provides: [email, name, direction, amount, you_owe_others, others_owe_you]
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - email
+    - name
+    - direction
+    - amount
+    - you_owe_others
+    - others_owe_you
   balance_group_query:
     description: List balances between members of one group.
     kind: query
     entity: Balance
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    - { name: group_id, value_ref: nv_group_id, required: true, role: scope }
-    - { name: email, value_ref: nv_email, required: false, role: filter }
-    provides: [email, name, group_id, direction, amount]
+    scope:
+    - name: group_id
+      value_ref: nv_group_id
+      required: true
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: email
+      value_ref: nv_email
+      required: false
+    provides:
+    - email
+    - name
+    - group_id
+    - direction
+    - amount
   balance_groups_query:
     description: List the current user's balance in each group.
     kind: query
     entity: Balance
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    provides: [group_id, group_name, you_owe_others, others_owe_you]
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - group_id
+    - group_name
+    - you_owe_others
+    - others_owe_you
   settle_up:
     description: Settle up balances with a person (optionally within a group).
     kind: action
     entity: Balance
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    - { name: email, value_ref: nv_email, required: true }
-    - { name: group_id, value_ref: nv_group_id, required: false }
-    - { name: description, value_ref: nv_body, required: false, sink_class: external_settle }
-    output: { type: side_effect, description: Creates settlement payments to zero out balances. }
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: email
+          value_ref: nv_email
+          required: true
+        - name: group_id
+          value_ref: nv_group_id
+          required: false
+        - name: description
+          value_ref: nv_body
+          required: false
+          sink_class: external_settle
+    output:
+      type: side_effect
+      description: Creates settlement payments to zero out balances.
   expense_comment_query:
     description: List comments on an expense.
     kind: query
     entity: ExpenseComment
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    - { name: expense_id, value_ref: nv_expense_id, required: true, role: scope }
-    - { name: page_index, value_ref: nv_int, required: false, role: response_control }
-    - { name: page_limit, value_ref: nv_int, required: false, role: response_control }
-    provides: [expense_comment_id, expense_id, comment, created_at]
+    scope:
+    - name: expense_id
+      value_ref: nv_expense_id
+      required: true
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    controls:
+    - name: page_index
+      value_ref: nv_int
+      required: false
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+    provides:
+    - expense_comment_id
+    - expense_id
+    - comment
+    - created_at
   expense_comment_create:
     description: Post a comment on an expense.
     kind: create
     entity: ExpenseComment
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    - { name: expense_id, value_ref: nv_expense_id, required: true }
-    - { name: comment, value_ref: nv_comment, required: true }
-    provides: [expense_comment_id]
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: expense_id
+          value_ref: nv_expense_id
+          required: true
+        - name: comment
+          value_ref: nv_comment
+          required: true
+    provides:
+    - expense_comment_id
   expense_comment_update:
     description: Update an expense comment you posted.
     kind: update
     entity: ExpenseComment
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    - { name: comment, value_ref: nv_comment, required: true }
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: comment
+          value_ref: nv_comment
+          required: true
   expense_comment_delete:
     description: Delete an expense comment you posted.
     kind: delete
     entity: ExpenseComment
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
   payment_comment_query:
     description: List comments on a payment.
     kind: query
     entity: PaymentComment
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    - { name: payment_id, value_ref: nv_payment_id, required: true, role: scope }
-    provides: [payment_comment_id, payment_id, comment, created_at]
+    scope:
+    - name: payment_id
+      value_ref: nv_payment_id
+      required: true
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - payment_comment_id
+    - payment_id
+    - comment
+    - created_at
   payment_comment_create:
     description: Post a comment on a payment.
     kind: create
     entity: PaymentComment
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    - { name: payment_id, value_ref: nv_payment_id, required: true }
-    - { name: comment, value_ref: nv_comment, required: true }
-    provides: [payment_comment_id]
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: payment_id
+          value_ref: nv_payment_id
+          required: true
+        - name: comment
+          value_ref: nv_comment
+          required: true
+    provides:
+    - payment_comment_id
   payment_comment_update:
     description: Update a payment comment you posted.
     kind: update
     entity: PaymentComment
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    - { name: comment, value_ref: nv_comment, required: true }
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: comment
+          value_ref: nv_comment
+          required: true
   payment_comment_delete:
     description: Delete a payment comment you posted.
     kind: delete
     entity: PaymentComment
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
   notification_query:
     description: List Splitwise inbox notifications.
     kind: query
     entity: Notification
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    - { name: read, value_ref: nv_read, required: false, role: filter }
-    - { name: page_index, value_ref: nv_int, required: false, role: response_control }
-    - { name: page_limit, value_ref: nv_int, required: false, role: response_control }
-    provides: [notification_id, type, title, message, read, created_at]
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: read
+      value_ref: nv_read
+      required: false
+    controls:
+    - name: page_index
+      value_ref: nv_int
+      required: false
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+    provides:
+    - notification_id
+    - type
+    - title
+    - message
+    - read
+    - created_at
   notification_delete:
     description: Delete one notification.
     kind: delete
     entity: Notification
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
   notification_mark:
     description: Mark one notification as read or unread.
     kind: action
     entity: Notification
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    - { name: read, value_ref: nv_read, required: true }
-    output: { type: side_effect, description: Updates the read status of one notification. }
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: read
+          value_ref: nv_read
+          required: true
+    output:
+      type: side_effect
+      description: Updates the read status of one notification.
   notification_delete_all:
     description: Delete all Splitwise notifications for the authenticated user.
     kind: action
     entity: Notification
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    output: { type: side_effect, description: Clears the entire notification inbox. }
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Clears the entire notification inbox.
   notification_mark_all:
     description: Mark all notifications as read or unread.
     kind: action
     entity: Notification
-    parameters:
-    - { name: access_token, value_ref: nv_access_token, required: true }
-    - { name: read, value_ref: nv_read, required: true }
-    output: { type: side_effect, description: Updates the read status of every notification. }
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: read
+          value_ref: nv_read
+          required: true
+    output:
+      type: side_effect
+      description: Updates the read status of every notification.
 values:
-  nv_str: { type: string, description: Free-form string. }
-  nv_login_username: { type: string, description: Account-holder login id for this service — not a counterparty. }
-  nv_email: { type: email, description: Email address of a user or counterparty. }
-  nv_password: { type: string, description: Account-holder password for this service. }
-  nv_access_token: { type: string, description: Bearer access token from login. }
-  nv_body: { type: markdown, description: Long text body. }
-  nv_group_id: { type: integer, description: Group primary key. }
-  nv_expense_id: { type: integer, description: Expense primary key. }
-  nv_payment_id: { type: integer, description: Payment primary key. }
+  nv_str:
+    type: string
+    description: Free-form string.
+  nv_login_username:
+    type: string
+    description: Account-holder login id for this service — not a counterparty.
+  nv_email:
+    type: email
+    description: Email address of a user or counterparty.
+  nv_password:
+    type: string
+    description: Account-holder password for this service.
+  nv_access_token:
+    type: string
+    description: Bearer access token from login.
+  nv_body:
+    type: markdown
+    description: Long text body.
+  nv_group_id:
+    type: integer
+    description: Group primary key.
+  nv_expense_id:
+    type: integer
+    description: Expense primary key.
+  nv_payment_id:
+    type: integer
+    description: Payment primary key.
   nv_email_list:
     type: array
-    items: { value_ref: nv_email }
+    items:
+      value_ref: nv_email
     description: List of email addresses.
-  nv_number: { type: number, description: Numeric amount. }
+  nv_number:
+    type: number
+    description: Numeric amount.
   nv_number_list:
     type: array
-    items: { value_ref: nv_number }
+    items:
+      value_ref: nv_number
     description: List of numeric amounts.
-  nv_bool: { type: boolean, description: Boolean flag. }
-  nv_int: { type: integer, description: Integer. }
-  nv_datetime: { type: rfc3339, description: ISO datetime string. }
-  nv_file_path: { type: string, description: Absolute file-system path for receipt upload. }
-  nv_expense_comment_id: { type: integer, description: Expense comment primary key. }
-  nv_payment_comment_id: { type: integer, description: Payment comment primary key. }
-  nv_notification_id: { type: integer, description: Notification primary key. }
-  nv_comment: { type: string, description: Text body of an expense or payment comment. }
-  nv_read: { type: boolean, description: Whether a notification has been read. }
-  nv_notification_type: { type: string, description: Notification type label. }
-  nv_notification_title: { type: string, description: Notification title. }
-  nv_notification_message: { type: string, description: Notification message body. }
+  nv_bool:
+    type: boolean
+    description: Boolean flag.
+  nv_int:
+    type: integer
+    description: Integer.
+  nv_datetime:
+    type: rfc3339
+    description: ISO datetime string.
+  nv_file_path:
+    type: string
+    description: Absolute file-system path for receipt upload.
+  nv_expense_comment_id:
+    type: integer
+    description: Expense comment primary key.
+  nv_payment_comment_id:
+    type: integer
+    description: Payment comment primary key.
+  nv_notification_id:
+    type: integer
+    description: Notification primary key.
+  nv_comment:
+    type: string
+    description: Text body of an expense or payment comment.
+  nv_read:
+    type: boolean
+    description: Whether a notification has been read.
+  nv_notification_type:
+    type: string
+    description: Notification type label.
+  nv_notification_title:
+    type: string
+    description: Notification title.
+  nv_notification_message:
+    type: string
+    description: Notification message body.

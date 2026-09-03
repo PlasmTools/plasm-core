@@ -166,13 +166,16 @@ capabilities:
     description: Login to Phone; returns access_token for Bearer auth.
     kind: action
     entity: AuthSession
-    parameters:
-    - name: username
-      value_ref: nv_login_username
-      required: true
-    - name: password
-      value_ref: nv_password
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: username
+          value_ref: nv_login_username
+          required: true
+        - name: password
+          value_ref: nv_password
+          required: true
     provides:
     - access_token
     - token_type
@@ -183,10 +186,13 @@ capabilities:
     description: Logout and invalidate the access token.
     kind: action
     entity: AuthSession
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
     output:
       type: side_effect
       description: Ends the Phone session for this token.
@@ -194,26 +200,23 @@ capabilities:
     description: Search contacts by name/relationship.
     kind: search
     entity: Contact
-    parameters:
+    selection:
     - name: access_token
       value_ref: nv_access_token
       required: true
     - name: query
       value_ref: nv_str
       required: false
-      role: search
     - name: relationship
       value_ref: nv_str
       required: false
-      role: filter
+    controls:
     - name: page_index
       value_ref: nv_int
       required: false
-      role: response_control
     - name: page_limit
       value_ref: nv_int
       required: false
-      role: response_control
     provides:
     - contact_id
     - first_name
@@ -229,92 +232,100 @@ capabilities:
     description: Add a contact.
     kind: create
     entity: Contact
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: first_name
-      value_ref: nv_str
-      required: true
-    - name: last_name
-      value_ref: nv_str
-      required: false
-    - name: phone_number
-      value_ref: nv_phone
-      required: true
-    - name: email
-      value_ref: nv_email
-      required: false
-    - name: relationships
-      value_ref: nv_str_list
-      required: false
-    - name: birthday
-      value_ref: nv_str
-      required: false
-    - name: home_address
-      value_ref: nv_str
-      required: false
-    - name: work_address
-      value_ref: nv_str
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: first_name
+          value_ref: nv_str
+          required: true
+        - name: last_name
+          value_ref: nv_str
+          required: false
+        - name: phone_number
+          value_ref: nv_phone
+          required: true
+        - name: email
+          value_ref: nv_email
+          required: false
+        - name: relationships
+          value_ref: nv_str_list
+          required: false
+        - name: birthday
+          value_ref: nv_str
+          required: false
+        - name: home_address
+          value_ref: nv_str
+          required: false
+        - name: work_address
+          value_ref: nv_str
+          required: false
     provides:
     - contact_id
   contact_update:
     description: Update a contact.
     kind: update
     entity: Contact
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: first_name
-      value_ref: nv_str
-      required: false
-    - name: last_name
-      value_ref: nv_str
-      required: false
-    - name: phone_number
-      value_ref: nv_phone
-      required: false
-    - name: email
-      value_ref: nv_email
-      required: false
-    - name: relationships
-      value_ref: nv_str_list
-      required: false
-    - name: birthday
-      value_ref: nv_str
-      required: false
-    - name: home_address
-      value_ref: nv_str
-      required: false
-    - name: work_address
-      value_ref: nv_str
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: first_name
+          value_ref: nv_str
+          required: false
+        - name: last_name
+          value_ref: nv_str
+          required: false
+        - name: phone_number
+          value_ref: nv_phone
+          required: false
+        - name: email
+          value_ref: nv_email
+          required: false
+        - name: relationships
+          value_ref: nv_str_list
+          required: false
+        - name: birthday
+          value_ref: nv_str
+          required: false
+        - name: home_address
+          value_ref: nv_str
+          required: false
+        - name: work_address
+          value_ref: nv_str
+          required: false
   contact_delete:
     description: Delete a contact.
     kind: delete
     entity: Contact
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
   alarm_query:
     description: List alarms.
     kind: query
     entity: Alarm
-    parameters:
+    selection:
     - name: access_token
       value_ref: nv_access_token
       required: true
+    controls:
     - name: page_index
       value_ref: nv_int
       required: false
-      role: response_control
     - name: page_limit
       value_ref: nv_int
       required: false
-      role: response_control
     provides:
     - alarm_id
     - time
@@ -328,10 +339,13 @@ capabilities:
     description: Show one alarm.
     kind: get
     entity: Alarm
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
     provides:
     - alarm_id
     - time
@@ -345,96 +359,100 @@ capabilities:
     description: Create an alarm.
     kind: create
     entity: Alarm
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: time
-      value_ref: nv_str
-      required: true
-    - name: repeat_days
-      value_ref: nv_str_list
-      required: false
-    - name: label
-      value_ref: nv_str
-      required: false
-    - name: enabled
-      value_ref: nv_bool
-      required: false
-    - name: snooze_minutes
-      value_ref: nv_int
-      required: false
-    - name: vibration
-      value_ref: nv_bool
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: time
+          value_ref: nv_str
+          required: true
+        - name: repeat_days
+          value_ref: nv_str_list
+          required: false
+        - name: label
+          value_ref: nv_str
+          required: false
+        - name: enabled
+          value_ref: nv_bool
+          required: false
+        - name: snooze_minutes
+          value_ref: nv_int
+          required: false
+        - name: vibration
+          value_ref: nv_bool
+          required: false
     provides:
     - alarm_id
   alarm_update:
     description: Update an alarm.
     kind: update
     entity: Alarm
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: time
-      value_ref: nv_str
-      required: false
-    - name: repeat_days
-      value_ref: nv_str_list
-      required: false
-    - name: label
-      value_ref: nv_str
-      required: false
-    - name: enabled
-      value_ref: nv_bool
-      required: false
-    - name: snooze_minutes
-      value_ref: nv_int
-      required: false
-    - name: vibration
-      value_ref: nv_bool
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: time
+          value_ref: nv_str
+          required: false
+        - name: repeat_days
+          value_ref: nv_str_list
+          required: false
+        - name: label
+          value_ref: nv_str
+          required: false
+        - name: enabled
+          value_ref: nv_bool
+          required: false
+        - name: snooze_minutes
+          value_ref: nv_int
+          required: false
+        - name: vibration
+          value_ref: nv_bool
+          required: false
   alarm_delete:
     description: Delete an alarm.
     kind: delete
     entity: Alarm
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
   text_message_query:
     description: Search text messages.
     kind: search
     entity: TextMessage
-    parameters:
+    selection:
     - name: access_token
       value_ref: nv_access_token
       required: true
     - name: query
       value_ref: nv_str
       required: false
-      role: search
     - name: phone_number
       value_ref: nv_phone
       required: false
-      role: filter
     - name: only_latest_per_contact
       value_ref: nv_bool
       required: false
-      role: filter
+    controls:
     - name: page_index
       value_ref: nv_int
       required: false
-      role: response_control
     - name: page_limit
       value_ref: nv_int
       required: false
-      role: response_control
     - name: sort_by
       value_ref: nv_str
       required: false
-      role: sort
     provides:
     - text_message_id
     - message
@@ -443,10 +461,13 @@ capabilities:
     description: Show one text message.
     kind: get
     entity: TextMessage
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
     provides:
     - text_message_id
     - message
@@ -455,17 +476,20 @@ capabilities:
     description: Send a text message to a phone number.
     kind: action
     entity: TextMessage
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: phone_number
-      value_ref: nv_phone
-      required: true
-    - name: message
-      value_ref: nv_message
-      required: true
-      sink_class: external_sms
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: phone_number
+          value_ref: nv_phone
+          required: true
+        - name: message
+          value_ref: nv_message
+          required: true
+          sink_class: external_sms
     output:
       type: side_effect
       description: Sends an SMS to the given phone number.
@@ -473,42 +497,40 @@ capabilities:
     description: Delete a text message.
     kind: delete
     entity: TextMessage
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
   voice_message_query:
     description: Search voice messages.
     kind: search
     entity: VoiceMessage
-    parameters:
+    selection:
     - name: access_token
       value_ref: nv_access_token
       required: true
     - name: query
       value_ref: nv_str
       required: false
-      role: search
     - name: phone_number
       value_ref: nv_phone
       required: false
-      role: filter
     - name: only_latest_per_contact
       value_ref: nv_bool
       required: false
-      role: filter
+    controls:
     - name: page_index
       value_ref: nv_int
       required: false
-      role: response_control
     - name: page_limit
       value_ref: nv_int
       required: false
-      role: response_control
     - name: sort_by
       value_ref: nv_str
       required: false
-      role: sort
     provides:
     - voice_message_id
     - message
@@ -517,17 +539,20 @@ capabilities:
     description: Send a voice message to a phone number.
     kind: action
     entity: VoiceMessage
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: phone_number
-      value_ref: nv_phone
-      required: true
-    - name: message
-      value_ref: nv_message
-      required: true
-      sink_class: external_sms
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: phone_number
+          value_ref: nv_phone
+          required: true
+        - name: message
+          value_ref: nv_message
+          required: true
+          sink_class: external_sms
     output:
       type: side_effect
       description: Sends a voice message to the given phone number.
@@ -535,18 +560,24 @@ capabilities:
     description: Delete a voice message.
     kind: delete
     entity: VoiceMessage
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
   profile_get:
     description: Show phone profile by phone number.
     kind: get
     entity: Profile
-    parameters:
-    - name: phone_number
-      value_ref: nv_phone
-      required: true
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: phone_number
+          value_ref: nv_phone
+          required: true
     provides:
     - first_name
     - last_name
@@ -556,41 +587,37 @@ capabilities:
     description: Get current device date and time.
     kind: get
     entity: DateTime
-    parameters:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
     provides:
     - date
     - time
 values:
   nv_str:
     type: string
-
     description: Free-form string.
   nv_email:
     type: email
-
     description: Email address of a user or counterparty.
   nv_login_username:
     type: e164
-
     description: Account-holder login id for this service (phone number here) — not a counterparty.
   nv_password:
     type: string
-
     description: Account-holder password for this service.
   nv_access_token:
     type: string
-
     description: Bearer access token from login.
   nv_phone:
     type: e164
-
     description: Phone number.
   nv_message:
     type: document
-
     description: Message body text.
   nv_contact_id:
     type: integer
@@ -617,5 +644,4 @@ values:
     description: Integer.
   nv_datetime:
     type: rfc3339
-
     description: ISO datetime string.
