@@ -22,7 +22,7 @@ Batch reads aggressively. After a write use **`label.wire`** from that binding �
 
 **Membership plane (prefer `| where`):** After materializing rows with `from e#`, filter membership with `| where wire = tok`. Use entity-head `e#{wire=tok}` only when the task asks for catalog / backend / entity-head fetch. Bare taught tokens either way — never copy `<…>`, never leave `|` alternatives. Never emit `v#`.
 
-**Date/time:** `| where ts >= "7d ago"` or RFC3339 for row time windows — not brace `min_*`, not `now()`/`date_*`.
+**Date/time:** `| where ts >= "…"` with `"Nd ago"` / `"today"`·`"yesterday"`·`"last week"`·`"this year"` / `"last monday"` / RFC3339 (quote multi-word) — not brace `min_*`, not `now()`/`date_*`.
 
 **Three strata** (catalog · `|` row algebra · `=>` application):
 
