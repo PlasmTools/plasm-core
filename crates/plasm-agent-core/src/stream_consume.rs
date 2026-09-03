@@ -114,7 +114,6 @@ mod tests {
     fn berry_query() -> Expr {
         Expr::Query(QueryExpr {
             entity: EntityName::new("Berry"),
-            context: None,
             predicate: None,
             projection: None,
             pagination: None,

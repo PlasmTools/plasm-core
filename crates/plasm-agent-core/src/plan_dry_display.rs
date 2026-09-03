@@ -19,15 +19,18 @@ pub enum PlanDryVerdict {
     Ok,
     Review,
     Deny,
+    /// Correctable program diagnostic (parse / type / preflight) — not a tool fault.
+    NeedsFix,
 }
 
 impl PlanDryVerdict {
-    /// Canonical agent/control-plane wire string (`ok` | `review` | `deny`).
+    /// Canonical agent/control-plane wire string (`ok` | `review` | `deny` | `needs_fix`).
     pub fn as_wire(self) -> &'static str {
         match self {
             Self::Ok => "ok",
             Self::Review => "review",
             Self::Deny => "deny",
+            Self::NeedsFix => "needs_fix",
         }
     }
 }
@@ -199,6 +202,7 @@ pub fn build_plan_dry_compact_view(
             .and_then(|v| v.as_str())
             .and_then(|v| match v {
                 "denied" | "deny" => Some(PlanDryVerdict::Deny),
+                "needs_fix" => Some(PlanDryVerdict::NeedsFix),
                 "needs_review" | "review" => Some(PlanDryVerdict::Review),
                 "clean" | "ok" => Some(PlanDryVerdict::Ok),
                 _ => None,
@@ -263,11 +267,7 @@ pub fn render_plan_dry_compact_text(
     plan_handle: Option<&str>,
 ) -> String {
     let mut out = String::new();
-    let verdict = match view.verdict {
-        PlanDryVerdict::Ok => "ok",
-        PlanDryVerdict::Review => "review",
-        PlanDryVerdict::Deny => "deny",
-    };
+    let verdict = view.verdict.as_wire();
     let mut header = format!("plan {verdict} · {}n {}r", view.node_count, view.read_count,);
     if view.write_count > 0 {
         let _ = write!(header, " {}w", view.write_count);

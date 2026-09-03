@@ -12,7 +12,7 @@ pub use dry_render::render_node_operation;
 pub fn evaluate_plasm_comp_dry(
     es: &ExecuteSession,
     bundle: &crate::plasm_comp_bundle::PlasmCompBundle,
-) -> Result<DryPlasmPlanEvaluation, String> {
+) -> Result<DryPlasmPlanEvaluation, crate::program_diagnostic::ProgramStageError> {
     evaluate_executable_comp_dry(es, bundle.executable(), bundle.artifact())
 }
 
@@ -20,35 +20,43 @@ pub fn evaluate_executable_comp_dry(
     es: &ExecuteSession,
     executable: &ExecutablePlasmComp,
     artifact: &PlasmCompArtifact,
-) -> Result<DryPlasmPlanEvaluation, String> {
+) -> Result<DryPlasmPlanEvaluation, crate::program_diagnostic::ProgramStageError> {
+    use crate::program_diagnostic::ProgramStageError;
+
     let comp = &artifact.comp;
     // Record comp commit when evidence chain is active (noop when disabled).
     if let Some(evidence) = crate::evidence_chain::chain(es) {
         evidence
             .record_comp_committed(comp)
-            .map_err(|e| format!("evidence comp_committed: {e}"))?;
+            .map_err(|e| ProgramStageError::plan(format!("evidence comp_committed: {e}")))?;
     }
     let version = serde_json::json!(comp.version);
     let mut out = Vec::new();
     let mut staged_nodes = Vec::new();
     let execution_unsupported = Vec::new();
     for (step_idx, (step_id, payload)) in executable.steps_topo.iter().enumerate() {
-        let n = step_payload_to_validated_node(step_id, payload, &executable.bind)?;
-        ensure_node_dispatchable(es, &n, step_idx)?;
+        let n = step_payload_to_validated_node(step_id, payload, &executable.bind)
+            .map_err(ProgramStageError::plan)?;
+        ensure_node_dispatchable(es, &n, step_idx).map_err(ProgramStageError::plan)?;
         if let ValidatedPlanNode::RelationTraversal(relation) = &n {
             let pe = ParsedExpr {
                 expr: relation.relation.ir.expr.clone(),
                 projection: relation.relation.ir.projection.clone(),
             };
-            typecheck_parsed_for_session(es, &pe)
-                .map_err(|e| format!("type check in plan.nodes[{step_idx}].relation.expr: {e}"))?;
-            ensure_relation_expr_matches_plan(es, relation, &pe, step_idx)?;
+            typecheck_parsed_for_session(es, &pe).map_err(|e| ProgramStageError::Type {
+                correction: crate::program_diagnostic::format_session_symbolic_type_error(
+                    es, None, &e,
+                ),
+            })?;
+            ensure_relation_expr_matches_plan(es, relation, &pe, step_idx)
+                .map_err(ProgramStageError::plan)?;
         }
         if let Some(surface) = n.as_surface() {
             match surface_parsed_expr(surface, step_idx) {
                 Ok(Some(pe)) => {
                     let scoped_es =
-                        entry_scoped_execute_session(es, surface.qualified_entity.as_ref())?;
+                        entry_scoped_execute_session(es, surface.qualified_entity.as_ref())
+                            .map_err(ProgramStageError::plan)?;
                     let normalized = if surface.ir.is_some() {
                         crate::execute_pipeline::PlasmPreflight::preflight_node_compile_dispatch(
                             es, &scoped_es, surface, &pe, step_idx,
@@ -120,21 +128,24 @@ pub fn evaluate_executable_comp_dry(
                 }
                 Ok(None) => {
                     if n.depends_on().is_empty() && n.uses_result().is_empty() {
-                        return Err(format!(
+                        return Err(ProgramStageError::plan(format!(
                             "plan.nodes[{step_idx}] requires ir or ir_template for executable surface"
-                        ));
+                        )));
                     }
                 }
-                Err(e) => return Err(e),
+                Err(e) => return Err(ProgramStageError::plan(e)),
             }
         }
 
         staged_nodes.push(format!("{} ({:?})", n.id(), n.kind()));
         out.push(dry_stage_result(step_idx, &n));
     }
-    let prepared = crate::plan_prepare::prepare_executable_plan_for_session(es, comp, executable)?;
-    dry_validate_render_nodes(es, prepared.validated.artifact())?;
-    dry_validate_staged_surfaces(es, prepared.validated.artifact())?;
+    let prepared = crate::plan_prepare::prepare_executable_plan_for_session(es, comp, executable)
+        .map_err(ProgramStageError::plan)?;
+    dry_validate_render_nodes(es, prepared.validated.artifact())
+        .map_err(ProgramStageError::plan)?;
+    dry_validate_staged_surfaces(es, prepared.validated.artifact())
+        .map_err(ProgramStageError::plan)?;
     let flow_catalog = es.build_flow_catalog_view();
     let topological_order: Vec<String> = executable
         .steps_topo

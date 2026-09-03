@@ -89,7 +89,7 @@ pub fn plan_gate(gate: &EvaluatedPlanGate, ctx: PlanGateContext<'_>) -> PlanGate
                 PlanGateDecision::NeedsReview
             }
         }
-        PlanDryVerdict::Deny => match gate.admission.clone() {
+        PlanDryVerdict::Deny | PlanDryVerdict::NeedsFix => match gate.admission.clone() {
             Err(denial) => PlanGateDecision::Denied(denial),
             Ok(_) => PlanGateDecision::Denied(FlowDenial {
                 verdict: FlowVerdict::Denied,

@@ -5,6 +5,7 @@ use plasm_core::{reject_domain_placeholder_in_executable, PreflightToken};
 
 use crate::plasm_plan::ValidatedSurfaceNode;
 use crate::plasm_plan_run::{dry_run_simulation_for_session, typecheck_parsed_for_session};
+use crate::program_diagnostic::ProgramStageError;
 
 use super::dispatch;
 
@@ -48,15 +49,19 @@ impl PlasmPreflight {
     pub fn typecheck_parsed_for_session(
         session: &crate::execute_session::ExecuteSession,
         parsed: &ParsedExpr,
-    ) -> Result<PreflightToken, String> {
-        typecheck_parsed_for_session(session, parsed).map_err(|e| e.to_string())?;
+    ) -> Result<PreflightToken, ProgramStageError> {
+        typecheck_parsed_for_session(session, parsed).map_err(|e| ProgramStageError::Type {
+            correction: crate::program_diagnostic::format_session_symbolic_type_error(
+                session, None, &e,
+            ),
+        })?;
         Ok(PreflightToken::VERIFIED)
     }
 
     pub fn validate_projection_fields(
         session: &crate::execute_session::ExecuteSession,
         parsed: &ParsedExpr,
-    ) -> Result<PreflightToken, String> {
+    ) -> Result<PreflightToken, ProgramStageError> {
         let Some(fields) = parsed.projection.as_ref() else {
             return Ok(PreflightToken::VERIFIED);
         };
@@ -68,19 +73,21 @@ impl PlasmPreflight {
             let qe =
                 crate::catalog_ownership::resolve_qualified_entity_key(session, entity, None).ok();
             let name =
-                crate::plasm_plan_run::resolve_wire_field_token(session, None, qe.as_ref(), field)?;
+                crate::plasm_plan_run::resolve_wire_field_token(session, None, qe.as_ref(), field)
+                    .map_err(ProgramStageError::plan)?;
             let entity = parsed.expr.primary_entity();
-            let cgs = crate::catalog_ownership::resolve_cgs_for_entity(session, entity, None)?;
+            let cgs = crate::catalog_ownership::resolve_cgs_for_entity(session, entity, None)
+                .map_err(ProgramStageError::plan)?;
             let Some(ent) = cgs.get_entity(entity) else {
-                return Err(format!(
+                return Err(ProgramStageError::plan(format!(
                     "entity `{entity}` is not defined in the resolved catalog"
-                ));
+                )));
             };
             if !ent.fields.contains_key(name.as_str()) && !ent.relations.contains_key(name.as_str())
             {
-                return Err(format!(
+                return Err(ProgramStageError::plan(format!(
                     "projection field `{field}` (wire `{name}`) is not declared on entity `{entity}`"
-                ));
+                )));
             }
         }
         Ok(PreflightToken::VERIFIED)
@@ -92,11 +99,12 @@ impl PlasmPreflight {
         scoped_es: &crate::execute_session::ExecuteSession,
         parsed: &ParsedExpr,
         step_idx: usize,
-    ) -> Result<PreflightNormalized, String> {
+    ) -> Result<PreflightNormalized, ProgramStageError> {
         let label = format!("plan.nodes[{step_idx}]");
         Self::preflight_parsed_line(scoped_es, &label, parsed)?;
         let normalized =
-            super::dispatch::prepare_parsed_expr_for_dispatch(federation_es, scoped_es, parsed)?;
+            super::dispatch::prepare_parsed_expr_for_dispatch(federation_es, scoped_es, parsed)
+                .map_err(ProgramStageError::plan)?;
         Ok(PreflightNormalized::TypecheckedOnly(normalized))
     }
 
@@ -105,9 +113,10 @@ impl PlasmPreflight {
         session: &crate::execute_session::ExecuteSession,
         _source: &str,
         parsed: &ParsedExpr,
-    ) -> Result<PreflightReport, String> {
+    ) -> Result<PreflightReport, ProgramStageError> {
         let typecheck = Self::typecheck_parsed_for_session(session, parsed)?;
-        reject_domain_placeholder_in_executable(&parsed.expr).map_err(|e| e.to_string())?;
+        reject_domain_placeholder_in_executable(&parsed.expr)
+            .map_err(|e| ProgramStageError::plan(e.to_string()))?;
         let projection = Self::validate_projection_fields(session, parsed)?;
         Ok(PreflightReport {
             typecheck,
@@ -123,12 +132,13 @@ impl PlasmPreflight {
         surface: &ValidatedSurfaceNode,
         parsed: &ParsedExpr,
         step_idx: usize,
-    ) -> Result<PreflightNormalized, String> {
+    ) -> Result<PreflightNormalized, ProgramStageError> {
         let label = format!("plan.nodes[{step_idx}]");
         Self::preflight_parsed_line(scoped_es, &label, parsed)?;
         let normalized = dispatch::preflight_surface_dispatch_after_typecheck(
             es, scoped_es, surface, parsed, step_idx,
-        )?;
+        )
+        .map_err(ProgramStageError::plan)?;
         Ok(PreflightNormalized::Simulatable(normalized))
     }
 
@@ -137,7 +147,7 @@ impl PlasmPreflight {
         session: &crate::execute_session::ExecuteSession,
         source: &str,
         parsed: &ParsedExpr,
-    ) -> Result<(String, String, serde_json::Value), String> {
+    ) -> Result<(String, String, serde_json::Value), ProgramStageError> {
         Self::preflight_parsed_line(session, source, parsed)?;
         let normalized = dispatch::preflight_line_compile_dispatch(
             session,
@@ -145,7 +155,8 @@ impl PlasmPreflight {
             parsed,
             source,
             session.cgs.as_ref(),
-        )?;
+        )
+        .map_err(ProgramStageError::plan)?;
         Ok(dry_run_simulation_for_session(session, &normalized))
     }
 }
@@ -191,7 +202,7 @@ mod tests {
         let parsed = parse_parsed_expr_for_session(&session, "e1($)").expect("parse");
         let err =
             PlasmPreflight::preflight_parsed_line(&session, "e1($)", &parsed).expect_err("dollar");
-        assert!(err.contains('$'), "{err}");
+        assert!(err.to_string().contains('$'), "{err}");
     }
 
     #[test]

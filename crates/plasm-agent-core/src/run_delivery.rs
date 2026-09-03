@@ -341,6 +341,7 @@ pub async fn deliver_http_live_run(
                 handle,
                 result: PlasmPlanRunResult {
                     version: serde_json::json!({}),
+                    agent_outcome: Default::default(),
                     node_results: Vec::new(),
                     graph_summary: serde_json::json!({}),
                     comp: Some(accept_payload.comp_wire.clone()),

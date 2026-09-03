@@ -377,6 +377,7 @@ async fn mcp_federated_post_async_finalize_compiles_e2_with_cross_cache() {
         &handle,
         crate::plasm_plan_run::PlasmPlanRunResult {
             version: serde_json::json!({}),
+            agent_outcome: Default::default(),
             node_results: vec![serde_json::json!({"id": "done"})],
             graph_summary: serde_json::json!({}),
             comp: None,
@@ -436,6 +437,7 @@ async fn mcp_async_wait_poll_reaches_terminal_result() {
         &handle,
         crate::plasm_plan_run::PlasmPlanRunResult {
             version: serde_json::json!({}),
+            agent_outcome: Default::default(),
             node_results: vec![serde_json::json!({"id": "done"})],
             graph_summary: serde_json::json!({}),
             comp: None,
@@ -1043,6 +1045,7 @@ fn plan_run_result_is_terminal_rejects_operation_poll_markdown() {
     );
     let poll = crate::plasm_plan_run::PlasmPlanRunResult {
         version: serde_json::json!({}),
+        agent_outcome: Default::default(),
         node_results: Vec::new(),
         graph_summary: serde_json::json!({}),
         comp: None,

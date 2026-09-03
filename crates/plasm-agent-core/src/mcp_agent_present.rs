@@ -19,6 +19,8 @@ pub const AGENT_TOKEN_KEYS: &[&str] = &[
     "dry_run",
     "logical_session_ref",
     "plan_uri",
+    "program_score",
+    "error_category",
     "result_delivery",
     "artifact_uri",
 ];
@@ -51,6 +53,8 @@ pub struct PlanTokenRefs<'a> {
     pub dry_verdict: &'a str,
     pub logical_session_ref: &'a str,
     pub plan_uri: Option<&'a str>,
+    pub program_score: Option<&'a str>,
+    pub error_category: Option<&'a str>,
 }
 
 /// Slim context tokens for `plasm_context` agent content.
@@ -177,23 +181,63 @@ impl AgentContent {
     pub fn plan(refs: &PlanTokenRefs<'_>, plan_body: &str) -> Self {
         let mut tokens: Vec<(&'static str, String)> = vec![
             ("kind", AgentResultKind::Plan.as_str().into()),
-            ("run_ref", refs.run_ref.into()),
             ("dry_verdict", refs.dry_verdict.into()),
             ("dry_run", "true".into()),
             ("logical_session_ref", refs.logical_session_ref.into()),
         ];
+        if !refs.run_ref.is_empty() {
+            // Keep run_ref after kind for historical token order when present.
+            tokens.insert(1, ("run_ref", refs.run_ref.into()));
+        }
         if let Some(uri) = refs.plan_uri.filter(|s| !s.is_empty()) {
             tokens.push(("plan_uri", uri.into()));
         }
-        let run_instruction = format!(
-            "**Run:** pass `run_ref`: `{}` to **`plasm_run`**. Do not echo the program.",
-            refs.run_ref
-        );
+        if let Some(score) = refs.program_score.filter(|s| !s.is_empty()) {
+            tokens.push(("program_score", score.into()));
+        }
+        if let Some(cat) = refs.error_category.filter(|s| !s.is_empty()) {
+            tokens.push(("error_category", cat.into()));
+        }
+        let run_instruction = if refs.run_ref.is_empty() {
+            None
+        } else {
+            Some(format!(
+                "**Run:** pass `run_ref`: `{}` to **`plasm_run`**. Do not echo the program.",
+                refs.run_ref
+            ))
+        };
         Self {
             kind: AgentResultKind::Plan,
             tokens,
             body: Some(format!("```text\n{}\n```", plan_body.trim_end())),
-            run_instruction: Some(run_instruction),
+            run_instruction,
+        }
+    }
+
+    /// Correctable program diagnostic — quiet status + correction body (no `run_ref`).
+    pub fn plan_needs_fix(refs: &PlanTokenRefs<'_>, body_markdown: &str) -> Self {
+        let mut tokens: Vec<(&'static str, String)> = vec![
+            ("kind", AgentResultKind::Plan.as_str().into()),
+            ("dry_verdict", refs.dry_verdict.into()),
+            ("dry_run", "true".into()),
+            ("logical_session_ref", refs.logical_session_ref.into()),
+        ];
+        if let Some(score) = refs.program_score.filter(|s| !s.is_empty()) {
+            tokens.push(("program_score", score.into()));
+        }
+        if let Some(cat) = refs.error_category.filter(|s| !s.is_empty()) {
+            tokens.push(("error_category", cat.into()));
+        }
+        let body = body_markdown.trim();
+        Self {
+            kind: AgentResultKind::Plan,
+            tokens,
+            body: if body.is_empty() {
+                None
+            } else {
+                Some(body.to_string())
+            },
+            run_instruction: None,
         }
     }
 
@@ -335,6 +379,8 @@ mod tests {
                 plan_uri: Some(
                     "plasm://execute/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/s1/plan/x",
                 ),
+                program_score: None,
+                error_category: None,
             },
             "plan ok · 1n 1r → r1\n\n01 r1           query Label{}",
         )
@@ -349,6 +395,34 @@ mod tests {
         assert!(!md.contains("domain_revision\t"));
         assert!(md.contains("```text\nplan ok"));
         assert!(md.contains("plasm_run"));
+    }
+
+    #[test]
+    fn agent_content_plan_needs_fix_omits_run_ref() {
+        let md = AgentContent::plan_needs_fix(
+            &PlanTokenRefs {
+                run_ref: "",
+                dry_verdict: "needs_fix",
+                logical_session_ref: "l_ref",
+                plan_uri: None,
+                program_score: Some("0.40"),
+                error_category: Some("parse"),
+            },
+            "needs_fix · parse\n\nFix spelling.\n\nrevise this program and retry",
+        )
+        .render();
+        assert!(md.contains("dry_verdict\tneeds_fix\n"));
+        assert!(md.contains("program_score\t0.40\n"));
+        assert!(md.contains("error_category\tparse\n"));
+        assert!(!md.contains("run_ref\t"));
+        assert!(!md.contains("plasm_run"));
+        assert!(md.contains("needs_fix · parse"));
+    }
+
+    #[test]
+    fn agent_token_keys_include_needs_fix_fields() {
+        assert!(AGENT_TOKEN_KEYS.contains(&"program_score"));
+        assert!(AGENT_TOKEN_KEYS.contains(&"error_category"));
     }
 
     #[test]

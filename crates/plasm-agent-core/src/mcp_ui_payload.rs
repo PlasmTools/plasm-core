@@ -449,6 +449,8 @@ mod tests {
                 plan_uri: Some(
                     "plasm://execute/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/s1/plan/00000000-0000-4000-8000-000000000001",
                 ),
+                program_score: None,
+                error_category: None,
             },
             "plan ok · 1n 1r → items",
         )

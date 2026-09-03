@@ -175,7 +175,7 @@ pub(crate) async fn run_parsed_plasm_line(
         Some(token) => token,
         None => {
             crate::execute_pipeline::PlasmPreflight::preflight_parsed_line(sess, line, &parsed)
-                .map_err(RunLineError::Parse)?;
+                .map_err(|e| RunLineError::Parse(e.into()))?;
             plasm_core::PreflightToken::VERIFIED
         }
     };

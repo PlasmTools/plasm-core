@@ -481,7 +481,8 @@ mod tests {
             "query_as_mutator",
             &line,
         )
-        .expect_err("query m# in mutator invoke position");
+        .expect_err("query m# in mutator invoke position")
+        .to_string();
         let msg = if err.contains("not a mutator") {
             append_symbol_stability_context_for_test(&es, &err, &line)
         } else {

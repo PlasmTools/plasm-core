@@ -108,6 +108,7 @@ pub mod pending_clarify;
 pub mod plan_commit_store;
 mod plan_dry_compact;
 mod plan_dry_display;
+pub mod program_diagnostic;
 pub mod release_version;
 pub(crate) mod tool_model_service;
 pub mod traced_pg;

@@ -511,6 +511,59 @@ async fn program_parse_error_is_bad_request() {
 }
 
 #[tokio::test]
+async fn program_parse_error_plan_mode_is_needs_fix_ok() {
+    let st = test_state_with_registry();
+    let app = test_app_execute(st.clone());
+    let create = Request::builder()
+        .method("POST")
+        .uri("/execute")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::json!({ "entry_id": "overshow", "entities": ["Profile"] }).to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(create).await.unwrap();
+    let loc = res
+        .headers()
+        .get(LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let created = get_execute_session_json(&app, loc.as_str()).await;
+    let run_uri = format!(
+        "/execute/{}/{}?mode=plan",
+        created.prompt_hash, created.session
+    );
+    let run = Request::builder()
+        .method("POST")
+        .uri(&run_uri)
+        .header("accept", "application/json")
+        .body(Body::from("@@@not-plasm"))
+        .unwrap();
+    let res2 = app.oneshot(run).await.unwrap();
+    assert_eq!(res2.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res2.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let doc: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        doc.get("dry_verdict").and_then(|v| v.as_str()),
+        Some("needs_fix")
+    );
+    assert_eq!(
+        doc.get("error_category").and_then(|v| v.as_str()),
+        Some("parse")
+    );
+    assert!(doc.get("program_score").is_some());
+    let correction = doc.get("correction").and_then(|d| d.as_str()).unwrap_or("");
+    assert!(
+        correction.contains("Fix spelling") || !correction.is_empty(),
+        "expected didactic correction: {correction:?}"
+    );
+}
+
+#[tokio::test]
 async fn resolved_plan_endpoint_plan_mode() {
     use crate::catalog_pin::CatalogPin;
     use crate::plasm_compile::compile_plasm_surface_line_to_comp;
@@ -839,7 +892,8 @@ async fn unknown_entity_parse_error_includes_session_bounds() {
     let cross = st.sessions.symbol_map_cross_cache();
     let err =
         crate::plasm_compile::compile_plasm_expression(pipeline, Some(cross), &sess, "t", "e9()")
-            .expect_err("out-of-range e#");
+            .expect_err("out-of-range e#")
+            .to_string();
     assert!(
         err.contains("is not in this session"),
         "expected unknown entity in {err:?}"

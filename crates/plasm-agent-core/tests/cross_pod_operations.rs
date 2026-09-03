@@ -162,6 +162,7 @@ async fn cross_pod_wait_terminal_hydrates_run_artifact() {
         &handle,
         plasm_agent_core::plasm_plan_run::PlasmPlanRunResult {
             version: serde_json::json!({}),
+            agent_outcome: Default::default(),
             node_results: vec![serde_json::json!({"id": "cross-pod", "display_name": "cross-pod"})],
             graph_summary: serde_json::json!({}),
             comp: None,

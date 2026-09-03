@@ -8,6 +8,7 @@ use crate::plasm_dag::{
     compile_plasm_dag_to_plan_inner, compile_plasm_surface_line_to_plan, is_plasm_dag_source,
 };
 use crate::plasm_plan::parse_and_validate_plan_json;
+use crate::program_diagnostic::{diagnose_compile_failure, ProgramStageError};
 use plasm_core::plasm_monad::PlasmCompArtifact;
 use plasm_core::{PromptPipelineConfig, SymbolMapCrossRequestCache};
 
@@ -34,14 +35,17 @@ fn compile_to_bundle(
     session: &ExecuteSession,
     name: &str,
     source: &str,
-) -> Result<PlasmCompBundle, String> {
-    PlasmCompBundle::new(compile_source_to_artifact(
-        pipeline,
-        symbol_map_cross_cache,
-        session,
-        name,
-        source,
-    )?)
+) -> Result<PlasmCompBundle, ProgramStageError> {
+    match compile_source_to_artifact(pipeline, symbol_map_cross_cache, session, name, source) {
+        Ok(artifact) => PlasmCompBundle::new(artifact).map_err(ProgramStageError::plan),
+        Err(msg) => Err(diagnose_compile_failure(
+            pipeline,
+            symbol_map_cross_cache,
+            session,
+            source,
+            msg,
+        )),
+    }
 }
 
 /// Compile a multi-line Plasm program to a runnable comp bundle.
@@ -51,14 +55,8 @@ pub fn compile_plasm_program(
     session: &ExecuteSession,
     name: &str,
     source: &str,
-) -> Result<PlasmCompBundle, String> {
-    PlasmCompBundle::new(compile_source_to_artifact(
-        pipeline,
-        symbol_map_cross_cache,
-        session,
-        name,
-        source,
-    )?)
+) -> Result<PlasmCompBundle, ProgramStageError> {
+    compile_to_bundle(pipeline, symbol_map_cross_cache, session, name, source)
 }
 
 /// Compile one expression (DAG program or single surface line) to a runnable comp bundle.
@@ -68,7 +66,7 @@ pub fn compile_plasm_expression(
     session: &ExecuteSession,
     name: &str,
     source: &str,
-) -> Result<PlasmCompBundle, String> {
+) -> Result<PlasmCompBundle, ProgramStageError> {
     compile_to_bundle(pipeline, symbol_map_cross_cache, session, name, source)
 }
 
@@ -79,6 +77,6 @@ pub fn compile_plasm_surface_line_to_comp(
     session: &ExecuteSession,
     name: &str,
     source: &str,
-) -> Result<PlasmCompBundle, String> {
+) -> Result<PlasmCompBundle, ProgramStageError> {
     compile_plasm_expression(pipeline, symbol_map_cross_cache, session, name, source)
 }

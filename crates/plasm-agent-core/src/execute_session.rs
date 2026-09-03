@@ -2521,6 +2521,7 @@ mod tests {
             &handle,
             crate::plasm_plan_run::PlasmPlanRunResult {
                 version: serde_json::json!({}),
+                agent_outcome: Default::default(),
                 node_results: Vec::new(),
                 graph_summary: serde_json::json!({}),
                 comp: None,

@@ -35,6 +35,7 @@ pub async fn run_plasm_comp(
         let comp_wire = crate::plasm_comp_wire::trace_comp_wire_from_dry(&dry);
         return Ok(PlasmPlanRunResult {
             version: dry.version,
+            agent_outcome: Default::default(),
             node_results: dry.node_results,
             graph_summary: dry.graph_summary,
             comp: Some(comp_wire),
@@ -509,6 +510,7 @@ pub(crate) async fn run_executable_plan_phased(
     };
     Ok(PlasmPlanRunResult {
         version: dry.version,
+        agent_outcome: Default::default(),
         node_results,
         graph_summary: graph_summary_with_approval_receipts(dry.graph_summary, &approval_receipts),
         comp: Some(comp),

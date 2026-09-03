@@ -817,6 +817,7 @@ mod tests {
         meta.insert("plasm".into(), serde_json::Value::Object(plasm));
         PlasmPlanRunResult {
             version: serde_json::json!(1),
+            agent_outcome: Default::default(),
             node_results: Vec::new(),
             graph_summary: serde_json::json!({}),
             comp: None,

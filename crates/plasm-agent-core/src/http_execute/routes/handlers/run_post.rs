@@ -117,14 +117,29 @@ pub(crate) async fn post_run_execute_session_inner(
         &program,
     ) {
         Ok(b) => b,
-        Err(e) => {
+        Err(stage) => {
+            if plan_only {
+                let diag = crate::program_diagnostic::ProgramDiagnostic::from_stage(
+                    pipeline,
+                    Some(cross),
+                    &sess,
+                    &program,
+                    stage,
+                );
+                return (
+                    StatusCode::OK,
+                    [(CONTENT_TYPE, "application/json; charset=utf-8")],
+                    Json(crate::program_diagnostic::needs_fix_http_payload(&diag, None)),
+                )
+                    .into_response();
+            }
             return problem_response(
                 Problem::custom(
                     ProblemStatus::BAD_REQUEST,
                     Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
                 )
                 .with_title("Bad Request")
-                .with_detail(e),
+                .with_detail(stage.to_string()),
             );
         }
     };
@@ -132,15 +147,20 @@ pub(crate) async fn post_run_execute_session_inner(
     if plan_only {
         let dry = match crate::plasm_plan_run::evaluate_plasm_comp_dry(&sess, &bundle) {
             Ok(d) => d,
-            Err(e) => {
-                return problem_response(
-                    Problem::custom(
-                        ProblemStatus::BAD_REQUEST,
-                        Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
-                    )
-                    .with_title("Bad Request")
-                    .with_detail(e),
+            Err(stage) => {
+                let diag = crate::program_diagnostic::ProgramDiagnostic::from_stage(
+                    pipeline,
+                    Some(cross),
+                    &sess,
+                    &program,
+                    stage,
                 );
+                return (
+                    StatusCode::OK,
+                    [(CONTENT_TYPE, "application/json; charset=utf-8")],
+                    Json(crate::program_diagnostic::needs_fix_http_payload(&diag, None)),
+                )
+                    .into_response();
             }
         };
         let comp_json = crate::plasm_comp_wire::trace_comp_wire_from_dry(&dry).to_json_value();
@@ -160,18 +180,17 @@ pub(crate) async fn post_run_execute_session_inner(
                 plan_commit_ref: None,
             },
         ) {
-            return problem_response(
-                Problem::custom(
-                    ProblemStatus::BAD_REQUEST,
-                    Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
-                )
-                .with_title("Bad Request")
-                .with_detail(format!(
-                    "plan denied by flow policy ({:?}): {} violation(s)",
-                    denial.verdict,
-                    denial.violations.len()
-                )),
-            );
+            let diag = crate::program_diagnostic::ProgramDiagnostic::flow_denied(format!(
+                "plan denied by flow policy ({:?}): {} violation(s)",
+                denial.verdict,
+                denial.violations.len()
+            ));
+            return (
+                StatusCode::OK,
+                [(CONTENT_TYPE, "application/json; charset=utf-8")],
+                Json(crate::program_diagnostic::needs_fix_http_payload(&diag, None)),
+            )
+                .into_response();
         }
         let commit_ref = sess.mint_plan_commit_ref();
         let dry_text = crate::plan_dry_display::render_plan_dry_compact_text(
@@ -189,18 +208,17 @@ pub(crate) async fn post_run_execute_session_inner(
         ) {
             Ok(record) => record,
             Err(denial) => {
-                return problem_response(
-                    Problem::custom(
-                        ProblemStatus::BAD_REQUEST,
-                        Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
-                    )
-                    .with_title("Bad Request")
-                    .with_detail(format!(
-                        "plan commit blocked by flow policy ({:?}): {} violation(s)",
-                        denial.verdict,
-                        denial.violations.len()
-                    )),
-                );
+                let diag = crate::program_diagnostic::ProgramDiagnostic::flow_denied(format!(
+                    "plan commit blocked by flow policy ({:?}): {} violation(s)",
+                    denial.verdict,
+                    denial.violations.len()
+                ));
+                return (
+                    StatusCode::OK,
+                    [(CONTENT_TYPE, "application/json; charset=utf-8")],
+                    Json(crate::program_diagnostic::needs_fix_http_payload(&diag, None)),
+                )
+                    .into_response();
             }
         };
         if let Err(e) = crate::plan_commit_store::register_plan_commit_and_persist(
@@ -282,7 +300,7 @@ pub(crate) async fn post_run_execute_session_inner(
                     Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
                 )
                 .with_title("Bad Request")
-                .with_detail(e),
+                .with_detail(e.to_string()),
             );
         }
     };

@@ -222,6 +222,7 @@ async fn coalesce_at_most_two_running_emits_per_two_second_window() {
         &handle,
         crate::plasm_plan_run::PlasmPlanRunResult {
             version: serde_json::json!({}),
+            agent_outcome: Default::default(),
             node_results: Vec::new(),
             graph_summary: serde_json::json!({}),
             comp: None,
