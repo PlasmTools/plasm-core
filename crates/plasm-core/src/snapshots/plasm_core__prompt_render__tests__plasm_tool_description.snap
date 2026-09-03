@@ -1,5 +1,5 @@
 ---
-source: plasm-oss/crates/plasm-core/src/prompt_render/tests.rs
+source: crates/plasm-core/src/prompt_render/tests.rs
 expression: "super::PLASM_TOOL_DESCRIPTION"
 ---
 **Plasm** — **`logical_session_ref`** + **`program`**. Clean read-only plans execute inline (rows in tool **`content`**). Plans with any mutation / review gate return a **`run_ref`** (`pcN`, 10 min TTL) for **`plasm_run`**; do **not** echo the program.
@@ -26,6 +26,8 @@ Batch reads aggressively. After a write use **`label.wire`** from that binding �
 
 **Membership plane (prefer `| where`):** After materializing rows with `from e#`, filter membership with `| where wire = tok`. Use entity-head `e#{wire=tok}` only when the task asks for catalog / backend / entity-head fetch. Bare taught tokens either way — never copy `<…>`, never leave `|` alternatives. Never emit `v#`.
 
+**Date/time:** `| where ts >= "7d ago"` or RFC3339 for row time windows — not brace `min_*`, not `now()`/`date_*`.
+
 **Three strata** (catalog · `|` row algebra · `=>` application):
 
 1. **Catalog source** — `from e#` / `from e#{wire=value}` / `from e#~"q"` / `from e#(<id>)`. Bare `e#{…}` OK with no stages. Backend WHERE only on an **entity head**.
@@ -41,4 +43,4 @@ Batch reads aggressively. After a write use **`label.wire`** from that binding �
 - Plural write: `rows => e#.m#(…, _.f)`. Bare create: `e#.m#(param=…)`.
 - Quote scalars in `{…}` and string params.
 
-**Recovery:** **`plasm_context`** `session_mode: "extend"` + same **`logical_session_ref`** — never **`new`**.
+**Recovery:** `dry_verdict: needs_fix` → revise `program`, call **`plasm`** again on the same **`logical_session_ref`**. **`plasm_context`** `session_mode: "extend"` when symbols are missing — never **`new`**.
