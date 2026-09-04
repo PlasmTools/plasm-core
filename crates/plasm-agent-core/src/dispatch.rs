@@ -167,12 +167,8 @@ fn build_expr(
             let mut get = GetExpr::from_ref(node_ref.clone());
             if let Some(get_cap) = cgs.find_capability(entity_name, CapabilityKind::Get) {
                 if let Some(mapping) = get_cap.mapping.as_ref() {
-                    get.path_vars = path_vars_for_cml(
-                        &mapping.template,
-                        id.as_str(),
-                        entity_matches,
-                        None,
-                    )?;
+                    get.path_vars =
+                        path_vars_for_cml(&mapping.template, id.as_str(), entity_matches, None)?;
                 }
             }
             let chain = ChainExpr::auto_get(Expr::Get(get), field_key);
@@ -268,12 +264,7 @@ fn build_expr(
     let node_ref = cli_entity_node_ref(entity_name, entity, entity_matches, id.as_str(), cgs)?;
     let mut get = GetExpr::from_ref(node_ref);
     if let Some(mapping) = get_cap.mapping.as_ref() {
-        get.path_vars = path_vars_for_cml(
-            &mapping.template,
-            id.as_str(),
-            entity_matches,
-            None,
-        )?;
+        get.path_vars = path_vars_for_cml(&mapping.template, id.as_str(), entity_matches, None)?;
     }
     Ok((Expr::Get(get), StreamConsumeOpts::default()))
 }
@@ -674,12 +665,8 @@ fn cli_entity_node_ref(
             entity.key_vars
         ))
     })?;
-    let mut bindings = collect_template_string_bindings(
-        &mapping.template,
-        positional_id,
-        entity_matches,
-        None,
-    )?;
+    let mut bindings =
+        collect_template_string_bindings(&mapping.template, positional_id, entity_matches, None)?;
 
     for kv in &entity.key_vars {
         if !bindings.contains_key(kv.as_str()) {

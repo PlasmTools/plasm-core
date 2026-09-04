@@ -424,8 +424,9 @@ mod tests {
             Value::String(repository.to_string()),
         );
         apply_entity_ref_scope_splat(&mut env, &cgs, cap).expect("scope splat");
-        let template = parse_capability_template(&cap.require_mapping().expect("cml mapping").template)
-            .unwrap_or_else(|e| panic!("parse {capability}: {e}"));
+        let template =
+            parse_capability_template(&cap.require_mapping().expect("cml mapping").template)
+                .unwrap_or_else(|e| panic!("parse {capability}: {e}"));
         let CompiledOperation::Http(req) = compile_operation(&template, &env)
             .unwrap_or_else(|e| panic!("compile {capability}: {e}"))
         else {

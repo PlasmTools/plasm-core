@@ -1,8 +1,6 @@
 //! Canonical pagination contract validation (compile/load + runtime).
 
-use crate::cml::{
-    PaginationConfig, PaginationLocation, PaginationParam, PaginationStrategyKind,
-};
+use crate::cml::{PaginationConfig, PaginationLocation, PaginationParam, PaginationStrategyKind};
 
 /// Validated pagination block: strategy is present, page-size role is unambiguous.
 #[derive(Debug, Clone, PartialEq)]

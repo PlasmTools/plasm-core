@@ -5743,9 +5743,9 @@ impl CapabilitySchema {
     ///
     /// Returns `Err` when this is a derived Get (`mapping` is `None`) — never panics.
     pub fn require_mapping(&self) -> Result<&CapabilityMapping, String> {
-        self.mapping.as_ref().ok_or_else(|| {
-            format!("capability '{}' has no CML mapping (derived)", self.name)
-        })
+        self.mapping
+            .as_ref()
+            .ok_or_else(|| format!("capability '{}' has no CML mapping (derived)", self.name))
     }
 
     /// See [`template_domain_exemplar_requires_entity_anchor`].

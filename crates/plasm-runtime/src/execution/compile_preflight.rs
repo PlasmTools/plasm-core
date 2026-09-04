@@ -115,14 +115,15 @@ fn preflight_compile_get(
     if capability.derived.is_some() {
         return Ok(());
     }
-    let mapping = capability.mapping.as_ref().ok_or_else(|| {
-        RuntimeError::ConfigurationError {
+    let mapping = capability
+        .mapping
+        .as_ref()
+        .ok_or_else(|| RuntimeError::ConfigurationError {
             message: format!(
                 "capability '{}' has neither CML mapping nor derived plan",
                 capability.name
             ),
-        }
-    })?;
+        })?;
     let capability_template = parse_capability_template(&mapping.template)?;
     if let CapabilityTemplate::View(vt) = &capability_template {
         return preflight_view_get(vt.view.as_str(), &get, cgs, ambient, mat);

@@ -129,14 +129,16 @@ impl ExecutionEngine {
                 ),
             });
         }
-        let mapping = capability.mapping.as_ref().ok_or_else(|| {
-            RuntimeError::ConfigurationError {
-                message: format!(
-                    "capability '{}' has neither CML mapping nor derived plan",
-                    capability.name
-                ),
-            }
-        })?;
+        let mapping =
+            capability
+                .mapping
+                .as_ref()
+                .ok_or_else(|| RuntimeError::ConfigurationError {
+                    message: format!(
+                        "capability '{}' has neither CML mapping nor derived plan",
+                        capability.name
+                    ),
+                })?;
         let capability_template = parse_capability_template(&mapping.template)?;
         if matches!(capability_template, CapabilityTemplate::View(_)) {
             return Err(RuntimeError::ConfigurationError {
@@ -406,14 +408,16 @@ impl ExecutionEngine {
             .await;
         }
 
-        let mapping = capability.mapping.as_ref().ok_or_else(|| {
-            RuntimeError::ConfigurationError {
-                message: format!(
-                    "capability '{}' has neither CML mapping nor derived plan",
-                    capability.name
-                ),
-            }
-        })?;
+        let mapping =
+            capability
+                .mapping
+                .as_ref()
+                .ok_or_else(|| RuntimeError::ConfigurationError {
+                    message: format!(
+                        "capability '{}' has neither CML mapping nor derived plan",
+                        capability.name
+                    ),
+                })?;
         let capability_template = parse_capability_template(&mapping.template)?;
 
         if let CapabilityTemplate::View(vt) = &capability_template {

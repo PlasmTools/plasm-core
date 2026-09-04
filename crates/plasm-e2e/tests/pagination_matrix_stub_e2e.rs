@@ -229,8 +229,14 @@ async fn indexed_host_budget_25_keeps_stable_page_limit_20() {
             "Fixed page_limit must stay 20: {r:?}"
         );
     }
-    assert_eq!(reqs[0].query.get("page_index").map(String::as_str), Some("0"));
-    assert_eq!(reqs[1].query.get("page_index").map(String::as_str), Some("1"));
+    assert_eq!(
+        reqs[0].query.get("page_index").map(String::as_str),
+        Some("0")
+    );
+    assert_eq!(
+        reqs[1].query.get("page_index").map(String::as_str),
+        Some("1")
+    );
 
     let got = ids(&result);
     assert_eq!(got.len(), 25);
@@ -284,8 +290,14 @@ async fn indexed_complete_fetch_all_reaches_authoritative_end() {
         .expect("execute");
 
     let reqs = stub.requests.lock().unwrap().clone();
-    assert!(reqs.len() >= 3, "45 items / 20 ⇒ ≥3 pages, got {}", reqs.len());
-    assert!(reqs.iter().all(|r| r.query.get("page_limit").map(String::as_str) == Some("20")));
+    assert!(
+        reqs.len() >= 3,
+        "45 items / 20 ⇒ ≥3 pages, got {}",
+        reqs.len()
+    );
+    assert!(reqs
+        .iter()
+        .all(|r| r.query.get("page_limit").map(String::as_str) == Some("20")));
     let got = ids(&result);
     assert_eq!(got.len(), 45);
     let unique: std::collections::BTreeSet<_> = got.iter().cloned().collect();
@@ -326,9 +338,9 @@ async fn offset_stride_matches_page_size() {
         .filter_map(|r| r.query.get("offset").cloned())
         .collect();
     assert!(
-        offsets.windows(2).all(|w| {
-            w[1].parse::<i64>().unwrap() - w[0].parse::<i64>().unwrap() == 20
-        }),
+        offsets
+            .windows(2)
+            .all(|w| { w[1].parse::<i64>().unwrap() - w[0].parse::<i64>().unwrap() == 20 }),
         "offset stride must equal page size: {offsets:?}"
     );
     assert_eq!(ids(&result).len(), 45);

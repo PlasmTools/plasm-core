@@ -402,7 +402,9 @@ mod tests {
             .get_capability("lang_key_pick_get")
             .expect("derived get");
         assert!(cap.derived.is_some());
-        let mapping_err = cap.require_mapping().expect_err("derived Get has no CML mapping");
+        let mapping_err = cap
+            .require_mapping()
+            .expect_err("derived Get has no CML mapping");
         assert!(
             mapping_err.contains("lang_key_pick_get") && mapping_err.contains("derived"),
             "unexpected require_mapping err: {mapping_err}"
@@ -410,13 +412,8 @@ mod tests {
         let mut get = GetExpr::from_ref(Ref::new("LangKeyPick", "alpha"));
         get.capability_name = Some("lang_key_pick_get".into());
         let mat = SessionMaterialization::new();
-        preflight_compile_expr(
-            &Expr::Get(get),
-            &cgs,
-            &ViewAmbientContext::default(),
-            &mat,
-        )
-        .expect("derived Get preflight must succeed without CML mapping");
+        preflight_compile_expr(&Expr::Get(get), &cgs, &ViewAmbientContext::default(), &mat)
+            .expect("derived Get preflight must succeed without CML mapping");
     }
 
     /// Live plan path that previously unwound with `require_mapping` panic on derived Gets.

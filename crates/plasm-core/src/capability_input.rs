@@ -294,21 +294,15 @@ fn validate_capability_input_with_satisfied(
                         if !field_value.is_domain_example_placeholder() {
                             match &field_schema.wire {
                                 crate::InputFieldWire::Inline(ty) => {
-                                    validate_input_type(
-                                        field_value,
-                                        ty.as_ref(),
-                                        field_path,
-                                        cgs,
-                                    )?;
+                                    validate_input_type(field_value, ty.as_ref(), field_path, cgs)?;
                                 }
                                 crate::InputFieldWire::Registry(_) => {
-                                    let fnv =
-                                        field_schema.named_value(cgs).map_err(|_| {
-                                            TypeError::FieldNotFound {
-                                                field: field_path.to_string(),
-                                                entity: "input object".to_string(),
-                                            }
-                                        })?;
+                                    let fnv = field_schema.named_value(cgs).map_err(|_| {
+                                        TypeError::FieldNotFound {
+                                            field: field_path.to_string(),
+                                            entity: "input object".to_string(),
+                                        }
+                                    })?;
                                     validate_concrete_named_value(
                                         field_value,
                                         fnv,
@@ -361,7 +355,12 @@ pub fn validate_capability_invocation_input(
     input: &Value,
     cgs: &CGS,
 ) -> Result<(), TypeError> {
-    validate_capability_invocation_input_inner(capability, input, cgs, &std::collections::HashSet::new())
+    validate_capability_invocation_input_inner(
+        capability,
+        input,
+        cgs,
+        &std::collections::HashSet::new(),
+    )
 }
 
 /// Create/invoke typecheck after CML path-var injection into the same object as body fields.
@@ -425,10 +424,12 @@ fn validate_invocation_object_field(
             validate_input_type(field_value, ty.as_ref(), field.name.as_str(), cgs)
         }
         crate::InputFieldWire::Registry(_) => {
-            let fnv = field.named_value(cgs).map_err(|_| TypeError::FieldNotFound {
-                field: field.name.clone(),
-                entity: "input object".to_string(),
-            })?;
+            let fnv = field
+                .named_value(cgs)
+                .map_err(|_| TypeError::FieldNotFound {
+                    field: field.name.clone(),
+                    entity: "input object".to_string(),
+                })?;
             validate_concrete_named_value(field_value, fnv, field.name.as_str(), cgs)
         }
     }
@@ -451,8 +452,7 @@ fn validate_capability_invocation_input_inner(
         return validate_capability_input_with_satisfied(input, schema, cgs, satisfied_fields);
     }
 
-    let object_schemas: Vec<&crate::InputSchema> =
-        capability.invocation_object_schemas().collect();
+    let object_schemas: Vec<&crate::InputSchema> = capability.invocation_object_schemas().collect();
 
     match object_schemas.as_slice() {
         [] => {
@@ -1045,9 +1045,7 @@ mod tests {
     fn reg_field(name: &str, key: &str, required: bool) -> crate::InputFieldSchema {
         crate::InputFieldSchema {
             name: name.to_string(),
-            wire: crate::InputFieldWire::Registry(
-                crate::ValueDomainKey::new(key).expect("key"),
-            ),
+            wire: crate::InputFieldWire::Registry(crate::ValueDomainKey::new(key).expect("key")),
             required,
             description: None,
             default: None,
@@ -1106,10 +1104,7 @@ mod tests {
 
         validate_capability_invocation_input(
             &cap,
-            &obj(&[
-                ("active", Value::Bool(false)),
-                ("limit", Value::Integer(3)),
-            ]),
+            &obj(&[("active", Value::Bool(false)), ("limit", Value::Integer(3))]),
             &cgs,
         )
         .expect("both lanes ok");
@@ -1171,5 +1166,4 @@ mod tests {
         cgs.validate()
             .unwrap_or_else(|e| panic!("amazon expression surface: {e}"));
     }
-
 }

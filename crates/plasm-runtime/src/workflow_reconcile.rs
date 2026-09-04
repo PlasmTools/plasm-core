@@ -142,8 +142,7 @@ fn map_request_to_conflict_or_return(
     } = &err
     {
         if let Ok(mapping) = capability.require_mapping() {
-            if let Some(conflict) =
-                workflow_conflict_from_http(&mapping.template.0, *status, body)
+            if let Some(conflict) = workflow_conflict_from_http(&mapping.template.0, *status, body)
             {
                 let md = conflict.markdown_block();
                 return Err(RuntimeError::WorkflowConflict {
@@ -443,7 +442,7 @@ mod tests {
             422,
             &body,
         )
-            .expect("match");
+        .expect("match");
         assert_eq!(c.kind, WorkflowConflictKind::ResourceExists);
     }
 }
