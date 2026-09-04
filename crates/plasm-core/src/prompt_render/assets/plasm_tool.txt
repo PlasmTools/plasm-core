@@ -2,9 +2,12 @@
 
 **`program` is Plasm source text, not JSON data.** Grammar below; symbols from the language card. Reply with one valid plasm_program:
 
-**Program shape:** one `plasm_expr`, or `label = …` bindings then **one** final return line (comma-separated roots on that line only). No prose, `return`, fences, or table rows.
+**Program shape:** one `plasm_expr`, or `label = …` bindings then **one** final return line (comma-separated roots on that line only). No prose, `return` keyword, fences, or table rows.
 
-**Strings:** JSON escapes in quotes (`\n` `\t` `\\` `\"`); prefer tagged `<<TAG` … `TAG` heredocs for long bodies (real newlines).
+**Strings:** JSON escapes in quotes (`\n` `\t` `\\` `\"`); tagged `<<TAG` … `TAG` heredocs for long bodies (real newlines). Pick one lane per open:
+- Literal — `body = <<TAG` … `TAG` (raw text, not Minijinja; a `key = value` body line is OK when asked)
+- Inline — `e#.m#(param=<<TAG` … `TAG)` …)
+- Render — `label = source => <<TAG` … `TAG` (Minijinja over `rows` and the source binding)
 
 **Batch independent reads** (required): shared scope + multi-root return — not N tool cycles.
 ```
@@ -22,21 +25,23 @@ Batch reads aggressively. After a write use **`label.wire`** from that binding �
 
 **Membership plane (prefer `| where`):** Materialize with `e#` / `e#{wire=tok}` then filter membership with `| where wire = tok`. Use entity-head `e#{wire=tok}` for catalog / backend selection. Bare taught tokens either way — never copy `<…>`, never leave `|` alternatives. Never emit `v#`.
 
-**Date/time:** `| where ts >= "…"` with `"Nd ago"` / `"today"`·`"yesterday"`·`"last week"`·`"this year"` / `"last monday"` / RFC3339 (quote multi-word) — not brace `min_*`, not `now()`/`date_*`.
+**Date/time:** `| where ts >= "…"` with `"Nd ago"` / `"today"`·`"yesterday"`·`"last week"`·`"this year"` / `"last monday"` / RFC3339 (quote multi-word) — not brace `min_*`, not `now()`/`date_*`. **"Last N days (including today)" → `"Nd ago"` / `"N days ago"`** (inclusive lower bound; do **not** emit `N−1`).
 
 **Three strata** (catalog · `|` row algebra · `=>` application):
 
 1. **Catalog source** — `e#` / `e#{wire=value}` / `e#~"q"` / `e#(<id>)` — before `|` stages or bare (no `|`). Backend WHERE only on an **entity head**.
 2. **Row algebra** — `|` stages left-to-right (never after `=>`): `| where …` · `| select fields, name = expr` · `| summarize [by keys] n=count()` · `| order by f [desc]` · `| take n` · `| distinct [by f]`. Bind cuts: `rows = e# | where …` then `rows | select …` or `rows => …`.
-3. **Application `=>`** — when per-row args vary: `{ t: _.f }` · `<<TAG` Jinja · `e#.m#(…, _.f)` · `_.r#` / `_.wire`. Always `_` for row variance. Dots `.m#` / `.r#` only on a proven Get singleton: `item = e#("id"); item.update(…)`.
+3. **Application `=>`** — when per-row args vary: `{ t: _.f }` · `<<TAG` Minijinja · `e#.m#(…, _.f)` · `_.r#` / `_.wire`. Always `_` for row variance. Dots `.m#` / `.r#` only on a proven Get singleton: `item = e#("id"); item.update(…)`.
 
 **Catalog vs row plane:** backend WHERE is `e#{wire=value}` on an entity head; row filter is `e# | where …` or `rows = e#` then `rows | where …`. Invalid: `rows{wire=…}` on a binding.
 
 **Forbidden as row algebra:** `.filter` / `.with` / `[proj]` / `.group_by` / `.sort` / `.limit`, `| update`, `| take 1` then `.update` for multi-row, bare `=> tags` without `_`.
 
 **Composition:**
-- Row text: `label = source => <<TAG` … `TAG` — never root `e#[…]<<` or bare `source <<TAG`. String params take **`binding.content`**. Interpolation: `${report.content}` (`$$` escapes `$`).
-- Plural write: `rows => e#.m#(…, _.f)`. Bare create: `e#.m#(param=…)`.
+- Render body is Minijinja (e.g. `{% for r in rows %}- {{ r.id }}{% endfor %}`). Put `| where` and plural `rows => e#.m#…` on earlier binding lines; string params take **`binding.content`**. Interpolation: `${report.content}` (`$$` escapes `$`).
+- Plural write (prefer bind): `done = rows => e#.m#(…, _.f)` then include `done` among the final return roots. Bare `rows => e#.m#…` only when it is the program’s **sole** return root. Bare create: `e#.m#(param=…)` (long string args: inline heredoc lane).
 - Quote scalars in `{…}` and string params.
+
+**Apply vs return:** A bare line `lhs => rhs` (no `label =`) is itself a return root. When more steps follow, bind it (`done = rows => e#.m#(…)`) and keep a single final return line of roots.
 
 **Recovery:** `dry_verdict: needs_fix` → revise `program`, call **`plasm`** again on the same **`logical_session_ref`**. **`plasm_context`** `session_mode: "extend"` when symbols are missing — never **`new`**.
