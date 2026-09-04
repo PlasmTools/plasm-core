@@ -716,9 +716,10 @@ mod tests {
                 domain: "Note".into(),
                 identity_key: None,
             invalidates_entities: vec![],
-                mapping: CapabilityMapping {
+                mapping: Some(CapabilityMapping {
                     template: serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "notes"}]}).into(),
-                },
+                }),
+                derived: None,
                 inputs: Default::default(),
                 output_schema: None,
                 provides: vec![],
@@ -821,9 +822,10 @@ mod tests {
             domain: "Spell".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "spells"}]}).into(),
-            },
+            }),
+            derived: None,
             inputs: Default::default(),
             output_schema: None,
             provides: vec![],
@@ -994,9 +996,10 @@ mod tests {
                 domain: "File".into(),
                 identity_key: None,
             invalidates_entities: vec![],
-                mapping: CapabilityMapping {
+                mapping: Some(CapabilityMapping {
                     template: serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "f"}]}).into(),
-                },
+                }),
+                derived: None,
                 inputs: Default::default(),
                 output_schema: None,
                 provides: vec![],

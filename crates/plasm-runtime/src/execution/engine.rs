@@ -268,7 +268,12 @@ impl ExecutionEngine {
                 ),
             });
         }
-        let template = parse_capability_template(&cap.mapping.template.0).map_err(|e| {
+        let mapping = cap.mapping.as_ref().ok_or_else(|| RuntimeError::ConfigurationError {
+            message: format!(
+                "schema overlay source capability '{capability_name}' has no CML mapping"
+            ),
+        })?;
+        let template = parse_capability_template(&mapping.template.0).map_err(|e| {
             RuntimeError::ConfigurationError {
                 message: format!("schema overlay source template: {e}"),
             }

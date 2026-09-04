@@ -237,13 +237,7 @@ fn surface_is_read_bounded(surface: &ValidatedSurfaceNode) -> bool {
 /// Aggregate/group_by/sort/dedupe over row sets — not project/filter/limit/render.
 #[must_use]
 pub(crate) fn compute_op_is_full_collection(op: &ComputeOp) -> bool {
-    matches!(
-        op,
-        ComputeOp::Aggregate { .. }
-            | ComputeOp::GroupBy { .. }
-            | ComputeOp::Sort { .. }
-            | ComputeOp::DedupeBy { .. }
-    )
+    crate::plan_read_bounds::compute_op_is_full_collection(op)
 }
 
 /// List/page read on the return path without `[field,…]` projection.

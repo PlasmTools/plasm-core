@@ -87,9 +87,10 @@ mod tests {
             domain: "Account".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({}).into(),
-            },
+            }),
+            derived: None,
             inputs: plasm_core::CapabilityInputs {
                 payload: Some(InputSchema {
                     input_type: InputType::Object {

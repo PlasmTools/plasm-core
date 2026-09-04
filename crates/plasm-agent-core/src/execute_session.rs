@@ -2292,6 +2292,7 @@ mod tests {
             env: CmlEnv::new(),
             template,
             config: PaginationConfig {
+                strategy: Some(plasm_compile::PaginationStrategyKind::PageNumber),
                 params: indexmap! {
                     "page".into() => PaginationParam::Counter { counter: 0, step: 1, max: None },
                 },

@@ -54,11 +54,53 @@ fn preflight_compile_query(
             Value::Array(proj.iter().map(|s| Value::String(s.clone())).collect()),
         );
     }
-    let capability_template = parse_capability_template(&capability.mapping.template)?;
+    let capability_template = parse_capability_template(
+        &capability
+            .require_mapping()
+            .map_err(|message| RuntimeError::ConfigurationError { message })?
+            .template,
+    )?;
     if let CapabilityTemplate::View(vt) = &capability_template {
         return preflight_view_query(vt.view.as_str(), query, cgs, ambient, mat);
     }
     compile_operation_dispatch(&capability_template, &env).map(|_| ())
+}
+
+fn resolve_get_capability_for_preflight<'a>(
+    get: &GetExpr,
+    cgs: &'a CGS,
+) -> Result<&'a plasm_core::CapabilitySchema, RuntimeError> {
+    match get.capability_name.as_deref() {
+        Some(name) => {
+            let c = cgs
+                .get_capability(name)
+                .ok_or_else(|| RuntimeError::CapabilityNotFound {
+                    capability: name.to_string(),
+                    entity: get.reference.entity_type.to_string(),
+                })?;
+            if c.kind != CapabilityKind::Get {
+                return Err(RuntimeError::ConfigurationError {
+                    message: format!("capability '{name}' must be kind get"),
+                });
+            }
+            if c.domain.as_str() != get.reference.entity_type.as_str() {
+                return Err(RuntimeError::ConfigurationError {
+                    message: format!(
+                        "capability '{name}' is for entity {}, expected {}",
+                        c.domain.as_str(),
+                        get.reference.entity_type
+                    ),
+                });
+            }
+            Ok(c)
+        }
+        None => cgs
+            .find_capability(&get.reference.entity_type, CapabilityKind::Get)
+            .ok_or_else(|| RuntimeError::CapabilityNotFound {
+                capability: "get".to_string(),
+                entity: get.reference.entity_type.to_string(),
+            }),
+    }
 }
 
 fn preflight_compile_get(
@@ -68,13 +110,20 @@ fn preflight_compile_get(
     mat: &SessionMaterialization,
 ) -> Result<(), RuntimeError> {
     let get = get_with_session_params(get, cgs, mat);
-    let capability = cgs
-        .find_capability(&get.reference.entity_type, CapabilityKind::Get)
-        .ok_or_else(|| RuntimeError::CapabilityNotFound {
-            capability: "get".to_string(),
-            entity: get.reference.entity_type.to_string(),
-        })?;
-    let capability_template = parse_capability_template(&capability.mapping.template)?;
+    let capability = resolve_get_capability_for_preflight(&get, cgs)?;
+    // List-backed derived Gets have no CML mapping; schema load already validated the plan.
+    if capability.derived.is_some() {
+        return Ok(());
+    }
+    let mapping = capability.mapping.as_ref().ok_or_else(|| {
+        RuntimeError::ConfigurationError {
+            message: format!(
+                "capability '{}' has neither CML mapping nor derived plan",
+                capability.name
+            ),
+        }
+    })?;
+    let capability_template = parse_capability_template(&mapping.template)?;
     if let CapabilityTemplate::View(vt) = &capability_template {
         return preflight_view_get(vt.view.as_str(), &get, cgs, ambient, mat);
     }
@@ -109,7 +158,12 @@ fn preflight_compile_create(
             capability: create.capability.to_string(),
             entity: create.entity.to_string(),
         })?;
-    let capability_template = parse_capability_template(&capability.mapping.template)?;
+    let capability_template = parse_capability_template(
+        &capability
+            .require_mapping()
+            .map_err(|message| RuntimeError::ConfigurationError { message })?
+            .template,
+    )?;
     let payload = if let Some(schema) = &capability.inputs.payload {
         InvokeInputPayload::lift(&create.input.to_value(), &schema.input_type, cgs)
     } else {
@@ -158,7 +212,12 @@ fn preflight_compile_delete(
             capability: delete.capability.to_string(),
             entity: delete.target.entity_type.to_string(),
         })?;
-    let capability_template = parse_capability_template(&capability.mapping.template)?;
+    let capability_template = parse_capability_template(
+        &capability
+            .require_mapping()
+            .map_err(|message| RuntimeError::ConfigurationError { message })?
+            .template,
+    )?;
     let mut env = CmlEnv::new();
     merge_plasm_execute_session_proof_base_token_env(&mut env);
     let target_ent = cgs.get_entity(delete.target.entity_type.as_str());
@@ -187,7 +246,12 @@ fn preflight_compile_invoke(invoke: &InvokeExpr, cgs: &CGS) -> Result<(), Runtim
             capability: invoke.capability.to_string(),
             entity: invoke.target.entity_type.to_string(),
         })?;
-    let capability_template = parse_capability_template(&capability.mapping.template)?;
+    let capability_template = parse_capability_template(
+        &capability
+            .require_mapping()
+            .map_err(|message| RuntimeError::ConfigurationError { message })?
+            .template,
+    )?;
     let input_for_env = {
         let raw = match &invoke.input {
             None => Value::Object(indexmap::IndexMap::new()),

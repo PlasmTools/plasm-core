@@ -148,5 +148,19 @@ pub fn step_error_from_runtime(err: &RuntimeError, cgs: &CGS) -> StepError {
                 inner.span_offset,
             )
         }
+        RuntimeError::DerivedGetNotFound { .. }
+        | RuntimeError::DerivedGetNonUnique { .. }
+        | RuntimeError::DerivedGetSourceFieldMissing { .. }
+        | RuntimeError::DerivedGetIncompleteSource { .. } => StepError::new(
+            StepErrorCategory::Runtime,
+            append_correction_lines(
+                err.to_string(),
+                vec![
+                    "Derived Get runs a source Query then unique-matches the identity; check the key and that the list materializes fully."
+                        .into(),
+                ],
+            ),
+            None,
+        ),
     }
 }

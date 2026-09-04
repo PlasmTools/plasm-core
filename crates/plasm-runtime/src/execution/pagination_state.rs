@@ -6,26 +6,9 @@ use plasm_compile::{CompiledOperation, CompiledRequest, PaginationConfig};
 use plasm_core::{QueryPagination, Value};
 
 fn pagination_default_limit(pconf: &PaginationConfig) -> u32 {
-    let size_names = [
-        "size",
-        "limit",
-        "per_page",
-        "page_size",
-        "maxResults",
-        "max_results",
-        "first",
-        "$top",
-        "top",
-    ];
-    for (name, param) in &pconf.params {
-        let is_size_like = size_names.contains(&name.as_str())
-            || name.ends_with("_size")
-            || name.ends_with("_limit");
-        if is_size_like {
-            if let Some(v) = param.fixed_as_u32() {
-                return v.max(1);
-            }
-        }
+    // Explicit page_size role is authoritative (no wire-name inference).
+    if let Some(v) = pconf.page_size_fixed_u32() {
+        return v.max(1);
     }
     // BlockRange: look for a fixed range_size param
     if pconf.location == plasm_compile::PaginationLocation::BlockRange {
@@ -256,7 +239,7 @@ impl PaginationLoopState {
                     };
                     Some(serde_json::Value::Number(start.into()))
                 }
-                plasm_compile::PaginationParam::Fixed { fixed } => Some(fixed.clone()),
+                plasm_compile::PaginationParam::Fixed { fixed, .. } => Some(fixed.clone()),
                 plasm_compile::PaginationParam::FromResponse { .. } => user
                     .cursor
                     .as_ref()
@@ -275,16 +258,10 @@ impl PaginationLoopState {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn apply_request_params(
         &mut self,
         compiled: &mut CompiledOperation,
         pconf: &PaginationConfig,
-        _user: &QueryPagination,
-        consume: &StreamConsumeOpts,
-        _single_page: bool,
-        _is_first_page: bool,
-        accumulated: usize,
     ) -> Result<(), RuntimeError> {
         let default_lim = pagination_default_limit(pconf);
 
@@ -341,46 +318,12 @@ impl PaginationLoopState {
             return Ok(());
         }
 
-        let remain_cap = consume
-            .max_items
-            .map(|c| c.saturating_sub(accumulated))
-            .unwrap_or(usize::MAX);
-        let limit_this_page: u32 = if remain_cap < usize::MAX {
-            (remain_cap as u32).min(default_lim).max(1)
-        } else {
-            default_lim
-        };
-
         for (name, param) in &pconf.params {
             let current = self.param_values.get(name).and_then(|v| v.as_ref());
 
             let value = match param {
-                plasm_compile::PaginationParam::Fixed { fixed } => {
-                    let name_lower = name.to_lowercase();
-                    let is_size_like = [
-                        "size",
-                        "limit",
-                        "per_page",
-                        "page_size",
-                        "maxresults",
-                        "max_results",
-                        "first",
-                    ]
-                    .iter()
-                    .any(|s| name_lower.contains(s))
-                        || name_lower == "first"
-                        || name_lower.ends_with("_size")
-                        || name_lower.ends_with("_limit");
-                    if is_size_like {
-                        serde_json::Value::Number(
-                            (limit_this_page as i64)
-                                .min(fixed.as_i64().unwrap_or(limit_this_page as i64))
-                                .into(),
-                        )
-                    } else {
-                        fixed.clone()
-                    }
-                }
+                // Fixed values are sent unchanged on every page (CML contract).
+                plasm_compile::PaginationParam::Fixed { fixed, .. } => fixed.clone(),
                 _ => match current {
                     Some(v) => v.clone(),
                     None => continue, // FromResponse absent on first page — skip
@@ -421,7 +364,9 @@ impl PaginationLoopState {
             }
         }
 
-        self.last_requested_limit = limit_this_page;
+        // Short-page termination compares against the catalog page size, never a
+        // host-shrunk remainder.
+        self.last_requested_limit = default_lim;
         Ok(())
     }
 
@@ -587,5 +532,106 @@ impl TryFrom<QueryPaginationState> for PaginationLoopState {
             final_to_block: s.final_to_block,
             last_requested_to_block: s.last_requested_to_block,
         })
+    }
+}
+
+#[cfg(test)]
+mod page_index_overlap_regressions {
+    use super::*;
+    use plasm_compile::{HttpMethod, PaginationLocation, PaginationParam};
+
+    fn page_index_limit_config() -> PaginationConfig {
+        PaginationConfig {
+            strategy: Some(plasm_compile::PaginationStrategyKind::PageNumber),
+            params: indexmap::indexmap! {
+                "page_index".to_string() => PaginationParam::Counter {
+                    counter: 0,
+                    step: 1,
+                    max: None,
+                },
+                "page_limit".to_string() => PaginationParam::Fixed {
+                    fixed: serde_json::json!(20),
+                    role: Some(plasm_compile::PaginationParamRole::PageSize),
+                },
+            },
+            location: PaginationLocation::Query,
+            body_merge_path: None,
+            response_prefix: None,
+            response_next_url_field: None,
+            stop_when: None,
+        }
+    }
+
+    fn empty_http_op() -> CompiledOperation {
+        CompiledOperation::Http(CompiledRequest {
+            method: HttpMethod::Get,
+            path: "/items".into(),
+            query: None,
+            body: None,
+            body_format: Default::default(),
+            multipart: None,
+            headers: None,
+        })
+    }
+
+    fn query_num(compiled: &CompiledOperation, key: &str) -> i64 {
+        let CompiledOperation::Http(req) = compiled else {
+            panic!("expected http");
+        };
+        req.query
+            .as_ref()
+            .and_then(|q| match q {
+                Value::Object(m) => m.get(key),
+                _ => None,
+            })
+            .and_then(|v| match v {
+                Value::Integer(n) => Some(*n),
+                Value::Float(f) => Some(*f as i64),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("missing query key {key}"))
+    }
+
+    /// PLAR1 evidence: page_limit=20, host budget 25 → second page must NOT send page_limit=5.
+    #[test]
+    fn fixed_page_limit_not_shrunk_by_host_remaining_budget() {
+        let pconf = page_index_limit_config();
+        let user = QueryPagination::default();
+        let consume = StreamConsumeOpts {
+            fetch_all: false,
+            max_items: Some(25),
+            one_page: false,
+            ..Default::default()
+        };
+        let mut state = PaginationLoopState::new(&pconf, &user, &consume).expect("state");
+
+        let mut page0 = empty_http_op();
+        state
+            .apply_request_params(&mut page0, &pconf)
+            .expect("page0");
+        assert_eq!(query_num(&page0, "page_index"), 0);
+        assert_eq!(query_num(&page0, "page_limit"), 20);
+        assert_eq!(state.last_requested_limit, 20);
+
+        // Advance page_index as after a full upstream page of 20.
+        state
+            .advance_after_page(&pconf, &serde_json::json!({}), 20, 20, None, None)
+            .expect("advance");
+
+        let mut page1 = empty_http_op();
+        state
+            .apply_request_params(&mut page1, &pconf)
+            .expect("page1");
+        assert_eq!(
+            query_num(&page1, "page_index"),
+            1,
+            "page_index must advance by one"
+        );
+        assert_eq!(
+            query_num(&page1, "page_limit"),
+            20,
+            "Fixed page_limit must stay 20 even when host remaining budget is 5"
+        );
+        assert_eq!(state.last_requested_limit, 20);
     }
 }

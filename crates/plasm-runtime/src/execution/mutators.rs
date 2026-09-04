@@ -18,7 +18,12 @@ impl ExecutionEngine {
                 entity: create.entity.to_string(),
             })?;
 
-        let capability_template = parse_capability_template(&capability.mapping.template)?;
+        let capability_template = parse_capability_template(
+            &capability
+                .require_mapping()
+                .map_err(|message| RuntimeError::ConfigurationError { message })?
+                .template,
+        )?;
 
         let payload = if let Some(schema) = &capability.inputs.payload {
             InvokeInputPayload::lift(&create.input.to_value(), &schema.input_type, cgs)
@@ -161,7 +166,12 @@ impl ExecutionEngine {
                 entity: delete.target.entity_type.to_string(),
             })?;
 
-        let capability_template = parse_capability_template(&capability.mapping.template)?;
+        let capability_template = parse_capability_template(
+            &capability
+                .require_mapping()
+                .map_err(|message| RuntimeError::ConfigurationError { message })?
+                .template,
+        )?;
 
         let mut env = CmlEnv::new();
         merge_plasm_execute_session_proof_base_token_env(&mut env);
@@ -237,7 +247,12 @@ impl ExecutionEngine {
                 entity: invoke.target.entity_type.to_string(),
             })?;
 
-        let capability_template = parse_capability_template(&capability.mapping.template)?;
+        let capability_template = parse_capability_template(
+            &capability
+                .require_mapping()
+                .map_err(|message| RuntimeError::ConfigurationError { message })?
+                .template,
+        )?;
 
         let target_ent = cgs.get_entity(invoke.target.entity_type.as_str());
 

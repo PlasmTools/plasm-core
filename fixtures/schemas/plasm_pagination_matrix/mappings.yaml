@@ -1,0 +1,45 @@
+item_query:
+  method: GET
+  path:
+    - type: literal
+      value: items
+    - type: literal
+      value: indexed
+  pagination:
+    strategy: page_number
+    params:
+      page_index: {counter: 0}
+      page_limit: {fixed: 20, role: page_size}
+  response:
+    items: results
+
+item_offset_query:
+  method: GET
+  path:
+    - type: literal
+      value: items
+    - type: literal
+      value: offset
+  pagination:
+    strategy: offset
+    params:
+      offset: {counter: 0, step: 20}
+      limit: {fixed: 20, role: page_size}
+  response:
+    items: results
+
+item_cursor_query:
+  method: GET
+  path:
+    - type: literal
+      value: items
+    - type: literal
+      value: cursor
+  pagination:
+    strategy: cursor
+    params:
+      cursor: {from_response: next_cursor}
+      limit: {fixed: 20, role: page_size}
+    stop_when: {field: next_cursor, absent: true}
+  response:
+    items: results

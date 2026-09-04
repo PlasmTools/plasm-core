@@ -779,7 +779,10 @@ fn explorer_args_for_get(entity: &EntityDef, get_cap: &CapabilitySchema) -> Vec<
         cli_flag: String::new(),
     }];
 
-    let Ok(template) = parse_capability_template(&get_cap.mapping.template) else {
+    let Some(mapping) = get_cap.mapping.as_ref() else {
+        return out;
+    };
+    let Ok(template) = parse_capability_template(&mapping.template) else {
         return out;
     };
 

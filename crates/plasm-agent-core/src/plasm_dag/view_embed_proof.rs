@@ -212,20 +212,10 @@ fn view_capability_matches(
     }
     cgs.capabilities.get(cap.as_str()).is_some_and(|schema| {
         schema.domain.as_str() == view.entity.as_str()
-            && schema
-                .mapping
-                .template
-                .0
-                .get("transport")
-                .and_then(|t| t.as_str())
-                == Some("view")
-            && schema
-                .mapping
-                .template
-                .0
-                .get("view")
-                .and_then(|v| v.as_str())
-                == Some(view_key)
+            && schema.mapping.as_ref().is_some_and(|m| {
+                m.template.0.get("transport").and_then(|t| t.as_str()) == Some("view")
+                    && m.template.0.get("view").and_then(|v| v.as_str()) == Some(view_key)
+            })
     })
 }
 

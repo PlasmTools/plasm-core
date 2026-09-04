@@ -55,6 +55,7 @@ mod http_exec;
 mod hydrate;
 mod identity;
 mod mutators;
+mod pagination_driver;
 mod pagination_state;
 mod predicates;
 mod projection;
@@ -74,6 +75,8 @@ pub(crate) use hydrate::{
     get_with_session_params, identity_keys_for_entity, stamp_entities_and_mat, synthesized_get,
     wrap_synthesized_get_error, CapabilityParamEnv,
 };
+
+pub use pagination_driver::{PageAudit, PaginationDriver, PaginationTerminalReason};
 
 use self::entity_decoder::{
     create_entity_decoder, create_entity_decoder_for_capability,

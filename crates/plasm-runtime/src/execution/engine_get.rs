@@ -121,7 +121,23 @@ impl ExecutionEngine {
                 capability: "get".to_string(),
                 entity: get.reference.entity_type.to_string(),
             })?;
-        let capability_template = parse_capability_template(&capability.mapping.template)?;
+        if capability.derived.is_some() {
+            return Err(RuntimeError::ConfigurationError {
+                message: format!(
+                    "derived Get '{}' cannot nest as an inner node inside a views: DAG",
+                    capability.name
+                ),
+            });
+        }
+        let mapping = capability.mapping.as_ref().ok_or_else(|| {
+            RuntimeError::ConfigurationError {
+                message: format!(
+                    "capability '{}' has neither CML mapping nor derived plan",
+                    capability.name
+                ),
+            }
+        })?;
+        let capability_template = parse_capability_template(&mapping.template)?;
         if matches!(capability_template, CapabilityTemplate::View(_)) {
             return Err(RuntimeError::ConfigurationError {
                 message:
@@ -381,7 +397,24 @@ impl ExecutionEngine {
                 })?,
         };
 
-        let capability_template = parse_capability_template(&capability.mapping.template)?;
+        if let Some(plan) = capability.derived.as_ref() {
+            let mut ephemeral = SessionMaterialization::new();
+            let cache_ref = cache.unwrap_or(&mut ephemeral);
+            return crate::derived_get::execute_derived_get(
+                self, plan, capability, get, cgs, cache_ref, mode, ambient,
+            )
+            .await;
+        }
+
+        let mapping = capability.mapping.as_ref().ok_or_else(|| {
+            RuntimeError::ConfigurationError {
+                message: format!(
+                    "capability '{}' has neither CML mapping nor derived plan",
+                    capability.name
+                ),
+            }
+        })?;
+        let capability_template = parse_capability_template(&mapping.template)?;
 
         if let CapabilityTemplate::View(vt) = &capability_template {
             let mut ephemeral = SessionMaterialization::new();

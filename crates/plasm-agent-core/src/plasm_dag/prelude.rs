@@ -21,13 +21,12 @@ pub(in crate::plasm_dag) use crate::program_binding::{
     RowCardinalityProof, SegmentPolicy,
 };
 pub(in crate::plasm_dag) use plasm_core::expr_parser::{
-    collect_program_statement_lines, expand_flattened_program_statements,
+    collect_program_statement_lines, expand_flattened_program_statements, is_valid_program_label,
     missing_program_roots_error, parse_expr_node, parse_pipe_expr, peel_collect_meta,
-    pipe_head_has_catalog_surface_syntax, program_duplicate_return_node_error,
-    program_empty_error, program_return_keyword_error, split_assignment_at_top_level,
-    split_assignment_for_binding, split_top_level, strip_line_comment, validate_program_label,
-    is_valid_program_label, validate_program_statement_order, Applicator,
-    ExprNode, PipeExpr, RenderApplicator, RowExpr,
+    pipe_head_has_catalog_surface_syntax, program_duplicate_return_node_error, program_empty_error,
+    program_return_keyword_error, split_assignment_at_top_level, split_assignment_for_binding,
+    split_top_level, strip_line_comment, validate_program_label, validate_program_statement_order,
+    Applicator, ExprNode, PipeExpr, RenderApplicator, RowExpr,
 };
 pub(in crate::plasm_dag) use plasm_core::query_resolve;
 pub(in crate::plasm_dag) use plasm_core::row_composition::RowSuffix;

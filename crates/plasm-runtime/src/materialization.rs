@@ -544,9 +544,10 @@ mod tests {
             description: String::new(),
             kind: CapabilityKind::Action,
             domain: EntityName::from("CreditCardAccountLocked"),
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: CapabilityTemplateJson(serde_json::json!({ "method": "POST" })),
-            },
+            }),
+            derived: None,
             inputs: Default::default(),
             output_schema: None,
             provides: vec![],

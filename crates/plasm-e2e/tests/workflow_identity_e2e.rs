@@ -111,7 +111,9 @@ fn workflow_matrix_conflict_rule_matches_resource_exists() {
     let cap = cgs
         .get_capability("workitem_create_idempotent")
         .expect("cap");
-    let rules = conflict_rules_from_mapping_template(&cap.mapping.template.0);
+    let rules = conflict_rules_from_mapping_template(
+        &cap.require_mapping().expect("cml mapping").template.0,
+    );
     let body = serde_json::json!({ "message": "title already exists", "title": "alpha" });
     let conflict = match_conflict_rule(&rules, 422, &body).expect("match");
     assert_eq!(conflict.kind, WorkflowConflictKind::ResourceExists);

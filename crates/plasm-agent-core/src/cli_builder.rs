@@ -278,16 +278,18 @@ fn build_entity_command(name: &str, entity: &EntityDef, cgs: &CGS) -> Command {
     cmd = cmd.arg(Arg::new("id").help(id_help));
 
     if let Some(get_cap) = cgs.find_capability(name, CapabilityKind::Get) {
-        if let Ok(template) = parse_capability_template(&get_cap.mapping.template) {
-            let http_cml = match &template {
-                CapabilityTemplate::Http(cml) | CapabilityTemplate::GraphQl(cml) => Some(cml),
-                _ => None,
-            };
-            if let Some(cml) = http_cml {
-                cmd = append_multi_path_args(cmd, cml);
+        if let Some(mapping) = get_cap.mapping.as_ref() {
+            if let Ok(template) = parse_capability_template(&mapping.template) {
+                let http_cml = match &template {
+                    CapabilityTemplate::Http(cml) | CapabilityTemplate::GraphQl(cml) => Some(cml),
+                    _ => None,
+                };
+                if let Some(cml) = http_cml {
+                    cmd = append_multi_path_args(cmd, cml);
+                }
+                cmd = append_compound_key_vars_not_on_path(cmd, entity, http_cml);
+                cmd = append_get_template_var_args(cmd, &template);
             }
-            cmd = append_compound_key_vars_not_on_path(cmd, entity, http_cml);
-            cmd = append_get_template_var_args(cmd, &template);
         }
     }
 
@@ -459,8 +461,10 @@ fn build_entity_command(name: &str, entity: &EntityDef, cgs: &CGS) -> Command {
             CapabilityKind::Delete => {
                 let mut del =
                     Command::new(leak(sub_kebab.clone())).about(format!("Delete a {name}"));
-                if let Some(cml) = http_template_request(&cap.mapping.template) {
-                    del = append_multi_path_args(del, &cml);
+                if let Some(mapping) = cap.mapping.as_ref() {
+                    if let Some(cml) = http_template_request(&mapping.template) {
+                        del = append_multi_path_args(del, &cml);
+                    }
                 }
                 cmd = cmd.subcommand(del);
             }
@@ -472,8 +476,10 @@ fn build_entity_command(name: &str, entity: &EntityDef, cgs: &CGS) -> Command {
                 for arg in build_invoke_args(cap, cgs) {
                     action_cmd = action_cmd.arg(arg);
                 }
-                if let Some(cml) = http_template_request(&cap.mapping.template) {
-                    action_cmd = append_multi_path_args(action_cmd, &cml);
+                if let Some(mapping) = cap.mapping.as_ref() {
+                    if let Some(cml) = http_template_request(&mapping.template) {
+                        action_cmd = append_multi_path_args(action_cmd, &cml);
+                    }
                 }
                 cmd = cmd.subcommand(action_cmd);
             }
@@ -876,7 +882,7 @@ mod tests {
             domain: "Account".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
                     "path": [{"type": "literal", "value": "accounts"}],
@@ -894,7 +900,8 @@ mod tests {
                     }
                 })
                 .into(),
-            },
+            }),
+            derived: None,
             inputs: plasm_core::CapabilityInputs { selection: plasm_core::BackendSelectionSchema(vec![InputFieldSchema {
                         name: "region".into(),
                         wire: InputFieldWire::Registry(
@@ -924,7 +931,7 @@ mod tests {
             domain: "Contact".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
                     "path": [{"type": "literal", "value": "contacts"}],
@@ -936,7 +943,8 @@ mod tests {
                     }
                 })
                 .into(),
-            },
+            }),
+            derived: None,
             inputs: plasm_core::CapabilityInputs { selection: plasm_core::BackendSelectionSchema(vec![InputFieldSchema {
                         name: "role".into(),
                         wire: InputFieldWire::Registry(ValueDomainKey::new("cb_contact_role").expect("key")),
@@ -1167,7 +1175,7 @@ mod tests {
             domain: "Balance".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "transport": "evm_call",
                     "chain": 1,
@@ -1177,7 +1185,8 @@ mod tests {
                     "block": { "type": "var", "name": "block" }
                 })
                 .into(),
-            },
+            }),
+            derived: None,
             inputs: Default::default(),
             output_schema: None,
             provides: vec![],
@@ -1306,13 +1315,14 @@ mod tests {
             domain: "Order".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
                     "path": [{"type": "literal", "value": "store"}, {"type": "literal", "value": "order"}, {"type": "var", "name": "id"}],
                 })
                 .into(),
-            },
+            }),
+            derived: None,
             inputs: Default::default(),
             output_schema: None,
             provides: vec![],
@@ -1330,13 +1340,14 @@ mod tests {
             domain: "Pet".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
                     "path": [{"type": "literal", "value": "pet"}, {"type": "var", "name": "id"}],
                 })
                 .into(),
-            },
+            }),
+            derived: None,
             inputs: Default::default(),
             output_schema: None,
             provides: vec![],
@@ -1377,13 +1388,14 @@ mod tests {
             domain: "Order".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
                     "path": [{"type": "literal", "value": "store"}, {"type": "literal", "value": "order"}],
                 })
                 .into(),
-            },
+            }),
+            derived: None,
             inputs: plasm_core::CapabilityInputs { selection: plasm_core::BackendSelectionSchema(vec![InputFieldSchema {
                         name: "petId".into(),
                         wire: InputFieldWire::Registry(ValueDomainKey::new("cb_order_pet_ref").expect("key")),

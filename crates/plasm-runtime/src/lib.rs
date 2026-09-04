@@ -149,6 +149,7 @@ pub use view_preflight::{
 };
 
 mod cancel_signal;
+mod derived_get;
 mod live_run_telemetry;
 mod runtime_metrics;
 #[cfg(test)]
@@ -186,7 +187,8 @@ pub use hosted_oauth_kv::{
 pub use http_resilience::{HttpResiliencePolicy, ResilientHttpTransport};
 pub use http_transport::{HttpTransport, ReqwestHttpTransport};
 pub use live_run_telemetry::{
-    drain_active_live_http_trace_entries, record_live_http_completion, record_live_http_trace,
+    drain_active_live_http_trace_entries, drain_active_live_page_audits,
+    record_live_http_completion, record_live_http_trace, record_live_page_audit,
     with_live_run_telemetry, LiveRunTelemetry,
 };
 pub use materialization::{

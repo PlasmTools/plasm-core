@@ -205,6 +205,9 @@ pub enum PathSegment {
 /// absent/null (cursor exhausted) or the items array is shorter than requested.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PaginationConfig {
+    /// Tagged traversal strategy (`page_number`, `offset`, `cursor`, `next_url`, …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy: Option<PaginationStrategyKind>,
     /// Parameters to inject into each request. Keys are the API parameter names.
     #[serde(default)]
     pub params: indexmap::IndexMap<String, PaginationParam>,
@@ -234,6 +237,39 @@ pub struct PaginationConfig {
     pub response_next_url_field: Option<String>,
 }
 
+/// Explicit role for a pagination parameter (full cutover: no wire-name inference).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaginationParamRole {
+    /// Catalog page size / span sent unchanged on every upstream request.
+    PageSize,
+}
+
+/// Strategy tag for a pagination block (required at compile/load validation).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaginationStrategyKind {
+    PageNumber,
+    Offset,
+    Cursor,
+    NextUrl,
+    LinkHeader,
+    BlockRange,
+}
+
+impl std::fmt::Display for PaginationStrategyKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::PageNumber => "page_number",
+            Self::Offset => "offset",
+            Self::Cursor => "cursor",
+            Self::NextUrl => "next_url",
+            Self::LinkHeader => "link_header",
+            Self::BlockRange => "block_range",
+        })
+    }
+}
+
 /// How a single pagination parameter advances across pages.
 ///
 /// Serde-untagged: the YAML variant is inferred from the value shape.
@@ -251,8 +287,13 @@ pub enum PaginationParam {
         max: Option<i64>,
     },
     /// Fixed value: sent unchanged on every page request.
-    /// YAML: `limit: {fixed: 20}` or `page_size: {fixed: 100}`.
-    Fixed { fixed: serde_json::Value },
+    /// YAML: `limit: {fixed: 20, role: page_size}` or `page_size: {fixed: 100, role: page_size}`.
+    Fixed {
+        fixed: serde_json::Value,
+        /// When `page_size`, this Fixed is the authoritative upstream page size.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        role: Option<PaginationParamRole>,
+    },
     /// Extracted from the previous response: absent on the first request; populated
     /// from `response[from_response]` on subsequent pages (or from the object at
     /// [`PaginationConfig::response_prefix`] when set). When the field is absent
@@ -273,18 +314,39 @@ impl PaginationParam {
             PaginationParam::Counter { counter, .. } => Some(serde_json::Value::Number(
                 serde_json::Number::from(*counter),
             )),
-            PaginationParam::Fixed { fixed } => Some(fixed.clone()),
+            PaginationParam::Fixed { fixed, .. } => Some(fixed.clone()),
             PaginationParam::FromResponse { .. } => None,
         }
     }
 
     /// Returns the default page size if this param represents a fixed page size.
     pub fn fixed_as_u32(&self) -> Option<u32> {
-        if let PaginationParam::Fixed { fixed } = self {
+        if let PaginationParam::Fixed { fixed, .. } = self {
             fixed.as_u64().map(|n| n as u32)
         } else {
             None
         }
+    }
+
+    /// True when this Fixed carries the explicit `page_size` role.
+    pub fn is_page_size_role(&self) -> bool {
+        matches!(
+            self,
+            PaginationParam::Fixed {
+                role: Some(PaginationParamRole::PageSize),
+                ..
+            }
+        )
+    }
+}
+
+impl PaginationConfig {
+    /// Authoritative Fixed page-size value (`role: page_size`), if declared.
+    pub fn page_size_fixed_u32(&self) -> Option<u32> {
+        self.params
+            .values()
+            .find(|p| p.is_page_size_role())
+            .and_then(|p| p.fixed_as_u32())
     }
 }
 
@@ -1372,18 +1434,21 @@ mod tests {
     #[test]
     fn pagination_config_deserializes_response_next_url() {
         let cfg: PaginationConfig = serde_json::from_value(serde_json::json!({
+            "strategy": "next_url",
             "location": "response_next_url",
             "response_next_url_field": "@odata.nextLink",
             "params": {
-                "$top": { "fixed": 100 }
+                "$top": { "fixed": 100, "role": "page_size" }
             }
         }))
         .expect("parse pagination block");
         assert_eq!(cfg.location, PaginationLocation::ResponseNextUrl);
+        assert_eq!(cfg.strategy, Some(PaginationStrategyKind::NextUrl));
         assert_eq!(
             cfg.response_next_url_field.as_deref(),
             Some("@odata.nextLink")
         );
         assert_eq!(cfg.params.get("$top").unwrap().fixed_as_u32(), Some(100));
+        assert!(cfg.params.get("$top").unwrap().is_page_size_role());
     }
 }

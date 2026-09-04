@@ -6,7 +6,7 @@ use plasm_core::{TypedFieldValue, Value, WriteOutcome};
 
 use crate::cache::CachedEntity;
 use crate::execution::ExecutionResult;
-use crate::value_match::{pick_row_field_where, values_semantically_equal};
+use crate::value_match::values_semantically_equal;
 use crate::RuntimeError;
 
 pub fn resolve_output_binding(
@@ -39,27 +39,6 @@ pub fn resolve_output_binding(
                 .get(field)
                 .map(TypedFieldValue::to_value)
                 .unwrap_or(Value::Null))
-        }
-        ViewOutputBinding::NodeFieldWhere {
-            node,
-            where_field,
-            equals_scope,
-            field,
-        } => {
-            let r = node_results
-                .get(node)
-                .ok_or_else(|| RuntimeError::ConfigurationError {
-                    message: format!("view output references unknown node `{node}`"),
-                })?;
-            let needle =
-                scope
-                    .get(equals_scope)
-                    .ok_or_else(|| RuntimeError::ConfigurationError {
-                        message: format!(
-                        "view node_field_where: missing equals_scope `{equals_scope}` in view scope"
-                    ),
-                    })?;
-            pick_row_field_where(&r.entities, node, where_field, equals_scope, needle, field)
         }
         ViewOutputBinding::NodeFieldHistogramJson { node, field } => {
             let r = node_results

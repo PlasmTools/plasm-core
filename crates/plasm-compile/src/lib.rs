@@ -6,6 +6,7 @@
 //! CML template types and transport live in [`plasm_cml`].
 
 pub mod backend_filter;
+pub mod capability_pagination;
 pub mod decoder;
 pub mod embed_decode;
 pub mod embed_target_decoder;
@@ -20,14 +21,19 @@ pub use plasm_cml::{
     CapabilityTemplate, CmlCond, CmlEnv, CmlExpr, CmlRequest, CmlType, CompiledMultipartBody,
     CompiledMultipartPart, CompiledOperation, CompiledRequest, HttpBodyFormat, HttpMethod,
     HttpResponseDecode, MultipartBodySpec, MultipartPartSpec, PaginationConfig, PaginationLocation,
-    PaginationParam, PaginationStop, PathSegment as CmlPathSegment, ResponsePreprocess,
-    ViewCompiled, ViewTemplate,
+    PaginationParam, PaginationParamRole, PaginationStop, PaginationStrategyKind,
+    PathSegment as CmlPathSegment, ResponsePreprocess, ValidatedPagination, ViewCompiled,
+    ViewTemplate,
 };
 
 #[cfg(feature = "evm")]
 pub use plasm_cml::evm_transport::*;
 
 pub use backend_filter::*;
+pub use capability_pagination::{
+    emit_paginated_list_missing_cml_pagination_warnings, is_pagination_wire_param,
+    paginated_list_missing_cml_pagination_warnings, pagination_contract_validation_errors,
+};
 pub use decoder::*;
 pub use embed_decode::{decode_entities, decode_entities_with_cgs};
 pub use embed_target_decoder::entity_decoder_for_from_parent_get_target;
@@ -60,7 +66,15 @@ pub type CompileQueryHook =
 /// (params bind via view scope / node binds, not this HTTP template).
 pub fn validate_cgs_capability_templates(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
     for (name, cap) in &cgs.capabilities {
-        let template_json = &cap.mapping.template.0;
+        // Domain-authored derived Gets have no CML mapping.
+        if cap.derived.is_some() {
+            continue;
+        }
+        let template_json = &cap
+            .require_mapping()
+            .map_err(|message| CmlError::InvalidTemplate { message })?
+            .template
+            .0;
         let template =
             parse_capability_template(template_json).map_err(|e| CmlError::InvalidTemplate {
                 message: format!("capability `{name}`: {e}"),
@@ -77,7 +91,36 @@ pub fn validate_cgs_capability_templates(cgs: &plasm_core::CGS) -> Result<(), Cm
             message: e.to_string(),
         })?;
 
+        forbid_pagination_dual_wire(name, &template)?;
         validate_capability_params_wired_in_cml(name, cap, &template)?;
+    }
+    emit_paginated_list_missing_cml_pagination_warnings(cgs);
+    Ok(())
+}
+
+/// Fail closed when a `pagination.params` key is also a CML template var
+/// (path/query/body/headers/multipart). Dual-wire races the driver against
+/// manual exists/var fields and is forbidden.
+fn forbid_pagination_dual_wire(name: &str, template: &CapabilityTemplate) -> Result<(), CmlError> {
+    let Some(pconf) = template_pagination(template) else {
+        return Ok(());
+    };
+    let cml_vars: std::collections::HashSet<String> =
+        template_var_names(template).into_iter().collect();
+    let mut dual: Vec<&str> = pconf
+        .params
+        .keys()
+        .filter(|k| cml_vars.contains(k.as_str()))
+        .map(|k| k.as_str())
+        .collect();
+    dual.sort_unstable();
+    if !dual.is_empty() {
+        return Err(CmlError::InvalidTemplate {
+            message: format!(
+                "capability `{name}`: pagination param(s) [{}] also appear as CML template vars (path/query/body/headers/multipart) — dual-wire is forbidden; remove the manual fields and let `pagination:` drive the wire",
+                dual.join(", ")
+            ),
+        });
     }
     Ok(())
 }
@@ -158,7 +201,11 @@ pub fn validate_cgs_views(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
                     view.capability
                 ),
             })?;
-        let template = parse_capability_template(&cap.mapping.template)?;
+        let template = parse_capability_template(
+            &cap.require_mapping()
+                .map_err(|message| CmlError::InvalidTemplate { message })?
+                .template,
+        )?;
         match &template {
             CapabilityTemplate::View(vt) if vt.view == *view_key => {}
             CapabilityTemplate::View(vt) => {
@@ -225,7 +272,12 @@ pub fn validate_cgs_views(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
                     });
                 }
             }
-            let inner_template = parse_capability_template(&node_cap.mapping.template)?;
+            let inner_template = parse_capability_template(
+                &node_cap
+                    .require_mapping()
+                    .map_err(|message| CmlError::InvalidTemplate { message })?
+                    .template,
+            )?;
             if matches!(inner_template, CapabilityTemplate::View(_)) {
                 return Err(CmlError::InvalidTemplate {
                     message: format!(
@@ -266,7 +318,6 @@ pub fn validate_cgs_views(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
             match binding {
                 ViewOutputBinding::NodeRowCount { node }
                 | ViewOutputBinding::NodeField { node, .. }
-                | ViewOutputBinding::NodeFieldWhere { node, .. }
                 | ViewOutputBinding::NodeFieldHistogramJson { node, .. }
                 | ViewOutputBinding::NodeAnyRowFieldEquals { node, .. }
                 | ViewOutputBinding::NodeRowCountPositive { node }
@@ -288,27 +339,6 @@ pub fn validate_cgs_views(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
                     )?;
                 }
                 ViewOutputBinding::Scope { .. } => {}
-            }
-        }
-
-        for (field, binding) in &view.output {
-            if let ViewOutputBinding::NodeFieldWhere {
-                equals_scope,
-                where_field,
-                field: row_field,
-                ..
-            } = binding
-            {
-                if let Some(detail) = plasm_core::view_node_field_where_output_detail(
-                    view,
-                    equals_scope,
-                    where_field,
-                    row_field,
-                ) {
-                    return Err(CmlError::InvalidTemplate {
-                        message: format!("view `{view_key}` output `{field}`: {detail}"),
-                    });
-                }
             }
         }
 
@@ -339,7 +369,10 @@ pub fn validate_cgs_views(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
     }
 
     for (cap_name, cap) in &cgs.capabilities {
-        let Ok(template) = parse_capability_template(&cap.mapping.template) else {
+        let Some(mapping) = &cap.mapping else {
+            continue;
+        };
+        let Ok(template) = parse_capability_template(&mapping.template) else {
             continue;
         };
         if let CapabilityTemplate::View(vt) = template {
@@ -359,7 +392,8 @@ pub fn validate_cgs_views(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
 /// Shared by CLI generation and tool-model projection so both surfaces interpret pagination
 /// from the exact same CML parsing path.
 pub fn pagination_config_for_capability(cap: &CapabilitySchema) -> Option<PaginationConfig> {
-    parse_capability_template(&cap.mapping.template)
+    let mapping = cap.mapping.as_ref()?;
+    parse_capability_template(&mapping.template)
         .ok()
         .and_then(|template| template_pagination(&template).cloned())
 }
@@ -390,7 +424,7 @@ mod tests {
             Value::String(repository.to_string()),
         );
         apply_entity_ref_scope_splat(&mut env, &cgs, cap).expect("scope splat");
-        let template = parse_capability_template(&cap.mapping.template)
+        let template = parse_capability_template(&cap.require_mapping().expect("cml mapping").template)
             .unwrap_or_else(|e| panic!("parse {capability}: {e}"));
         let CompiledOperation::Http(req) = compile_operation(&template, &env)
             .unwrap_or_else(|e| panic!("compile {capability}: {e}"))
@@ -489,6 +523,69 @@ mod tests {
             plasm_core::load_schema(&root.join("../../apis/appworld/supervisor")).expect("load");
         validate_cgs_capability_templates(&cgs).expect("templates");
         validate_cgs_views(&cgs).expect("views");
+    }
+
+    #[test]
+    fn appworld_amazon_and_gmail_templates_validate() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        for rel in ["../../apis/appworld/amazon", "../../apis/appworld/gmail"] {
+            let cgs = plasm_core::load_schema(&root.join(rel)).expect(rel);
+            validate_cgs_capability_templates(&cgs).unwrap_or_else(|e| {
+                panic!("{rel} templates must validate after pagination cutover: {e}")
+            });
+        }
+    }
+
+    #[test]
+    fn forbid_pagination_dual_wire_rejects_overlapping_query_vars() {
+        let template = parse_capability_template(&serde_json::json!({
+            "method": "GET",
+            "path": [{"type": "literal", "value": "items"}],
+            "query": {
+                "type": "object",
+                "fields": [
+                    ["page_index", {"type": "var", "name": "page_index"}],
+                    ["page_limit", {"type": "var", "name": "page_limit"}]
+                ]
+            },
+            "pagination": {
+                "params": {
+                    "page_index": {"counter": 0},
+                    "page_limit": {"fixed": 20, "role": "page_size"}
+                },
+                "strategy": "page_number"
+            }
+        }))
+        .expect("parse dual-wire template");
+        let err = forbid_pagination_dual_wire("list_items", &template).expect_err("dual-wire");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("dual-wire") && msg.contains("page_index") && msg.contains("page_limit"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn forbid_pagination_dual_wire_allows_pagination_only() {
+        let template = parse_capability_template(&serde_json::json!({
+            "method": "GET",
+            "path": [{"type": "literal", "value": "items"}],
+            "query": {
+                "type": "object",
+                "fields": [
+                    ["query", {"type": "var", "name": "query"}]
+                ]
+            },
+            "pagination": {
+                "params": {
+                    "page_index": {"counter": 0},
+                    "page_limit": {"fixed": 20, "role": "page_size"}
+                },
+                "strategy": "page_number"
+            }
+        }))
+        .expect("parse clean template");
+        forbid_pagination_dual_wire("list_items", &template).expect("pagination-only ok");
     }
 
     #[test]

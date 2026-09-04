@@ -87,7 +87,7 @@ fn create_test_cgs() -> CGS {
         domain: "Account".into(),
         identity_key: None,
         invalidates_entities: vec![],
-        mapping: CapabilityMapping {
+        mapping: Some(CapabilityMapping {
             template: serde_json::json!({
                 "method": "POST",
                 "path": [{"type": "literal", "value": "query"}, {"type": "literal", "value": "Account"}],
@@ -99,7 +99,8 @@ fn create_test_cgs() -> CGS {
                 }
             })
             .into(),
-        },
+        }),
+        derived: None,
         inputs: Default::default(),
         output_schema: None,
         provides: vec![],
@@ -121,7 +122,7 @@ fn create_test_cgs() -> CGS {
         domain: "Account".into(),
         identity_key: None,
         invalidates_entities: vec![],
-        mapping: CapabilityMapping {
+        mapping: Some(CapabilityMapping {
             template: serde_json::json!({
                 "method": "GET",
                 "path": [
@@ -131,7 +132,8 @@ fn create_test_cgs() -> CGS {
                 ]
             })
             .into(),
-        },
+        }),
+        derived: None,
         inputs: Default::default(),
         output_schema: None,
         provides: vec![],
@@ -213,7 +215,7 @@ fn cgs_with_unary_entity_ref_scope_query() -> (CGS, CapabilitySchema) {
         domain: "ManagedResource".into(),
         identity_key: None,
         invalidates_entities: vec![],
-        mapping: CapabilityMapping {
+        mapping: Some(CapabilityMapping {
             template: serde_json::json!({
                 "method": "GET",
                 "path": [
@@ -223,7 +225,8 @@ fn cgs_with_unary_entity_ref_scope_query() -> (CGS, CapabilitySchema) {
                 ]
             })
             .into(),
-        },
+        }),
+        derived: None,
         inputs: plasm_core::CapabilityInputs {
             scope: plasm_core::ParentScopeSchema(vec![InputFieldSchema {
                 name: "workspace_id".to_string(),
@@ -389,7 +392,7 @@ fn matrix_fixture_ruleset_query_decodes_v4_envelope_list() {
     let cap = cgs
         .get_capability("ruleset_query")
         .expect("ruleset_query capability");
-    let capability_template = parse_capability_template(&cap.mapping.template).unwrap();
+    let capability_template = parse_capability_template(&cap.require_mapping().expect("cml mapping").template).unwrap();
     let cml = match &capability_template {
         plasm_compile::CapabilityTemplate::Http(c) => c,
         _ => panic!("expected HTTP template"),
@@ -448,7 +451,7 @@ fn matrix_fixture_ruleset_get_narrowing_decodes_inner_result_object() {
     let cap = cgs
         .get_capability("ruleset_get")
         .expect("ruleset_get capability");
-    let capability_template = parse_capability_template(&cap.mapping.template).unwrap();
+    let capability_template = parse_capability_template(&cap.require_mapping().expect("cml mapping").template).unwrap();
     let cml = match &capability_template {
         plasm_compile::CapabilityTemplate::Http(c) => c,
         _ => panic!("expected HTTP template"),
@@ -769,8 +772,12 @@ fn populate_template_path_env_path_vars_override_compound_ref_strings() {
 #[test]
 fn block_range_with_upper_bound_is_not_single_page() {
     let pconf = PaginationConfig {
+        strategy: Some(plasm_compile::PaginationStrategyKind::BlockRange),
         params: indexmap::indexmap! {
-            "range_size".to_string() => plasm_compile::PaginationParam::Fixed { fixed: serde_json::json!(100) },
+            "range_size".to_string() => plasm_compile::PaginationParam::Fixed {
+                fixed: serde_json::json!(100),
+                role: Some(plasm_compile::PaginationParamRole::PageSize),
+            },
         },
         location: plasm_compile::PaginationLocation::BlockRange,
         body_merge_path: None,
@@ -803,8 +810,12 @@ fn block_range_with_upper_bound_is_not_single_page() {
 #[test]
 fn block_range_without_upper_bound_stays_single_page_by_default() {
     let pconf = PaginationConfig {
+        strategy: Some(plasm_compile::PaginationStrategyKind::BlockRange),
         params: indexmap::indexmap! {
-            "range_size".to_string() => plasm_compile::PaginationParam::Fixed { fixed: serde_json::json!(100) },
+            "range_size".to_string() => plasm_compile::PaginationParam::Fixed {
+                fixed: serde_json::json!(100),
+                role: Some(plasm_compile::PaginationParamRole::PageSize),
+            },
         },
         location: plasm_compile::PaginationLocation::BlockRange,
         body_merge_path: None,
@@ -1420,7 +1431,7 @@ fn fibery_schema_query_decodes_database_rows_from_fibery_name_id_path() {
     let cgs = load_schema_dir(&dir).expect("load fibery catalog");
     let cap = cgs.get_capability("schema_query").expect("schema_query");
     let capability_template =
-        parse_capability_template(&cap.mapping.template).expect("parse template");
+        parse_capability_template(&cap.require_mapping().expect("cml mapping").template).expect("parse template");
     let cml = match &capability_template {
         plasm_compile::CapabilityTemplate::Http(c) => c,
         _ => panic!("expected HTTP template"),
@@ -1456,7 +1467,7 @@ fn fibery_user_get_me_narrowing_decodes_first_result_row() {
     let cgs = load_schema_dir(&dir).expect("load fibery catalog");
     let cap = cgs.get_capability("user_get_me").expect("user_get_me");
     let capability_template =
-        parse_capability_template(&cap.mapping.template).expect("parse template");
+        parse_capability_template(&cap.require_mapping().expect("cml mapping").template).expect("parse template");
     let body: serde_json::Value = serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../fixtures/schemas/fibery_schema_overlay/sample_user_get_me.json"
@@ -1493,7 +1504,7 @@ fn fibery_entity_create_narrowing_decodes_result_object() {
     let cgs = load_schema_dir(&dir).expect("load fibery catalog");
     let cap = cgs.get_capability("entity_create").expect("entity_create");
     let capability_template =
-        parse_capability_template(&cap.mapping.template).expect("parse template");
+        parse_capability_template(&cap.require_mapping().expect("cml mapping").template).expect("parse template");
     let body: serde_json::Value = serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../fixtures/schemas/fibery_schema_overlay/sample_entity_create.json"
@@ -1537,7 +1548,7 @@ fn fibery_entity_update_merge_injects_fibery_id_into_input() {
     let cgs = load_schema_dir(&dir).expect("load fibery catalog");
     let cap = cgs.get_capability("entity_update").expect("entity_update");
     let capability_template =
-        parse_capability_template(&cap.mapping.template).expect("parse template");
+        parse_capability_template(&cap.require_mapping().expect("cml mapping").template).expect("parse template");
     let mut env = CmlEnv::new();
     env.insert(
         "id".into(),
@@ -1580,7 +1591,7 @@ fn fibery_entity_delete_compiles_fibery_id_and_database() {
     let cgs = load_schema_dir(&dir).expect("load fibery catalog");
     let cap = cgs.get_capability("entity_delete").expect("entity_delete");
     let capability_template =
-        parse_capability_template(&cap.mapping.template).expect("parse template");
+        parse_capability_template(&cap.require_mapping().expect("cml mapping").template).expect("parse template");
     let mut env = CmlEnv::new();
     env.insert(
         "id".into(),
@@ -1634,7 +1645,7 @@ fn fibery_view_query_decodes_result_array() {
     let cgs = load_schema_dir(&dir).expect("load fibery catalog");
     let cap = cgs.get_capability("view_query").expect("view_query");
     let capability_template =
-        parse_capability_template(&cap.mapping.template).expect("parse template");
+        parse_capability_template(&cap.require_mapping().expect("cml mapping").template).expect("parse template");
     let cml = match &capability_template {
         plasm_compile::CapabilityTemplate::Http(c) => c,
         _ => panic!("expected HTTP template"),
@@ -1676,7 +1687,7 @@ fn fibery_user_get_me_compile_preserves_my_id_filter() {
     let cgs = load_schema_dir(&dir).expect("load fibery catalog");
     let cap = cgs.get_capability("user_get_me").expect("user_get_me");
     let capability_template =
-        parse_capability_template(&cap.mapping.template).expect("parse template");
+        parse_capability_template(&cap.require_mapping().expect("cml mapping").template).expect("parse template");
     let compiled = compile_operation_dispatch(&capability_template, &CmlEnv::new())
         .expect("compile user_get_me");
     let CompiledOperation::Http(req) = compiled else {
@@ -1711,7 +1722,7 @@ fn fibery_command_envelope_preflight_surfaces_success_false() {
     let cgs = load_schema_dir(&dir).expect("load fibery catalog");
     let cap = cgs.get_capability("user_get_me").expect("user_get_me");
     let capability_template =
-        parse_capability_template(&cap.mapping.template).expect("parse template");
+        parse_capability_template(&cap.require_mapping().expect("cml mapping").template).expect("parse template");
     let body = serde_json::json!({
         "success": false,
         "result": {
@@ -1734,7 +1745,7 @@ fn fibery_command_envelope_preflight_surfaces_empty_result_array() {
     let cgs = load_schema_dir(&dir).expect("load fibery catalog");
     let cap = cgs.get_capability("user_get_me").expect("user_get_me");
     let capability_template =
-        parse_capability_template(&cap.mapping.template).expect("parse template");
+        parse_capability_template(&cap.require_mapping().expect("cml mapping").template).expect("parse template");
     let body = serde_json::json!({ "success": true, "result": [] });
     let err = narrow_http_graphql_response_for_entity_decode(&capability_template, body)
         .expect_err("empty result[] must fail with actionable message");
@@ -1754,7 +1765,7 @@ fn graphql_get_null_entity_surfaces_request_error_not_config() {
     let cgs = load_schema_dir(&dir).expect("load linear catalog");
     let cap = cgs.get_capability("issue_get").expect("issue_get");
     let capability_template =
-        parse_capability_template(&cap.mapping.template).expect("parse template");
+        parse_capability_template(&cap.require_mapping().expect("cml mapping").template).expect("parse template");
     let body = serde_json::json!({
         "data": { "issue": null },
         "errors": [{ "message": "Entity not found: Issue" }]
@@ -1781,7 +1792,7 @@ fn graphql_mutation_success_false_surfaces_actionable_error() {
     let cgs = load_schema_dir(&dir).expect("load linear catalog");
     let cap = cgs.get_capability("issue_create").expect("issue_create");
     let capability_template =
-        parse_capability_template(&cap.mapping.template).expect("parse template");
+        parse_capability_template(&cap.require_mapping().expect("cml mapping").template).expect("parse template");
     let body = serde_json::json!({
         "data": { "issueCreate": { "success": false, "issue": null } }
     });
@@ -1803,7 +1814,7 @@ fn graphql_mutation_success_false_prefers_graphql_errors() {
     let cgs = load_schema_dir(&dir).expect("load linear catalog");
     let cap = cgs.get_capability("issue_create").expect("issue_create");
     let capability_template =
-        parse_capability_template(&cap.mapping.template).expect("parse template");
+        parse_capability_template(&cap.require_mapping().expect("cml mapping").template).expect("parse template");
     let body = serde_json::json!({
         "data": { "issueCreate": { "success": false, "issue": null } },
         "errors": [{ "message": "Team not found: PLA" }]
@@ -1823,7 +1834,7 @@ fn graphql_mutation_success_true_decodes_normally() {
     let cgs = load_schema_dir(&dir).expect("load linear catalog");
     let cap = cgs.get_capability("issue_create").expect("issue_create");
     let capability_template =
-        parse_capability_template(&cap.mapping.template).expect("parse template");
+        parse_capability_template(&cap.require_mapping().expect("cml mapping").template).expect("parse template");
     let body = serde_json::json!({
         "data": { "issueCreate": { "success": true, "issue": { "id": "abc", "identifier": "EVA-61", "title": "x" } } }
     });
@@ -1845,7 +1856,7 @@ fn github_issue_query_decoder_includes_embedded_labels_relation() {
     let cgs = load_schema_dir(&dir).expect("load github catalog");
     let cap = cgs.get_capability("issue_query").expect("issue_query");
     let capability_template =
-        parse_capability_template(&cap.mapping.template).expect("parse template");
+        parse_capability_template(&cap.require_mapping().expect("cml mapping").template).expect("parse template");
     let cml = match &capability_template {
         plasm_compile::CapabilityTemplate::Http(c) => c,
         _ => panic!("expected HTTP template"),

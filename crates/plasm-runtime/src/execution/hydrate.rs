@@ -201,13 +201,13 @@ impl ExecutionEngine {
             return Ok((ordered_entities.to_vec(), 0));
         };
 
-        // List + view-backed get (e.g. AccountPassword vault): hydrating each summary row
-        // would re-enter the same composed view (query → get → query → …). Skip.
-        if get_cap.is_view_transport() {
+        // List + derived/view-backed get: hydrating each summary row would re-enter the
+        // same list-backed Get (query → get → query → …). Skip.
+        if get_cap.is_list_backed_get(cgs) {
             tracing::debug!(
                 entity = %entity_type,
                 capability = %get_cap.name,
-                event = "hydrate_skipped_view_backed_get"
+                event = "hydrate_skipped_list_backed_get"
             );
             return Ok((ordered_entities.to_vec(), 0));
         }
@@ -386,6 +386,123 @@ mod tests {
         assert_eq!(
             over.path_vars.as_ref().and_then(|p| p.get("access_token")),
             Some(&Value::String("program".into()))
+        );
+    }
+
+    #[test]
+    fn preflight_derived_get_skips_cml_and_does_not_panic() {
+        use plasm_core::loader::load_schema_dir;
+        use plasm_core::{Expr, GetExpr, Ref};
+        let cgs = load_schema_dir(
+            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/plasm_language_matrix_views"),
+        )
+        .expect("matrix views CGS");
+        let cap = cgs
+            .get_capability("lang_key_pick_get")
+            .expect("derived get");
+        assert!(cap.derived.is_some());
+        let mapping_err = cap.require_mapping().expect_err("derived Get has no CML mapping");
+        assert!(
+            mapping_err.contains("lang_key_pick_get") && mapping_err.contains("derived"),
+            "unexpected require_mapping err: {mapping_err}"
+        );
+        let mut get = GetExpr::from_ref(Ref::new("LangKeyPick", "alpha"));
+        get.capability_name = Some("lang_key_pick_get".into());
+        let mat = SessionMaterialization::new();
+        preflight_compile_expr(
+            &Expr::Get(get),
+            &cgs,
+            &ViewAmbientContext::default(),
+            &mat,
+        )
+        .expect("derived Get preflight must succeed without CML mapping");
+    }
+
+    /// Live plan path that previously unwound with `require_mapping` panic on derived Gets.
+    #[tokio::test]
+    async fn derived_get_live_execute_does_not_panic() {
+        use crate::auth::ResolvedAuth;
+        use crate::http_transport::HttpTransport;
+        use async_trait::async_trait;
+        use plasm_compile::CompiledRequest;
+        use plasm_core::loader::load_schema_dir;
+        use plasm_core::{Expr, GetExpr, Ref};
+        use std::sync::Arc;
+
+        #[derive(Clone)]
+        struct ListItemsTransport;
+
+        #[async_trait]
+        impl HttpTransport for ListItemsTransport {
+            async fn send_compiled_http(
+                &self,
+                _base_url: &str,
+                request: &CompiledRequest,
+                _auth: Option<ResolvedAuth>,
+            ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+                assert!(
+                    request.path.contains("items"),
+                    "derived Get must fetch source list, got path {}",
+                    request.path
+                );
+                Ok((
+                    serde_json::json!([
+                        {"id": "alpha", "title": "Alpha Item"},
+                        {"id": "beta", "title": "Beta Item"}
+                    ]),
+                    None,
+                ))
+            }
+
+            async fn get_json_absolute(
+                &self,
+                _url: &str,
+                _auth: Option<ResolvedAuth>,
+            ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+                Ok((serde_json::json!({}), None))
+            }
+        }
+
+        let cgs = load_schema_dir(
+            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/plasm_language_matrix_views"),
+        )
+        .expect("matrix views CGS");
+        let engine = ExecutionEngine::new_with_transport(
+            ExecutionConfig {
+                base_url: Some("http://127.0.0.1:9".into()),
+                ..ExecutionConfig::default()
+            },
+            Arc::new(ListItemsTransport),
+            None,
+        );
+        let mut get = GetExpr::from_ref(Ref::new("LangKeyPick", "alpha"));
+        get.capability_name = Some("lang_key_pick_get".into());
+        let mut mat = SessionMaterialization::new();
+        preflight_compile_expr(
+            &Expr::Get(get.clone()),
+            &cgs,
+            &ViewAmbientContext::default(),
+            &mat,
+        )
+        .expect("preflight");
+        let result = engine
+            .execute_get(
+                &get,
+                &cgs,
+                &mut mat,
+                ExecutionMode::Live,
+                &ViewAmbientContext::default(),
+            )
+            .await
+            .expect("derived Get live execute must return Result, not unwind");
+        assert_eq!(result.entities.len(), 1);
+        let row = &result.entities[0];
+        assert_eq!(row.reference.primary_slot_str(), "alpha");
+        assert_eq!(
+            row.fields.get("title").map(|f| f.to_value()),
+            Some(Value::String("Alpha Item".into()))
         );
     }
 

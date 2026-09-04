@@ -651,7 +651,10 @@ fn has_required_fields(schema: &plasm_core::InputSchema) -> bool {
 
 /// True when the query capability's CML template declares a `pagination` block.
 fn query_mapping_has_pagination(cap: &plasm_core::CapabilitySchema) -> bool {
-    serde_json::from_value::<CmlRequest>(cap.mapping.template.0.clone())
+    let Ok(mapping) = cap.require_mapping() else {
+        return false;
+    };
+    serde_json::from_value::<CmlRequest>(mapping.template.0.clone())
         .ok()
         .is_some_and(|r| r.pagination.is_some())
 }

@@ -178,9 +178,10 @@ mod tests {
             domain: "Thing".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({}).into(),
-            },
+            }),
+            derived: None,
             inputs: plasm_core::CapabilityInputs {
                 selection: plasm_core::BackendSelectionSchema(params),
                 ..Default::default()
@@ -203,9 +204,10 @@ mod tests {
             domain: "Thing".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({}).into(),
-            },
+            }),
+            derived: None,
             inputs: Default::default(),
             output_schema: None,
             provides: vec![],

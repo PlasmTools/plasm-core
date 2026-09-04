@@ -99,12 +99,7 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
                 resolve_binding(bspec, ctx.scope, node_fields)?,
             );
         }
-        let nfwh = self
-            .cgs
-            .views
-            .get(ctx.view_name)
-            .map(|view| (view, node.id.as_str(), ctx.scope));
-        stub_query_result(cap, self.cgs, &bound_values, nfwh)
+        stub_query_result(cap, self.cgs, &bound_values)
     }
 
     fn run_get_node(
@@ -149,6 +144,6 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
                 ctx.view_name, node.id, node.capability
             ),
         })?;
-        stub_query_result(cap, self.cgs, &IndexMap::new(), None)
+        stub_query_result(cap, self.cgs, &IndexMap::new())
     }
 }

@@ -25,9 +25,15 @@ pub fn map_capability_http_error(
     body: &serde_json::Value,
     fallback_message: String,
 ) -> RuntimeError {
-    if let Some(conflict) =
-        workflow_conflict_from_http(&capability.mapping.template.0, status, body)
-    {
+    let Ok(mapping) = capability.require_mapping() else {
+        return RuntimeError::RequestError {
+            message: fallback_message,
+            attempts: 1,
+            status: Some(status),
+            body: Some(body.clone()),
+        };
+    };
+    if let Some(conflict) = workflow_conflict_from_http(&mapping.template.0, status, body) {
         let md = conflict.markdown_block();
         return RuntimeError::WorkflowConflict {
             conflict: Box::new(conflict),
@@ -81,7 +87,13 @@ impl ExecutionEngine {
             Some(parts) => parts,
             None => return Err(err),
         };
-        let rules = conflict_rules_from_mapping_template(&capability.mapping.template.0);
+        let rules = conflict_rules_from_mapping_template(
+            &capability
+                .require_mapping()
+                .map_err(|message| RuntimeError::ConfigurationError { message })?
+                .template
+                .0,
+        );
         let Some(conflict) = plasm_core::match_conflict_rule(&rules, status, &body) else {
             return Err(err);
         };
@@ -129,15 +141,17 @@ fn map_request_to_conflict_or_return(
         ..
     } = &err
     {
-        if let Some(conflict) =
-            workflow_conflict_from_http(&capability.mapping.template.0, *status, body)
-        {
-            let md = conflict.markdown_block();
-            return Err(RuntimeError::WorkflowConflict {
-                conflict: Box::new(conflict.clone()),
-                message: format!("{message}\n\n{md}"),
-                attempts: 1,
-            });
+        if let Ok(mapping) = capability.require_mapping() {
+            if let Some(conflict) =
+                workflow_conflict_from_http(&mapping.template.0, *status, body)
+            {
+                let md = conflict.markdown_block();
+                return Err(RuntimeError::WorkflowConflict {
+                    conflict: Box::new(conflict.clone()),
+                    message: format!("{message}\n\n{md}"),
+                    attempts: 1,
+                });
+            }
         }
     }
     Err(err)
@@ -364,7 +378,7 @@ mod tests {
             kind: CapabilityKind::Action,
             domain: EntityName::from("WorkItem"),
             identity_key: Some(vec!["title".into()]),
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: CapabilityTemplateJson(serde_json::json!({
                     "method": "POST",
                     "conflict_rules": [{
@@ -372,7 +386,8 @@ mod tests {
                         "kind": "resource_exists"
                     }]
                 })),
-            },
+            }),
+            derived: None,
             output_schema: Some(OutputSchema {
                 output_type: OutputType::Entity {
                     entity_type: "WorkItem".into(),
@@ -423,7 +438,12 @@ mod tests {
     fn workflow_conflict_from_mapping_template() {
         let cap = idempotent_cap();
         let body = serde_json::json!({ "message": "title already exists" });
-        let c = workflow_conflict_from_http(&cap.mapping.template.0, 422, &body).expect("match");
+        let c = workflow_conflict_from_http(
+            &cap.require_mapping().expect("cml mapping").template.0,
+            422,
+            &body,
+        )
+            .expect("match");
         assert_eq!(c.kind, WorkflowConflictKind::ResourceExists);
     }
 }

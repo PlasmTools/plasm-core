@@ -166,12 +166,14 @@ fn build_expr(
         if let Some(field_key) = resolve_entity_ref_field(entity, sub_name, cgs) {
             let mut get = GetExpr::from_ref(node_ref.clone());
             if let Some(get_cap) = cgs.find_capability(entity_name, CapabilityKind::Get) {
-                get.path_vars = path_vars_for_cml(
-                    &get_cap.mapping.template,
-                    id.as_str(),
-                    entity_matches,
-                    None,
-                )?;
+                if let Some(mapping) = get_cap.mapping.as_ref() {
+                    get.path_vars = path_vars_for_cml(
+                        &mapping.template,
+                        id.as_str(),
+                        entity_matches,
+                        None,
+                    )?;
+                }
             }
             let chain = ChainExpr::auto_get(Expr::Get(get), field_key);
             return Ok((Expr::Chain(chain), StreamConsumeOpts::default()));
@@ -218,24 +220,30 @@ fn build_expr(
             }
             CapabilityKind::Delete => {
                 let mut del = DeleteExpr::with_target(&cap.name, node_ref.clone());
-                del.path_vars = path_vars_for_cml(
-                    &cap.mapping.template,
-                    id.as_str(),
-                    entity_matches,
-                    Some(sub_matches),
-                )?;
+                del.path_vars = match cap.mapping.as_ref() {
+                    Some(mapping) => path_vars_for_cml(
+                        &mapping.template,
+                        id.as_str(),
+                        entity_matches,
+                        Some(sub_matches),
+                    )?,
+                    None => None,
+                };
                 return Ok((Expr::Delete(del), StreamConsumeOpts::default()));
             }
             _ => {
                 // Update, Action, or anything else -> Invoke
                 let input = args_to_input(sub_matches, cap, cgs);
                 let mut inv = InvokeExpr::with_target(&cap.name, node_ref.clone(), input);
-                inv.path_vars = path_vars_for_cml(
-                    &cap.mapping.template,
-                    id.as_str(),
-                    entity_matches,
-                    Some(sub_matches),
-                )?;
+                inv.path_vars = match cap.mapping.as_ref() {
+                    Some(mapping) => path_vars_for_cml(
+                        &mapping.template,
+                        id.as_str(),
+                        entity_matches,
+                        Some(sub_matches),
+                    )?,
+                    None => None,
+                };
                 return Ok((Expr::Invoke(inv), StreamConsumeOpts::default()));
             }
         }
@@ -259,8 +267,14 @@ fn build_expr(
         })?;
     let node_ref = cli_entity_node_ref(entity_name, entity, entity_matches, id.as_str(), cgs)?;
     let mut get = GetExpr::from_ref(node_ref);
-    get.path_vars =
-        path_vars_for_cml(&get_cap.mapping.template, id.as_str(), entity_matches, None)?;
+    if let Some(mapping) = get_cap.mapping.as_ref() {
+        get.path_vars = path_vars_for_cml(
+            &mapping.template,
+            id.as_str(),
+            entity_matches,
+            None,
+        )?;
+    }
     Ok((Expr::Get(get), StreamConsumeOpts::default()))
 }
 
@@ -414,7 +428,10 @@ fn attach_query_pagination_if_present(
     let Some(cap) = cap_opt else {
         return StreamConsumeOpts::default();
     };
-    let Ok(template) = parse_capability_template(&cap.mapping.template) else {
+    let Some(mapping) = cap.mapping.as_ref() else {
+        return StreamConsumeOpts::default();
+    };
+    let Ok(template) = parse_capability_template(&mapping.template) else {
         return StreamConsumeOpts::default();
     };
     let Some(pconf) = template_pagination(&template) else {
@@ -651,8 +668,14 @@ fn cli_entity_node_ref(
             entity.key_vars
         ))
     })?;
+    let mapping = get_cap.mapping.as_ref().ok_or_else(|| {
+        AgentError::Argument(format!(
+            "Entity `{entity_name}` uses compound key {:?}; derived Gets have no CML path template for CLI key binding.",
+            entity.key_vars
+        ))
+    })?;
     let mut bindings = collect_template_string_bindings(
-        &get_cap.mapping.template,
+        &mapping.template,
         positional_id,
         entity_matches,
         None,
@@ -856,7 +879,7 @@ mod tests {
             domain: "Balance".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "transport": "evm_call",
                     "chain": 1,
@@ -866,7 +889,8 @@ mod tests {
                     "block": { "type": "var", "name": "block" }
                 })
                 .into(),
-            },
+            }),
+            derived: None,
             inputs: Default::default(),
             output_schema: None,
             provides: vec![],
@@ -890,9 +914,14 @@ mod tests {
         let (_, entity_matches) = matches.subcommand().unwrap();
         let cap = cgs.find_capability("Balance", CapabilityKind::Get).unwrap();
 
-        let vars = path_vars_for_cml(&cap.mapping.template, "0xabc", entity_matches, None)
-            .unwrap()
-            .unwrap();
+        let vars = path_vars_for_cml(
+            &cap.require_mapping().expect("cml mapping").template,
+            "0xabc",
+            entity_matches,
+            None,
+        )
+        .unwrap()
+        .unwrap();
 
         assert_eq!(
             vars.get("block"),
@@ -955,7 +984,7 @@ mod tests {
             domain: "Transfer".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "transport": "evm_logs",
                     "chain": 1,
@@ -969,7 +998,8 @@ mod tests {
                     }
                 })
                 .into(),
-            },
+            }),
+            derived: None,
             inputs: Default::default(),
             output_schema: None,
             provides: vec![],
@@ -1082,7 +1112,7 @@ mod tests {
             domain: "Issue".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
                     "path": [
@@ -1094,7 +1124,8 @@ mod tests {
                     ]
                 })
                 .into(),
-            },
+            }),
+            derived: None,
             inputs: Default::default(),
             output_schema: None,
             provides: vec![],

@@ -347,13 +347,27 @@ async fn pokeapi_berry_query_paginates_with_cml() {
 
     assert!(result.is_ok(), "{:?}", result.err());
     let r = result.unwrap();
-    assert!(r.count >= 1, "expected at least one berry, got {}", r.count);
+    // pokeapi_mini Hermit serves a multi-page berry list; after offset step=20 migration we
+    // require unique cardinality and multi-request progress rather than `count >= 1`.
+    assert!(
+        r.count >= 20,
+        "expected multi-page berry materialization, got {}",
+        r.count
+    );
+    let ids: std::collections::BTreeSet<_> = r
+        .entities
+        .iter()
+        .map(|e| e.reference.primary_slot_str())
+        .collect();
+    assert_eq!(
+        ids.len(),
+        r.count,
+        "paginated berry query must not overlap identities"
+    );
     assert!(r
         .entities
         .iter()
         .all(|e| e.reference.entity_type == "Berry"));
-    // Hermit may return `next: null` with several items in one body (ignores `limit`); the e2e still
-    // proves CML pagination + `StreamConsumeOpts::fetch_all` integrates with the live engine and decoder.
 }
 
 #[tokio::test]

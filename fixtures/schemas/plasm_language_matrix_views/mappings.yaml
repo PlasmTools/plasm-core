@@ -326,10 +326,6 @@ lang_tag_filter_demo_get:
   transport: view
   view: lang_tag_filter_demo
 
-lang_key_pick_get:
-  transport: view
-  view: lang_key_pick
-
 langviewer_get:
   method: GET
   path:
