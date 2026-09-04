@@ -76,11 +76,12 @@ pub fn field_omitted_from_path_inject(
     if !vars.iter().any(|pv| pv == field_name) {
         return false;
     }
+    // Create domain: no sole-path invent alias (parent keys are wire names or declared inputs).
     crate::is_identity_projectable(
         ent,
         &vars,
         field_name,
-        crate::SoleAliasPolicy::AllowedOnSimpleKey,
+        cap.kind.domain_path_env_alias_policy(),
     )
 }
 

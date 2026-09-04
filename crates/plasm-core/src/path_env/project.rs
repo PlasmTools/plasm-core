@@ -151,7 +151,7 @@ pub fn project_capability_identity_env(
         .map(|m| identity_env_var_names(&m.template.0))
         .unwrap_or_default();
     let declared = capability_declared_input_names(cap);
-    let policy = SoleAliasPolicy::AllowedOnSimpleKey;
+    let policy = cap.kind.domain_path_env_alias_policy();
     let identity = ResolvedIdentity::from_ref(reference, ctx);
     let path_env = project_identity_onto_vars(
         reference,
@@ -185,7 +185,8 @@ pub fn create_binds_from_anchor_identity(
     if vars.is_empty() {
         return false;
     }
-    let policy = SoleAliasPolicy::AllowedOnSimpleKey;
+    // Same law as pack prove for Create: no invent sole-alias — wire names only.
+    let policy = SoleAliasPolicy::Forbidden;
     if !vars
         .iter()
         .all(|pv| is_identity_projectable(anchor, &vars, pv, policy))
@@ -282,6 +283,13 @@ mod tests {
             &anchor,
             Some(&reference)
         ));
+    }
+
+    #[test]
+    fn create_bind_rejects_sole_invent_alias() {
+        let anchor = pet_entity();
+        let cap = create_cap(&["pet_id"]);
+        assert!(!create_binds_from_anchor_identity(&cap, &anchor, None));
     }
 
     #[test]

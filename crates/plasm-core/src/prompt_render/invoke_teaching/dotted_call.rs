@@ -3,9 +3,7 @@
 use std::collections::HashMap;
 
 use crate::schema::EntityDef;
-use crate::scope_entity_ref_infer::{
-    field_omitted_from_path_inject, should_omit_invoke_teaching_arg,
-};
+use crate::scope_entity_ref_infer::should_omit_invoke_teaching_arg;
 use crate::symbol_tuning::SymbolMap;
 use crate::{CapabilityKind, FieldType, InputType, ValueWireFormat, CGS};
 
@@ -158,7 +156,7 @@ pub(crate) fn build_dotted_call_paren_args(
             .flatten(),
     );
     for f in invoke_fields {
-        if field_omitted_from_path_inject(ent, cap, f.name.as_str()) {
+        if should_omit_invoke_teaching_arg(ent, cap, f, cgs) {
             continue;
         }
         match invoke_dotted_call_arg_example(f, cap, cgs, map, catalog_entry_id) {
@@ -212,7 +210,7 @@ pub(crate) fn build_standalone_create_paren_args(
             .flatten(),
     );
     for f in invoke_fields {
-        if field_omitted_from_path_inject(ent, cap, f.name.as_str()) {
+        if should_omit_invoke_teaching_arg(ent, cap, f, cgs) {
             continue;
         }
         match invoke_dotted_call_arg_example(f, cap, cgs, map, catalog_entry_id) {
