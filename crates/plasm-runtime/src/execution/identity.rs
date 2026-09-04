@@ -31,7 +31,10 @@ pub(crate) fn cml_env_to_identity_strings(env: &CmlEnv) -> IndexMap<String, Stri
 pub(crate) fn ref_to_identity_ambient(reference: &Ref) -> IndexMap<String, String> {
     match &reference.key {
         EntityKey::Simple(_) => IndexMap::new(),
-        EntityKey::Compound(parts) => parts.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+        EntityKey::Compound(parts) => parts
+            .iter()
+            .filter_map(|(k, v)| v.as_lit_str().map(|s| (k.clone(), s.to_string())))
+            .collect(),
     }
 }
 

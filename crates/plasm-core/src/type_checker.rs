@@ -191,11 +191,6 @@ pub fn reject_domain_placeholder_in_executable(expr: &Expr) -> Result<(), TypeEr
             if g.reference.contains_domain_placeholder() {
                 return Err(err());
             }
-            if let Some(m) = &g.path_vars {
-                if m.values().any(Value::contains_domain_placeholder_deep) {
-                    return Err(err());
-                }
-            }
         }
         Expr::Create(c) => {
             if c.input.to_value().contains_domain_placeholder_deep() {
@@ -206,11 +201,6 @@ pub fn reject_domain_placeholder_in_executable(expr: &Expr) -> Result<(), TypeEr
             if d.target.contains_domain_placeholder() {
                 return Err(err());
             }
-            if let Some(m) = &d.path_vars {
-                if m.values().any(Value::contains_domain_placeholder_deep) {
-                    return Err(err());
-                }
-            }
         }
         Expr::Invoke(i) => {
             if i.target.contains_domain_placeholder() {
@@ -218,11 +208,6 @@ pub fn reject_domain_placeholder_in_executable(expr: &Expr) -> Result<(), TypeEr
             }
             if let Some(inp) = &i.input {
                 if inp.to_value().contains_domain_placeholder_deep() {
-                    return Err(err());
-                }
-            }
-            if let Some(m) = &i.path_vars {
-                if m.values().any(Value::contains_domain_placeholder_deep) {
                     return Err(err());
                 }
             }
@@ -488,29 +473,12 @@ pub fn type_check_get(get: &GetExpr, cgs: &CGS) -> Result<(), TypeError> {
                 .map(|k| k.as_str().to_string())
                 .collect();
             let from_ref: std::collections::BTreeSet<String> = m.keys().cloned().collect();
-            let from_pv: std::collections::BTreeSet<String> = get
-                .path_vars
-                .as_ref()
-                .map(|pv| pv.keys().cloned().collect())
-                .unwrap_or_default();
-            let overlap: Vec<String> = from_ref.intersection(&from_pv).cloned().collect();
-            if !overlap.is_empty() {
+            if from_ref != expected {
                 return Err(TypeError::RefKeyMismatch {
                     entity: en,
                     message: format!(
-                        "compound GET identity keys {:?} must not appear in both `ref` and `path_vars`",
-                        overlap
-                    ),
-                });
-            }
-            let union: std::collections::BTreeSet<String> =
-                from_ref.union(&from_pv).cloned().collect();
-            if union != expected {
-                return Err(TypeError::RefKeyMismatch {
-                    entity: en,
-                    message: format!(
-                        "expected compound identity keys {:?} from ref ∪ path_vars, got {:?} ∪ {:?}",
-                        entity.key_vars, from_ref, from_pv
+                        "expected compound identity keys {:?}, got {:?}",
+                        entity.key_vars, from_ref
                     ),
                 });
             }
@@ -2000,10 +1968,7 @@ mod tests {
         );
         exp.expose_entities(&layers, cgs_secondary.clone(), "pokeapi", &["LangItem"]);
         let fed = FederationDispatch::from_contexts_and_exposure(by_entry, &exp);
-        let get = Expr::Get(GetExpr::from_ref_with_path_vars(
-            crate::Ref::new("LangItem", "LI1"),
-            None,
-        ));
+        let get = Expr::Get(GetExpr::from_ref(crate::Ref::new("LangItem", "LI1")));
         let chain = Expr::Chain(ChainExpr::auto_get(get, "summary".to_string()));
         type_check_expr_federated(&chain, &fed, cgs_primary.as_ref()).expect("federated chain tc");
     }

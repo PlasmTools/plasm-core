@@ -3098,6 +3098,73 @@ fn keyed_view_get_teaches_brace_identity_not_method_invoke() {
     );
 }
 
+/// Pathless Action (`langitem_broadcast`) teaches bare `eN.mN(...)`, never `eN(<id>).mN(...)`.
+#[test]
+fn pathless_action_teaches_bare_entity_method_not_identity_paren() {
+    let dir = fixtures_schemas_dir("plasm_language_matrix");
+    if !dir.exists() {
+        return;
+    }
+    let cgs = load_schema_dir(&dir).unwrap();
+    let cap = cgs
+        .get_capability("langitem_broadcast")
+        .expect("langitem_broadcast");
+    assert!(
+        super::invoke_teaching::path_vars_empty(cap),
+        "broadcast must be pathless for this witness"
+    );
+    let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
+    let mut line_valid_cache = HashMap::new();
+    let mut gloss_emit_none = None;
+    let seed = prompt_line_valid_cache_seed_cgs(&cgs);
+    let map_arc = std::sync::Arc::new(map.clone());
+    let block = collect_entity_teaching_block(
+        &cgs,
+        "LangItem",
+        Some(&map_arc),
+        None,
+        true, // need source_capability metadata
+        &mut line_valid_cache,
+        seed,
+        &mut gloss_emit_none,
+        None,
+        None,
+    );
+    let es = map.entity_sym_for("", "LangItem");
+    let ms = map.method_sym_for_cap("", cap);
+    let row = block
+        .teaching_rows
+        .iter()
+        .find(|r| {
+            r.meta.source_capability.as_deref() == Some("langitem_broadcast")
+                || r.teaching_expr
+                    .expression
+                    .starts_with(&format!("{es}.{ms}("))
+        })
+        .unwrap_or_else(|| {
+            let caps: Vec<_> = block
+                .teaching_rows
+                .iter()
+                .map(|r| {
+                    (
+                        r.meta.source_capability.as_deref(),
+                        r.teaching_expr.expression.as_str(),
+                    )
+                })
+                .collect();
+            panic!("broadcast teaching row missing; rows={caps:?}");
+        });
+    let expr = row.teaching_expr.expression.as_str();
+    assert!(
+        expr.starts_with(&format!("{es}.{ms}(")),
+        "pathless Action must teach bare {es}.{ms}(...), got {expr}"
+    );
+    assert!(
+        !expr.starts_with(&format!("{es}(")),
+        "pathless Action must not teach identity paren receiver, got {expr}"
+    );
+}
+
 /// AppWorld AccountPassword — same derived keyed-Get pattern as LangKeyPick matrix fixture.
 #[test]
 fn appworld_account_password_teaches_keyed_get_not_method_invoke() {

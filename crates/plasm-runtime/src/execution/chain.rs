@@ -361,6 +361,8 @@ impl ExecutionEngine {
                     .unwrap_or_default();
                 let get = synthesized_get(reference.clone(), &inherit);
                 let cap_name = get_cap_name.clone();
+                let ambient =
+                    ViewAmbientContext::default().with_capability_params(inherit.bindings().clone());
                 async move {
                     self.fetch_get_decoded(
                         &get,
@@ -369,7 +371,7 @@ impl ExecutionEngine {
                         None,
                         false,
                         None,
-                        &ViewAmbientContext::default(),
+                        &ambient,
                     )
                     .await
                     .map_err(|e| {
@@ -808,14 +810,10 @@ impl ExecutionEngine {
                 &mat.capability_params_for(&entity.reference),
                 cap,
             );
-            let mut path_vars = inherit.into_bindings();
-            for (k, v) in &bound {
-                path_vars.insert(k.clone(), Value::String(v.clone()));
+            if !inherit.bindings().is_empty() {
+                mat.stamp_capability_params(&reference, inherit.bindings().clone());
             }
-            gets.push(GetExpr::from_ref_with_path_vars(
-                reference,
-                (!path_vars.is_empty()).then_some(path_vars),
-            ));
+            gets.push(GetExpr::from_ref(reference));
         }
 
         if gets.is_empty() {
@@ -1040,6 +1038,8 @@ impl ExecutionEngine {
                 let inherit = inherit_by_ref.get(&reference).cloned().unwrap_or_default();
                 let get = synthesized_get(reference.clone(), &inherit);
                 let cap_name = get_cap_name.clone();
+                let ambient =
+                    ViewAmbientContext::default().with_capability_params(inherit.bindings().clone());
                 async move {
                     self.fetch_get_decoded(
                         &get,
@@ -1048,7 +1048,7 @@ impl ExecutionEngine {
                         None,
                         false,
                         None,
-                        &ViewAmbientContext::default(),
+                        &ambient,
                     )
                     .await
                     .map_err(|e| {

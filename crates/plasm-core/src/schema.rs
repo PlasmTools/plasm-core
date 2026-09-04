@@ -950,25 +950,10 @@ pub struct CapabilityMapping {
     pub template: CapabilityTemplateJson,
 }
 
-/// HTTP path segment variable names from CML `path` (in order), `type: var` only.
-///
-/// GraphQL capabilities often have **no** `path` vars (POST `/graphql` is all literals); subject id
-/// may live under `body` — see [`template_domain_exemplar_requires_entity_anchor`] and
-/// [`template_invoke_requires_explicit_anchor_id`].
-pub fn path_var_names_from_mapping_json(template: &serde_json::Value) -> Vec<String> {
-    let mut out = Vec::new();
-    let Some(path) = template.get("path").and_then(|p| p.as_array()) else {
-        return out;
-    };
-    for seg in path {
-        if seg.get("type").and_then(|t| t.as_str()) == Some("var") {
-            if let Some(name) = seg.get("name").and_then(|n| n.as_str()) {
-                out.push(name.to_string());
-            }
-        }
-    }
-    out
-}
+pub use crate::path_env::{
+    capability_template_all_var_names, graphql_operation_variable_names,
+    path_var_names_from_mapping_json,
+};
 
 /// Drop CML `path` template var keys from an object input before body-schema validate.
 ///
@@ -990,47 +975,10 @@ pub fn body_value_without_mapping_path_vars(
     crate::Value::Object(map)
 }
 
-/// Same rule as `Parser::can_bind_create_path_vars`: path template binds `{anchor}_id` from `Get(anchor)`.
-pub fn can_bind_create_from_anchor(cap: &CapabilitySchema, anchor: &str) -> bool {
-    let Some(mapping) = &cap.mapping else {
-        return false;
-    };
-    let path_vars = path_var_names_from_mapping_json(&mapping.template.0);
-    if path_vars.is_empty() {
-        return false;
-    }
-    let expected = format!("{}_id", anchor.to_lowercase());
-    path_vars.iter().all(|pv| pv == &expected)
-}
-
-fn collect_template_var_refs(template: &serde_json::Value, out: &mut Vec<String>) {
-    match template {
-        serde_json::Value::Object(map) => {
-            if map.get("type").and_then(|t| t.as_str()) == Some("var") {
-                if let Some(name) = map.get("name").and_then(|n| n.as_str()) {
-                    out.push(name.to_string());
-                }
-            }
-            for v in map.values() {
-                collect_template_var_refs(v, out);
-            }
-        }
-        serde_json::Value::Array(arr) => {
-            for e in arr {
-                collect_template_var_refs(e, out);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Every CML `type: var` / `name` in the mapping template JSON (including nested bodies).
-pub fn capability_template_all_var_names(template: &serde_json::Value) -> Vec<String> {
-    let mut out = Vec::new();
-    collect_template_var_refs(template, &mut out);
-    out.sort();
-    out.dedup();
-    out
+/// True when a Create capability's CML identity-env vars project from `anchor`'s identity
+/// (including single-path-var primary alias). Used for dotted `Anchor(id).create-…` binding.
+pub fn can_bind_create_from_anchor(cap: &CapabilitySchema, anchor: &EntityDef) -> bool {
+    crate::path_env::create_binds_from_anchor_identity(cap, anchor, None)
 }
 
 /// True when CML mapping uses `transport: view` (composed view DAG, no direct HTTP).
@@ -1044,27 +992,6 @@ pub fn mapping_body_is_whole_var_input(template: &serde_json::Value) -> bool {
         body.get("type").and_then(|t| t.as_str()) == Some("var")
             && body.get("name").and_then(|n| n.as_str()) == Some("input")
     })
-}
-
-/// `type: var` / `name` entries under GraphQL `body` → `variables` (operation variables only).
-///
-/// Used with [`path_var_names_from_mapping_json`] for zero-arity `Issue(id).get()`: the HTTP `path` is
-/// only `/graphql`, but `variables.id` still needs the anchor id — without this, the parser wrongly
-/// defaulted the target to a synthetic pathless identity.
-///
-/// We intentionally **do not** scan the whole template (login bodies, pagination, etc.).
-pub fn graphql_operation_variable_names(template: &serde_json::Value) -> Vec<String> {
-    let mut out = Vec::new();
-    if template.get("transport").and_then(|t| t.as_str()) != Some("graphql") {
-        return out;
-    }
-    let Some(body) = template.get("body") else {
-        return out;
-    };
-    graphql_find_variables_block(body, &mut out);
-    out.sort();
-    out.dedup();
-    out
 }
 
 /// True when teaching table exemplars must use `Entity($)` / an anchored receiver (`Entity($).m()`), not a
@@ -1090,37 +1017,6 @@ pub fn template_domain_exemplar_requires_entity_anchor(template: &serde_json::Va
 pub fn template_invoke_requires_explicit_anchor_id(template: &serde_json::Value) -> bool {
     !path_var_names_from_mapping_json(template).is_empty()
         || !graphql_operation_variable_names(template).is_empty()
-}
-
-fn graphql_find_variables_block(v: &serde_json::Value, out: &mut Vec<String>) {
-    match v {
-        serde_json::Value::Object(map) => {
-            if let Some(fields) = map.get("fields").and_then(|f| f.as_array()) {
-                for item in fields {
-                    if let Some(pair) = item.as_array() {
-                        if pair.len() >= 2 {
-                            let key = pair[0].as_str();
-                            let val = &pair[1];
-                            if key == Some("variables") {
-                                collect_template_var_refs(val, out);
-                                return;
-                            }
-                        }
-                    }
-                    graphql_find_variables_block(item, out);
-                }
-            }
-            for val in map.values() {
-                graphql_find_variables_block(val, out);
-            }
-        }
-        serde_json::Value::Array(arr) => {
-            for e in arr {
-                graphql_find_variables_block(e, out);
-            }
-        }
-        _ => {}
-    }
 }
 
 /// Path method segment for prompts and parser matching (`team_seats` → `seats` after domain strip).
@@ -2110,7 +2006,7 @@ impl CgsIncomingNavIndex {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CgsCapabilityIndex {
     by_domain_kind: IndexMap<(EntityName, CapabilityKind), Vec<CapabilityName>>,
-    /// Create capabilities that bind `{anchor}_id` from a path anchor entity.
+    /// Create capabilities whose CML path vars project from a path-anchor entity's identity.
     creates_by_anchor: IndexMap<EntityName, Vec<CapabilityName>>,
 }
 
@@ -2127,10 +2023,10 @@ impl CgsCapabilityIndex {
             if cap.kind != CapabilityKind::Create {
                 continue;
             }
-            for anchor in cgs.entities.keys() {
-                if can_bind_create_from_anchor(cap, anchor.as_str()) {
+            for (anchor_name, anchor_ent) in cgs.entities.iter() {
+                if can_bind_create_from_anchor(cap, anchor_ent) {
                     creates_by_anchor
-                        .entry(anchor.clone())
+                        .entry(anchor_name.clone())
                         .or_default()
                         .push(cap_name.clone());
                 }

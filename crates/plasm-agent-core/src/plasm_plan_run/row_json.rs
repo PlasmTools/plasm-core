@@ -59,8 +59,10 @@ pub(crate) fn augment_row_json_with_identity(
     }
     if let plasm_core::EntityKey::Compound(parts) = &identity.reference.key {
         for (k, v) in parts {
-            obj.entry(k.clone())
-                .or_insert_with(|| serde_json::Value::String(v.clone()));
+            if let Some(s) = v.as_lit_str() {
+                obj.entry(k.clone())
+                    .or_insert_with(|| serde_json::Value::String(s.to_string()));
+            }
         }
     }
     // Simple-key identity: also stamp a non-`id` primary when ambient is empty but callers

@@ -9,7 +9,7 @@ use crate::typed_invoke::InvokeInputPayload;
 use crate::value::Value;
 
 use super::predicates::{render_predicate_wire, split_search_predicate};
-use super::values::{render_id_slot, render_surface_value};
+use super::values::{render_identity_slot, render_surface_value};
 
 pub(crate) struct RenderCtx<'a> {
     pub cgs: &'a CGS,
@@ -129,38 +129,12 @@ impl<'a> RenderCtx<'a> {
     fn render_get(&self, g: &GetExpr) -> String {
         let entry_id = g.catalog_entry_id.as_deref();
         let head = g.reference.entity_type.as_str();
-        if let Some(path_vars) = &g.path_vars {
-            if !path_vars.is_empty() {
-                let cgs = self.cgs_for_entity(entry_id, head);
-                if let Some(ent) = cgs.get_entity(head) {
-                    let parts: Vec<String> = ent
-                        .key_vars
-                        .iter()
-                        .map(|k| {
-                            let val = path_vars
-                                .get(k.as_str())
-                                .map(render_surface_value)
-                                .unwrap_or_else(|| "$".to_string());
-                            format!("{k}={val}")
-                        })
-                        .collect();
-                    if !parts.is_empty() {
-                        return format!("{head}({})", parts.join(", "));
-                    }
-                }
-                let parts: Vec<String> = path_vars
-                    .iter()
-                    .map(|(k, v)| format!("{k}={}", render_surface_value(v)))
-                    .collect();
-                return format!("{head}({})", parts.join(", "));
-            }
-        }
         match &g.reference.key {
-            EntityKey::Simple(id) => {
-                if id.is_empty() {
+            EntityKey::Simple(slot) => {
+                if slot.is_empty_lit() {
                     format!("{head}()")
                 } else {
-                    format!("{head}({})", render_id_slot(id.as_str()))
+                    format!("{head}({})", render_identity_slot(slot))
                 }
             }
             EntityKey::Compound(parts) => {
@@ -172,13 +146,13 @@ impl<'a> RenderCtx<'a> {
                         .filter_map(|k| {
                             parts
                                 .get(k.as_str())
-                                .map(|v| format!("{k}={}", render_id_slot(v)))
+                                .map(|v| format!("{k}={}", render_identity_slot(v)))
                         })
                         .collect()
                 } else {
                     parts
                         .iter()
-                        .map(|(k, v)| format!("{k}={}", render_id_slot(v)))
+                        .map(|(k, v)| format!("{k}={}", render_identity_slot(v)))
                         .collect()
                 };
                 format!("{head}({})", kv.join(", "))
@@ -214,10 +188,7 @@ impl<'a> RenderCtx<'a> {
         let entry_id = d.catalog_entry_id.as_deref();
         let cgs = self.cgs_for_entity(entry_id, d.target.entity_type.as_str());
         let cap = cgs.get_capability(d.capability.as_str());
-        let base = self.render_get(&GetExpr::from_ref_with_path_vars(
-            d.target.clone(),
-            d.path_vars.clone(),
-        ));
+        let base = self.render_get(&GetExpr::from_ref(d.target.clone()));
         if let Some(cap) = cap {
             let method = capability_method_label_kebab(cap);
             let args = self.render_invoke_args(
@@ -239,10 +210,7 @@ impl<'a> RenderCtx<'a> {
         let entry_id = i.catalog_entry_id.as_deref();
         let cgs = self.cgs_for_entity(entry_id, i.target.entity_type.as_str());
         let cap = cgs.get_capability(i.capability.as_str());
-        let base = self.render_get(&GetExpr::from_ref_with_path_vars(
-            i.target.clone(),
-            i.path_vars.clone(),
-        ));
+        let base = self.render_get(&GetExpr::from_ref(i.target.clone()));
         if let Some(cap) = cap {
             let method = capability_method_label_kebab(cap);
             let input = i

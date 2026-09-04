@@ -98,7 +98,10 @@ pub fn apply_identity_slots_to_row(
     cgs: Option<&CGS>,
 ) {
     match &reference.key {
-        crate::EntityKey::Simple(id) => {
+        crate::EntityKey::Simple(slot) => {
+            let Some(id) = slot.as_lit_str() else {
+                return;
+            };
             if id.is_empty() {
                 return;
             }
@@ -111,19 +114,20 @@ pub fn apply_identity_slots_to_row(
             }
         }
         crate::EntityKey::Compound(parts) => {
-            if parts.values().all(|v| v.is_empty()) {
+            if parts.values().all(|v| v.is_empty_lit()) {
                 return;
             }
             let ent = cgs.and_then(|c| c.get_entity(reference.entity_type.as_str()));
             for (k, val) in parts {
-                if val.is_empty() || !identity_slot_needed(obj.get(k.as_str())) {
+                let Some(s) = val.as_lit_str() else {
+                    continue;
+                };
+                if s.is_empty() || !identity_slot_needed(obj.get(k.as_str())) {
                     continue;
                 }
                 let json = match (cgs, ent) {
-                    (Some(cgs), Some(ent)) => {
-                        identity_slot_to_json(cgs, ent, k.as_str(), val.as_str())
-                    }
-                    _ => serde_json::Value::String(val.clone()),
+                    (Some(cgs), Some(ent)) => identity_slot_to_json(cgs, ent, k.as_str(), s),
+                    _ => serde_json::Value::String(s.to_string()),
                 };
                 obj.insert(k.clone(), json);
             }
@@ -145,13 +149,13 @@ pub fn restore_id_field_from_compound_ref(
         return;
     };
     let id_name = ent.id_field.as_str();
-    let Some(val) = parts.get(id_name) else {
+    let Some(val) = parts.get(id_name).and_then(|s| s.as_lit_str()) else {
         return;
     };
     fields.entry(id_name.to_string()).or_insert_with(|| {
         let json = identity_slot_to_json(cgs, ent, id_name, val);
         serde_json::from_value(json)
-            .unwrap_or_else(|_| crate::TypedFieldValue::from(crate::Value::String(val.clone())))
+            .unwrap_or_else(|_| crate::TypedFieldValue::from(crate::Value::String(val.to_string())))
     });
 }
 

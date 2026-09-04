@@ -2,16 +2,6 @@
 
 use super::*;
 
-pub(crate) fn path_var_names_from_template(template: &CapabilityTemplate) -> Vec<String> {
-    match template {
-        CapabilityTemplate::Http(cml) | CapabilityTemplate::GraphQl(cml) => {
-            path_var_names_from_request(cml)
-        }
-        CapabilityTemplate::View(_) => Vec::new(),
-        CapabilityTemplate::EvmCall(_) | CapabilityTemplate::EvmLogs(_) => Vec::new(),
-    }
-}
-
 pub(crate) fn ensure_http_operation(
     operation: &CompiledOperation,
     action: &str,
@@ -27,73 +17,35 @@ pub(crate) fn ensure_http_operation(
     })
 }
 
-/// Bind template variables for get/delete/invoke:
-/// explicit `path_vars` first, then keys from `input_overlay`, then identity slots
-/// ([`ResolvedIdentity`]), while preserving the legacy HTTP single-path-var => `id` alias.
+/// Bind CML env from one identity projection + optional overlay.
+///
+/// [`project_capability_identity_env`] materializes [`ResolvedIdentity`] once and projects
+/// path/GQL identity-env vars; declared inputs come from `input_overlay`.
 pub(crate) fn populate_template_path_env(
     env: &mut CmlEnv,
-    template: &CapabilityTemplate,
+    cap: &CapabilitySchema,
     reference: &Ref,
-    ent: Option<&plasm_core::schema::EntityDef>,
-    path_vars: Option<&indexmap::IndexMap<String, Value>>,
+    ctx: plasm_core::IdentityProjectionCtx<'_>,
     input_overlay: Option<&Value>,
-) {
-    let identity = plasm_core::ResolvedIdentity::from_ref(reference, ent);
-    let primary_id = reference.primary_slot_str();
-    let id_val = Value::String(primary_id.clone());
-
-    for (k, v) in &identity.slots {
-        env.insert(k.clone(), Value::String(v.clone()));
+) -> Result<(), RuntimeError> {
+    let projected = plasm_core::project_capability_identity_env(cap, reference, ctx).map_err(
+        |e| RuntimeError::ConfigurationError {
+            message: e.to_string(),
+        },
+    )?;
+    for (k, v) in &projected.identity.slots {
+        env.insert(k.clone(), v.clone());
+    }
+    for (k, v) in projected.path_env.slots {
+        env.insert(k, v);
     }
 
-    let single_http_id_alias = match template {
-        CapabilityTemplate::Http(cml) | CapabilityTemplate::GraphQl(cml) => {
-            let names = path_var_names_from_request(cml);
-            (names.len() == 1).then(|| names[0].clone())
-        }
-        CapabilityTemplate::View(_)
-        | CapabilityTemplate::EvmCall(_)
-        | CapabilityTemplate::EvmLogs(_) => None,
-    };
-
-    for var_name in template_var_names(template) {
-        if var_name == "id" {
-            continue;
-        }
-
-        let resolved = path_vars
-            .and_then(|m| m.get(&var_name))
-            .cloned()
-            .or_else(|| {
-                input_overlay.and_then(|inp| match inp {
-                    Value::Object(map) => map.get(&var_name).cloned(),
-                    _ => None,
-                })
-            })
-            .or_else(|| {
-                identity
-                    .get(&var_name)
-                    .map(|s| Value::String(s.to_string()))
-            })
-            .or_else(|| {
-                single_http_id_alias
-                    .as_ref()
-                    .filter(|name| *name == &var_name)
-                    .map(|_| id_val.clone())
-            });
-
-        if let Some(value) = resolved {
-            env.insert(var_name.clone(), value);
-        }
-    }
-
-    // Explicit `path_vars` override compound [`Ref`] strings and template defaults (program
-    // `node_input`, materialized entity-ref rows, …).
-    if let Some(pv) = path_vars {
-        for (k, v) in pv {
+    if let Some(Value::Object(map)) = input_overlay {
+        for (k, v) in map {
             env.insert(k.clone(), v.clone());
         }
     }
+    Ok(())
 }
 
 /// Narrow scope slots typed as [`FieldType::EntityRef`] (row JSON → id string, etc.).

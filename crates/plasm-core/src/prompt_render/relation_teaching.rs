@@ -29,19 +29,31 @@ use super::tsv_emit::{teaching_relation_field_gloss, write_teaching_tsv_row, Dom
 use super::{EntityTeachingExprRow, TeachingHeading};
 
 /// Ordered receiver bases for teaching table dotted calls / relation nav on `ent` (`es` = entity symbol).
+///
+/// When `prefer_bare` is true (pathless Actions / Creates that need no identity), bare `eN` is
+/// tried before `eN(<id>)` so taught forms match executable pathless login/create-session.
 pub(crate) fn nav_receiver_candidates(
     es: &str,
     ent: &EntityDef,
     cgs: &CGS,
     map: Option<&SymbolMap>,
     catalog_entry_id: &str,
+    prefer_bare: bool,
 ) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
-    if let Some(cmp) = compound_get_expr_line(es, ent, cgs, map, catalog_entry_id) {
-        if seen.insert(cmp.clone()) {
-            out.push(cmp);
+    let push = |out: &mut Vec<String>, seen: &mut HashSet<String>, s: String| {
+        if seen.insert(s.clone()) {
+            out.push(s);
         }
+    };
+
+    if prefer_bare {
+        push(&mut out, &mut seen, es.to_string());
+    }
+
+    if let Some(cmp) = compound_get_expr_line(es, ent, cgs, map, catalog_entry_id) {
+        push(&mut out, &mut seen, cmp);
     }
     let mut query_caps: Vec<_> = cgs.find_capabilities(ent.name.as_str(), CapabilityKind::Query);
     query_caps.sort_by(|a, b| a.name.cmp(&b.name));
@@ -54,18 +66,13 @@ pub(crate) fn nav_receiver_candidates(
         .into_iter()
         .flatten()
         {
-            if seen.insert(qline.clone()) {
-                out.push(qline);
-            }
+            push(&mut out, &mut seen, qline);
         }
     }
     let unary = unary_entity_id_teaching_expr_line(es, ent, map, catalog_entry_id);
-    if seen.insert(unary.clone()) {
-        out.push(unary);
-    }
-    let bare = es.to_string();
-    if seen.insert(bare.clone()) {
-        out.push(bare);
+    push(&mut out, &mut seen, unary);
+    if !prefer_bare {
+        push(&mut out, &mut seen, es.to_string());
     }
     out
 }
@@ -82,8 +89,9 @@ pub(crate) fn receiver_for_dotted_suffix(
     line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
     line_valid_cache_seed: u64,
     map_arc: Option<&std::sync::Arc<SymbolMap>>,
+    prefer_bare: bool,
 ) -> Option<String> {
-    nav_receiver_candidates(es, ent, cgs, map, catalog_entry_id)
+    nav_receiver_candidates(es, ent, cgs, map, catalog_entry_id, prefer_bare)
         .into_iter()
         .find(|recv| {
             let full = format!("{recv}{suffix}");
@@ -113,7 +121,7 @@ fn relation_nav_anchor_expr(
     line_valid_cache_seed: u64,
     map_arc: Option<&std::sync::Arc<SymbolMap>>,
 ) -> Option<String> {
-    nav_receiver_candidates(es, ent, cgs, map, catalog_entry_id)
+    nav_receiver_candidates(es, ent, cgs, map, catalog_entry_id, false)
         .into_iter()
         .find(|recv| {
             domain_line_work_valid_cached(
@@ -296,6 +304,7 @@ pub(crate) fn try_build_relation_nav_exemplar(
         line_valid_cache,
         line_valid_cache_seed,
         map_arc,
+        false,
     )?;
     Some(format!("{recv}{suffix}"))
 }

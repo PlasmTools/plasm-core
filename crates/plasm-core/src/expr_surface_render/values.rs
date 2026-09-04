@@ -66,3 +66,10 @@ pub(crate) fn render_id_slot(s: &str) -> String {
         render_surface_value(&Value::String(s.to_string()))
     }
 }
+
+pub(crate) fn render_identity_slot(slot: &crate::IdentitySlot) -> String {
+    match slot {
+        crate::IdentitySlot::Lit(id) => render_id_slot(id.as_str()),
+        crate::IdentitySlot::Binding(_) => "$".to_string(),
+    }
+}

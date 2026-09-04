@@ -417,9 +417,9 @@ fn compound_key_accepts_wire_names() {
     let crate::EntityKey::Compound(m) = &g.reference.key else {
         panic!("expected compound key");
     };
-    assert_eq!(m.get("owner").map(String::as_str), Some("acme"));
-    assert_eq!(m.get("item_id").map(String::as_str), Some("i1"));
-    assert_eq!(m.get("name").map(String::as_str), Some("main"));
+    assert_eq!(m.get("owner").and_then(|s| s.as_lit_str()), Some("acme"));
+    assert_eq!(m.get("item_id").and_then(|s| s.as_lit_str()), Some("i1"));
+    assert_eq!(m.get("name").and_then(|s| s.as_lit_str()), Some("main"));
 }
 
 /// Regression: deleted qualified reverse-map fields must not reappear on opaque resolution paths.

@@ -475,6 +475,7 @@ pub(crate) fn collect_entity_teaching_block(
                     line_valid_cache,
                     line_valid_cache_seed,
                     map_arc,
+                    false,
                 ) else {
                     continue;
                 };

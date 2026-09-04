@@ -135,6 +135,7 @@ pub mod query_resolve;
 pub mod relation_nav;
 pub mod relation_segment;
 pub mod relation_validation_expr;
+pub mod path_env;
 pub mod resolved_identity;
 pub mod result_gloss;
 pub mod row_composition;
@@ -219,8 +220,8 @@ pub use entity_ref_value::{
 pub use error::{NormalizationError, SchemaError, TypeError};
 pub use expr::{
     lift_invoke_payloads_in_expr, CancelExpr, ChainExpr, ChainStep, CreateExpr, DeleteExpr,
-    EntityKey, Expr, GetExpr, InvokeExpr, PageExpr, QueryExpr, QueryPagination, Ref, RefWire,
-    WaitExpr, OPERATION_EXPR_PRIMARY_ENTITY, PAGE_EXPR_PRIMARY_ENTITY,
+    EntityKey, Expr, GetExpr, IdentitySlot, InvokeExpr, PageExpr, QueryExpr, QueryPagination, Ref,
+    RefWire, WaitExpr, OPERATION_EXPR_PRIMARY_ENTITY, PAGE_EXPR_PRIMARY_ENTITY,
 };
 pub use expr_sugar::{
     lower_id_field_brace_to_get, lower_id_field_brace_to_get_federated, predicate_is_sole_field_eq,
@@ -287,7 +288,15 @@ pub use query_resolve::{
     required_scope_param_names, resolve_query_capability, sole_nullary_singleton_get,
     sole_nullary_singleton_get_for_bare_query, QueryCapabilityResolveError,
 };
-pub use resolved_identity::ResolvedIdentity;
+pub use path_env::{
+    capability_declared_input_names, classify_path_var, create_binds_from_anchor_identity,
+    graphql_operation_variable_names, identity_env_var_names, identity_wire_names,
+    is_identity_projectable, path_var_names_from_mapping_json, project_capability_identity_env,
+    project_identity_onto_vars, prove_path_env_coverage, prove_path_env_coverage_in_cgs,
+    CapabilityIdentityProjection, CmlIdentityEnv, IdentityEnvVars, IdentityNameMatch,
+    IdentityWireNames, PathEnvProjectionError, PathEnvProofError, SoleAliasPolicy,
+};
+pub use resolved_identity::{IdentityProjectionCtx, ResolvedIdentity};
 pub use row_composition::{
     resolve_relation_target_id, row_identity_from_parts, row_identity_from_ref, IdEncoding,
     PreflightToken, ResolutionHint, RowIdentity, RowProvenance, RowState, RowSuffix,

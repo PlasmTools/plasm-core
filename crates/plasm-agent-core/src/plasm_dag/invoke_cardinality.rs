@@ -50,20 +50,6 @@ pub(in crate::plasm_dag) fn validate_invoke_scalar_field_refs(
         }
         reject_non_scalar_cell_invoke_refs(state, node_id, param, val)?;
     }
-    if let Some(path_vars) = &inv.path_vars {
-        for (param, val) in path_vars {
-            let Some(field) = fields.iter().find(|f| f.name == *param) else {
-                continue;
-            };
-            let Ok(nv) = field.named_value(cgs.as_ref()) else {
-                continue;
-            };
-            if !param_is_scalar_cell(&nv.field_type) {
-                continue;
-            }
-            reject_non_scalar_cell_invoke_refs(state, node_id, param, val)?;
-        }
-    }
     Ok(())
 }
 

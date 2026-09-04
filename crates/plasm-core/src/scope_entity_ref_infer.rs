@@ -3,8 +3,6 @@
 //! omit explicit scope args if [`normalize_entity_ref_value_for_target`] succeeds on the receiver
 //! identity. Explicit authored keys always win.
 
-use std::collections::HashSet;
-
 use indexmap::IndexMap;
 
 use crate::entity_ref_value::normalize_entity_ref_value_for_target;
@@ -18,7 +16,7 @@ use crate::{FieldType, CGS};
 pub enum ScopeParamSupply {
     /// Must appear in `(…)` — not path-bound, not same-entity inferable.
     Explicit,
-    /// Bound by CML path template / unary `{entity}_id` inject.
+    /// Bound by CML path template from receiver identity (id_field / key_vars / single-alias).
     PathTemplate,
     /// Same-entity EntityRef scope — omit from teaching; infer at runtime when normalizable.
     ReceiverEntityRef,
@@ -64,43 +62,26 @@ pub fn should_omit_invoke_teaching_arg(
 }
 
 /// Omit path-bound scope keys from explicit dotted-call `(…)` when they are already supplied by the
-/// receiver: unary `Entity($)` / symbolic unary `e#(p#)` identity injects `{entity}_id`, and compound
-/// `Entity(k1=$, k2=$)` injects each `key_vars` slot that also appears as a path template variable.
+/// receiver identity via [`crate::is_identity_projectable`] (same vocabulary as
+/// [`crate::project_identity_onto_vars`] / pack-time path-env proof).
 pub fn field_omitted_from_path_inject(
     ent: &EntityDef,
     cap: &CapabilitySchema,
     field_name: &str,
 ) -> bool {
-    let path_vars = cap
-        .mapping
-        .as_ref()
-        .map(|m| crate::schema::path_var_names_from_mapping_json(&m.template.0))
-        .unwrap_or_default();
-    if !path_vars.iter().any(|pv| pv == field_name) {
+    let Some(mapping) = &cap.mapping else {
+        return false;
+    };
+    let vars = crate::identity_env_var_names(&mapping.template.0);
+    if !vars.iter().any(|pv| pv == field_name) {
         return false;
     }
-    let unary_anchor_id = format!("{}_id", ent.name.to_lowercase());
-    if field_name == unary_anchor_id {
-        return true;
-    }
-    if ent.key_vars.len() > 1 {
-        let required_scope: HashSet<&str> = cap
-            .scope_params()
-            .iter()
-            .filter(|f| f.required)
-            .map(|f| f.name.as_str())
-            .collect();
-        let path_set: HashSet<&str> = path_vars.iter().map(|s| s.as_str()).collect();
-        let every_path_bound_key_declared = ent.key_vars.iter().all(|kv| {
-            let k = kv.as_str();
-            !path_set.contains(k) || required_scope.contains(k)
-        });
-        if every_path_bound_key_declared && ent.key_vars.iter().any(|kv| kv.as_str() == field_name)
-        {
-            return true;
-        }
-    }
-    false
+    crate::is_identity_projectable(
+        ent,
+        &vars,
+        field_name,
+        crate::SoleAliasPolicy::AllowedOnSimpleKey,
+    )
 }
 
 /// Build a normalized EntityRef(scope) value from a same-entity receiver [`Ref`].
@@ -121,17 +102,21 @@ fn ref_to_scope_candidate_value(receiver_ref: &Ref, target_entity: &EntityDef) -
         EntityKey::Compound(parts) => Value::Object(
             parts
                 .iter()
-                .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+                .filter_map(|(k, v)| {
+                    v.as_lit_str()
+                        .map(|s| (k.clone(), Value::String(s.to_string())))
+                })
                 .collect(),
         ),
-        EntityKey::Simple(id) => {
+        EntityKey::Simple(slot) => {
+            let id = slot.display_str();
             if target_entity.key_vars.len() == 1 {
                 Value::Object(IndexMap::from([(
                     target_entity.key_vars[0].to_string(),
-                    Value::String(id.to_string()),
+                    Value::String(id),
                 )]))
             } else {
-                Value::String(id.to_string())
+                Value::String(id)
             }
         }
     }
@@ -301,7 +286,7 @@ mod tests {
         CapabilitySchema {
             name: CapabilityName::from("repo_branch_create"),
             description: String::new(),
-            kind: CapabilityKind::Query,
+            kind: CapabilityKind::Create,
             domain: EntityName::from("Repository"),
             identity_key: None,
             invalidates_entities: vec![],

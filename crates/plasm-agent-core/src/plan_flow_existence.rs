@@ -256,12 +256,12 @@ fn extract_expr_read_constraints(expr: &Expr, out: &mut BTreeMap<String, String>
             }
         }
         Expr::Get(g) => match &g.reference.key {
-            EntityKey::Simple(id) => {
-                out.insert("id".to_string(), id.to_string());
+            EntityKey::Simple(slot) => {
+                out.insert("id".to_string(), slot.display_str());
             }
             EntityKey::Compound(parts) => {
                 for (k, v) in parts {
-                    out.insert(k.clone(), v.clone());
+                    out.insert(k.clone(), v.display_str());
                 }
             }
         },

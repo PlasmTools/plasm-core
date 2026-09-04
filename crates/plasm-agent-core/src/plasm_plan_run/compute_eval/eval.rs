@@ -275,10 +275,10 @@ pub(crate) fn node_input_hole_from_identity(
             ));
         }
         if let plasm_core::EntityKey::Compound(parts) = &identity.reference.key {
-            if let Some(v) = parts.get(key) {
+            if let Some(v) = parts.get(key).and_then(|s| s.as_lit_str()) {
                 let raw = ctx
                     .map(|c| plasm_core::identity_slot_to_json(c.cgs, c.source_entity, key, v))
-                    .unwrap_or_else(|| serde_json::Value::String(v.clone()));
+                    .unwrap_or_else(|| serde_json::Value::String(v.to_string()));
                 return Some(coerce_node_input_json(ctx, path, raw));
             }
         }

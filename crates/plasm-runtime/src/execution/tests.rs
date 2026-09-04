@@ -609,15 +609,18 @@ fn test_execution_result_json_skips_host_pagination_fields() {
 
 #[test]
 fn populate_template_path_env_binds_explicit_evm_get_vars() {
-    let template = parse_capability_template(&serde_json::json!({
+    let mapping = serde_json::json!({
         "transport": "evm_call",
         "chain": 1,
         "contract": { "type": "const", "value": "0x0000000000000000000000000000000000000001" },
         "function": "function balanceOf(address owner) view returns (uint256)",
         "args": [{ "type": "var", "name": "owner" }],
         "block": { "type": "var", "name": "block" }
-    }))
-    .unwrap();
+    });
+    let mut cap = plasm_core::schema::CapabilitySchema::minimal_test();
+    cap.mapping = Some(plasm_core::schema::CapabilityMapping {
+        template: plasm_core::schema::CapabilityTemplateJson(mapping),
+    });
 
     let mut env = CmlEnv::new();
     let mut vars = IndexMap::new();
@@ -627,14 +630,15 @@ fn populate_template_path_env_binds_explicit_evm_get_vars() {
     );
     vars.insert("block".to_string(), Value::String("latest".to_string()));
 
+    let overlay = Value::Object(vars);
     populate_template_path_env(
         &mut env,
-        &template,
+        &cap,
         &Ref::new("Pet", "ignored-id"),
-        None,
-        Some(&vars),
-        None,
-    );
+        plasm_core::IdentityProjectionCtx::LegacyIdOnly,
+        Some(&overlay),
+    )
+    .expect("populate");
 
     assert_eq!(
         env.get("owner"),
@@ -651,24 +655,27 @@ fn populate_template_path_env_binds_explicit_evm_get_vars() {
 
 #[test]
 fn populate_template_path_env_does_not_default_non_id_evm_vars_to_primary_id() {
-    let template = parse_capability_template(&serde_json::json!({
+    let mapping = serde_json::json!({
         "transport": "evm_call",
         "chain": 1,
         "contract": { "type": "const", "value": "0x0000000000000000000000000000000000000001" },
         "function": "function balanceOf(address owner) view returns (uint256)",
         "args": [{ "type": "var", "name": "owner" }]
-    }))
-    .unwrap();
+    });
+    let mut cap = plasm_core::schema::CapabilitySchema::minimal_test();
+    cap.mapping = Some(plasm_core::schema::CapabilityMapping {
+        template: plasm_core::schema::CapabilityTemplateJson(mapping),
+    });
 
     let mut env = CmlEnv::new();
     populate_template_path_env(
         &mut env,
-        &template,
+        &cap,
         &Ref::new("Pet", "primary-id"),
+        plasm_core::IdentityProjectionCtx::LegacyIdOnly,
         None,
-        None,
-        None,
-    );
+    )
+    .expect("populate");
 
     assert_eq!(
         env.get("id"),
@@ -686,7 +693,7 @@ fn populate_template_path_env_binds_graphql_id_field_var() {
     use plasm_core::identity::{EntityFieldName, EntityName};
     use plasm_core::schema::EntityDef;
 
-    let template = parse_capability_template(&serde_json::json!({
+    let mapping = serde_json::json!({
         "transport": "graphql",
         "method": "POST",
         "path": [{ "type": "literal", "value": "graphql" }],
@@ -700,8 +707,13 @@ fn populate_template_path_env_binds_graphql_id_field_var() {
                 }]
             ]
         }
-    }))
-    .unwrap();
+    });
+    let mut cap = plasm_core::schema::CapabilitySchema::minimal_test();
+    cap.kind = plasm_core::CapabilityKind::Get;
+    cap.domain = EntityName::from("Team");
+    cap.mapping = Some(plasm_core::schema::CapabilityMapping {
+        template: plasm_core::schema::CapabilityTemplateJson(mapping),
+    });
 
     let ent = EntityDef {
         name: EntityName::from("Team"),
@@ -725,19 +737,19 @@ fn populate_template_path_env_binds_graphql_id_field_var() {
     let mut env = CmlEnv::new();
     populate_template_path_env(
         &mut env,
-        &template,
+        &cap,
         &Ref::new("Team", "EVA"),
-        Some(&ent),
+        plasm_core::IdentityProjectionCtx::Entity(&ent),
         None,
-        None,
-    );
+    )
+    .expect("populate");
 
     assert_eq!(env.get("key"), Some(&Value::String("EVA".to_string())));
 }
 
 #[test]
-fn populate_template_path_env_path_vars_override_compound_ref_strings() {
-    let template = parse_capability_template(&serde_json::json!({
+fn populate_template_path_env_projects_compound_identity_slots() {
+    let mapping = serde_json::json!({
         "method": "GET",
         "path": [
             {"type": "var", "name": "owner"},
@@ -746,28 +758,36 @@ fn populate_template_path_env_path_vars_override_compound_ref_strings() {
             {"type": "literal", "value": "/"},
             {"type": "var", "name": "n"}
         ]
-    }))
-    .unwrap();
+    });
+    let mut cap = plasm_core::schema::CapabilitySchema::minimal_test();
+    cap.mapping = Some(plasm_core::schema::CapabilityMapping {
+        template: plasm_core::schema::CapabilityTemplateJson(mapping),
+    });
 
     let mut parts = BTreeMap::new();
-    parts.insert("owner".into(), "stale-binding-name".into());
+    parts.insert("owner".into(), "real-owner-id".into());
     parts.insert("repo".into(), "r".into());
     parts.insert("n".into(), "9".into());
     let reference = Ref::compound("Ticket", parts);
 
-    let mut pv = IndexMap::new();
-    pv.insert(
-        "owner".into(),
-        plasm_core::Value::String("real-owner-id".into()),
-    );
-
     let mut env = CmlEnv::new();
-    populate_template_path_env(&mut env, &template, &reference, None, Some(&pv), None);
+    populate_template_path_env(
+        &mut env,
+        &cap,
+        &reference,
+        plasm_core::IdentityProjectionCtx::LegacyIdOnly,
+        None,
+    )
+    .expect("populate");
 
     assert_eq!(
         env.get("owner"),
-        Some(&plasm_core::Value::String("real-owner-id".into())),
-        "path_vars must override stale compound Ref string for HTTP template vars"
+        Some(&plasm_core::Value::String("real-owner-id".to_string())),
+        "compound Lit slots project into HTTP template vars"
+    );
+    assert_eq!(
+        env.get("repo"),
+        Some(&plasm_core::Value::String("r".to_string()))
     );
 }
 

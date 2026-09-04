@@ -27,10 +27,12 @@ use crate::RuntimeError;
 /// (live execute, from pinned [`crate::execution::ExecuteSessionMaterial`]), the agent host's
 /// `ExecuteSession::view_ambient` (dry preflight), or [`ViewAmbientContext::default`] in unit
 /// tests. No task-local lookup.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ViewAmbientContext {
     pub transport_origin: Option<String>,
     pub ui_origin: Option<String>,
+    /// Non-identity capability params for concurrent GETs (session stamps; not AST path_vars).
+    pub capability_params: IndexMap<String, Value>,
 }
 
 impl ViewAmbientContext {
@@ -47,7 +49,14 @@ impl ViewAmbientContext {
         Self {
             transport_origin: Some(base.to_string()),
             ui_origin: Some(base.to_string()),
+            capability_params: IndexMap::new(),
         }
+    }
+
+    #[must_use]
+    pub fn with_capability_params(mut self, params: IndexMap<String, Value>) -> Self {
+        self.capability_params = params;
+        self
     }
 }
 
@@ -57,6 +66,7 @@ impl From<&crate::execution::ExecuteSessionMaterial> for ViewAmbientContext {
         Self {
             ui_origin: material.ui_origin.clone().or_else(|| transport.clone()),
             transport_origin: transport,
+            capability_params: IndexMap::new(),
         }
     }
 }
@@ -230,15 +240,12 @@ pub fn scope_from_get_reference(
 ) -> Result<IndexMap<String, Value>, RuntimeError> {
     let mut scope = IndexMap::new();
     match &get.reference.key {
-        EntityKey::Simple(id) => {
-            scope.insert(
-                view_ent.id_field.to_string(),
-                Value::String(id.as_str().to_string()),
-            );
+        EntityKey::Simple(slot) => {
+            scope.insert(view_ent.id_field.to_string(), Value::String(slot.display_str()));
         }
         EntityKey::Compound(parts) => {
             for (k, v) in parts {
-                scope.insert(k.clone(), Value::String(v.clone()));
+                scope.insert(k.clone(), Value::String(v.display_str()));
             }
         }
     }

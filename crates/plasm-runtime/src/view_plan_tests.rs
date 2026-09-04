@@ -78,6 +78,7 @@ fn merge_ambient_scope_uses_explicit_transport_origin() {
     let ambient = ViewAmbientContext {
         transport_origin: Some("https://host.test".into()),
         ui_origin: None,
+        capability_params: indexmap::IndexMap::new(),
     };
     merge_view_ambient_scope(&view, &mut scope, &ambient);
     assert_eq!(

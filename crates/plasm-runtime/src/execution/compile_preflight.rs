@@ -8,7 +8,8 @@ use crate::view_preflight::{preflight_view_get, preflight_view_query};
 /// Compile capability templates for `expr` without dispatching HTTP.
 ///
 /// Identity GETs inherit session-stamped capability params from `mat` (explicit
-/// `path_vars` still win). Dry-run and live share this gate.
+/// Session capability params overlay identity at CML populate (`path_vars` deleted from AST).
+/// Dry-run and live share this gate.
 pub fn preflight_compile_expr(
     expr: &Expr,
     cgs: &CGS,
@@ -130,15 +131,21 @@ fn preflight_compile_get(
     }
     let mut env = CmlEnv::new();
     merge_plasm_execute_session_proof_base_token_env(&mut env);
-    let target_ent = cgs.get_entity(get.reference.entity_type.as_str());
+    let target_ent = cgs.get_entity(get.reference.entity_type.as_str()).ok_or_else(|| {
+        RuntimeError::ConfigurationError {
+            message: format!(
+                "unknown entity `{}` for get identity-env projection",
+                get.reference.entity_type
+            ),
+        }
+    })?;
     populate_template_path_env(
         &mut env,
-        &capability_template,
+        capability,
         &get.reference,
-        target_ent,
-        get.path_vars.as_ref(),
-        None,
-    );
+        plasm_core::IdentityProjectionCtx::Entity(target_ent),
+        Some(&Value::Object(mat.capability_params_for(&get.reference))),
+    )?;
     normalize_cml_env_scope_entity_refs(&mut env, cgs, capability)?;
     plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
         RuntimeError::ConfigurationError {
@@ -183,11 +190,6 @@ fn preflight_compile_create(
     merge_plasm_execute_session_proof_base_token_env(&mut env);
     env.insert("input".to_string(), input.clone());
     if let Value::Object(ref map) = input {
-        for var_name in path_var_names_from_template(&capability_template) {
-            if let Some(v) = map.get(&var_name) {
-                env.insert(var_name.clone(), v.clone());
-            }
-        }
         for (k, v) in map {
             env.insert(k.clone(), v.clone());
         }
@@ -221,15 +223,21 @@ fn preflight_compile_delete(
     )?;
     let mut env = CmlEnv::new();
     merge_plasm_execute_session_proof_base_token_env(&mut env);
-    let target_ent = cgs.get_entity(delete.target.entity_type.as_str());
+    let target_ent = cgs.get_entity(delete.target.entity_type.as_str()).ok_or_else(|| {
+        RuntimeError::ConfigurationError {
+            message: format!(
+                "unknown entity `{}` for delete identity-env projection",
+                delete.target.entity_type
+            ),
+        }
+    })?;
     populate_template_path_env(
         &mut env,
-        &capability_template,
+        capability,
         &delete.target,
-        target_ent,
-        delete.path_vars.as_ref(),
+        plasm_core::IdentityProjectionCtx::Entity(target_ent),
         None,
-    );
+    )?;
     normalize_cml_env_scope_entity_refs(&mut env, cgs, capability)?;
     plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
         RuntimeError::ConfigurationError {
@@ -281,15 +289,21 @@ fn preflight_compile_invoke(invoke: &InvokeExpr, cgs: &CGS) -> Result<(), Runtim
     };
     let mut env = CmlEnv::new();
     merge_plasm_execute_session_proof_base_token_env(&mut env);
-    let target_ent = cgs.get_entity(invoke.target.entity_type.as_str());
+    let target_ent = cgs.get_entity(invoke.target.entity_type.as_str()).ok_or_else(|| {
+        RuntimeError::ConfigurationError {
+            message: format!(
+                "unknown entity `{}` for invoke identity-env projection",
+                invoke.target.entity_type
+            ),
+        }
+    })?;
     populate_template_path_env(
         &mut env,
-        &capability_template,
+        capability,
         &invoke.target,
-        target_ent,
-        invoke.path_vars.as_ref(),
+        plasm_core::IdentityProjectionCtx::Entity(target_ent),
         input_for_env.as_ref(),
-    );
+    )?;
     if let Some(input) = &input_for_env {
         env.insert("input".to_string(), input.clone());
         if let Value::Object(map) = input {
@@ -304,7 +318,7 @@ fn preflight_compile_invoke(invoke: &InvokeExpr, cgs: &CGS) -> Result<(), Runtim
             message: e.to_string(),
         }
     })?;
-    merge_entity_id_from_into_input_env(&mut env, target_ent, capability);
+    merge_entity_id_from_into_input_env(&mut env, Some(target_ent), capability);
     apply_preflight_compile_stubs(&mut env, capability, cgs);
     merge_plasm_execute_session_env(&mut env);
     compile_operation_dispatch(&capability_template, &env).map(|_| ())

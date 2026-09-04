@@ -60,9 +60,6 @@ impl ExecutionEngine {
             )
             .await?;
         mat.insert(cached.clone())?;
-        if let Some(pv) = get.path_vars.clone() {
-            mat.stamp_capability_params(&cached.reference, pv);
-        }
 
         Ok(ExecutionResult {
             entities: vec![cached],
@@ -157,12 +154,10 @@ impl ExecutionEngine {
                 &capability_template,
                 true,
                 Some(mat),
+                &ViewAmbientContext::default(),
             )
             .await?;
         mat.insert(cached.clone())?;
-        if let Some(pv) = get.path_vars.clone() {
-            mat.stamp_capability_params(&cached.reference, pv);
-        }
 
         Ok(ExecutionResult {
             entities: vec![cached],
@@ -263,20 +258,35 @@ impl ExecutionEngine {
         capability_template: &CapabilityTemplate,
         inject_execute_session_env: bool,
         mut cache: Option<&mut SessionMaterialization>,
+        ambient: &ViewAmbientContext,
     ) -> Result<(CachedEntity, ExecutionSource), RuntimeError> {
         let mut env = CmlEnv::new();
         if inject_execute_session_env {
             merge_plasm_execute_session_proof_base_token_env(&mut env);
         }
-        let target_ent = cgs.get_entity(get.reference.entity_type.as_str());
+        let target_ent = cgs.get_entity(get.reference.entity_type.as_str()).ok_or_else(|| {
+            RuntimeError::ConfigurationError {
+                message: format!(
+                    "unknown entity `{}` for get identity-env projection",
+                    get.reference.entity_type
+                ),
+            }
+        })?;
+        let mut overlay_map = cache
+            .as_ref()
+            .map(|m| m.capability_params_for(&get.reference))
+            .unwrap_or_default();
+        for (k, v) in &ambient.capability_params {
+            overlay_map.entry(k.clone()).or_insert_with(|| v.clone());
+        }
+        let session_overlay = (!overlay_map.is_empty()).then(|| Value::Object(overlay_map));
         populate_template_path_env(
             &mut env,
-            capability_template,
+            capability,
             &get.reference,
-            target_ent,
-            get.path_vars.as_ref(),
-            None,
-        );
+            plasm_core::IdentityProjectionCtx::Entity(target_ent),
+            session_overlay.as_ref(),
+        )?;
         normalize_cml_env_scope_entity_refs(&mut env, cgs, capability)?;
         plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
             RuntimeError::ConfigurationError {
@@ -451,6 +461,7 @@ impl ExecutionEngine {
             &capability_template,
             inject_execute_session_env,
             cache,
+            ambient,
         )
         .await
     }

@@ -142,6 +142,6 @@ pub(crate) use scoped_fanout::{
     ref_from_materialize_bindings_for_get_chain, resolve_cached_targets_from_relation_refs,
 };
 pub(crate) use template_env::{
-    ensure_http_operation, normalize_cml_env_scope_entity_refs,
-    normalize_cml_scope_entity_ref_value, path_var_names_from_template, populate_template_path_env,
+    ensure_http_operation, normalize_cml_env_scope_entity_refs, normalize_cml_scope_entity_ref_value,
+    populate_template_path_env,
 };

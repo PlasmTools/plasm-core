@@ -134,8 +134,8 @@ pub fn row_identity_from_parts(
     let mut ambient = IndexMap::new();
     if let EntityKey::Compound(parts) = &reference.key {
         for (k, v) in parts {
-            if !v.is_empty() {
-                ambient.insert(k.clone(), v.clone());
+            if !v.is_empty_lit() {
+                ambient.insert(k.clone(), v.display_str());
             }
         }
     }

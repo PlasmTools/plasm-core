@@ -207,25 +207,26 @@ fn validate_invoke_input_object(
     Ok(())
 }
 
-fn validate_path_vars(
-    path_vars: &indexmap::IndexMap<String, Value>,
+fn validate_ref_identity_slots(
+    reference: &crate::Ref,
     program_labels: &BTreeSet<String>,
-    cap_params: &[InputFieldSchema],
-    cgs: &CGS,
 ) -> Result<(), String> {
-    for (key, val) in path_vars {
-        let ctx = cap_params
-            .iter()
-            .find(|p| p.name == *key)
-            .and_then(|f| field_context_from_input_field(f, cgs));
-        match val {
-            Value::PhraseIdent(ident) => {
-                validate_identifier_phrase(ident, program_labels, ctx.as_ref())?;
-            }
-            _ => validate_value_phrase_idents(val, program_labels, ctx.as_ref())?,
+    fn walk_slot(slot: &crate::IdentitySlot, _program_labels: &BTreeSet<String>) -> Result<(), String> {
+        match slot {
+            crate::IdentitySlot::Lit(_) => Ok(()),
+            // Binding is [`PlasmInputRef`] — no PhraseIdent payload to validate.
+            crate::IdentitySlot::Binding(_) => Ok(()),
         }
     }
-    Ok(())
+    match &reference.key {
+        crate::EntityKey::Simple(slot) => walk_slot(slot, program_labels),
+        crate::EntityKey::Compound(parts) => {
+            for slot in parts.values() {
+                walk_slot(slot, program_labels)?;
+            }
+            Ok(())
+        }
+    }
 }
 
 fn validate_predicate_phrase_idents(
@@ -365,17 +366,10 @@ fn lower_expr_phrase_idents(
                         cgs,
                     )?;
                 }
-                if let Some(pv) = &inv.path_vars {
-                    validate_path_vars(pv, program_labels, &cap_params, cgs)?;
-                }
+                validate_ref_identity_slots(&inv.target, program_labels)?;
             }
             if let Some(input) = &mut inv.input {
                 normalize_invoke_payload(input);
-            }
-            if let Some(pv) = &mut inv.path_vars {
-                for v in pv.values_mut() {
-                    normalize_value_phrase_idents(v);
-                }
             }
             Ok(())
         }
@@ -400,40 +394,22 @@ fn lower_expr_phrase_idents(
             Ok(())
         }
         Expr::Delete(del) => {
-            let cgs = scope.resolve_capability_cgs(
+            let _cgs = scope.resolve_capability_cgs(
                 del.catalog_entry_id.as_deref(),
                 del.target.entity_type.as_str(),
             )?;
             if validate {
-                let cap = cgs
-                    .get_capability(del.capability.as_str())
-                    .ok_or_else(|| format!("unknown capability `{}`", del.capability))?;
-                let cap_params = cap_params_for_capability(cap);
-                if let Some(pv) = &del.path_vars {
-                    validate_path_vars(pv, program_labels, &cap_params, cgs)?;
-                }
-            }
-            if let Some(pv) = &mut del.path_vars {
-                for v in pv.values_mut() {
-                    normalize_value_phrase_idents(v);
-                }
+                validate_ref_identity_slots(&del.target, program_labels)?;
             }
             Ok(())
         }
         Expr::Get(get) => {
-            let cgs = scope.resolve(
+            let _cgs = scope.resolve(
                 get.catalog_entry_id.as_deref(),
                 get.reference.entity_type.as_str(),
             )?;
             if validate {
-                if let Some(pv) = &get.path_vars {
-                    validate_path_vars(pv, program_labels, &[], cgs)?;
-                }
-            }
-            if let Some(pv) = &mut get.path_vars {
-                for v in pv.values_mut() {
-                    normalize_value_phrase_idents(v);
-                }
+                validate_ref_identity_slots(&get.reference, program_labels)?;
             }
             Ok(())
         }

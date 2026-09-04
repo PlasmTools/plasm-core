@@ -876,7 +876,6 @@ mod tests {
                     [("owner".into(), "octocat".into())].into_iter().collect(),
                 ),
             },
-            path_vars: None,
             catalog_entry_id: plasm_core::CatalogEntryStamp::none(),
             capability_name: None,
         });

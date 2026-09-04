@@ -195,7 +195,9 @@ impl SessionMaterialization {
         Self::default()
     }
 
-    pub(crate) fn stamp_capability_params(
+    /// Stamp non-identity capability params (CLI flags, session inherit) onto a row ref.
+    /// Path env is projected from [`Ref`] identity; these bindings overlay at CML populate.
+    pub fn stamp_capability_params(
         &mut self,
         reference: &Ref,
         params: IndexMap<String, Value>,

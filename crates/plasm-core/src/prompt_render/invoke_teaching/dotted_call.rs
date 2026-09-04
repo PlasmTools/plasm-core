@@ -12,6 +12,7 @@ use crate::{CapabilityKind, FieldType, InputType, ValueWireFormat, CGS};
 use super::super::line_validate::{DomainLineValidCacheKey, DomainLineValidEntry};
 use super::super::query_teaching::{entity_ref_id_example, scope_param_slot};
 use super::super::relation_teaching::receiver_for_dotted_suffix;
+use super::path_vars_empty;
 use super::super::symbol_tokens::{id_sym_cap, met_sym};
 use super::super::teaching_util::TEACHING_PARAM_VALUE_PLACEHOLDER;
 use super::union_ctor::{
@@ -245,6 +246,7 @@ pub(crate) fn format_dotted_call_line(
     let args = build_dotted_call_paren_args(anchor_entity, cap, cgs, map, catalog_entry_id)?;
     let ms = met_sym(map, catalog_entry_id, cap.domain.as_str(), cap);
     let suffix = format!(".{ms}({args})");
+    let prefer_bare = path_vars_empty(cap);
     let recv = receiver_for_dotted_suffix(
         es,
         ent,
@@ -255,6 +257,7 @@ pub(crate) fn format_dotted_call_line(
         line_valid_cache,
         line_valid_cache_seed,
         map_arc,
+        prefer_bare,
     )?;
     Some(format!("{recv}{suffix}"))
 }

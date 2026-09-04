@@ -207,8 +207,8 @@ pub(crate) fn chain_binding_raw_json(
         return serde_json::Value::String(entity.reference.primary_slot_str());
     }
     if let EntityKey::Compound(parts) = &entity.reference.key {
-        if let Some(s) = parts.get(pf) {
-            return serde_json::Value::String(s.clone());
+        if let Some(s) = parts.get(pf).and_then(|slot| slot.as_lit_str()) {
+            return serde_json::Value::String(s.to_string());
         }
     }
     serde_json::Value::String(entity.reference.primary_slot_str())

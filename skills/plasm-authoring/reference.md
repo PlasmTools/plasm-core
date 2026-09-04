@@ -1398,17 +1398,17 @@ query:
 
 ### Variable Resolution
 
-The execution engine populates the CML environment before template evaluation:
+The execution engine populates the CML environment before template evaluation. **Path / GraphQL identity vars** are a **projection** of entity identity (never invented `{entity}_id` transport names on Get/Invoke):
 
 | Operation | Variables set |
 |-----------|---------------|
 | **Query** | `filter` (compiled BackendFilter), each predicate field=value pair, `projection` |
-| **Get** | `id`, plus all path var names from the CML template set to the ID value |
-| **Create** | `input` (Value::Object from compiled create/update/action expressions) |
-| **Delete** | `id`, plus all path var names |
-| **Update/Action** | `id`, path var names, `input` |
+| **Get** | Identity slots (`id`, `id_field`, `key_vars`) projected onto CML path vars via `project_capability_identity_env` (sole projector; pack prove via `prove_path_env_coverage`); declared non-identity inputs from session/CLI stamps |
+| **Create** | `input` (Value::Object from compiled create/update/action expressions) plus declared scope/path inputs |
+| **Delete** | Same identity→path projection as Get |
+| **Update/Action** | Identity→path projection, plus `input` / declared params |
 
-If the spec uses `{petId}` in the path, the CML template should use `name: id` (normalized) OR `name: petId` (the engine sets both).
+**Pack-time path-env law** (`validate_cgs_capability_templates`): every CML path var (and GraphQL identity operation variable) must be either (1) **identity-projectable** — `id`, the entity's `id_field`, a `key_vars` entry, or (for non-Create) a **single-path-var primary alias** on a simple-keyed entity — or (2) a **declared capability input**. Invented names such as `pet_id` when `id_field` is `name` fail closed at pack/load. Align path template `name:` with identity wires; do not rely on body-splat invent.
 
 ### Compilation: CML → HTTP Request
 

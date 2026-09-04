@@ -20,10 +20,6 @@ impl CapabilityParamEnv {
         &self.bindings
     }
 
-    pub(crate) fn into_bindings(self) -> IndexMap<String, Value> {
-        self.bindings
-    }
-
     /// Keep parent env keys that the target capability declares as parameters.
     pub(crate) fn from_cml_env(env: &CmlEnv, cap: &CapabilitySchema) -> Self {
         Self::intersect(env, &capability_param_name_set(cap))
@@ -75,14 +71,6 @@ impl CapabilityParamEnv {
         Self { bindings }
     }
 
-    pub(crate) fn as_path_vars(&self) -> Option<IndexMap<String, Value>> {
-        if self.bindings.is_empty() {
-            None
-        } else {
-            Some(self.bindings.clone())
-        }
-    }
-
     /// Required capability params that are neither identity slots nor inherited.
     pub(crate) fn missing_required(
         &self,
@@ -96,39 +84,18 @@ impl CapabilityParamEnv {
     }
 }
 
-pub(crate) fn synthesized_get(reference: Ref, params: &CapabilityParamEnv) -> GetExpr {
-    GetExpr::from_ref_with_path_vars(reference, params.as_path_vars())
+pub(crate) fn synthesized_get(reference: Ref, _params: &CapabilityParamEnv) -> GetExpr {
+    GetExpr::from_ref(reference)
 }
 
-/// Overlay session-stamped capability params onto a GET. Explicit `path_vars` win.
+/// Session capability params are applied at CML env populate time from materialization —
+/// identity lives on [`Ref`] only (IdentitySlot cutover).
 pub(crate) fn get_with_session_params(
     get: &GetExpr,
-    cgs: &CGS,
-    mat: &SessionMaterialization,
+    _cgs: &CGS,
+    _mat: &SessionMaterialization,
 ) -> GetExpr {
-    let cap = get
-        .capability_name
-        .as_deref()
-        .and_then(|n| cgs.get_capability(n))
-        .or_else(|| cgs.find_capability(&get.reference.entity_type, CapabilityKind::Get));
-    let Some(cap) = cap else {
-        return get.clone();
-    };
-    let inherit =
-        CapabilityParamEnv::from_bindings(&mat.capability_params_for(&get.reference), cap);
-    let mut merged = inherit.into_bindings();
-    if let Some(explicit) = &get.path_vars {
-        for (k, v) in explicit {
-            merged.insert(k.clone(), v.clone());
-        }
-    }
-    let mut out = get.clone();
-    out.path_vars = if merged.is_empty() {
-        None
-    } else {
-        Some(merged)
-    };
-    out
+    get.clone()
 }
 
 pub(crate) fn identity_keys_for_entity(cgs: &CGS, entity: &str) -> HashSet<String> {
@@ -250,6 +217,8 @@ impl ExecutionEngine {
         let mut stream = stream::iter(to_fetch.into_iter().map(|reference| {
             let get = synthesized_get(reference, &inherit);
             let cap_name = cap_name.clone();
+            let ambient =
+                ViewAmbientContext::default().with_capability_params(inherit.bindings().clone());
             async move {
                 self.fetch_get_decoded(
                     &get,
@@ -258,7 +227,7 @@ impl ExecutionEngine {
                     None,
                     false,
                     None,
-                    &ViewAmbientContext::default(),
+                    &ambient,
                 )
                 .await
                 .map_err(|e| wrap_synthesized_get_error(cap_name.as_str(), entity_type, e))
@@ -345,13 +314,14 @@ mod tests {
     }
 
     #[test]
-    fn synthesized_get_stamps_path_vars() {
+    fn synthesized_get_is_identity_only() {
         let inherit = CapabilityParamEnv {
             bindings: IndexMap::from([("access_token".into(), Value::String("tok".into()))]),
         };
         let get = synthesized_get(Ref::new("LangSecuredNote", "1"), &inherit);
-        let pv = get.path_vars.expect("path_vars");
-        assert_eq!(pv.get("access_token"), Some(&Value::String("tok".into())));
+        assert_eq!(get.reference, Ref::new("LangSecuredNote", "1"));
+        // Session params ride materialization stamps, not Get AST.
+        assert!(!inherit.bindings().is_empty());
     }
 
     #[test]
@@ -369,23 +339,19 @@ mod tests {
             IndexMap::from([("access_token".into(), Value::String("session".into()))]),
         );
         let inherited = get_with_session_params(&GetExpr::from_ref(reference.clone()), &cgs, &mat);
+        assert_eq!(inherited.reference, reference);
         assert_eq!(
-            inherited
-                .path_vars
-                .as_ref()
-                .and_then(|p| p.get("access_token")),
+            mat.capability_params_for(&reference).get("access_token"),
             Some(&Value::String("session".into()))
         );
-        let mut explicit = IndexMap::new();
-        explicit.insert("access_token".into(), Value::String("program".into()));
-        let over = get_with_session_params(
-            &GetExpr::from_ref_with_path_vars(reference, Some(explicit)),
-            &cgs,
-            &mat,
+        mat.stamp_capability_params(
+            &reference,
+            IndexMap::from([("access_token".into(), Value::String("program".into()))]),
         );
         assert_eq!(
-            over.path_vars.as_ref().and_then(|p| p.get("access_token")),
-            Some(&Value::String("program".into()))
+            mat.capability_params_for(&reference).get("access_token"),
+            Some(&Value::String("program".into())),
+            "later stamp overlays session capability params"
         );
     }
 
@@ -761,10 +727,11 @@ mod tests {
 
         paths.lock().unwrap().clear();
         auths.lock().unwrap().clear();
-        let get = GetExpr::from_ref(reference);
-        assert!(
-            get.path_vars.is_none(),
-            "explicit identity GET has no path_vars"
+        let get = GetExpr::from_ref(reference.clone());
+        assert_eq!(
+            get.reference.simple_id().map(|s| s.as_str()),
+            reference.simple_id().map(|s| s.as_str()),
+            "explicit identity GET carries identity on Ref only"
         );
         let got = engine
             .execute_get(

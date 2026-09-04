@@ -103,7 +103,7 @@ use crate::{
     catalog_id::CatalogEntryStamp, coerce_value_for_field_type,
     coerce_value_for_field_type_with_policy, ArrayFieldCoercionPolicy, ArrayItemsSchema,
     CapabilityKind, CapabilityName, ChainExpr, CompOp, CreateExpr, DeleteExpr, EntityDef,
-    EntityKey, EntityName, Expr, FieldType, GetExpr, InputType, InvokeExpr, InvokeInputPayload,
+    EntityName, Expr, FieldType, GetExpr, IdentitySlot, InputType, InvokeExpr, InvokeInputPayload,
     PageExpr, Predicate, QueryExpr, Ref, SymbolResolveError, Value, ValueWireFormat, CGS,
 };
 use indexmap::IndexMap;
@@ -1031,22 +1031,14 @@ impl<'a> Parser<'a> {
             ))
         } else if cap.kind == CapabilityKind::Delete {
             if let Expr::Get(g) = source {
-                Expr::Delete(DeleteExpr::with_target_path_vars(
-                    cap_name,
-                    g.reference.clone(),
-                    g.path_vars.clone(),
-                ))
+                Expr::Delete(DeleteExpr::with_target(cap_name, g.reference.clone()))
             } else if !needs_anchor_id {
                 let g = self.pathless_mutator_anchor_from_receiver(
                     source,
                     false,
                     "delete requires Entity(id) on the left",
                 )?;
-                Expr::Delete(DeleteExpr::with_target_path_vars(
-                    cap_name,
-                    g.reference.clone(),
-                    g.path_vars.clone(),
-                ))
+                Expr::Delete(DeleteExpr::with_target(cap_name, g.reference.clone()))
             } else {
                 return Err(self.err(ParseErrorKind::InvokeRequiresTargetId {
                     entity: entity.clone(),
@@ -1061,10 +1053,7 @@ impl<'a> Parser<'a> {
             } else {
                 match source {
                     Expr::Get(src) => {
-                        let mut g = GetExpr::from_ref_with_path_vars(
-                            src.reference.clone(),
-                            src.path_vars.clone(),
-                        );
+                        let mut g = GetExpr::from_ref(src.reference.clone());
                         g.capability_name = Some(cap_name);
                         g
                     }
@@ -1086,12 +1075,7 @@ impl<'a> Parser<'a> {
                 false,
                 "invoke requires Entity(id) on the left",
             )?;
-            Expr::Invoke(InvokeExpr::with_target_path_vars(
-                cap_name,
-                g.reference.clone(),
-                None,
-                g.path_vars.clone(),
-            ))
+            Expr::Invoke(InvokeExpr::with_target(cap_name, g.reference.clone(), None))
         } else {
             let Expr::Get(g) = source else {
                 return Err(self.err(ParseErrorKind::InvokeRequiresTargetId {
@@ -1099,12 +1083,7 @@ impl<'a> Parser<'a> {
                     label: raw.to_string(),
                 }));
             };
-            Expr::Invoke(InvokeExpr::with_target_path_vars(
-                cap_name,
-                g.reference.clone(),
-                None,
-                g.path_vars.clone(),
-            ))
+            Expr::Invoke(InvokeExpr::with_target(cap_name, g.reference.clone(), None))
         };
         Ok(Self::stamp_session_catalog_from_source(source, expr))
     }
@@ -1704,12 +1683,10 @@ impl<'a> Parser<'a> {
                 ),
             }));
         }
-        if matches!(id_val, Value::PlasmInputRef(_)) {
-            let path_key = format!("{}_id", entity.to_lowercase());
-            return Ok(Some(Expr::Get(GetExpr::from_ref_with_path_vars(
-                Ref::new(entity, ""),
-                Some(IndexMap::from([(path_key, id_val)])),
-            ))));
+        if let Value::PlasmInputRef(r) = id_val {
+            return Ok(Some(Expr::Get(GetExpr::from_ref(Ref::simple_binding(
+                entity, r,
+            )))));
         }
         let id_str = self.identity_literal_from_value(&id_val)?;
         Ok(Some(Expr::Get(GetExpr::new(entity, id_str))))
@@ -1765,12 +1742,10 @@ impl<'a> Parser<'a> {
             self.pos = save;
             return Ok(None);
         }
-        if matches!(id_val, Value::PlasmInputRef(_)) {
-            let path_key = format!("{}_id", entity.to_lowercase());
-            return Ok(Some(Expr::Get(GetExpr::from_ref_with_path_vars(
-                Ref::new(entity, ""),
-                Some(IndexMap::from([(path_key, id_val)])),
-            ))));
+        if let Value::PlasmInputRef(r) = id_val {
+            return Ok(Some(Expr::Get(GetExpr::from_ref(Ref::simple_binding(
+                entity, r,
+            )))));
         }
         let id_str = self.identity_literal_from_value(&id_val)?;
         Ok(Some(Expr::Get(GetExpr::new(entity, id_str))))
@@ -2122,68 +2097,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn inject_path_vars_from_get(
-        &self,
-        cap: &crate::CapabilitySchema,
-        source: &Expr,
-        map: &mut IndexMap<String, Value>,
-    ) {
-        let path_vars = cap
-            .mapping
-            .as_ref()
-            .map(|m| path_var_names_from_mapping_json(&m.template.0))
-            .unwrap_or_default();
-        let Expr::Get(g) = source else {
-            return;
-        };
-        // Explicit `Get.path_vars` from compound/simple ctor holes (`node_input`, row JSON, …).
-        if let Some(explicit) = &g.path_vars {
-            for (k, v) in explicit {
-                if !map.contains_key(k) {
-                    map.insert(k.clone(), v.clone());
-                }
-            }
-        }
-        let src_ent = g.reference.entity_type.as_str();
-        let expected_id_key = format!("{}_id", src_ent.to_lowercase());
-        let Ok(cgs_src) = self.cgs_for_expr_source(source) else {
-            return;
-        };
-        let ent_src = cgs_src.get_entity(src_ent);
-        match &g.reference.key {
-            EntityKey::Compound(parts) => {
-                for pv in path_vars {
-                    if map.contains_key(&pv) {
-                        continue;
-                    }
-                    if let Some(v) = parts.get(&pv) {
-                        let wire = if let Some(ent) = ent_src {
-                            let json = crate::identity_slot_to_json(cgs_src, ent, pv.as_str(), v);
-                            crate::json_value_to_plasm_value(&json)
-                        } else {
-                            Value::String(v.clone())
-                        };
-                        map.insert(pv, wire);
-                    }
-                }
-            }
-            EntityKey::Simple(id) => {
-                for pv in path_vars {
-                    if map.contains_key(&pv) {
-                        continue;
-                    }
-                    if pv == expected_id_key {
-                        map.insert(pv, Value::String(id.to_string()));
-                    } else if pv == "id" {
-                        // REST templates often use `{id}` while the anchor entity uses `{type}_id`
-                        // in the exemplar convention (e.g. IssueComment + path segment `id`).
-                        map.insert("id".to_string(), Value::String(id.to_string()));
-                    }
-                }
-            }
-        }
-    }
-
     /// Shared InvokeArg coerce over a concrete field list (object body lanes or union variant).
     ///
     /// Call with [`CapabilitySchema::invocation_object_fields`] for create/invoke object bodies
@@ -2362,28 +2275,13 @@ impl<'a> Parser<'a> {
         let Expr::Get(g) = source else {
             return false;
         };
-        let path_vars = cap
-            .mapping
-            .as_ref()
-            .map(|m| path_var_names_from_mapping_json(&m.template.0))
-            .unwrap_or_default();
-        if path_vars.is_empty() {
+        let Ok(cgs) = self.cgs_for_expr_source(source) else {
             return false;
-        }
-        let src_ent = g.reference.entity_type.as_str();
-        let expected = format!("{}_id", src_ent.to_lowercase());
-        path_vars.iter().all(|pv| {
-            if pv != &expected {
-                return false;
-            }
-            if g.path_vars.as_ref().is_some_and(|m| m.contains_key(pv)) {
-                return true;
-            }
-            match &g.reference.key {
-                EntityKey::Simple(id) => !id.is_empty(),
-                EntityKey::Compound(parts) => parts.contains_key(pv),
-            }
-        })
+        };
+        let Some(anchor) = cgs.get_entity(g.reference.entity_type.as_str()) else {
+            return false;
+        };
+        crate::create_binds_from_anchor_identity(cap, anchor, Some(&g.reference))
     }
 
     /// Build Create / Update / Action / Delete from dotted-call args after `resolve_dotted_call_capability`.
@@ -2403,7 +2301,6 @@ impl<'a> Parser<'a> {
             Some(field_raw.as_str()),
             map,
         )?;
-        self.inject_path_vars_from_get(cap, &source, &mut map);
         self.coerce_registry_input_fields(
             cap.domain.as_str(),
             self.active_catalog_entry_id(Some(&source)).as_deref(),
@@ -2448,7 +2345,6 @@ impl<'a> Parser<'a> {
             ..
         } = &mut value
         {
-            self.inject_path_vars_from_get(cap, &source, ctor_fields);
             if let Some(is) = &cap.inputs.payload {
                 if let InputType::Union { variants } = &is.input_type {
                     if let Some(variant) = variants.iter().find(|v| {
@@ -2558,17 +2454,10 @@ impl<'a> Parser<'a> {
                     needs_explicit_anchor,
                     "delete with arguments requires Entity(id) on the left",
                 )?;
-                let path_vars = match input {
-                    Value::Object(map) if !map.is_empty() => Some(map),
-                    _ => g.path_vars.clone(),
-                };
+                let _ = input;
                 Ok(Self::stamp_session_catalog_from_source(
                     &source,
-                    Expr::Delete(DeleteExpr::with_target_path_vars(
-                        cap_name,
-                        g.reference.clone(),
-                        path_vars,
-                    )),
+                    Expr::Delete(DeleteExpr::with_target(cap_name, g.reference.clone())),
                 ))
             }
             CapabilityKind::Update | CapabilityKind::Action => {
@@ -2579,11 +2468,10 @@ impl<'a> Parser<'a> {
                 )?;
                 Ok(Self::stamp_session_catalog_from_source(
                     &source,
-                    Expr::Invoke(InvokeExpr::with_target_path_vars(
+                    Expr::Invoke(InvokeExpr::with_target(
                         cap_name,
                         g.reference.clone(),
                         Some(input),
-                        g.path_vars.clone(),
                     )),
                 ))
             }
@@ -3349,25 +3237,17 @@ impl<'a> Parser<'a> {
                         self.pending_session_catalog_entry_id.clone(),
                     );
                     let map_values = self.parse_strict_compound_key_value_map(&head, &ent)?;
-                    let mut ordered: BTreeMap<String, String> = BTreeMap::new();
-                    let mut ctor_path_vars: IndexMap<String, Value> = IndexMap::new();
+                    let mut slots: BTreeMap<String, IdentitySlot> = BTreeMap::new();
                     for k in &ent.key_vars {
                         let v = map_values.get(k.as_str()).expect("keys validated");
-                        if matches!(v, Value::PlasmInputRef(_)) {
-                            ctor_path_vars.insert(k.to_string(), v.clone());
-                            continue;
-                        }
-                        let s = self.identity_literal_from_value(v)?;
-                        ordered.insert(k.to_string(), s);
-                    }
-                    let get = GetExpr::from_ref_with_path_vars(
-                        Ref::compound(entity, ordered),
-                        if ctor_path_vars.is_empty() {
-                            None
+                        if let Value::PlasmInputRef(r) = v {
+                            slots.insert(k.to_string(), IdentitySlot::binding(r.clone()));
                         } else {
-                            Some(ctor_path_vars)
-                        },
-                    );
+                            let s = self.identity_literal_from_value(v)?;
+                            slots.insert(k.to_string(), IdentitySlot::lit(s));
+                        }
+                    }
+                    let get = GetExpr::from_ref(Ref::compound_slots(entity, slots));
                     Ok(Expr::Get(get))
                 } else {
                     if looks_kv && ent.key_vars.is_empty() {
@@ -3393,12 +3273,8 @@ impl<'a> Parser<'a> {
                         self.parse_value()?
                     };
                     self.expect_char(')')?;
-                    if matches!(id_val, Value::PlasmInputRef(_)) {
-                        let path_key = format!("{}_id", entity.to_lowercase());
-                        Ok(Expr::Get(GetExpr::from_ref_with_path_vars(
-                            Ref::new(entity, ""),
-                            Some(IndexMap::from([(path_key, id_val)])),
-                        )))
+                    if let Value::PlasmInputRef(r) = id_val {
+                        Ok(Expr::Get(GetExpr::from_ref(Ref::simple_binding(entity, r))))
                     } else {
                         let id_str = self.identity_literal_from_value(&id_val)?;
                         Ok(Expr::Get(GetExpr::new(entity, id_str)))
@@ -3909,7 +3785,6 @@ mod tests {
         InputVariantSchema, OutputSchema, OutputType, PlasmInputRef, RelationSchema,
         ResourceSchema, WireVariantDiscriminator, CGS,
     };
-    use indexmap::IndexMap;
     use std::collections::BTreeMap;
     use std::collections::BTreeSet;
 
@@ -5802,13 +5677,13 @@ mod tests {
         let EntityKey::Compound(m) = &g.reference.key else {
             panic!("expected compound key");
         };
-        assert_eq!(m.get("owner").map(String::as_str), Some("o"));
-        assert_eq!(m.get("repo").map(String::as_str), Some("r"));
-        assert_eq!(m.get("n").map(String::as_str), Some("9"));
+        assert_eq!(m.get("owner").and_then(|s| s.as_lit_str()), Some("o"));
+        assert_eq!(m.get("repo").and_then(|s| s.as_lit_str()), Some("r"));
+        assert_eq!(m.get("n").and_then(|s| s.as_lit_str()), Some("9"));
     }
 
     #[test]
-    fn program_parse_compound_get_maps_binding_slot_to_path_vars() {
+    fn program_parse_compound_get_maps_binding_slot_to_identity_slot() {
         let cgs = compound_get_fixture_cgs();
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
         let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
@@ -5826,37 +5701,33 @@ mod tests {
         let Expr::Get(g) = &r.expr else {
             panic!("expected Get");
         };
-        let pv = g.path_vars.as_ref().expect("path_vars for hole slot");
-        assert!(
-            matches!(
-                pv.get("owner"),
-                Some(Value::PlasmInputRef(PlasmInputRef::NodeInput { node, path }))
-                    if node == "zone" && path.is_empty()
-            ),
-            "expected node_input(zone), got {:?}",
-            pv.get("owner")
-        );
         let EntityKey::Compound(m) = &g.reference.key else {
             panic!("expected compound ref");
         };
-        assert!(m.get("owner").is_none());
-        assert_eq!(m.get("repo").map(String::as_str), Some("r"));
-        assert_eq!(m.get("n").map(String::as_str), Some("9"));
+        assert!(
+            matches!(
+                m.get("owner"),
+                Some(crate::IdentitySlot::Binding(PlasmInputRef::NodeInput { node, path }))
+                    if node == "zone" && path.is_empty()
+            ),
+            "expected Binding(zone) on owner slot, got {:?}",
+            m.get("owner")
+        );
+        assert_eq!(m.get("repo").and_then(|s| s.as_lit_str()), Some("r"));
+        assert_eq!(m.get("n").and_then(|s| s.as_lit_str()), Some("9"));
         crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
     }
 
     #[test]
-    fn get_expr_serde_json_roundtrip_with_compound_path_vars() {
+    fn get_expr_serde_json_roundtrip_with_compound_identity_slots() {
         let mut parts = BTreeMap::new();
-        parts.insert("repo".into(), "r".into());
-        parts.insert("n".into(), "9".into());
-        let g = GetExpr::from_ref_with_path_vars(
-            Ref::compound("Ticket", parts),
-            Some(IndexMap::from([(
-                "owner".into(),
-                Value::PlasmInputRef(PlasmInputRef::node_output("zone", vec![])),
-            )])),
+        parts.insert("repo".into(), crate::IdentitySlot::lit("r"));
+        parts.insert("n".into(), crate::IdentitySlot::lit("9"));
+        parts.insert(
+            "owner".into(),
+            crate::IdentitySlot::binding(PlasmInputRef::node_output("zone", vec![])),
         );
+        let g = GetExpr::from_ref(Ref::compound_slots("Ticket", parts));
         let json = serde_json::to_value(&g).unwrap();
         let back: GetExpr = serde_json::from_value(json).unwrap();
         assert_eq!(back, g);
@@ -5930,7 +5801,7 @@ mod tests {
         let EntityKey::Compound(m) = &g.reference.key else {
             panic!("expected compound key");
         };
-        let repo = m.get("repo").expect("repo");
+        let repo = m.get("repo").expect("repo").as_lit_str().expect("lit repo");
         assert!(repo.contains("eu"), "{repo}");
         assert!(repo.contains("main"), "{repo}");
     }
@@ -6738,6 +6609,133 @@ mod tests {
             deterministic: None,
         })
         .unwrap();
+        // Pathful Action: identity projects into CML path `name` (Lit|Binding parity).
+        cgs.add_capability(CapabilitySchema {
+            name: "pet_act".into(),
+            description: String::new(),
+            kind: CapabilityKind::Action,
+            domain: "Pet".into(),
+            identity_key: None,
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
+                template: serde_json::json!({
+                    "method": "POST",
+                    "path": [
+                        {"type": "literal", "value": "pets"},
+                        {"type": "var", "name": "name"},
+                        {"type": "literal", "value": "act"}
+                    ],
+                    "body": {
+                        "type": "object",
+                        "fields": [["message", {"type": "var", "name": "message"}]]
+                    }
+                })
+                .into(),
+            }),
+            derived: None,
+            inputs: crate::schema::CapabilityInputs {
+                arguments: Some(InputSchema {
+                    input_type: InputType::Object {
+                        fields: vec![InputFieldSchema {
+                            name: "message".into(),
+                            wire: InputFieldWire::Registry(
+                                crate::schema::ValueDomainKey::new("fx_str").unwrap(),
+                            ),
+                            required: true,
+                            description: None,
+                            default: None,
+                            wire_json_path: None,
+                            wire_array_element_key: None,
+                            sink_class: None,
+                        }],
+                        additional_fields: false,
+                    },
+                    validation: Default::default(),
+                    description: None,
+                    examples: vec![],
+                }),
+                ..Default::default()
+            },
+            output_schema: Some(OutputSchema {
+                output_type: OutputType::SideEffect {
+                    description: "acts on the pet".into(),
+                },
+                decoder: serde_json::json!({}),
+                idempotent: false,
+                reconcile: None,
+            }),
+            provides: vec![],
+            scope_aggregate_key_policy: Default::default(),
+            preflight: None,
+            discovery: None,
+            sanitizes: vec![],
+
+            deterministic: None,
+        })
+        .unwrap();
+        // Pathless Action: no path vars — bare `Pet.broadcast(...)` (teaching + binding typecheck).
+        cgs.add_capability(CapabilitySchema {
+            name: "pet_broadcast".into(),
+            description: String::new(),
+            kind: CapabilityKind::Action,
+            domain: "Pet".into(),
+            identity_key: None,
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
+                template: serde_json::json!({
+                    "method": "POST",
+                    "path": [
+                        {"type": "literal", "value": "pets"},
+                        {"type": "literal", "value": "broadcast"}
+                    ],
+                    "body": {
+                        "type": "object",
+                        "fields": [["message", {"type": "var", "name": "message"}]]
+                    }
+                })
+                .into(),
+            }),
+            derived: None,
+            inputs: crate::schema::CapabilityInputs {
+                arguments: Some(InputSchema {
+                    input_type: InputType::Object {
+                        fields: vec![InputFieldSchema {
+                            name: "message".into(),
+                            wire: InputFieldWire::Registry(
+                                crate::schema::ValueDomainKey::new("fx_str").unwrap(),
+                            ),
+                            required: false,
+                            description: None,
+                            default: None,
+                            wire_json_path: None,
+                            wire_array_element_key: None,
+                            sink_class: None,
+                        }],
+                        additional_fields: false,
+                    },
+                    validation: Default::default(),
+                    description: None,
+                    examples: vec![],
+                }),
+                ..Default::default()
+            },
+            output_schema: Some(OutputSchema {
+                output_type: OutputType::SideEffect {
+                    description: "broadcasts without path identity".into(),
+                },
+                decoder: serde_json::json!({}),
+                idempotent: false,
+                reconcile: None,
+            }),
+            provides: vec![],
+            scope_aggregate_key_policy: Default::default(),
+            preflight: None,
+            discovery: None,
+            sanitizes: vec![],
+
+            deterministic: None,
+        })
+        .unwrap();
         cgs.validate().unwrap();
         cgs
     }
@@ -6813,12 +6811,125 @@ mod tests {
         let Expr::Get(g) = r.expr else {
             panic!("expected Get, got {:?}", r.expr);
         };
-        let pv = g.path_vars.as_ref().expect("path_vars");
+        assert!(
+            matches!(
+                &g.reference.key,
+                EntityKey::Simple(crate::IdentitySlot::Binding(PlasmInputRef::NodeInput {
+                    node,
+                    path
+                })) if node == "pikachu" && path.is_empty()
+            ),
+            "expected Simple(Binding(pikachu)), got {:?}",
+            g.reference.key
+        );
+    }
+
+    /// Pathless Action + Lit|Binding receivers: same invoke body; identity only on Ref slots.
+    #[test]
+    fn binding_and_literal_method_invoke_ir_equivalent() {
+        use std::collections::BTreeSet;
+        use std::sync::Arc;
+
+        let cgs = simple_name_id_get_fixture_cgs();
+        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
+        let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
+        let stack = test_layer(&cgs);
+
+        let lit = parse_with_cgs_layers_program(
+            r#"Pet("pikachu").act(message="hi")"#,
+            &stack,
+            Arc::clone(&sym_map),
+            None,
+            false,
+        )
+        .expect("lit invoke");
+        let mut labels = BTreeSet::new();
+        labels.insert("principal".into());
+        let bind = parse_with_cgs_layers_program(
+            r#"Pet(principal).act(message="hi")"#,
+            &stack,
+            sym_map,
+            Some(&labels),
+            false,
+        )
+        .expect("binding invoke");
+
+        let (Expr::Invoke(lit_inv), Expr::Invoke(bind_inv)) = (&lit.expr, &bind.expr) else {
+            panic!("expected Invokes, got {:?} / {:?}", lit.expr, bind.expr);
+        };
+        assert_eq!(lit_inv.capability, bind_inv.capability);
+        assert_eq!(
+            lit_inv.input.as_ref().map(|i| i.to_value()),
+            bind_inv.input.as_ref().map(|i| i.to_value()),
+            "body args must match — no invented path keys"
+        );
+        if let Some(Value::Object(m)) = lit_inv.input.as_ref().map(|i| i.to_value()) {
+            assert!(
+                !m.contains_key("pet_id") && !m.contains_key("name"),
+                "identity must not be smuggled into body: {m:?}"
+            );
+        }
         assert!(matches!(
-            pv.get("pet_id"),
-            Some(Value::PlasmInputRef(PlasmInputRef::NodeInput { node, path }))
-                if node == "pikachu" && path.is_empty()
+            &lit_inv.target.key,
+            EntityKey::Simple(crate::IdentitySlot::Lit(id)) if id.as_str() == "pikachu"
         ));
+        assert!(matches!(
+            &bind_inv.target.key,
+            EntityKey::Simple(crate::IdentitySlot::Binding(PlasmInputRef::NodeInput { node, path }))
+                if node == "principal" && path.is_empty()
+        ));
+        crate::type_checker::type_check_expr(&lit.expr, &cgs).unwrap();
+        crate::type_checker::type_check_expr(&bind.expr, &cgs).unwrap();
+    }
+
+    #[test]
+    fn pathless_action_bare_receiver_typechecks() {
+        use std::collections::BTreeSet;
+        use std::sync::Arc;
+
+        let cgs = simple_name_id_get_fixture_cgs();
+        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
+        let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
+        let stack = test_layer(&cgs);
+        let r = parse_with_cgs_layers_program(
+            r#"Pet.broadcast(message="hi")"#,
+            &stack,
+            Arc::clone(&sym_map),
+            None,
+            false,
+        )
+        .expect("bare pathless Action");
+        let Expr::Invoke(inv) = &r.expr else {
+            panic!("expected Invoke, got {:?}", r.expr);
+        };
+        assert!(
+            inv.target.is_pathless_nullary()
+                || inv.target.simple_id().is_some_and(|s| s.as_str().is_empty()),
+            "bare pathless Action should not invent identity, got {:?}",
+            inv.target
+        );
+        crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
+
+        let mut labels = BTreeSet::new();
+        labels.insert("principal".into());
+        let bind = parse_with_cgs_layers_program(
+            r#"Pet(principal).broadcast(message="hi")"#,
+            &stack,
+            sym_map,
+            Some(&labels),
+            false,
+        )
+        .expect("binding pathless Action");
+        let Expr::Invoke(bind_inv) = &bind.expr else {
+            panic!("expected Invoke");
+        };
+        if let Some(Value::Object(m)) = bind_inv.input.as_ref().map(|i| i.to_value()) {
+            assert!(
+                !m.contains_key("pet_id") && !m.contains_key("name"),
+                "pathless+binding must not invent path keys in body: {m:?}"
+            );
+        }
+        crate::type_checker::type_check_expr(&bind.expr, &cgs).unwrap();
     }
 
     #[test]
