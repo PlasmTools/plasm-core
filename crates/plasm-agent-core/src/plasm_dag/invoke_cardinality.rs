@@ -1,4 +1,5 @@
-//! Compile-time gate: only StaticSingleton field extracts may fill scalar invoke params.
+//! Compile-time gate: only StaticSingleton field extracts / scalar-cell bindings may fill
+//! scalar invoke params (PLP-1).
 
 use super::binding_contract::binding_contract;
 use super::prelude::*;
@@ -6,7 +7,7 @@ use super::schema_validate::cgs_for_qualified_entity;
 use super::types::CompileState;
 use plasm_core::{plp, FieldType, PlasmInputRef, Value};
 
-/// Reject plural / bounded / whole-entity refs into scalar stringish invoke params (PLP-1).
+/// Reject plural / bounded / entity-row refs into scalar stringish invoke params (PLP-1).
 pub(in crate::plasm_dag) fn validate_invoke_scalar_field_refs(
     session: &ExecuteSession,
     state: &CompileState<'_>,
@@ -47,7 +48,7 @@ pub(in crate::plasm_dag) fn validate_invoke_scalar_field_refs(
         if !param_is_scalar_cell(&nv.field_type) {
             continue;
         }
-        reject_non_static_singleton_scalar_refs(state, node_id, param, val)?;
+        reject_non_scalar_cell_invoke_refs(state, node_id, param, val)?;
     }
     if let Some(path_vars) = &inv.path_vars {
         for (param, val) in path_vars {
@@ -60,7 +61,7 @@ pub(in crate::plasm_dag) fn validate_invoke_scalar_field_refs(
             if !param_is_scalar_cell(&nv.field_type) {
                 continue;
             }
-            reject_non_static_singleton_scalar_refs(state, node_id, param, val)?;
+            reject_non_scalar_cell_invoke_refs(state, node_id, param, val)?;
         }
     }
     Ok(())
@@ -96,7 +97,7 @@ fn param_is_scalar_cell(ft: &FieldType) -> bool {
     )
 }
 
-fn reject_non_static_singleton_scalar_refs(
+fn reject_non_scalar_cell_invoke_refs(
     state: &CompileState<'_>,
     node_id: &str,
     param: &str,
@@ -104,12 +105,16 @@ fn reject_non_static_singleton_scalar_refs(
 ) -> Result<(), String> {
     match value {
         Value::PlasmInputRef(PlasmInputRef::NodeInput { node, path }) if path.is_empty() => {
-            Err(plp::plp4_program(
-                node_id,
-                format!(
-                    "param `{param}` expects a scalar cell, but `{node}` is a whole-entity row — bind `{node}.wire` from a StaticSingleton (Get / nullary singleton), or pass a string literal"
-                ),
-            ))
+            if binding_is_scalar_cell(state, node) {
+                Ok(())
+            } else {
+                Err(plp::plp4_program(
+                    node_id,
+                    format!(
+                        "param `{param}` expects a scalar cell, but `{node}` denotes an entity row — bind a scalar cell (`x = ℓ.wire` or a string/heredoc binding) then pass `param=x`, or write `param=ℓ.wire` inline"
+                    ),
+                ))
+            }
         }
         Value::PlasmInputRef(PlasmInputRef::NodeInput { node, path }) if !path.is_empty() => {
             if !binding_is_static_singleton(state, node) {
@@ -125,19 +130,19 @@ fn reject_non_static_singleton_scalar_refs(
         }
         Value::Array(items) => {
             for item in items {
-                reject_non_static_singleton_scalar_refs(state, node_id, param, item)?;
+                reject_non_scalar_cell_invoke_refs(state, node_id, param, item)?;
             }
             Ok(())
         }
         Value::Object(fields) => {
             for v in fields.values() {
-                reject_non_static_singleton_scalar_refs(state, node_id, param, v)?;
+                reject_non_scalar_cell_invoke_refs(state, node_id, param, v)?;
             }
             Ok(())
         }
         Value::UnionCtor { ctor_fields, .. } => {
             for v in ctor_fields.values() {
-                reject_non_static_singleton_scalar_refs(state, node_id, param, v)?;
+                reject_non_scalar_cell_invoke_refs(state, node_id, param, v)?;
             }
             Ok(())
         }
@@ -148,4 +153,8 @@ fn reject_non_static_singleton_scalar_refs(
 fn binding_is_static_singleton(state: &CompileState<'_>, label: &str) -> bool {
     binding_contract(state, label)
         .is_some_and(|c| matches!(c.row_cardinality, RowCardinalityProof::StaticSingleton))
+}
+
+fn binding_is_scalar_cell(state: &CompileState<'_>, label: &str) -> bool {
+    binding_contract(state, label).is_some_and(|c| c.is_scalar_cell())
 }

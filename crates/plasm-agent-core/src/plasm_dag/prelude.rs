@@ -17,8 +17,8 @@ pub(in crate::plasm_dag) use crate::plasm_render_compile::{
     parse_field_list_with_tokens, render_plan_graph_edges,
 };
 pub(in crate::plasm_dag) use crate::program_binding::{
-    BoundedSingletonKind, ContinuationAnchor, ContinuationCapability, ProgramBindingContract,
-    RowCardinalityProof, SegmentPolicy,
+    BindingValueKind, BoundedSingletonKind, ContinuationAnchor, ContinuationCapability,
+    ProgramBindingContract, RowCardinalityProof, SegmentPolicy,
 };
 pub(in crate::plasm_dag) use plasm_core::expr_parser::{
     collect_program_statement_lines, expand_flattened_program_statements, is_valid_program_label,

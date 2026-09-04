@@ -1,7 +1,8 @@
 //! Unified compile-time contract for program binding labels (`ident = …`).
 //!
-//! Single source of truth for row entity type, cardinality proof, and continuation mode —
-//! consumed by [`crate::plasm_dag`] when lowering `label.relation` / postfix chains.
+//! Single source of truth for row entity type, cardinality proof, [`BindingValueKind`]
+//! (row vs scalar cell), and continuation mode — consumed by [`crate::plasm_dag`] when
+//! lowering `label.relation` / postfix chains and gating scalar invoke params (PLP-1).
 
 use crate::plasm_plan::{
     InputCardinalityProof, QualifiedEntityKey, RelationSourceCardinality, ResultShape,
@@ -34,8 +35,22 @@ pub(crate) struct ProgramBindingContract {
     pub row_entity: QualifiedEntityKey,
     pub result_shape: ResultShape,
     pub row_cardinality: RowCardinalityProof,
+    /// Orthogonal to [`RowCardinalityProof`]: row count ≠ cell payload (PLP-1).
+    pub value_kind: BindingValueKind,
     pub continuation: ContinuationCapability,
     pub anchor: ContinuationAnchor,
+}
+
+/// Whether a bare binding label denotes an entity row or a proven scalar cell.
+///
+/// Orthogonal to [`RowCardinalityProof`]: a StaticSingleton Get is still [`EntityRow`];
+/// a [`crate::plasm_dag`] `ScalarExtract` / heredoc cell is [`ScalarCell`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BindingValueKind {
+    /// Entity / relation / projection row — bare label is a row, not a scalar cell.
+    EntityRow,
+    /// Proven scalar cell — bare label lawfully fills scalar invoke params (PLP-1 form 2).
+    ScalarCell,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -151,6 +166,10 @@ impl RowCardinalityProof {
 }
 
 impl ProgramBindingContract {
+    pub(crate) fn is_scalar_cell(&self) -> bool {
+        matches!(self.value_kind, BindingValueKind::ScalarCell)
+    }
+
     pub(crate) fn supports_relation_dot(&self) -> bool {
         matches!(
             self.continuation,

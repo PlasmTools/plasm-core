@@ -3469,8 +3469,40 @@ bad"#,
         )
         .expect_err("whole-entity bind must not fill string param");
         assert!(
-            err.contains("whole-entity") || err.contains("scalar cell"),
-            "expected whole-entity reject, got: {err}"
+            err.contains("entity row") && err.contains("scalar cell"),
+            "expected PLP-4 entity-row reject, got: {err}"
+        );
+        assert!(
+            !err.contains("peer.wire") && !err.contains("bind `peer`.wire") && !err.contains("bind `{node}.wire`"),
+            "must not teach a literal field named wire on the binding: {err}"
+        );
+    }
+
+    /// PLP-1 form 2: `x = ℓ.wire` then `param=x` must compile like inline `param=ℓ.wire`.
+    #[test]
+    fn invoke_accepts_bound_scalar_extract_into_string_param() {
+        let session = test_session();
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "scalar-extract-into-string",
+            r#"peer = LangItem("i2")
+t = peer.title
+ok = LangItem("i1").update(title=t, score=1, owner="a")
+ok"#,
+        )
+        .expect("bound ScalarExtract cell must fill string param");
+        let updated = plan["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .find(|n| n["id"] == "ok")
+            .expect("ok node");
+        let uses = updated["uses_result"].as_array().expect("uses_result");
+        assert!(
+            uses.iter().any(|u| u["node"] == "t"),
+            "title=t must reference scalar binding: {uses:?}"
         );
     }
 

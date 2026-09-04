@@ -50,6 +50,7 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
     node_expr: &str,
     source: &DagNodeSource,
 ) -> ProgramBindingContract {
+    let value_kind = binding_value_kind(source);
     match source {
         DagNodeSource::Surface {
             parsed,
@@ -89,6 +90,7 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
                 row_entity: qualified_entity.clone(),
                 result_shape: *result_shape,
                 row_cardinality,
+                value_kind,
                 continuation,
                 anchor,
             }
@@ -113,6 +115,7 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
                 row_entity: qualified_entity.clone(),
                 result_shape: *result_shape,
                 row_cardinality,
+                value_kind,
                 continuation: ContinuationCapability::RelationDot {
                     segments: SegmentPolicy::SingleSegment,
                     method_invoke: true,
@@ -141,6 +144,7 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
                 row_entity: parent.row_entity.clone(),
                 result_shape: parent.result_shape,
                 row_cardinality: parent.row_cardinality,
+                value_kind,
                 continuation: parent.continuation,
                 anchor,
             }
@@ -169,6 +173,7 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
                 } else {
                     RowCardinalityProof::StaticPlural
                 },
+                value_kind,
                 continuation: parent.continuation,
                 anchor: ContinuationAnchor::BindingLabel,
             }
@@ -184,32 +189,22 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
             },
             result_shape: crate::plasm_plan::ResultShape::Single,
             row_cardinality: RowCardinalityProof::StaticSingleton,
+            value_kind,
             continuation: ContinuationCapability::RenderContentScalar,
             anchor: ContinuationAnchor::None,
         },
         DagNodeSource::Compute { schema, .. } => synthetic_terminal_contract(label, schema),
         DagNodeSource::Data(value) => {
-            let singleton = matches!(
-                value,
-                PlanValue::Literal { value }
-                    if value.as_array().is_none_or(|items| items.len() <= 1)
-            );
+            let shape = data_literal_shape(value);
             ProgramBindingContract {
                 label: label.to_string(),
                 row_entity: QualifiedEntityKey {
                     entry_id: String::new(),
                     entity: String::new(),
                 },
-                result_shape: if singleton {
-                    crate::plasm_plan::ResultShape::Single
-                } else {
-                    crate::plasm_plan::ResultShape::List
-                },
-                row_cardinality: if singleton {
-                    RowCardinalityProof::StaticSingleton
-                } else {
-                    RowCardinalityProof::StaticPlural
-                },
+                result_shape: shape.result_shape,
+                row_cardinality: shape.row_cardinality,
+                value_kind,
                 continuation: ContinuationCapability::Terminal,
                 anchor: ContinuationAnchor::None,
             }
@@ -222,6 +217,7 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
             },
             result_shape: crate::plasm_plan::ResultShape::Single,
             row_cardinality: RowCardinalityProof::RuntimeChecked,
+            value_kind,
             continuation: ContinuationCapability::Terminal,
             anchor: ContinuationAnchor::None,
         },
@@ -233,8 +229,66 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
             },
             result_shape: crate::plasm_plan::ResultShape::Single,
             row_cardinality: RowCardinalityProof::StaticSingleton,
+            value_kind,
             continuation: ContinuationCapability::Terminal,
             anchor: ContinuationAnchor::None,
+        },
+    }
+}
+
+/// PLP-1 table: which DAG sources denote a proven scalar cell vs an entity row.
+fn binding_value_kind(source: &DagNodeSource) -> BindingValueKind {
+    match source {
+        DagNodeSource::ScalarExtract { .. }
+        | DagNodeSource::Compute {
+            op: ComputeOp::Render { .. },
+            ..
+        } => BindingValueKind::ScalarCell,
+        DagNodeSource::Data(value) => data_literal_shape(value).value_kind,
+        _ => BindingValueKind::EntityRow,
+    }
+}
+
+struct DataLiteralShape {
+    result_shape: crate::plasm_plan::ResultShape,
+    row_cardinality: RowCardinalityProof,
+    value_kind: BindingValueKind,
+}
+
+/// Single classifier for `DagNodeSource::Data` — cardinality and value-kind stay aligned.
+fn data_literal_shape(value: &PlanValue) -> DataLiteralShape {
+    match value {
+        PlanValue::Literal { value: lit } => match lit {
+            serde_json::Value::Null
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Number(_)
+            | serde_json::Value::String(_) => DataLiteralShape {
+                result_shape: crate::plasm_plan::ResultShape::Single,
+                row_cardinality: RowCardinalityProof::StaticSingleton,
+                value_kind: BindingValueKind::ScalarCell,
+            },
+            serde_json::Value::Array(items) if items.len() <= 1 => DataLiteralShape {
+                result_shape: crate::plasm_plan::ResultShape::Single,
+                row_cardinality: RowCardinalityProof::StaticSingleton,
+                value_kind: BindingValueKind::EntityRow,
+            },
+            serde_json::Value::Array(_) => DataLiteralShape {
+                result_shape: crate::plasm_plan::ResultShape::List,
+                row_cardinality: RowCardinalityProof::StaticPlural,
+                value_kind: BindingValueKind::EntityRow,
+            },
+            // Objects are non-array literals → prior `as_array().is_none_or(…)` treated them
+            // as singleton rows, not scalar cells.
+            serde_json::Value::Object(_) => DataLiteralShape {
+                result_shape: crate::plasm_plan::ResultShape::Single,
+                row_cardinality: RowCardinalityProof::StaticSingleton,
+                value_kind: BindingValueKind::EntityRow,
+            },
+        },
+        _ => DataLiteralShape {
+            result_shape: crate::plasm_plan::ResultShape::List,
+            row_cardinality: RowCardinalityProof::StaticPlural,
+            value_kind: BindingValueKind::EntityRow,
         },
     }
 }
@@ -251,6 +305,7 @@ pub(in crate::plasm_dag) fn synthetic_row_contract(
         },
         result_shape: crate::plasm_plan::ResultShape::List,
         row_cardinality: RowCardinalityProof::RuntimeChecked,
+        value_kind: BindingValueKind::EntityRow,
         continuation: ContinuationCapability::PostfixOnly,
         anchor: ContinuationAnchor::None,
     }
@@ -268,7 +323,95 @@ pub(in crate::plasm_dag) fn synthetic_terminal_contract(
         },
         result_shape: crate::plasm_plan::ResultShape::Single,
         row_cardinality: RowCardinalityProof::RuntimeChecked,
+        value_kind: BindingValueKind::EntityRow,
         continuation: ContinuationCapability::Terminal,
         anchor: ContinuationAnchor::None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plasm_dag::types::DagNodeSource;
+    use crate::plasm_plan::{ComputeOp, SyntheticResultSchema};
+
+    #[test]
+    fn binding_value_kind_table() {
+        assert_eq!(
+            binding_value_kind(&DagNodeSource::ScalarExtract {
+                source: "peer".into(),
+                wire: "title".into(),
+            }),
+            BindingValueKind::ScalarCell
+        );
+        assert_eq!(
+            binding_value_kind(&DagNodeSource::Compute {
+                source: "src".into(),
+                op: ComputeOp::Render {
+                    columns: Vec::new(),
+                    template: String::new(),
+                    column_aliases: Default::default(),
+                    render_bindings: Vec::new(),
+                },
+                schema: SyntheticResultSchema {
+                    entity: None,
+                    fields: Vec::new(),
+                },
+                collection_alias: None,
+            }),
+            BindingValueKind::ScalarCell
+        );
+        assert_eq!(
+            binding_value_kind(&DagNodeSource::Data(PlanValue::Literal {
+                value: serde_json::json!("hi"),
+            })),
+            BindingValueKind::ScalarCell
+        );
+        assert_eq!(
+            binding_value_kind(&DagNodeSource::Data(PlanValue::Literal {
+                value: serde_json::json!({"k": 1}),
+            })),
+            BindingValueKind::EntityRow
+        );
+        assert_eq!(
+            binding_value_kind(&DagNodeSource::Derive {
+                source: "src".into(),
+                value: PlanValue::Literal {
+                    value: serde_json::json!("x"),
+                },
+                inputs: Vec::new(),
+            }),
+            BindingValueKind::EntityRow
+        );
+    }
+
+    #[test]
+    fn data_literal_shape_aligns_cardinality_and_value_kind() {
+        let s = data_literal_shape(&PlanValue::Literal {
+            value: serde_json::json!("cell"),
+        });
+        assert_eq!(s.value_kind, BindingValueKind::ScalarCell);
+        assert!(matches!(
+            s.row_cardinality,
+            RowCardinalityProof::StaticSingleton
+        ));
+
+        let arr1 = data_literal_shape(&PlanValue::Literal {
+            value: serde_json::json!([1]),
+        });
+        assert_eq!(arr1.value_kind, BindingValueKind::EntityRow);
+        assert!(matches!(
+            arr1.row_cardinality,
+            RowCardinalityProof::StaticSingleton
+        ));
+
+        let arr_many = data_literal_shape(&PlanValue::Literal {
+            value: serde_json::json!([1, 2]),
+        });
+        assert_eq!(arr_many.value_kind, BindingValueKind::EntityRow);
+        assert!(matches!(
+            arr_many.row_cardinality,
+            RowCardinalityProof::StaticPlural
+        ));
     }
 }
