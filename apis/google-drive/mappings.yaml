@@ -27,10 +27,13 @@ files_list:
     items: files
   pagination:
     params:
-      pageToken: { from_response: nextPageToken }
-      pageSize: { fixed: 100 }
+      pageToken:
+        from_response: nextPageToken
+      pageSize:
+        fixed: 100
+        role: page_size
     location: query
-
+    strategy: cursor
 files_get:
   method: GET
   path:
@@ -137,10 +140,13 @@ permissions_list:
     items: permissions
   pagination:
     params:
-      pageToken: { from_response: nextPageToken }
-      pageSize: { fixed: 100 }
+      pageToken:
+        from_response: nextPageToken
+      pageSize:
+        fixed: 100
+        role: page_size
     location: query
-
+    strategy: cursor
 permissions_get:
   method: GET
   path:
@@ -223,10 +229,13 @@ comments_list:
     items: comments
   pagination:
     params:
-      pageToken: { from_response: nextPageToken }
-      pageSize: { fixed: 100 }
+      pageToken:
+        from_response: nextPageToken
+      pageSize:
+        fixed: 100
+        role: page_size
     location: query
-
+    strategy: cursor
 comments_get:
   method: GET
   path:
@@ -293,10 +302,13 @@ replies_list:
     items: replies
   pagination:
     params:
-      pageToken: { from_response: nextPageToken }
-      pageSize: { fixed: 100 }
+      pageToken:
+        from_response: nextPageToken
+      pageSize:
+        fixed: 100
+        role: page_size
     location: query
-
+    strategy: cursor
 replies_get:
   method: GET
   path:
@@ -367,10 +379,13 @@ revisions_list:
     items: revisions
   pagination:
     params:
-      pageToken: { from_response: nextPageToken }
-      pageSize: { fixed: 100 }
+      pageToken:
+        from_response: nextPageToken
+      pageSize:
+        fixed: 100
+        role: page_size
     location: query
-
+    strategy: cursor
 revisions_get:
   method: GET
   path:
@@ -415,10 +430,13 @@ drives_list:
     items: drives
   pagination:
     params:
-      pageToken: { from_response: nextPageToken }
-      pageSize: { fixed: 100 }
+      pageToken:
+        from_response: nextPageToken
+      pageSize:
+        fixed: 100
+        role: page_size
     location: query
-
+    strategy: cursor
 drives_get:
   method: GET
   path:
@@ -517,10 +535,13 @@ changes_list:
     items: changes
   pagination:
     params:
-      pageToken: { from_response: nextPageToken }
-      pageSize: { fixed: 100 }
+      pageToken:
+        from_response: nextPageToken
+      pageSize:
+        fixed: 100
+        role: page_size
     location: query
-
+    strategy: cursor
 channels_stop:
   method: POST
   path:
@@ -551,10 +572,13 @@ teamdrives_list:
     items: teamDrives
   pagination:
     params:
-      pageToken: { from_response: nextPageToken }
-      pageSize: { fixed: 100 }
+      pageToken:
+        from_response: nextPageToken
+      pageSize:
+        fixed: 100
+        role: page_size
     location: query
-
+    strategy: cursor
 teamdrives_get:
   method: GET
   path:

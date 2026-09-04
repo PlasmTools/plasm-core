@@ -11,8 +11,12 @@ artist_search:
     items: artist_list
   pagination:
     params:
-      page: {counter: 1}
-      page_size: {fixed: 10}
+      page:
+        counter: 1
+      page_size:
+        fixed: 10
+        role: page_size
+    strategy: page_number
   query:
     type: object
     fields:
@@ -42,8 +46,12 @@ chart_artists:
     items: artist_list
   pagination:
     params:
-      page: {counter: 1}
-      page_size: {fixed: 10}
+      page:
+        counter: 1
+      page_size:
+        fixed: 10
+        role: page_size
+    strategy: page_number
   query:
     type: object
     fields:
@@ -62,8 +70,12 @@ track_search:
     items: track_list
   pagination:
     params:
-      page: {counter: 1}
-      page_size: {fixed: 10}
+      page:
+        counter: 1
+      page_size:
+        fixed: 10
+        role: page_size
+    strategy: page_number
   query:
     type: object
     fields:
@@ -112,8 +124,12 @@ chart_tracks:
     items: track_list
   pagination:
     params:
-      page: {counter: 1}
-      page_size: {fixed: 10}
+      page:
+        counter: 1
+      page_size:
+        fixed: 10
+        role: page_size
+    strategy: page_number
   query:
     type: object
     fields:

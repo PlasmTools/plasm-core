@@ -211,9 +211,15 @@ user_query:
       value: users
   pagination:
     params:
-      start_cursor: {from_response: next_cursor}
-      page_size: {fixed: 100}
-    stop_when: {field: has_more, eq: false}
+      start_cursor:
+        from_response: next_cursor
+      page_size:
+        fixed: 100
+        role: page_size
+    stop_when:
+      field: has_more
+      eq: false
+    strategy: cursor
   headers:
     type: object
     fields:
@@ -239,9 +245,15 @@ comment_query:
           name: block_id
   pagination:
     params:
-      start_cursor: {from_response: next_cursor}
-      page_size: {fixed: 100}
-    stop_when: {field: has_more, eq: false}
+      start_cursor:
+        from_response: next_cursor
+      page_size:
+        fixed: 100
+        role: page_size
+    stop_when:
+      field: has_more
+      eq: false
+    strategy: cursor
   headers:
     type: object
     fields:

@@ -348,6 +348,44 @@ text_message_delete:
   - { type: var, name: id }
   headers: *auth_header
 
+text_message_window:
+  method: GET
+  path:
+  - { type: literal, value: phone }
+  - { type: literal, value: messages }
+  - { type: literal, value: text }
+  - { type: literal, value: window }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - [phone_number, { type: var, name: phone_number }]
+    - - min_datetime
+      - type: if
+        condition: { type: exists, var: min_datetime }
+        then_expr: { type: var, name: min_datetime }
+        else_expr: { type: const, value: null }
+    - - max_datetime
+      - type: if
+        condition: { type: exists, var: max_datetime }
+        then_expr: { type: var, name: max_datetime }
+        else_expr: { type: const, value: null }
+    - - pagination_order
+      - type: if
+        condition: { type: exists, var: pagination_order }
+        then_expr: { type: var, name: pagination_order }
+        else_expr: { type: const, value: null }
+    - - page_index
+      - type: if
+        condition: { type: exists, var: page_index }
+        then_expr: { type: var, name: page_index }
+        else_expr: { type: const, value: null }
+    - - page_limit
+      - type: if
+        condition: { type: exists, var: page_limit }
+        then_expr: { type: var, name: page_limit }
+        else_expr: { type: const, value: null }
+
 voice_message_query:
   method: GET
   path:
@@ -411,6 +449,44 @@ voice_message_delete:
   - { type: var, name: id }
   headers: *auth_header
 
+voice_message_window:
+  method: GET
+  path:
+  - { type: literal, value: phone }
+  - { type: literal, value: messages }
+  - { type: literal, value: voice }
+  - { type: literal, value: window }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - [phone_number, { type: var, name: phone_number }]
+    - - min_datetime
+      - type: if
+        condition: { type: exists, var: min_datetime }
+        then_expr: { type: var, name: min_datetime }
+        else_expr: { type: const, value: null }
+    - - max_datetime
+      - type: if
+        condition: { type: exists, var: max_datetime }
+        then_expr: { type: var, name: max_datetime }
+        else_expr: { type: const, value: null }
+    - - pagination_order
+      - type: if
+        condition: { type: exists, var: pagination_order }
+        then_expr: { type: var, name: pagination_order }
+        else_expr: { type: const, value: null }
+    - - page_index
+      - type: if
+        condition: { type: exists, var: page_index }
+        then_expr: { type: var, name: page_index }
+        else_expr: { type: const, value: null }
+    - - page_limit
+      - type: if
+        condition: { type: exists, var: page_limit }
+        then_expr: { type: var, name: page_limit }
+        else_expr: { type: const, value: null }
+
 profile_get:
   method: GET
   path:
@@ -427,3 +503,12 @@ date_time_get:
   - { type: literal, value: phone }
   - { type: literal, value: date_time }
   headers: *auth_header
+
+contact_relationship_query:
+  method: GET
+  path:
+  - { type: literal, value: phone }
+  - { type: literal, value: contact_relationships }
+  headers: *auth_header
+  response:
+    items: results

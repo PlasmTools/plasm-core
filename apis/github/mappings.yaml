@@ -37,9 +37,13 @@ repo_search:
                   else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1, max: 33}
-      per_page: {fixed: 30}
-
+      page:
+        counter: 1
+        max: 33
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 user_repos_query:
   method: GET
   path:
@@ -61,9 +65,12 @@ user_repos_query:
                       else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 30}
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 auth_user_repos_query:
   method: GET
   path:
@@ -87,9 +94,12 @@ auth_user_repos_query:
                       else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 30}
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 repo_get:
   # GET /repos/{owner}/{repo} — second segment is the repo slug (domain field `repo`, wire `name`).
   method: GET
@@ -115,9 +125,12 @@ repo_collaborators_query:
                        else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 30 }
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 repo_forks_query:
   method: GET
   path:
@@ -134,11 +147,12 @@ repo_forks_query:
                  else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 30 }
-
-# ── Issue ────────────────────────────────────────────────────────────────────
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 issue_get:
   # GET /repos/{owner}/{repo}/issues/{number}
   # key_vars [owner, repo, number] are injected into CML env from the compound Ref.
@@ -187,9 +201,12 @@ issue_query:
                       else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 30}
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 issue_sub_issue_query:
   method: GET
   path:
@@ -202,9 +219,12 @@ issue_sub_issue_query:
   response: bare_list
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 30}
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 issue_search:
   method: GET
   path:
@@ -224,11 +244,13 @@ issue_search:
                   else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1, max: 33}
-      per_page: {fixed: 30}
-
-# ── PullRequest ──────────────────────────────────────────────────────────────
-
+      page:
+        counter: 1
+        max: 33
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 pr_get:
   # GET /repos/{owner}/{repo}/pulls/{number}
   method: GET
@@ -268,9 +290,12 @@ pr_query:
                       else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 30}
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 pr_search:
   method: GET
   path:
@@ -290,9 +315,13 @@ pr_search:
                   else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1, max: 33}
-      per_page: {fixed: 30}
-
+      page:
+        counter: 1
+        max: 33
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 pr_touching_path_search:
   method: GET
   path:
@@ -316,9 +345,13 @@ pr_touching_path_search:
                   else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1, max: 33}
-      per_page: {fixed: 30}
-
+      page:
+        counter: 1
+        max: 33
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 commit_query:
   method: GET
   path:
@@ -350,9 +383,12 @@ commit_query:
                  else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 30}
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 commit_get:
   method: GET
   path:
@@ -391,9 +427,12 @@ pr_review_query:
   response: bare_list
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 30}
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 pr_file_query:
   method: GET
   path:
@@ -406,9 +445,12 @@ pr_file_query:
   response: bare_list
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 30 }
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 pr_review_comment_query:
   method: GET
   path:
@@ -427,9 +469,12 @@ pr_review_comment_query:
                   else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 30 }
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 branch_query:
   method: GET
   path:
@@ -440,9 +485,12 @@ branch_query:
   response: bare_list
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 30}
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 branch_get:
   method: GET
   path:
@@ -463,9 +511,12 @@ repo_tags_query:
   response: bare_list
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 30 }
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 repo_tag_get:
   method: GET
   path:
@@ -494,9 +545,12 @@ contributor_query:
                  else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 30 }
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 workflow_query:
   method: GET
   path:
@@ -509,9 +563,12 @@ workflow_query:
     items: workflows
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 30 }
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 workflow_get:
   method: GET
   path:
@@ -569,9 +626,12 @@ workflow_run_query:
                     else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 30 }
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 workflow_run_get:
   method: GET
   path:
@@ -609,9 +669,12 @@ workflow_run_by_workflow_query:
                   else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 30 }
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 workflow_run_rerun:
   method: POST
   path:
@@ -680,9 +743,12 @@ workflow_job_query:
                    else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 30 }
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 workflow_artifact_query:
   method: GET
   path:
@@ -697,9 +763,12 @@ workflow_artifact_query:
     items: artifacts
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 30 }
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 workflow_run_usage_get:
   method: GET
   path:
@@ -748,11 +817,13 @@ user_search:
                   else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1, max: 33}
-      per_page: {fixed: 30}
-
-# ── Label ────────────────────────────────────────────────────────────────────
-
+      page:
+        counter: 1
+        max: 33
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 label_query:
   method: GET
   path:
@@ -763,9 +834,12 @@ label_query:
   response: bare_list
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 100}
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 100
+        role: page_size
+    strategy: page_number
 label_get:
   method: GET
   path:
@@ -788,11 +862,12 @@ issue_label_query:
   response: bare_list
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 100}
-
-# ── Milestone ────────────────────────────────────────────────────────────────
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 100
+        role: page_size
+    strategy: page_number
 milestone_query:
   method: GET
   path:
@@ -815,9 +890,12 @@ milestone_query:
                       else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 100}
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 100
+        role: page_size
+    strategy: page_number
 milestone_get:
   method: GET
   path:
@@ -897,9 +975,12 @@ release_query:
   response: bare_list
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 30 }
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 release_get:
   method: GET
   path:
@@ -1004,9 +1085,12 @@ issue_comment_query:
                   else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 30}
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 repo_comment_query:
   # GET /repos/{owner}/{repo}/issues/comments  (all issue comments in a repo)
   method: GET
@@ -1031,11 +1115,12 @@ repo_comment_query:
                   else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 30}
-
-# ── Organization ────────────────────────────────────────────────────────────
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 org_get:
   # GET /orgs/{org} — id_field is login; CML env uses `id` for the path segment
   method: GET
@@ -1073,9 +1158,12 @@ org_repos_query:
                       else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 30 }
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 org_public_repos_query:
   method: GET
   path:
@@ -1095,9 +1183,12 @@ org_public_repos_query:
                       else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 30 }
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 org_members_query:
   method: GET
   path:
@@ -1116,11 +1207,12 @@ org_members_query:
                  else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 30 }
-
-# ── Gist ─────────────────────────────────────────────────────────────────────
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 gist_query:
   method: GET
   path:
@@ -1128,9 +1220,12 @@ gist_query:
   response: bare_list
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 30 }
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 gist_get:
   method: GET
   path:
@@ -1162,9 +1257,12 @@ notification_query:
                   else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1}
-      per_page: {fixed: 30 }
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
 notification_get:
   method: GET
   path:

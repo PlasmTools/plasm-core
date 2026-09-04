@@ -16,10 +16,6 @@ account_password_query:
   - type: literal
     value: account_passwords
 
-account_password_get:
-  transport: view
-  view: account_password_by_key
-
 address_query:
   method: GET
   path:

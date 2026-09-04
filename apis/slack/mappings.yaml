@@ -41,10 +41,13 @@ channel_list:
           else_expr: { type: const, value: null }
   pagination:
     params:
-      cursor: { from_response: response_metadata.next_cursor }
-      limit: { fixed: 200 }
+      cursor:
+        from_response: response_metadata.next_cursor
+      limit:
+        fixed: 200
+        role: page_size
     location: query
-
+    strategy: cursor
 channel_info:
   response:
     items: channel
@@ -92,11 +95,16 @@ channel_history:
           else_expr: { type: const, value: null }
   pagination:
     params:
-      cursor: { from_response: response_metadata.next_cursor }
-      limit: { fixed: 100 }
+      cursor:
+        from_response: response_metadata.next_cursor
+      limit:
+        fixed: 100
+        role: page_size
     location: query
-    stop_when: { field: has_more, eq: false }
-
+    stop_when:
+      field: has_more
+      eq: false
+    strategy: cursor
 channel_replies:
   response:
     items: messages
@@ -115,11 +123,16 @@ channel_replies:
           name: ts
   pagination:
     params:
-      cursor: { from_response: response_metadata.next_cursor }
-      limit: { fixed: 100 }
+      cursor:
+        from_response: response_metadata.next_cursor
+      limit:
+        fixed: 100
+        role: page_size
     location: query
-    stop_when: { field: has_more, eq: false }
-
+    stop_when:
+      field: has_more
+      eq: false
+    strategy: cursor
 channel_members:
   response:
     items: members
@@ -135,10 +148,13 @@ channel_members:
           name: channel
   pagination:
     params:
-      cursor: { from_response: response_metadata.next_cursor }
-      limit: { fixed: 200 }
+      cursor:
+        from_response: response_metadata.next_cursor
+      limit:
+        fixed: 200
+        role: page_size
     location: query
-
+    strategy: cursor
 channel_create:
   response: single
   method: POST
@@ -333,10 +349,13 @@ message_search:
           else_expr: { type: const, value: null }
   pagination:
     params:
-      page: { counter: 1 }
-      count: { fixed: 100 }
+      page:
+        counter: 1
+      count:
+        fixed: 100
+        role: page_size
     location: query
-
+    strategy: page_number
 message_post:
   response: single
   method: POST
@@ -467,10 +486,13 @@ user_list:
           else_expr: { type: const, value: null }
   pagination:
     params:
-      cursor: { from_response: response_metadata.next_cursor }
-      limit: { fixed: 200 }
+      cursor:
+        from_response: response_metadata.next_cursor
+      limit:
+        fixed: 200
+        role: page_size
     location: query
-
+    strategy: cursor
 user_info:
   # GET users.info — returns {"ok": true, "user": {...}}
   response:
@@ -563,10 +585,13 @@ file_list:
           else_expr: { type: const, value: null }
   pagination:
     params:
-      page: { counter: 1 }
-      count: { fixed: 100 }
+      page:
+        counter: 1
+      count:
+        fixed: 100
+        role: page_size
     location: query
-
+    strategy: page_number
 file_info:
   # GET files.info — returns {"ok": true, "file": {...}}
   response:
@@ -883,10 +908,13 @@ scheduledmessage_list:
           else_expr: { type: const, value: null }
   pagination:
     params:
-      cursor: { from_response: response_metadata.next_cursor }
-      limit: { fixed: 100 }
+      cursor:
+        from_response: response_metadata.next_cursor
+      limit:
+        fixed: 100
+        role: page_size
     location: body
-
+    strategy: cursor
 scheduledmessage_create:
   response: single
   method: POST

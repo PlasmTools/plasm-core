@@ -38,6 +38,19 @@ project_query:
   - { type: literal, value: todoist }
   - { type: literal, value: projects }
   headers: *auth_header
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+    - - color
+      - type: if
+        condition: { type: exists, var: color }
+        then_expr: { type: var, name: color }
+        else_expr: { type: const, value: null }
 
 project_get:
   method: GET
@@ -110,6 +123,14 @@ task_query:
   - { type: var, name: project_id }
   - { type: literal, value: tasks }
   headers: *auth_header
+  query:
+    type: object
+    fields:
+    - - priority
+      - type: if
+        condition: { type: exists, var: priority }
+        then_expr: { type: var, name: priority }
+        else_expr: { type: const, value: null }
 
 task_get:
   method: GET
@@ -146,6 +167,11 @@ task_create:
         condition: { type: exists, var: priority }
         then_expr: { type: var, name: priority }
         else_expr: { type: const, value: null }
+    - - duration_unit
+      - type: if
+        condition: { type: exists, var: duration_unit }
+        then_expr: { type: var, name: duration_unit }
+        else_expr: { type: const, value: null }
     - - section_id
       - type: if
         condition: { type: exists, var: section_id }
@@ -181,6 +207,11 @@ task_update:
       - type: if
         condition: { type: exists, var: priority }
         then_expr: { type: var, name: priority }
+        else_expr: { type: const, value: null }
+    - - duration_unit
+      - type: if
+        condition: { type: exists, var: duration_unit }
+        then_expr: { type: var, name: duration_unit }
         else_expr: { type: const, value: null }
     - - is_completed
       - type: if
@@ -226,6 +257,11 @@ label_query:
       - type: if
         condition: { type: exists, var: query }
         then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+    - - color
+      - type: if
+        condition: { type: exists, var: color }
+        then_expr: { type: var, name: color }
         else_expr: { type: const, value: null }
 
 label_create:
@@ -424,3 +460,98 @@ user_query:
         condition: { type: exists, var: query }
         then_expr: { type: var, name: query }
         else_expr: { type: const, value: null }
+
+profile_get:
+  method: GET
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: profile }
+  query:
+    type: object
+    fields:
+    - - email
+      - type: if
+        condition: { type: exists, var: email }
+        then_expr: { type: var, name: email }
+        else_expr: { type: const, value: null }
+
+project_invite_accept:
+  method: POST
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: project_invites }
+  - { type: var, name: id }
+  - { type: literal, value: accept }
+  headers: *auth_header
+
+project_invite_delete:
+  method: POST
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: project_invites }
+  - { type: var, name: id }
+  - { type: literal, value: delete }
+  headers: *auth_header
+
+notification_query:
+  method: GET
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: notifications }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - - read
+      - type: if
+        condition: { type: exists, var: read }
+        then_expr: { type: var, name: read }
+        else_expr: { type: const, value: null }
+    - - page_index
+      - type: if
+        condition: { type: exists, var: page_index }
+        then_expr: { type: var, name: page_index }
+        else_expr: { type: const, value: null }
+    - - page_limit
+      - type: if
+        condition: { type: exists, var: page_limit }
+        then_expr: { type: var, name: page_limit }
+        else_expr: { type: const, value: null }
+
+notification_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: notifications }
+  - { type: var, name: id }
+  headers: *auth_header
+
+notification_mark:
+  method: PATCH
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: notifications }
+  - { type: var, name: id }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [read, { type: var, name: read }]
+
+notification_delete_all:
+  method: DELETE
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: notifications }
+  headers: *auth_header
+
+notification_mark_all:
+  method: PATCH
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: notifications }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [read, { type: var, name: read }]

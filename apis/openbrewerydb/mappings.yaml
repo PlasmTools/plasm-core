@@ -6,8 +6,12 @@ brewery_query:
   path: [{ type: literal, value: breweries }]
   pagination:
     params:
-      page: {counter: 1}
-      per_page: {fixed: 20}
+      page:
+        counter: 1
+      per_page:
+        fixed: 20
+        role: page_size
+    strategy: page_number
   query:
     type: object
     fields:
@@ -57,8 +61,12 @@ brewery_search:
   path: [{ type: literal, value: breweries }, { type: literal, value: search }]
   pagination:
     params:
-      page: {counter: 1}
-      per_page: {fixed: 20}
+      page:
+        counter: 1
+      per_page:
+        fixed: 20
+        role: page_size
+    strategy: page_number
   query:
     type: object
     fields:

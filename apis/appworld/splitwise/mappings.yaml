@@ -725,6 +725,42 @@ notification_query:
         then_expr: { type: var, name: page_limit }
         else_expr: { type: const, value: null }
 
+activity_query:
+  method: GET
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: account }
+  - { type: literal, value: activity }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - - show_expenses
+      - type: if
+        condition: { type: exists, var: show_expenses }
+        then_expr: { type: var, name: show_expenses }
+        else_expr: { type: const, value: null }
+    - - show_payments
+      - type: if
+        condition: { type: exists, var: show_payments }
+        then_expr: { type: var, name: show_payments }
+        else_expr: { type: const, value: null }
+    - - page_index
+      - type: if
+        condition: { type: exists, var: page_index }
+        then_expr: { type: var, name: page_index }
+        else_expr: { type: const, value: null }
+    - - page_limit
+      - type: if
+        condition: { type: exists, var: page_limit }
+        then_expr: { type: var, name: page_limit }
+        else_expr: { type: const, value: null }
+    - - sort_by
+      - type: if
+        condition: { type: exists, var: sort_by }
+        then_expr: { type: var, name: sort_by }
+        else_expr: { type: const, value: null }
+
 notification_delete:
   method: DELETE
   path:
@@ -762,3 +798,42 @@ notification_mark_all:
     type: object
     fields:
     - [read, { type: var, name: read }]
+
+profile_get:
+  method: GET
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: profile }
+  query:
+    type: object
+    fields:
+    - - email
+      - type: if
+        condition: { type: exists, var: email }
+        then_expr: { type: var, name: email }
+        else_expr: { type: const, value: null }
+
+user_search:
+  method: GET
+  path:
+  - { type: literal, value: splitwise }
+  - { type: literal, value: users }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+    - - page_index
+      - type: if
+        condition: { type: exists, var: page_index }
+        then_expr: { type: var, name: page_index }
+        else_expr: { type: const, value: null }
+    - - page_limit
+      - type: if
+        condition: { type: exists, var: page_limit }
+        then_expr: { type: var, name: page_limit }
+        else_expr: { type: const, value: null }

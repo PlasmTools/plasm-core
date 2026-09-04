@@ -18,10 +18,12 @@ team_query:
     items: value
   pagination:
     location: response_next_url
-    response_next_url_field: "@odata.nextLink"
+    response_next_url_field: '@odata.nextLink'
     params:
-      $top: { fixed: 100 }
-
+      $top:
+        fixed: 100
+        role: page_size
+    strategy: next_url
 team_get:
   method: GET
   path:
@@ -41,10 +43,12 @@ channel_query:
     items: value
   pagination:
     location: response_next_url
-    response_next_url_field: "@odata.nextLink"
+    response_next_url_field: '@odata.nextLink'
     params:
-      $top: { fixed: 100 }
-
+      $top:
+        fixed: 100
+        role: page_size
+    strategy: next_url
 channel_get:
   method: GET
   path:
@@ -65,10 +69,12 @@ chat_query:
     items: value
   pagination:
     location: response_next_url
-    response_next_url_field: "@odata.nextLink"
+    response_next_url_field: '@odata.nextLink'
     params:
-      $top: { fixed: 100 }
-
+      $top:
+        fixed: 100
+        role: page_size
+    strategy: next_url
 chat_get:
   method: GET
   path:
@@ -93,10 +99,12 @@ chat_message_query:
         - { type: const, value: "id,body,createdDateTime,lastModifiedDateTime,from,importance,messageType,webUrl" }
   pagination:
     location: response_next_url
-    response_next_url_field: "@odata.nextLink"
+    response_next_url_field: '@odata.nextLink'
     params:
-      $top: { fixed: 50 }
-
+      $top:
+        fixed: 50
+        role: page_size
+    strategy: next_url
 chat_message_get:
   method: GET
   path:
@@ -152,10 +160,12 @@ channel_message_query:
         - { type: const, value: "id,body,createdDateTime,lastModifiedDateTime,from,importance,messageType,webUrl" }
   pagination:
     location: response_next_url
-    response_next_url_field: "@odata.nextLink"
+    response_next_url_field: '@odata.nextLink'
     params:
-      $top: { fixed: 50 }
-
+      $top:
+        fixed: 50
+        role: page_size
+    strategy: next_url
 channel_message_get:
   method: GET
   path:

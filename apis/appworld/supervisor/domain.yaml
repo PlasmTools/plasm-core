@@ -59,7 +59,7 @@ entities:
     fields:
       name:
         required: true
-        value_ref: nv_str
+        value_ref: nv_address_label
       street_address:
         required: false
         value_ref: nv_str
@@ -84,7 +84,7 @@ entities:
         value_ref: nv_str
       card_name:
         required: false
-        value_ref: nv_str
+        value_ref: nv_card_brand
       card_number:
         required: true
         value_ref: nv_int
@@ -146,14 +146,33 @@ capabilities:
     provides:
     - account_name
     - password
+    derive:
+      source: account_password_query
+      match_field: account_name
+      projection:
+        account_name: account_name
+        password: password
   address_query:
     description: List supervisor addresses.
     kind: query
     entity: Address
+    provides:
+    - name
+    - street_address
+    - city
+    - state
+    - country
+    - zip_code
   payment_card_query:
     description: List supervisor payment cards.
     kind: query
     entity: PaymentCard
+    provides:
+    - owner_name
+    - card_name
+    - card_number
+    - expiry_year
+    - expiry_month
   active_task_get:
     description: Show the active task instruction text.
     kind: get
@@ -198,6 +217,23 @@ values:
     enum:
     - male
     - female
+  nv_address_label:
+    type: enum
+    description: Named address slot on the supervisor profile.
+    enum:
+    - Home
+    - Work
+  nv_card_brand:
+    type: enum
+    description: Payment-card network or bank label on the supervisor profile.
+    enum:
+    - Visa
+    - MasterCard
+    - American Express
+    - Discover
+    - HSBC
+    - Wells Fargo
+    - Chase
   nv_account_name:
     type: string
     description: App key in the password list (e.g. simple_note, gmail, venmo) — not a login id.
@@ -219,26 +255,3 @@ values:
     enum:
     - success
     - fail
-views:
-  account_password_by_key:
-    description: Single password row for one app key, selected from the list-only vault endpoint.
-    capability: account_password_get
-    entity: AccountPassword
-    scope:
-    - name: account_name
-      value_ref: nv_account_name
-      required: true
-    nodes:
-    - id: vault
-      capability: account_password_query
-      bind: {}
-    output:
-      account_name:
-        kind: scope
-        param: account_name
-      password:
-        kind: node_field_where
-        node: vault
-        where_field: account_name
-        equals_scope: account_name
-        field: password

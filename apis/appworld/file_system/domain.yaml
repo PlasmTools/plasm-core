@@ -1,4 +1,4 @@
-version: 5
+version: 6
 entry_id: file_system
 auth:
   scheme: none
@@ -88,6 +88,27 @@ entities:
       exists:
         required: true
         value_ref: nv_bool
+  Profile:
+    id_field: email
+    description: File System user public profile.
+    discovery:
+      names:
+      - profile
+      - user
+      seed_class: ambient
+    fields:
+      first_name:
+        required: false
+        value_ref: nv_str
+      last_name:
+        required: false
+        value_ref: nv_str
+      email:
+        required: true
+        value_ref: nv_email
+      registered_at:
+        required: false
+        value_ref: nv_datetime
 capabilities:
   login:
     description: Login to File System; returns access_token for Bearer auth.
@@ -128,7 +149,7 @@ capabilities:
       filter, or recursive walk).
 
       '
-    kind: search
+    kind: query
     entity: DirectoryEntry
     discovery:
       operation_terms:
@@ -152,7 +173,7 @@ capabilities:
       value_ref: nv_str
       required: false
     - name: entry_type
-      value_ref: nv_str
+      value_ref: nv_entry_type
       required: false
     - name: recursive
       value_ref: nv_bool
@@ -435,6 +456,19 @@ capabilities:
     output:
       type: side_effect
       description: Expands the archive and returns the destination directory path.
+  profile_get:
+    description: Show a File System user's public profile (omit email for the default profile).
+    kind: query
+    entity: Profile
+    selection:
+    - name: email
+      value_ref: nv_email
+      required: false
+    provides:
+    - first_name
+    - last_name
+    - email
+    - registered_at
 values:
   nv_str:
     type: string
@@ -460,6 +494,13 @@ values:
   nv_file_id:
     type: integer
     description: File primary key.
+  nv_entry_type:
+    type: enum
+    description: Directory listing filter — files, directories, or both.
+    enum:
+    - all
+    - files
+    - directories
   nv_bool:
     type: boolean
     description: Boolean flag.

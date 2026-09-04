@@ -1,4 +1,4 @@
-version: 4
+version: 6
 entry_id: phone
 auth:
   scheme: none
@@ -55,7 +55,7 @@ entities:
         value_ref: nv_phone
       relationships:
         required: false
-        value_ref: nv_str_list
+        value_ref: nv_contact_relationship_list
       birthday:
         required: false
         value_ref: nv_str
@@ -85,7 +85,7 @@ entities:
         value_ref: nv_str
       repeat_days:
         required: false
-        value_ref: nv_str_list
+        value_ref: nv_weekday_list
       label:
         required: false
         value_ref: nv_str
@@ -103,6 +103,7 @@ entities:
         value_ref: nv_datetime
   TextMessage:
     id_field: text_message_id
+    primary_query: text_message_query
     description: SMS / text message between phone numbers.
     discovery:
       names:
@@ -123,6 +124,7 @@ entities:
         value_ref: nv_datetime
   VoiceMessage:
     id_field: voice_message_id
+    primary_query: voice_message_query
     description: Voice message between phone numbers.
     fields:
       voice_message_id:
@@ -151,6 +153,19 @@ entities:
       registered_at:
         required: false
         value_ref: nv_datetime
+  ContactRelationship:
+    id_field: label
+    description: Contact relationship label available in the address book.
+    discovery:
+      names:
+      - contact relationship
+      - relationship
+      - relationships
+      seed_class: ambient
+    fields:
+      label:
+        required: true
+        value_ref: nv_contact_relationship
   DateTime:
     id_field: date
     description: Current device date and time.
@@ -198,7 +213,7 @@ capabilities:
       description: Ends the Phone session for this token.
   contact_query:
     description: Search contacts by name/relationship.
-    kind: search
+    kind: query
     entity: Contact
     selection:
     - name: access_token
@@ -208,7 +223,7 @@ capabilities:
       value_ref: nv_str
       required: false
     - name: relationship
-      value_ref: nv_str
+      value_ref: nv_contact_relationship
       required: false
     controls:
     - name: page_index
@@ -252,7 +267,7 @@ capabilities:
           value_ref: nv_email
           required: false
         - name: relationships
-          value_ref: nv_str_list
+          value_ref: nv_contact_relationship_list
           required: false
         - name: birthday
           value_ref: nv_str
@@ -289,7 +304,7 @@ capabilities:
           value_ref: nv_email
           required: false
         - name: relationships
-          value_ref: nv_str_list
+          value_ref: nv_contact_relationship_list
           required: false
         - name: birthday
           value_ref: nv_str
@@ -370,7 +385,7 @@ capabilities:
           value_ref: nv_str
           required: true
         - name: repeat_days
-          value_ref: nv_str_list
+          value_ref: nv_weekday_list
           required: false
         - name: label
           value_ref: nv_str
@@ -401,7 +416,7 @@ capabilities:
           value_ref: nv_str
           required: false
         - name: repeat_days
-          value_ref: nv_str_list
+          value_ref: nv_weekday_list
           required: false
         - name: label
           value_ref: nv_str
@@ -428,7 +443,7 @@ capabilities:
           required: true
   text_message_query:
     description: Search text messages.
-    kind: search
+    kind: query
     entity: TextMessage
     selection:
     - name: access_token
@@ -504,9 +519,40 @@ capabilities:
         - name: access_token
           value_ref: nv_access_token
           required: true
+  text_message_window:
+    description: Show text messages with a contact in a datetime window.
+    kind: query
+    entity: TextMessage
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: phone_number
+      value_ref: nv_phone
+      required: true
+    - name: min_datetime
+      value_ref: nv_datetime
+      required: false
+    - name: max_datetime
+      value_ref: nv_datetime
+      required: false
+    controls:
+    - name: pagination_order
+      value_ref: nv_pagination_order
+      required: false
+    - name: page_index
+      value_ref: nv_int
+      required: false
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+    provides:
+    - text_message_id
+    - message
+    - sent_at
   voice_message_query:
     description: Search voice messages.
-    kind: search
+    kind: query
     entity: VoiceMessage
     selection:
     - name: access_token
@@ -567,6 +613,37 @@ capabilities:
         - name: access_token
           value_ref: nv_access_token
           required: true
+  voice_message_window:
+    description: Show voice messages with a contact in a datetime window.
+    kind: query
+    entity: VoiceMessage
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: phone_number
+      value_ref: nv_phone
+      required: true
+    - name: min_datetime
+      value_ref: nv_datetime
+      required: false
+    - name: max_datetime
+      value_ref: nv_datetime
+      required: false
+    controls:
+    - name: pagination_order
+      value_ref: nv_pagination_order
+      required: false
+    - name: page_index
+      value_ref: nv_int
+      required: false
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+    provides:
+    - voice_message_id
+    - message
+    - sent_at
   profile_get:
     description: Show phone profile by phone number.
     kind: get
@@ -597,6 +674,23 @@ capabilities:
     provides:
     - date
     - time
+  contact_relationship_query:
+    description: List all contact relationship labels in the address book.
+    kind: query
+    entity: ContactRelationship
+    discovery:
+      operation_terms:
+      - list
+      - show
+      target_terms:
+      - contact relationship
+      - relationships
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - label
 values:
   nv_str:
     type: string
@@ -631,11 +725,54 @@ values:
   nv_voice_id:
     type: integer
     description: Voice message primary key.
-  nv_str_list:
+  nv_weekday:
+    type: enum
+    description: Calendar weekday for alarm repeat.
+    enum:
+    - monday
+    - tuesday
+    - wednesday
+    - thursday
+    - friday
+    - saturday
+    - sunday
+  nv_pagination_order:
+    type: enum
+    description: Page traversal order for message windows (within each page, messages stay oldest to newest).
+    enum:
+    - ascending
+    - descending
+  nv_weekday_list:
     type: array
     items:
-      value_ref: nv_str
-    description: List of strings.
+      value_ref: nv_weekday
+    description: Days an alarm repeats.
+  nv_contact_relationship:
+    type: enum
+    description: Relationship label for a phone contact.
+    enum:
+    - brother
+    - child
+    - coworker
+    - daughter
+    - father
+    - friend
+    - husband
+    - manager
+    - mother
+    - parent
+    - partner
+    - roommate
+    - sibling
+    - sister
+    - son
+    - subordinate
+    - wife
+  nv_contact_relationship_list:
+    type: array
+    items:
+      value_ref: nv_contact_relationship
+    description: Relationship labels for a contact.
   nv_bool:
     type: boolean
     description: Boolean flag.

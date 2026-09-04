@@ -37,6 +37,8 @@ transfer_query:
     params:
       range_size:
         fixed: 1000
+        role: page_size
+    strategy: block_range
   decode:
     event_id:
       type: log_meta

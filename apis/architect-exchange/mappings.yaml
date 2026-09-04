@@ -286,9 +286,13 @@ ticker_query:
   pagination:
     location: query
     params:
-      offset: { counter: 0, step: 100 }
-      limit: { fixed: 100 }
-
+      offset:
+        counter: 0
+        step: 100
+      limit:
+        fixed: 100
+        role: page_size
+    strategy: offset
 ticker_for_symbol_query:
   method: GET
   path:
@@ -375,8 +379,10 @@ trade_query:
   pagination:
     location: query
     params:
-      limit: { fixed: 100 }
-
+      limit:
+        fixed: 100
+        role: page_size
+    strategy: page_number
 candle_query:
   method: GET
   path:
@@ -530,9 +536,12 @@ funding_rate_query:
   pagination:
     location: query
     params:
-      cursor: { from_response: next_cursor }
-      limit: { fixed: 1000 }
-
+      cursor:
+        from_response: next_cursor
+      limit:
+        fixed: 1000
+        role: page_size
+    strategy: cursor
 estimated_funding_get:
   method: GET
   path:
@@ -595,9 +604,12 @@ underlying_price_query:
   pagination:
     location: query
     params:
-      cursor: { from_response: next_cursor }
-      limit: { fixed: 1000 }
-
+      cursor:
+        from_response: next_cursor
+      limit:
+        fixed: 1000
+        role: page_size
+    strategy: cursor
 special_settlement_query:
   method: GET
   path:
@@ -656,9 +668,13 @@ order_open_query:
   pagination:
     location: query
     params:
-      offset: { counter: 0, step: 100 }
-      limit: { fixed: 100 }
-
+      offset:
+        counter: 0
+        step: 100
+      limit:
+        fixed: 100
+        role: page_size
+    strategy: offset
 order_history_query:
   method: GET
   path:
@@ -708,9 +724,12 @@ order_history_query:
   pagination:
     location: query
     params:
-      cursor: { from_response: next_cursor }
-      limit: { fixed: 100 }
-
+      cursor:
+        from_response: next_cursor
+      limit:
+        fixed: 100
+        role: page_size
+    strategy: cursor
 order_status_query:
   method: GET
   path:
@@ -1001,9 +1020,12 @@ fill_query:
   pagination:
     location: query
     params:
-      cursor: { from_response: next_cursor }
-      limit: { fixed: 100 }
-
+      cursor:
+        from_response: next_cursor
+      limit:
+        fixed: 100
+        role: page_size
+    strategy: cursor
 fill_for_order_query:
   method: GET
   path:
@@ -1056,9 +1078,12 @@ transaction_query:
   pagination:
     location: query
     params:
-      cursor: { from_response: next_cursor }
-      limit: { fixed: 100 }
-
+      cursor:
+        from_response: next_cursor
+      limit:
+        fixed: 100
+        role: page_size
+    strategy: cursor
 funding_transaction_query:
   method: GET
   path:
@@ -1093,9 +1118,12 @@ funding_transaction_query:
   pagination:
     location: query
     params:
-      cursor: { from_response: next_cursor }
-      limit: { fixed: 100 }
-
+      cursor:
+        from_response: next_cursor
+      limit:
+        fixed: 100
+        role: page_size
+    strategy: cursor
 liquidation_query:
   method: GET
   path:
@@ -1130,9 +1158,12 @@ liquidation_query:
   pagination:
     location: query
     params:
-      cursor: { from_response: next_cursor }
-      limit: { fixed: 100 }
-
+      cursor:
+        from_response: next_cursor
+      limit:
+        fixed: 100
+        role: page_size
+    strategy: cursor
 volume_stat_query:
   method: GET
   path:

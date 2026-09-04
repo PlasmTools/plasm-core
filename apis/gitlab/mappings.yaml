@@ -46,9 +46,12 @@ project_query:
                       else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page: { counter: 1 }
-      per_page: { fixed: 20 }
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 20
+        role: page_size
+    strategy: page_number
 project_get:
   method: GET
   path:
@@ -93,9 +96,12 @@ issue_query:
                  else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page: { counter: 1 }
-      per_page: { fixed: 20 }
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 20
+        role: page_size
+    strategy: page_number
 issue_for_project_query:
   method: GET
   path:
@@ -122,9 +128,12 @@ issue_for_project_query:
                  else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page: { counter: 1 }
-      per_page: { fixed: 20 }
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 20
+        role: page_size
+    strategy: page_number
 issue_get:
   method: GET
   path:
@@ -162,9 +171,12 @@ merge_request_query:
                  else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page: { counter: 1 }
-      per_page: { fixed: 20 }
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 20
+        role: page_size
+    strategy: page_number
 merge_request_for_project_query:
   method: GET
   path:
@@ -188,9 +200,12 @@ merge_request_for_project_query:
                  else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page: { counter: 1 }
-      per_page: { fixed: 20 }
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 20
+        role: page_size
+    strategy: page_number
 merge_request_get:
   method: GET
   path:
@@ -569,9 +584,12 @@ issue_note_for_issue_query:
   response: bare_list
   pagination:
     params:
-      page: { counter: 1 }
-      per_page: { fixed: 20 }
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 20
+        role: page_size
+    strategy: page_number
 issue_note_get:
   method: GET
   path:
@@ -649,9 +667,12 @@ merge_request_note_for_mr_query:
   response: bare_list
   pagination:
     params:
-      page: { counter: 1 }
-      per_page: { fixed: 20 }
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 20
+        role: page_size
+    strategy: page_number
 merge_request_note_get:
   method: GET
   path:
@@ -726,9 +747,12 @@ issue_award_emoji_for_issue_query:
   response: bare_list
   pagination:
     params:
-      page: { counter: 1 }
-      per_page: { fixed: 20 }
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 20
+        role: page_size
+    strategy: page_number
 issue_award_emoji_get:
   method: GET
   path:
@@ -784,9 +808,12 @@ merge_request_award_emoji_for_mr_query:
   response: bare_list
   pagination:
     params:
-      page: { counter: 1 }
-      per_page: { fixed: 20 }
-
+      page:
+        counter: 1
+      per_page:
+        fixed: 20
+        role: page_size
+    strategy: page_number
 merge_request_award_emoji_get:
   method: GET
   path:

@@ -31,6 +31,28 @@ entities:
       token_type:
         required: false
         value_ref: nv_str
+  User:
+    id_field: email
+    description: Amazon user public profile.
+    discovery:
+      names:
+      - profile
+      - user
+      - account holder
+      seed_class: ambient
+    fields:
+      first_name:
+        required: false
+        value_ref: nv_str
+      last_name:
+        required: false
+        value_ref: nv_str
+      email:
+        required: true
+        value_ref: nv_email
+      registered_at:
+        required: false
+        value_ref: nv_datetime
   Product:
     id_field: product_id
     description: Amazon product listing.
@@ -71,10 +93,71 @@ entities:
         value_ref: nv_str
       relative_size:
         required: false
+        value_ref: nv_relative_size
+      rating:
+        required: false
+        value_ref: nv_number
+  Seller:
+    id_field: seller_id
+    description: Third-party seller on Amazon.
+    discovery:
+      names:
+      - seller
+      - sellers
+      - merchant
+      seed_class: ambient
+    fields:
+      seller_id:
+        required: true
+        value_ref: nv_seller_id
+      name:
+        required: false
         value_ref: nv_str
       rating:
         required: false
         value_ref: nv_number
+  ProductType:
+    id_field: name
+    description: Product category label used to filter catalog search.
+    discovery:
+      names:
+      - product type
+      - product types
+      - category
+      seed_class: ambient
+    fields:
+      name:
+        required: true
+        value_ref: nv_str
+  ProductFeatureChoices:
+    id_field: product_type
+    description: Aggregated color, size, and seller options for a product type filter.
+    discovery:
+      names:
+      - feature choices
+      - product filters
+      - colors sizes sellers
+      seed_class: ambient
+    fields:
+      product_type:
+        required: false
+        value_ref: nv_str
+      colors:
+        required: false
+        value_ref: nv_str_list
+      relative_sizes:
+        required: false
+        value_ref: nv_relative_size_list
+    relations:
+      seller_options:
+        description: Sellers offering products of this type.
+        target: Seller
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: sellers
+          - wildcard: true
   CartItem:
     id_field: product_id
     description: A product line currently in the shopping cart.
@@ -298,6 +381,23 @@ entities:
       created_at:
         required: false
         value_ref: nv_datetime
+  ReturnDeliverer:
+    id_field: deliverer_id
+    description: Carrier available for product return shipments.
+    discovery:
+      names:
+      - return deliverer
+      - return carrier
+      - deliverer
+      seed_class: ambient
+    fields:
+      deliverer_id:
+        required: true
+        value_ref: nv_deliverer_id
+      deliverer_name:
+        required: false
+        value_ref: nv_deliverer_name
+        path: name
   ProductReturn:
     id_field: return_id
     description: Product return initiated for an order line.
@@ -328,7 +428,7 @@ entities:
         value_ref: nv_deliverer_id
       deliverer_name:
         required: false
-        value_ref: nv_str
+        value_ref: nv_deliverer_name
       refund_amount:
         required: false
         value_ref: nv_number
@@ -361,6 +461,38 @@ entities:
       created_at:
         required: false
         value_ref: nv_datetime
+  ProductQuestionAnswer:
+    id_field: question_answer_id
+    description: Answer posted to a product question.
+    discovery:
+      names:
+      - question answer
+      - product answer
+      - Q&A answer
+      seed_class: dependent
+    fields:
+      question_answer_id:
+        required: true
+        value_ref: nv_question_answer_id
+      question_id:
+        required: false
+        value_ref: nv_question_id
+      is_verified:
+        required: false
+        value_ref: nv_bool
+      answer:
+        required: false
+        value_ref: nv_body
+        data_class: untrusted
+      created_at:
+        required: false
+        value_ref: nv_datetime
+      user_name:
+        required: false
+        value_ref: nv_str
+      user_email:
+        required: false
+        value_ref: nv_email
   PrimeSubscription:
     id_field: prime_subscription_id
     description: Amazon Prime subscription period.
@@ -422,9 +554,25 @@ capabilities:
     output:
       type: side_effect
       description: Ends the Amazon session for this token.
+  profile_get:
+    description: Show public Amazon profile by optional email.
+    kind: query
+    entity: User
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: email
+      value_ref: nv_email
+      required: false
+    provides:
+    - first_name
+    - last_name
+    - email
+    - registered_at
   product_query:
     description: Search products by query and filters.
-    kind: search
+    kind: query
     entity: Product
     selection:
     - name: access_token
@@ -440,7 +588,7 @@ capabilities:
       value_ref: nv_str
       required: false
     - name: relative_size
-      value_ref: nv_str
+      value_ref: nv_relative_size
       required: false
     - name: min_price
       value_ref: nv_number
@@ -496,6 +644,92 @@ capabilities:
     - color
     - relative_size
     - rating
+  seller_query:
+    description: List or filter third-party sellers by name.
+    kind: query
+    entity: Seller
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+    controls:
+    - name: page_index
+      value_ref: nv_int
+      required: false
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+    provides:
+    - seller_id
+    - name
+    discovery:
+      operation_terms:
+      - list
+      - find
+      - search
+      target_terms:
+      - seller
+      - merchant
+  seller_get:
+    description: Show one seller with rating.
+    kind: get
+    entity: Seller
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - seller_id
+    - name
+    - rating
+  product_type_query:
+    description: List or filter product type labels used for catalog filters.
+    kind: query
+    entity: ProductType
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+    controls:
+    - name: page_index
+      value_ref: nv_int
+      required: false
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+    provides:
+    - name
+    discovery:
+      operation_terms:
+      - list
+      - find
+      - search
+      target_terms:
+      - product type
+      - category
+  product_feature_choices_query:
+    description: Show aggregated color, size, and seller choices for a product type.
+    kind: query
+    entity: ProductFeatureChoices
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: product_type
+      value_ref: nv_str
+      required: false
+    provides:
+    - colors
+    - relative_sizes
   cart_get:
     description: Show the current cart totals and line items.
     kind: get
@@ -708,9 +942,40 @@ capabilities:
     output:
       type: side_effect
       description: Empties the shopping cart.
+  cart_apply_promo:
+    description: Apply a promo code to the cart.
+    kind: action
+    entity: Cart
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: promo_code
+          value_ref: nv_str
+          required: true
+    output:
+      type: side_effect
+      description: Applies the promo code to cart totals.
+  cart_remove_promo:
+    description: Remove the promo code from the cart.
+    kind: action
+    entity: Cart
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Clears the applied promo code from the cart.
   order_query:
     description: List past orders.
-    kind: search
+    kind: query
     entity: Order
     selection:
     - name: access_token
@@ -784,6 +1049,29 @@ capabilities:
           required: true
     provides:
     - order_id
+  order_receipt_download:
+    description: Download an order receipt to a file-system path.
+    kind: action
+    entity: Order
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: download_to_file_path
+          value_ref: nv_file_path
+          required: false
+        - name: overwrite
+          value_ref: nv_bool
+          required: false
+        - name: file_system_access_token
+          value_ref: nv_access_token
+          required: false
+    output:
+      type: side_effect
+      description: Writes the order receipt to the given file path.
   address_query:
     description: List shipping addresses.
     kind: query
@@ -946,7 +1234,7 @@ capabilities:
           required: true
   product_review_query:
     description: Search reviews for a product.
-    kind: search
+    kind: query
     entity: ProductReview
     selection:
     - name: product_id
@@ -1069,6 +1357,17 @@ capabilities:
           required: true
     provides:
     - return_id
+  return_deliverer_query:
+    description: List carriers available for product returns.
+    kind: query
+    entity: ReturnDeliverer
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - deliverer_id
+    - deliverer_name
   prime_subscribe:
     description: Subscribe to Amazon Prime with a saved payment card.
     kind: create
@@ -1133,6 +1432,31 @@ capabilities:
         - name: access_token
           value_ref: nv_access_token
           required: true
+  product_question_answer_update:
+    description: Update a product question answer.
+    kind: update
+    entity: ProductQuestionAnswer
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: answer
+          value_ref: nv_body
+          required: false
+  product_question_answer_delete:
+    description: Delete a product question answer.
+    kind: delete
+    entity: ProductQuestionAnswer
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
 values:
   nv_str:
     type: string
@@ -1177,6 +1501,12 @@ values:
   nv_question_id:
     type: integer
     description: Product question primary key.
+  nv_question_answer_id:
+    type: integer
+    description: Product question answer primary key.
+  nv_seller_id:
+    type: integer
+    description: Seller primary key.
   nv_prime_subscription_id:
     type: integer
     description: Prime subscription primary key.
@@ -1186,6 +1516,35 @@ values:
     enum:
     - monthly
     - yearly
+  nv_relative_size:
+    type: enum
+    description: Product size band (filter and product attribute).
+    enum:
+    - extra-small
+    - small
+    - medium
+    - large
+    - extra-large
+  nv_deliverer_name:
+    type: enum
+    description: Carrier that handled a return shipment.
+    enum:
+    - UPS
+    - USPS
+    - FedEx
+  nv_str_list:
+    type: array
+    items:
+      value_ref: nv_str
+    description: List of string values.
+  nv_relative_size_list:
+    type: array
+    items:
+      value_ref: nv_relative_size
+    description: List of relative size enum values.
+  nv_file_path:
+    type: string
+    description: File-system path for download or save.
   nv_number:
     type: number
     description: Numeric amount or rating.

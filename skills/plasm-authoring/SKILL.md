@@ -308,7 +308,7 @@ auth:
 
 #### `kind: query` vs `kind: search`
 
-Use **`kind: search`** when the endpoint's primary interface is a **free-text relevance query** (`q`, `query`, `search`) that returns ranked results rather than field-filtered rows. If the endpoint filters by concrete field values (`status`, `archived`, `team_id`), use `kind: query`.
+Use **`kind: search`** when the endpoint's primary interface is a **required** free-text relevance query (`q`, `query`, `search`) that returns ranked results rather than field-filtered rows. The free-text selection param **must** be `required: true` — optional free-text list filters use **`kind: query`** (otherwise teaching emits a barren `e~"<query>"{query=…}` twin and schema load fails). Required non-text selection (e.g. AppWorld `access_token`) is taught on the primary `e~"<query>"{…}` row; an optional-filter twin is emitted only when other optional selection slots exist. If the endpoint filters by concrete field values (`status`, `archived`, `team_id`), use `kind: query`.
 
 #### Classification: where each query param goes
 

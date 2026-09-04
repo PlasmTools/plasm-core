@@ -135,23 +135,20 @@ capabilities:
     - id
     - title
     - url
-    parameters:
+    selection:
     - name: query
       value_ref: nv_wire_str_short
       required: true
-      role: search
     - name: tags
       value_ref: nv_wire_str_short
       required: false
-      role: filter
+    controls:
     - name: page
       value_ref: nv_wire_int
       required: false
-      role: response_control
     - name: per_page
       value_ref: nv_wire_int
       required: false
-      role: response_control
   item_search_by_date:
     description: Same as item_search but sorted by time (search_by_date). Use for recency; combine with item_get for full.
       items.
@@ -161,23 +158,20 @@ capabilities:
     - id
     - title
     - url
-    parameters:
+    selection:
     - name: query
       value_ref: nv_wire_str_short
       required: true
-      role: search
     - name: tags
       value_ref: nv_wire_str_short
       required: false
-      role: filter
+    controls:
     - name: page
       value_ref: nv_wire_int
       required: false
-      role: response_control
     - name: per_page
       value_ref: nv_wire_int
       required: false
-      role: response_control
   item_feed_query:
     description: Ordered list of item ids for a public feed (top, new, best, ask, show, or job). Each entry is an Item id only.
       hydrate with item_get for full records and kids.
@@ -185,11 +179,10 @@ capabilities:
     entity: Item
     provides:
     - id
-    parameters:
+    selection:
     - name: feed
       value_ref: nv_item_feed_query_feed
       required: true
-      role: filter
   max_item_id_query:
     description: Current largest item id (maxitem.json).
     kind: query

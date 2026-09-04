@@ -1,4 +1,4 @@
-version: 6
+version: 8
 entry_id: spotify
 auth:
   scheme: none
@@ -10,6 +10,9 @@ data_classes:
   pii_payment:
     description: Payment-card numbers and CVV.
     severity: sensitive
+  external_subscribe:
+    description: Outbound premium subscription that charges a payment card.
+    severity: critical
 entities:
   AuthSession:
     id_field: access_token
@@ -64,7 +67,7 @@ entities:
         value_ref: nv_int
       genre:
         required: false
-        value_ref: nv_str
+        value_ref: nv_genre
       release_date:
         required: false
         value_ref: nv_str
@@ -98,7 +101,7 @@ entities:
         value_ref: nv_str
       genre:
         required: false
-        value_ref: nv_str
+        value_ref: nv_genre
       rating:
         required: false
         value_ref: nv_number
@@ -110,6 +113,7 @@ entities:
         value_ref: nv_str
   Artist:
     id_field: artist_id
+    primary_query: following_artist_query
     description: Music artist.
     discovery:
       names:
@@ -125,10 +129,44 @@ entities:
         value_ref: nv_str
       genre:
         required: false
-        value_ref: nv_str
+        value_ref: nv_genre
       follower_count:
         required: false
         value_ref: nv_int
+  Profile:
+    id_field: email
+    description: Spotify user public profile.
+    discovery:
+      names:
+      - profile
+      - user
+      seed_class: ambient
+    fields:
+      first_name:
+        required: false
+        value_ref: nv_str
+      last_name:
+        required: false
+        value_ref: nv_str
+      email:
+        required: true
+        value_ref: nv_email
+      registered_at:
+        required: false
+        value_ref: nv_datetime
+  Genre:
+    id_field: name
+    description: Music genre label from the Spotify catalog vocabulary.
+    discovery:
+      names:
+      - genre
+      - genres
+      - music genre
+      seed_class: ambient
+    fields:
+      name:
+        required: true
+        value_ref: nv_genre
   Playlist:
     id_field: playlist_id
     primary_query: playlist_library_query
@@ -357,6 +395,48 @@ entities:
         required: false
         value_ref: nv_int
         data_class: pii_payment
+  PremiumPlan:
+    id_field: monthly
+    description: Spotify premium pricing sheet (monthly and yearly amounts).
+    discovery:
+      names:
+      - premium plan
+      - premium plans
+      - premium pricing
+      seed_class: dependent
+    fields:
+      monthly:
+        required: true
+        value_ref: nv_int
+      yearly:
+        required: true
+        value_ref: nv_int
+  PremiumSubscription:
+    id_field: premium_subscription_id
+    description: Spotify premium subscription period.
+    discovery:
+      names:
+      - premium
+      - premium subscription
+      - subscription
+      seed_class: dependent
+    fields:
+      premium_subscription_id:
+        required: true
+        value_ref: nv_premium_subscription_id
+      start_date:
+        required: false
+        value_ref: nv_datetime
+      end_date:
+        required: false
+        value_ref: nv_datetime
+      payment_card_digits:
+        required: false
+        value_ref: nv_str
+        data_class: pii_payment
+      paid_amount:
+        required: false
+        value_ref: nv_number
 capabilities:
   login:
     description: Login to Spotify; returns access_token for Bearer auth.
@@ -394,7 +474,7 @@ capabilities:
       description: Ends the Spotify session for this token.
   song_search:
     description: Search songs.
-    kind: search
+    kind: query
     entity: Song
     selection:
     - name: access_token
@@ -404,7 +484,7 @@ capabilities:
       value_ref: nv_str
       required: false
     - name: genre
-      value_ref: nv_str
+      value_ref: nv_genre
       required: false
     controls:
     - name: page_index
@@ -481,7 +561,7 @@ capabilities:
       description: Unlikes the song.
   downloaded_song_query:
     description: Search downloaded songs for offline play.
-    kind: search
+    kind: query
     entity: DownloadedSong
     selection:
     - name: access_token
@@ -543,7 +623,7 @@ capabilities:
       description: Removes this song from offline downloads.
   album_search:
     description: Search albums.
-    kind: search
+    kind: query
     entity: Album
     selection:
     - name: access_token
@@ -553,7 +633,7 @@ capabilities:
       value_ref: nv_str
       required: false
     - name: genre
-      value_ref: nv_str
+      value_ref: nv_genre
       required: false
     controls:
     - name: page_index
@@ -620,7 +700,7 @@ capabilities:
       description: Unlikes the album.
   artist_search:
     description: Search artists.
-    kind: search
+    kind: query
     entity: Artist
     selection:
     - name: access_token
@@ -687,7 +767,7 @@ capabilities:
       description: Unfollows the artist.
   playlist_search:
     description: Search playlists.
-    kind: search
+    kind: query
     entity: Playlist
     selection:
     - name: access_token
@@ -1671,6 +1751,107 @@ capabilities:
         - name: access_token
           value_ref: nv_access_token
           required: true
+  premium_plan_get:
+    description: Show Spotify premium plan prices (monthly and yearly).
+    kind: get
+    entity: PremiumPlan
+    arguments:
+      input_type:
+        type: object
+        fields: []
+    provides:
+    - monthly
+    - yearly
+  premium_subscription_query:
+    description: List premium subscription history.
+    kind: query
+    entity: PremiumSubscription
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    controls:
+    - name: page_index
+      value_ref: nv_int
+      required: false
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+    provides:
+    - premium_subscription_id
+    - start_date
+    - end_date
+    - payment_card_digits
+    - paid_amount
+  premium_subscribe:
+    description: Subscribe to Spotify Premium with a saved payment card.
+    kind: create
+    entity: PremiumSubscription
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: payment_card_id
+          value_ref: nv_payment_card_id
+          required: true
+          sink_class: external_subscribe
+        - name: duration
+          value_ref: nv_premium_duration
+          required: true
+    provides:
+    - premium_subscription_id
+  premium_subscription_receipt:
+    description: Download a premium subscription receipt to a file-system path.
+    kind: action
+    entity: PremiumSubscription
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: download_to_file_path
+          value_ref: nv_file_path
+          required: false
+        - name: overwrite
+          value_ref: nv_bool
+          required: false
+        - name: file_system_access_token
+          value_ref: nv_access_token
+          required: false
+    output:
+      type: side_effect
+      description: Writes the premium subscription receipt to the given file path.
+  profile_get:
+    description: Show a Spotify user's public profile (omit email for the default profile).
+    kind: query
+    entity: Profile
+    selection:
+    - name: email
+      value_ref: nv_email
+      required: false
+    provides:
+    - first_name
+    - last_name
+    - email
+    - registered_at
+  genre_query:
+    description: List all music genres in the Spotify catalog.
+    kind: query
+    entity: Genre
+    discovery:
+      operation_terms:
+      - list
+      - show
+      target_terms:
+      - genre
+      - genres
+    provides:
+    - name
 values:
   nv_str:
     type: string
@@ -1711,6 +1892,32 @@ values:
   nv_payment_card_id:
     type: integer
     description: Payment card primary key.
+  nv_premium_subscription_id:
+    type: integer
+    description: Premium subscription primary key.
+  nv_premium_duration:
+    type: enum
+    description: Premium subscription billing duration.
+    enum:
+    - monthly
+    - yearly
+  nv_genre:
+    type: enum
+    description: Music genre in the Spotify catalog.
+    enum:
+    - EDM
+    - R&B
+    - classical
+    - country
+    - hip-hop
+    - indie
+    - jazz
+    - pop
+    - reggae
+    - rock
+  nv_file_path:
+    type: string
+    description: File-system path for download or save.
   nv_rating:
     type: integer
     description: Star rating from 1 to 5.

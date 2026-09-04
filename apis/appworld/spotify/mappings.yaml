@@ -927,3 +927,94 @@ payment_card_delete:
   - { type: literal, value: payment_cards }
   - { type: var, name: id }
   headers: *auth_header
+
+premium_plan_get:
+  method: GET
+  path:
+  - { type: literal, value: spotify }
+  - { type: literal, value: premium }
+  - { type: literal, value: plans }
+
+premium_subscription_query:
+  method: GET
+  path:
+  - { type: literal, value: spotify }
+  - { type: literal, value: premium }
+  - { type: literal, value: subscriptions }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - - page_index
+      - type: if
+        condition: { type: exists, var: page_index }
+        then_expr: { type: var, name: page_index }
+        else_expr: { type: const, value: null }
+    - - page_limit
+      - type: if
+        condition: { type: exists, var: page_limit }
+        then_expr: { type: var, name: page_limit }
+        else_expr: { type: const, value: null }
+
+premium_subscribe:
+  method: POST
+  path:
+  - { type: literal, value: spotify }
+  - { type: literal, value: premium }
+  - { type: literal, value: subscriptions }
+  headers: *auth_header
+  body:
+    type: object
+    fields:
+    - [payment_card_id, { type: var, name: payment_card_id }]
+    - [duration, { type: var, name: duration }]
+
+premium_subscription_receipt:
+  method: GET
+  path:
+  - { type: literal, value: spotify }
+  - { type: literal, value: premium }
+  - { type: literal, value: subscriptions }
+  - { type: var, name: id }
+  - { type: literal, value: receipt }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - - download_to_file_path
+      - type: if
+        condition: { type: exists, var: download_to_file_path }
+        then_expr: { type: var, name: download_to_file_path }
+        else_expr: { type: const, value: null }
+    - - overwrite
+      - type: if
+        condition: { type: exists, var: overwrite }
+        then_expr: { type: var, name: overwrite }
+        else_expr: { type: const, value: null }
+    - - file_system_access_token
+      - type: if
+        condition: { type: exists, var: file_system_access_token }
+        then_expr: { type: var, name: file_system_access_token }
+        else_expr: { type: const, value: null }
+
+profile_get:
+  method: GET
+  path:
+  - { type: literal, value: spotify }
+  - { type: literal, value: profile }
+  query:
+    type: object
+    fields:
+    - - email
+      - type: if
+        condition: { type: exists, var: email }
+        then_expr: { type: var, name: email }
+        else_expr: { type: const, value: null }
+
+genre_query:
+  method: GET
+  path:
+  - { type: literal, value: spotify }
+  - { type: literal, value: genres }
+  response:
+    items: results

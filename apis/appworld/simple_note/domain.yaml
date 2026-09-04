@@ -110,7 +110,7 @@ capabilities:
       description: Ends the Simple Note session for this token.
   note_query:
     description: Search notes (titles/tags; content omitted in list).
-    kind: search
+    kind: query
     entity: Note
     selection:
     - name: access_token

@@ -33,8 +33,8 @@ entities:
         value_ref: nv_str
   EmailThread:
     id_field: email_thread_id
-    primary_search: email_thread_query
-    description: Gmail conversation thread (inbox/outbox/spam/archived/snoozed).
+    primary_query: email_thread_query
+    description: Inbox conversation thread.
     discovery:
       names:
       - thread
@@ -143,6 +143,57 @@ entities:
       registered_at:
         required: false
         value_ref: nv_datetime
+  User:
+    id_field: email
+    description: Gmail directory person (name and email) for addressing mail.
+    discovery:
+      names:
+      - user
+      - contact
+      - recipient
+      seed_class: ambient
+    fields:
+      email:
+        required: true
+        value_ref: nv_email
+      first_name:
+        required: false
+        value_ref: nv_str
+      last_name:
+        required: false
+        value_ref: nv_str
+      registered_at:
+        required: false
+        value_ref: nv_datetime
+  CategorySizes:
+    id_field: inbox
+    description: Thread and draft counts per mailbox category (inbox, outbox, archived, spam, drafts).
+    discovery:
+      names:
+      - category sizes
+      - mailbox counts
+      - inbox count
+      - thread counts
+      seed_class: ambient
+    fields:
+      inbox:
+        required: true
+        value_ref: nv_int
+      outbox:
+        required: true
+        value_ref: nv_int
+      archived:
+        required: true
+        value_ref: nv_int
+      spam:
+        required: true
+        value_ref: nv_int
+      unscheduled_drafts:
+        required: true
+        value_ref: nv_int
+      scheduled_drafts:
+        required: true
+        value_ref: nv_int
   Attachment:
     id_field: attachment_id
     description: File attachment on an email message.
@@ -192,7 +243,7 @@ capabilities:
       description: Ends the Gmail session for this token.
   email_thread_query:
     description: Search inbox threads (query/filters/pagination).
-    kind: search
+    kind: query
     entity: EmailThread
     selection:
     - name: access_token
@@ -243,7 +294,7 @@ capabilities:
     - updated_at
   email_thread_outbox_query:
     description: Search outbox / sent threads.
-    kind: search
+    kind: query
     entity: EmailThread
     selection:
     - name: access_token
@@ -294,7 +345,7 @@ capabilities:
     - updated_at
   email_thread_archived_query:
     description: Search archived threads.
-    kind: search
+    kind: query
     entity: EmailThread
     selection:
     - name: access_token
@@ -701,9 +752,56 @@ capabilities:
     - last_name
     - email
     - registered_at
+  user_query:
+    description: List or filter Gmail directory users by name or email before composing.
+    kind: query
+    entity: User
+    selection:
+    - name: query
+      value_ref: nv_str
+      required: false
+    controls:
+    - name: page_index
+      value_ref: nv_int
+      required: false
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+    provides:
+    - first_name
+    - last_name
+    - email
+    - registered_at
+    discovery:
+      operation_terms:
+      - list
+      - find
+      - search
+      target_terms:
+      - user
+      - recipient
+      - contact
+  category_sizes_get:
+    description: Show email thread counts per category and draft counts for the authenticated mailbox.
+    kind: get
+    entity: CategorySizes
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - inbox
+    - outbox
+    - archived
+    - spam
+    - unscheduled_drafts
+    - scheduled_drafts
   email_thread_spam_query:
     description: Search spam threads.
-    kind: search
+    kind: query
     entity: EmailThread
     selection:
     - name: access_token
@@ -754,7 +852,7 @@ capabilities:
     - updated_at
   email_thread_snoozed_query:
     description: Search snoozed threads.
-    kind: search
+    kind: query
     entity: EmailThread
     selection:
     - name: access_token

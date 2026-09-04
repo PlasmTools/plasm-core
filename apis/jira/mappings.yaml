@@ -61,12 +61,15 @@ issue_jql:
     items: issues
   pagination:
     params:
-      nextPageToken: {from_response: nextPageToken}
-      maxResults: {fixed: 50}
-    stop_when: {field: nextPageToken, absent: true}
-
-# ── Project ──────────────────────────────────────────────────────────────────
-
+      nextPageToken:
+        from_response: nextPageToken
+      maxResults:
+        fixed: 50
+        role: page_size
+    stop_when:
+      field: nextPageToken
+      absent: true
+    strategy: cursor
 project_get:
   # GET /rest/api/3/project/{projectIdOrKey}  — id = project key (e.g. PROJ)
   method: GET
@@ -108,9 +111,13 @@ project_query:
     items: values
   pagination:
     params:
-      startAt: {counter: 0}
-      maxResults: {fixed: 50}
-
+      startAt:
+        counter: 0
+        step: 50
+      maxResults:
+        fixed: 50
+        role: page_size
+    strategy: offset
 project_version_query:
   # GET /rest/api/3/project/{projectIdOrKey}/version
   # Scoped to a project; projectIdOrKey comes from the scope param.
@@ -138,11 +145,13 @@ project_version_query:
     items: values
   pagination:
     params:
-      startAt: {counter: 0}
-      maxResults: {fixed: 50}
-
-# ── User ─────────────────────────────────────────────────────────────────────
-
+      startAt:
+        counter: 0
+        step: 50
+      maxResults:
+        fixed: 50
+        role: page_size
+    strategy: offset
 user_get:
   # GET /rest/api/3/user?accountId=<id>
   # Unusual: accountId in query string, not path.
@@ -195,11 +204,13 @@ user_search:
     items: values
   pagination:
     params:
-      startAt: {counter: 0}
-      maxResults: {fixed: 50}
-
-# ── Comment ──────────────────────────────────────────────────────────────────
-
+      startAt:
+        counter: 0
+        step: 50
+      maxResults:
+        fixed: 50
+        role: page_size
+    strategy: offset
 comment_query:
   # GET /rest/api/3/issue/{issueIdOrKey}/comment
   # Scoped to an issue; issueIdOrKey comes from via_param traversal.
@@ -221,11 +232,13 @@ comment_query:
     items: comments
   pagination:
     params:
-      startAt: {counter: 0}
-      maxResults: {fixed: 50}
-
-# ── Priority ─────────────────────────────────────────────────────────────────
-
+      startAt:
+        counter: 0
+        step: 50
+      maxResults:
+        fixed: 50
+        role: page_size
+    strategy: offset
 priority_query:
   # GET /rest/api/3/priority/search
   method: GET
@@ -245,9 +258,13 @@ priority_query:
     items: values
   pagination:
     params:
-      startAt: {counter: 0}
-      maxResults: {fixed: 50}
-
+      startAt:
+        counter: 0
+        step: 50
+      maxResults:
+        fixed: 50
+        role: page_size
+    strategy: offset
 priority_get:
   # GET /rest/api/3/priority/{id}
   method: GET
@@ -331,11 +348,13 @@ worklog_query:
     items: worklogs
   pagination:
     params:
-      startAt: {counter: 0}
-      maxResults: {fixed: 50}
-
-# ── Changelog ────────────────────────────────────────────────────────────────
-
+      startAt:
+        counter: 0
+        step: 50
+      maxResults:
+        fixed: 50
+        role: page_size
+    strategy: offset
 changelog_query:
   # GET /rest/api/3/issue/{issueIdOrKey}/changelog
   # Returns PageBeanChangelog {values: [...], total, isLast}
@@ -351,11 +370,13 @@ changelog_query:
     items: values
   pagination:
     params:
-      startAt: {counter: 0}
-      maxResults: {fixed: 50}
-
-# ── RemoteLink ────────────────────────────────────────────────────────────────
-
+      startAt:
+        counter: 0
+        step: 50
+      maxResults:
+        fixed: 50
+        role: page_size
+    strategy: offset
 remotelink_query:
   # GET /rest/api/3/issue/{issueIdOrKey}/remotelink
   # Returns a bare array of remote links (no pagination wrapper).
@@ -411,9 +432,13 @@ component_query:
     items: values
   pagination:
     params:
-      startAt: {counter: 0}
-      maxResults: {fixed: 50}
-
+      startAt:
+        counter: 0
+        step: 50
+      maxResults:
+        fixed: 50
+        role: page_size
+    strategy: offset
 component_get:
   # GET /rest/api/3/component/{id}
   method: GET
@@ -713,9 +738,13 @@ group_query:
     items: groups
   pagination:
     params:
-      startAt: {counter: 0}
-      maxResults: {fixed: 50}
-
+      startAt:
+        counter: 0
+        step: 50
+      maxResults:
+        fixed: 50
+        role: page_size
+    strategy: offset
 group_get:
   # GET /rest/api/3/group?groupname=…
   method: GET
@@ -781,9 +810,13 @@ filter_query:
     items: values
   pagination:
     params:
-      startAt: {counter: 0}
-      maxResults: {fixed: 50}
-
+      startAt:
+        counter: 0
+        step: 50
+      maxResults:
+        fixed: 50
+        role: page_size
+    strategy: offset
 filter_get:
   # GET /rest/api/3/filter/{id}
   method: GET
@@ -814,9 +847,13 @@ dashboard_query:
     items: values
   pagination:
     params:
-      startAt: {counter: 0}
-      maxResults: {fixed: 50}
-
+      startAt:
+        counter: 0
+        step: 50
+      maxResults:
+        fixed: 50
+        role: page_size
+    strategy: offset
 dashboard_get:
   # GET /rest/api/3/dashboard/{id}
   method: GET
@@ -842,9 +879,13 @@ webhook_query:
     items: values
   pagination:
     params:
-      startAt: {counter: 0}
-      maxResults: {fixed: 50}
-
+      startAt:
+        counter: 0
+        step: 50
+      maxResults:
+        fixed: 50
+        role: page_size
+    strategy: offset
 webhook_register:
   # POST /rest/api/3/webhook — WebhookRegistrationDetails
   method: POST
@@ -901,9 +942,13 @@ board_query:
     items: values
   pagination:
     params:
-      startAt: {counter: 0}
-      maxResults: {fixed: 50}
-
+      startAt:
+        counter: 0
+        step: 50
+      maxResults:
+        fixed: 50
+        role: page_size
+    strategy: offset
 board_get:
   # GET /rest/agile/1.0/board/{boardId}
   method: GET
@@ -929,9 +974,13 @@ sprint_query:
     items: values
   pagination:
     params:
-      startAt: {counter: 0}
-      maxResults: {fixed: 50}
-
+      startAt:
+        counter: 0
+        step: 50
+      maxResults:
+        fixed: 50
+        role: page_size
+    strategy: offset
 sprint_get:
   # GET /rest/agile/1.0/sprint/{sprintId}
   method: GET

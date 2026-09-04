@@ -48,8 +48,13 @@ ugc_post_query:
           else_expr: { type: const, value: null }
   pagination:
     params:
-      start: { counter: 0, step: 10 }
-      count: { fixed: 10 }
+      start:
+        counter: 0
+        step: 10
+      count:
+        fixed: 10
+        role: page_size
+    strategy: offset
   headers: *restli_headers
 
 ugc_post_query_for_member:
@@ -81,8 +86,13 @@ ugc_post_query_for_member:
           else_expr: { type: const, value: null }
   pagination:
     params:
-      start: { counter: 0, step: 10 }
-      count: { fixed: 10 }
+      start:
+        counter: 0
+        step: 10
+      count:
+        fixed: 10
+        role: page_size
+    strategy: offset
   headers: *restli_headers
 
 ugc_post_query_for_organization:
@@ -114,8 +124,13 @@ ugc_post_query_for_organization:
           else_expr: { type: const, value: null }
   pagination:
     params:
-      start: { counter: 0, step: 10 }
-      count: { fixed: 10 }
+      start:
+        counter: 0
+        step: 10
+      count:
+        fixed: 10
+        role: page_size
+    strategy: offset
   headers: *restli_headers
 
 ugc_post_get:

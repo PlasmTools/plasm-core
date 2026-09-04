@@ -602,9 +602,12 @@ task_query:
       value: task
   pagination:
     params:
-      page: {counter: 0}
-    stop_when: {field: last_page, eq: true}
-
+      page:
+        counter: 0
+    stop_when:
+      field: last_page
+      eq: true
+    strategy: page_number
 list_task_query:
   # List-scoped task query. GET /v2/list/{list_id}/task
   # Uses the same last_page pagination pattern as task_query.
@@ -623,9 +626,12 @@ list_task_query:
       value: task
   pagination:
     params:
-      page: {counter: 0}
-    stop_when: {field: last_page, eq: true}
-
+      page:
+        counter: 0
+    stop_when:
+      field: last_page
+      eq: true
+    strategy: page_number
 task_get:
   response: single
   method: GET
@@ -900,9 +906,12 @@ view_tasks:
       value: task
   pagination:
     params:
-      page: {counter: 0}
-    stop_when: {field: last_page, eq: true}
-
+      page:
+        counter: 0
+    stop_when:
+      field: last_page
+      eq: true
+    strategy: page_number
 view_comments:
   response:
     items: comments

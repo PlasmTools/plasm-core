@@ -7,8 +7,12 @@ character_query:
   path: [{ type: literal, value: character }]
   pagination:
     params:
-      page: {counter: 1}
-      page_size: {fixed: 20}
+      page:
+        counter: 1
+      page_size:
+        fixed: 20
+        role: page_size
+    strategy: page_number
   query:
     type: object
     fields:
@@ -47,8 +51,12 @@ location_query:
   path: [{ type: literal, value: location }]
   pagination:
     params:
-      page: {counter: 1}
-      page_size: {fixed: 20}
+      page:
+        counter: 1
+      page_size:
+        fixed: 20
+        role: page_size
+    strategy: page_number
   query:
     type: object
     fields:
@@ -77,8 +85,12 @@ episode_query:
   path: [{ type: literal, value: episode }]
   pagination:
     params:
-      page: {counter: 1}
-      page_size: {fixed: 20}
+      page:
+        counter: 1
+      page_size:
+        fixed: 20
+        role: page_size
+    strategy: page_number
   query:
     type: object
     fields:

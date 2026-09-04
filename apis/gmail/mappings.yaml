@@ -58,11 +58,13 @@ message_list:
           else_expr: { type: const, value: null }
   pagination:
     params:
-      pageToken: { from_response: nextPageToken }
-      maxResults: { fixed: 100 }
+      pageToken:
+        from_response: nextPageToken
+      maxResults:
+        fixed: 100
+        role: page_size
     location: query
-
-# Same HTTP as message_list — enables Message~"…" / `message search` (kind: search).
+    strategy: cursor
 message_search:
   response:
     items: messages
@@ -98,10 +100,13 @@ message_search:
           else_expr: { type: const, value: null }
   pagination:
     params:
-      pageToken: { from_response: nextPageToken }
-      maxResults: { fixed: 100 }
+      pageToken:
+        from_response: nextPageToken
+      maxResults:
+        fixed: 100
+        role: page_size
     location: query
-
+    strategy: cursor
 message_get:
   response: single
   method: GET
@@ -301,11 +306,13 @@ thread_list:
           else_expr: { type: const, value: null }
   pagination:
     params:
-      pageToken: { from_response: nextPageToken }
-      maxResults: { fixed: 100 }
+      pageToken:
+        from_response: nextPageToken
+      maxResults:
+        fixed: 100
+        role: page_size
     location: query
-
-# Same HTTP as thread_list — enables Thread~"…" / `thread search` (kind: search).
+    strategy: cursor
 thread_search:
   response:
     items: threads
@@ -341,10 +348,13 @@ thread_search:
           else_expr: { type: const, value: null }
   pagination:
     params:
-      pageToken: { from_response: nextPageToken }
-      maxResults: { fixed: 100 }
+      pageToken:
+        from_response: nextPageToken
+      maxResults:
+        fixed: 100
+        role: page_size
     location: query
-
+    strategy: cursor
 thread_get:
   response: single
   method: GET
@@ -557,10 +567,13 @@ draft_list:
       value: drafts
   pagination:
     params:
-      pageToken: { from_response: nextPageToken }
-      maxResults: { fixed: 100 }
+      pageToken:
+        from_response: nextPageToken
+      maxResults:
+        fixed: 100
+        role: page_size
     location: query
-
+    strategy: cursor
 draft_get:
   response: single
   method: GET

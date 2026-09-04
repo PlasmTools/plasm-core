@@ -73,6 +73,16 @@ RULES: dict[str, tuple[Severity, str, re.Pattern[str]]] = {
             re.I,
         ),
     ),
+    "H_sibling_list_polarity": (
+        "error",
+        "Entity banner conflates sibling list polarities (received/sent, inbox/outbox, …)",
+        re.compile(
+            r"received\b.*\bsent\b|\bsent\b.*\breceived\b|"
+            r"inbox\s*/\s*outbox|inbox/outbox|"
+            r"incoming\b.*\boutgoing\b|\boutgoing\b.*\bincoming\b",
+            re.I,
+        ),
+    ),
 }
 
 G_TABULAR_JARGON_ALLOW = re.compile(
@@ -224,6 +234,10 @@ def scan_domain_yaml(path: Path, catalog: str) -> list[Finding]:
             if not pattern.search(line):
                 continue
             if rule_id == "G_tabular_jargon" and G_TABULAR_JARGON_ALLOW.search(line):
+                continue
+            # Sibling-list polarity mash-ups are entity-banner heresy; capability
+            # glosses may correctly name both poles when one op filters by direction.
+            if rule_id == "H_sibling_list_polarity" and context != "entity":
                 continue
             sev = effective_severity(rule_id, base_sev, context)
             findings.append(

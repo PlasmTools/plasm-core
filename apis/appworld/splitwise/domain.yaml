@@ -1,4 +1,4 @@
-version: 8
+version: 9
 entry_id: splitwise
 auth:
   scheme: none
@@ -108,7 +108,7 @@ entities:
         value_ref: nv_str
   Expense:
     id_field: expense_id
-    primary_search: expense_query
+    primary_query: expense_query
     description: Shared expense with payer and debtors.
     discovery:
       names:
@@ -148,7 +148,7 @@ entities:
           param: expense_id
   Payment:
     id_field: payment_id
-    primary_search: payment_query
+    primary_query: payment_query
     description: Settlement payment between members.
     discovery:
       names:
@@ -258,6 +258,42 @@ entities:
       created_at:
         required: false
         value_ref: nv_datetime
+  Activity:
+    id_field: created_at
+    primary_query: activity_query
+    description: Combined expense and payment history for the authenticated account.
+    discovery:
+      names:
+      - activity
+      - history
+      - ledger
+      seed_class: ambient
+    fields:
+      record_type:
+        required: true
+        value_ref: nv_activity_record_type
+      amount:
+        required: true
+        value_ref: nv_number
+      paid_by:
+        required: true
+        value_ref: nv_activity_paid_by
+      owed_by:
+        required: true
+        value_ref: nv_activity_owed_by
+      description:
+        required: false
+        value_ref: nv_body
+        data_class: untrusted
+      group_id:
+        required: false
+        value_ref: nv_group_id
+      group_name:
+        required: true
+        value_ref: nv_str
+      created_at:
+        required: true
+        value_ref: nv_datetime
   Balance:
     id_field: you_owe_others
     primary_query: balance_groups_query
@@ -289,10 +325,61 @@ entities:
         value_ref: nv_str
       direction:
         required: false
-        value_ref: nv_str
+        value_ref: nv_balance_direction
       amount:
         required: false
         value_ref: nv_number
+  User:
+    id_field: email
+    description: Splitwise person with optional balance direction toward the authenticated user.
+    discovery:
+      names:
+      - user
+      - person
+      - member
+      seed_class: ambient
+    fields:
+      email:
+        required: true
+        value_ref: nv_email
+      name:
+        required: false
+        value_ref: nv_str
+      first_name:
+        required: false
+        value_ref: nv_str
+      last_name:
+        required: false
+        value_ref: nv_str
+      registered_at:
+        required: false
+        value_ref: nv_datetime
+      direction:
+        required: false
+        value_ref: nv_balance_direction
+      amount:
+        required: false
+        value_ref: nv_number
+  Profile:
+    id_field: email
+    description: Splitwise public profile (name and email).
+    discovery:
+      names:
+      - profile
+      seed_class: ambient
+    fields:
+      email:
+        required: true
+        value_ref: nv_email
+      first_name:
+        required: false
+        value_ref: nv_str
+      last_name:
+        required: false
+        value_ref: nv_str
+      registered_at:
+        required: false
+        value_ref: nv_datetime
 capabilities:
   login:
     description: Login to Splitwise; returns access_token for Bearer auth.
@@ -520,7 +607,7 @@ capabilities:
       description: Issues a new invitation code for the group.
   expense_query:
     description: List expenses in a group.
-    kind: search
+    kind: query
     entity: Expense
     selection:
     - name: access_token
@@ -561,7 +648,7 @@ capabilities:
       required: true
   expense_ungrouped_query:
     description: List expenses not attached to a group.
-    kind: search
+    kind: query
     entity: Expense
     selection:
     - name: access_token
@@ -731,7 +818,7 @@ capabilities:
       description: Removes the receipt file from the expense.
   payment_query:
     description: List payments in a group.
-    kind: search
+    kind: query
     entity: Payment
     selection:
     - name: access_token
@@ -766,7 +853,7 @@ capabilities:
       required: true
   payment_ungrouped_query:
     description: List payments not attached to a group.
-    kind: search
+    kind: query
     entity: Payment
     selection:
     - name: access_token
@@ -1166,6 +1253,39 @@ capabilities:
     - message
     - read
     - created_at
+  activity_query:
+    description: List combined expense and payment activity for the account.
+    kind: query
+    entity: Activity
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: show_expenses
+      value_ref: nv_bool
+      required: false
+    - name: show_payments
+      value_ref: nv_bool
+      required: false
+    controls:
+    - name: page_index
+      value_ref: nv_int
+      required: false
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+    provides:
+    - record_type
+    - amount
+    - paid_by
+    - owed_by
+    - description
+    - group_id
+    - group_name
+    - created_at
   notification_delete:
     description: Delete one notification.
     kind: delete
@@ -1225,6 +1345,50 @@ capabilities:
     output:
       type: side_effect
       description: Updates the read status of every notification.
+  profile_get:
+    description: Show a Splitwise user's public profile (omit email for the default profile).
+    kind: query
+    entity: Profile
+    selection:
+    - name: email
+      value_ref: nv_email
+      required: false
+    provides:
+    - first_name
+    - last_name
+    - email
+    - registered_at
+  user_search:
+    description: List or filter Splitwise users by name or email (includes balance direction and amount).
+    kind: query
+    entity: User
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+    controls:
+    - name: page_index
+      value_ref: nv_int
+      required: false
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+    provides:
+    - name
+    - email
+    - direction
+    - amount
+    discovery:
+      operation_terms:
+      - list
+      - find
+      - search
+      target_terms:
+      - user
+      - member
 values:
   nv_str:
     type: string
@@ -1293,12 +1457,50 @@ values:
   nv_read:
     type: boolean
     description: Whether a notification has been read.
+  nv_balance_direction:
+    type: enum
+    description: Who owes whom for a balance row.
+    enum:
+    - you_owe_them
+    - they_owe_you
+    - no_balance
   nv_notification_type:
-    type: string
-    description: Notification type label.
+    type: enum
+    description: Inbox notification kind from Splitwise activity.
+    enum:
+    - expense_added
+    - expense_comment_added
+    - expense_deleted
+    - expense_undeleted
+    - expense_updated
+    - group_deleted
+    - group_member_added
+    - group_member_exited
+    - group_member_joined
+    - group_member_removed
+    - group_undeleted
+    - group_updated
+    - payment_added
+    - payment_comment_added
+    - payment_deleted
+    - payment_undeleted
+    - payment_updated
+    - you_added_to_group
   nv_notification_title:
     type: string
     description: Notification title.
   nv_notification_message:
     type: string
     description: Notification message body.
+  nv_activity_record_type:
+    type: enum
+    description: Whether an activity row is an expense or a payment.
+    enum:
+    - expense
+    - payment
+  nv_activity_paid_by:
+    type: json
+    description: Payer name and email on an activity row.
+  nv_activity_owed_by:
+    type: json
+    description: Debtors (name, email, amount) on an activity row.

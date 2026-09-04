@@ -165,7 +165,7 @@ Symbolic teaching table / TSV teaching attaches **`entities.<Name>.description`*
 
 | Surface | Write | Do **not** write |
 |---------|-------|-------------------|
-| **Entity `description`** | Role / intent only: what class of task or decision this entity grounds — no relation, field, or parameter names that teaching table already prints | Payload inventories, relation "next step" hints, lists of related entities, REST-ish tours, capability ids, step-by-step APIs, HTTP status codes, `transport:`, explicit MCP seed instructions, **other catalogs / `entry_id`s / foreign entity names** |
+| **Entity `description`** | Role / intent only: what class of task or decision this entity grounds — no relation, field, or parameter names that teaching table already prints. When `primary_query` / `primary_search` is set, the banner **must match that primary list’s polarity** (e.g. received-only, inbox-only) — sibling list surfaces get their own capability `description`, not an “or” mash-up on the entity | Payload inventories, relation "next step" hints, lists of related entities, REST-ish tours, capability ids, step-by-step APIs, HTTP status codes, `transport:`, explicit MCP seed instructions, **other catalogs / `entry_id`s / foreign entity names**, **conflating sibling Query/Search surfaces** (“received or sent”, “inbox/outbox/spam…”) on one entity banner |
 | **Capability `description`** | What this operation **does** or **when** to pick it, in user/domain terms (roles: account holder vs recipient, public vs private, …) | "Call `foo_query` first", URL paths, error-code trivia (use `discovery.target_terms` for NL hints), **cross-catalog playbooks** (“get X from catalog Y then call this”) |
 
 **Compositional catalogs — never cross-annotate:** CGS strings are **local** to this `entry_id`. Federation stitches catalogs at session time; authors must **not** hard-wire foreign catalog or entity names into `description` / value glosses / instructional discovery prose. Teach **semantic roles** this surface owns (“login username is the account holder’s email, never a payment counterparty”; “`account_name` is an app key, not a login id”). Product docs may describe multi-catalog rites; **`domain.yaml` must not**.
@@ -543,11 +543,27 @@ Expose **next hops as relations** (`relation_outputs:` → decoded `Ref` edges o
     - `kind: scope` `param:` — copy a scope parameter into the row
     - `kind: node_row_count` `node:` — integer count
     - `kind: node_field` `node:` `field:` — take a field from one row (first row for query nodes)
-    - `kind: node_field_where` `node:` `where_field:` `equals_scope:` `field:` — take `field` from the **unique** row on `node` where `where_field` equals view scope `equals_scope` (fail on 0 or >1 matches; same semantics as write `query_pick`). Use for keyed get over a list-only vendor endpoint (e.g. AppWorld AccountPassword).
     - `kind: node_field_histogram_json` — JSON object of distinct values → counts
     - `kind: node_any_row_field_equals` — boolean
     - `kind: node_row_count_positive` — boolean
     - **`kind: computed`** `template:` — Minijinja string evaluated **after** all non-computed `output:` bindings (scope + node bindings) are materialized. The template context includes scope keys and prior output field names. Result is stored as a string field on the composed row. Use for assembled URLs, derived labels, and other strings that are not a single upstream field.
+
+**List-backed keyed Gets (`derive:`):** When the vendor exposes only a list endpoint but agents need `Entity(id)` / `e#{id_field=…}` identity reads, author a `kind: get` with **`derive:`** in `domain.yaml` (no `mappings.yaml` entry). Do **not** invent a one-node `views:` DAG for that case — reserve `views:` for real multi-node / computed / relation composition.
+
+```yaml
+account_password_get:
+  kind: get
+  entity: AccountPassword
+  provides: [account_name, password]
+  derive:
+    source: account_password_query   # same-catalog kind: query
+    match_field: account_name        # optional; defaults to target entity id_field
+    projection:                      # target_field → source_field; must cover provides
+      account_name: account_name
+      password: password
+```
+
+Load validates: outer is `kind: get`; source is same-catalog `kind: query`; match/projection fields exist and are type-compatible; projection is total for `provides`; no CML mapping template coexists. Runtime runs the source query through normal decode + pagination, requires exactly one typed key match, then projects one target row (dedicated not-found / non-unique / incomplete-source errors). Cross-catalog `derive.source` is invalid — federation ownership stays on the outer Get's catalog stamp.
   - **`relation_outputs:`** (optional) — synthesize `CachedEntity.relations` `Ref` targets:
     - `kind: first_node_row_where`
     - `kind: node_rows_where`
@@ -1064,7 +1080,7 @@ plasm> Page("abc")[markdown]
 - `get` / `query` / `search` → provides all entity fields (optimistic)
 - `create` / `update` / `delete` / `action` → provides nothing (declare explicitly)
 
-**Recommendation for `kind: get`:** Declare an explicit ordered `provides:` listing every scalar field the detail response materializes, with `id_field` first.
+**Recommendation for `kind: get`:** Declare an explicit ordered `provides:` listing every scalar field the detail response materializes, with `id_field` first. For list-only vendor endpoints, use capability-level [`derive:`](#composed-read-views) instead of a trivial one-node view.
 
 For `action`, if you rely on the default empty `provides`, you **must** add `output: { type: side_effect, description: "…" }`.
 
@@ -1229,6 +1245,30 @@ Decode shape for list bodies remains on the mapping's `response:` / decoder.
 | `next_cursor` + `results` | Cursor param + `from_response` |
 | `@odata.nextLink` + `value` | `location: response_next_url`, optional `response_next_url_field`, `$top` / `$select` as first-page `params` |
 | No list pagination parameters | omit `pagination` |
+
+#### AppWorld simulated APIs (`apis/appworld/*`)
+
+AppWorld OpenAPI list routes expose **`page_index`** (0-based) and **`page_limit`** (simulator default **5**, maximum **20**). Responses are typically a **bare JSON array** (no `next` cursor field).
+
+**Runtime contract:** automatic multi-page **`fetch_all`** applies only when the capability mapping includes a composable CML **`pagination:`** block. Wiring `page_index` / `page_limit` only as optional manual `query:` vars (or only under `domain.yaml` `controls:`) is **not** enough — the host still performs a **single upstream HTTP page** unless `pagination:` is present.
+
+Recommended pattern for AppWorld list queries:
+
+```yaml
+_appworld_page_index_limit: &appworld_page_index_limit
+  params:
+    page_index: {counter: 0}
+    page_limit: {fixed: 20}
+
+payment_request_received_query:
+  method: GET
+  # path / query ...
+  pagination: *appworld_page_index_limit
+```
+
+The runtime stops when a page returns fewer rows than `page_limit` (short-page heuristic). **`validate_cgs_capability_templates`** emits a **warning** when a query/search capability declares pagination wire params in domain or CML but omits `pagination:`.
+
+Catalog audit (2026-09): all AppWorld child catalogs had **zero** `pagination:` blocks; Venmo list queries were fixed first (CUGA `166f4ff_1`). Gmail, Spotify, Splitwise, etc. still wire manual `page_index`/`page_limit` query vars and will warn until composable pagination is added. See [`apis/appworld/README.md`](../../../apis/appworld/README.md).
 
 #### GraphQL (`transport: graphql`)
 

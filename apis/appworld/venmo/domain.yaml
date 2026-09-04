@@ -50,6 +50,12 @@ values:
     enum:
     - sent
     - received
+  nv_transfer_type:
+    type: enum
+    description: Bank transfer direction between linked card and Venmo balance.
+    enum:
+    - card_to_venmo
+    - venmo_to_card
   nv_sort_field:
     type: string
     description: Sort attribute with optional +/- prefix (created_at
@@ -64,6 +70,9 @@ values:
   nv_transaction_id:
     type: integer
     description: Transaction primary key.
+  nv_bank_transfer_id:
+    type: integer
+    description: Bank transfer primary key.
   nv_payment_request_id:
     type: integer
     description: Payment request primary key.
@@ -212,8 +221,40 @@ entities:
       venmo_balance:
         value_ref: nv_amount
         required: true
+  BankTransfer:
+    id_field: bank_transfer_id
+    primary_query: bank_transfer_query
+    description: History of money moved between a linked payment card and Venmo balance (deposits and
+      cash-outs) — not peer-to-peer payments (use Transaction).
+    discovery:
+      names:
+      - bank transfer
+      - card transfer
+      - deposit history
+      - cash out history
+      - card to venmo
+      - venmo to card
+      seed_class: primary
+    fields:
+      bank_transfer_id:
+        value_ref: nv_bank_transfer_id
+        required: true
+      transfer_type:
+        value_ref: nv_transfer_type
+        required: true
+      amount:
+        value_ref: nv_amount
+        required: true
+      payment_card_digits:
+        value_ref: nv_card_digits
+        required: true
+        data_class: pii_payment
+      created_at:
+        value_ref: nv_timestamp
+        required: true
   Transaction:
     id_field: transaction_id
+    primary_query: transaction_query
     description: Review completed transfers or send money you already owe — not for asking someone to
       pay you.
     discovery:
@@ -273,11 +314,9 @@ entities:
   PaymentRequest:
     id_field: payment_request_id
     primary_query: payment_request_received_query
-    description: 'Money someone asked you to pay (received) or money you asked someone else to pay (sent).
-      List and resolve pending requests here — not for completed transfers (use Transaction) and not for
-      moving Venmo balance to a card (use Balance).
-
-      '
+    description: >-
+      Money others asked you to pay (received payment requests). Not completed
+      transfers (use Transaction) or card↔balance moves (use Balance).
     discovery:
       names:
       - payment request
@@ -578,9 +617,25 @@ capabilities:
     output:
       type: side_effect
       description: Moves balance from Venmo onto the chosen payment card.
+  bank_transfer_query:
+    description: List history of money transfers between linked payment cards and Venmo balance.
+    kind: query
+    entity: BankTransfer
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: transfer_type
+      value_ref: nv_transfer_type
+    provides:
+    - bank_transfer_id
+    - transfer_type
+    - amount
+    - payment_card_digits
+    - created_at
   transaction_query:
     description: Find the authenticated user's sent and received transactions.
-    kind: search
+    kind: query
     entity: Transaction
     selection:
     - name: access_token
@@ -979,6 +1034,31 @@ capabilities:
         - name: access_token
           value_ref: nv_access_token
           required: true
+  notification_query:
+    description: List Venmo inbox notifications.
+    kind: query
+    entity: Notification
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: read
+      value_ref: nv_read
+      required: false
+    controls:
+    - name: page_index
+      value_ref: nv_count
+      required: false
+    - name: page_limit
+      value_ref: nv_count
+      required: false
+    provides:
+    - notification_id
+    - type
+    - title
+    - message
+    - read
+    - created_at
   notification_delete:
     description: Delete one Venmo notification.
     kind: delete
@@ -1038,6 +1118,31 @@ capabilities:
     output:
       type: side_effect
       description: Updates the read status of every notification.
+  social_feed_query:
+    description: Browse friends' public Venmo transactions on your social feed.
+    kind: query
+    entity: Transaction
+    discovery:
+      operation_terms:
+      - show
+      - browse
+      - list
+      target_terms:
+      - social feed
+      - friends feed
+      - activity feed
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    controls:
+    - name: page_index
+      value_ref: nv_count
+      required: false
+    - name: page_limit
+      value_ref: nv_count
+      required: false
+    provides: *id001
 auth:
   scheme: none
 http_backend: http://127.0.0.1:9000

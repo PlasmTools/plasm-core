@@ -25,10 +25,12 @@ mail_folder_query:
           else_expr: { type: const, value: null }
   pagination:
     location: response_next_url
-    response_next_url_field: "@odata.nextLink"
+    response_next_url_field: '@odata.nextLink'
     params:
-      $top: { fixed: 100 }
-
+      $top:
+        fixed: 100
+        role: page_size
+    strategy: next_url
 mail_folder_child_query:
   method: GET
   path:
@@ -49,10 +51,12 @@ mail_folder_child_query:
           else_expr: { type: const, value: null }
   pagination:
     location: response_next_url
-    response_next_url_field: "@odata.nextLink"
+    response_next_url_field: '@odata.nextLink'
     params:
-      $top: { fixed: 100 }
-
+      $top:
+        fixed: 100
+        role: page_size
+    strategy: next_url
 mail_folder_get:
   method: GET
   path:
@@ -87,10 +91,12 @@ message_query:
           else_expr: { type: const, value: null }
   pagination:
     location: response_next_url
-    response_next_url_field: "@odata.nextLink"
+    response_next_url_field: '@odata.nextLink'
     params:
-      $top: { fixed: 100 }
-
+      $top:
+        fixed: 100
+        role: page_size
+    strategy: next_url
 message_folder_query:
   method: GET
   path:
@@ -118,10 +124,12 @@ message_folder_query:
           else_expr: { type: const, value: null }
   pagination:
     location: response_next_url
-    response_next_url_field: "@odata.nextLink"
+    response_next_url_field: '@odata.nextLink'
     params:
-      $top: { fixed: 100 }
-
+      $top:
+        fixed: 100
+        role: page_size
+    strategy: next_url
 message_get:
   method: GET
   path:
@@ -239,10 +247,12 @@ attachment_query:
     items: value
   pagination:
     location: response_next_url
-    response_next_url_field: "@odata.nextLink"
+    response_next_url_field: '@odata.nextLink'
     params:
-      $top: { fixed: 100 }
-
+      $top:
+        fixed: 100
+        role: page_size
+    strategy: next_url
 attachment_get:
   method: GET
   path:
@@ -272,10 +282,12 @@ calendar_query:
     items: value
   pagination:
     location: response_next_url
-    response_next_url_field: "@odata.nextLink"
+    response_next_url_field: '@odata.nextLink'
     params:
-      $top: { fixed: 100 }
-
+      $top:
+        fixed: 100
+        role: page_size
+    strategy: next_url
 calendar_get:
   method: GET
   path:
@@ -310,10 +322,12 @@ event_query:
           else_expr: { type: const, value: null }
   pagination:
     location: response_next_url
-    response_next_url_field: "@odata.nextLink"
+    response_next_url_field: '@odata.nextLink'
     params:
-      $top: { fixed: 100 }
-
+      $top:
+        fixed: 100
+        role: page_size
+    strategy: next_url
 event_calendar_query:
   method: GET
   path:
@@ -341,10 +355,12 @@ event_calendar_query:
           else_expr: { type: const, value: null }
   pagination:
     location: response_next_url
-    response_next_url_field: "@odata.nextLink"
+    response_next_url_field: '@odata.nextLink'
     params:
-      $top: { fixed: 100 }
-
+      $top:
+        fixed: 100
+        role: page_size
+    strategy: next_url
 event_get:
   method: GET
   path:

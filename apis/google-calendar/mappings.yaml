@@ -57,11 +57,12 @@ calendar_list:
                           else_expr: { type: const, value: null } }]
   pagination:
     params:
-      pageToken:  { from_response: nextPageToken }
-      maxResults: { fixed: 250 }
-
-# ── Event ─────────────────────────────────────────────────────────────────────
-
+      pageToken:
+        from_response: nextPageToken
+      maxResults:
+        fixed: 250
+        role: page_size
+    strategy: cursor
 event_get:
   # GET /calendars/{calendarId}/events/{eventId}
   # Both calendarId and id come from the compound Ref key_vars.
@@ -138,5 +139,9 @@ event_list:
                          else_expr: { type: const, value: null } }]
   pagination:
     params:
-      pageToken:  { from_response: nextPageToken }
-      maxResults: { fixed: 250 }
+      pageToken:
+        from_response: nextPageToken
+      maxResults:
+        fixed: 250
+        role: page_size
+    strategy: cursor

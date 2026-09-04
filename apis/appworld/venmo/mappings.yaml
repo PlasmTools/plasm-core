@@ -7,6 +7,16 @@ _auth_header: &auth_header
       vars:
         token: { type: var, name: access_token }
 
+# AppWorld OpenAPI list endpoints use page_index (0-based) + page_limit (default 5, max 20).
+# Composable pagination enables default fetch-all for summarize / aggregate programs.
+_appworld_page_index_limit: &appworld_page_index_limit
+  params:
+    page_index:
+      counter: 0
+    page_limit:
+      fixed: 20
+      role: page_size
+  strategy: page_number
 login:
   method: POST
   path:
@@ -36,6 +46,7 @@ user_search:
     type: object
     fields:
     - [query, { type: var, name: query }]
+  pagination: *appworld_page_index_limit
 user_get:
   method: GET
   path:
@@ -65,6 +76,7 @@ friend_query:
         condition: { type: exists, var: user_email }
         then_expr: { type: var, name: user_email }
         else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
 friend_add:
   method: POST
   path:
@@ -107,6 +119,21 @@ balance_withdraw:
     fields:
     - [amount, { type: var, name: amount }]
     - [payment_card_id, { type: var, name: payment_card_id }]
+bank_transfer_query:
+  method: GET
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: bank_transfers }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - - transfer_type
+      - type: if
+        condition: { type: exists, var: transfer_type }
+        then_expr: { type: var, name: transfer_type }
+        else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
 transaction_query:
   method: GET
   path:
@@ -171,6 +198,7 @@ transaction_query:
         condition: { type: exists, var: sort_by }
         then_expr: { type: var, name: sort_by }
         else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
 transaction_get:
   method: GET
   path:
@@ -218,6 +246,7 @@ payment_request_received_query:
         condition: { type: exists, var: status }
         then_expr: { type: var, name: status }
         else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
 payment_request_sent_query:
   method: GET
   path:
@@ -225,6 +254,7 @@ payment_request_sent_query:
   - { type: literal, value: sent_payment_requests }
   headers: *auth_header
   query: *status_query
+  pagination: *appworld_page_index_limit
 payment_request_create:
   method: POST
   path:
@@ -415,6 +445,21 @@ payment_card_delete:
   - { type: literal, value: payment_cards }
   - { type: var, name: id }
   headers: *auth_header
+notification_query:
+  method: GET
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: notifications }
+  headers: *auth_header
+  query:
+    type: object
+    fields:
+    - - read
+      - type: if
+        condition: { type: exists, var: read }
+        then_expr: { type: var, name: read }
+        else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
 notification_delete:
   method: DELETE
   path:
@@ -449,3 +494,10 @@ notification_mark_all:
     type: object
     fields:
     - [read, { type: var, name: read }]
+social_feed_query:
+  method: GET
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: social_feed }
+  headers: *auth_header
+  pagination: *appworld_page_index_limit

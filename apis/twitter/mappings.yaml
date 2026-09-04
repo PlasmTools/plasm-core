@@ -115,11 +115,15 @@ tweet_search:
           else_expr: { type: const, value: null }
   pagination:
     location: query
-    response_prefix: [meta]
+    response_prefix:
+    - meta
     params:
-      max_results: { fixed: 25 }
-      next_token: { from_response: next_token }
-
+      max_results:
+        fixed: 25
+        role: page_size
+      next_token:
+        from_response: next_token
+    strategy: cursor
 tweet_timeline_query:
   method: GET
   path:
@@ -162,11 +166,15 @@ tweet_timeline_query:
           else_expr: { type: const, value: null }
   pagination:
     location: query
-    response_prefix: [meta]
+    response_prefix:
+    - meta
     params:
-      max_results: { fixed: 25 }
-      pagination_token: { from_response: next_token }
-
+      max_results:
+        fixed: 25
+        role: page_size
+      pagination_token:
+        from_response: next_token
+    strategy: cursor
 tweet_mentions_query:
   method: GET
   path:
@@ -201,11 +209,15 @@ tweet_mentions_query:
           else_expr: { type: const, value: null }
   pagination:
     location: query
-    response_prefix: [meta]
+    response_prefix:
+    - meta
     params:
-      max_results: { fixed: 25 }
-      pagination_token: { from_response: next_token }
-
+      max_results:
+        fixed: 25
+        role: page_size
+      pagination_token:
+        from_response: next_token
+    strategy: cursor
 user_liked_tweets_query:
   method: GET
   path:
@@ -220,11 +232,15 @@ user_liked_tweets_query:
     fields: []
   pagination:
     location: query
-    response_prefix: [meta]
+    response_prefix:
+    - meta
     params:
-      max_results: { fixed: 25 }
-      pagination_token: { from_response: next_token }
-
+      max_results:
+        fixed: 25
+        role: page_size
+      pagination_token:
+        from_response: next_token
+    strategy: cursor
 tweet_create:
   method: POST
   path:
@@ -317,7 +333,12 @@ list_tweets_query:
     fields: []
   pagination:
     location: query
-    response_prefix: [meta]
+    response_prefix:
+    - meta
     params:
-      max_results: { fixed: 50 }
-      pagination_token: { from_response: next_token }
+      max_results:
+        fixed: 50
+        role: page_size
+      pagination_token:
+        from_response: next_token
+    strategy: cursor

@@ -269,3 +269,17 @@ file_decompress:
         condition: { type: exists, var: delete_compressed_file }
         then_expr: { type: var, name: delete_compressed_file }
         else_expr: { type: const, value: null }
+
+profile_get:
+  method: GET
+  path:
+  - { type: literal, value: file_system }
+  - { type: literal, value: profile }
+  query:
+    type: object
+    fields:
+    - - email
+      - type: if
+        condition: { type: exists, var: email }
+        then_expr: { type: var, name: email }
+        else_expr: { type: const, value: null }

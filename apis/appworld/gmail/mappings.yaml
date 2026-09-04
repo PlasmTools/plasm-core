@@ -1,5 +1,14 @@
 # Gmail — AppWorld. Auth: login → access_token → Bearer header.
 
+# AppWorld OpenAPI list endpoints use page_index (0-based) + page_limit (default 5, max 20).
+_appworld_page_index_limit: &appworld_page_index_limit
+  params:
+    page_index:
+      counter: 0
+    page_limit:
+      fixed: 20
+      role: page_size
+  strategy: page_number
 _auth_header: &auth_header
   type: object
   fields:
@@ -78,21 +87,12 @@ email_thread_query:
         condition: { type: exists, var: to_email }
         then_expr: { type: var, name: to_email }
         else_expr: { type: const, value: null }
-    - - page_index
-      - type: if
-        condition: { type: exists, var: page_index }
-        then_expr: { type: var, name: page_index }
-        else_expr: { type: const, value: null }
-    - - page_limit
-      - type: if
-        condition: { type: exists, var: page_limit }
-        then_expr: { type: var, name: page_limit }
-        else_expr: { type: const, value: null }
     - - sort_by
       - type: if
         condition: { type: exists, var: sort_by }
         then_expr: { type: var, name: sort_by }
         else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
 
 email_thread_outbox_query:
   method: GET
@@ -103,6 +103,7 @@ email_thread_outbox_query:
   - { type: literal, value: outbox }
   headers: *auth_header
   query: *thread_search_query
+  pagination: *appworld_page_index_limit
 
 email_thread_archived_query:
   method: GET
@@ -145,21 +146,12 @@ email_thread_archived_query:
         condition: { type: exists, var: to_email }
         then_expr: { type: var, name: to_email }
         else_expr: { type: const, value: null }
-    - - page_index
-      - type: if
-        condition: { type: exists, var: page_index }
-        then_expr: { type: var, name: page_index }
-        else_expr: { type: const, value: null }
-    - - page_limit
-      - type: if
-        condition: { type: exists, var: page_limit }
-        then_expr: { type: var, name: page_limit }
-        else_expr: { type: const, value: null }
     - - sort_by
       - type: if
         condition: { type: exists, var: sort_by }
         then_expr: { type: var, name: sort_by }
         else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
 
 email_thread_get:
   method: GET
@@ -310,19 +302,7 @@ draft_query:
   - { type: literal, value: gmail }
   - { type: literal, value: drafts }
   headers: *auth_header
-  query:
-    type: object
-    fields:
-    - - page_index
-      - type: if
-        condition: { type: exists, var: page_index }
-        then_expr: { type: var, name: page_index }
-        else_expr: { type: const, value: null }
-    - - page_limit
-      - type: if
-        condition: { type: exists, var: page_limit }
-        then_expr: { type: var, name: page_limit }
-        else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
 
 draft_get:
   method: GET
@@ -430,6 +410,28 @@ profile_get:
     fields:
     - [email, { type: var, name: email }]
 
+user_query:
+  method: GET
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: users }
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
+
+category_sizes_get:
+  method: GET
+  path:
+  - { type: literal, value: gmail }
+  - { type: literal, value: category_sizes }
+  headers: *auth_header
+
 email_thread_spam_query:
   method: GET
   path:
@@ -439,6 +441,7 @@ email_thread_spam_query:
   - { type: literal, value: spam }
   headers: *auth_header
   query: *thread_search_query
+  pagination: *appworld_page_index_limit
 
 email_thread_snoozed_query:
   method: GET
@@ -449,6 +452,7 @@ email_thread_snoozed_query:
   - { type: literal, value: snoozed }
   headers: *auth_header
   query: *thread_search_query
+  pagination: *appworld_page_index_limit
 
 email_thread_label:
   method: POST
