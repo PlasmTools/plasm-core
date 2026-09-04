@@ -1,6 +1,7 @@
-use crate::capability_input::{validate_capability_invocation_input, validate_concrete_named_value};
+use crate::capability_input::{
+    validate_capability_invocation_input_with_path_vars, validate_concrete_named_value,
+};
 use crate::cgs_federation::{FederationDispatch, FederationResolveError};
-use crate::schema::body_value_without_mapping_path_vars;
 use crate::scope_entity_ref_infer::{
     prepare_create_capability_input, prepare_invoke_capability_input,
 };
@@ -539,8 +540,7 @@ pub fn type_check_create(create: &CreateExpr, cgs: &CGS) -> Result<(), TypeError
     if has_invocation_body {
         let raw = create.input.to_value();
         let effective = prepare_create_capability_input(capability, create, raw, cgs);
-        let body = body_value_without_mapping_path_vars(capability, effective);
-        validate_capability_invocation_input(capability, &body, cgs)?;
+        validate_capability_invocation_input_with_path_vars(capability, effective, cgs)?;
     }
 
     Ok(())
@@ -593,8 +593,7 @@ pub fn type_check_invoke(invoke: &InvokeExpr, cgs: &CGS) -> Result<(), TypeError
             .map(|i| i.to_value())
             .unwrap_or_else(|| Value::Object(indexmap::IndexMap::new()));
         let effective = prepare_invoke_capability_input(capability, invoke, raw, cgs);
-        let body = body_value_without_mapping_path_vars(capability, effective);
-        validate_capability_invocation_input(capability, &body, cgs)?;
+        validate_capability_invocation_input_with_path_vars(capability, effective, cgs)?;
     }
 
     Ok(())

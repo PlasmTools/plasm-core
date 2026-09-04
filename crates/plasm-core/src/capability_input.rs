@@ -251,11 +251,99 @@ fn validate_money_named_value(
 }
 
 /// Validate input against capability input schema
+#[allow(dead_code)]
 pub(crate) fn validate_capability_input(
     input: &Value,
     input_schema: &crate::InputSchema,
     cgs: &CGS,
 ) -> Result<(), TypeError> {
+    validate_capability_input_with_satisfied(
+        input,
+        input_schema,
+        cgs,
+        &std::collections::HashSet::new(),
+    )
+}
+
+fn validate_capability_input_with_satisfied(
+    input: &Value,
+    input_schema: &crate::InputSchema,
+    cgs: &CGS,
+    satisfied_fields: &std::collections::HashSet<String>,
+) -> Result<(), TypeError> {
+    if !satisfied_fields.is_empty() {
+        if let crate::InputType::Object {
+            fields,
+            additional_fields,
+        } = &input_schema.input_type
+        {
+            let Some(object) = input.as_object() else {
+                return Err(TypeError::IncompatibleValue {
+                    field: String::new(),
+                    value_type: input.type_name().to_string(),
+                    field_type: "object".to_string(),
+                });
+            };
+            for field_schema in fields {
+                if satisfied_fields.contains(field_schema.name.as_str()) {
+                    continue;
+                }
+                let field_path = field_schema.name.as_str();
+                match object.get(&field_schema.name) {
+                    Some(field_value) => {
+                        if !field_value.is_domain_example_placeholder() {
+                            match &field_schema.wire {
+                                crate::InputFieldWire::Inline(ty) => {
+                                    validate_input_type(
+                                        field_value,
+                                        ty.as_ref(),
+                                        field_path,
+                                        cgs,
+                                    )?;
+                                }
+                                crate::InputFieldWire::Registry(_) => {
+                                    let fnv =
+                                        field_schema.named_value(cgs).map_err(|_| {
+                                            TypeError::FieldNotFound {
+                                                field: field_path.to_string(),
+                                                entity: "input object".to_string(),
+                                            }
+                                        })?;
+                                    validate_concrete_named_value(
+                                        field_value,
+                                        fnv,
+                                        field_path,
+                                        cgs,
+                                    )?;
+                                }
+                            }
+                        }
+                    }
+                    None if field_schema.required => {
+                        return Err(TypeError::FieldNotFound {
+                            field: field_path.to_string(),
+                            entity: "input object".to_string(),
+                        });
+                    }
+                    None => {}
+                }
+            }
+            if !additional_fields {
+                let defined: std::collections::HashSet<_> =
+                    fields.iter().map(|f| f.name.as_str()).collect();
+                for object_field in object.keys() {
+                    if !defined.contains(object_field.as_str()) {
+                        return Err(TypeError::FieldNotFound {
+                            field: object_field.clone(),
+                            entity: "additional fields not allowed".to_string(),
+                        });
+                    }
+                }
+            }
+            validate_input_constraints(input, &input_schema.validation)?;
+            return Ok(());
+        }
+    }
     validate_input_type(input, &input_schema.input_type, "", cgs)?;
     validate_input_constraints(input, &input_schema.validation)?;
     Ok(())
@@ -273,6 +361,85 @@ pub fn validate_capability_invocation_input(
     input: &Value,
     cgs: &CGS,
 ) -> Result<(), TypeError> {
+    validate_capability_invocation_input_inner(capability, input, cgs, &std::collections::HashSet::new())
+}
+
+/// Create/invoke typecheck after CML path-var injection into the same object as body fields.
+///
+/// 1. Type-check mapping path vars that are **declared** on an invocation lane (still present on
+///    `effective`).
+/// 2. Strip those path keys ([`crate::body_value_without_mapping_path_vars`]).
+/// 3. Validate the remaining body, treating path-template fields as already satisfied so they are
+///    neither "additional" nor spuriously missing-required.
+pub fn validate_capability_invocation_input_with_path_vars(
+    capability: &CapabilitySchema,
+    effective: Value,
+    cgs: &CGS,
+) -> Result<(), TypeError> {
+    use crate::schema::{body_value_without_mapping_path_vars, path_var_names_from_mapping_json};
+    use std::collections::HashSet;
+
+    let path_vars: HashSet<String> = capability
+        .mapping
+        .as_ref()
+        .map(|m| path_var_names_from_mapping_json(&m.template.0))
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+
+    if !path_vars.is_empty() {
+        if let Some(object) = effective.as_object() {
+            for field in capability.invocation_object_fields() {
+                if !path_vars.contains(field.name.as_str()) {
+                    continue;
+                }
+                match object.get(&field.name) {
+                    Some(field_value) => {
+                        if !field_value.is_domain_example_placeholder() {
+                            validate_invocation_object_field(field, field_value, cgs)?;
+                        }
+                    }
+                    None if field.required => {
+                        return Err(TypeError::FieldNotFound {
+                            field: field.name.clone(),
+                            entity: "input object".to_string(),
+                        });
+                    }
+                    None => {}
+                }
+            }
+        }
+    }
+
+    let body = body_value_without_mapping_path_vars(capability, effective);
+    validate_capability_invocation_input_inner(capability, &body, cgs, &path_vars)
+}
+
+fn validate_invocation_object_field(
+    field: &crate::InputFieldSchema,
+    field_value: &Value,
+    cgs: &CGS,
+) -> Result<(), TypeError> {
+    match &field.wire {
+        crate::InputFieldWire::Inline(ty) => {
+            validate_input_type(field_value, ty.as_ref(), field.name.as_str(), cgs)
+        }
+        crate::InputFieldWire::Registry(_) => {
+            let fnv = field.named_value(cgs).map_err(|_| TypeError::FieldNotFound {
+                field: field.name.clone(),
+                entity: "input object".to_string(),
+            })?;
+            validate_concrete_named_value(field_value, fnv, field.name.as_str(), cgs)
+        }
+    }
+}
+
+fn validate_capability_invocation_input_inner(
+    capability: &CapabilitySchema,
+    input: &Value,
+    cgs: &CGS,
+    satisfied_fields: &std::collections::HashSet<String>,
+) -> Result<(), TypeError> {
     if matches!(input, Value::UnionCtor { .. }) {
         let Some(schema) = capability.inputs.payload.as_ref() else {
             return Err(TypeError::IncompatibleValue {
@@ -281,7 +448,7 @@ pub fn validate_capability_invocation_input(
                 field_type: "union constructor requires inputs.payload".to_string(),
             });
         };
-        return validate_capability_input(input, schema, cgs);
+        return validate_capability_input_with_satisfied(input, schema, cgs, satisfied_fields);
     }
 
     let object_schemas: Vec<&crate::InputSchema> =
@@ -290,11 +457,11 @@ pub fn validate_capability_invocation_input(
     match object_schemas.as_slice() {
         [] => {
             if let Some(schema) = capability.primary_invocation_schema() {
-                validate_capability_input(input, schema, cgs)?;
+                validate_capability_input_with_satisfied(input, schema, cgs, satisfied_fields)?;
             }
             Ok(())
         }
-        [schema] => validate_capability_input(input, schema, cgs),
+        [schema] => validate_capability_input_with_satisfied(input, schema, cgs, satisfied_fields),
         schemas => {
             let Some(object) = input.as_object() else {
                 return Err(TypeError::IncompatibleValue {
@@ -337,7 +504,12 @@ pub fn validate_capability_invocation_input(
             }
 
             for (schema, part) in schemas.iter().zip(partitions) {
-                validate_capability_input(&Value::Object(part), schema, cgs)?;
+                validate_capability_input_with_satisfied(
+                    &Value::Object(part),
+                    schema,
+                    cgs,
+                    satisfied_fields,
+                )?;
             }
             Ok(())
         }
@@ -982,4 +1154,22 @@ mod tests {
             "expected extra rejected, got {err:?}"
         );
     }
+    #[test]
+    fn path_var_required_on_payload_survives_create_strip() {
+        use crate::loader::load_schema_dir_unvalidated;
+        use crate::type_check_expr;
+        use std::path::Path;
+        let root = Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../apis/appworld/amazon"
+        ));
+        let cgs = load_schema_dir_unvalidated(root).expect("amazon");
+        let line = r#"ProductReview.product-review-create(product_id=Product($), access_token="$", rating="$")"#;
+        let mut parsed = crate::expr_parser::parse(line, &cgs).expect("parse");
+        crate::normalize_expr_query_capabilities(&mut parsed.expr, &cgs).unwrap();
+        type_check_expr(&parsed.expr, &cgs).unwrap_or_else(|e| panic!("typecheck: {e}"));
+        cgs.validate()
+            .unwrap_or_else(|e| panic!("amazon expression surface: {e}"));
+    }
+
 }

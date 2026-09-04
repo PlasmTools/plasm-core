@@ -341,7 +341,9 @@ pub use relation_segment::{
     RelationSegmentContext, RelationSegmentOutcome,
 };
 pub use relation_validation_expr::relation_validation_expr;
-pub use capability_input::validate_capability_invocation_input;
+pub use capability_input::{
+    validate_capability_invocation_input, validate_capability_invocation_input_with_path_vars,
+};
 pub use schema::{
     body_value_without_mapping_path_vars, capability_is_zero_arity_action,
     capability_is_zero_arity_invoke, capability_mapping_is_view_transport,

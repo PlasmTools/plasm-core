@@ -97,7 +97,9 @@ fn query_has_empty_object_params(cap: &plasm_core::CapabilitySchema) -> bool {
 }
 
 fn mapping_declares_pagination(cap: &plasm_core::CapabilitySchema) -> bool {
-    cap.mapping.template.0.get("pagination").is_some()
+    cap.mapping
+        .as_ref()
+        .is_some_and(|m| m.template.0.get("pagination").is_some())
 }
 
 /// Unfiltered list query in CGS terms: no typed domain parameters **and** no cursor/pagination
