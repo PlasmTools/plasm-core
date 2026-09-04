@@ -26,6 +26,7 @@ pub fn prepare_parsed_expr_for_dispatch(
     Ok(ParsedExpr {
         expr,
         projection: parsed.projection.clone(),
+        field_dot_extract: None,
     })
 }
 

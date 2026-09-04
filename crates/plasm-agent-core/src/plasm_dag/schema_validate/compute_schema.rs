@@ -56,8 +56,8 @@ pub(in crate::plasm_dag) fn infer_render_columns_for_node(
         DagNodeSource::Data(_) => Err(
             "data literals cannot provide inferred template columns; use explicit `[field,...] <<TAG` columns or bind a query".into(),
         ),
-        DagNodeSource::Derive { .. } => {
-            Err("derive bindings cannot provide inferred template columns".into())
+        DagNodeSource::Derive { .. } | DagNodeSource::ScalarExtract { .. } => {
+            Err("derive / scalar-extract bindings cannot provide inferred template columns".into())
         }
         DagNodeSource::ForEach { .. } => {
             Err("for_each bindings cannot provide inferred template columns".into())

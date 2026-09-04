@@ -99,10 +99,7 @@ mod tests {
     fn parallel_safe_root_query_without_projection() {
         use plasm_core::expr_parser::ParsedExpr;
         use plasm_core::{Expr, QueryExpr};
-        let p = ParsedExpr {
-            expr: Expr::Query(QueryExpr::all("Pet")),
-            projection: None,
-        };
+        let p = ParsedExpr::from_expr(Expr::Query(QueryExpr::all("Pet")));
         assert!(line_may_share_parallel_query_stage(&p));
     }
 
@@ -110,10 +107,8 @@ mod tests {
     fn not_parallel_safe_with_top_level_projection_enrichment() {
         use plasm_core::expr_parser::ParsedExpr;
         use plasm_core::{Expr, QueryExpr};
-        let p = ParsedExpr {
-            expr: Expr::Query(QueryExpr::all("Pet")),
-            projection: Some(vec!["name".into()]),
-        };
+        let p = ParsedExpr::from_expr(Expr::Query(QueryExpr::all("Pet")))
+            .with_projection(Some(vec!["name".into()]));
         assert!(!line_may_share_parallel_query_stage(&p));
     }
 
@@ -121,15 +116,12 @@ mod tests {
     fn not_parallel_safe_non_query_root() {
         use plasm_core::expr_parser::ParsedExpr;
         use plasm_core::{Expr, GetExpr, Ref};
-        let p = ParsedExpr {
-            expr: Expr::Get(GetExpr {
-                reference: Ref::new("Pet", "1"),
-                path_vars: None,
-                catalog_entry_id: plasm_core::CatalogEntryStamp::none(),
-                capability_name: None,
-            }),
-            projection: None,
-        };
+        let p = ParsedExpr::from_expr(Expr::Get(GetExpr {
+            reference: Ref::new("Pet", "1"),
+            path_vars: None,
+            catalog_entry_id: plasm_core::CatalogEntryStamp::none(),
+            capability_name: None,
+        }));
         assert!(!line_may_share_parallel_query_stage(&p));
     }
 }
@@ -179,29 +171,21 @@ mod property_tests {
             let (expected, p) = match case {
                 0 => (
                     true,
-                    ParsedExpr {
-                        expr: Expr::Query(QueryExpr::all("Pet")),
-                        projection: None,
-                    },
+                    ParsedExpr::from_expr(Expr::Query(QueryExpr::all("Pet"))),
                 ),
                 1 => (
                     false,
-                    ParsedExpr {
-                        expr: Expr::Query(QueryExpr::all("Pet")),
-                        projection: Some(vec!["name".into()]),
-                    },
+                    ParsedExpr::from_expr(Expr::Query(QueryExpr::all("Pet")))
+                        .with_projection(Some(vec!["name".into()])),
                 ),
                 2 => (
                     false,
-                    ParsedExpr {
-                        expr: Expr::Get(GetExpr {
-                            reference: Ref::new("Pet", "1"),
-                            path_vars: None,
-                            catalog_entry_id: plasm_core::CatalogEntryStamp::none(),
-                            capability_name: None,
-                        }),
-                        projection: None,
-                    },
+                    ParsedExpr::from_expr(Expr::Get(GetExpr {
+                        reference: Ref::new("Pet", "1"),
+                        path_vars: None,
+                        catalog_entry_id: plasm_core::CatalogEntryStamp::none(),
+                        capability_name: None,
+                    })),
                 ),
                 _ => unreachable!(),
             };

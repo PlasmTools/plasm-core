@@ -169,8 +169,7 @@ mod tests {
             entry_id: "default".into(),
             resource_index: Some(1),
             principal: None,
-            parsed_preimage: ParsedExpr {
-                expr: Expr::Query(QueryExpr {
+            parsed_preimage: ParsedExpr::from_expr(Expr::Query(QueryExpr {
                     entity: "Pet".into(),
                     predicate: None,
                     projection: None,
@@ -180,9 +179,7 @@ mod tests {
                     catalog_entry_id: plasm_core::CatalogEntryStamp::some(
                         plasm_core::RegistryEntryId::from("default"),
                     ),
-                }),
-                projection: None,
-            },
+                })),
             display_lines: vec!["pets".into()],
             request_fingerprints: vec!["fp1".into()],
             entities: vec![],

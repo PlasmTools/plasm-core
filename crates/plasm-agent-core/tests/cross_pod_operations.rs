@@ -75,6 +75,7 @@ fn run_artifact_doc(
                 entity: "Profile".into(),
                 predicate: None,
                 projection: None,
+                field_dot_extract: None,
                 pagination: None,
                 hydrate: None,
                 capability_name: None,

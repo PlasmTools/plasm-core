@@ -26,6 +26,7 @@ pub(crate) fn instantiate_parsed_expr_plan_inputs_with_rows(
     Ok(ParsedExpr {
         expr,
         projection: parsed.projection,
+        field_dot_extract: None,
     })
 }
 
@@ -101,6 +102,7 @@ pub(crate) fn instantiate_expr_template(
     Ok(ParsedExpr {
         expr,
         projection: template.projection.clone(),
+        field_dot_extract: None,
     })
 }
 
@@ -115,6 +117,7 @@ pub(crate) fn instantiate_raw_expr_template(
     Ok(ParsedExpr {
         expr,
         projection: template.projection.clone(),
+        field_dot_extract: None,
     })
 }
 

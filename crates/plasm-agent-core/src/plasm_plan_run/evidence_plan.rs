@@ -5,12 +5,9 @@ use plasm_core::{Expr, Value};
 
 /// Fallback parsed expr for synthetic plan nodes and archive preimages.
 pub fn archive_fallback_parsed_expr() -> ParsedExpr {
-    ParsedExpr {
-        expr: Expr::TeachingValue {
+    ParsedExpr::from_expr(Expr::TeachingValue {
             value: Value::String("__plasm_run_artifact_archive__".into()),
-        },
-        projection: None,
-    }
+        })
 }
 
 pub fn parsed_expr_for_plan_node(node: &crate::plasm_plan::ValidatedPlanNode) -> ParsedExpr {
@@ -21,11 +18,13 @@ pub fn parsed_expr_for_plan_node(node: &crate::plasm_plan::ValidatedPlanNode) ->
             .map(|ir| ParsedExpr {
                 expr: ir.expr.clone(),
                 projection: ir.projection.clone(),
+                field_dot_extract: None,
             })
             .unwrap_or_else(archive_fallback_parsed_expr),
         crate::plasm_plan::ValidatedPlanNode::RelationTraversal(relation) => ParsedExpr {
             expr: relation.relation.ir.expr.clone(),
             projection: relation.relation.ir.projection.clone(),
+            field_dot_extract: None,
         },
         crate::plasm_plan::ValidatedPlanNode::ForEach(for_each) => {
             if let Ok(expr) = serde_json::from_value::<plasm_core::Expr>(
@@ -38,6 +37,7 @@ pub fn parsed_expr_for_plan_node(node: &crate::plasm_plan::ValidatedPlanNode) ->
                     } else {
                         Some(for_each.effect_template.projection.clone())
                     },
+                    field_dot_extract: None,
                 }
             } else {
                 archive_fallback_parsed_expr()

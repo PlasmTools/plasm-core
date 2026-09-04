@@ -12,7 +12,7 @@ use crate::plasm_render_compile::{
     resolve_render_collection_alias, validate_template_binding_labels,
 };
 
-use super::pipeline::compile_surface_node;
+use super::pipeline::compile_surface_nodes;
 use super::row_suffix::{
     compile_state_with_nodes, decompose_row_suffix_stream, lower_suffix_stream,
 };
@@ -82,7 +82,7 @@ fn compile_render_chain(
         if state.contains(head_core.trim()) {
             vec![]
         } else {
-            vec![compile_surface_node(session, state, &tmp, head)?]
+            compile_surface_nodes(session, state, &tmp, head)?
         }
     } else {
         lower_suffix_stream(session, state, &tmp, head, &head_core, suffixes, None)

@@ -90,6 +90,12 @@ pub(in crate::plasm_dag) enum DagNodeSource {
         value: PlanValue,
         inputs: Vec<serde_json::Value>,
     },
+    /// PLP-1: StaticSingleton field cell extract (`ℓ.wire` / `Get.wire`).
+    /// Plan JSON still emits as `derive` (BindingSymbol path) for runtime compatibility.
+    ScalarExtract {
+        source: String,
+        wire: String,
+    },
     ForEach {
         source: String,
         parsed_template: serde_json::Value,

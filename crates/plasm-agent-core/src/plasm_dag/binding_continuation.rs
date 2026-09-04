@@ -123,14 +123,11 @@ fn parse_relation_continuation_expr(
         Some(plasm_core::ProgramBindingLabel(contract.label.as_str())),
     )?;
     if force_row_hole || prefer_row_hole_relation_continuation(state, contract, segment, session) {
-        return Ok(plasm_core::expr_parser::ParsedExpr {
-            expr: relation_continuation_expr_from_source_row_hole(
+        return Ok(plasm_core::expr_parser::ParsedExpr::from_expr(relation_continuation_expr_from_source_row_hole(
                 session,
                 &contract.row_entity,
                 &relation_wire,
-            )?,
-            projection: None,
-        });
+            )?));
     }
     let refs = state.program_node_id_set();
     let try_expanded_chain = |expanded: &str| -> Option<plasm_core::expr_parser::ParsedExpr> {
@@ -180,14 +177,11 @@ fn parse_relation_continuation_expr(
             }
         }
     }
-    Ok(plasm_core::expr_parser::ParsedExpr {
-        expr: relation_continuation_expr_from_source_row_hole(
+    Ok(plasm_core::expr_parser::ParsedExpr::from_expr(relation_continuation_expr_from_source_row_hole(
             session,
             &contract.row_entity,
             &relation_wire,
-        )?,
-        projection: None,
-    })
+        )?))
 }
 
 fn looks_like_method_invoke_continuation_tail(
@@ -508,7 +502,7 @@ enum BindingContinuationRoute {
     CollectMetaTail {
         meta: Vec<plasm_core::expr_parser::CollectMeta>,
     },
-    FieldProject {
+    FieldExtract {
         wire: String,
     },
     RelationSingleHop,
@@ -591,7 +585,7 @@ fn classify_binding_continuation_route(
             }
             // Field-dot sugar: `ℓ.wire` → same route as explicit `ℓ[wire]` postfix.
             if let Some(wire) = field_project_wire_for_continuation(session, contract, tail_trim) {
-                return Ok(BindingContinuationRoute::FieldProject { wire });
+                return Ok(BindingContinuationRoute::FieldExtract { wire });
             }
             return Ok(BindingContinuationRoute::RelationSingleHop);
         }
@@ -719,19 +713,15 @@ pub(in crate::plasm_dag) fn dispatch_binding_continuation(
         .ok_or_else(|| {
             format!("Plasm program `{id}`: collect-meta continuation `{expr}` produced no nodes")
         }),
-        BindingContinuationRoute::FieldProject { wire } => lower_suffix_stream(
-            session,
-            state,
-            id,
-            expr,
-            label,
-            vec![RowSuffix::Project { fields: vec![wire] }],
-            Some(id),
-        )?
-        .pop()
-        .ok_or_else(|| {
-            format!("Plasm program `{id}`: field continuation `{expr}` produced no nodes")
-        }),
+        BindingContinuationRoute::FieldExtract { wire } => {
+            super::scalar_extract::lower_binding_scalar_field_dot(
+                id,
+                expr,
+                label,
+                wire,
+                contract.row_cardinality,
+            )
+        }
         BindingContinuationRoute::RelationSingleHop => {
             lower_relation_continuation(session, state, id, expr, label, tail_trim)
         }

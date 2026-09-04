@@ -1,12 +1,12 @@
-//! Compile-time gate: plural query-all field extracts must not fill scalar invoke params.
+//! Compile-time gate: only StaticSingleton field extracts may fill scalar invoke params.
 
 use super::binding_contract::binding_contract;
 use super::prelude::*;
 use super::schema_validate::cgs_for_qualified_entity;
-use super::types::{CompileState, DagNodeSource};
-use plasm_core::{plp, FieldType, PlasmInputRef, Predicate, Value};
+use super::types::CompileState;
+use plasm_core::{plp, FieldType, PlasmInputRef, Value};
 
-/// Reject `username=account.account_name` when `account` is bare query-all (plural → array at live).
+/// Reject plural / bounded / whole-entity refs into scalar stringish invoke params (PLP-1).
 pub(in crate::plasm_dag) fn validate_invoke_scalar_field_refs(
     session: &ExecuteSession,
     state: &CompileState<'_>,
@@ -44,10 +44,10 @@ pub(in crate::plasm_dag) fn validate_invoke_scalar_field_refs(
         let Ok(nv) = field.named_value(cgs.as_ref()) else {
             continue;
         };
-        if param_accepts_plural_column_projection(&nv.field_type) {
+        if !param_is_scalar_cell(&nv.field_type) {
             continue;
         }
-        reject_bare_plural_field_refs(state, node_id, param, val)?;
+        reject_non_static_singleton_scalar_refs(state, node_id, param, val)?;
     }
     if let Some(path_vars) = &inv.path_vars {
         for (param, val) in path_vars {
@@ -57,10 +57,10 @@ pub(in crate::plasm_dag) fn validate_invoke_scalar_field_refs(
             let Ok(nv) = field.named_value(cgs.as_ref()) else {
                 continue;
             };
-            if param_accepts_plural_column_projection(&nv.field_type) {
+            if !param_is_scalar_cell(&nv.field_type) {
                 continue;
             }
-            reject_bare_plural_field_refs(state, node_id, param, val)?;
+            reject_non_static_singleton_scalar_refs(state, node_id, param, val)?;
         }
     }
     Ok(())
@@ -80,26 +80,43 @@ fn infer_invoke_qualified_entity(
     }
 }
 
-fn param_accepts_plural_column_projection(ft: &FieldType) -> bool {
+/// Scalar cell params (PLP-1); not arrays / JSON / entity-ref identity slots.
+fn param_is_scalar_cell(ft: &FieldType) -> bool {
     matches!(
         ft,
-        FieldType::Array | FieldType::Json | FieldType::MultiSelect
+        FieldType::Boolean
+            | FieldType::Number
+            | FieldType::Integer
+            | FieldType::Uuid
+            | FieldType::Blob
+            | FieldType::String
+            | FieldType::Select
+            | FieldType::Date
+            | FieldType::Money
     )
 }
 
-fn reject_bare_plural_field_refs(
+fn reject_non_static_singleton_scalar_refs(
     state: &CompileState<'_>,
     node_id: &str,
     param: &str,
     value: &Value,
 ) -> Result<(), String> {
     match value {
+        Value::PlasmInputRef(PlasmInputRef::NodeInput { node, path }) if path.is_empty() => {
+            Err(plp::plp4_program(
+                node_id,
+                format!(
+                    "param `{param}` expects a scalar cell, but `{node}` is a whole-entity row — bind `{node}.wire` from a StaticSingleton (Get / nullary singleton), or pass a string literal"
+                ),
+            ))
+        }
         Value::PlasmInputRef(PlasmInputRef::NodeInput { node, path }) if !path.is_empty() => {
-            if binding_is_bare_query_all_plural(state, node) {
+            if !binding_is_static_singleton(state, node) {
                 return Err(plp::plp4_program(
                     node_id,
                     format!(
-                        "param `{param}` expects a scalar, but `{node}.{}` projects a field from bare query-all (plural). Narrow with `e#{{…}}` / `.filter{{…}}` then `.limit(1)` / `.singleton()`, or use a get / nullary `e#.m#()` row before passing `.wire` into a string param",
+                        "param `{param}` expects a scalar, but `{node}.{}` is not a StaticSingleton field extract — use a Get / nullary singleton row (`e#(id=…)`) then `ℓ.wire`, not plural / `| take 1` / filtered query field dots",
                         path.join(".")
                     ),
                 ));
@@ -108,19 +125,19 @@ fn reject_bare_plural_field_refs(
         }
         Value::Array(items) => {
             for item in items {
-                reject_bare_plural_field_refs(state, node_id, param, item)?;
+                reject_non_static_singleton_scalar_refs(state, node_id, param, item)?;
             }
             Ok(())
         }
         Value::Object(fields) => {
             for v in fields.values() {
-                reject_bare_plural_field_refs(state, node_id, param, v)?;
+                reject_non_static_singleton_scalar_refs(state, node_id, param, v)?;
             }
             Ok(())
         }
         Value::UnionCtor { ctor_fields, .. } => {
             for v in ctor_fields.values() {
-                reject_bare_plural_field_refs(state, node_id, param, v)?;
+                reject_non_static_singleton_scalar_refs(state, node_id, param, v)?;
             }
             Ok(())
         }
@@ -128,53 +145,7 @@ fn reject_bare_plural_field_refs(
     }
 }
 
-/// True when `label` ultimately comes from an unfiltered Query/Search surface (query-all).
-fn binding_is_bare_query_all_plural(state: &CompileState<'_>, label: &str) -> bool {
-    let Some(contract) = binding_contract(state, label) else {
-        return false;
-    };
-    if !matches!(
-        contract.row_cardinality,
-        RowCardinalityProof::StaticPlural | RowCardinalityProof::RuntimeChecked
-    ) {
-        return false;
-    }
-    ultimate_surface_is_bare_list_producer(state, label)
-}
-
-fn ultimate_surface_is_bare_list_producer(state: &CompileState<'_>, label: &str) -> bool {
-    let Some(node) = state.get(label) else {
-        return false;
-    };
-    match &node.source {
-        DagNodeSource::Surface {
-            parsed,
-            kind: PlanNodeKind::Query | PlanNodeKind::Search,
-            ..
-        } => match &parsed.expr {
-            Expr::Query(q) => predicate_is_absent_or_true(q.predicate.as_ref()),
-            _ => false,
-        },
-        DagNodeSource::Surface { .. } => false,
-        DagNodeSource::Compute { source, op, .. } => match op {
-            ComputeOp::Filter { .. }
-            | ComputeOp::Aggregate { .. }
-            | ComputeOp::Render { .. }
-            | ComputeOp::GroupBy { .. } => false,
-            ComputeOp::Limit { count } if *count <= 1 => false,
-            ComputeOp::Project { .. }
-            | ComputeOp::Sort { .. }
-            | ComputeOp::DedupeBy { .. }
-            | ComputeOp::With { .. }
-            | ComputeOp::Limit { .. } => ultimate_surface_is_bare_list_producer(state, source),
-        },
-        DagNodeSource::RelationTraversal { source_label, .. } => {
-            ultimate_surface_is_bare_list_producer(state, source_label)
-        }
-        _ => false,
-    }
-}
-
-fn predicate_is_absent_or_true(pred: Option<&Predicate>) -> bool {
-    matches!(pred, None | Some(Predicate::True))
+fn binding_is_static_singleton(state: &CompileState<'_>, label: &str) -> bool {
+    binding_contract(state, label)
+        .is_some_and(|c| matches!(c.row_cardinality, RowCardinalityProof::StaticSingleton))
 }

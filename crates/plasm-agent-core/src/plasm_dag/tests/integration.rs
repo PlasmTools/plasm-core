@@ -132,6 +132,104 @@ lines = rows.lines"#,
         assert_eq!(ret, Some("return_1"));
     }
 
+    /// PLP-1: `ℓ.wire` on StaticSingleton binds a scalar Derive cell, not `| select` Project.
+    #[test]
+    fn singleton_field_dot_bind_lowers_to_scalar_derive() {
+        let session = test_session();
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "singleton-field-dot-scalar",
+            "item = LangItem(\"i1\")\ntitle = item.title\ntitle",
+        )
+        .expect("singleton field-dot bind");
+        let nodes = plan["nodes"].as_array().expect("nodes");
+        let title = nodes
+            .iter()
+            .find(|n| n.get("id").and_then(|v| v.as_str()) == Some("title"))
+            .expect("title node");
+        assert_eq!(title.get("kind").and_then(|v| v.as_str()), Some("derive"));
+        let value = &title["derive_template"]["value"];
+        assert_eq!(
+            value.get("kind").and_then(|v| v.as_str()),
+            Some("binding_symbol"),
+            "{title}"
+        );
+        let path = value["path"].as_array().expect("path");
+        assert_eq!(path, &vec![serde_json::json!("title")]);
+        assert!(
+            !nodes.iter().any(|n| {
+                n.get("id").and_then(|v| v.as_str()) == Some("title")
+                    && n.get("kind").and_then(|v| v.as_str()) == Some("compute")
+            }),
+            "title must not be row Project compute: {nodes:?}"
+        );
+    }
+
+    #[test]
+    fn catalog_get_field_dot_bind_lowers_to_get_plus_scalar_derive() {
+        let session = test_session();
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "catalog-get-field-dot-scalar",
+            "title = LangItem(\"i1\").title\ntitle",
+        )
+        .expect("catalog Get.field-dot");
+        let nodes = plan["nodes"].as_array().expect("nodes");
+        let title = nodes
+            .iter()
+            .find(|n| n.get("id").and_then(|v| v.as_str()) == Some("title"))
+            .expect("title node");
+        assert_eq!(title.get("kind").and_then(|v| v.as_str()), Some("derive"));
+        assert!(
+            nodes.iter().any(|n| {
+                n.get("id")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|id| id.contains("extract_src"))
+                    && n.get("kind").and_then(|v| v.as_str()) == Some("get")
+            }),
+            "expected extract_src Get before scalar derive: {nodes:?}"
+        );
+    }
+
+    #[test]
+    fn compile_surface_node_rejects_multi_node_field_dot() {
+        let session = test_session();
+        let pipeline = PromptPipelineConfig::default();
+        let state = CompileState::new(&pipeline, None);
+        let err = super::pipeline::compile_surface_node(
+            &session,
+            &state,
+            "title",
+            r#"LangItem("i1").title"#,
+        )
+        .expect_err("single-node API must not drop Get");
+        assert!(
+            err.contains("compile_surface_nodes") || err.contains("multi-node"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn plural_field_dot_rejects_with_select_steer() {
+        let session = test_session();
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "plural-field-dot-reject",
+            "rows = LangItem\ntitle = rows.title\ntitle",
+        )
+        .expect_err("plural .title must not silently project");
+        assert!(
+            err.contains("PLP-4") || err.contains("select"),
+            "{err}"
+        );
+    }
+
     #[test]
     fn search_group_by_rejects_filter_input_param() {
         let session = test_session();
@@ -3333,24 +3431,47 @@ bad"#,
         )
         .expect_err("bare query-all `.title` must not fill string param");
         assert!(
-            err.contains("plural") || err.contains("query-all") || err.contains("scalar"),
+            err.contains("StaticSingleton") || err.contains("scalar") || err.contains("plural"),
             "expected plural→scalar gate, got: {err}"
         );
     }
 
     #[test]
-    fn invoke_allows_filtered_query_field_into_string_param() {
+    fn invoke_rejects_filtered_query_field_into_string_param() {
         let session = test_session();
-        compile_plasm_dag_to_plan(
+        let err = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
             None,
             &session,
             "filtered-field-into-string",
             r#"items = LangItem{owner="alice"}
-ok = LangItem("i1").update(title=items.title, score=1, owner="a")
-ok"#,
+bad = LangItem("i1").update(title=items.title, score=1, owner="a")
+bad"#,
         )
-        .expect("filtered query field extract into string may compile (runtime-checked)");
+        .expect_err("filtered plural `.title` must not fill string param");
+        assert!(
+            err.contains("StaticSingleton") || err.contains("scalar"),
+            "expected StaticSingleton field-extract gate, got: {err}"
+        );
+    }
+
+    #[test]
+    fn invoke_rejects_whole_entity_binding_into_string_param() {
+        let session = test_session();
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "entity-into-string",
+            r#"peer = LangItem("i2")
+bad = LangItem("i1").update(title=peer, score=1, owner="a")
+bad"#,
+        )
+        .expect_err("whole-entity bind must not fill string param");
+        assert!(
+            err.contains("whole-entity") || err.contains("scalar cell"),
+            "expected whole-entity reject, got: {err}"
+        );
     }
 
     #[test]

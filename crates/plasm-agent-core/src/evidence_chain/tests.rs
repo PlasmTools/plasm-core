@@ -67,12 +67,9 @@ fn session_slot_unallocated_when_disabled() {
             0,
             None,
             "line",
-            &ParsedExpr {
-                expr: Expr::TeachingValue {
+            &ParsedExpr::from_expr(Expr::TeachingValue {
                     value: Value::String("x".into()),
-                },
-                projection: None,
-            },
+                }),
             &[],
         )
         .expect("noop");
@@ -109,12 +106,9 @@ fn record_step_executed_accepts_synthetic_fingerprint() {
             0,
             None,
             "plan.compute(compute_step)",
-            &ParsedExpr {
-                expr: Expr::TeachingValue {
+            &ParsedExpr::from_expr(Expr::TeachingValue {
                     value: Value::String("x".into()),
-                },
-                projection: None,
-            },
+                }),
             &["plan-compute:deadbeef".into()],
         )
         .expect("synthetic fingerprint accepted");
@@ -135,12 +129,9 @@ fn batch_record_steps_single_lock() {
         ))
         .expect("scope");
     chain.record_comp_committed(&minimal_comp()).expect("comp");
-    let parsed = ParsedExpr {
-        expr: Expr::TeachingValue {
+    let parsed = ParsedExpr::from_expr(Expr::TeachingValue {
             value: Value::String("x".into()),
-        },
-        projection: None,
-    };
+        });
     chain
         .record_steps_executed(&[
             StepExecutedRecord {
@@ -179,12 +170,9 @@ fn record_run_sealed_rejects_run_id_wire_mismatch() {
             "demo",
         ))
         .expect("scope");
-    let parsed = ParsedExpr {
-        expr: Expr::TeachingValue {
+    let parsed = ParsedExpr::from_expr(Expr::TeachingValue {
             value: Value::String("x".into()),
-        },
-        projection: None,
-    };
+        });
     let err = chain
         .record_run_sealed(&RunSealRecord {
             expected_run_id_wire: format!("{}00", "pr".to_string() + &"ab".repeat(32)),

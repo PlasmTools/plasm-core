@@ -455,7 +455,7 @@ capabilities:
       required: true
     - name: query
       value_ref: nv_lang_secured_note_query
-      required: false
+      required: true
     provides:
     - note_id
     - title

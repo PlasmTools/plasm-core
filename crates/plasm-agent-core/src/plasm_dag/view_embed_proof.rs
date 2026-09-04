@@ -86,7 +86,9 @@ fn find_view_producer_node(
                 }
                 cur = source_label.clone();
             }
-            DagNodeSource::Compute { source, .. } | DagNodeSource::Derive { source, .. } => {
+            DagNodeSource::Compute { source, .. }
+            | DagNodeSource::Derive { source, .. }
+            | DagNodeSource::ScalarExtract { source, .. } => {
                 cur = source.clone();
             }
             DagNodeSource::Data(_) => {

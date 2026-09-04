@@ -169,6 +169,7 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
     let pe = ParsedExpr {
         expr: relation.relation.ir.expr.clone(),
         projection: relation.relation.ir.projection.clone(),
+        field_dot_extract: None,
     };
     let source_node = &relation.relation.source;
     let base_display = relation

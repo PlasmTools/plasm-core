@@ -82,7 +82,8 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "bindings_assignment",
     "bind_first_pipe_take",
     "binding_continuation",
-    "field_dot_project_sugar",
+    "pipe_select_row_fields",
+    "bind_singleton_field_scalar",
     "bind_pipe_take_continuation",
     "bind_projection_then_relation",
     "bind_relation_hop_one_one",
@@ -956,9 +957,9 @@ fn assert_planning_ir(
                 ));
             }
         }
-        "lang_field_dot_project_sugar" => {
+        "lang_pipe_select_row_fields" => {
             if comp_has_relation_named(comp, "title") {
-                return Err("field-dot sugar must not lower `title` as a relation".into());
+                return Err("select title must not lower `title` as a relation".into());
             }
             let Some(ComputeTemplate {
                 op: ComputeOp::Project { fields },
@@ -968,12 +969,34 @@ fn assert_planning_ir(
                 .find(|c| matches!(c.op, ComputeOp::Project { .. }))
             else {
                 return Err(format!(
-                    "expected Project compute from field-dot sugar (≡ [title]), got {computes:?}"
+                    "expected Project compute from `| select title`, got {computes:?}"
                 ));
             };
             if !fields.keys().any(|k| k.as_str() == "title") {
                 return Err(format!(
                     "expected Project fields to include title, got {fields:?}"
+                ));
+            }
+        }
+        "lang_bind_singleton_field_scalar" => {
+            if computes
+                .iter()
+                .any(|c| matches!(c.op, ComputeOp::Project { .. }))
+            {
+                return Err(
+                    "StaticSingleton `.title` must be scalar Derive, not Project / `| select`"
+                        .into(),
+                );
+            }
+            let has_title_derive = comp["nodes"].as_array().is_some_and(|nodes| {
+                nodes.iter().any(|n| {
+                    n.get("id").and_then(|v| v.as_str()) == Some("title")
+                        && n.get("kind").and_then(|v| v.as_str()) == Some("derive")
+                })
+            });
+            if !has_title_derive {
+                return Err(format!(
+                    "expected derive node `title` for singleton field-dot scalar, got {comp:?}"
                 ));
             }
         }
@@ -2226,6 +2249,17 @@ out"#,
         expect_markdown_substrings: &["alice", "42", "```tsv"],
     },
     MatrixRow {
+        id: "lang_bind_singleton_field_scalar",
+        program: r#"item = LangItem("i1")
+title = item.title
+title"#,
+        surface_line: false,
+        federated: false,
+        features: &["bind_singleton_field_scalar", "binding_continuation"],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv", "title"],
+    },
+    MatrixRow {
         id: "lang_derive_map_parallel",
         program: r#"hits = LangItem~"Alpha"
 sumry = hits | select id, title
@@ -2249,12 +2283,12 @@ tags"#,
         expect_markdown_substrings: &["```tsv"],
     },
     MatrixRow {
-        id: "lang_field_dot_project_sugar",
+        id: "lang_pipe_select_row_fields",
         program: r#"root = LangItem("i1")
 root | select title"#,
         surface_line: false,
         federated: false,
-        features: &["field_dot_project_sugar", "binding_continuation", "pipe_select"],
+        features: &["pipe_select_row_fields", "binding_continuation", "pipe_select"],
         min_node_results: 2,
         expect_markdown_substrings: &["```tsv", "title"],
     },

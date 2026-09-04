@@ -69,10 +69,7 @@ async fn fetch_entity_get_by_ref(
     get_expr.catalog_entry_id = plasm_core::CatalogEntryStamp::some(
         plasm_core::RegistryEntryId::from(target.entry_id.as_str()),
     );
-    let parsed = ParsedExpr {
-        expr: Expr::Get(get_expr),
-        projection: None,
-    };
+    let parsed = ParsedExpr::from_expr(Expr::Get(get_expr));
     let (_, result, _) = execute_plasm_parsed_expr(
         st,
         &scoped,

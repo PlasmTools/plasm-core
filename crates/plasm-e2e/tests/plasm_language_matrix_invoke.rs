@@ -167,10 +167,9 @@ async fn langitem_create_p_symbols_execute_and_materialize_post_body() {
         input.contains_key("title") && input.contains_key("score") && input.contains_key("owner")
     );
 
-    let template = parse_capability_template(
-        &cap.require_mapping().expect("cml mapping").template.0,
-    )
-    .expect("template");
+    let template =
+        parse_capability_template(&cap.require_mapping().expect("cml mapping").template.0)
+            .expect("template");
     let mut env = CmlEnv::new();
     for (k, v) in input {
         env.insert(k, v);

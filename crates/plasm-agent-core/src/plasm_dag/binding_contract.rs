@@ -225,6 +225,17 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
             continuation: ContinuationCapability::Terminal,
             anchor: ContinuationAnchor::None,
         },
+        DagNodeSource::ScalarExtract { .. } => ProgramBindingContract {
+            label: label.to_string(),
+            row_entity: QualifiedEntityKey {
+                entry_id: String::new(),
+                entity: String::new(),
+            },
+            result_shape: crate::plasm_plan::ResultShape::Single,
+            row_cardinality: RowCardinalityProof::StaticSingleton,
+            continuation: ContinuationCapability::Terminal,
+            anchor: ContinuationAnchor::None,
+        },
     }
 }
 

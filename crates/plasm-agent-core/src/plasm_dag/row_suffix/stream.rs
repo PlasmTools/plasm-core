@@ -1,7 +1,7 @@
 //! Row suffix stream decomposition and lowering.
 
 use super::super::binding_continuation;
-use super::super::pipeline::compile_surface_node;
+use super::super::pipeline::compile_surface_nodes;
 use super::super::prelude::*;
 use super::super::relation::try_split_single_hop_surface_chain;
 use super::super::schema_validate::{
@@ -45,9 +45,7 @@ fn lower_row_expression_with_suffixes(
     suffixes: Vec<RowSuffix>,
 ) -> Result<Vec<DagNode>, String> {
     if suffixes.is_empty() {
-        return Ok(vec![compile_surface_node(
-            session, state, binding_id, full_rhs,
-        )?]);
+        return Ok(compile_surface_nodes(session, state, binding_id, full_rhs)?);
     }
     lower_suffix_stream(
         session, state, binding_id, full_rhs, &head, suffixes, final_id,
@@ -200,20 +198,26 @@ pub(in crate::plasm_dag) fn lower_suffix_stream(
             };
             return Ok(vec![node]);
         }
-        let mut node = compile_surface_node(session, state, &out_id, head_trim)?;
-        node.singleton |= tail_singleton;
-        node.page_size = tail_page_size.or(node.page_size);
-        node.expr = full_rhs.to_string();
-        return Ok(vec![node]);
+        let mut nodes = compile_surface_nodes(session, state, &out_id, head_trim)?;
+        if let Some(node) = nodes.last_mut() {
+            node.singleton |= tail_singleton;
+            node.page_size = tail_page_size.or(node.page_size);
+            node.expr = full_rhs.to_string();
+        }
+        return Ok(nodes);
     }
 
     let mut cur_id = if state.contains(head_trim) {
         head_trim.to_string()
     } else {
         let bid = format!("__plasm_{binding_id}_b0");
-        let base = compile_surface_node(session, state, &bid, head_trim)?;
-        out.push(base);
-        bid
+        let mut base_nodes = compile_surface_nodes(session, state, &bid, head_trim)?;
+        let cur = base_nodes
+            .last()
+            .map(|n| n.id.clone())
+            .unwrap_or_else(|| bid.clone());
+        out.append(&mut base_nodes);
+        cur
     };
 
     for (i, suffix) in steps.iter().enumerate() {

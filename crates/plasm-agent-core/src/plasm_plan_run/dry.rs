@@ -42,6 +42,7 @@ pub fn evaluate_executable_comp_dry(
             let pe = ParsedExpr {
                 expr: relation.relation.ir.expr.clone(),
                 projection: relation.relation.ir.projection.clone(),
+                field_dot_extract: None,
             };
             typecheck_parsed_for_session(es, &pe).map_err(|e| ProgramStageError::Type {
                 correction: crate::program_diagnostic::format_session_symbolic_type_error(
@@ -752,6 +753,7 @@ fn surface_parsed_expr(
         return Ok(Some(ParsedExpr {
             expr: ir.expr.clone(),
             projection: ir.projection.clone(),
+            field_dot_extract: None,
         }));
     }
     if let Some(template) = &surface.ir_template {
@@ -761,6 +763,7 @@ fn surface_parsed_expr(
         return Ok(Some(ParsedExpr {
             expr,
             projection: template.projection.clone(),
+            field_dot_extract: None,
         }));
     }
     Ok(None)

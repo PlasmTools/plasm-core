@@ -163,6 +163,27 @@ pub(in crate::plasm_dag) fn emit_plan_json_for_source(
                 }
             }))
         }
+        DagNodeSource::ScalarExtract { source, wire } => {
+            let value = PlanValue::BindingSymbol {
+                binding: "_".to_string(),
+                path: vec![wire.clone()],
+            };
+            Ok(json!({
+                "id": node.id,
+                "kind": "derive",
+                "effect_class": "artifact_read",
+                "result_shape": "single",
+                "depends_on": [source],
+                "uses_result": [{ "node": source, "as": "_" }],
+                "derive_template": {
+                    "kind": "map",
+                    "source": source,
+                    "item_binding": "_",
+                    "inputs": [],
+                    "value": value,
+                }
+            }))
+        }
         DagNodeSource::ForEach {
             source,
             parsed_template,

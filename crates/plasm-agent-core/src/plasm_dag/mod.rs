@@ -11,6 +11,7 @@ mod plan_serialize;
 mod prelude;
 mod relation;
 mod row_suffix;
+mod scalar_extract;
 mod schema_validate;
 mod types;
 mod view_embed_proof;

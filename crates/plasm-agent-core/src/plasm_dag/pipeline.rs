@@ -321,7 +321,7 @@ fn lower_row_only_expr(
                         }]);
                     }
                 }
-                return Ok(vec![compile_surface_node(session, state, id, head)?]);
+                return compile_surface_nodes(session, state, id, head);
             }
             let suffixes: Vec<RowSuffix> = collect_meta.iter().map(RowSuffix::from).collect();
             lower_suffix_stream(session, state, id, display, head, suffixes, Some(id))
@@ -387,12 +387,7 @@ fn stage_row_expr_to_source(
             let suffixes = pipe.row_suffixes()?;
             if suffixes.is_empty() {
                 return Ok((
-                    vec![compile_surface_node(
-                        session,
-                        state,
-                        &out_id,
-                        pipe.head.as_str(),
-                    )?],
+                    compile_surface_nodes(session, state, &out_id, pipe.head.as_str())?,
                     out_id,
                 ));
             }
@@ -439,7 +434,7 @@ fn stage_row_expr_to_source(
                 {
                     nodes
                 } else {
-                    vec![compile_surface_node(session, state, &out_id, head)?]
+                    compile_surface_nodes(session, state, &out_id, head)?
                 }
             } else {
                 lower_suffix_stream(
@@ -548,10 +543,27 @@ pub(in crate::plasm_dag) fn compile_surface_node(
     id: &str,
     expr: &str,
 ) -> Result<DagNode, String> {
-    if let Some(mut nodes) = try_lower_row_suffix_expression(session, state, id, expr)? {
-        return nodes.pop().ok_or_else(|| {
-            format!("Plasm program `{id}`: postfix/relation chain `{expr}` produced no nodes")
-        });
+    let mut nodes = compile_surface_nodes(session, state, id, expr)?;
+    if nodes.len() != 1 {
+        return Err(format!(
+            "Plasm program `{id}`: surface `{expr}` lowered to {} nodes — use `compile_surface_nodes` for multi-node surfaces (PLP-1 field-dot extract)",
+            nodes.len()
+        ));
+    }
+    nodes
+        .pop()
+        .ok_or_else(|| format!("Plasm program `{id}`: empty surface"))
+}
+
+/// Compile a catalog / binding-continuation surface; may return Get + scalar Derive (PLP-1).
+pub(in crate::plasm_dag) fn compile_surface_nodes(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    id: &str,
+    expr: &str,
+) -> Result<Vec<DagNode>, String> {
+    if let Some(nodes) = try_lower_row_suffix_expression(session, state, id, expr)? {
+        return Ok(nodes);
     }
     if let Some((label, tail)) = longest_matching_bound_prefix(expr, state) {
         let contract = binding_contract(state, &label).ok_or_else(|| {
@@ -572,9 +584,9 @@ pub(in crate::plasm_dag) fn compile_surface_node(
             ));
         }
         if contract.supports_relation_dot() {
-            return binding_continuation::dispatch_binding_continuation(
+            return Ok(vec![binding_continuation::dispatch_binding_continuation(
                 session, state, id, expr, &label, tail_trim, &contract,
-            );
+            )?]);
         }
         return Err(plasm_core::plp::plp4_program(
             id,
@@ -584,7 +596,7 @@ pub(in crate::plasm_dag) fn compile_surface_node(
         ));
     }
     let refs = state.program_node_id_set();
-    let parsed = parse_plasm_program_surface_for_dag(
+    let mut parsed = parse_plasm_program_surface_for_dag(
         session,
         state.cross_cache,
         state.pipeline,
@@ -593,6 +605,11 @@ pub(in crate::plasm_dag) fn compile_surface_node(
         false,
         Some(id),
     )?;
+    if let Some(wire) = parsed.field_dot_extract.take() {
+        return super::scalar_extract::compile_catalog_singleton_field_dot(
+            session, state, id, expr, parsed, wire,
+        );
+    }
     let uses = collect_template_uses_from_expr(&parsed.expr);
     let (kind, qualified_entity, effect_class, result_shape) =
         infer_surface_contract(session, &parsed.expr)?;
@@ -614,8 +631,9 @@ pub(in crate::plasm_dag) fn compile_surface_node(
     if let DagNodeSource::Surface { parsed, .. } = &node.source {
         validate_invoke_scalar_field_refs(session, state, id, &parsed.expr)?;
     }
-    Ok(node)
+    Ok(vec![node])
 }
+
 pub(in crate::plasm_dag) fn split_return_list(
     line: &str,
     state: &mut CompileState<'_>,

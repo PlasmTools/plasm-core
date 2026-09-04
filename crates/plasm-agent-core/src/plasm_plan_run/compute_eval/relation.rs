@@ -36,6 +36,7 @@ pub(crate) async fn materialize_relation_singleton_chain(
     let pe = ParsedExpr {
         expr: relation.relation.ir.expr.clone(),
         projection: relation.relation.ir.projection.clone(),
+        field_dot_extract: None,
     };
     let parsed = instantiate_parsed_expr_plan_inputs(pe, &relation.uses_result, materialized)?;
     let expr_label = relation
@@ -351,6 +352,7 @@ pub(crate) async fn materialize_relation_scoped_fanout(
     let pe = ParsedExpr {
         expr: relation.relation.ir.expr.clone(),
         projection: relation.relation.ir.projection.clone(),
+        field_dot_extract: None,
     };
     let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
     let source_node = &relation.relation.source;

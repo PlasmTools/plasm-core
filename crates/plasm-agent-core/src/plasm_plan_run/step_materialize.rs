@@ -223,6 +223,7 @@ impl IoPort for LiveIoPort<'_> {
                     let pe = ParsedExpr {
                         expr: ir.expr.clone(),
                         projection: ir.projection.clone(),
+                        field_dot_extract: None,
                     };
                     let mut input_rows =
                         materialized_result_use_inputs(materialized, &surface.uses_result, None)?;

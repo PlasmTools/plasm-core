@@ -52,7 +52,7 @@
 //! # Examples
 //!
 //! ```text
-//! parse("Pet(10)", &cgs)        → Ok(ParsedExpr { expr: Get(Pet,10), projection: None })
+//! parse("Pet(10)", &cgs)        → Ok(ParsedExpr { expr: Get(Pet,10), .. })
 //! parse("Order{quantity>3}", &cgs) → Ok(ParsedExpr { expr: Query(...), .. })
 //! parse("Order(5).petId", &cgs) → Ok(ParsedExpr { expr: Chain(..), .. })
 //! ```
@@ -366,8 +366,32 @@ impl fmt::Display for ParseErrorKind {
 pub struct ParsedExpr {
     /// The composed expression tree.
     pub expr: Expr,
-    /// Optional field projection (list of field names) appended as `[f,f,...]`.
+    /// Optional **row** projection from explicit `[f,f,…]` (preserves entity/row shape).
     pub projection: Option<Vec<String>>,
+    /// Single-segment `.wire` sugar on a catalog source (PLP-1 scalar extract when the
+    /// source is a proven StaticSingleton Get; never silent `| select`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field_dot_extract: Option<String>,
+}
+
+impl ParsedExpr {
+    /// Expression with neither row projection nor PLP-1 field-dot extract.
+    #[must_use]
+    pub fn from_expr(expr: Expr) -> Self {
+        Self {
+            expr,
+            projection: None,
+            field_dot_extract: None,
+        }
+    }
+
+    /// Attach an explicit `[…]` row projection (clears any field-dot extract).
+    #[must_use]
+    pub fn with_projection(mut self, projection: Option<Vec<String>>) -> Self {
+        self.projection = projection;
+        self.field_dot_extract = None;
+        self
+    }
 }
 
 /// A structured parse error with position information.
@@ -682,8 +706,8 @@ pub(super) struct Parser<'a> {
     pub(super) for_each_row_context: bool,
     /// When the surface entity token was an opaque `e#`, owning catalog stamped on built [`Expr`].
     pending_session_catalog_entry_id: Option<String>,
-    /// Deferred bracket-equivalent projection from `.field` sugar (non-relation, non-EntityRef).
-    field_project_sugar: Option<String>,
+    /// Deferred field-dot extract candidate (PLP-1 scalar on StaticSingleton; `[…]` remains row projection).
+    pending_field_dot_extract: Option<String>,
 }
 
 impl<'a> Parser<'a> {
@@ -710,7 +734,7 @@ impl<'a> Parser<'a> {
             program_nodes: None,
             for_each_row_context: false,
             pending_session_catalog_entry_id: None,
-            field_project_sugar: None,
+            pending_field_dot_extract: None,
         };
         p.skip_ws();
         p
@@ -3668,7 +3692,8 @@ impl<'a> Parser<'a> {
                 }
 
                 // Check EntityRef fields (e.g. .petId → ChainExpr). Non-ref fields are
-                // projection sugar: `source.wire` ≡ `source[wire]` (deferred onto ParsedExpr).
+                // field-dot extract candidates: `source.wire` (PLP-1 scalar on StaticSingleton;
+                // explicit `source[wire]` remains row projection).
                 match ent.fields.get(field.as_str()) {
                     Some(f) => {
                         let is_ref = f
@@ -3688,7 +3713,7 @@ impl<'a> Parser<'a> {
                                     offset: span_start,
                                 });
                             }
-                            if self.field_project_sugar.is_some() {
+                            if self.pending_field_dot_extract.is_some() {
                                 return Err(ParseError {
                                     kind: ParseErrorKind::NotNavigable {
                                         field: field.clone(),
@@ -3699,7 +3724,7 @@ impl<'a> Parser<'a> {
                                     offset: span_start,
                                 });
                             }
-                            self.field_project_sugar = Some(field);
+                            self.pending_field_dot_extract = Some(field);
                             return Ok(source);
                         }
                     }
@@ -3815,10 +3840,10 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // Optional projection — explicit `[…]` or deferred `.field` sugar (≡ `[field]`).
+        // Optional projection — explicit `[…]` (row) vs deferred `.field` sugar (scalar-extract candidate).
         self.skip_ws();
-        let projection = if self.peek_char() == Some('[') {
-            if self.field_project_sugar.is_some() {
+        let (projection, field_dot_extract) = if self.peek_char() == Some('[') {
+            if self.pending_field_dot_extract.is_some() {
                 return Err(ParseError {
                     kind: ParseErrorKind::UnexpectedTrailingInput {
                         tail: self.remaining().to_string(),
@@ -3826,15 +3851,22 @@ impl<'a> Parser<'a> {
                     offset: self.pos,
                 });
             }
-            Some(self.parse_projection()?)
+            (Some(self.parse_projection()?), None)
+        } else if let Some(wire) = self.pending_field_dot_extract.take() {
+            // PLP-1: `.wire` is scalar extract on StaticSingleton — not `| select` / `[wire]`.
+            (None, Some(wire))
         } else {
-            self.field_project_sugar.take().map(|wire| vec![wire])
+            (None, None)
         };
 
         // One expression per call; ignore trailing noise (LLM markdown, prose, etc.).
         self.skip_ws();
 
-        Ok(ParsedExpr { expr, projection })
+        Ok(ParsedExpr {
+            expr,
+            projection,
+            field_dot_extract,
+        })
     }
 
     fn classify_remainder(&self) -> ParseRemainder {
@@ -4688,7 +4720,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_field_dot_project_sugar_equals_bracket() {
+    fn parse_field_dot_extract_is_not_bracket_projection() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.exists() {
@@ -4696,19 +4728,23 @@ mod tests {
         }
         let cgs = load_schema_dir(&dir).expect("language matrix cgs");
         let bracket = parse(r#"LangItem("i1")[title]"#, &cgs).expect("bracket project");
-        let sugar = parse(r#"LangItem("i1").title"#, &cgs).expect("field-dot project sugar");
+        let sugar = parse(r#"LangItem("i1").title"#, &cgs).expect("field-dot scalar extract");
         assert!(matches!(bracket.expr, Expr::Get(_)));
         assert!(matches!(sugar.expr, Expr::Get(_)));
         assert_eq!(bracket.projection, Some(vec!["title".to_string()]));
-        assert_eq!(sugar.projection, bracket.projection);
+        assert_eq!(bracket.field_dot_extract, None);
+        // PLP-1: `.wire` is scalar-extract candidate — never silent `| select` / `[wire]`.
+        assert_eq!(sugar.projection, None);
+        assert_eq!(sugar.field_dot_extract, Some("title".to_string()));
         // Relation still wins over field when both exist (tags).
         let rel = parse(r#"LangItem("i1").tags"#, &cgs).expect("relation hop");
         assert!(matches!(rel.expr, Expr::Chain(_)));
         assert_eq!(rel.projection, None);
+        assert_eq!(rel.field_dot_extract, None);
     }
 
     #[test]
-    fn parse_field_dot_project_sugar_rejects_further_nav() {
+    fn parse_field_dot_extract_rejects_further_nav() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.exists() {
