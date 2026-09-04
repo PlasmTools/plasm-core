@@ -233,13 +233,14 @@ mod tests {
             domain: "Request".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
                     "path": path
                 })
                 .into(),
-            },
+            }),
+            derived: None,
             inputs: CapabilityInputs {
                 scope,
                 selection,
@@ -263,7 +264,7 @@ mod tests {
             domain: "Request".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
                     "path": [
@@ -272,7 +273,8 @@ mod tests {
                     ]
                 })
                 .into(),
-            },
+            }),
+            derived: None,
             inputs: CapabilityInputs::default(),
             output_schema: None,
             provides: vec![],

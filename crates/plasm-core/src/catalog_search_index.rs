@@ -335,9 +335,10 @@ mod tests {
                 description: "Open a pull request.".into(),
                 kind: CapabilityKind::Create,
                 domain: EntityName::from("PullRequest"),
-                mapping: CapabilityMapping {
+                mapping: Some(CapabilityMapping {
                     template: CapabilityTemplateJson(serde_json::json!({ "method": "POST" })),
-                },
+                }),
+                derived: None,
                 inputs: CapabilityInputs::default(),
                 output_schema: None,
                 provides: vec![],

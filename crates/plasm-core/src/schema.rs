@@ -852,7 +852,12 @@ pub struct CapabilitySchema {
     pub description: String,
     pub kind: CapabilityKind,
     pub domain: EntityName, // Entity this capability operates on
-    pub mapping: CapabilityMapping,
+    /// CML / view transport mapping. `None` when [`Self::derived`] is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mapping: Option<CapabilityMapping>,
+    /// List-backed keyed Get plan (`derive:`). `None` when [`Self::mapping`] is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derived: Option<crate::DerivedGetPlan>,
     /// Structurally disjoint capability-input lanes.
     #[serde(flatten)]
     pub inputs: CapabilityInputs,
@@ -965,9 +970,32 @@ pub fn path_var_names_from_mapping_json(template: &serde_json::Value) -> Vec<Str
     out
 }
 
+/// Drop CML `path` template var keys from an object input before body-schema validate.
+///
+/// Parse injects anchor path segments into the same object as body fields for CML env splat;
+/// [`crate::validate_capability_input`] must not treat those as unexpected payload/arguments keys.
+pub fn body_value_without_mapping_path_vars(
+    cap: &CapabilitySchema,
+    input: crate::Value,
+) -> crate::Value {
+    let crate::Value::Object(mut map) = input else {
+        return input;
+    };
+    let Some(mapping) = &cap.mapping else {
+        return crate::Value::Object(map);
+    };
+    for pv in path_var_names_from_mapping_json(&mapping.template.0) {
+        map.swap_remove(&pv);
+    }
+    crate::Value::Object(map)
+}
+
 /// Same rule as `Parser::can_bind_create_path_vars`: path template binds `{anchor}_id` from `Get(anchor)`.
 pub fn can_bind_create_from_anchor(cap: &CapabilitySchema, anchor: &str) -> bool {
-    let path_vars = path_var_names_from_mapping_json(&cap.mapping.template.0);
+    let Some(mapping) = &cap.mapping else {
+        return false;
+    };
+    let path_vars = path_var_names_from_mapping_json(&mapping.template.0);
     if path_vars.is_empty() {
         return false;
     }
@@ -1008,29 +1036,6 @@ pub fn capability_template_all_var_names(template: &serde_json::Value) -> Vec<St
 /// True when CML mapping uses `transport: view` (composed view DAG, no direct HTTP).
 pub fn capability_mapping_is_view_transport(template: &serde_json::Value) -> bool {
     template.get("transport").and_then(|t| t.as_str()) == Some("view")
-}
-
-/// Returns a validation detail when invalid; `None` when the binding is well-formed.
-pub fn view_node_field_where_output_detail(
-    view: &ViewDefinition,
-    equals_scope: &str,
-    where_field: &str,
-    row_field: &str,
-) -> Option<String> {
-    if equals_scope.trim().is_empty()
-        || where_field.trim().is_empty()
-        || row_field.trim().is_empty()
-    {
-        return Some(
-            "node_field_where requires non-empty where_field, equals_scope, and field".into(),
-        );
-    }
-    if !view.scope.iter().any(|s| s.name == equals_scope) {
-        return Some(format!(
-            "equals_scope `{equals_scope}` is not a view scope param"
-        ));
-    }
-    None
 }
 
 /// True when the mapping sends the whole create/invoke aggregate via `body: { type: var, name: input }`.
@@ -1431,8 +1436,8 @@ pub fn union_variant_constructor_symbol(v: &InputVariantSchema) -> Option<&str> 
     v.constructor_symbol.as_deref()
 }
 
-/// Resolve a dotted capability input path (`operations.replace_block.ref`) against invocation
-/// arguments and payload. Structural source lanes are resolved through their dedicated accessors.
+/// Resolve a dotted capability input path (`operations.replace_block.ref`) against structural
+/// source lanes (`scope` / `selection` / `controls`) first, then invocation schemas.
 pub(crate) fn resolve_capability_input_param_field<'a>(
     cap: &'a CapabilitySchema,
     path: &str,
@@ -1441,27 +1446,30 @@ pub(crate) fn resolve_capability_input_param_field<'a>(
         return None;
     }
     let segments: Vec<&str> = path.split('.').collect();
-    for schema in [cap.inputs.arguments.as_ref(), cap.inputs.payload.as_ref()]
-        .into_iter()
-        .flatten()
-    {
-        match &schema.input_type {
-            InputType::Object { fields, .. } => {
-                if let Some(field) = resolve_input_fields_path(fields, segments.as_slice()) {
-                    return Some(field);
-                }
-            }
-            InputType::Union { variants } => {
-                for v in variants {
-                    if let Some(f) = resolve_input_fields_path(&v.fields, segments.as_slice()) {
-                        return Some(f);
-                    }
-                }
-            }
-            _ => {}
+    for fields in [
+        cap.scope_params(),
+        cap.selection_params(),
+        cap.control_params(),
+    ] {
+        if let Some(field) = resolve_input_fields_path(fields, &segments) {
+            return Some(field);
         }
     }
-    None
+    cap.invocation_input_schemas()
+        .find_map(|schema| resolve_in_invocation_schema(schema, &segments))
+}
+
+fn resolve_in_invocation_schema<'a>(
+    schema: &'a InputSchema,
+    segments: &[&str],
+) -> Option<&'a InputFieldSchema> {
+    match &schema.input_type {
+        InputType::Object { fields, .. } => resolve_input_fields_path(fields, segments),
+        InputType::Union { variants } => variants
+            .iter()
+            .find_map(|v| resolve_input_fields_path(&v.fields, segments)),
+        _ => None,
+    }
 }
 
 fn resolve_input_fields_path<'a>(
@@ -2192,14 +2200,6 @@ pub enum ViewOutputBinding {
         node: String,
         field: String,
     },
-    /// Field from the unique row on `node` where `where_field` equals view scope `equals_scope`.
-    /// Fails at runtime when zero or more than one rows match (same semantics as write `query_pick`).
-    NodeFieldWhere {
-        node: String,
-        where_field: String,
-        equals_scope: String,
-        field: String,
-    },
     /// JSON object mapping distinct `field` values to occurrence counts across node rows.
     NodeFieldHistogramJson {
         node: String,
@@ -2854,7 +2854,15 @@ impl CGS {
                 });
             }
 
-            let template = &cap.mapping.template.0;
+            let template = &cap
+                .require_mapping()
+                .map_err(|detail| SchemaError::ViewCapabilityMappingInvalid {
+                    view: view_key.clone(),
+                    capability: view.capability.clone(),
+                    detail,
+                })?
+                .template
+                .0;
             if template.get("transport").and_then(|x| x.as_str()) != Some("view") {
                 return Err(SchemaError::ViewCapabilityMappingInvalid {
                     view: view_key.clone(),
@@ -3010,32 +3018,6 @@ impl CGS {
                             });
                         }
                     }
-                    ViewOutputBinding::NodeFieldWhere {
-                        node,
-                        where_field,
-                        equals_scope,
-                        field: row_field,
-                    } => {
-                        if !view.nodes.iter().any(|n| n.id == *node) {
-                            return Err(SchemaError::ViewOutputUnknownNode {
-                                view: view_key.clone(),
-                                field: field_name.clone(),
-                                node: node.clone(),
-                            });
-                        }
-                        if let Some(detail) = view_node_field_where_output_detail(
-                            view,
-                            equals_scope,
-                            where_field,
-                            row_field,
-                        ) {
-                            return Err(SchemaError::ViewCapabilityMappingInvalid {
-                                view: view_key.clone(),
-                                capability: view.capability.clone(),
-                                detail: format!("output field `{field_name}`: {detail}"),
-                            });
-                        }
-                    }
                     ViewOutputBinding::Scope { .. } => {}
                     ViewOutputBinding::Computed { template } => {
                         if template.trim().is_empty() {
@@ -3095,7 +3077,10 @@ impl CGS {
 
         // Every capability with `transport: view` must reference an existing view and match its entity domain.
         for (cap_name, cap) in &self.capabilities {
-            let template = &cap.mapping.template.0;
+            let Some(mapping) = &cap.mapping else {
+                continue;
+            };
+            let template = &mapping.template.0;
             if template.get("transport").and_then(|x| x.as_str()) != Some("view") {
                 continue;
             }
@@ -3122,6 +3107,16 @@ impl CGS {
                         cap.domain, view_def.entity
                     ),
                 });
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_derived_gets(&self) -> Result<(), SchemaError> {
+        for (cap_name, cap) in &self.capabilities {
+            crate::derived_get::validate_capability_backend(cap_name.as_str(), cap)?;
+            if let Some(plan) = &cap.derived {
+                crate::derived_get::validate_derived_get(self, cap_name.as_str(), plan)?;
             }
         }
         Ok(())
@@ -3603,6 +3598,7 @@ impl CGS {
 
         self.validate_schema_overlay()?;
         self.validate_views()?;
+        self.validate_derived_gets()?;
         self.validate_body_var_input_param_collisions()?;
 
         if !crate::loader::plasm_cgs_fast_load_enabled() {
@@ -3671,6 +3667,22 @@ impl CGS {
                     ),
                 });
             }
+            if cap.kind == CapabilityKind::Search {
+                match cap.search_text_selection_param() {
+                    None => {
+                        return Err(SchemaError::SearchMissingFreeText {
+                            capability: cap_name.to_string(),
+                        });
+                    }
+                    Some(field) if !field.required => {
+                        return Err(SchemaError::SearchOptionalFreeText {
+                            capability: cap_name.to_string(),
+                            param: field.name.clone(),
+                        });
+                    }
+                    Some(_) => {}
+                }
+            }
 
             let mut owners = std::collections::BTreeMap::<String, &'static str>::new();
             let mut register = |name: &str, lane: &'static str| -> Result<(), SchemaError> {
@@ -3727,7 +3739,10 @@ impl CGS {
     /// into the CML env after binding the aggregate, overwriting `env["input"]` with the scalar.
     fn validate_body_var_input_param_collisions(&self) -> Result<(), SchemaError> {
         for (cap_name, cap) in &self.capabilities {
-            if !mapping_body_is_whole_var_input(&cap.mapping.template.0) {
+            let Some(mapping) = &cap.mapping else {
+                continue;
+            };
+            if !mapping_body_is_whole_var_input(&mapping.template.0) {
                 continue;
             }
             for param in cap.input_fields() {
@@ -5632,6 +5647,25 @@ impl CapabilitySchema {
         &self.inputs.selection.0
     }
 
+    /// Free-text hole for `Entity~"…"` / teaching `e#~"<query>"`.
+    ///
+    /// Prefer a selection param named `query`, `q`, or `search`. Otherwise, when selection
+    /// has exactly one param, that param is the hole (legacy single-slot searches).
+    pub fn search_text_selection_param(&self) -> Option<&InputFieldSchema> {
+        const FREE_TEXT: &[&str] = &["query", "q", "search"];
+        let sel = self.selection_params();
+        if let Some(field) = sel
+            .iter()
+            .find(|f| FREE_TEXT.iter().any(|n| f.name.eq_ignore_ascii_case(n)))
+        {
+            return Some(field);
+        }
+        match sel {
+            [only] => Some(only),
+            _ => None,
+        }
+    }
+
     pub fn control_params(&self) -> &[InputFieldSchema] {
         &self.inputs.controls.0
     }
@@ -5642,7 +5676,16 @@ impl CapabilitySchema {
             .flatten()
     }
 
-    /// Top-level object fields from `inputs.arguments` / `inputs.payload` (invoke/create body).
+    /// Top-level **object** fields from `inputs.payload` ∪ `inputs.arguments`.
+    ///
+    /// This is the sanctified field set for parse-time body materialization: key normalize,
+    /// nested union-ctor walk, and [`crate::coerce_value_for_field_type_with_policy`] with
+    /// [`crate::ArrayFieldCoercionPolicy::InvokeArg`]. Callers must not walk only one lane —
+    /// Create/Update/Action catalogs often put body scalars under `payload` while Gets put
+    /// transport args under `arguments`.
+    ///
+    /// Union payload variants contribute no top-level object fields here (see
+    /// [`input_schema_top_level_fields`]); constructor fields use the variant path instead.
     pub fn invocation_object_fields(&self) -> impl Iterator<Item = &InputFieldSchema> {
         self.invocation_input_schemas()
             .flat_map(input_schema_top_level_fields)
@@ -5657,11 +5700,22 @@ impl CapabilitySchema {
     }
 
     /// Preferred create/invoke body schema: `inputs.payload`, else `inputs.arguments`.
+    ///
+    /// Use for **union** constructors and single-schema lift/normalize. Object bodies with
+    /// fields on both lanes typecheck via [`crate::validate_capability_invocation_input`]
+    /// (partitioned over [`Self::invocation_object_schemas`]), matching parse coerce over
+    /// [`Self::invocation_object_fields`].
     pub fn primary_invocation_schema(&self) -> Option<&InputSchema> {
         self.inputs
             .payload
             .as_ref()
             .or(self.inputs.arguments.as_ref())
+    }
+
+    /// Object-typed schemas among `payload` and `arguments` (0–2; field names are disjoint).
+    pub fn invocation_object_schemas(&self) -> impl Iterator<Item = &InputSchema> {
+        self.invocation_input_schemas()
+            .filter(|s| matches!(s.input_type, InputType::Object { .. }))
     }
 
     pub fn input_fields(&self) -> impl Iterator<Item = &InputFieldSchema> {
@@ -5685,25 +5739,42 @@ impl CapabilitySchema {
         self.input_fields().any(|f| f.required)
     }
 
+    /// CML mapping for this capability.
+    ///
+    /// Returns `Err` when this is a derived Get (`mapping` is `None`) — never panics.
+    pub fn require_mapping(&self) -> Result<&CapabilityMapping, String> {
+        self.mapping.as_ref().ok_or_else(|| {
+            format!("capability '{}' has no CML mapping (derived)", self.name)
+        })
+    }
+
     /// See [`template_domain_exemplar_requires_entity_anchor`].
     #[inline]
     pub fn domain_exemplar_requires_entity_anchor(&self) -> bool {
-        template_domain_exemplar_requires_entity_anchor(&self.mapping.template.0)
+        let Some(mapping) = &self.mapping else {
+            return false;
+        };
+        template_domain_exemplar_requires_entity_anchor(&mapping.template.0)
     }
 
     /// See [`template_invoke_requires_explicit_anchor_id`].
     #[inline]
     pub fn invoke_requires_explicit_anchor_id(&self) -> bool {
-        template_invoke_requires_explicit_anchor_id(&self.mapping.template.0)
+        let Some(mapping) = &self.mapping else {
+            return false;
+        };
+        template_invoke_requires_explicit_anchor_id(&mapping.template.0)
     }
 
     /// True when this capability's CML mapping uses `transport: view`.
     #[inline]
     pub fn is_view_transport(&self) -> bool {
-        capability_mapping_is_view_transport(&self.mapping.template.0)
+        self.mapping
+            .as_ref()
+            .is_some_and(|m| capability_mapping_is_view_transport(&m.template.0))
     }
 
-    /// True when this Get must be keyed (identity / view scope / required body) — not bare `e#` or `e#.m#()`.
+    /// True when this Get must be keyed (identity / view scope / required body / derived list-pick) — not bare `e#` or `e#.m#()`.
     pub fn get_requires_identity_anchor(&self, cgs: &CGS) -> bool {
         if self.domain_exemplar_requires_entity_anchor() {
             return true;
@@ -5711,15 +5782,27 @@ impl CapabilitySchema {
         if !capability_is_zero_arity_invoke(self) {
             return true;
         }
+        if self.derived.is_some() {
+            return true;
+        }
         if !self.is_view_transport() {
             return false;
         }
-        let Some(view_key) = self.mapping.template.0.get("view").and_then(|v| v.as_str()) else {
+        let Some(mapping) = &self.mapping else {
+            return false;
+        };
+        let Some(view_key) = mapping.template.0.get("view").and_then(|v| v.as_str()) else {
             return false;
         };
         cgs.views
             .get(view_key)
             .is_some_and(|view| view.scope.iter().any(|s| s.required))
+    }
+
+    /// True when this Get is list-backed (derived plan or view transport) and must not hydrate recursively.
+    #[inline]
+    pub fn is_list_backed_get(&self, _cgs: &CGS) -> bool {
+        self.is_view_transport() || self.derived.is_some()
     }
 
     /// Minimal capability shell for unit tests in downstream crates.
@@ -5730,9 +5813,10 @@ impl CapabilitySchema {
             description: String::new(),
             kind: CapabilityKind::Action,
             domain: EntityName::from("TestEntity"),
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: CapabilityTemplateJson(serde_json::json!({ "method": "POST" })),
-            },
+            }),
+            derived: None,
             inputs: CapabilityInputs::default(),
             output_schema: None,
             provides: vec![],

@@ -1,5 +1,6 @@
-use crate::capability_input::{validate_capability_input, validate_concrete_named_value};
+use crate::capability_input::{validate_capability_invocation_input, validate_concrete_named_value};
 use crate::cgs_federation::{FederationDispatch, FederationResolveError};
+use crate::schema::body_value_without_mapping_path_vars;
 use crate::scope_entity_ref_infer::{
     prepare_create_capability_input, prepare_invoke_capability_input,
 };
@@ -534,10 +535,12 @@ pub fn type_check_create(create: &CreateExpr, cgs: &CGS) -> Result<(), TypeError
                 capability: create.capability.to_string(),
             })?;
 
-    if let Some(input_schema) = &capability.inputs.payload {
+    let has_invocation_body = capability.primary_invocation_schema().is_some();
+    if has_invocation_body {
         let raw = create.input.to_value();
         let effective = prepare_create_capability_input(capability, create, raw, cgs);
-        validate_capability_input(&effective, input_schema, cgs)?;
+        let body = body_value_without_mapping_path_vars(capability, effective);
+        validate_capability_invocation_input(capability, &body, cgs)?;
     }
 
     Ok(())
@@ -573,22 +576,25 @@ pub fn type_check_invoke(invoke: &InvokeExpr, cgs: &CGS) -> Result<(), TypeError
                 capability: invoke.capability.to_string(),
             })?;
 
-    // Validate input against capability input schema if present (same-entity scope EntityRef inferred).
-    let input_schema = invoke.input.as_ref().and_then(|input| match input {
-        crate::InvokeInputPayload::Raw(Value::UnionCtor { .. })
-        | crate::InvokeInputPayload::Typed(crate::TypedInvokeInput::Union { .. }) => {
-            capability.inputs.payload.as_ref()
-        }
-        _ => capability.inputs.arguments.as_ref(),
-    });
-    if let Some(input_schema) = input_schema {
+    // Validate against payload ∪ arguments object lanes (same field set as parse coerce).
+    // Union constructors still require inputs.payload.
+    let has_invocation_body = capability.primary_invocation_schema().is_some()
+        || matches!(
+            invoke.input.as_ref(),
+            Some(
+                crate::InvokeInputPayload::Raw(Value::UnionCtor { .. })
+                    | crate::InvokeInputPayload::Typed(crate::TypedInvokeInput::Union { .. })
+            )
+        );
+    if has_invocation_body {
         let raw = invoke
             .input
             .as_ref()
             .map(|i| i.to_value())
             .unwrap_or_else(|| Value::Object(indexmap::IndexMap::new()));
         let effective = prepare_invoke_capability_input(capability, invoke, raw, cgs);
-        validate_capability_input(&effective, input_schema, cgs)?;
+        let body = body_value_without_mapping_path_vars(capability, effective);
+        validate_capability_invocation_input(capability, &body, cgs)?;
     }
 
     Ok(())
@@ -1077,13 +1083,14 @@ mod tests {
             domain: "Pet".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
                     "path": [{"type": "literal", "value": "pet"}, {"type": "var", "name": "id"}],
                 })
                 .into(),
-            },
+            }),
+            derived: None,
             inputs: Default::default(),
             output_schema: None,
             provides: vec![],
@@ -1103,13 +1110,14 @@ mod tests {
             domain: "Order".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
                     "path": [{"type": "literal", "value": "store"}, {"type": "literal", "value": "order"}, {"type": "var", "name": "id"}],
                 })
                 .into(),
-            },
+            }),
+            derived: None,
             inputs: Default::default(),
             output_schema: None,
             provides: vec![],

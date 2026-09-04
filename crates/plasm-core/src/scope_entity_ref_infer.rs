@@ -71,7 +71,11 @@ pub fn field_omitted_from_path_inject(
     cap: &CapabilitySchema,
     field_name: &str,
 ) -> bool {
-    let path_vars = crate::schema::path_var_names_from_mapping_json(&cap.mapping.template.0);
+    let path_vars = cap
+        .mapping
+        .as_ref()
+        .map(|m| crate::schema::path_var_names_from_mapping_json(&m.template.0))
+        .unwrap_or_default();
     if !path_vars.iter().any(|pv| pv == field_name) {
         return false;
     }
@@ -301,7 +305,7 @@ mod tests {
             domain: EntityName::from("Repository"),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: CapabilityTemplateJson(serde_json::json!({
                     "method": "POST",
                     "path": [
@@ -311,7 +315,8 @@ mod tests {
                         {"type": "literal", "value": "git/refs"},
                     ],
                 })),
-            },
+            }),
+            derived: None,
             inputs: CapabilityInputs {
                 scope: ParentScopeSchema(vec![repository]),
                 arguments: Some(InputSchema {

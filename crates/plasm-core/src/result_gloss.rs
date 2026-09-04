@@ -37,13 +37,15 @@ pub fn result_gloss_for_capability(
     catalog_entry_id: &str,
 ) -> Option<String> {
     let domain = cap.domain.as_str();
-    let template = &cap.mapping.template.0;
-    if let Some(resp) = template.get("response") {
-        if resp.get("items").is_some() {
-            return collection_gloss(map, catalog_entry_id, domain);
-        }
-        if resp.get("single").is_some() {
-            return single_gloss(map, catalog_entry_id, domain);
+    if let Some(mapping) = &cap.mapping {
+        let template = &mapping.template.0;
+        if let Some(resp) = template.get("response") {
+            if resp.get("items").is_some() {
+                return collection_gloss(map, catalog_entry_id, domain);
+            }
+            if resp.get("single").is_some() {
+                return single_gloss(map, catalog_entry_id, domain);
+            }
         }
     }
 

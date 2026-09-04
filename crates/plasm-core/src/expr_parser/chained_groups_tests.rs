@@ -51,7 +51,7 @@ fn ticket_query_fixture_cgs() -> CGS {
         domain: "Ticket".into(),
         identity_key: None,
         invalidates_entities: vec![],
-        mapping: CapabilityMapping {
+        mapping: Some(CapabilityMapping {
             template: serde_json::json!({
                 "method": "GET",
                 "path": [
@@ -61,7 +61,8 @@ fn ticket_query_fixture_cgs() -> CGS {
                 ]
             })
             .into(),
-        },
+        }),
+        derived: None,
         inputs: CapabilityInputs::default(),
         output_schema: None,
         provides: vec![],

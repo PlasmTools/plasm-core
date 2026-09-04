@@ -78,12 +78,35 @@ fn validate_teaching_line_uncached(
     if crate::type_check_expr(&parsed.expr, cgs).is_err() {
         return None;
     }
+    // Identity braces must lower to Get — never teach a Query that is sole `id_field=`.
+    if identity_brace_survived_as_query(&parsed.expr, cgs) {
+        return None;
+    }
     let wire = if map_arc.is_some() {
         crate::expr_surface_render::render_expr_surface(&parsed.expr, cgs)
     } else {
         stripped.to_string()
     };
     Some((parsed, wire))
+}
+
+fn identity_brace_survived_as_query(expr: &crate::Expr, cgs: &CGS) -> bool {
+    let crate::Expr::Query(q) = expr else {
+        return false;
+    };
+    if q.capability_name.is_some() {
+        return false;
+    }
+    let Some(ent) = cgs.get_entity(q.entity.as_str()) else {
+        return false;
+    };
+    let Some(pred) = q.predicate.as_ref() else {
+        return false;
+    };
+    crate::expr_sugar::predicate_is_sole_field_eq(pred, ent.id_field.as_str())
+        && !cgs
+            .find_capabilities(&q.entity, crate::CapabilityKind::Get)
+            .is_empty()
 }
 
 /// Wire-only ingress (no session [`SymbolMap`]); for tests and canonical wire lines.

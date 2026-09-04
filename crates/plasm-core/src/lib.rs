@@ -92,6 +92,7 @@ pub mod cgs_federation;
 pub mod cgs_normalize;
 pub mod connect_profile;
 pub mod cross_entity;
+pub mod derived_get;
 pub mod discovery;
 pub mod discovery_auto_seed;
 pub mod discovery_candidate_graph;
@@ -202,6 +203,7 @@ pub use comp_canonical::plasm_comp_commit_canonical;
 pub use connect_profile::{
     catalog_connect_profile, CatalogAuthCapability, CatalogConnectProfile, CatalogOauthCapability,
 };
+pub use derived_get::DerivedGetPlan;
 pub use discovery::{
     derive_intent_exposure_surface_batch, relation_target_deferred_mutator_wires, Ambiguity,
     CapabilityQuery, CatalogEntryMeta, CgsCatalog, CgsDiscovery, ClosureStats,
@@ -220,7 +222,10 @@ pub use expr::{
     EntityKey, Expr, GetExpr, InvokeExpr, PageExpr, QueryExpr, QueryPagination, Ref, RefWire,
     WaitExpr, OPERATION_EXPR_PRIMARY_ENTITY, PAGE_EXPR_PRIMARY_ENTITY,
 };
-pub use expr_sugar::rewrite_id_field_brace_query_to_get;
+pub use expr_sugar::{
+    lower_id_field_brace_to_get, lower_id_field_brace_to_get_federated, predicate_is_sole_field_eq,
+    IdentityLoweringError,
+};
 pub use identity::{
     CapabilityName, CapabilityParamName, EntityFieldName, EntityId, EntityName, PathMethodSegment,
     RegistryEntryId, RelationName,
@@ -336,25 +341,27 @@ pub use relation_segment::{
     RelationSegmentContext, RelationSegmentOutcome,
 };
 pub use relation_validation_expr::relation_validation_expr;
+pub use capability_input::validate_capability_invocation_input;
 pub use schema::{
-    capability_is_zero_arity_action, capability_is_zero_arity_invoke,
-    capability_mapping_is_view_transport, capability_method_label_kebab,
-    capability_template_all_var_names, flow_control_param_names, is_flow_control_param_name,
-    template_domain_exemplar_requires_entity_anchor, template_invoke_requires_explicit_anchor_id,
-    view_node_field_where_output_detail, AgentPresentation, ArrayItemsSchema, AttachmentMediaKind,
-    AuthScheme, BackendSelectionSchema, CapabilityInputs, CapabilityKind, CapabilityManifest,
-    CapabilityMapping, CapabilitySchema, CapabilityTemplateJson, Cardinality, CgsCapabilityIndex,
-    CrossFieldRule, CrossFieldRuleType, DataClassDimension, DataClassName, DataClassSchema,
-    DataClassSeverity, DiscoveryCapabilityHints, DiscoveryCoSeedWith, DiscoveryEntityHints,
-    DiscoveryRelationHints, DiscoverySeedClass, DiscoverySeedNav, EmbedOnMissPolicy, EntityDef,
-    FieldDeriveRule, FieldSchema, FieldValueKind, IdFormat, InputFieldSchema, InputFieldWire,
-    InputSchema, InputType, InputValidation, InputVariantSchema, InvocationControlsSchema,
-    JsonPathSegment, NamedValueSchema, OauthDefaultScopeSet, OauthExtension, OauthRequirements,
-    OauthScopeEntry, OutputSchema, OutputType, ParentScopeSchema, RelationMaterialization,
-    RelationSchema, RelationScopedFallback, ResourceSchema, ScopeAggregateKeyPolicy,
-    ScopeRequirement, SinkClassName, ValueDomainKey, ValueDomainSlot, ViewDefinition, ViewNodeSpec,
-    ViewOutputBinding, ViewParamBinding, ViewRelationBinding, ViewRelationOutputSpec,
-    ViewScopeInject, ViewScopeParam, WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
+    body_value_without_mapping_path_vars, capability_is_zero_arity_action,
+    capability_is_zero_arity_invoke, capability_mapping_is_view_transport,
+    capability_method_label_kebab, capability_template_all_var_names, flow_control_param_names,
+    is_flow_control_param_name, template_domain_exemplar_requires_entity_anchor,
+    template_invoke_requires_explicit_anchor_id, AgentPresentation, ArrayItemsSchema,
+    AttachmentMediaKind, AuthScheme, BackendSelectionSchema, CapabilityInputs, CapabilityKind,
+    CapabilityManifest, CapabilityMapping, CapabilitySchema, CapabilityTemplateJson, Cardinality,
+    CgsCapabilityIndex, CrossFieldRule, CrossFieldRuleType, DataClassDimension, DataClassName,
+    DataClassSchema, DataClassSeverity, DiscoveryCapabilityHints, DiscoveryCoSeedWith,
+    DiscoveryEntityHints, DiscoveryRelationHints, DiscoverySeedClass, DiscoverySeedNav,
+    EmbedOnMissPolicy, EntityDef, FieldDeriveRule, FieldSchema, FieldValueKind, IdFormat,
+    InputFieldSchema, InputFieldWire, InputSchema, InputType, InputValidation, InputVariantSchema,
+    InvocationControlsSchema, JsonPathSegment, NamedValueSchema, OauthDefaultScopeSet,
+    OauthExtension, OauthRequirements, OauthScopeEntry, OutputSchema, OutputType,
+    ParentScopeSchema, RelationMaterialization, RelationSchema, RelationScopedFallback,
+    ResourceSchema, ScopeAggregateKeyPolicy, ScopeRequirement, SinkClassName, ValueDomainKey,
+    ValueDomainSlot, ViewDefinition, ViewNodeSpec, ViewOutputBinding, ViewParamBinding,
+    ViewRelationBinding, ViewRelationOutputSpec, ViewScopeInject, ViewScopeParam,
+    WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
 };
 pub use schema_overlay::{
     build_decode_scope_key, build_schema_overlay, overlay_bind_cache_suffix, overlay_collect_rows,

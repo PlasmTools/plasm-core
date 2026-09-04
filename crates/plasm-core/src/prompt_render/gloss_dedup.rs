@@ -105,6 +105,10 @@ impl ValueDomainStructuralKey {
         meta.value_domain_allocation_fp()
             .map(ValueDomainStructuralKey)
     }
+
+    pub(crate) fn from_allocation_fp(fp: impl Into<String>) -> Self {
+        Self(fp.into())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -353,18 +357,21 @@ pub(crate) fn build_typed_field_meaning_from_render(
         .split_once(" · ")
         .map(|(ty, t)| (ty.trim().to_string(), t.trim().to_string()))
         .unwrap_or_else(|| (render_gloss.trim().to_string(), String::new()));
-    let is_enumish = matches!(type_label.as_str(), "select" | "multiselect");
-    let allowed_values = if is_enumish {
-        tail.clone()
-    } else {
-        meta.allowed_values()
-            .filter(|vals| !vals.is_empty())
-            .map(|vals| vals.join(", "))
-            .unwrap_or_default()
-    };
-    let description = if is_enumish && !allowed_values.is_empty() {
-        GlossDescription::from_trimmed("")
-    } else if !meta.description().trim().is_empty() {
+    // `render_gloss` maps Select/MultiSelect → teaching labels `enum` / `multi_enum`.
+    // Prefer the pre-rendered enum Meaning verbatim — do not re-split into
+    // FieldType + AllowedValues (that yields `enum · allowed: a | b`).
+    let is_enumish = matches!(type_label.as_str(), "enum" | "multi_enum");
+    if is_enumish {
+        return FieldGlossMeaning::OpaqueLegend {
+            description: render_gloss.trim().to_string(),
+        };
+    }
+    let allowed_values = meta
+        .allowed_values()
+        .filter(|vals| !vals.is_empty())
+        .map(|vals| vals.join(", "))
+        .unwrap_or_default();
+    let description = if !meta.description().trim().is_empty() {
         GlossDescription::from_trimmed(meta.description())
     } else {
         GlossDescription::from_trimmed(&tail)

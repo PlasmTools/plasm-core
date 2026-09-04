@@ -98,9 +98,9 @@ impl<'a> RenderCtx<'a> {
         let cap = cgs
             .get_capability(cap_name)
             .expect("rendered search query must name a capability");
-        let q_field = cap.selection_params().first().unwrap_or_else(|| {
+        let q_field = cap.search_text_selection_param().unwrap_or_else(|| {
             panic!(
-                "search capability `{}` has no selection parameter",
+                "search capability `{}` has no free-text selection parameter",
                 cap.name
             )
         });
@@ -283,7 +283,11 @@ impl<'a> RenderCtx<'a> {
             Value::Null => String::new(),
             Value::Object(map) if map.is_empty() => "()".to_string(),
             Value::Object(map) => {
-                let path_vars = path_var_names_from_mapping_json(&cap.mapping.template.0);
+                let path_vars = cap
+                    .mapping
+                    .as_ref()
+                    .map(|m| path_var_names_from_mapping_json(&m.template.0))
+                    .unwrap_or_default();
                 let parts: Vec<String> = map
                     .iter()
                     .filter(|(k, _)| !path_vars.contains(k))

@@ -18,8 +18,8 @@ use super::invoke_teaching::{
 use super::line_validate::{DomainLineValidCacheKey, DomainLineValidEntry};
 use super::query_teaching::{
     compound_get_expr_line, get_requires_identity_anchor, keyed_identity_get_teaching_expr_line,
-    query_expr_filters_only, query_expr_maximal, query_expr_scope_only, search_expr_with_filters,
-    unary_entity_id_teaching_expr_line,
+    query_expr_filters_only, query_expr_maximal, query_expr_scope_only, search_expr_primary,
+    search_expr_with_filters, unary_entity_id_teaching_expr_line,
 };
 use super::relation_teaching::{receiver_for_dotted_suffix, try_emit_relation_nav_teaching_row};
 use super::row_producer::RowProducerProjection;
@@ -606,7 +606,10 @@ pub(crate) fn collect_entity_teaching_block(
             .primary_search_capability(ename)
             .filter(|cap| surface_allows_capability(surface_filter, catalog_entry_id, cap))
             .or_else(|| search_caps.first().copied());
-        let line = format!("{es}~{TEACHING_SEARCH_QUERY_LITERAL}");
+        let line = scap.map_or_else(
+            || format!("{es}~{TEACHING_SEARCH_QUERY_LITERAL}"),
+            |cap| search_expr_primary(cap, &es, cgs, map, catalog_entry_id),
+        );
         let sg = scap.and_then(|cap| {
             crate::result_gloss::result_gloss_for_capability(cap, cgs, map, catalog_entry_id)
         });

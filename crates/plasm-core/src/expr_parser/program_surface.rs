@@ -1088,8 +1088,12 @@ created"#;
 
     #[test]
     fn pipe_head_catalog_surface_syntax() {
-        assert!(pipe_head_has_catalog_surface_syntax("e3{access_token=\"x\"}"));
-        assert!(pipe_head_has_catalog_surface_syntax("LangItem(\"i1\").lines"));
+        assert!(pipe_head_has_catalog_surface_syntax(
+            "e3{access_token=\"x\"}"
+        ));
+        assert!(pipe_head_has_catalog_surface_syntax(
+            "LangItem(\"i1\").lines"
+        ));
         assert!(pipe_head_has_catalog_surface_syntax("e1~\"query\""));
         assert!(!pipe_head_has_catalog_surface_syntax("rows"));
         assert!(!pipe_head_has_catalog_surface_syntax("items"));

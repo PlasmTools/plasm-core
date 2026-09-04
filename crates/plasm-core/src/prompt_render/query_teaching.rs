@@ -256,7 +256,43 @@ pub(crate) fn query_expr_filters_only(
     Some(format!("{es}{{{}}}", inner.join(", ")))
 }
 
-/// Search filter slots for `e#~"<query>"{p#=…}` — selection-lane params (not the free-text `~` hole).
+fn search_non_text_selection<'a>(
+    cap: &'a crate::CapabilitySchema,
+) -> impl Iterator<Item = &'a InputFieldSchema> {
+    let text_name = cap
+        .search_text_selection_param()
+        .map(|f| f.name.as_str())
+        .unwrap_or("");
+    cap.selection_params()
+        .iter()
+        .filter(move |f| f.name != text_name)
+}
+
+/// Primary search exemplar: `e#~"<query>"` plus braces for **required** non-text selection
+/// (e.g. AppWorld `access_token`). Bare tilde alone must not teach away required credentials.
+pub(crate) fn search_expr_primary(
+    cap: &crate::CapabilitySchema,
+    es: &str,
+    cgs: &CGS,
+    map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
+) -> String {
+    let mut inner: Vec<String> = Vec::new();
+    for f in search_non_text_selection(cap).filter(|f| f.required) {
+        inner.push(query_param_slot_example(f, cap, cgs, map, catalog_entry_id));
+    }
+    if inner.is_empty() {
+        format!("{es}~{TEACHING_SEARCH_QUERY_LITERAL}")
+    } else {
+        format!(
+            "{es}~{TEACHING_SEARCH_QUERY_LITERAL}{{{}}}",
+            inner.join(", ")
+        )
+    }
+}
+
+/// Optional-filter twin for `e#~"<query>"{p#=…}` — only when selection has optional non-text
+/// slots beyond the free-text `~` hole (and beyond required credentials already on the primary).
 pub(crate) fn search_expr_with_filters(
     cap: &crate::CapabilitySchema,
     es: &str,
@@ -264,12 +300,13 @@ pub(crate) fn search_expr_with_filters(
     map: Option<&SymbolMap>,
     catalog_entry_id: &str,
 ) -> Option<String> {
-    let mut inner: Vec<String> = Vec::new();
-    for f in cap.selection_params() {
-        inner.push(query_param_slot_example(f, cap, cgs, map, catalog_entry_id));
-    }
-    if inner.is_empty() {
+    let non_text: Vec<&InputFieldSchema> = search_non_text_selection(cap).collect();
+    if !non_text.iter().any(|f| !f.required) {
         return None;
+    }
+    let mut inner: Vec<String> = Vec::new();
+    for f in &non_text {
+        inner.push(query_param_slot_example(f, cap, cgs, map, catalog_entry_id));
     }
     Some(format!(
         "{es}~{TEACHING_SEARCH_QUERY_LITERAL}{{{}}}",

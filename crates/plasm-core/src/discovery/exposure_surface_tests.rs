@@ -523,9 +523,10 @@ fn intent_only_admits_mutators_on_readless_seeded_auth_session() {
         description: "Login; returns access_token.".into(),
         kind: CapabilityKind::Action,
         domain: EntityName::from("AuthSession"),
-        mapping: CapabilityMapping {
+        mapping: Some(CapabilityMapping {
             template: CapabilityTemplateJson(serde_json::json!({ "method": "POST" })),
-        },
+        }),
+        derived: None,
         inputs: CapabilityInputs::default(),
         output_schema: None,
         provides: vec![],

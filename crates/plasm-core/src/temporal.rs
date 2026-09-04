@@ -244,7 +244,8 @@ pub fn temporal_predicate_alias_hint() -> &'static str {
      `7d ago`, `7 days ago`, `in 3 hours`, `today`, `yesterday` (also `1d ago` / \
      `0d ago` as calendar-day midnights), `last week`, `last monday`, RFC3339 \
      (`2024-06-01T12:00:00Z`), or Unix ms — not `now()`, `now() - 7d`, or wire-only \
-     `now-7d` (those are rewritten when possible; prefer the English forms)."
+     `now-7d` (those are rewritten when possible; prefer the English forms). \
+     \"Last N days (including today)\" → `Nd ago` / `N days ago` (inclusive; not N−1)."
 }
 
 fn datetime_from_integer(i: i64) -> Result<chrono::DateTime<chrono::Utc>, String> {

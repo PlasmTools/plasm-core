@@ -521,9 +521,10 @@ fn simple_string_id_identity_row_uses_id_hole() {
         domain: "Specimen".into(),
         identity_key: None,
         invalidates_entities: vec![],
-        mapping: CapabilityMapping {
+        mapping: Some(CapabilityMapping {
             template: tmpl.into(),
-        },
+        }),
+        derived: None,
         inputs: CapabilityInputs::default(),
         output_schema: None,
         provides: vec!["name".into()],

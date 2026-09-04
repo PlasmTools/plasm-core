@@ -800,7 +800,7 @@ mod tests {
             domain: "Task".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
                     "path": [
@@ -809,7 +809,8 @@ mod tests {
                     ]
                 })
                 .into(),
-            },
+            }),
+            derived: None,
             inputs: CapabilityInputs::default(),
             output_schema: None,
             provides: vec![],
@@ -828,13 +829,14 @@ mod tests {
             domain: "Task".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
                     "path": [{"type": "literal", "value": "tasks"}]
                 })
                 .into(),
-            },
+            }),
+            derived: None,
             inputs: CapabilityInputs {
                 scope: ParentScopeSchema(vec![registry_test_util::object_input_field_from_values(
                     &cgs, "fx_str", "list_id", true,

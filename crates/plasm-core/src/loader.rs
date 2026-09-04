@@ -13,11 +13,10 @@ use crate::schema::{
 };
 use crate::{
     capability_template_all_var_names, AgentPresentation, ArrayItemsSchema, AttachmentMediaKind,
-    AuthScheme, BackendSelectionSchema, CapabilityInputs,
-    CapabilityKind, CapabilityMapping, CapabilitySchema, CapabilityTemplateJson, Cardinality,
-    FieldDeriveRule, FieldSchema, FieldType, InputFieldSchema, InputSchema, InputType,
-    InvocationControlsSchema, OauthExtension, ParentScopeSchema, RelationSchema, ResourceSchema,
-    ScopeAggregateKeyPolicy, CGS,
+    AuthScheme, BackendSelectionSchema, CapabilityInputs, CapabilityKind, CapabilityMapping,
+    CapabilitySchema, CapabilityTemplateJson, Cardinality, FieldDeriveRule, FieldSchema, FieldType,
+    InputFieldSchema, InputSchema, InputType, InvocationControlsSchema, OauthExtension,
+    ParentScopeSchema, RelationSchema, ResourceSchema, ScopeAggregateKeyPolicy, CGS,
 };
 use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer};
@@ -392,6 +391,22 @@ pub struct DomainCapability {
     /// Natural-key params for PLT workflow identity (required when catalog `workflow_identity: true`).
     #[serde(default)]
     pub identity_key: Option<Vec<String>>,
+    /// List-backed keyed Get (`derive:`) — no `mappings.yaml` entry; runtime picks one row from `source`.
+    #[serde(default)]
+    pub derive: Option<DomainDerivedGetSpec>,
+}
+
+/// Authoring shape for [`crate::DerivedGetPlan`] on a `kind: get` capability.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DomainDerivedGetSpec {
+    /// Same-catalog Query capability id.
+    pub source: String,
+    /// Field on the **source** entity compared to Get identity (defaults to target `id_field`).
+    #[serde(default)]
+    pub match_field: Option<String>,
+    /// Target field → source field (must cover every `provides` on the Get).
+    pub projection: indexmap::IndexMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -992,11 +1007,60 @@ fn assemble_cgs_core(
     for (cap_name, cap) in &domain.capabilities {
         let kind = parse_capability_kind(&cap.kind);
 
-        let template = mappings.swap_remove(cap_name).ok_or_else(|| {
-            format!(
-                "Capability '{cap_name}' is listed in domain.yaml but has no entry in mappings.yaml"
+        let (mapping, derived) = if let Some(derive) = &cap.derive {
+            if mappings.contains_key(cap_name) {
+                return Err(format!(
+                    "Capability '{cap_name}' declares derive: and must not have a mappings.yaml entry"
+                ));
+            }
+            if kind != CapabilityKind::Get {
+                return Err(format!(
+                    "Capability '{cap_name}': derive: is only valid on kind: get"
+                ));
+            }
+            let match_field = derive.match_field.clone().unwrap_or_else(|| {
+                domain
+                    .entities
+                    .get(&cap.entity)
+                    .and_then(|e| e.id_field.clone())
+                    .unwrap_or_default()
+            });
+            if match_field.trim().is_empty() {
+                return Err(format!(
+                    "Capability '{cap_name}': derive.match_field is empty and entity has no id_field"
+                ));
+            }
+            let identity_field = domain
+                .entities
+                .get(&cap.entity)
+                .and_then(|e| e.id_field.clone())
+                .ok_or_else(|| {
+                    format!(
+                        "Capability '{cap_name}': derive: requires entity '{}' to declare id_field",
+                        cap.entity
+                    )
+                })?;
+            let plan = crate::DerivedGetPlan {
+                get_capability: CapabilityName::from(cap_name.clone()),
+                source_query: CapabilityName::from(derive.source.clone()),
+                match_field,
+                identity_field,
+                projection: derive.projection.clone(),
+            };
+            (None, Some(plan))
+        } else {
+            let template = mappings.swap_remove(cap_name).ok_or_else(|| {
+                format!(
+                    "Capability '{cap_name}' is listed in domain.yaml but has no entry in mappings.yaml"
+                )
+            })?;
+            (
+                Some(CapabilityMapping {
+                    template: CapabilityTemplateJson(template),
+                }),
+                None,
             )
-        })?;
+        };
 
         let inputs = capability_inputs_from_domain(cap_name, cap, &cgs.values)?;
 
@@ -1005,9 +1069,8 @@ fn assemble_cgs_core(
             description: cap.description.clone(),
             kind,
             domain: EntityName::from(cap.entity.clone()),
-            mapping: CapabilityMapping {
-                template: CapabilityTemplateJson(template),
-            },
+            mapping,
+            derived,
             inputs,
             output_schema: cap.output.clone(),
             provides: cap.provides.clone(),
@@ -1022,6 +1085,15 @@ fn assemble_cgs_core(
 
         cgs.add_capability(capability)
             .map_err(|e| format!("Failed to add capability '{}': {}", cap_name, e))?;
+    }
+
+    if !mappings.is_empty() {
+        let leftover: Vec<_> = mappings.keys().cloned().collect();
+        warn!(
+            target: "plasm_core::loader",
+            leftover = %leftover.join(", "),
+            "mappings.yaml has entries with no matching domain.yaml capability"
+        );
     }
 
     cgs.views = std::mem::take(&mut domain.views);
@@ -1078,7 +1150,10 @@ fn warn_scope_aggregate_policy_template_mismatches(cgs: &CGS) {
         if cap.scope_aggregate_key_policy != ScopeAggregateKeyPolicy::OmitWhenRedundant {
             continue;
         }
-        let vars = capability_template_all_var_names(&cap.mapping.template.0);
+        let Some(mapping) = &cap.mapping else {
+            continue;
+        };
+        let vars = capability_template_all_var_names(&mapping.template.0);
         for param in cap.scope_params() {
             let Ok(nv) = param.named_value(cgs) else {
                 continue;
@@ -1935,6 +2010,81 @@ capabilities:
         assert_eq!(cap.selection_params()[0].name, "filter_q");
         assert_eq!(cap.control_params()[0].name, "page");
         assert!(cap.scope_params().is_empty());
+    }
+
+    #[test]
+    fn rejects_search_with_optional_free_text_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("domain.yaml"),
+            r#"http_backend: http://localhost:1080
+values:
+  nv_id:
+    type: string
+  nv_query:
+    type: string
+entities:
+  Note:
+    id_field: id
+    fields:
+      id:
+        value_ref: nv_id
+        required: true
+capabilities:
+  note_search:
+    kind: search
+    entity: Note
+    selection:
+      - name: query
+        value_ref: nv_query
+        required: false
+"#,
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("mappings.yaml"), "note_search: {}\n").unwrap();
+        let err = load_schema_dir(dir.path()).unwrap_err();
+        assert!(
+            err.contains("note_search")
+                && err.contains("kind: search")
+                && err.contains("required: true")
+                && err.contains("kind: query"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn accepts_search_with_required_free_text_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("domain.yaml"),
+            r#"http_backend: http://localhost:1080
+values:
+  nv_id:
+    type: string
+  nv_query:
+    type: string
+entities:
+  Note:
+    id_field: id
+    fields:
+      id:
+        value_ref: nv_id
+        required: true
+capabilities:
+  note_search:
+    kind: search
+    entity: Note
+    selection:
+      - name: query
+        value_ref: nv_query
+        required: true
+"#,
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("mappings.yaml"), "note_search: {}\n").unwrap();
+        let cgs = load_schema_dir(dir.path()).unwrap();
+        let cap = cgs.get_capability("note_search").unwrap();
+        assert!(cap.search_text_selection_param().unwrap().required);
     }
 
     #[test]

@@ -38,7 +38,10 @@ pub fn parse_row_predicate_list(
     layers: &[CgsLayer<'_>],
     sym_map: Arc<dyn SymbolSession>,
 ) -> Result<RowPredicate, String> {
-    let input = format!("{entity}{{{}}}", body.trim());
+    // Deterministic rewrite of Kusto / wire-shaped temporal RHS before parse
+    // (`now() - 7d` → `7d ago`, etc.). Wire slots still pass `now-7d` unchanged.
+    let rewritten = crate::temporal::rewrite_temporal_aliases_in_predicate_body(body);
+    let input = format!("{entity}{{{}}}", rewritten.trim());
     let parsed = crate::expr_parser::parse_row_filter_body(&input, layers, sym_map)
         .map_err(|e| format!("row filter parse: {e}"))?;
     row_predicate_from_expr(&parsed.expr)

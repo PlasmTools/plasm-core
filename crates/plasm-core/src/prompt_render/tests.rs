@@ -381,6 +381,73 @@ fn proof_document_blocks_operation_params_are_not_relation_nav_gloss() {
     }
 }
 
+/// Selection-lane `type: enum` params must teach `enum · tokens` on a `v#` row and link the wire
+/// (`status → v#`), not collapse to OpaqueLegend `status → status`.
+#[test]
+fn selection_lane_enum_param_teaches_enum_gloss_not_wire_echo() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("domain.yaml"),
+        r#"http_backend: http://localhost:1080
+values:
+  nv_id:
+    type: string
+  nv_status:
+    type: enum
+    description: Request status filter.
+    enum:
+    - pending
+    - approved
+    - denied
+entities:
+  PaymentRequest:
+    id_field: id
+    fields:
+      id:
+        value_ref: nv_id
+        required: true
+capabilities:
+  payment_request_query:
+    kind: query
+    entity: PaymentRequest
+    selection:
+    - name: status
+      value_ref: nv_status
+      required: false
+    provides:
+    - id
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("mappings.yaml"),
+        "payment_request_query: {}\n",
+    )
+    .unwrap();
+    let cgs = load_schema_dir(dir.path()).unwrap();
+    let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
+    assert!(
+        tsv.lines()
+            .any(|l| l.contains("enum · pending | approved | denied")),
+        "expected enum membership Meaning on a v# row; tsv:\n{tsv}"
+    );
+    assert!(
+        !tsv.lines().any(|l| l == "status\tstatus"),
+        "selection enum must not OpaqueLegend-echo the wire name; tsv:\n{tsv}"
+    );
+    let status_link = tsv.lines().find(|l| l.starts_with("status\t"));
+    assert!(
+        status_link.is_some_and(|l| {
+            let meaning = l.split_once('\t').map(|(_, m)| m).unwrap_or("");
+            meaning.starts_with('v') && meaning[1..].chars().all(|c| c.is_ascii_digit())
+                || meaning.split(" · ").next().is_some_and(|head| {
+                    head.starts_with('v') && head[1..].chars().all(|c| c.is_ascii_digit())
+                })
+        }),
+        "status wire should RegistryWire-link a v#; got {status_link:?}\ntsv:\n{tsv}"
+    );
+}
+
 #[test]
 fn proof_bug_report_capabilities_require_report_parameter() {
     let dir = apis_dir("proof");
@@ -2474,6 +2541,43 @@ fn domain_search_teaching_rows_use_quoted_query_hole() {
     }
 }
 
+/// Required non-text selection (e.g. access_token) rides the primary `~` row; no barren twin
+/// that only re-states credentials as optional filters.
+#[test]
+fn search_teaching_puts_required_selection_on_primary_tilde_row() {
+    let dir = fixtures_schemas_dir("auth_bearer_search");
+    if !dir.exists() {
+        return;
+    }
+    let cgs = load_schema_dir(&dir).unwrap();
+    let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
+    let search_rows: Vec<&str> = prompt
+        .lines()
+        .filter(|l| l.contains("~\"<query>\"") && l.starts_with('e'))
+        .collect();
+    assert!(
+        !search_rows.is_empty(),
+        "expected search teaching rows; prompt=\n{prompt}"
+    );
+    assert!(
+        search_rows
+            .iter()
+            .any(|l| l.contains("~\"<query>\"{") && l.contains("access_token=")),
+        "primary search row must include required access_token; rows={search_rows:?}"
+    );
+    assert!(
+        search_rows
+            .iter()
+            .all(|l| l.contains("access_token=") || !l.contains("~\"<query>\"")),
+        "no bare ~\"<query>\" without required access_token; rows={search_rows:?}"
+    );
+    assert_eq!(
+        search_rows.len(),
+        1,
+        "credential-only selection must not spawn an optional-filter twin; rows={search_rows:?}"
+    );
+}
+
 /// Executable producers carry `[wires]` by first use; Meaning never says `noun`.
 #[test]
 fn row_producer_teaching_includes_inputs_and_rows_contract() {
@@ -2951,7 +3055,7 @@ fn clickup_user_singleton_get_me_line_in_domain() {
     );
 }
 
-/// View-backed keyed Get (`node_field_where`) must teach `e#{id_field=<wire>}`, not `e#.m#()`.
+/// Derived keyed Get must teach `e#{id_field=<wire>}`, not `e#.m#()`, and lower to `Expr::Get`.
 #[test]
 fn keyed_view_get_teaches_brace_identity_not_method_invoke() {
     let dir = fixtures_schemas_dir("plasm_language_matrix_views");
@@ -2977,11 +3081,24 @@ fn keyed_view_get_teaches_brace_identity_not_method_invoke() {
             let expr = l.split('\t').next().unwrap_or("");
             expr.contains(".m") && expr.ends_with("()") && expr.starts_with('e')
         }),
-        "view-backed keyed Get must not teach invalid e#.m#() invoke:\n{table}"
+        "derived keyed Get must not teach invalid e#.m#() invoke:\n{table}"
+    );
+    let body_filled = body.replace("<wire>", "item-1");
+    let line = body_filled
+        .lines()
+        .find(|l| l.contains("{key="))
+        .expect("keyed line");
+    let expr = line.split('\t').next().unwrap().trim();
+    let parsed = crate::expr_parser::parse_session_line(expr, &cgs, Some(exp.symbol_map_arc()))
+        .expect("parse keyed teaching");
+    assert!(
+        matches!(parsed.expr, crate::Expr::Get(_)),
+        "keyed LangKeyPick teaching must lower to Get, got {:?}",
+        parsed.expr
     );
 }
 
-/// AppWorld AccountPassword — same keyed view-get pattern as LangKeyPick matrix fixture.
+/// AppWorld AccountPassword — same derived keyed-Get pattern as LangKeyPick matrix fixture.
 #[test]
 fn appworld_account_password_teaches_keyed_get_not_method_invoke() {
     let dir = apis_dir("appworld/supervisor");
@@ -3001,6 +3118,20 @@ fn appworld_account_password_teaches_keyed_get_not_method_invoke() {
             expr.contains("{account_name=<wire>}")
         }),
         "AccountPassword must teach e#{{account_name=<wire>}}:\n{table}"
+    );
+    // Hole-filled teaching line must lower to Get, not Query.
+    let body_filled = body.replace("<wire>", "venmo");
+    let line = body_filled
+        .lines()
+        .find(|l| l.contains("{account_name="))
+        .expect("keyed line");
+    let expr = line.split('\t').next().unwrap().trim();
+    let parsed = crate::expr_parser::parse_session_line(expr, &cgs, Some(exp.symbol_map_arc()))
+        .expect("parse keyed teaching");
+    assert!(
+        matches!(parsed.expr, crate::Expr::Get(_)),
+        "keyed AccountPassword teaching must lower to Get, got {:?}",
+        parsed.expr
     );
     assert!(
         !table.lines().any(|l| {
@@ -3095,9 +3226,10 @@ fn prompt_stats_fixture_cgs() -> CGS {
             domain: domain.into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: tmpl.clone().into(),
-            },
+            }),
+            derived: None,
             inputs: Default::default(),
             output_schema: None,
             provides: vec![],
@@ -3221,7 +3353,7 @@ fn p_slot_redefinition_fixture_cgs(id_desc_a: &str, id_desc_b: &str) -> CGS {
             domain: name.into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
                     "path": [
@@ -3230,7 +3362,8 @@ fn p_slot_redefinition_fixture_cgs(id_desc_a: &str, id_desc_b: &str) -> CGS {
                     ],
                 })
                 .into(),
-            },
+            }),
+            derived: None,
             inputs: Default::default(),
             output_schema: None,
             provides: vec![],

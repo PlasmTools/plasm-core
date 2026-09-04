@@ -415,9 +415,10 @@ fn unbranded_top_catalog_cut_preserves_federated_co_seed_seats() {
                 description: format!("query {ent}"),
                 kind: CapabilityKind::Query,
                 domain: EntityName::from(ent),
-                mapping: CapabilityMapping {
+                mapping: Some(CapabilityMapping {
                     template: CapabilityTemplateJson(serde_json::json!({ "method": "GET" })),
-                },
+                }),
+                derived: None,
                 inputs: CapabilityInputs::default(),
                 output_schema: None,
                 provides: vec![],
@@ -726,9 +727,10 @@ fn corpus_stamps_attach_on_label_and_prune_drops_label_read() {
                 description: format!("Query {domain}"),
                 kind: CapabilityKind::Query,
                 domain: EntityName::from(domain),
-                mapping: CapabilityMapping {
+                mapping: Some(CapabilityMapping {
                     template: CapabilityTemplateJson(serde_json::json!({ "method": "GET" })),
-                },
+                }),
+                derived: None,
                 inputs: CapabilityInputs::default(),
                 output_schema: None,
                 provides: vec![],
@@ -918,9 +920,10 @@ fn corpus_stamps_own_pair_on_both_ends_of_own_edge() {
                 description: format!("Query {domain}"),
                 kind: CapabilityKind::Query,
                 domain: EntityName::from(domain),
-                mapping: CapabilityMapping {
+                mapping: Some(CapabilityMapping {
                     template: CapabilityTemplateJson(serde_json::json!({ "method": "GET" })),
-                },
+                }),
+                derived: None,
                 inputs: CapabilityInputs::default(),
                 output_schema: None,
                 provides: vec![],

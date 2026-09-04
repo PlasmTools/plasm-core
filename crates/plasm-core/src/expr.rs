@@ -751,20 +751,30 @@ pub fn lift_invoke_payloads_in_expr(expr: &mut Expr, cgs: &CGS) {
         | Expr::TeachingValue { .. } => {}
         Expr::Create(create) => {
             if let Some(cap) = cgs.get_capability(&create.capability) {
-                if let Some(schema) = &cap.inputs.payload {
-                    let lifted =
-                        InvokeInputPayload::lift(&create.input.to_value(), &schema.input_type, cgs);
-                    create.input = lifted;
+                // Dual object lanes stay Raw — Typed lift is single-schema; typecheck partitions.
+                if cap.invocation_object_schemas().count() <= 1 {
+                    if let Some(schema) = cap.primary_invocation_schema() {
+                        create.input = InvokeInputPayload::lift(
+                            &create.input.to_value(),
+                            &schema.input_type,
+                            cgs,
+                        );
+                    }
                 }
             }
         }
         Expr::Invoke(invoke) => {
             if let Some(cap) = cgs.get_capability(&invoke.capability) {
-                if let Some(schema) = &cap.inputs.arguments {
-                    if let Some(inp) = &invoke.input {
-                        let lifted =
-                            InvokeInputPayload::lift(&inp.to_value(), &schema.input_type, cgs);
-                        invoke.input = Some(lifted);
+                // Dual object lanes stay Raw — Typed lift is single-schema; typecheck partitions.
+                if cap.invocation_object_schemas().count() <= 1 {
+                    if let (Some(schema), Some(inp)) =
+                        (cap.primary_invocation_schema(), invoke.input.as_ref())
+                    {
+                        invoke.input = Some(InvokeInputPayload::lift(
+                            &inp.to_value(),
+                            &schema.input_type,
+                            cgs,
+                        ));
                     }
                 }
             }

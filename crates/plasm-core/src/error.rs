@@ -577,6 +577,9 @@ pub enum SchemaError {
         detail: String,
     },
 
+    #[error("Derived get '{capability}': {detail}")]
+    DerivedGetInvalid { capability: String, detail: String },
+
     #[error(
         "View '{view}': node '{node}' capability '{capability}' must be Query, Get, Search, or mutator (got {kind})"
     )]
@@ -666,6 +669,16 @@ pub enum SchemaError {
 
     #[error("{message}")]
     SchemaConstraint { message: String },
+
+    #[error(
+        "capability '{capability}' (kind: search): must declare a free-text selection param named query/q/search (or a sole selection slot) for Entity~\"…\""
+    )]
+    SearchMissingFreeText { capability: String },
+
+    #[error(
+        "capability '{capability}' (kind: search): free-text selection param '{param}' must be required: true — optional free-text list filters use kind: query (avoids barren e~\"<query>\"{{query=…}} teaching twins)"
+    )]
+    SearchOptionalFreeText { capability: String, param: String },
 
     #[error("schema_overlay: {detail}")]
     SchemaOverlayInvalid { detail: String },

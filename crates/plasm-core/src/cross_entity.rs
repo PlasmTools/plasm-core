@@ -333,9 +333,10 @@ mod tests {
             domain: "Pet".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "pet"}]}).into(),
-            },
+            }),
+            derived: None,
             inputs: CapabilityInputs {
                 selection: BackendSelectionSchema(vec![
                     registry_test_util::object_input_field_from_values(
@@ -364,9 +365,10 @@ mod tests {
             domain: "Order".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "store"}, {"type": "literal", "value": "order"}]}).into(),
-            },
+            }),
+            derived: None,
             inputs: CapabilityInputs {
                 selection: BackendSelectionSchema(vec![
                     registry_test_util::object_input_field_from_values(

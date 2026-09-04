@@ -4702,9 +4702,10 @@ mod tests {
             domain: "Widget".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({"method":"GET","path":[{"type":"literal","value":"w"},{"type":"var","name":"id"}]}).into(),
-            },
+            }),
+            derived: None,
             inputs: Default::default(),
             output_schema: None,
             provides: vec![],

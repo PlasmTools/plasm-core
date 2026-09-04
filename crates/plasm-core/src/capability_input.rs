@@ -2,7 +2,9 @@
 
 use crate::array_field_policy::ArrayFieldCoercionPolicy;
 use crate::entity_ref_value::normalize_entity_ref_value_for_target;
+use crate::schema::CapabilitySchema;
 use crate::{ArrayItemsSchema, FieldType, TypeError, Value, CGS};
+use indexmap::IndexMap;
 
 /// Human-facing “what to write instead of `$`” for LLM corrections.
 fn expected_type_phrase_for_placeholder(field_type: &FieldType) -> String {
@@ -257,6 +259,89 @@ pub(crate) fn validate_capability_input(
     validate_input_type(input, &input_schema.input_type, "", cgs)?;
     validate_input_constraints(input, &input_schema.validation)?;
     Ok(())
+}
+
+/// Validate a create/invoke body against the capability's invocation lanes.
+///
+/// - [`Value::UnionCtor`] → `inputs.payload` (union root).
+/// - Object body with a single object lane → that schema (payload or arguments).
+/// - Object body with **both** payload and arguments object lanes → partition keys by
+///   disjoint field ownership and validate each partition (same field set as parse
+///   [`CapabilitySchema::invocation_object_fields`] coerce). Unknown keys are rejected.
+pub fn validate_capability_invocation_input(
+    capability: &CapabilitySchema,
+    input: &Value,
+    cgs: &CGS,
+) -> Result<(), TypeError> {
+    if matches!(input, Value::UnionCtor { .. }) {
+        let Some(schema) = capability.inputs.payload.as_ref() else {
+            return Err(TypeError::IncompatibleValue {
+                field: String::new(),
+                value_type: input.type_name().to_string(),
+                field_type: "union constructor requires inputs.payload".to_string(),
+            });
+        };
+        return validate_capability_input(input, schema, cgs);
+    }
+
+    let object_schemas: Vec<&crate::InputSchema> =
+        capability.invocation_object_schemas().collect();
+
+    match object_schemas.as_slice() {
+        [] => {
+            if let Some(schema) = capability.primary_invocation_schema() {
+                validate_capability_input(input, schema, cgs)?;
+            }
+            Ok(())
+        }
+        [schema] => validate_capability_input(input, schema, cgs),
+        schemas => {
+            let Some(object) = input.as_object() else {
+                return Err(TypeError::IncompatibleValue {
+                    field: String::new(),
+                    value_type: input.type_name().to_string(),
+                    field_type: "object".to_string(),
+                });
+            };
+
+            let mut owner: IndexMap<&str, usize> = IndexMap::new();
+            for (i, schema) in schemas.iter().enumerate() {
+                let crate::InputType::Object { fields, .. } = &schema.input_type else {
+                    // `invocation_object_schemas` already filters Object; skip defensively.
+                    continue;
+                };
+                for f in fields {
+                    let replaced = owner.insert(f.name.as_str(), i);
+                    debug_assert!(
+                        replaced.is_none(),
+                        "duplicate field `{}` across invocation object lanes (CGS must keep lanes disjoint)",
+                        f.name
+                    );
+                }
+            }
+
+            let mut partitions: Vec<IndexMap<String, Value>> =
+                (0..schemas.len()).map(|_| IndexMap::new()).collect();
+            for (key, value) in object {
+                match owner.get(key.as_str()) {
+                    Some(&i) => {
+                        partitions[i].insert(key.clone(), value.clone());
+                    }
+                    None => {
+                        return Err(TypeError::FieldNotFound {
+                            field: key.clone(),
+                            entity: "additional fields not allowed".to_string(),
+                        });
+                    }
+                }
+            }
+
+            for (schema, part) in schemas.iter().zip(partitions) {
+                validate_capability_input(&Value::Object(part), schema, cgs)?;
+            }
+            Ok(())
+        }
+    }
 }
 
 /// Validate a value against an input type specification
@@ -771,5 +856,130 @@ mod tests {
         ]);
         validate_capability_input(&both_placeholders, schema, &cgs)
             .expect("all-$ fields must vacate exactly_one until execute");
+    }
+
+    fn nv(ft: FieldType) -> crate::NamedValueSchema {
+        crate::NamedValueSchema {
+            domain: Default::default(),
+            description: String::new(),
+            field_type: ft,
+            value_format: None,
+            allowed_values: None,
+            array_items: None,
+            currency: None,
+        }
+    }
+
+    fn reg_field(name: &str, key: &str, required: bool) -> crate::InputFieldSchema {
+        crate::InputFieldSchema {
+            name: name.to_string(),
+            wire: crate::InputFieldWire::Registry(
+                crate::ValueDomainKey::new(key).expect("key"),
+            ),
+            required,
+            description: None,
+            default: None,
+            wire_json_path: None,
+            wire_array_element_key: None,
+            sink_class: None,
+        }
+    }
+
+    fn dual_lane_cap(cgs: &mut CGS) -> crate::CapabilitySchema {
+        use crate::CapabilitySchema;
+        cgs.values.insert("dl_bool".into(), nv(FieldType::Boolean));
+        cgs.values.insert("dl_int".into(), nv(FieldType::Integer));
+        let mut cap = CapabilitySchema::minimal_test();
+        cap.name = "dual_lane_update".into();
+        cap.kind = crate::CapabilityKind::Update;
+        cap.domain = "Item".into();
+        cap.mapping = None;
+        cap.inputs = crate::CapabilityInputs {
+            scope: Default::default(),
+            selection: Default::default(),
+            controls: Default::default(),
+            arguments: Some(crate::InputSchema {
+                input_type: crate::InputType::Object {
+                    fields: vec![reg_field("limit", "dl_int", true)],
+                    additional_fields: false,
+                },
+                validation: Default::default(),
+                description: None,
+                examples: vec![],
+            }),
+            payload: Some(crate::InputSchema {
+                input_type: crate::InputType::Object {
+                    fields: vec![reg_field("active", "dl_bool", true)],
+                    additional_fields: false,
+                },
+                validation: Default::default(),
+                description: None,
+                examples: vec![],
+            }),
+        };
+        cap
+    }
+
+    /// Dual object lanes: typecheck must validate **arguments** fields even when primary is payload.
+    #[test]
+    fn dual_lane_invocation_validates_both_object_schemas() {
+        let mut cgs = CGS::new();
+        let cap = dual_lane_cap(&mut cgs);
+        assert_eq!(cap.invocation_object_schemas().count(), 2);
+        assert!(
+            cap.primary_invocation_schema()
+                .is_some_and(|s| matches!(&s.input_type, crate::InputType::Object { fields, .. } if fields.iter().any(|f| f.name == "active"))),
+            "primary must prefer payload"
+        );
+
+        validate_capability_invocation_input(
+            &cap,
+            &obj(&[
+                ("active", Value::Bool(false)),
+                ("limit", Value::Integer(3)),
+            ]),
+            &cgs,
+        )
+        .expect("both lanes ok");
+
+        let err = validate_capability_invocation_input(
+            &cap,
+            &obj(&[
+                ("active", Value::Bool(true)),
+                ("limit", Value::String("nope".into())),
+            ]),
+            &cgs,
+        )
+        .expect_err("arguments lane integer must reject string");
+        assert!(
+            matches!(err, TypeError::IncompatibleValue { ref field, .. } if field == "limit"),
+            "expected limit IncompatibleValue, got {err:?}"
+        );
+
+        let err = validate_capability_invocation_input(
+            &cap,
+            &obj(&[("active", Value::Bool(true))]),
+            &cgs,
+        )
+        .expect_err("required arguments field missing");
+        assert!(
+            matches!(err, TypeError::FieldNotFound { ref field, .. } if field == "limit"),
+            "expected missing limit, got {err:?}"
+        );
+
+        let err = validate_capability_invocation_input(
+            &cap,
+            &obj(&[
+                ("active", Value::Bool(true)),
+                ("limit", Value::Integer(1)),
+                ("extra", Value::Integer(0)),
+            ]),
+            &cgs,
+        )
+        .expect_err("unknown key");
+        assert!(
+            matches!(err, TypeError::FieldNotFound { ref field, .. } if field == "extra"),
+            "expected extra rejected, got {err:?}"
+        );
     }
 }

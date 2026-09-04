@@ -234,9 +234,10 @@ mod tests {
             domain: EntityName::from("Repository"),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: CapabilityTemplateJson(serde_json::json!({})),
-            },
+            }),
+            derived: None,
             inputs: CapabilityInputs {
                 scope: ParentScopeSchema(vec![repository_param]),
                 ..CapabilityInputs::default()

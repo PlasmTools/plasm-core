@@ -603,6 +603,7 @@ pub fn render_parse_error_with_feedback(
                 "This prompt does not support bare many-relation navigation to `{target}` for `{relation}`: use a list/query form from the `{target}` block in the teaching table, or the schema must declare materialization for that edge."
             ),
         },
+        ParseErrorKind::IdentityBraceGetFailed { message } => message.clone(),
         ParseErrorKind::Other { message } => message.clone(),
     };
 
@@ -864,7 +865,11 @@ fn correction_empty_get_parens(cgs: &CGS, entity: &str, style: &FeedbackStyle<'_
     let singletons: Vec<_> = get_caps
         .into_iter()
         .filter(|cap| {
-            crate::schema::path_var_names_from_mapping_json(&cap.mapping.template.0).is_empty()
+            cap.mapping
+                .as_ref()
+                .map(|m| crate::schema::path_var_names_from_mapping_json(&m.template.0))
+                .unwrap_or_default()
+                .is_empty()
                 && capability_is_zero_arity_invoke(cap)
         })
         .collect();

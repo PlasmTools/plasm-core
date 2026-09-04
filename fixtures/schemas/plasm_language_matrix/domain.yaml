@@ -354,6 +354,12 @@ capabilities:
         - name: owner
           value_ref: nv_langitem_create_owner
           required: false
+        - name: active
+          value_ref: nv_langitem_create_active
+          required: false
+        - name: recorded_at
+          value_ref: nv_langitem_create_recorded_at
+          required: false
         - name: tags
           value_ref: nv_langitem_create_tags
           required: false
@@ -362,6 +368,8 @@ capabilities:
     - title
     - score
     - owner
+    - active
+    - recorded_at
   langitem_update:
     description: Patch LangItem
     kind: update
@@ -757,6 +765,10 @@ values:
     type: integer
   nv_langitem_create_owner:
     type: string
+  nv_langitem_create_active:
+    type: boolean
+  nv_langitem_create_recorded_at:
+    type: rfc3339
   nv_langitem_create_tags_item:
     type: string
   nv_langitem_create_tags:

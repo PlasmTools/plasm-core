@@ -79,14 +79,13 @@ pub use program::{
     parse_expr_node, parse_program_shape, ExprNode, ParsedProgram, RowExpr, Statement,
 };
 pub use program_surface::{
-    collect_program_statement_lines, expand_flattened_program_statements,
-    is_valid_program_label, looks_like_domain_symbol, missing_program_roots_error,
-    pipe_head_has_catalog_surface_syntax, program_binding_after_return_error,
-    validate_pipe_head_syntax,
-    program_duplicate_return_node_error, program_empty_error, program_invalid_binding_label_error,
-    program_return_keyword_error, scan_physical_line_stmt_state, split_assignment_at_top_level,
-    split_assignment_for_binding, split_flattened_program_line, split_token_top_level,
-    split_top_level, strip_line_comment, validate_program_label, validate_program_statement_order,
+    collect_program_statement_lines, expand_flattened_program_statements, is_valid_program_label,
+    looks_like_domain_symbol, missing_program_roots_error, pipe_head_has_catalog_surface_syntax,
+    program_binding_after_return_error, program_duplicate_return_node_error, program_empty_error,
+    program_invalid_binding_label_error, program_return_keyword_error,
+    scan_physical_line_stmt_state, split_assignment_at_top_level, split_assignment_for_binding,
+    split_flattened_program_line, split_token_top_level, split_top_level, strip_line_comment,
+    validate_pipe_head_syntax, validate_program_label, validate_program_statement_order,
     FlattenedProgram, FlattenedProgramLine, PhysicalLineStmtState,
 };
 pub use value_expr::{RenderExpr, ValueExpr};
@@ -223,6 +222,10 @@ pub enum ParseErrorKind {
     AmbiguousEntityCatalog {
         entity: String,
     },
+    /// Exact `id_field` brace could not lower to Get (no Get / ambiguous / unresolved catalog).
+    IdentityBraceGetFailed {
+        message: String,
+    },
     CapabilityMissingInternal {
         name: String,
     },
@@ -339,6 +342,7 @@ impl fmt::Display for ParseErrorKind {
                 f,
                 "ambiguous entity `{entity}` across loaded catalogs — use session `e#` (catalog ownership stamp), not bare wire entity name"
             ),
+            ParseErrorKind::IdentityBraceGetFailed { message } => f.write_str(message),
             ParseErrorKind::CapabilityMissingInternal { name } => {
                 write!(f, "internal: capability '{name}' missing")
             }
@@ -483,7 +487,15 @@ pub fn parse_with_remainder(
     let _guard = span.enter();
     let mut p = Parser::new(input, cgs);
     let mut parsed = p.parse_expr()?;
-    parsed.expr = crate::expr_sugar::rewrite_id_field_brace_query_to_get(parsed.expr, cgs);
+    parsed.expr =
+        crate::expr_sugar::lower_id_field_brace_to_get(parsed.expr, cgs).map_err(|e| {
+            ParseError {
+                kind: ParseErrorKind::IdentityBraceGetFailed {
+                    message: e.to_string(),
+                },
+                offset: 0,
+            }
+        })?;
     Ok((parsed, p.classify_remainder()))
 }
 
@@ -501,7 +513,15 @@ pub fn parse(input: &str, cgs: &CGS) -> Result<ParsedExpr, ParseError> {
     let _guard = span.enter();
     let mut p = Parser::new(input, cgs);
     let mut parsed = p.parse_expr()?;
-    parsed.expr = crate::expr_sugar::rewrite_id_field_brace_query_to_get(parsed.expr, cgs);
+    parsed.expr =
+        crate::expr_sugar::lower_id_field_brace_to_get(parsed.expr, cgs).map_err(|e| {
+            ParseError {
+                kind: ParseErrorKind::IdentityBraceGetFailed {
+                    message: e.to_string(),
+                },
+                offset: 0,
+            }
+        })?;
     Ok(parsed)
 }
 
@@ -596,8 +616,13 @@ fn parse_with_cgs_layers_program_opts(
     p.for_each_row_context = for_each_row_context;
     let mut parsed = p.parse_expr()?;
     if apply_id_field_get_rewrite {
-        parsed.expr =
-            crate::expr_sugar::rewrite_id_field_brace_query_to_get(parsed.expr, layers[0].cgs());
+        parsed.expr = crate::expr_sugar::lower_id_field_brace_to_get_federated(parsed.expr, layers)
+            .map_err(|e| ParseError {
+                kind: ParseErrorKind::IdentityBraceGetFailed {
+                    message: e.to_string(),
+                },
+                offset: 0,
+            })?;
     }
     let remainder = p.classify_remainder();
     if !remainder.acceptable_for_program_line() {
@@ -969,7 +994,10 @@ impl<'a> Parser<'a> {
             source.session_catalog_entry_id().map(|id| id.as_str()),
         )?;
         let cap_name = cap.name.clone();
-        let needs_anchor_id = template_invoke_requires_explicit_anchor_id(&cap.mapping.template.0);
+        let needs_anchor_id = cap
+            .mapping
+            .as_ref()
+            .is_some_and(|m| template_invoke_requires_explicit_anchor_id(&m.template.0));
 
         let expr = if cap.kind == CapabilityKind::Create {
             Expr::Create(CreateExpr::new(
@@ -1106,6 +1134,9 @@ impl<'a> Parser<'a> {
     }
 
     /// Resolve invoke `key=value` map keys at capability materialization (cap-qualified only).
+    ///
+    /// Field names come from [`CapabilitySchema::invocation_object_fields`] (`payload` ∪
+    /// `arguments`) — the same body-object set as object-body InvokeArg coerce.
     fn normalize_invoke_arg_keys_for_cap(
         &self,
         cap: &crate::CapabilitySchema,
@@ -1113,12 +1144,10 @@ impl<'a> Parser<'a> {
         raw_method_label: Option<&str>,
         raw_map: IndexMap<String, Value>,
     ) -> Result<IndexMap<String, Value>, ParseError> {
-        let Some(is) = &cap.inputs.arguments else {
+        if cap.primary_invocation_schema().is_none() {
             return Ok(raw_map);
-        };
-        let InputType::Object { fields, .. } = &is.input_type else {
-            return Ok(raw_map);
-        };
+        }
+        let fields: Vec<_> = cap.invocation_object_fields().cloned().collect();
         self.normalize_invoke_arg_keys_for_fields(
             cap,
             source,
@@ -1263,9 +1292,16 @@ impl<'a> Parser<'a> {
             variant,
             ctor_fields,
         )?;
+        let mut ctor_fields = normalized;
+        self.coerce_registry_input_fields(
+            cap.domain.as_str(),
+            self.active_catalog_entry_id(Some(source)).as_deref(),
+            variant.fields.iter(),
+            &mut ctor_fields,
+        )?;
         Ok(Value::UnionCtor {
             ctor_label,
-            ctor_fields: normalized,
+            ctor_fields,
         })
     }
 
@@ -1312,13 +1348,9 @@ impl<'a> Parser<'a> {
         raw_method_label: Option<&str>,
         mut map: indexmap::IndexMap<String, Value>,
     ) -> Result<indexmap::IndexMap<String, Value>, ParseError> {
-        let Some(is) = cap.inputs.arguments.as_ref() else {
-            return Ok(map);
-        };
-        let crate::InputType::Object { fields, .. } = &is.input_type else {
-            return Ok(map);
-        };
-        for f in fields {
+        // Same body-object field set as coerce — payload ∪ arguments (not arguments-only).
+        let fields: Vec<_> = cap.invocation_object_fields().cloned().collect();
+        for f in &fields {
             if let Some(v) = map.get_mut(&f.name) {
                 let taken = std::mem::replace(v, Value::Null);
                 *v = self.normalize_invoke_nested_input_value(
@@ -1903,7 +1935,12 @@ impl<'a> Parser<'a> {
                 .find_capabilities(entity, kind)
             {
                 if matches!(kind, CapabilityKind::Get)
-                    && !path_var_names_from_mapping_json(&cap.mapping.template.0).is_empty()
+                    && !cap
+                        .mapping
+                        .as_ref()
+                        .map(|m| path_var_names_from_mapping_json(&m.template.0))
+                        .unwrap_or_default()
+                        .is_empty()
                 {
                     continue;
                 }
@@ -2067,7 +2104,11 @@ impl<'a> Parser<'a> {
         source: &Expr,
         map: &mut IndexMap<String, Value>,
     ) {
-        let path_vars = path_var_names_from_mapping_json(&cap.mapping.template.0);
+        let path_vars = cap
+            .mapping
+            .as_ref()
+            .map(|m| path_var_names_from_mapping_json(&m.template.0))
+            .unwrap_or_default();
         let Expr::Get(g) = source else {
             return;
         };
@@ -2119,20 +2160,24 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn coerce_object_input_for_cap(
+    /// Shared InvokeArg coerce over a concrete field list (object body lanes or union variant).
+    ///
+    /// Call with [`CapabilitySchema::invocation_object_fields`] for create/invoke object bodies
+    /// (`payload` ∪ `arguments`), or with a union variant's fields for ctor coerce. Scalar /
+    /// array / temporal / money / boolean / stringish PhraseIdent rules match query filters;
+    /// only array scalar-wrap differs by [`ArrayFieldCoercionPolicy::InvokeArg`]. Inline nested
+    /// object wires are skipped (nested coerce is not this boundary).
+    fn coerce_registry_input_fields<'f, I>(
         &self,
-        cap: &crate::CapabilitySchema,
-        map: &mut IndexMap<String, Value>,
+        domain: &str,
         catalog_entry_id: Option<&str>,
-    ) -> Result<(), ParseError> {
-        let Some(is) = &cap.inputs.arguments else {
-            return Ok(());
-        };
-        let InputType::Object { fields, .. } = &is.input_type else {
-            return Ok(());
-        };
-        let ec =
-            self.cgs_for_entity_with_preferred_catalog(cap.domain.as_str(), catalog_entry_id)?;
+        fields: I,
+        map: &mut IndexMap<String, Value>,
+    ) -> Result<(), ParseError>
+    where
+        I: IntoIterator<Item = &'f crate::InputFieldSchema>,
+    {
+        let ec = self.cgs_for_entity_with_preferred_catalog(domain, catalog_entry_id)?;
         for f in fields {
             if let Some(v) = map.get_mut(&f.name) {
                 if matches!(&f.wire, crate::InputFieldWire::Inline(_)) {
@@ -2293,7 +2338,11 @@ impl<'a> Parser<'a> {
         let Expr::Get(g) = source else {
             return false;
         };
-        let path_vars = path_var_names_from_mapping_json(&cap.mapping.template.0);
+        let path_vars = cap
+            .mapping
+            .as_ref()
+            .map(|m| path_var_names_from_mapping_json(&m.template.0))
+            .unwrap_or_default();
         if path_vars.is_empty() {
             return false;
         }
@@ -2331,10 +2380,11 @@ impl<'a> Parser<'a> {
             map,
         )?;
         self.inject_path_vars_from_get(cap, &source, &mut map);
-        self.coerce_object_input_for_cap(
-            cap,
-            &mut map,
+        self.coerce_registry_input_fields(
+            cap.domain.as_str(),
             self.active_catalog_entry_id(Some(&source)).as_deref(),
+            cap.invocation_object_fields(),
+            &mut map,
         )?;
         let needs_explicit_anchor = cap.invoke_requires_explicit_anchor_id();
         let input = Value::Object(map);
@@ -2390,6 +2440,12 @@ impl<'a> Parser<'a> {
                             std::mem::take(ctor_fields),
                         )?;
                         *ctor_fields = normalized;
+                        self.coerce_registry_input_fields(
+                            cap.domain.as_str(),
+                            self.active_catalog_entry_id(Some(&source)).as_deref(),
+                            variant.fields.iter(),
+                            ctor_fields,
+                        )?;
                     }
                 }
             }
@@ -3360,8 +3416,8 @@ impl<'a> Parser<'a> {
                     Value::Integer(n) => n.to_string(),
                     _ => return Err(self.err(ParseErrorKind::SearchTextMustBeString)),
                 };
-                // The primary Search capability and its structural selection lane identify the
-                // search-text input. Names and required-position heuristics are forbidden.
+                // The primary Search capability and its free-text selection lane identify the
+                // search-text input (`query`/`q`/`search`, or a sole selection slot).
                 let (cap_name, q_field) = {
                     let c = self.cgs_for_entity_required(&entity)?;
                     let cap = c.primary_search_capability(&entity).ok_or_else(|| {
@@ -3371,10 +3427,10 @@ impl<'a> Parser<'a> {
                             ),
                         })
                     })?;
-                    let field = cap.selection_params().first().ok_or_else(|| {
+                    let field = cap.search_text_selection_param().ok_or_else(|| {
                         self.err(ParseErrorKind::Other {
                             message: format!(
-                                "search capability `{}` must declare a selection parameter",
+                                "search capability `{}` must declare a free-text selection parameter (query/q/search)",
                                 cap.name
                             ),
                         })
@@ -4334,7 +4390,7 @@ mod tests {
             domain: "Document".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
                     "path": [
@@ -4343,7 +4399,8 @@ mod tests {
                     ]
                 })
                 .into(),
-            },
+            }),
+            derived: None,
             inputs: Default::default(),
             output_schema: None,
             provides: vec!["slug".into()],
@@ -4362,7 +4419,7 @@ mod tests {
             domain: "Document".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "POST",
                     "path": [
@@ -4373,7 +4430,8 @@ mod tests {
                     "body": {"type": "var", "name": "input"}
                 })
                 .into(),
-            },
+            }),
+            derived: None,
             inputs: crate::schema::CapabilityInputs {
                 payload: Some(InputSchema {
                     input_type: InputType::Union {
@@ -5130,7 +5188,7 @@ mod tests {
         }
         let cgs = load_schema_dir(dir).unwrap();
         // `List{id=<bigint>}` is referentially `List(<id>)`: the id-field brace sugar
-        // (`expr_sugar::rewrite_id_field_brace_query_to_get`) rewrites it to a Get whose key preserves
+        // (`expr_sugar::lower_id_field_brace_to_get`) rewrites it to a Get whose key preserves
         // the string-typed id verbatim — no integer coercion or precision loss on the 18-digit literal.
         let r = parse("List{id=123456789012345678}", &cgs).unwrap();
         let Expr::Get(g) = &r.expr else {
@@ -5325,9 +5383,10 @@ mod tests {
             domain: "Widget".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "widget"}]}).into(),
-            },
+            }),
+            derived: None,
             inputs: Default::default(),
             output_schema: None,
             provides: vec![],
@@ -5440,11 +5499,12 @@ mod tests {
             domain: "Book".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template:
                     serde_json::json!({"method":"GET","path":[{"type":"literal","value":"books"}]})
                         .into(),
-            },
+            }),
+            derived: None,
             inputs: Default::default(),
             output_schema: None,
             provides: vec![],
@@ -5463,7 +5523,7 @@ mod tests {
             domain: "Library".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method":"GET",
                     "path":[
@@ -5473,7 +5533,8 @@ mod tests {
                     ]
                 })
                 .into(),
-            },
+            }),
+            derived: None,
             inputs: Default::default(),
             output_schema: None,
             provides: vec![],
@@ -5657,7 +5718,7 @@ mod tests {
             domain: "Ticket".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
                     "path": [
@@ -5667,7 +5728,8 @@ mod tests {
                     ]
                 })
                 .into(),
-            },
+            }),
+            derived: None,
             inputs: Default::default(),
             output_schema: None,
             provides: vec![],
@@ -5797,7 +5859,7 @@ mod tests {
             domain: "Library".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method":"GET",
                     "path":[
@@ -5807,7 +5869,8 @@ mod tests {
                     ]
                 })
                 .into(),
-            },
+            }),
+            derived: None,
             inputs: Default::default(),
             output_schema: None,
             provides: vec![],
@@ -5899,14 +5962,15 @@ mod tests {
             domain: "Parent".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({"method":"GET","path":[
                     {"type":"literal","value":"parent"},
                     {"type":"literal","value":"/"},
                     {"type":"var","name":"id"}
                 ]})
                 .into(),
-            },
+            }),
+            derived: None,
             inputs: Default::default(),
             output_schema: None,
             provides: vec![],
@@ -5925,12 +5989,13 @@ mod tests {
             domain: "Child".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({"method":"GET","path":[
                     {"type":"literal","value":"children"}
                 ]})
                 .into(),
-            },
+            }),
+            derived: None,
             inputs: Default::default(),
             output_schema: None,
             provides: vec![],
@@ -6193,8 +6258,9 @@ mod tests {
         );
     }
 
-    /// Program-mode bare `true`/`false` on invoke args must coerce via the **same**
-    /// [`coerce_value_for_field_type`] path as query predicates (PhraseIdent ≡ stringish).
+    /// Program-mode bare tokens on invoke/create body fields must coerce via the **same**
+    /// [`coerce_value_for_field_type_with_policy`] (`InvokeArg`) path as query predicates
+    /// (PhraseIdent ≡ stringish). Covers payload-lane Create — not arguments-only.
     #[test]
     fn program_invoke_bare_bool_coerces_like_query_filter() {
         use crate::InvokeInputPayload;
@@ -6209,15 +6275,11 @@ mod tests {
         let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
         let stack = test_layer(&cgs);
 
-        // Read path (non-program): already Bool after predicate coerce.
-        let q = parse("LangItem{score=1}", &cgs).expect("query parse");
-        crate::type_checker::type_check_expr(&q.expr, &cgs).expect("query typecheck");
-
-        // Write path (program): bare true/false were PhraseIdent and used to fail typecheck.
+        // Update (payload body): bare true must become Bool before typecheck.
         let mut r = parse_with_cgs_layers_program(
             r#"LangItem("i1").update(active=true, score=3)"#,
             &stack,
-            sym_map,
+            Arc::clone(&sym_map),
             None,
             false,
         )
@@ -6241,6 +6303,60 @@ mod tests {
             .expect("phrase lower");
         crate::type_checker::type_check_expr(&r.expr, &cgs)
             .expect("program invoke with bare bool must typecheck");
+    }
+
+    /// Create capabilities author body fields under `inputs.payload`. Parse coerce must walk
+    /// that lane (payload ∪ arguments) — Boolean and temporal PhraseIdent alike.
+    #[test]
+    fn program_create_payload_bare_tokens_coerce_like_invoke_args() {
+        use std::sync::Arc;
+
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
+        let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
+        let stack = test_layer(&cgs);
+
+        let mut r = parse_with_cgs_layers_program(
+            r#"LangItem.create(title="payload-coerce", active=false, recorded_at=now)"#,
+            &stack,
+            sym_map,
+            None,
+            false,
+        )
+        .expect("program create parse");
+        let Expr::Create(create) = &r.expr else {
+            panic!("expected Create, got {:?}", r.expr);
+        };
+        let Value::Object(map) = create.input.to_value() else {
+            panic!("expected object create input, got {:?}", create.input);
+        };
+        assert_eq!(
+            map.get("active"),
+            Some(&Value::Bool(false)),
+            "Create payload coerce must yield Bool(false), got {:?}",
+            map.get("active")
+        );
+        let recorded = map
+            .get("recorded_at")
+            .expect("recorded_at present after coerce");
+        assert!(
+            !matches!(recorded, Value::PhraseIdent(_)),
+            "Create payload temporal must leave PhraseIdent via shared coerce, got {recorded:?}"
+        );
+        assert!(
+            matches!(recorded, Value::String(_)),
+            "expected temporal normalize to String, got {recorded:?}"
+        );
+
+        let labels = std::collections::BTreeSet::new();
+        crate::lower_program_phrase_idents_in_expr(&mut r.expr, &labels, &cgs)
+            .expect("phrase lower");
+        crate::type_checker::type_check_expr(&r.expr, &cgs)
+            .expect("program Create with payload bare bool + temporal must typecheck");
     }
 
     #[test]
@@ -6567,13 +6683,14 @@ mod tests {
             domain: "Pet".into(),
             identity_key: None,
             invalidates_entities: vec![],
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
                     "path": [{"type": "var", "name": "name"}]
                 })
                 .into(),
-            },
+            }),
+            derived: None,
             inputs: Default::default(),
             output_schema: None,
             provides: vec![],
