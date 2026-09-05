@@ -323,11 +323,13 @@ pub use teaching_term::{
 pub use wire_coercion::{
     apply_identity_slots_to_row, binding_value_as_plasm_value, coerce_json_value_for_field_type,
     coerce_value_for_field_type, coerce_value_for_field_type_with_policy,
-    collect_relation_binding_proofs, decode_coerce_and_validate_field, decode_coerce_money_fields,
+    collect_relation_binding_proofs, compare_unify_json_ordered_numbers,
+    decode_coerce_and_validate_field, decode_coerce_money_fields, dry_stub_entity_row_json,
+    dry_stub_json_for_named_value, dry_stub_value_for_named_value,
     field_type_assignable_for_relation_binding, identity_slot_to_json, json_value_to_plasm_value,
     parent_entity_field_type, plasm_value_to_json, relation_binding_assignable,
-    restore_id_field_from_compound_ref, try_plasm_value_to_json, DecodeFieldDiagnostic,
-    RelationBindingProof,
+    restore_id_field_from_compound_ref, try_plasm_value_to_json, value_compatible_with_field_type,
+    DecodeFieldDiagnostic, RelationBindingProof,
 };
 pub mod relation_materialize;
 pub mod view_embed_proof;

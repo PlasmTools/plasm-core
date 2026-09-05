@@ -695,17 +695,23 @@ pub fn program_multiple_return_lines_error() -> String {
         .to_string()
 }
 
-pub fn program_intermediate_return_error(stmt: &str) -> String {
-    let stmt = stmt.trim();
-    format!(
-        "Only one return line allowed — bind this step first (e.g. `filtered = {stmt}`), then end with one return line."
-    )
+pub fn program_intermediate_return_error(_stmt: &str) -> String {
+    // Do **not** echo the offending statement: when the agent unrolled N literal
+    // applies, quoting them teaches "bind each unroll" instead of fanout.
+    "Only one return line allowed — bind intermediate steps \
+     (`done = rows => e#.m#(…, _.f)` or `label = …`), then end with one return \
+     line of roots."
+        .to_string()
 }
 
 pub fn program_intermediate_return_must_be_binding_error(stmt: &str) -> String {
     let head = leading_identifier(stmt.trim());
+    let bind = if head.is_empty() { "step" } else { head };
+    // Prefer a short bind name only — never re-paste the full expression body
+    // (may contain copied path/id literals from a prior observation).
     format!(
-        "Intermediate step must be a binding — write `{head} = {stmt}` (not a bare `{stmt}` line), then return on the last line."
+        "Intermediate step must be a binding — write `{bind} = …` (not a bare \
+         expression line), then return on the last line."
     )
 }
 
@@ -1051,6 +1057,18 @@ created"#;
             err.contains("binding") || err.contains("Intermediate"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn intermediate_return_error_does_not_echo_literal_unroll() {
+        let lit = r#"e2.m14(source_file_path="/zone/a/work/x.dat", destination_file_path="/zone/a/archive/x.dat")"#;
+        let err = program_intermediate_return_error(lit);
+        assert!(err.contains("rows =>"), "{err}");
+        assert!(!err.contains("/zone/"), "{err}");
+        assert!(!err.contains("source_file_path"), "{err}");
+        let err2 = program_intermediate_return_must_be_binding_error(lit);
+        assert!(!err2.contains("/zone/"), "{err2}");
+        assert!(!err2.contains("source_file_path"), "{err2}");
     }
 
     #[test]

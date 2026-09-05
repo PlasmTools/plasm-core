@@ -530,11 +530,11 @@ fn return_arrow_classifier_agrees_with_domain_line_kind_on_language_matrix() {
     );
 }
 
-/// Rendered-glyph regression: the language matrix TSV must show `↠` + a `chain:` reconstruction hint
-/// on an entity-providing write, `↠ ()` **without** a chain hint on a void write, `↣ [` on a query,
-/// and `→` on a get.
+/// Rendered-glyph regression: the language matrix TSV must show `↠ e#[…]` on an
+/// entity-providing write (no obsolete `chain:` hint), `↠ ()` on a void write, `↣ [` on a
+/// query, and `→` on a get.
 #[test]
-fn teaching_tsv_return_glyphs_and_terminal_chain_hint_language_matrix() {
+fn teaching_tsv_return_glyphs_mutation_result_field_alphabet_language_matrix() {
     let dir = fixtures_schemas_dir("plasm_language_matrix");
     if !dir.exists() {
         return;
@@ -548,8 +548,13 @@ fn teaching_tsv_return_glyphs_and_terminal_chain_hint_language_matrix() {
     assert!(
         meanings
             .iter()
-            .any(|m| m.contains('↠') && m.contains("chain:") && m.contains("(<id>).m#")),
-        "expected a provides-write row with terminal glyph + reconstruction hint; meanings:\n{}",
+            .any(|m| m.contains('↠') && m.contains('[') && !m.contains("chain:")),
+        "expected a provides-write row with terminal glyph + field alphabet, no chain hint; meanings:\n{}",
+        meanings.join("\n")
+    );
+    assert!(
+        !meanings.iter().any(|m| m.contains("chain:")),
+        "MutationResult field-dot is lawful — teaching must not emit chain: hints; meanings:\n{}",
         meanings.join("\n")
     );
     assert!(
@@ -2671,10 +2676,9 @@ fn sole_nullary_get_fixture_teaches_bare_e_first_with_gloss() {
         })
     });
     let (first_expr, first_meaning) = e_rows.next().expect("Profile e# row");
-    assert_eq!(
-        first_expr,
-        e.as_str(),
-        "first e# must be bare executable singleton fetch, got {first_expr:?}\n{body}"
+    assert!(
+        first_expr.starts_with(&format!("{e}[")) && first_expr.contains("first_name"),
+        "first e# must be singleton fetch with field alphabet, got {first_expr:?}\n{body}"
     );
     assert!(
         first_meaning.contains("→")
@@ -2687,10 +2691,6 @@ fn sole_nullary_get_fixture_teaches_bare_e_first_with_gloss() {
             .lines()
             .any(|l| l.contains(&format!("{e}.m")) && l.contains("()\t")),
         "must not teach redundant e#.m#() for sole singleton Get:\n{body}"
-    );
-    assert!(
-        !body.lines().any(|l| l.starts_with(&format!("{e}["))),
-        "must not lead with noun e#[wires]:\n{body}"
     );
 }
 
@@ -3008,7 +3008,8 @@ fn clickup_domain_gloss_and_symbol_map_queries() {
     );
 }
 
-/// User has only pathless singleton `user_get_me` — first e# row is bare `e#` (not `e#(42)` / `e#.m#()`).
+/// User has only pathless singleton `user_get_me` — first e# row is `e#` or `e#[…]`
+/// (not `e#(42)` / `e#.m#()`).
 #[test]
 fn clickup_user_singleton_get_me_line_in_domain() {
     let dir = apis_dir("clickup");
@@ -3037,14 +3038,13 @@ fn clickup_user_singleton_get_me_line_in_domain() {
         })
     });
     let (expr, meaning) = first_user_e.expect("User must have an e# teaching row");
-    assert_eq!(
-        expr,
-        user_sym.as_str(),
-        "sole singleton Get: first e# row must be bare {user_sym}, got {expr:?}"
+    assert!(
+        expr == user_sym.as_str() || expr.starts_with(&format!("{user_sym}[")),
+        "sole singleton Get: first e# row must be bare or projected {user_sym}, got {expr:?}"
     );
     assert!(
         meaning.contains("→") && !meaning.contains("materialize"),
-        "bare User Meaning is →e (+ gloss), not materialize mark, got {meaning:?}"
+        "User Meaning is →e (+ gloss), not materialize mark, got {meaning:?}"
     );
     assert!(
         !sym.lines().any(|l| {
@@ -3162,50 +3162,6 @@ fn pathless_action_teaches_bare_entity_method_not_identity_paren() {
     assert!(
         !expr.starts_with(&format!("{es}(")),
         "pathless Action must not teach identity paren receiver, got {expr}"
-    );
-}
-
-/// AppWorld AccountPassword — same derived keyed-Get pattern as LangKeyPick matrix fixture.
-#[test]
-fn appworld_account_password_teaches_keyed_get_not_method_invoke() {
-    let dir = apis_dir("appworld/supervisor");
-    if !dir.exists() {
-        return;
-    }
-    let cgs = load_schema_dir(&dir).unwrap();
-    let exp = TeachingExposureSession::new(&cgs, "", &["AccountPassword"]);
-    let body =
-        PromptPipelineConfig::default().render_teaching_first_wave_for_session(&cgs, &exp, None);
-    let (_, table) = split_tsv_teaching_contract_and_table(&body);
-    validate_teaching_tsv_teaching_table(&table).expect("valid teaching rows");
-
-    assert!(
-        table.lines().any(|l| {
-            let expr = l.split('\t').next().unwrap_or("").trim();
-            expr.contains("{account_name=<wire>}")
-        }),
-        "AccountPassword must teach e#{{account_name=<wire>}}:\n{table}"
-    );
-    // Hole-filled teaching line must lower to Get, not Query.
-    let body_filled = body.replace("<wire>", "venmo");
-    let line = body_filled
-        .lines()
-        .find(|l| l.contains("{account_name="))
-        .expect("keyed line");
-    let expr = line.split('\t').next().unwrap().trim();
-    let parsed = crate::expr_parser::parse_session_line(expr, &cgs, Some(exp.symbol_map_arc()))
-        .expect("parse keyed teaching");
-    assert!(
-        matches!(parsed.expr, crate::Expr::Get(_)),
-        "keyed AccountPassword teaching must lower to Get, got {:?}",
-        parsed.expr
-    );
-    assert!(
-        !table.lines().any(|l| {
-            let expr = l.split('\t').next().unwrap_or("");
-            expr.contains(".m") && expr.ends_with("()") && expr.starts_with('e')
-        }),
-        "AccountPassword must not teach invalid e#.m#():\n{table}"
     );
 }
 

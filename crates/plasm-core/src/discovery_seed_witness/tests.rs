@@ -1001,3 +1001,373 @@ fn corpus_stamps_own_pair_on_both_ends_of_own_edge() {
     assert_eq!(thread.own_pairs.end_role("Thread"), OwnEnd::Source);
     assert_eq!(message.own_pairs.end_role("Message"), OwnEnd::Target);
 }
+
+#[test]
+fn identity_seats_pinned_before_max_witnesses_truncate() {
+    use crate::discovery_intent_class::DiscoveryIntentClass;
+    use crate::discovery_seed_catalog::CatalogWorkflowContext;
+    use crate::identity::{CapabilityName, EntityFieldName, EntityName};
+    use crate::schema::{
+        CapabilityInputs, CapabilityKind, CapabilityMapping, CapabilitySchema,
+        CapabilityTemplateJson, DiscoveryCoSeedWith, DiscoveryEntityHints, DiscoverySeedClass,
+        EntityDef, CGS,
+    };
+    use indexmap::IndexMap;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    fn entity(
+        name: &str,
+        seed_class: Option<DiscoverySeedClass>,
+        co_seed: Option<DiscoveryCoSeedWith>,
+    ) -> (EntityName, EntityDef) {
+        let en = EntityName::from(name);
+        (
+            en.clone(),
+            EntityDef {
+                name: en,
+                description: format!("{name} desc"),
+                id_field: EntityFieldName::from("id"),
+                id_format: None,
+                id_from: None,
+                fields: IndexMap::new(),
+                relations: IndexMap::new(),
+                expression_aliases: vec![],
+                implicit_request_identity: false,
+                key_vars: vec![],
+                abstract_entity: false,
+                domain_projection_examples: true,
+                primary_read: None,
+                primary_query: None,
+                primary_search: None,
+                discovery: Some(DiscoveryEntityHints {
+                    names: vec![name.to_ascii_lowercase()],
+                    qualifier_names: vec![],
+                    seed_class,
+                    co_seed_with: co_seed,
+                }),
+            },
+        )
+    }
+
+    fn query_cap(ent: &str) -> (CapabilityName, CapabilitySchema) {
+        let cn = CapabilityName::from(format!("{ent}_query"));
+        (
+            cn.clone(),
+            CapabilitySchema {
+                name: cn,
+                description: format!("query {ent}"),
+                kind: CapabilityKind::Query,
+                domain: EntityName::from(ent),
+                mapping: Some(CapabilityMapping {
+                    template: CapabilityTemplateJson(serde_json::json!({ "method": "GET" })),
+                }),
+                derived: None,
+                inputs: CapabilityInputs::default(),
+                output_schema: None,
+                provides: vec![],
+                sanitizes: vec![],
+                deterministic: None,
+                scope_aggregate_key_policy: Default::default(),
+                preflight: None,
+                discovery: None,
+                identity_key: None,
+                invalidates_entities: vec![],
+            },
+        )
+    }
+
+    fn cgs_with(
+        entities: Vec<(
+            &str,
+            Option<DiscoverySeedClass>,
+            Option<DiscoveryCoSeedWith>,
+        )>,
+    ) -> CGS {
+        let mut ents = IndexMap::new();
+        let mut caps = IndexMap::new();
+        for (name, seed, co) in entities {
+            let (en, def) = entity(name, seed, co);
+            ents.insert(en, def);
+            let (cn, cap) = query_cap(name);
+            caps.insert(cn, cap);
+        }
+        let mut cgs = CGS::new();
+        cgs.entities = ents;
+        cgs.capabilities = caps;
+        cgs
+    }
+
+    let app = Arc::new(cgs_with(vec![(
+        "File",
+        Some(DiscoverySeedClass::Primary),
+        None,
+    )]));
+    let creds = Arc::new(cgs_with(vec![
+        (
+            "Supervisor",
+            Some(DiscoverySeedClass::Primary),
+            Some(DiscoveryCoSeedWith::FederatedPrimary),
+        ),
+        (
+            "AccountPassword",
+            Some(DiscoverySeedClass::Primary),
+            Some(DiscoveryCoSeedWith::SessionPrimary),
+        ),
+    ]));
+    let mut catalog_refs = HashMap::new();
+    catalog_refs.insert("file_system".to_string(), app.as_ref());
+    catalog_refs.insert("supervisor".to_string(), creds.as_ref());
+    let ctx = CatalogWorkflowContext::build(
+        &catalog_refs,
+        "list meeting files under documents",
+        &DiscoveryIntentClass::default(),
+        &[],
+    );
+
+    // Flood the closed set with high-score File caps so lexical truncate would
+    // otherwise drop low-score Supervisor while keeping AccountPassword.
+    let mut bundles = Vec::new();
+    for i in 0..MAX_WITNESSES {
+        bundles.push(bundle(
+            &format!("file_system:File{i}"),
+            "file_system",
+            "File",
+            vec![cap(
+                &format!("file_system:File:Query{i}"),
+                "Query",
+                "Query",
+                200 - i as u32,
+            )],
+            200 - i as u32,
+        ));
+    }
+    bundles.push(bundle(
+        "supervisor:AccountPassword",
+        "supervisor",
+        "AccountPassword",
+        vec![cap(
+            "supervisor:AccountPassword:Query",
+            "Query",
+            "Query",
+            50,
+        )],
+        50,
+    ));
+    bundles.push(bundle(
+        "supervisor:Supervisor",
+        "supervisor",
+        "Supervisor",
+        vec![cap("supervisor:Supervisor:Query", "Query", "Query", 1)],
+        1,
+    ));
+
+    let graph = empty_graph(&bundles);
+    let corpus = build_witness_corpus(&bundles, &[], &graph, Some(&ctx)).expect("corpus");
+    let entities: std::collections::BTreeSet<&str> = corpus
+        .witnesses
+        .iter()
+        .filter_map(|w| match &w.kind {
+            WitnessKind::DirectCapability { entity, .. } => Some(entity.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        entities.contains("AccountPassword"),
+        "session_primary must remain; got {entities:?}"
+    );
+    assert!(
+        entities.contains("Supervisor"),
+        "federated_primary must be pinned with password seat; got {entities:?}"
+    );
+}
+
+#[test]
+fn catalog_primary_auth_alone_does_not_earn_soft_catalog_seat() {
+    use crate::discovery_intent_class::DiscoveryIntentClass;
+    use crate::discovery_seed_catalog::CatalogWorkflowContext;
+    use crate::identity::{CapabilityName, EntityFieldName, EntityName};
+    use crate::schema::{
+        CapabilityInputs, CapabilityKind, CapabilityMapping, CapabilitySchema,
+        CapabilityTemplateJson, DiscoveryCoSeedWith, DiscoveryEntityHints, DiscoverySeedClass,
+        EntityDef, CGS,
+    };
+    use indexmap::IndexMap;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    fn entity(
+        name: &str,
+        seed_class: Option<DiscoverySeedClass>,
+        co_seed: Option<DiscoveryCoSeedWith>,
+    ) -> (EntityName, EntityDef) {
+        let en = EntityName::from(name);
+        (
+            en.clone(),
+            EntityDef {
+                name: en,
+                description: format!("{name} desc"),
+                id_field: EntityFieldName::from("id"),
+                id_format: None,
+                id_from: None,
+                fields: IndexMap::new(),
+                relations: IndexMap::new(),
+                expression_aliases: vec![],
+                implicit_request_identity: false,
+                key_vars: vec![],
+                abstract_entity: false,
+                domain_projection_examples: true,
+                primary_read: None,
+                primary_query: None,
+                primary_search: None,
+                discovery: Some(DiscoveryEntityHints {
+                    names: vec![name.to_ascii_lowercase()],
+                    qualifier_names: vec![],
+                    seed_class,
+                    co_seed_with: co_seed,
+                }),
+            },
+        )
+    }
+
+    fn query_cap(ent: &str) -> (CapabilityName, CapabilitySchema) {
+        let cn = CapabilityName::from(format!("{ent}_query"));
+        (
+            cn.clone(),
+            CapabilitySchema {
+                name: cn,
+                description: format!("query {ent}"),
+                kind: CapabilityKind::Query,
+                domain: EntityName::from(ent),
+                mapping: Some(CapabilityMapping {
+                    template: CapabilityTemplateJson(serde_json::json!({ "method": "GET" })),
+                }),
+                derived: None,
+                inputs: CapabilityInputs::default(),
+                output_schema: None,
+                provides: vec![],
+                sanitizes: vec![],
+                deterministic: None,
+                scope_aggregate_key_policy: Default::default(),
+                preflight: None,
+                discovery: None,
+                identity_key: None,
+                invalidates_entities: vec![],
+            },
+        )
+    }
+
+    fn cgs_with(
+        entities: Vec<(
+            &str,
+            Option<DiscoverySeedClass>,
+            Option<DiscoveryCoSeedWith>,
+        )>,
+    ) -> CGS {
+        let mut ents = IndexMap::new();
+        let mut caps = IndexMap::new();
+        for (name, seed, co) in entities {
+            let (en, def) = entity(name, seed, co);
+            ents.insert(en, def);
+            let (cn, cap) = query_cap(name);
+            caps.insert(cn, cap);
+        }
+        let mut cgs = CGS::new();
+        cgs.entities = ents;
+        cgs.capabilities = caps;
+        cgs
+    }
+
+    let app = Arc::new(cgs_with(vec![(
+        "File",
+        Some(DiscoverySeedClass::Primary),
+        None,
+    )]));
+    let phone = Arc::new(cgs_with(vec![(
+        "AuthSession",
+        Some(DiscoverySeedClass::Primary),
+        Some(DiscoveryCoSeedWith::CatalogPrimary),
+    )]));
+    let todo = Arc::new(cgs_with(vec![(
+        "AuthSession",
+        Some(DiscoverySeedClass::Primary),
+        Some(DiscoveryCoSeedWith::CatalogPrimary),
+    )]));
+    let slack = Arc::new(cgs_with(vec![(
+        "Channel",
+        Some(DiscoverySeedClass::Primary),
+        None,
+    )]));
+    let gmail = Arc::new(cgs_with(vec![(
+        "Message",
+        Some(DiscoverySeedClass::Primary),
+        None,
+    )]));
+
+    let mut catalog_refs = HashMap::new();
+    catalog_refs.insert("file_system".to_string(), app.as_ref());
+    catalog_refs.insert("phone".to_string(), phone.as_ref());
+    catalog_refs.insert("todoist".to_string(), todo.as_ref());
+    catalog_refs.insert("slack".to_string(), slack.as_ref());
+    catalog_refs.insert("gmail".to_string(), gmail.as_ref());
+    let ctx = CatalogWorkflowContext::build(
+        &catalog_refs,
+        "reorganize meeting files",
+        &DiscoveryIntentClass::default(),
+        &[],
+    );
+
+    let bundles = vec![
+        bundle(
+            "file_system:File",
+            "file_system",
+            "File",
+            vec![cap("file_system:File:Query", "Query", "Query", 100)],
+            100,
+        ),
+        bundle(
+            "slack:Channel",
+            "slack",
+            "Channel",
+            vec![cap("slack:Channel:Query", "Query", "Query", 90)],
+            90,
+        ),
+        bundle(
+            "gmail:Message",
+            "gmail",
+            "Message",
+            vec![cap("gmail:Message:Query", "Query", "Query", 80)],
+            80,
+        ),
+        // High-score AuthSession alone must not pull phone/todoist into top-3.
+        bundle(
+            "phone:AuthSession",
+            "phone",
+            "AuthSession",
+            vec![cap("phone:AuthSession:Action", "Action", "Action", 95)],
+            95,
+        ),
+        bundle(
+            "todoist:AuthSession",
+            "todoist",
+            "AuthSession",
+            vec![cap("todoist:AuthSession:Action", "Action", "Action", 94)],
+            94,
+        ),
+    ];
+    let graph = empty_graph(&bundles);
+    let corpus = build_witness_corpus(&bundles, &[], &graph, Some(&ctx)).expect("corpus");
+    let catalogs: std::collections::BTreeSet<&str> =
+        corpus.witnesses.iter().map(witness_catalog_of).collect();
+    assert!(catalogs.contains("file_system"));
+    assert!(catalogs.contains("slack"));
+    assert!(catalogs.contains("gmail"));
+    assert!(
+        !catalogs.contains("phone"),
+        "catalog_primary AuthSession must not earn soft seat; got {catalogs:?}"
+    );
+    assert!(
+        !catalogs.contains("todoist"),
+        "catalog_primary AuthSession must not earn soft seat; got {catalogs:?}"
+    );
+}

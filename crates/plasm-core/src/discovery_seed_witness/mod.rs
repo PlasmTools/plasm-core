@@ -17,6 +17,7 @@
 //! collapses through [`CapBucket`].
 
 mod corpus;
+mod identity_pair;
 mod kind;
 mod named_in_intent;
 mod outcome;

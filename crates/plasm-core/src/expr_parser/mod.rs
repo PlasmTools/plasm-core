@@ -6156,12 +6156,12 @@ mod tests {
             return;
         }
         let cgs = load_schema_dir(dir).unwrap();
-        let r = parse("LangItem{score=notanint}", &cgs)
-            .expect("parse unknown integer token as phrase string");
-        let err = crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap_err();
+        // RA-8: hard coerce rejects non-numeric tokens at parse (not soft-leave-as-string).
+        let err = parse("LangItem{score=notanint}", &cgs).expect_err("non-numeric integer token");
+        let msg = format!("{err:?}");
         assert!(
-            matches!(err, crate::TypeError::IncompatibleValue { .. }),
-            "expected compile-time type rejection, got {err:?}"
+            msg.contains("cannot coerce") && msg.contains("integer"),
+            "expected RA-8 integer coerce reject, got {msg}"
         );
     }
 

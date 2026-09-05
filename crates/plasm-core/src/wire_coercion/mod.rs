@@ -1,233 +1,39 @@
-//! Catalog-driven wire value coercion and relation-binding type assignability.
+//! # Catalog-directed value coercion (RA-8)
+//!
+//! **Sole public law** for turning a raw [`Value`] / JSON cell into a catalog-typed cell.
+//! Program literals, wire decode, invoke args, compare-unify, and dry stubs all call through
+//! this module. Validate / compatible paths are coerce-then-domain — they must not maintain a
+//! second, divergent type matrix.
+//!
+//! Modes (see `docs/plasm-language-surface-invariants.md` § RA-8):
+//! - **ProgramLiteral** / query filters — [`coerce_value_for_field_type`] (default array wrap)
+//! - **InvokeArg** — [`coerce_value_for_field_type_with_policy`] + [`ArrayFieldCoercionPolicy::InvokeArg`]
+//! - **WireDecode** — [`decode_coerce_and_validate_field`]
+//! - **CompareUnify** — [`compare_unify_json_ordered_numbers`] (residual JSON ordered compare)
+//! - **DryStub** — [`dry_stub_value_for_named_value`] / [`dry_stub_json_for_named_value`]
+//!
+//! Relation-binding assignability helpers also live here (parent field → param after coerce).
 
 use crate::array_field_policy::{invoke_array_scalar_error, ArrayFieldCoercionPolicy};
 use crate::capability_input::validate_named_value_domain_value;
-use crate::{
-    ArrayItemsSchema, EntityDef, FieldType, NamedValueSchema, RelationMaterialization,
-    RelationSchema, Value, ValueWireFormat, CGS,
-};
+use crate::{ArrayItemsSchema, FieldType, NamedValueSchema, Value, ValueWireFormat};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
-/// Static witness for a `query_scoped_bindings` / `get_scoped_bindings` materialize map entry.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RelationBindingProof {
-    pub cap_param: String,
-    pub parent_field: String,
-}
 
-/// Collect binding proofs from a declared many-relation `query_scoped_bindings` materialization.
-pub fn collect_relation_binding_proofs(
-    cgs: &CGS,
-    entity: &EntityDef,
-    relation: &RelationSchema,
-) -> Result<Vec<RelationBindingProof>, String> {
-    let mat = relation
-        .materialize
-        .as_ref()
-        .ok_or_else(|| format!("relation `{}` has no materialize", relation.name))?;
-    let bindings = match mat {
-        RelationMaterialization::QueryScopedBindings { bindings, .. }
-        | RelationMaterialization::GetScopedBindings { bindings, .. } => bindings,
-        _ => {
-            return Err(format!(
-                "relation `{}` materialize is not query_scoped_bindings",
-                relation.name
-            ));
-        }
-    };
-    let mut out = Vec::with_capacity(bindings.len());
-    for (cap_param, parent_field) in bindings {
-        out.push(RelationBindingProof {
-            cap_param: cap_param.as_str().to_string(),
-            parent_field: parent_field.as_str().to_string(),
-        });
-    }
-    cgs.validate_relation_materialize_bindings(
-        entity.name.as_str(),
-        relation.name.as_str(),
-        entity,
-        match mat {
-            RelationMaterialization::QueryScopedBindings { capability, .. }
-            | RelationMaterialization::GetScopedBindings { capability, .. } => capability,
-            _ => unreachable!(),
-        },
-        bindings,
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(out)
-}
+mod dry_stub;
+mod relation_binding;
 
-/// Coerce a string identity slot into JSON using the parent entity field's catalog type.
-pub fn identity_slot_to_json(
-    cgs: &CGS,
-    entity: &EntityDef,
-    field_name: &str,
-    slot: &str,
-) -> serde_json::Value {
-    let raw = serde_json::Value::String(slot.to_string());
-    match parent_entity_field_type(cgs, entity, field_name) {
-        Ok(ft) => {
-            let nv = entity
-                .fields
-                .get(field_name)
-                .and_then(|f| f.named_value(cgs).ok());
-            coerce_json_value_for_field_type(
-                &ft,
-                nv.and_then(|n| n.value_format),
-                nv.and_then(|n| n.array_items.as_ref()),
-                raw,
-            )
-        }
-        Err(_) => raw,
-    }
-}
+pub use dry_stub::{
+    dry_stub_entity_row_json, dry_stub_json_for_named_value, dry_stub_value_for_named_value,
+};
+pub use relation_binding::{
+    apply_identity_slots_to_row, binding_value_as_plasm_value, collect_relation_binding_proofs,
+    field_type_assignable_for_relation_binding, identity_slot_to_json, parent_entity_field_type,
+    relation_binding_assignable, restore_id_field_from_compound_ref, RelationBindingProof,
+};
 
-fn identity_slot_needed(existing: Option<&serde_json::Value>) -> bool {
-    match existing {
-        None | Some(serde_json::Value::Null) => true,
-        Some(serde_json::Value::String(s)) => s.is_empty(),
-        _ => false,
-    }
-}
-
-/// Merge CGS identity slots into agent row JSON — compound keys never flatten into `id_field`.
-pub fn apply_identity_slots_to_row(
-    obj: &mut serde_json::Map<String, serde_json::Value>,
-    reference: &crate::Ref,
-    cgs: Option<&CGS>,
-) {
-    match &reference.key {
-        crate::EntityKey::Simple(slot) => {
-            let Some(id) = slot.as_lit_str() else {
-                return;
-            };
-            if id.is_empty() {
-                return;
-            }
-            let id_field = cgs
-                .and_then(|c| c.get_entity(reference.entity_type.as_str()))
-                .map(|e| e.id_field.as_str().to_string())
-                .unwrap_or_else(|| "id".to_string());
-            if identity_slot_needed(obj.get(&id_field)) {
-                obj.insert(id_field, serde_json::Value::String(id.to_string()));
-            }
-        }
-        crate::EntityKey::Compound(parts) => {
-            if parts.values().all(|v| v.is_empty_lit()) {
-                return;
-            }
-            let ent = cgs.and_then(|c| c.get_entity(reference.entity_type.as_str()));
-            for (k, val) in parts {
-                let Some(s) = val.as_lit_str() else {
-                    continue;
-                };
-                if s.is_empty() || !identity_slot_needed(obj.get(k.as_str())) {
-                    continue;
-                }
-                let json = match (cgs, ent) {
-                    (Some(cgs), Some(ent)) => identity_slot_to_json(cgs, ent, k.as_str(), s),
-                    _ => serde_json::Value::String(s.to_string()),
-                };
-                obj.insert(k.clone(), json);
-            }
-        }
-    }
-}
-
-/// Restore `id_field` from compound `_ref` after row JSON omitted it during reload.
-pub fn restore_id_field_from_compound_ref(
-    fields: &mut indexmap::IndexMap<String, crate::TypedFieldValue>,
-    reference: &crate::Ref,
-    entity_def: Option<&EntityDef>,
-    cgs: &CGS,
-) {
-    let crate::EntityKey::Compound(parts) = &reference.key else {
-        return;
-    };
-    let Some(ent) = entity_def else {
-        return;
-    };
-    let id_name = ent.id_field.as_str();
-    let Some(val) = parts.get(id_name).and_then(|s| s.as_lit_str()) else {
-        return;
-    };
-    fields.entry(id_name.to_string()).or_insert_with(|| {
-        let json = identity_slot_to_json(cgs, ent, id_name, val);
-        serde_json::from_value(json)
-            .unwrap_or_else(|_| crate::TypedFieldValue::from(crate::Value::String(val.to_string())))
-    });
-}
-
-/// Whether a parent entity field can supply a scoped-query capability parameter after wire coercion.
-pub fn field_type_assignable_for_relation_binding(parent: &FieldType, param: &FieldType) -> bool {
-    use FieldType::*;
-    if parent == param {
-        return true;
-    }
-    match (parent, param) {
-        (Integer, Number) | (Number, Integer) => true,
-        (String, Integer) | (String, Number) => true,
-        (Integer, String) | (Number, String) | (Uuid, String) => true,
-        (EntityRef { target: t1, .. }, EntityRef { target: t2, .. }) => t1 == t2,
-        (Boolean, String) | (String, Boolean) => true,
-        (Date, String) | (String, Date) => true,
-        _ => false,
-    }
-}
-
-/// Catalog relation `query_scoped_bindings` / `get_scoped_bindings` assignability (includes identity slots).
-pub fn relation_binding_assignable(
-    parent_entity: &EntityDef,
-    parent_field: &str,
-    parent_ty: &FieldType,
-    param_ty: &FieldType,
-) -> bool {
-    if field_type_assignable_for_relation_binding(parent_ty, param_ty) {
-        return true;
-    }
-    let FieldType::EntityRef { target, .. } = param_ty else {
-        return false;
-    };
-    if parent_entity.name != *target {
-        return false;
-    }
-    let identity_slot = parent_field == parent_entity.id_field.as_str()
-        || parent_entity
-            .key_vars
-            .iter()
-            .any(|k| k.as_str() == parent_field);
-    if identity_slot {
-        return matches!(
-            parent_ty,
-            FieldType::String | FieldType::Integer | FieldType::Number | FieldType::Uuid
-        );
-    }
-    parent_scalar_field_supplies_entity_ref_scope(parent_entity, parent_field, parent_ty)
-}
-
-/// True when a single parent row field value can [`normalize_entity_ref_value_for_target`] for this entity.
-fn parent_scalar_field_supplies_entity_ref_scope(
-    parent_entity: &EntityDef,
-    parent_field: &str,
-    parent_ty: &FieldType,
-) -> bool {
-    let leaf = match parent_ty {
-        FieldType::String => Value::String("a/b".into()),
-        FieldType::Integer => Value::Integer(1),
-        FieldType::Number => Value::Float(1.0),
-        FieldType::Uuid => Value::String("00000000-0000-0000-0000-000000000001".into()),
-        _ => return false,
-    };
-    let row = Value::Object(IndexMap::from([(parent_field.to_string(), leaf)]));
-    crate::entity_ref_value::normalize_entity_ref_value_for_target(&row, parent_entity).is_some()
-}
-
-/// Unquoted program tokens ([`Value::PhraseIdent`]) and quoted/plain strings share the same
-/// stringish coerce path — used by **both** query predicates (`QueryFilter`) and invoke/create
-/// args (`InvokeArg`). Divergent handling here is what made `archived=false` work on reads while
-/// `contacted_merchant=true` failed on writes.
-fn stringish(val: &Value) -> Option<&str> {
+pub(crate) fn stringish(val: &Value) -> Option<&str> {
     match val {
         Value::String(s) | Value::PhraseIdent(s) => Some(s.as_str()),
         _ => None,
@@ -241,7 +47,7 @@ fn phrase_ident_to_string(val: Value) -> Value {
     }
 }
 
-/// Coerce a parsed predicate / env token for typecheck and downstream HTTP binding.
+/// Coerce a parsed predicate / env token for typecheck and downstream HTTP binding (ProgramLiteral).
 ///
 /// Same entry point for **read** filters (`{field=…}`) and (via
 /// [`coerce_value_for_field_type_with_policy`]) **write** capability inputs — do not add
@@ -264,7 +70,7 @@ pub fn coerce_value_for_field_type(
 /// Coerce with explicit array policy (invoke args use [`ArrayFieldCoercionPolicy::InvokeArg`]).
 ///
 /// Scalar / typed literal rules are **identical** for query and invoke; only array scalar-wrap
-/// differs by [`ArrayFieldCoercionPolicy`].
+/// differs by [`ArrayFieldCoercionPolicy`]. Failed scalar coercions **Err** (no soft leave-as-string).
 pub fn coerce_value_for_field_type_with_policy(
     ft: &FieldType,
     value_format: Option<ValueWireFormat>,
@@ -275,6 +81,9 @@ pub fn coerce_value_for_field_type_with_policy(
     // Teaching-table bare `$` is a fill-in slot, not a wire token — pass through for every field
     // type (including temporal `Date`) so optional params can appear as `p#=$` in method rows.
     if val.is_domain_example_placeholder() {
+        return Ok(val);
+    }
+    if matches!(val, Value::Null | Value::PlasmInputRef(_)) {
         return Ok(val);
     }
     match ft {
@@ -313,57 +122,107 @@ pub fn coerce_value_for_field_type_with_policy(
                 Some(ValueWireFormat::Temporal(fmt)) => {
                     crate::temporal::normalize_temporal_value(val, fmt)
                 }
-                None | Some(ValueWireFormat::Money(_)) => {
+                None => match val {
+                    Value::String(_) | Value::Integer(_) | Value::Float(_) => Ok(val),
+                    other => Err(format!(
+                        "cannot coerce {} to date (missing value_format)",
+                        other.type_name()
+                    )),
+                },
+                Some(ValueWireFormat::Money(_)) => {
                     Err("Date field missing value_format in schema".to_string())
                 }
             }
         }
-        FieldType::String | FieldType::Uuid | FieldType::Select | FieldType::MultiSelect => {
+        FieldType::String | FieldType::Uuid | FieldType::Select => {
             Ok(match val {
                 Value::Integer(n) => Value::String(n.to_string()),
                 Value::Float(f) => Value::String(normalize_numeric_id_float(f)),
                 Value::PhraseIdent(s) => Value::String(s),
-                other => other,
+                Value::String(s) => Value::String(s),
+                other => {
+                    return Err(format!("cannot coerce {} to {ft:?}", other.type_name()))
+                }
             })
         }
-        FieldType::Integer => {
-            if let Some(s) = stringish(&val) {
-                return Ok(s
-                    .parse::<i64>()
-                    .map(Value::Integer)
-                    .unwrap_or_else(|_| phrase_ident_to_string(val)));
+        FieldType::Blob => {
+            if val.is_plasm_attachment_object() {
+                return Ok(val);
             }
             Ok(match val {
-                Value::Float(f) if f.fract() == 0.0 && f.is_finite() => Value::Integer(f as i64),
-                other => other,
+                Value::Integer(n) => Value::String(n.to_string()),
+                Value::Float(f) => Value::String(normalize_numeric_id_float(f)),
+                Value::PhraseIdent(s) => Value::String(s),
+                Value::String(s) => Value::String(s),
+                other => {
+                    return Err(format!("cannot coerce {} to blob", other.type_name()))
+                }
             })
+        }
+        FieldType::MultiSelect => match val {
+            Value::Array(_) => Ok(val),
+            Value::PhraseIdent(s) => Ok(Value::String(s)),
+            Value::String(s) => Ok(Value::String(s)),
+            other => Err(format!(
+                "cannot coerce {} to multi_select",
+                other.type_name()
+            )),
+        },
+        FieldType::Integer => {
+            if let Some(s) = stringish(&val) {
+                return s.parse::<i64>().map(Value::Integer).map_err(|_| {
+                    format!("cannot coerce {s:?} to integer")
+                });
+            }
+            match val {
+                Value::Integer(n) => Ok(Value::Integer(n)),
+                Value::Float(f) if f.fract() == 0.0 && f.is_finite() => Ok(Value::Integer(f as i64)),
+                other => Err(format!(
+                    "cannot coerce {} to integer",
+                    other.type_name()
+                )),
+            }
         }
         FieldType::Number => {
             if let Some(s) = stringish(&val) {
-                return Ok(s
-                    .parse::<f64>()
-                    .map(Value::Float)
-                    .unwrap_or_else(|_| phrase_ident_to_string(val)));
+                return s.parse::<f64>().map(Value::Float).map_err(|_| {
+                    format!("cannot coerce {s:?} to number")
+                });
             }
-            Ok(match val {
-                Value::Integer(n) => Value::Float(n as f64),
-                other => other,
-            })
+            match val {
+                Value::Integer(n) => Ok(Value::Float(n as f64)),
+                Value::Float(f) => Ok(Value::Float(f)),
+                other => Err(format!("cannot coerce {} to number", other.type_name())),
+            }
         }
         FieldType::EntityRef { .. } => Ok(match val {
             Value::Integer(n) => Value::String(n.to_string()),
             Value::Float(f) => Value::String(normalize_numeric_id_float(f)),
             Value::PhraseIdent(s) => Value::String(s),
-            other => other,
+            Value::String(s) => Value::String(s),
+            Value::Object(o) => Value::Object(o),
+            other => {
+                return Err(format!(
+                    "cannot coerce {} to entity_ref",
+                    other.type_name()
+                ))
+            }
         }),
-        FieldType::Boolean => Ok(match stringish(&val) {
-            Some(s) if s.eq_ignore_ascii_case("true") => Value::Bool(true),
-            Some(s) if s.eq_ignore_ascii_case("false") => Value::Bool(false),
-            _ => match val {
-                Value::Bool(b) => Value::Bool(b),
-                other => other,
+        FieldType::Boolean => match stringish(&val) {
+            // RA-8: reject `"1"` / `"0"` — only true/false tokens.
+            Some(s) if s.eq_ignore_ascii_case("true") => Ok(Value::Bool(true)),
+            Some(s) if s.eq_ignore_ascii_case("false") => Ok(Value::Bool(false)),
+            Some(s) => Err(format!(
+                "cannot coerce {s:?} to boolean (expected true/false)"
+            )),
+            None => match val {
+                Value::Bool(b) => Ok(Value::Bool(b)),
+                other => Err(format!(
+                    "cannot coerce {} to boolean",
+                    other.type_name()
+                )),
             },
-        }),
+        },
         FieldType::Json => match val {
             Value::String(ref s) if s.as_str() == "$" => Ok(val),
             Value::String(s) => crate::value::parse_json_subtree_str(&s).ok_or_else(|| {
@@ -374,7 +233,8 @@ pub fn coerce_value_for_field_type_with_policy(
                 "Json parameter: string must be valid JSON with a top-level object or array"
                     .to_string()
             }),
-            other => Ok(other),
+            Value::Object(_) | Value::Array(_) => Ok(val),
+            other => Err(format!("cannot coerce {} to json", other.type_name())),
         },
         FieldType::Money => {
             // Doctrine: money wire is decimal string only.
@@ -382,11 +242,56 @@ pub fn coerce_value_for_field_type_with_policy(
             let val = phrase_ident_to_string(val);
             crate::money::normalize(val, fmt, None).map_err(String::from)
         }
-        _ => Ok(val),
     }
 }
 
-/// Coerce a JSON wire value toward a catalog field type (plan rows, hole instantiation).
+/// Whether `value` can occupy `field_type` under RA-8 (successful coerce, optional formats absent).
+///
+/// Prefer [`coerce_value_for_field_type`] + domain validate when a [`NamedValueSchema`] is available.
+pub fn value_compatible_with_field_type(value: &Value, field_type: &FieldType) -> bool {
+    let Ok(coerced) = coerce_value_for_field_type(field_type, None, None, value.clone()) else {
+        return false;
+    };
+    if matches!(field_type, FieldType::EntityRef { .. }) {
+        return matches!(
+            &coerced,
+            Value::String(_)
+                | Value::Integer(_)
+                | Value::Float(_)
+                | Value::Null
+                | Value::PlasmInputRef(_)
+        ) || crate::entity_ref_value::EntityRefPayload::value_is_legal_shape(&coerced);
+    }
+    true
+}
+
+/// CompareUnify residual: parse JSON cells as ordered numbers (wire string decimals allowed).
+///
+/// Returns `None` when either side is not numeric under RA-8 ordered-compare rules (no bool/`"1"`).
+pub fn compare_unify_json_ordered_numbers(
+    lhs: &serde_json::Value,
+    rhs: &serde_json::Value,
+) -> Option<(f64, f64)> {
+    Some((json_ordered_number(lhs)?, json_ordered_number(rhs)?))
+}
+
+fn json_ordered_number(v: &serde_json::Value) -> Option<f64> {
+    match v {
+        serde_json::Value::Number(n) => n
+            .as_f64()
+            .or_else(|| n.as_i64().map(|i| i as f64))
+            .or_else(|| n.as_u64().map(|u| u as f64)),
+        serde_json::Value::String(s) => {
+            let t = s.trim();
+            if t.is_empty() {
+                return None;
+            }
+            t.parse::<f64>().ok().filter(|f| f.is_finite())
+        }
+        _ => None,
+    }
+}
+
 pub fn coerce_json_value_for_field_type(
     ft: &FieldType,
     value_format: Option<ValueWireFormat>,
@@ -403,22 +308,8 @@ pub fn coerce_json_value_for_field_type(
     }
 }
 
-/// Build a [`Value`] for a relation binding param from row JSON or identity.
-pub fn binding_value_as_plasm_value(
-    raw: &serde_json::Value,
-    target_nv: &NamedValueSchema,
-) -> Value {
-    let plasm = json_to_plasm_for_field(&target_nv.field_type, raw);
-    coerce_value_for_field_type(
-        &target_nv.field_type,
-        target_nv.value_format,
-        target_nv.array_items.as_ref(),
-        plasm.clone(),
-    )
-    .unwrap_or(plasm)
-}
 
-fn json_to_plasm_for_field(ft: &FieldType, value: &serde_json::Value) -> Value {
+pub(crate) fn json_to_plasm_for_field(ft: &FieldType, value: &serde_json::Value) -> Value {
     if matches!(ft, FieldType::Money) {
         crate::money::json_amount_to_value(value)
     } else {
@@ -499,46 +390,7 @@ fn normalize_numeric_id_float(f: f64) -> String {
     }
 }
 
-/// Resolve the catalog field type for a parent entity wire field used in `query_scoped_bindings`.
-pub fn parent_entity_field_type(
-    cgs: &CGS,
-    entity: &EntityDef,
-    parent_field: &str,
-) -> Result<FieldType, String> {
-    if parent_field == entity.id_field.as_str() {
-        if let Some(fs) = entity.fields.get(parent_field) {
-            return Ok(fs
-                .named_value(cgs)
-                .map_err(|e| e.to_string())?
-                .field_type
-                .clone());
-        }
-        return Ok(FieldType::String);
-    }
-    if let Some(fs) = entity.fields.get(parent_field) {
-        return Ok(fs
-            .named_value(cgs)
-            .map_err(|e| e.to_string())?
-            .field_type
-            .clone());
-    }
-    if entity.key_vars.iter().any(|k| k.as_str() == parent_field) {
-        if let Some(fs) = entity.fields.get(parent_field) {
-            return Ok(fs
-                .named_value(cgs)
-                .map_err(|e| e.to_string())?
-                .field_type
-                .clone());
-        }
-        return Ok(FieldType::String);
-    }
-    Err(format!(
-        "unknown parent field `{parent_field}` on entity `{}`",
-        entity.name
-    ))
-}
 
-/// Structured soft-fail diagnostic when decode-time shape coerce or domain validation rejects a field.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DecodeFieldDiagnostic {
     pub field: String,
@@ -649,6 +501,7 @@ pub fn decode_coerce_money_fields(
 mod tests {
     use super::*;
     use crate::array_field_policy::ArrayFieldCoercionPolicy;
+    use crate::EntityDef;
     use crate::EntityFieldName;
     use crate::FieldValueKind;
     use crate::ValueDomainKey;
@@ -894,6 +747,54 @@ mod tests {
             Value::Array(vec![Value::String("tag".into())]),
             "predicate coercion may still wrap single scalar"
         );
+    }
+
+    #[test]
+    fn string_integer_compatible_via_coerce_law() {
+        assert!(value_compatible_with_field_type(
+            &Value::String("42".into()),
+            &FieldType::Integer
+        ));
+        assert!(!value_compatible_with_field_type(
+            &Value::String("nope".into()),
+            &FieldType::Integer
+        ));
+        assert!(!value_compatible_with_field_type(
+            &Value::String("1".into()),
+            &FieldType::Boolean
+        ));
+    }
+
+    #[test]
+    fn dry_stub_integer_is_numeric_not_string() {
+        use crate::schema::NamedValueSchema;
+        use crate::value_domain::{Constraints, KernelKind, ValueDomain};
+
+        let nv = NamedValueSchema::from_domain(
+            String::new(),
+            ValueDomain::new(KernelKind::Integer, None, Constraints::default(), None, None)
+                .expect("integer domain"),
+            None,
+        );
+        let v = dry_stub_value_for_named_value(&nv, 3);
+        assert_eq!(v, Value::Integer(3));
+        let j = dry_stub_json_for_named_value(&nv, 3);
+        assert_eq!(j, serde_json::json!(3));
+    }
+
+    #[test]
+    fn compare_unify_parses_numeric_strings() {
+        let (l, r) = compare_unify_json_ordered_numbers(
+            &serde_json::json!("5"),
+            &serde_json::json!(0),
+        )
+        .expect("string vs number");
+        assert!(l > r);
+        assert!(compare_unify_json_ordered_numbers(
+            &serde_json::json!("nope"),
+            &serde_json::json!(0),
+        )
+        .is_none());
     }
 
     #[test]

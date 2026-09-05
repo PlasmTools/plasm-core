@@ -6,17 +6,12 @@ expression: "plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION"
 
 **`program` is Plasm source text, not JSON data.** Grammar below; symbols from the language card. Reply with one valid plasm_program:
 
-**Program shape:** one `plasm_expr`, or `label = …` bindings then **one** final return line (comma-separated roots on that line only). No prose, `return`, fences, or table rows. A plan that merely echoes an object/array/string literal is a **literal no-op**.
+**Program shape:** one `plasm_expr`, or `label = …` bindings then **one** final return line (comma-separated roots on that line only). No prose, `return` keyword, fences, or table rows.
 
-**Entity heads vs rows:** Copy the card’s left-column `eN…` patterns — they are executable. Do not invent `eN.field` as a fetch. `[field,…]` keeps row shape; scalar params need `label.wire` from a singleton row (`→ e`), not a plural `↣ [e]` head. Array params may take plural `rows.wire`. After binding, use `label.wire` / `label.mK(…)`.
-
-**Language-card Meaning** (static here — not repeated on each `plasm_context` card):
-- Header `plasm_expr<TAB>Meaning`; **left column only is syntax** — never copy Meaning.
-- `↣ [e]` = plural rows · `→ e` = one entity row (chainable; not a scalar) · `↠` = write.
-- `optional:` = optional params · `chain:` = later-turn write reconstruction (not a ban on in-program chaining).
-- Executable rows start with `e#`; `r#`/`v#` are never roots. Wires appear on field-gloss / bracket rows by first use.
-
-**Strings:** JSON escapes in quotes (`\n` `\t` `\\` `\"`); unknown `\x` errors. Prefer tagged `<<TAG` … `TAG` heredocs for long bodies (real newlines).
+**Strings:** JSON escapes in quotes (`\n` `\t` `\\` `\"`); tagged `<<TAG` … `TAG` heredocs for long bodies (real newlines). Pick one lane per open:
+- Literal — `body = <<TAG` … `TAG` (raw text, not Minijinja; a `key = value` body line is OK when asked)
+- Inline — `e#.m#(param=<<TAG` … `TAG)` …)
+- Render — `label = source => <<TAG` … `TAG` (Minijinja over `rows` and the source binding)
 
 **Batch independent reads** (required): shared scope + multi-root return — not N tool cycles.
 ```
@@ -25,59 +20,32 @@ bars = e2{foo=foo}
 bazs = e3{foo=foo}
 bars, bazs
 ```
-Batch reads aggressively. **Prefer one multi-write program** when steps share one approval: writes run **bind-ordered (sequential)**; **one** `run_ref` for the plan. After a write use **`label.wire`** — never invent a `.wire` postfix.
-```
-foo = e1.m1(name="n")
-bar = e2.m2(foo=foo, title="t")
-baz = e3.m3(bar=bar, body="…")
-bar, baz
-```
-Worked lookup→write (illustrative mini card; live symbols from `plasm_context`). Left=code; never copy Meaning. Session tokens: ` ```plasm-session `; language-card / run rows: ` ```tsv `.
-```tsv
-plasm_expr	Meaning
-e1.m1(p1=<wire>, p2=<wire>)	→ e1 · open · provides w1
-w1	str · handle from m1
-e2~"<query>"{w1=<wire>}	↣ [e2]
-w2	str · key on e2
-e3.m2(w1=<wire>, w2=<wire>, n=<wire>)	↠ e3 · create linked
-```
-```
-a = e1.m1(p1="u", p2="s")
-b = e2~"q"{w1=a.w1}
-c = e3.m2(w1=a.w1, w2=b.w2, n=1)
-c
-```
+Batch reads aggressively. After a write use **`label.wire`** from that binding — never invent a `.wire` not taught on the card.
 
-Output:
-- Bind → narrow/project/transform → one return line.
-- Worked transform (substitute session symbols):
-items = e_source
-filtered = items.filter{amount>=300}
-sorted = filtered.sort(amount, desc).limit(10)
-sorted[name,amount]
-- Worked row-to-text (wire names in bracket and Minijinja body; source binding name also works for `{% for %}`):
-report = sorted[name,amount] <<PLASM_RPT_TAG
-{% for r in rows %}- {{ r.name }} ({{ r.amount or "—" }})
-{% endfor %}
-PLASM_RPT_TAG
+**Language-card Meaning:**
+- Header `plasm_expr<TAB>Meaning`; **left column only is syntax** — never copy Meaning.
+- Executable rows start with `e#`; `r#`/`v#` are never roots. Wires appear on field-gloss / bracket rows by first use.
+- Never emit `v#`. Fill every card hole with a real value.
 
-Core surface:
-- Get: `e#(<id>)`. Query: `e#{field=<wire>}`. Search when taught: `e#~"<query>"`. Bare `e#` when the card teaches it as `→ e`.
-- Projection: taught brackets / bound `label[wires]` — never invent a root `e#[wires]` fetch.
-- Postfix from card left column: `.filter{…}` `.sort` `.limit` `.group_by` `.aggregate` `.with{k: expr}` `[field,…]`.
-- Inline rows when delivery is `inline` (≤25); `snapshot_only` / `(in artifact)` need artifact read. Copy **`artifact_uri`** from `plasm-session` tokens — never plan `run_step` / `dict_ref`.
-- `page(...)` is HTTP-execute only — not an MCP tool argument.
+**Membership plane (prefer `| where`):** Materialize with `e#` / `e#{wire=tok}` then filter membership with `| where wire = tok`. Use entity-head `e#{wire=tok}` for catalog / backend selection. Bare taught tokens either way — never copy `<…>`, never leave `|` alternatives. Never emit `v#`.
 
-Composition rules:
-- One binding per line; multi-roots on the final line only.
-- Row text: `label = source[field,…] <<TAG` … `TAG`; string params use **`binding.content`**, not the whole row. Bare string bind: `label = <<TAG` … `TAG` → `param=label`.
-- After `foo = e#(…)`, prefer `foo.m#(…)` / `foo.r#`. `${report.content}` in later strings (`$$` escapes `$`).
-- Bare create: `e#.m#(param=…)`; scoped write: `source => e#.m#(…)`. Heredoc closes on first trimmed `TAG` line.
+**Date/time:** `| where ts >= "…"` with `"Nd ago"` / `"today"`·`"yesterday"`·`"last week"`·`"this year"` / `"last monday"` / RFC3339 (quote multi-word) — not brace `min_*`, not `now()`/`date_*`. **"Last N days (including today)" → `"Nd ago"` / `"N days ago"`** (inclusive lower bound; do **not** emit `N−1`).
 
-Symbol and fill rules:
-- Code uses `e#` / `m#` / `r#`; **wire names** for fields/params/filters. Never emit `v#`.
-- Homographs by syntax position (`{wire=…}`, `.r#`, `m#(wire=…)`).
-- Session handles (`logical_session_ref`, `run_ref`/`pcN`) are MCP tokens — not program syntax.
-- Card templates have holes — fill with real values; never emit leftover placeholder characters from a card row.
-- Quote scalars in `{…}` predicates and string params. Prefer `label = e#` then `label.filter{…}` when you need the full plural set.
-- Recovery: **`plasm_context`** `session_mode: "extend"` + same **`logical_session_ref`** — never **`new`**.
+**Three strata** (catalog · `|` row algebra · `=>` application):
+
+1. **Catalog source** — `e#` / `e#{wire=value}` / `e#~"q"` / `e#(<id>)` — before `|` stages or bare (no `|`). Backend WHERE only on an **entity head**.
+2. **Row algebra** — `|` stages left-to-right (never after `=>`): `| where …` · `| select fields, name = expr` · `| summarize [by keys] n=count()` · `| order by f [desc]` · `| take n` · `| distinct [by f]`. Bind cuts: `rows = e# | where …` then `rows | select …` or `rows => …`.
+3. **Application `=>`** — when per-row args vary: `{ t: _.f }` · `<<TAG` Minijinja · `e#.m#(…, _.f)` · `_.r#` / `_.wire`. Always `_` for row variance. Dots `.m#` / `.r#` / `.wire` only on a proven singleton row (`→` Get **or** `↠` MutationResult write with taught `[wires]`): `item = e#("id"); item.update(…)`; `sess = e#.mLogin(…)`; `tok = sess.access_token` then `param=tok` equals `param=sess.access_token` (scalar cell — not a one-column row). Row projection uses `| select` or `[…]` only.
+
+**Catalog vs row plane:** backend WHERE is `e#{wire=value}` on an entity head; row filter is `e# | where …` or `rows = e#` then `rows | where …`. Invalid: `rows{wire=…}` on a binding.
+
+**Forbidden as row algebra:** `.filter` / `.with` / `[proj]` / `.group_by` / `.sort` / `.limit`, `| update`, `| take 1` then `.update` for multi-row, bare `=> tags` without `_`.
+
+**Composition:**
+- Render body is Minijinja (e.g. `{% for r in rows %}- {{ r.id }}{% endfor %}`). Put `| where` and plural `rows => e#.m#…` on earlier binding lines; string params take **`binding.content`**. Interpolation: `${report.content}` (`$$` escapes `$`).
+- Plural write (prefer bind): `done = rows => e#.m#(…, _.f)` then include `done` among the final return roots. Bare `rows => e#.m#…` only when it is the program’s **sole** return root. Bare create: `e#.m#(param=…)` (long string args: inline heredoc lane).
+- Quote scalars in `{…}` and string params.
+
+**Apply vs return:** A bare line `lhs => rhs` (no `label =`) is itself a return root. When more steps follow, bind it (`done = rows => e#.m#(…)`) and keep a single final return line of roots.
+
+**Recovery:** `dry_verdict: needs_fix` → revise `program`, call **`plasm`** again on the same **`logical_session_ref`**. **`plasm_context`** `session_mode: "extend"` when symbols are missing — never **`new`**.

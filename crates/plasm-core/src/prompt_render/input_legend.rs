@@ -8,8 +8,9 @@ use serde::{Deserialize, Serialize};
 /// - [`ReturnArrow::Single`] `→` — one record; a chainable anchor (`.r#` / `.m#` / get-head reuse).
 /// - [`ReturnArrow::List`] `↣` — a list of rows; transformable via `| where` / `| select` /
 ///   `| summarize` / `| order by` / `| take` / `| distinct`.
-/// - [`ReturnArrow::Terminal`] `↠` — a terminal write result (or unit `()`); **not** an expression
-///   anchor. To keep operating, reconstruct the entity with a get (`e#(id=…)`) then chain `.m#`.
+/// - [`ReturnArrow::Terminal`] `↠` — a write / side-effect result. MutationResult writers
+///   (`provides` nonempty) are still `↠` but Γ is StaticSingleton + RelationDot — field-dot
+///   (`sess.access_token`) is lawful; void `()` remains non-chainable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ReturnArrow {
@@ -92,7 +93,7 @@ pub struct TeachingExprLine {
     #[serde(flatten)]
     pub legend: CapabilityInputLegend,
     pub is_projection_teaching: bool,
-    /// Nullary singleton Get (bare `e#` / `e#.m#()`): one entity row (`→ e`); no write `chain:` hint.
+    /// Nullary singleton Get (bare `e#` / `e#.m#()`): one entity row (`→ e`).
     #[serde(default)]
     pub is_singleton_row_fetch: bool,
     #[serde(default)]

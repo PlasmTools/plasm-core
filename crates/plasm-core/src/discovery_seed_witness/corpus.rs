@@ -290,6 +290,10 @@ pub fn build_witness_corpus(
 
 /// Brand-lock (already applied at bundle stage) + unbranded top-catalog soft cut +
 /// top-[`MAX_WITNESSES`] by lexical score before BAML sees the closed set.
+///
+/// Federated/session identity seats are pinned before truncate so password seats
+/// cannot crowd out the principal. Catalog-primary AuthSession rows do not earn
+/// soft-catalog seats alone (see [`filter_top_catalogs_by_score`]).
 fn shortlist_witnesses_for_llm(
     mut drafted: Vec<RequirementWitness>,
     brand_lock_catalogs: &[String],
@@ -313,10 +317,11 @@ fn shortlist_witnesses_for_llm(
             .then_with(|| a.summary.cmp(&b.summary))
     });
     let ranked = drafted;
-    let mut shortlist: Vec<RequirementWitness> =
-        ranked.iter().take(MAX_WITNESSES).cloned().collect();
+    let mut shortlist =
+        super::identity_pair::pin_identity_seats_then_truncate(&ranked, MAX_WITNESSES);
     admit_primary_parents_for_attach_leaves(&mut shortlist, &ranked);
     admit_co_seed_with_primary(&mut shortlist, &ranked);
+    super::identity_pair::admit_identity_pair_siblings(&mut shortlist, &ranked);
     shortlist
 }
 
@@ -477,6 +482,11 @@ fn admit_primary_parents_for_attach_leaves(
 /// Catalog-authored `co_seed_with: federated_primary|session_primary` seats always
 /// survive (same stamp exemption as brand-lock bundle retention) so later
 /// [`admit_co_seed_with_primary`] can force-admit them — never entity English.
+///
+/// `catalog_primary` AuthSession seats also do **not** earn a soft-catalog seat:
+/// unrelated login affordances must not pull phone/todoist/… into the closed set
+/// for unbranded file/meeting intents. Those seats still survive when their
+/// catalog earns a seat via workflow entities.
 fn filter_top_catalogs_by_score(
     drafted: Vec<RequirementWitness>,
     max_catalogs: usize,
@@ -486,16 +496,22 @@ fn filter_top_catalogs_by_score(
     }
     let mut best: HashMap<String, u32> = HashMap::new();
     for w in &drafted {
-        // Federated/session co-seed seats do not compete for the soft catalog budget.
-        if w.co_seed_with.admits_on_federated_primary() {
+        // Identity + catalog-primary auth seats do not compete for the soft catalog budget.
+        if w.co_seed_with.admits_on_federated_primary() || w.co_seed_with.is_catalog_primary_seat()
+        {
             continue;
         }
         let cat = witness_catalog(w).to_string();
         let entry = best.entry(cat).or_insert(0);
         *entry = (*entry).max(w.lexical_score);
     }
-    if best.len() <= max_catalogs {
-        return drafted;
+    if best.is_empty() {
+        // Soft budget empty: every draft was identity-stamped and/or catalog-primary.
+        // Keep federated/session identity seats; drop catalog-primary-only noise.
+        return drafted
+            .into_iter()
+            .filter(|w| w.co_seed_with.admits_on_federated_primary())
+            .collect();
     }
     let mut ranked: Vec<(String, u32)> = best.into_iter().collect();
     ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));

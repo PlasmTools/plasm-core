@@ -22,10 +22,9 @@ use super::query_teaching::{
     search_expr_with_filters, unary_entity_id_teaching_expr_line,
 };
 use super::relation_teaching::{receiver_for_dotted_suffix, try_emit_relation_nav_teaching_row};
-use super::row_producer::RowProducerProjection;
+use super::row_producer::with_projection_bracket;
 use super::row_producer_teaching::{
-    enrich_row_producer_teaching_line, row_producer_projection_for_query_line,
-    try_push_row_producer_teaching_example,
+    enrich_row_producer_teaching_line, try_push_row_producer_teaching_example,
 };
 use super::surface_filter::{
     surface_allows_capability, surface_allows_entity_field, surface_allows_relation_nav,
@@ -226,6 +225,12 @@ pub(crate) fn collect_entity_teaching_block(
         }
     });
 
+    let canonical_bracket = primary_get_projection_bracket
+        .as_deref()
+        .filter(|b| !b.trim().is_empty());
+    // Noun cards deleted — query/search never omit brackets as "same as witness".
+    let witness_taught = false;
+
     push_entity_fetch_heads(
         gloss_emit,
         &mut teaching_rows,
@@ -240,23 +245,16 @@ pub(crate) fn collect_entity_teaching_block(
         catalog_entry_id,
         ident_meta,
         get_gloss.clone(),
+        canonical_bracket,
         line_valid_cache,
         line_valid_cache_seed,
     );
-    let canonical_bracket = primary_get_projection_bracket
-        .as_deref()
-        .filter(|b| !b.trim().is_empty());
-    // Noun cards deleted — query/search never omit brackets as "same as witness".
-    let witness_taught = false;
 
     let mut emitted_primary_get = false;
     if primary_get_cap.is_some() && !only_singleton_gets {
         let primary_name = primary_get_cap.map(|c| &c.name);
         let with_wires = |base: String| -> String {
-            match canonical_bracket {
-                Some(br) => format!("{base}{br}"),
-                None => base,
-            }
+            with_projection_bracket(base, canonical_bracket)
         };
         if let Some(cmp) = compound_get_expr_line(&es, ent, cgs, map, catalog_entry_id) {
             if try_push_teaching_example(
@@ -334,7 +332,6 @@ pub(crate) fn collect_entity_teaching_block(
                     let is_primary_query = primary_q_name.as_deref() == Some(cap.name.as_str());
                     let mut added = false;
                     if let Some(line) = query_expr_maximal(cap, &es, cgs, map, catalog_entry_id) {
-                        let projection = row_producer_projection_for_query_line(cap, &es, &line);
                         if local_seen.insert(line.clone())
                             && try_push_row_producer_teaching_example(
                                 gloss_emit,
@@ -354,7 +351,6 @@ pub(crate) fn collect_entity_teaching_block(
                                 line_valid_cache,
                                 line_valid_cache_seed,
                                 map_arc,
-                                projection,
                                 canonical_bracket,
                                 witness_taught,
                             )
@@ -386,7 +382,6 @@ pub(crate) fn collect_entity_teaching_block(
                                     line_valid_cache,
                                     line_valid_cache_seed,
                                     map_arc,
-                                    RowProducerProjection::CapabilityProvides,
                                     canonical_bracket,
                                     witness_taught,
                                 )
@@ -419,7 +414,6 @@ pub(crate) fn collect_entity_teaching_block(
                                     line_valid_cache,
                                     line_valid_cache_seed,
                                     map_arc,
-                                    RowProducerProjection::CapabilityProvides,
                                     canonical_bracket,
                                     witness_taught,
                                 )
@@ -569,7 +563,7 @@ pub(crate) fn collect_entity_teaching_block(
     }
 
     // Unary `e#(p…)` after query lines when primary GET was not emitted earlier.
-    // Queries already teach wires by first use — keep this get unbracketed.
+    // Attach field alphabet when present (list-all Query may already have taught it).
     if primary_get_cap.is_some()
         && !only_singleton_gets
         && !emitted_primary_get
@@ -578,12 +572,13 @@ pub(crate) fn collect_entity_teaching_block(
         let primary_name = primary_get_cap.map(|c| &c.name);
         let keyed = keyed_identity_get_teaching_expr_line(&es, ent, map, catalog_entry_id)
             .unwrap_or_else(|| unary_entity_id_teaching_expr_line(&es, ent, map, catalog_entry_id));
+        let keyed_with_wires = with_projection_bracket(keyed, canonical_bracket);
         let _ = try_push_teaching_example(
             gloss_emit,
             &mut teaching_rows,
             collect_meta,
             cgs,
-            &keyed,
+            &keyed_with_wires,
             get_gloss.clone(),
             None,
             None,
@@ -629,7 +624,6 @@ pub(crate) fn collect_entity_teaching_block(
                     surface_filter,
                     &line,
                     sg.clone(),
-                    RowProducerProjection::CapabilityProvides,
                     canonical_bracket,
                     witness_taught,
                 )
@@ -673,7 +667,6 @@ pub(crate) fn collect_entity_teaching_block(
                 line_valid_cache,
                 line_valid_cache_seed,
                 map_arc,
-                RowProducerProjection::CapabilityProvides,
                 canonical_bracket,
                 witness_taught,
             );

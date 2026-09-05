@@ -700,7 +700,7 @@ values:
     description: Email address of a user or counterparty.
   nv_login_username:
     type: e164
-    description: Account-holder login id for this service (phone number here) — not a counterparty.
+    description: Task-principal phone number from Supervisor — the login username for Phone (e164), not a counterparty.
   nv_password:
     type: string
     description: Account-holder password for this service.

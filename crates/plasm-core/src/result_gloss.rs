@@ -29,10 +29,11 @@ pub fn entity_sym_for_gloss(
         .map(|t| t.to_string())
 }
 
-/// Gloss string for a capability: collection `[e#]`, single `e#`, unit `()`, or `None` (omit).
+/// Gloss string for a capability: collection `[e#]`, single `e#`, projected write
+/// `e#[p#,…]`, unit `()`, or `None` (omit).
 pub fn result_gloss_for_capability(
     cap: &CapabilitySchema,
-    _cgs: &CGS,
+    cgs: &CGS,
     map: Option<&SymbolMap>,
     catalog_entry_id: &str,
 ) -> Option<String> {
@@ -60,13 +61,37 @@ pub fn result_gloss_for_capability(
         | CapabilityKind::Action => {
             // Writes without `response` in CML still often return an entity slice; `provides` marks that.
             if !cap.provides.is_empty() {
-                single_gloss(map, catalog_entry_id, domain)
+                mutation_result_gloss(cap, cgs, map, catalog_entry_id, domain)
             } else {
                 // CGS: every capability has a type; void / side-effect with no entity payload uses unit `()`.
                 Some("()".to_string())
             }
         }
     }
+}
+
+/// MutationResult write gloss: `e#[field,…]` so the field alphabet is taught on the invoke row
+/// (AuthSession login has no Get/Query witness).
+fn mutation_result_gloss(
+    cap: &CapabilitySchema,
+    cgs: &CGS,
+    map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
+    domain: &str,
+) -> Option<String> {
+    let ent = single_gloss(map, catalog_entry_id, domain)?;
+    let fields = cgs.effective_ordered_response_fields(cap);
+    if fields.is_empty() {
+        return Some(ent);
+    }
+    let syms: Vec<String> = fields
+        .iter()
+        .map(|k| {
+            map.map(|m| m.ident_sym_entity_field_for(catalog_entry_id, domain, k.as_str()))
+                .unwrap_or_else(|| k.clone())
+        })
+        .collect();
+    Some(format!("{ent}[{}]", syms.join(",")))
 }
 
 /// Single-resource get result (e.g. `Team(42)` => `e1`).

@@ -696,8 +696,8 @@ fn type_check_comparison(
     // ── 1. Capability parameter ───────────────────────────────────────────────
     // Capability params are typed HTTP inputs. Their `role` (search, sort,
     // response_control, scope, filter) is semantic metadata; at the type-checking
-    // level we enforce the declared `field_type` (same matrix as entity fields via
-    // [`Value::is_compatible_with_field_type`]) plus structured rules below.
+    // level we enforce the declared `field_type` via RA-8 coerce-then-domain
+    // ([`validate_concrete_named_value`]) plus structured rules below.
     // We do NOT enforce operator compatibility — the operator is just a hint for
     // how the CLI flag was built; the CML template determines the actual HTTP encoding.
     if let Some(param) = cap_params.iter().find(|p| p.name == field_name) {
@@ -1595,7 +1595,7 @@ mod tests {
     }
 
     #[test]
-    fn capability_integer_param_rejects_string() {
+    fn capability_integer_param_rejects_non_numeric_string() {
         use crate::schema::NamedValueSchema;
         use indexmap::IndexMap;
 
@@ -1629,7 +1629,7 @@ mod tests {
             wire_array_element_key: None,
             sink_class: None,
         }];
-        let pred = Predicate::eq("limit", "10");
+        let pred = Predicate::eq("limit", "ten");
         let mut cgs = CGS::new();
         cgs.values.insert(
             "tc_cap_limit_int".into(),
@@ -1648,6 +1648,14 @@ mod tests {
             matches!(err, TypeError::IncompatibleValue { ref field, .. } if field == "limit"),
             "expected IncompatibleValue for limit, got {err:?}"
         );
+        // RA-8: numeric strings coerce to integer (compatible with coerce law).
+        let ok = type_check_predicate(
+            &Predicate::eq("limit", "10"),
+            &entity,
+            &cap_params,
+            &cgs,
+        );
+        assert!(ok.is_ok(), "numeric string must coerce: {ok:?}");
     }
 
     #[test]

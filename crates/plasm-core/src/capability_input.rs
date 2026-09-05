@@ -34,15 +34,16 @@ fn expected_type_phrase_for_placeholder(field_type: &FieldType) -> String {
     }
 }
 
-/// Like [`Value::is_compatible_with_field_type`], plus target-aware normalization for
-/// [`FieldType::EntityRef`] (row narrowing, `full_name` split, compound-key completeness).
+/// Like [`crate::wire_coercion::value_compatible_with_field_type`], plus target-aware
+/// normalization for [`FieldType::EntityRef`] (row narrowing, `full_name` split, compound-key
+/// completeness).
 pub(crate) fn value_fits_field_type_entity_ref_aware(
     value: &Value,
     field_type: &FieldType,
     cgs: &CGS,
 ) -> bool {
     let FieldType::EntityRef { target, .. } = field_type else {
-        return value.is_compatible_with_field_type(field_type);
+        return crate::wire_coercion::value_compatible_with_field_type(value, field_type);
     };
     let Some(ent) = cgs.get_entity(target) else {
         return false;
@@ -187,6 +188,9 @@ pub(crate) fn validate_multiselect_value(
 }
 
 /// Validate a concrete value against a resolved [`NamedValueSchema`] (invoke params + predicates).
+///
+/// RA-8 cutover: coerce toward the catalog type first, then domain / entity-ref checks — so
+/// compatible and coerce cannot disagree (e.g. string `"42"` on an integer field).
 pub(crate) fn validate_concrete_named_value(
     value: &Value,
     nv: &crate::NamedValueSchema,
@@ -203,29 +207,71 @@ pub(crate) fn validate_concrete_named_value(
                     value_type: value.type_name().to_string(),
                     field_type: "array (missing items schema)".to_string(),
                 })?;
-            validate_typed_array_value(value, spec, field_path, cgs)
+            let coerced = crate::coerce_value_for_field_type(
+                &nv.field_type,
+                nv.value_format,
+                nv.array_items.as_ref(),
+                value.clone(),
+            )
+            .map_err(|message| TypeError::IncompatibleValue {
+                field: field_path.to_string(),
+                value_type: format!("{} ({message})", value.type_name()),
+                field_type: "array".to_string(),
+            })?;
+            validate_typed_array_value(&coerced, spec, field_path, cgs)
         }
         FieldType::MultiSelect => {
             let allowed = nv.allowed_values.as_deref().unwrap_or(&[]);
-            validate_multiselect_value(value, allowed, field_path)
+            let coerced = crate::coerce_value_for_field_type(
+                &nv.field_type,
+                nv.value_format,
+                nv.array_items.as_ref(),
+                value.clone(),
+            )
+            .map_err(|message| TypeError::IncompatibleValue {
+                field: field_path.to_string(),
+                value_type: format!("{} ({message})", value.type_name()),
+                field_type: "multi_select".to_string(),
+            })?;
+            validate_multiselect_value(&coerced, allowed, field_path)
         }
         _ => {
-            if !value_fits_field_type_entity_ref_aware(value, &nv.field_type, cgs) {
+            let coerced = match crate::coerce_value_for_field_type(
+                &nv.field_type,
+                nv.value_format,
+                nv.array_items.as_ref(),
+                value.clone(),
+            ) {
+                Ok(v) => v,
+                Err(message) => {
+                    return Err(match &nv.field_type {
+                        FieldType::EntityRef { target, .. } => {
+                            entity_ref_incompatible_value(field_path, target.as_str(), value, cgs)
+                        }
+                        _ => TypeError::IncompatibleValue {
+                            field: field_path.to_string(),
+                            value_type: format!("{} ({message})", value.type_name()),
+                            field_type: format!("{:?}", nv.field_type),
+                        },
+                    });
+                }
+            };
+            if !value_fits_field_type_entity_ref_aware(&coerced, &nv.field_type, cgs) {
                 return Err(match &nv.field_type {
                     FieldType::EntityRef { target, .. } => {
-                        entity_ref_incompatible_value(field_path, target.as_str(), value, cgs)
+                        entity_ref_incompatible_value(field_path, target.as_str(), &coerced, cgs)
                     }
                     _ => TypeError::IncompatibleValue {
                         field: field_path.to_string(),
-                        value_type: value.type_name().to_string(),
+                        value_type: coerced.type_name().to_string(),
                         field_type: format!("{:?}", nv.field_type),
                     },
                 });
             }
             if matches!(nv.field_type, FieldType::Money) {
-                validate_money_named_value(field_path, value, nv)?;
+                validate_money_named_value(field_path, &coerced, nv)?;
             }
-            validate_named_value_domain(value, nv, field_path)
+            validate_named_value_domain(&coerced, nv, field_path)
         }
     }
 }

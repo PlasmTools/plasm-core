@@ -35,7 +35,7 @@ Batch reads aggressively. After a write use **`label.wire`** from that binding �
 
 1. **Catalog source** — `e#` / `e#{wire=value}` / `e#~"q"` / `e#(<id>)` — before `|` stages or bare (no `|`). Backend WHERE only on an **entity head**.
 2. **Row algebra** — `|` stages left-to-right (never after `=>`): `| where …` · `| select fields, name = expr` · `| summarize [by keys] n=count()` · `| order by f [desc]` · `| take n` · `| distinct [by f]`. Bind cuts: `rows = e# | where …` then `rows | select …` or `rows => …`.
-3. **Application `=>`** — when per-row args vary: `{ t: _.f }` · `<<TAG` Minijinja · `e#.m#(…, _.f)` · `_.r#` / `_.wire`. Always `_` for row variance. Dots `.m#` / `.r#` only on a proven Get singleton: `item = e#("id"); item.update(…)`.
+3. **Application `=>`** — when per-row args vary: `{ t: _.f }` · `<<TAG` Minijinja · `e#.m#(…, _.f)` · `_.r#` / `_.wire`. Always `_` for row variance. Dots `.m#` / `.r#` / `.wire` only on a proven singleton row (`→` Get **or** `↠` MutationResult write with taught `[wires]`): `item = e#("id"); item.update(…)`; `sess = e#.mLogin(…)`; `tok = sess.access_token` then `param=tok` equals `param=sess.access_token` (scalar cell — not a one-column row). Row projection uses `| select` or `[…]` only.
 
 **Catalog vs row plane:** backend WHERE is `e#{wire=value}` on an entity head; row filter is `e# | where …` or `rows = e#` then `rows | where …`. Invalid: `rows{wire=…}` on a binding.
 

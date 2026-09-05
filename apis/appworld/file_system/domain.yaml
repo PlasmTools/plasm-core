@@ -477,8 +477,8 @@ values:
     type: email
     description: Email address of a user or counterparty.
   nv_login_username:
-    type: string
-    description: Account-holder login id for this service — not a counterparty.
+    type: email
+    description: Task-principal email from Supervisor — the login username for this service (not a counterparty).
   nv_password:
     type: string
     description: Account-holder password for this service.

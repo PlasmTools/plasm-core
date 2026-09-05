@@ -427,6 +427,9 @@ pub fn admit_teaching_satellites(
 ///
 /// Triggered by FO-minimal **workflow** seeds that are primary and not themselves
 /// co-seed seats. Does **not** enlarge the ≤3 seed plan — stamps only, no entity English.
+///
+/// Hard identity pair: admitting any `session_primary` seat (password) always
+/// admits same-catalog `federated_primary` principal seats into the teaching set.
 pub fn admit_co_seed_teaching_seats(
     corpus: &WitnessCorpus,
     plan: &DeterministicSeedPlan,
@@ -485,6 +488,28 @@ pub fn admit_co_seed_teaching_seats(
             out.insert((entry_id.clone(), entity.clone()));
         }
     }
+
+    // Hard-pair: session_primary (password) in plan or teaching set ⇒ same-catalog
+    // federated_primary principal must also be taught.
+    let mut session_catalogs = super::identity_pair::session_primary_catalogs_for_entity_seats(
+        &corpus.witnesses,
+        plan.entities
+            .iter()
+            .map(|(e, ent)| (e.as_str(), ent.as_str())),
+    );
+    session_catalogs.extend(
+        super::identity_pair::session_primary_catalogs_for_entity_seats(
+            &corpus.witnesses,
+            out.iter().map(|(e, ent)| (e.as_str(), ent.as_str())),
+        ),
+    );
+    super::identity_pair::admit_identity_pair_entity_siblings(
+        &session_catalogs,
+        &corpus.witnesses,
+        &seed_entities,
+        &mut out,
+    );
+
     out.into_iter().collect()
 }
 
@@ -1341,6 +1366,86 @@ mod tests {
                 .iter()
                 .any(|(e, n)| e == "payapp" && n == "PaymentRequest"),
             "workflow seed must not reappear as co-seed satellite"
+        );
+    }
+
+    #[test]
+    fn session_primary_seed_hard_pairs_federated_principal() {
+        use crate::schema::DiscoveryCoSeedWith;
+        use std::collections::HashMap;
+
+        fn primary(
+            entry: &str,
+            entity: &str,
+            kind: &str,
+            score: u32,
+            co: SeedCoSeedStamp,
+        ) -> RequirementWitness {
+            RequirementWitness {
+                symbol: String::new(),
+                kind: WitnessKind::DirectCapability {
+                    entry_id: entry.into(),
+                    entity: entity.into(),
+                    capability_id: format!("{entry}:{entity}:{kind}"),
+                    capability_name: format!("{entity}_{kind}"),
+                    kind: kind.into(),
+                    description: format!("{kind} {entity}"),
+                },
+                owner_candidate_id: format!("{entry}:{entity}"),
+                lexical_score: score,
+                summary: format!("{kind} {entity}"),
+                entity_description: format!("{entity} desc"),
+                aliases: entity.to_ascii_lowercase(),
+                pool: PoolLinks::default(),
+                seed_class: SeedClassStamp::Authored(DiscoverySeedClass::Primary),
+                co_seed_with: co,
+                seed_nav: SeedNavStamp::Unset,
+                own_pairs: Default::default(),
+            }
+        }
+
+        let secret = primary(
+            "supervisor",
+            "AccountPassword",
+            "Query",
+            50,
+            SeedCoSeedStamp::Authored(DiscoveryCoSeedWith::SessionPrimary),
+        );
+        let profile = primary(
+            "supervisor",
+            "Supervisor",
+            "Query",
+            5,
+            SeedCoSeedStamp::Authored(DiscoveryCoSeedWith::FederatedPrimary),
+        );
+        let mut witnesses = vec![secret, profile];
+        let mut symbol_to_index = HashMap::new();
+        for (idx, w) in witnesses.iter_mut().enumerate() {
+            w.symbol = format!("w{}", idx + 1);
+            symbol_to_index.insert(w.symbol.clone(), idx);
+        }
+        let corpus = WitnessCorpus {
+            roles: CorpusRoleIndex::build(&witnesses),
+            witnesses,
+            bundles: vec![],
+            brand_lock_catalogs: vec![],
+            symbol_to_index,
+        };
+        // Password seat alone as FO seed — no foreign-catalog federated trigger.
+        let plan = DeterministicSeedPlan {
+            symbol: "p1".into(),
+            candidate_ids: vec!["supervisor:AccountPassword".into()],
+            entities: vec![("supervisor".into(), "AccountPassword".into())],
+            lexical_score: 50,
+            covered_witness_symbols: vec!["w1".into()],
+            summary: "supervisor.AccountPassword".into(),
+        };
+        let seats = admit_co_seed_teaching_seats(&corpus, &plan);
+        assert!(
+            seats
+                .iter()
+                .any(|(e, n)| e == "supervisor" && n == "Supervisor"),
+            "session_primary must hard-pair federated principal; got {seats:?}"
         );
     }
 }

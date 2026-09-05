@@ -59,27 +59,31 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
             result_shape,
             ..
         } => {
-            let row_cardinality =
-                if matches!(kind, PlanNodeKind::Get) || matches!(parsed.expr, Expr::Get(_)) {
-                    RowCardinalityProof::StaticSingleton
-                } else if matches!(kind, PlanNodeKind::Query | PlanNodeKind::Search) {
-                    RowCardinalityProof::StaticPlural
-                } else {
-                    RowCardinalityProof::RuntimeChecked
-                };
-            let continuation =
-                if matches!(
-                    kind,
-                    PlanNodeKind::Get | PlanNodeKind::Query | PlanNodeKind::Search
-                ) || matches!(parsed.expr, Expr::Get(_) | Expr::Query(_) | Expr::Chain(_))
-                {
-                    ContinuationCapability::RelationDot {
-                        segments: SegmentPolicy::MultiSegment,
-                        method_invoke: true,
-                    }
-                } else {
-                    ContinuationCapability::Terminal
-                };
+            // MutationResult writers decode entity rows → StaticSingleton + RelationDot (PLP-1).
+            let mutation_result =
+                matches!(result_shape, crate::plasm_plan::ResultShape::MutationResult);
+            let read_get =
+                matches!(kind, PlanNodeKind::Get) || matches!(parsed.expr, Expr::Get(_));
+            let read_list = matches!(kind, PlanNodeKind::Query | PlanNodeKind::Search);
+            let row_surface = read_get
+                || read_list
+                || mutation_result
+                || matches!(parsed.expr, Expr::Query(_) | Expr::Chain(_));
+            let row_cardinality = if read_get || mutation_result {
+                RowCardinalityProof::StaticSingleton
+            } else if read_list {
+                RowCardinalityProof::StaticPlural
+            } else {
+                RowCardinalityProof::RuntimeChecked
+            };
+            let continuation = if row_surface {
+                ContinuationCapability::RelationDot {
+                    segments: SegmentPolicy::MultiSegment,
+                    method_invoke: true,
+                }
+            } else {
+                ContinuationCapability::Terminal
+            };
             let anchor = if matches!(&continuation, ContinuationCapability::Terminal) {
                 ContinuationAnchor::None
             } else {
@@ -412,6 +416,69 @@ mod tests {
         assert!(matches!(
             arr_many.row_cardinality,
             RowCardinalityProof::StaticPlural
+        ));
+    }
+
+    #[test]
+    fn mutation_result_surface_is_static_singleton_relation_dot() {
+        use plasm_core::expr::{CreateExpr, InvokeExpr};
+        use plasm_core::expr_parser::ParsedExpr;
+        use plasm_core::{CatalogEntryStamp, InvokeInputPayload};
+
+        let pipeline = PromptPipelineConfig::default();
+        let state = CompileState::new(&pipeline, None);
+        let qe = QualifiedEntityKey {
+            entry_id: "test".into(),
+            entity: "AuthSession".into(),
+        };
+
+        let create_parsed = ParsedExpr::from_expr(Expr::Create(CreateExpr {
+            capability: "create".into(),
+            entity: "AuthSession".into(),
+            input: InvokeInputPayload::Raw(Value::Object(Default::default())),
+            catalog_entry_id: CatalogEntryStamp::none(),
+            dotted_receiver: None,
+        }));
+        let create_src = DagNodeSource::Surface {
+            parsed: create_parsed,
+            kind: PlanNodeKind::Create,
+            qualified_entity: qe.clone(),
+            effect_class: EffectClass::Write,
+            result_shape: crate::plasm_plan::ResultShape::MutationResult,
+            uses_result: Vec::new(),
+        };
+        let create_c = program_binding_contract_for_source(&state, "created", "e1.m1()", &create_src);
+        assert!(matches!(
+            create_c.row_cardinality,
+            RowCardinalityProof::StaticSingleton
+        ));
+        assert!(matches!(
+            create_c.continuation,
+            ContinuationCapability::RelationDot { .. }
+        ));
+
+        let ack_parsed = ParsedExpr::from_expr(Expr::Invoke(InvokeExpr {
+            capability: "logout".into(),
+            target: Ref::new("AuthSession", ""),
+            input: None,
+            catalog_entry_id: CatalogEntryStamp::none(),
+        }));
+        let ack_src = DagNodeSource::Surface {
+            parsed: ack_parsed,
+            kind: PlanNodeKind::Action,
+            qualified_entity: qe,
+            effect_class: EffectClass::SideEffect,
+            result_shape: crate::plasm_plan::ResultShape::SideEffectAck,
+            uses_result: Vec::new(),
+        };
+        let ack_c = program_binding_contract_for_source(&state, "done", "e1.m2()", &ack_src);
+        assert!(matches!(
+            ack_c.row_cardinality,
+            RowCardinalityProof::RuntimeChecked
+        ));
+        assert!(matches!(
+            ack_c.continuation,
+            ContinuationCapability::Terminal
         ));
     }
 }

@@ -91,16 +91,37 @@ pub fn json_predicate_matches(
         JsonRowPredicateOp::In => rhs
             .as_array()
             .is_some_and(|items| items.iter().any(|item| item == lhs)),
-        JsonRowPredicateOp::Lt => json_number(lhs) < json_number(rhs),
-        JsonRowPredicateOp::Lte => json_number(lhs) <= json_number(rhs),
-        JsonRowPredicateOp::Gt => json_number(lhs) > json_number(rhs),
-        JsonRowPredicateOp::Gte => json_number(lhs) >= json_number(rhs),
+        JsonRowPredicateOp::Lt => compare_ordered(lhs, rhs, |l, r| l < r),
+        JsonRowPredicateOp::Lte => compare_ordered(lhs, rhs, |l, r| l <= r),
+        JsonRowPredicateOp::Gt => compare_ordered(lhs, rhs, |l, r| l > r),
+        JsonRowPredicateOp::Gte => compare_ordered(lhs, rhs, |l, r| l >= r),
     }
 }
 
-fn json_number(v: &serde_json::Value) -> f64 {
-    v.as_f64()
-        .or_else(|| v.as_i64().map(|i| i as f64))
-        .or_else(|| v.as_u64().map(|u| u as f64))
-        .unwrap_or(f64::NAN)
+fn compare_ordered(
+    lhs: &serde_json::Value,
+    rhs: &serde_json::Value,
+    op: impl Fn(f64, f64) -> bool,
+) -> bool {
+    plasm_core::compare_unify_json_ordered_numbers(lhs, rhs)
+        .is_some_and(|(l, r)| op(l, r))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ordered_compare_unifies_numeric_string_lhs() {
+        assert!(json_predicate_matches(
+            &serde_json::json!("5"),
+            JsonRowPredicateOp::Gt,
+            &serde_json::json!(0),
+        ));
+        assert!(!json_predicate_matches(
+            &serde_json::json!("nope"),
+            JsonRowPredicateOp::Gt,
+            &serde_json::json!(0),
+        ));
+    }
 }

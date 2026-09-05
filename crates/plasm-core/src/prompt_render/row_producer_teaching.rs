@@ -6,7 +6,7 @@ use crate::symbol_tuning::{ExposureSurface, SymbolMap};
 use super::gloss_collect::GlossScratch;
 use super::input_legend::{RowContractLegend, RowProjectionContract};
 use super::line_validate::{DomainLineValidCacheKey, DomainLineValidEntry};
-use super::row_producer::RowProducerProjection;
+use super::row_producer::with_projection_bracket;
 use super::surface_filter::surface_allows_entity_field;
 use super::symbol_tokens::id_sym_entity;
 use super::teaching_push::try_push_teaching_example;
@@ -39,8 +39,7 @@ pub(crate) fn projection_field_sets_equal(a: &[String], b: &[String]) -> bool {
     aa == bb
 }
 
-/// When the entity projection witness already taught `canonical_bracket`, omit the same
-/// `[p#,…]` / `rows:` contract on row-producer lines (parser treats projection as optional).
+/// Attach capability `provides` `[p#,…]` unless the entity witness already taught the same set.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn enrich_row_producer_teaching_line(
     cgs: &CGS,
@@ -51,50 +50,29 @@ pub(crate) fn enrich_row_producer_teaching_line(
     surface_filter: Option<&ExposureSurface>,
     base_expr: &str,
     base_gloss: Option<String>,
-    projection: RowProducerProjection,
     canonical_bracket: Option<&str>,
     witness_taught: bool,
 ) -> (String, Option<String>, RowContractLegend) {
-    let bracket = match projection {
-        RowProducerProjection::BareQueryListAll => None,
-        RowProducerProjection::CapabilityProvides => {
-            let b = capability_row_projection_bracket(
-                cgs,
-                cap,
-                map,
-                catalog_entry_id,
-                ename,
-                surface_filter,
-            );
-            if witness_taught {
-                if let (Some(br), Some(canon)) = (b.as_deref(), canonical_bracket) {
-                    let br_syms = projection_bracket_syms(br);
-                    let canon_syms = projection_bracket_syms(canon);
-                    if projection_field_sets_equal(&br_syms, &canon_syms) {
-                        None
-                    } else {
-                        b
-                    }
-                } else {
-                    b
-                }
-            } else {
-                b
+    let mut bracket = capability_row_projection_bracket(
+        cgs,
+        cap,
+        map,
+        catalog_entry_id,
+        ename,
+        surface_filter,
+    );
+    if witness_taught {
+        if let (Some(br), Some(canon)) = (bracket.as_deref(), canonical_bracket) {
+            let br_syms = projection_bracket_syms(br);
+            let canon_syms = projection_bracket_syms(canon);
+            if projection_field_sets_equal(&br_syms, &canon_syms) {
+                bracket = None;
             }
         }
-    };
+    }
     let row_syms = bracket
         .as_ref()
-        .map(|b| {
-            b.trim()
-                .trim_start_matches('[')
-                .trim_end_matches(']')
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-        })
+        .map(|b| projection_bracket_syms(b))
         .unwrap_or_default();
     let input_syms = input_param_syms_from_teaching_expr(base_expr, cap, map, catalog_entry_id);
     let rows = if bracket.is_some() {
@@ -108,25 +86,9 @@ pub(crate) fn enrich_row_producer_teaching_line(
         inputs: input_syms,
         rows,
     };
-    let expr = if let Some(b) = bracket {
-        format!("{}{}", base_expr.trim(), b)
-    } else {
-        base_expr.trim().to_string()
-    };
+    let expr = with_projection_bracket(base_expr.trim(), bracket.as_deref());
     let gloss = merge_result_gloss_with_row_contract(base_gloss, &row_contract);
     (expr, gloss, row_contract)
-}
-
-pub(crate) fn row_producer_projection_for_query_line(
-    cap: &crate::CapabilitySchema,
-    entity_sym: &str,
-    line: &str,
-) -> RowProducerProjection {
-    if cap.kind == crate::CapabilityKind::Query && line == entity_sym {
-        RowProducerProjection::BareQueryListAll
-    } else {
-        RowProducerProjection::CapabilityProvides
-    }
 }
 
 /// Bracket `[p#,…]` from a capability's ordered `provides` (row contract), when non-empty.
@@ -155,7 +117,7 @@ pub(crate) fn capability_row_projection_bracket(
     Some(format!("[{}]", syms.join(",")))
 }
 
-/// Opaque `p#` symbols for params appearing in `{…}` / `~"…"{…}` teaching exemplars.
+/// Opaque param wires appearing in `{…}` / `~"…"{…}` teaching exemplars (skips opaque `p#`).
 pub(crate) fn input_param_syms_from_teaching_expr(
     expr: &str,
     _cap: &crate::CapabilitySchema,
@@ -233,7 +195,6 @@ pub(crate) fn try_push_row_producer_teaching_example(
     line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
     line_valid_cache_seed: u64,
     map_arc: Option<&std::sync::Arc<SymbolMap>>,
-    projection: RowProducerProjection,
     canonical_bracket: Option<&str>,
     witness_taught: bool,
 ) -> bool {
@@ -246,7 +207,6 @@ pub(crate) fn try_push_row_producer_teaching_example(
         surface_filter,
         base_expr,
         base_gloss,
-        projection,
         canonical_bracket,
         witness_taught,
     );

@@ -329,4 +329,17 @@ mod tests {
             out.markdown
         );
     }
+
+    #[test]
+    fn observe_fm0_hook_appends_footer_for_plural_identity_tsv() {
+        // `render_markdown` ends with `append_tsv_process_using_footers` (product path).
+        let md = crate::observe_process_using::append_tsv_process_using_footers(
+            "## files (11 rows)\n```tsv\npath\tflag\n/a\ttrue\n/b\ttrue\n/c\ttrue\n/d\ttrue\n/e\ttrue\n/f\ttrue\n/g\ttrue\n/h\ttrue\n/i\ttrue\n/j\ttrue\n/k\ttrue\n```\n",
+        );
+        assert!(
+            md.contains("rows => e#") && md.contains("not N applies") && !md.contains("done ="),
+            "expected F_m0 footer: {md}"
+        );
+        assert_eq!(md.matches("not N applies").count(), 1);
+    }
 }

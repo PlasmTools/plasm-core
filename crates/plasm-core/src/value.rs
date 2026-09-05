@@ -285,58 +285,9 @@ impl Value {
         }
     }
 
-    /// Check if this value is compatible with the given field type.
+    /// Check if this value is compatible with the given field type (RA-8: coerce succeeds).
     pub fn is_compatible_with_field_type(&self, field_type: &FieldType) -> bool {
-        match (self, field_type) {
-            // Compile-time holes defer to plan / runtime materialization.
-            (Value::PlasmInputRef(_), _) => true,
-            (Value::Null, _) => true,
-            (Value::Bool(_), FieldType::Boolean) => true,
-            // Integer is compatible with both Integer and Number fields
-            (Value::Integer(_), FieldType::Integer | FieldType::Number) => true,
-            // Float is compatible with Number fields (and Integer as a relaxed fallback)
-            (Value::Float(_), FieldType::Number | FieldType::Integer) => true,
-            (
-                Value::String(_) | Value::PhraseIdent(_),
-                FieldType::String
-                | FieldType::Blob
-                | FieldType::Uuid
-                | FieldType::Select
-                | FieldType::Date,
-            ) => true,
-            // APIs and LLMs often emit numeric literals for string ids / UUID fragments.
-            (
-                Value::Integer(_) | Value::Float(_),
-                FieldType::String | FieldType::Blob | FieldType::Uuid,
-            ) => true,
-            // Normalized Date values are string (RFC3339 / date) or integer (Unix ms/s) per
-            // [`ValueWireFormat::Temporal`] / [`TemporalWireFormat`].
-            (Value::Integer(_) | Value::Float(_), FieldType::Date) => true,
-            (Value::String(_) | Value::PhraseIdent(_), FieldType::EntityRef { .. }) => true,
-            (v, FieldType::Blob) if v.is_plasm_attachment_object() => true,
-            // Numeric IDs may arrive as integers for entity refs
-            (Value::Integer(_) | Value::Float(_), FieldType::EntityRef { .. }) => true,
-            // Compound `entity_ref` scope / predicate values normalize to a structured object
-            // (CGS `key_vars` keys) before splat and HTTP binding — see [`crate::entity_ref_value`].
-            (Value::Object(_), FieldType::EntityRef { .. }) => {
-                crate::entity_ref_value::EntityRefPayload::value_is_legal_shape(self)
-            }
-            (Value::Array(_), FieldType::Array | FieldType::MultiSelect) => true,
-            (Value::Object(_) | Value::Array(_), FieldType::Json) => true,
-            (Value::String(s) | Value::PhraseIdent(s), FieldType::Json) => {
-                parse_json_subtree_str(s).is_some()
-            }
-            (
-                Value::Money(_)
-                | Value::String(_)
-                | Value::PhraseIdent(_)
-                | Value::Integer(_)
-                | Value::Float(_)
-                | Value::Object(_),
-                FieldType::Money,
-            ) => true,
-            _ => false,
-        }
+        crate::wire_coercion::value_compatible_with_field_type(self, field_type)
     }
 
     /// True when this value is a JSON object carrying [`PLASM_ATTACHMENT_KEY`] metadata (uri, mime, …).

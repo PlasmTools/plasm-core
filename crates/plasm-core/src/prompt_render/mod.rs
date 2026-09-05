@@ -90,6 +90,8 @@ mod tsv_emit;
 mod types;
 
 #[cfg(test)]
+mod appworld_teaching_tests;
+#[cfg(test)]
 mod doc_fenced_examples_tests;
 #[cfg(test)]
 mod query_teaching_tests;

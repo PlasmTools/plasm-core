@@ -127,25 +127,12 @@ fn dry_stub_row_count(shape: crate::plasm_plan::ResultShape) -> usize {
 }
 
 fn dry_stub_entity_rows(
+    cgs: &plasm_core::CGS,
     ent: &plasm_core::EntityDef,
     count: usize,
-) -> (Vec<serde_json::Value>, Vec<Option<plasm_core::RowIdentity>>) {
-    let mut rows = Vec::with_capacity(count);
-    for i in 0..count {
-        let mut obj = serde_json::Map::new();
-        for field in ent.fields.keys() {
-            obj.insert(
-                field.as_str().to_string(),
-                serde_json::Value::String(format!("dry-{i}")),
-            );
-        }
-        obj.insert(
-            ent.id_field.as_str().to_string(),
-            serde_json::Value::String(format!("dry-{i}")),
-        );
-        rows.push(serde_json::Value::Object(obj));
-    }
-    (rows, vec![None; count])
+) -> Result<(Vec<serde_json::Value>, Vec<Option<plasm_core::RowIdentity>>), String> {
+    let rows = plasm_core::dry_stub_entity_row_json(cgs, ent, count)?;
+    Ok((rows, vec![None; count]))
 }
 
 /// The dry-run [`IoPort`]: every I/O leaf is replaced by typed stub entity rows so downstream
@@ -249,7 +236,7 @@ impl DryIoPort<'_> {
             .cgs
             .get_entity(qe.entity.as_str())
             .ok_or_else(|| format!("dry staging: unknown entity `{}`", qe.entity))?;
-        Ok(dry_stub_entity_rows(ent, count))
+        dry_stub_entity_rows(scoped.cgs.as_ref(), ent, count)
     }
 }
 
@@ -391,4 +378,25 @@ pub(crate) fn dry_validate_staged_surfaces(
         instantiate_expr_template(template, &env)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod dry_stub_tests {
+    use super::dry_stub_entity_rows;
+    use plasm_core::load_schema;
+    use std::path::PathBuf;
+
+    #[test]
+    fn dry_stub_lang_item_score_is_integer_json() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = load_schema(&root.join("../../fixtures/schemas/plasm_language_matrix"))
+            .expect("load matrix");
+        let ent = cgs.get_entity("LangItem").expect("LangItem");
+        let (rows, _) = dry_stub_entity_rows(&cgs, ent, 2).expect("stubs");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["score"], serde_json::json!(0));
+        assert_eq!(rows[1]["score"], serde_json::json!(1));
+        assert!(rows[0]["score"].is_i64() || rows[0]["score"].is_u64());
+        assert!(rows[0]["active"].is_boolean(), "active={}", rows[0]["active"]);
+    }
 }

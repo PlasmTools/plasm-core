@@ -10,6 +10,7 @@ use super::gloss_collect::GlossScratch;
 use super::invoke_teaching::{capability_legend_with_session_gloss, path_vars_empty};
 use super::line_validate::{DomainLineValidCacheKey, DomainLineValidEntry};
 use super::query_teaching::{get_requires_identity_anchor, unary_entity_id_teaching_expr_line};
+use super::row_producer::with_projection_bracket;
 use super::surface_filter::surface_allows_capability;
 use super::symbol_tokens::met_sym;
 use super::teaching_push::try_push_teaching_example;
@@ -31,6 +32,8 @@ pub(crate) fn push_entity_fetch_heads(
     catalog_entry_id: &str,
     ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
     get_gloss: Option<String>,
+    // Canonical `[p#,…]` projection when primary Get/Query teaches a field alphabet.
+    projection_bracket: Option<&str>,
     line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
     line_valid_cache_seed: u64,
 ) {
@@ -52,6 +55,7 @@ pub(crate) fn push_entity_fetch_heads(
             ident_meta,
             cap,
             get_gloss,
+            projection_bracket,
             line_valid_cache,
             line_valid_cache_seed,
         );
@@ -81,7 +85,7 @@ pub(crate) fn push_entity_fetch_heads(
             continue;
         }
         let ms = met_sym(map, catalog_entry_id, ename, cap);
-        let expr = format!("{es}.{ms}()");
+        let expr = with_projection_bracket(format!("{es}.{ms}()"), projection_bracket);
         let result_gloss =
             crate::result_gloss::result_gloss_for_capability(cap, cgs, map, catalog_entry_id);
         let cap_leg = capability_legend_with_session_gloss(
@@ -126,6 +130,7 @@ fn push_sole_nullary_bare_head(
     ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
     cap: &CapabilitySchema,
     get_gloss: Option<String>,
+    projection_bracket: Option<&str>,
     line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
     line_valid_cache_seed: u64,
 ) {
@@ -133,12 +138,13 @@ fn push_sole_nullary_bare_head(
         crate::result_gloss::result_gloss_for_capability(cap, cgs, map, catalog_entry_id);
     let cap_leg =
         capability_legend_with_session_gloss(map, cgs, cap, ename, ident_meta, catalog_entry_id);
+    let bare_expr = with_projection_bracket(es, projection_bracket);
     if try_push_teaching_example(
         gloss_emit,
         teaching_rows,
         collect_meta,
         cgs,
-        es,
+        &bare_expr,
         result_gloss,
         cap_leg,
         None,
@@ -157,12 +163,13 @@ fn push_sole_nullary_bare_head(
     if let Some(line_base) = (!ent.id_field.is_empty())
         .then(|| unary_entity_id_teaching_expr_line(es, ent, map, catalog_entry_id))
     {
+        let line = with_projection_bracket(line_base, projection_bracket);
         let _ = try_push_teaching_example(
             gloss_emit,
             teaching_rows,
             collect_meta,
             cgs,
-            &line_base,
+            &line,
             get_gloss,
             None,
             None,

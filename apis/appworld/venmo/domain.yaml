@@ -20,8 +20,8 @@ values:
     enum:
     - bearer
   nv_login_username:
-    type: string
-    description: Account-holder login id for this service — not a payment counterparty.
+    type: email
+    description: Task-principal email from Supervisor — account-holder login username, not a payment counterparty.
   nv_email:
     type: email
     description: Email of a Venmo user (profile or counterparty).
@@ -153,14 +153,20 @@ entities:
         value_ref: nv_token_type
   User:
     id_field: email
-    description: Find a Venmo user before viewing their profile or exchanging money.
+    description: >-
+      Resolve a Venmo person by name or email to a user_email before paying,
+      requesting money, or opening their profile — not friendship management.
     discovery:
       names:
       - user
       - person
       - profile
       - recipient
+      - counterparty
+      - who to pay
+      - who to request from
       seed_class: primary
+      co_seed_with: catalog_primary
     fields:
       email:
         value_ref: nv_email
@@ -183,7 +189,9 @@ entities:
           param: user_email
   Friend:
     id_field: email
-    description: Search Venmo friends and add or remove friendships.
+    description: >-
+      Resolve a named friend to a Venmo email before requesting or sending
+      money, or add/remove people on the friends list.
     discovery:
       names:
       - friend
@@ -192,7 +200,14 @@ entities:
       - befriend
       - unfriend
       - contact
+      - my friend
+      - from my friend
+      - named friend
+      - friend named
       seed_class: primary
+      # Teaching extra whenever a Venmo primary (PaymentRequest, Transaction, …)
+      # is FO-seeded — peer email is not inventable from create params alone.
+      co_seed_with: catalog_primary
     fields:
       email:
         value_ref: nv_email
@@ -325,6 +340,8 @@ entities:
       - requested money
       - been requested
       - request money
+      - ask to pay
+      - charge someone
       - approve request
       - pending request
       seed_class: primary
@@ -494,9 +511,21 @@ capabilities:
     - registered_at
     - friends_since
   friend_query:
-    description: Search the authenticated user's friends or another user's friends.
+    description: >-
+      Search friends by name or email and return their Venmo email for a later
+      pay or request step (or list another user's friends when scoped).
     kind: query
     entity: Friend
+    discovery:
+      operation_terms:
+      - search
+      - find
+      - look up
+      - resolve
+      target_terms:
+      - friend
+      - friends
+      - named friend
     scope:
     - name: user_email
       value_ref: nv_email
@@ -774,6 +803,17 @@ capabilities:
     description: Ask another Venmo user to pay you (create a sent payment request).
     kind: create
     entity: PaymentRequest
+    discovery:
+      operation_terms:
+      - request
+      - create
+      - ask
+      - charge
+      target_terms:
+      - payment request
+      - money
+      - friend
+      - user
     payload:
       input_type:
         type: object

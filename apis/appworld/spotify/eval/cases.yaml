@@ -100,7 +100,7 @@
   tags: [query]
   covers: [query_filtered]
   expect:
-    entities_any: [Song]
+    entities_any: [LikedSong]
 
 - id: song_library
   schema: spotify
@@ -109,6 +109,22 @@
   covers: [query_filtered]
   expect:
     entities_any: [Song]
+
+- id: liked_albums
+  schema: spotify
+  goal: List albums I have liked on Spotify
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [LikedAlbum]
+
+- id: liked_playlists
+  schema: spotify
+  goal: List playlists I have liked on Spotify
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [LikedPlaylist]
 
 - id: following_artists
   schema: spotify

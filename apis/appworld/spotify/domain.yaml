@@ -1,4 +1,4 @@
-version: 8
+version: 9
 entry_id: spotify
 auth:
   scheme: none
@@ -34,8 +34,9 @@ entities:
   Song:
     id_field: song_id
     primary_query: song_library_query
-    description: 'A Spotify track — search the catalog, browse the user''s library or liked songs, or
-      like/unlike. Not the playback queue (use Player / QueueEntry).
+    description: 'A Spotify track on the catalog and library shelf — search, open one track, save or
+      remove from the library, like/unlike, or offline download. Not the liked-songs shelf (use LikedSong)
+      and not the playback queue (use Player / QueueEntry).
 
       '
     discovery:
@@ -44,8 +45,6 @@ entities:
       - songs
       - track
       - music
-      - liked song
-      - liked songs
       - song library
       - library songs
       seed_class: primary
@@ -79,18 +78,56 @@ entities:
         value_ref: nv_number
       like_count:
         required: false
-        value_ref: nv_int
+        value_ref: nv_like_count
       shareable_link:
         required: false
         value_ref: nv_str
+  LikedSong:
+    id_field: song_id
+    primary_query: liked_song_query
+    description: 'A track on the user''s liked-songs shelf (hearted favorites). Distinct from the library
+      shelf and from catalog search — open Song for full catalog fields such as genre.
+
+      '
+    discovery:
+      names:
+      - liked song
+      - liked songs
+      - favorites
+      - hearted song
+      seed_class: primary
+    fields:
+      song_id:
+        required: true
+        value_ref: nv_song_id
+      title:
+        required: true
+        value_ref: nv_str
+      album_id:
+        required: false
+        value_ref: nv_album_id
+      album_title:
+        required: false
+        value_ref: nv_str
+      duration:
+        required: false
+        value_ref: nv_int
+      liked_at:
+        required: false
+        value_ref: nv_datetime
   Album:
     id_field: album_id
     primary_query: album_library_query
-    description: Album containing songs.
+    description: 'An album on the catalog and library shelf — search, open, save or remove from the library,
+      like/unlike. Not the liked-albums shelf (use LikedAlbum).
+
+      '
     discovery:
       names:
       - album
       - albums
+      - album library
+      - library albums
       seed_class: primary
     fields:
       album_id:
@@ -107,10 +144,43 @@ entities:
         value_ref: nv_number
       like_count:
         required: false
-        value_ref: nv_int
+        value_ref: nv_like_count
       release_date:
         required: false
         value_ref: nv_str
+  LikedAlbum:
+    id_field: album_id
+    primary_query: liked_album_query
+    description: 'An album on the user''s liked-albums shelf. Distinct from albums saved in the library.
+
+      '
+    discovery:
+      names:
+      - liked album
+      - liked albums
+      seed_class: primary
+    fields:
+      album_id:
+        required: true
+        value_ref: nv_album_id
+      title:
+        required: true
+        value_ref: nv_str
+      genre:
+        required: false
+        value_ref: nv_genre
+      rating:
+        required: false
+        value_ref: nv_number
+      like_count:
+        required: false
+        value_ref: nv_like_count
+      release_date:
+        required: false
+        value_ref: nv_str
+      liked_at:
+        required: false
+        value_ref: nv_datetime
   Artist:
     id_field: artist_id
     primary_query: following_artist_query
@@ -170,11 +240,16 @@ entities:
   Playlist:
     id_field: playlist_id
     primary_query: playlist_library_query
-    description: User or public playlist.
+    description: 'A playlist on the catalog and library shelf — create, edit, delete, add/remove songs,
+      like/unlike. Not the liked-playlists shelf (use LikedPlaylist).
+
+      '
     discovery:
       names:
       - playlist
       - playlists
+      - playlist library
+      - library playlists
       seed_class: primary
     fields:
       playlist_id:
@@ -191,7 +266,7 @@ entities:
         value_ref: nv_number
       like_count:
         required: false
-        value_ref: nv_int
+        value_ref: nv_like_count
       created_at:
         required: false
         value_ref: nv_datetime
@@ -209,6 +284,40 @@ entities:
           - key: songs
           - wildcard: true
           - key: id
+  LikedPlaylist:
+    id_field: playlist_id
+    primary_query: liked_playlist_query
+    description: 'A playlist on the user''s liked-playlists shelf. Distinct from playlists saved in the
+      library.
+
+      '
+    discovery:
+      names:
+      - liked playlist
+      - liked playlists
+      seed_class: primary
+    fields:
+      playlist_id:
+        required: true
+        value_ref: nv_playlist_id
+      title:
+        required: true
+        value_ref: nv_str
+      is_public:
+        required: false
+        value_ref: nv_bool
+      rating:
+        required: false
+        value_ref: nv_number
+      like_count:
+        required: false
+        value_ref: nv_like_count
+      created_at:
+        required: false
+        value_ref: nv_datetime
+      liked_at:
+        required: false
+        value_ref: nv_datetime
   DownloadedSong:
     id_field: song_id
     description: A song downloaded for offline playback.
@@ -1228,7 +1337,7 @@ capabilities:
 
       '
     kind: query
-    entity: Song
+    entity: LikedSong
     discovery:
       operation_terms:
       - list
@@ -1258,12 +1367,7 @@ capabilities:
     - album_id
     - album_title
     - duration
-    - genre
-    - release_date
-    - play_count
-    - rating
-    - like_count
-    - shareable_link
+    - liked_at
   song_library_query:
     description: 'List songs saved in the user''s song library (library shelf — not the same as liked
       songs, and not a free-text catalog search).
@@ -1449,7 +1553,15 @@ capabilities:
   liked_playlist_query:
     description: List playlists the user has liked.
     kind: query
-    entity: Playlist
+    entity: LikedPlaylist
+    discovery:
+      operation_terms:
+      - list
+      - show
+      - liked
+      target_terms:
+      - liked playlist
+      - liked playlists
     selection:
     - name: access_token
       value_ref: nv_access_token
@@ -1468,11 +1580,19 @@ capabilities:
     - rating
     - like_count
     - created_at
-    - shareable_link
+    - liked_at
   liked_album_query:
     description: List albums the user has liked.
     kind: query
-    entity: Album
+    entity: LikedAlbum
+    discovery:
+      operation_terms:
+      - list
+      - show
+      - liked
+      target_terms:
+      - liked album
+      - liked albums
     selection:
     - name: access_token
       value_ref: nv_access_token
@@ -1491,6 +1611,7 @@ capabilities:
     - rating
     - like_count
     - release_date
+    - liked_at
   following_artist_query:
     description: List artists the user follows.
     kind: query
@@ -1857,8 +1978,8 @@ values:
     type: string
     description: Free-form string.
   nv_login_username:
-    type: string
-    description: Account-holder login id for this service — not a counterparty.
+    type: email
+    description: Task-principal email from Supervisor — the login username for this service (not a counterparty).
   nv_email:
     type: email
     description: Email address of a user or counterparty.
@@ -1936,6 +2057,10 @@ values:
   nv_int:
     type: integer
     description: Integer.
+  nv_like_count:
+    type: integer
+    description: Community/social popularity tally for this item — how many users have liked it, not
+      whether the current user hearted it.
   nv_datetime:
     type: rfc3339
     description: ISO datetime string.

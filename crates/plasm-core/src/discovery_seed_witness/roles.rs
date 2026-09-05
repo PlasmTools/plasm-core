@@ -90,6 +90,17 @@ impl SeedCoSeedStamp {
                 | Self::Authored(DiscoveryCoSeedWith::SessionPrimary)
         )
     }
+
+    /// Password / credential seat (`session_primary`) — must hard-pair with a
+    /// same-catalog `federated_primary` principal when admitted.
+    pub fn is_session_primary_seat(self) -> bool {
+        matches!(self, Self::Authored(DiscoveryCoSeedWith::SessionPrimary))
+    }
+
+    /// Federated identity principal seat (`federated_primary` only).
+    pub fn is_federated_principal_seat(self) -> bool {
+        matches!(self, Self::Authored(DiscoveryCoSeedWith::FederatedPrimary))
+    }
 }
 
 impl fmt::Display for SeedCoSeedStamp {

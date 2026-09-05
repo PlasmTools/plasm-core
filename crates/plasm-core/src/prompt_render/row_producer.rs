@@ -1,12 +1,10 @@
-//! Row-producer teaching line shaping (query list-all vs default projection bracket).
+//! Row-producer teaching line shaping (projection brackets on query/search rows).
 
-/// Whether a row-producer teaching line should attach the capability `provides` bracket.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(super) enum RowProducerProjection {
-    /// Attach `[p#,…]` from capability/entity field order when non-empty, unless it matches the
-    /// entity's canonical projection already taught on the projection witness row.
-    #[default]
-    CapabilityProvides,
-    /// Query list-all (`e#` only): CGS teaches bare entity symbol without projection suffix.
-    BareQueryListAll,
+/// Append `[p#,…]` to a teaching expression base when a non-empty bracket is present.
+#[inline]
+pub(super) fn with_projection_bracket(base: impl AsRef<str>, bracket: Option<&str>) -> String {
+    match bracket.filter(|b| !b.trim().is_empty()) {
+        Some(br) => format!("{}{br}", base.as_ref()),
+        None => base.as_ref().to_string(),
+    }
 }

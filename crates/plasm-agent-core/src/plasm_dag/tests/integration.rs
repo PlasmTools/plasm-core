@@ -488,6 +488,22 @@ bad"#,
     }
 
     #[test]
+    fn dry_stub_integer_where_does_not_polars_string_compare() {
+        // RA-8 DryStub: integer fields must not be blanket `"dry-N"` strings or Polars
+        // rejects `score > 0` with string↔i32 dtype heresy.
+        let session = test_session();
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "dry-int-where",
+            "LangItem | where score > 0",
+        )
+        .expect("compile integer where");
+        evaluate_plasm_plan_dry(&session, &plan).expect("dry integer where under RA-8 stubs");
+    }
+
+    #[test]
     fn bare_postfix_render_is_rejected() {
         let session = test_session();
         let err = compile_plasm_dag_to_plan(

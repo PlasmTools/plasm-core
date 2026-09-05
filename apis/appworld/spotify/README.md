@@ -13,4 +13,7 @@ OpenAPI: `openapi.json`. Backend: `http://127.0.0.1:9000` after `appworld serve 
 
 - `*_search` and `downloaded_song_query` use `kind: search`.
 - Playlist songs are embedded on `playlist_get` (`from_parent_get` on `songs[].id`) — not a separate list endpoint and not a `views:` composition.
-- Library / liked / following lists (`liked_song_query`, `song_library_*`, `album_library_*`, `playlist_library_query`, `liked_playlist_query`, `liked_album_query`, `following_artist_query`).
+- Library / liked / following lists: library shelves via `song_library_*` / `album_library_*` /
+  `playlist_library_query` on `Song` / `Album` / `Playlist`; liked shelves via `liked_song_query` /
+  `liked_album_query` / `liked_playlist_query` on distinct `LikedSong` / `LikedAlbum` / `LikedPlaylist`
+  entities; following via `following_artist_query`.

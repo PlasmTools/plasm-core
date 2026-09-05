@@ -249,7 +249,7 @@ fn apply_node(
         PlanNode::Filter(filter) => {
             let mut e = lit(true);
             for p in filter.predicates() {
-                e = e.and(pred_expr(p)?);
+                e = e.and(pred_expr(p, state)?);
             }
             Ok(lf.filter(e))
         }
@@ -380,9 +380,12 @@ fn push_money_sum(
     state.money_sum_names.push(name.to_string());
 }
 
-fn pred_expr(p: &PlanPredicate) -> PolarsResult<Expr> {
+fn pred_expr(p: &PlanPredicate, state: &FrameState) -> PolarsResult<Expr> {
     let lhs = col_expr(&p.field_path);
     let rhs = data_lit(&p.value)?;
+    let field_kind = state.kinds.get(&p.field_path.dotted()).copied();
+    let rhs_kind = data_value_kind(&p.value);
+    let (lhs, rhs) = unify_compare_sides(lhs, rhs, field_kind, rhs_kind, p.op)?;
     Ok(match p.op {
         PlanPredicateOp::Eq => lhs.eq(rhs),
         PlanPredicateOp::Ne => lhs.neq(rhs),
@@ -394,6 +397,63 @@ fn pred_expr(p: &PlanPredicate) -> PolarsResult<Expr> {
         PlanPredicateOp::In => lhs.is_in(rhs),
         PlanPredicateOp::Exists => lhs.is_not_null(),
     })
+}
+
+/// RA-8 CompareUnify for Polars filters: cast toward the field column kind (or numeric LUB).
+fn unify_compare_sides(
+    lhs: Expr,
+    rhs: Expr,
+    field_kind: Option<ColKind>,
+    rhs_kind: ColKind,
+    op: PlanPredicateOp,
+) -> PolarsResult<(Expr, Expr)> {
+    let ordered = matches!(
+        op,
+        PlanPredicateOp::Lt
+            | PlanPredicateOp::Lte
+            | PlanPredicateOp::Gt
+            | PlanPredicateOp::Gte
+    );
+    let eq_like = matches!(op, PlanPredicateOp::Eq | PlanPredicateOp::Ne);
+    if !ordered && !eq_like {
+        return Ok((lhs, rhs));
+    }
+    let target = match field_kind {
+        Some(ColKind::Int | ColKind::Float) => field_kind,
+        Some(ColKind::Str)
+            if ordered && matches!(rhs_kind, ColKind::Int | ColKind::Float) =>
+        {
+            // Residual wire/stub string vs numeric literal — unify toward number.
+            Some(if rhs_kind == ColKind::Float {
+                ColKind::Float
+            } else {
+                ColKind::Int
+            })
+        }
+        Some(ColKind::Bool) if eq_like => Some(ColKind::Bool),
+        None if ordered && matches!(rhs_kind, ColKind::Int | ColKind::Float) => Some(rhs_kind),
+        Some(k) if eq_like && k == rhs_kind => Some(k),
+        _ => None,
+    };
+    Ok(match target {
+        Some(ColKind::Int) => (lhs.cast(DataType::Int64), rhs.cast(DataType::Int64)),
+        Some(ColKind::Float) => (lhs.cast(DataType::Float64), rhs.cast(DataType::Float64)),
+        Some(ColKind::Bool) => (lhs.cast(DataType::Boolean), rhs.cast(DataType::Boolean)),
+        _ => (lhs, rhs),
+    })
+}
+
+fn data_value_kind(v: &PlasmDataValue) -> ColKind {
+    match v {
+        PlasmDataValue::Literal { value } => match value {
+            serde_json::Value::Bool(_) => ColKind::Bool,
+            serde_json::Value::Number(n) if n.as_i64().is_some() => ColKind::Int,
+            serde_json::Value::Number(_) => ColKind::Float,
+            serde_json::Value::String(_) => ColKind::Str,
+            _ => ColKind::Json,
+        },
+        _ => ColKind::Json,
+    }
 }
 
 fn data_lit(v: &PlasmDataValue) -> PolarsResult<Expr> {

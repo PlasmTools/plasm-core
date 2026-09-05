@@ -358,10 +358,6 @@ enum TeachingMeaningAtom {
     RelationNav {
         line: String,
     },
-    /// Terminal write (`↠ e#`) reconstruction hint: re-read the entity by id to keep chaining.
-    TerminalChainHint {
-        entity: String,
-    },
     /// Capability prose (e.g. Get description) or entity banner joined into Meaning.
     CapabilityGloss(String),
     LegendScope(String),
@@ -389,9 +385,6 @@ impl TeachingMeaningAtom {
         let raw = match self {
             TeachingMeaningAtom::Returns { arrow, gloss } => format!("{} {gloss}", arrow.glyph()),
             TeachingMeaningAtom::RelationNav { line } => line.clone(),
-            TeachingMeaningAtom::TerminalChainHint { entity } => {
-                format!("chain: {entity}(<id>).m#")
-            }
             TeachingMeaningAtom::CapabilityGloss(s) => s.clone(),
             TeachingMeaningAtom::LegendScope(s) => s.clone(),
             TeachingMeaningAtom::LegendOptionalParams(wires) => {
@@ -540,19 +533,6 @@ fn push_teaching_meaning_result_atom(
             atoms.push(TeachingMeaningAtom::CapabilityGloss(desc.to_string()));
         } else if row.arrow == ReturnArrow::Terminal || row.arrow == ReturnArrow::List {
             atoms.push(TeachingMeaningAtom::CapabilityGloss(desc.to_string()));
-        }
-    }
-    if row.is_singleton_row_fetch {
-        return;
-    }
-    // Terminal write that yields an entity slice (`↠ e#`, not `()` / list): teach the
-    // entity-reconstruction form so an agent knows how to keep chaining after a mutation.
-    if !identity_row && row.arrow == ReturnArrow::Terminal {
-        let gloss = row.result_type.trim();
-        if gloss != "()" && !gloss.starts_with('[') {
-            atoms.push(TeachingMeaningAtom::TerminalChainHint {
-                entity: gloss.to_string(),
-            });
         }
     }
 }

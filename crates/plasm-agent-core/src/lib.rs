@@ -93,6 +93,7 @@ pub mod oauth_provider_model;
 pub mod oauth_provider_pull;
 pub mod oauth_provider_repository;
 pub mod oauth_runtime_source;
+mod observe_process_using;
 mod op_ui_telemetry;
 pub mod operation;
 pub mod operation_error;

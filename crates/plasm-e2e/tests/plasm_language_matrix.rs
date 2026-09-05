@@ -149,6 +149,7 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "money_create_body",
     "ra4_pipe_factor",
     "ra4_apply_factor",
+    "catalog_directed_coerce",
 ];
 
 struct MatrixRow {
@@ -1519,6 +1520,23 @@ fn assert_planning_ir(
                 ));
             }
         }
+        "lang_integer_where_gt_dry_coerce" => {
+            let Some(ComputeOp::Filter { predicates }) = computes
+                .iter()
+                .map(|c| &c.op)
+                .find(|op| matches!(op, ComputeOp::Filter { .. }))
+            else {
+                return Err(format!(
+                    "expected integer Filter compute (RA-8), got {computes:?}"
+                ));
+            };
+            let predicate_debug = format!("{predicates:?}");
+            if !predicate_debug.contains("score") || !predicate_debug.contains('0') {
+                return Err(format!(
+                    "unexpected integer filter predicates: {predicate_debug}"
+                ));
+            }
+        }
         "lang_money_create_body" => {
             let Some(Expr::Create(c)) = surfaces.iter().find(|e| matches!(e, Expr::Create(_)))
             else {
@@ -1700,7 +1718,7 @@ fn assert_planning_ir(
 
 fn get_simple_id(g: &GetExpr) -> Option<&str> {
     match &g.reference.key {
-        EntityKey::Simple(id) => Some(id.as_str()),
+        EntityKey::Simple(id) => id.as_lit_str(),
         EntityKey::Compound(_) => None,
     }
 }
@@ -2664,6 +2682,15 @@ summary | select headline"#,
         expect_markdown_substrings: &["```tsv"],
     },
     MatrixRow {
+        id: "lang_integer_where_gt_dry_coerce",
+        program: r#"LangItem | where score > 0"#,
+        surface_line: false,
+        federated: false,
+        features: &["catalog_directed_coerce", "pipe_where", "dry_live_parity"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv"],
+    },
+    MatrixRow {
         id: "lang_money_create_body",
         program: r#"LangOffer.create(price="9.25", quote_currency="USD")"#,
         surface_line: false,
@@ -2953,8 +2980,10 @@ fn matrix_program_for_row(
             format!(
                 r#"sn_auth = {e_sn_auth}.{m_sn_login}(username="simple_note", password="secret")
 sw_auth = {e_sw_auth}.{m_sw_login}(username="splitwise", password="secret")
-notes = {e_note}~"trip"{{access_token=sn_auth.access_token}}
-groups = {e_group}{{access_token=sw_auth.access_token}}
+sn_tok = sn_auth.access_token
+sw_tok = sw_auth.access_token
+notes = {e_note}~"trip"{{access_token=sn_tok}}
+groups = {e_group}{{access_token=sw_tok}}
 notes, groups"#
             )
         }
@@ -3048,6 +3077,50 @@ async fn lang_federated_auth_session_bearer_hole_fill_live_async() {
         .iter()
         .find(|r| r.id == "lang_federated_auth_session_provides_mutation")
         .expect("auth hole-fill matrix row");
+    matrix_live_run_row(row, es.as_ref(), st.as_ref()).await;
+}
+
+/// RA-8: dry + live `| where score > 0` on an integer catalog field (typed dry stubs).
+#[test]
+fn lang_integer_where_gt_dry_coerce_live() {
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("integer where coerce runtime");
+            rt.block_on(lang_integer_where_gt_dry_coerce_live_async());
+        })
+        .expect("spawn integer where coerce harness")
+        .join()
+        .expect("join integer where coerce harness");
+}
+
+async fn lang_integer_where_gt_dry_coerce_live_async() {
+    use std::sync::Arc;
+
+    let base = hermit_lang_matrix::language_matrix_hermit_base_url()
+        .await
+        .clone();
+    let cgs = language_matrix::load_language_matrix_cgs();
+    let mut cgs_live = (*cgs).clone();
+    cgs_live.http_backend = base.clone();
+    let cgs_live = Arc::new(cgs_live);
+    let es = Arc::new(language_matrix::matrix_execute_session(cgs_live.clone()));
+    let st = Arc::new(language_matrix::matrix_host_state(
+        ExecutionEngine::new(ExecutionConfig {
+            base_url: Some(base),
+            ..Default::default()
+        })
+        .expect("ExecutionEngine"),
+        cgs_live,
+    ));
+    let row = MATRIX_ROWS
+        .iter()
+        .find(|r| r.id == "lang_integer_where_gt_dry_coerce")
+        .expect("integer where coerce matrix row");
     matrix_live_run_row(row, es.as_ref(), st.as_ref()).await;
 }
 
