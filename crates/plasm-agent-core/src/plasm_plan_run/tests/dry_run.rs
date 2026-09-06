@@ -252,7 +252,7 @@ fn for_each_write_plan(source_node: serde_json::Value, source_id: &str) -> serde
                 "effect_template": {
                     "kind": "action",
                     "qualified_entity": { "entry_id": "acme", "entity": "Product" },
-                    "expr_template": "Product(${product.id}).label(label=\"stale\")",
+                    "expr_template": "Product({{ product.id }}).label(label=\"stale\")",
                     "ir_template": {
                         "expr": {
                             "op": "invoke",
@@ -660,14 +660,14 @@ fn evaluate_plasm_plan_dry_materializes_data_binding_for_staged_surface() {
                 "id": "make",
                 "kind": "create",
                 "qualified_entity": { "entry_id": "acme", "entity": "Product" },
-                "expr_template": "Product.create(name=${body.name})",
+                "expr_template": "Product.create(name={{ body.name }})",
                 "ir_template": {
                     "expr": {
                         "op": "create",
                         "capability": "product_create",
                         "entity": "Product",
                         "input": {
-                            "name": "${body.name}"
+                            "name": "{{ body.name }}"
                         }
                     },
                     "input_bindings": []
@@ -958,7 +958,7 @@ fn dry_run_text_renders_dependency_dag_snapshot() {
                     "value": {
                         "kind": "object",
                         "fields": {
-                            "title": { "kind": "template", "template": "${product.name}", "input_bindings": [{ "from": "product.name", "to": "" }] }
+                            "title": { "kind": "template", "template": "{{ product.name }}", "input_bindings": [{ "from": "product.name", "to": "" }] }
                         }
                     }
                 },
@@ -1089,7 +1089,7 @@ fn evaluate_plasm_plan_dry_reports_for_each_stage() {
                 "effect_template": {
                     "kind": "action",
                     "qualified_entity": { "entry_id": "acme", "entity": "Product" },
-                    "expr_template": "Product(${product.id}).label(label=\"stale\")",
+                    "expr_template": "Product({{ product.id }}).label(label=\"stale\")",
                     "ir_template": {
                         "expr": {
                             "op": "invoke",
@@ -1142,7 +1142,7 @@ fn for_each_templates_render_concrete_row_bound_plasm_calls() {
                     "effect_template": {
                         "kind": "action",
                         "qualified_entity": { "entry_id": "acme", "entity": "Product" },
-                        "expr_template": "Product(${product.id}).label(label=\"stale\")",
+                        "expr_template": "Product({{ product.id }}).label(label=\"stale\")",
                         "ir_template": {
                             "expr": {
                                 "op": "invoke",
@@ -1300,7 +1300,7 @@ fn dry_run_text_renders_staged_read_map_body() {
                 "effect_template": {
                     "kind": "get",
                     "qualified_entity": { "entry_id": "acme", "entity": "Product" },
-                    "expr_template": "Product(${product.id})",
+                    "expr_template": "Product({{ product.id }})",
                     "ir_template": {
                         "expr": {
                             "op": "get",
@@ -1323,7 +1323,7 @@ fn dry_run_text_renders_staged_read_map_body() {
     assert!(dry.execution_unsupported.is_empty());
     let text = render_plasm_plan_dry_text(&dry, None);
     assert!(
-        text.contains("for_each products as product => Product(${product.id})"),
+        text.contains("for_each products as product => Product({{ product.id }})"),
         "{text}"
     );
     assert!(!text.contains("=> {}"), "{text}");

@@ -388,6 +388,20 @@ impl IoPort for LiveIoPort<'_> {
                 )
                 .await?,
             )),
+            IoStep::IterateUntil(it) => Ok(Some(
+                materialize_iterate_until_node(
+                    ctx.st,
+                    ctx.es,
+                    ctx.session_id,
+                    step_idx,
+                    it,
+                    materialized,
+                    ctx.trace,
+                    ctx.sink,
+                    Some(Arc::clone(ctx.plan_shared)),
+                )
+                .await?,
+            )),
         }
     }
 }

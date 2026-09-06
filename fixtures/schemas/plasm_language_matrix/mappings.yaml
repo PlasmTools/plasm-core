@@ -11,23 +11,9 @@ langitem_query:
     type: object
     fields:
     - [tags, { type: if, condition: { type: exists, var: tags },
-               then_expr: { type: var, name: tags },
-               else_expr: { type: const, value: null } }]
-
-langitem_query_owner:
-  method: GET
-  path:
-  - type: literal
-    value: language
-  - type: literal
-    value: v1
-  - type: literal
-    value: items
-  query:
-    type: object
-    fields:
-    - ["owner", { type: var, name: owner }]
-
+        then_expr: { type: var, name: tags }, else_expr: { type: const, value: null } }]
+    - [owner, { type: if, condition: { type: exists, var: owner },
+        then_expr: { type: var, name: owner }, else_expr: { type: const, value: null } }]
 langitem_search:
   method: GET
   path:
@@ -135,6 +121,30 @@ langitem_ping:
     name: id
   - type: literal
     value: ping
+
+langitem_secured_touch:
+  method: POST
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: items
+  - type: var
+    name: id
+  - type: literal
+    value: secured_touch
+  headers:
+    type: object
+    fields:
+    - - Authorization
+      - type: format
+        template: "Bearer {token}"
+        vars:
+          token:
+            type: var
+            name: access_token
 
 langitem_broadcast:
   method: POST
@@ -279,22 +289,10 @@ langtag_query:
   query:
     type: object
     fields:
-    - ["item_id", { type: var, name: item_id }]
-
-langtag_by_score_query:
-  method: GET
-  path:
-  - type: literal
-    value: language
-  - type: literal
-    value: v1
-  - type: literal
-    value: tags
-  query:
-    type: object
-    fields:
-    - ["seq", { type: var, name: seq }]
-
+    - [item_id, { type: if, condition: { type: exists, var: item_id },
+        then_expr: { type: var, name: item_id }, else_expr: { type: const, value: null } }]
+    - [seq, { type: if, condition: { type: exists, var: seq },
+        then_expr: { type: var, name: seq }, else_expr: { type: const, value: null } }]
 langline_query:
   method: GET
   path:
@@ -517,3 +515,29 @@ queryonly_request_remind:
           token:
             type: var
             name: access_token
+
+langcursor_get:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: cursors
+  - type: var
+    name: id
+
+langcursor_tick:
+  method: POST
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: cursors
+  - type: var
+    name: id
+  - type: literal
+    value: tick

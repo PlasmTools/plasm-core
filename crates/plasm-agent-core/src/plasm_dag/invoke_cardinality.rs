@@ -1,33 +1,52 @@
 //! Compile-time gate: only StaticSingleton field extracts / scalar-cell bindings may fill
 //! scalar invoke params (PLP-1).
 
-use super::binding_contract::binding_contract;
+use super::binding_contract::{binding_contract, reject_illegal_content_stitch};
 use super::prelude::*;
 use super::schema_validate::cgs_for_qualified_entity;
 use super::types::CompileState;
 use plasm_core::{plp, FieldType, PlasmInputRef, Value};
 
-/// Reject plural / bounded / entity-row refs into scalar stringish invoke params (PLP-1).
+/// Reject plural / bounded / entity-row refs into scalar stringish invoke/create params (PLP-1).
 pub(in crate::plasm_dag) fn validate_invoke_scalar_field_refs(
     session: &ExecuteSession,
     state: &CompileState<'_>,
     node_id: &str,
     expr: &Expr,
 ) -> Result<(), String> {
-    let Expr::Invoke(inv) = expr else {
-        return Ok(());
+    let (capability, entity, catalog_entry_id, input) = match expr {
+        Expr::Invoke(inv) => {
+            let Some(input) = &inv.input else {
+                return Ok(());
+            };
+            (
+                inv.capability.as_str(),
+                inv.target.entity_type.as_str(),
+                inv.catalog_entry_id.as_deref(),
+                input,
+            )
+        }
+        Expr::Create(c) => (
+            c.capability.as_str(),
+            c.entity.as_str(),
+            c.catalog_entry_id.as_deref(),
+            &c.input,
+        ),
+        _ => return Ok(()),
     };
-    let Some(input) = &inv.input else {
-        return Ok(());
+    let qe = QualifiedEntityKey {
+        entry_id: catalog_entry_id
+            .unwrap_or(session.entry_id.as_str())
+            .to_string(),
+        entity: entity.to_string(),
     };
-    let qe = infer_invoke_qualified_entity(session, inv);
     let cgs = cgs_for_qualified_entity(session, &qe).ok_or_else(|| {
         format!(
             "catalog `{}` is not loaded for entity `{}`",
             qe.entry_id, qe.entity
         )
     })?;
-    let Some(cap) = cgs.get_capability(inv.capability.as_str()) else {
+    let Some(cap) = cgs.get_capability(capability) else {
         return Ok(());
     };
     let fields: Vec<_> = cap.invocation_object_fields().collect();
@@ -51,20 +70,6 @@ pub(in crate::plasm_dag) fn validate_invoke_scalar_field_refs(
         reject_non_scalar_cell_invoke_refs(state, node_id, param, val)?;
     }
     Ok(())
-}
-
-fn infer_invoke_qualified_entity(
-    session: &ExecuteSession,
-    inv: &plasm_core::InvokeExpr,
-) -> QualifiedEntityKey {
-    let entry = inv
-        .catalog_entry_id
-        .as_deref()
-        .unwrap_or(session.entry_id.as_str());
-    QualifiedEntityKey {
-        entry_id: entry.to_string(),
-        entity: inv.target.entity_type.as_str().to_string(),
-    }
 }
 
 /// Scalar cell params (PLP-1); not arrays / JSON / entity-ref identity slots.
@@ -103,6 +108,7 @@ fn reject_non_scalar_cell_invoke_refs(
             }
         }
         Value::PlasmInputRef(PlasmInputRef::NodeInput { node, path }) if !path.is_empty() => {
+            reject_illegal_content_stitch(state, node, path)?;
             if !binding_is_static_singleton(state, node) {
                 return Err(plp::plp4_program(
                     node_id,

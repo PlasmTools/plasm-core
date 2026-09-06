@@ -292,6 +292,10 @@ fn validate_template_alias(
     if item_binding == Some(alias) || inputs_by_alias.contains_key(alias) {
         return Ok(());
     }
+    // Under a for_each / derive row cursor, bare Minijinja wires are row fields.
+    if item_binding.is_some() {
+        return Ok(());
+    }
     Err(format!(
         "plan.nodes[{node_index}].derive_template.value template references undeclared alias {alias:?}"
     ))
@@ -438,7 +442,7 @@ fn validate_render_compute_template(
     }
     if let Some(span) = plasm_core::find_dollar_interpolation_in_minijinja_body(template) {
         return Err(format!(
-            "plan.nodes[{node_index}].compute.render.template uses `${{…}}` interpolation ({span}); row-to-text bodies use Minijinja `{{ … }}` over `rows` (also bound under the source label when applicable). `${{binding.content}}` resolves only in later string params / heredocs."
+            "plan.nodes[{node_index}].compute.render.template uses abolished `${{…}}` interpolation ({span}); use Minijinja `{{ … }}` over `rows` (also bound under the source label when applicable). Later string params use `{{{{ binding.content }}}}` or bare `param=binding.content`."
         ));
     }
     let mut env = minijinja::Environment::new();

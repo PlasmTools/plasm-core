@@ -151,7 +151,7 @@ pub mod string_unescape;
 pub mod summary_render;
 pub mod symbol_tuning;
 pub mod teaching_term;
-pub mod template_interpolate;
+pub mod program_string_template;
 pub mod template_ref;
 pub mod temporal;
 pub mod tests;
@@ -257,7 +257,7 @@ pub use plasm_monad::{
     PlasmDataValue, PlasmHoleUse, PlasmReturn, PlasmStep, PlasmStepKind, PlasmStepPayload,
     PurePayload, RelationCardinality, RelationSourceCardinality, ResultShape, RewritePolicy,
     StepId, SurfaceKind, SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind,
-    WithColumn, WithExpr, WithExprError, WithLiteral, PLASM_COMP_WIRE_VERSION,
+    UnfoldUntilPayload, WithColumn, WithExpr, WithExprError, WithLiteral, PLASM_COMP_WIRE_VERSION,
 };
 pub use predicate::Predicate;
 pub use preflight::{
@@ -405,15 +405,13 @@ pub use symbol_tuning::{
     SymbolResolve, SymbolResolveError, SymbolSession, TeachingExposureSession,
     PERSISTED_SYMBOL_LEDGER_VERSION,
 };
-pub use template_interpolate::{
-    dollar_interpolation_roots, interpolate_string, interpolate_string_map,
-    interpolate_string_with_max, BindingScope, InterpolateError,
-};
-pub use template_ref::{
-    contains_dollar_interpolation, find_dollar_interpolation_in_minijinja_body,
+pub use program_string_template::{
+    contains_dollar_interpolation, contains_minijinja_markers, find_dollar_interpolation_in_minijinja_body,
     for_each_interpolation_path, interpolation_paths, interpolation_roots,
-    validate_interpolation_syntax, RefKind, TemplateRefContext,
+    reject_dollar_interpolation, render_program_string, register_shared_minijinja_filters,
+    validate_interpolation_syntax, ProgramStringError, DEFAULT_MAX_INTERPOLATED_LEN,
 };
+pub use template_ref::{RefKind, TemplateRefContext};
 pub use temporal::{
     normalize_temporal_value, parse_temporal_now_env, rewrite_temporal_aliases,
     rewrite_temporal_aliases_in_predicate_body, temporal_predicate_alias_hint,

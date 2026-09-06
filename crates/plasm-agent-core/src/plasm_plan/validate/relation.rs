@@ -112,7 +112,7 @@ fn plan_node_reaches_view_producer(
                 .as_ref()
                 .and_then(|d| d.source.clone())
                 .unwrap_or_default(),
-            PlanNodeKind::ForEach => node.source.clone().unwrap_or_default(),
+            PlanNodeKind::ForEach | PlanNodeKind::IterateUntil => node.source.clone().unwrap_or_default(),
             PlanNodeKind::Data => return Ok(false),
             _ => return Ok(false),
         };

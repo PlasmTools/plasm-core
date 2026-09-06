@@ -1,5 +1,6 @@
 //! Surface parse helpers (aggregates, sort, plan-value literals).
 
+use super::super::binding_contract::reject_illegal_content_stitch;
 use super::super::prelude::*;
 use super::super::types::CompileState;
 use super::template_uses::dedupe_inputs;
@@ -201,11 +202,13 @@ pub(in crate::plasm_dag) fn parse_plan_value_expr(
     }
     if let Some((node, path)) = raw.split_once('.') {
         if let Some(dep) = state.get(node) {
+            let path_segs: Vec<String> = path.split('.').map(str::to_string).collect();
+            reject_illegal_content_stitch(state, node, &path_segs)?;
             return Ok((
                 PlanValue::NodeSymbol {
                     node: node.to_string(),
                     alias: node.to_string(),
-                    path: path.split('.').map(str::to_string).collect(),
+                    path: path_segs,
                 },
                 vec![json!({
                     "node": node,

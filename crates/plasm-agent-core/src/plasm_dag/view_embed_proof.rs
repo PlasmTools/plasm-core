@@ -96,7 +96,9 @@ fn find_view_producer_node(
                     "synthetic binding `{cur}` cannot produce view_embed parent rows for `{expected_view}`"
                 ));
             }
-            DagNodeSource::ForEach { source, .. } => cur = source.clone(),
+            DagNodeSource::ForEach { source, .. } | DagNodeSource::IterateUntil { seed: source, .. } => {
+                cur = source.clone()
+            }
         }
     }
     Err(format!(

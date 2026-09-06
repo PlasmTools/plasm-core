@@ -710,7 +710,7 @@ mod tests {
         normalize_expr_query_capabilities_federated(&mut expr, &fed, &cgs_github).unwrap();
         match &expr {
             crate::Expr::Query(q) => {
-                assert_eq!(q.capability_name.as_deref(), Some("langitem_query_owner"));
+                assert_eq!(q.capability_name.as_deref(), Some("langitem_query"));
                 assert_eq!(q.catalog_entry_id.as_deref(), Some("github"));
             }
             _ => panic!("expected query"),

@@ -134,9 +134,6 @@ fn relation_nav_anchor_expr(
         })
 }
 
-#[cfg(test)]
-const MAX_INCOMING_REL_NAV_PROJECTION_BASES: usize = 16;
-
 /// `ParentRecv.rel` expressions that type-check and return `target_ename` (incoming edges).
 ///
 /// With `surface_filter: Some`, only edges whose **parent** (`src_name`) is in
@@ -219,9 +216,6 @@ pub(crate) fn incoming_relation_nav_bases_to_entity(
         ) && seen.insert(expr.clone())
         {
             out.push(expr);
-            if out.len() >= MAX_INCOMING_REL_NAV_PROJECTION_BASES {
-                return out;
-            }
         }
     }
     out
@@ -433,7 +427,6 @@ pub(crate) fn render_relation_edge_delta_rows(
     new_relation_slots: &[crate::symbol_tuning::ExposureSlotKey],
     map_arc: Option<&std::sync::Arc<SymbolMap>>,
 ) -> String {
-    const MAX_EDGE_DELTA_ROWS: usize = 8;
     let mut out = String::new();
     let mut seen_expr: HashSet<String> = HashSet::new();
     let mut seen_r_gloss: HashSet<String> = HashSet::new();
@@ -466,9 +459,6 @@ pub(crate) fn render_relation_edge_delta_rows(
         HashMap::new();
 
     for slot in slots {
-        if seen_expr.len() >= MAX_EDGE_DELTA_ROWS {
-            break;
-        }
         let crate::symbol_tuning::ExposureSlotKey::Relation { source, relation } = slot else {
             continue;
         };

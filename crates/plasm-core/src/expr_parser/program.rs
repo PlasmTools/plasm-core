@@ -8,6 +8,7 @@ use super::program_surface::{
     collect_program_statement_lines, split_assignment_at_top_level, split_top_level,
     validate_program_label,
 };
+use super::iterate_until::{try_parse_iterate_until, IterateUntilExpr};
 use super::{
     parse_pipe_expr, peel_collect_meta, split_apply_expr, Applicator, CollectMeta, PipeExpr,
 };
@@ -31,6 +32,8 @@ pub enum RowExpr {
         collect_meta: Vec<CollectMeta>,
     },
     Pipe(PipeExpr),
+    /// PLP-8 state iterator (`iterate … step … until … take N`).
+    Iterate(IterateUntilExpr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,6 +50,7 @@ impl ExprNode {
             RowExpr::Primary { collect_meta, .. } => {
                 Ok(collect_meta.iter().map(RowSuffix::from).collect())
             }
+            RowExpr::Iterate(_) => Ok(Vec::new()),
         }
     }
 
@@ -54,6 +58,7 @@ impl ExprNode {
         match &self.row {
             RowExpr::Primary { head, .. } => head.as_str(),
             RowExpr::Pipe(p) => p.head.as_str(),
+            RowExpr::Iterate(it) => it.seed.as_str(),
         }
     }
 }
@@ -82,16 +87,18 @@ pub fn parse_program_shape(source: &str) -> Result<ParsedProgram, String> {
             if line.starts_with("return ") {
                 return Err("return is not Plasm syntax; use bare final roots".into());
             }
-            roots = Some(if parse_pipe_expr(line)?.is_some() {
-                vec![parse_expr_node(line)?]
-            } else {
-                split_top_level(line, ',')?
-                    .into_iter()
-                    .map(|s| s.trim())
-                    .filter(|s| !s.is_empty())
-                    .map(parse_expr_node)
-                    .collect::<Result<Vec<_>, _>>()?
-            });
+            roots = Some(
+                if parse_pipe_expr(line)?.is_some() || line.trim_start().starts_with("iterate") {
+                    vec![parse_expr_node(line)?]
+                } else {
+                    split_top_level(line, ',')?
+                        .into_iter()
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty())
+                        .map(parse_expr_node)
+                        .collect::<Result<Vec<_>, _>>()?
+                },
+            );
         }
     }
 
@@ -103,6 +110,20 @@ pub fn parse_program_shape(source: &str) -> Result<ParsedProgram, String> {
 }
 
 pub fn parse_expr_node(raw: &str) -> Result<ExprNode, String> {
+    let trimmed = raw.trim();
+    if let Some(it) = try_parse_iterate_until(trimmed)? {
+        // State iterate owns the full surface — no `=>` applicator stratum.
+        if trimmed.contains("=>") {
+            return Err(
+                "iterate … until … take N cannot take a `=>` applicator (state iterator is complete)"
+                    .into(),
+            );
+        }
+        return Ok(ExprNode {
+            row: RowExpr::Iterate(it),
+            apply: None,
+        });
+    }
     let (row_surface, apply) = split_apply_expr(raw)?;
     if let Some(pipe) = parse_pipe_expr(&row_surface)? {
         return Ok(ExprNode {
@@ -192,6 +213,47 @@ mod tests {
         assert_eq!(p.statements.len(), 1);
         assert_eq!(p.roots.len(), 1);
         assert_eq!(p.roots[0].primary_head(), "body");
+    }
+
+    #[test]
+    fn parses_iterate_until_take_as_row_expr() {
+        let node = parse_expr_node(
+            r#"iterate LangCursor("c1") step LangCursor(_.id).tick() until phase = "done" take 4"#,
+        )
+        .expect("iterate");
+        assert!(matches!(
+            node.row,
+            RowExpr::Iterate(ref it) if it.take == 4 && it.seed.contains("LangCursor")
+        ));
+        assert!(node.apply.is_none());
+    }
+
+    #[test]
+    fn rejects_iterate_without_hard_bound() {
+        let err = parse_expr_node(
+            r#"iterate LangCursor("c1") step LangCursor(_.id).tick() until phase = "done""#,
+        )
+        .expect_err("missing take");
+        assert!(err.contains("take"), "{err}");
+    }
+
+    #[test]
+    fn parses_bound_iterate_assignment_with_until_eq() {
+        let src = r#"item = LangItem("i1")
+done = iterate item step LangItem(_.id).update(score=11, title=_.title, owner=_.owner) until score = 11 take 4
+done"#;
+        let p = parse_program_shape(src).expect("program shape");
+        assert_eq!(p.statements.len(), 2);
+        match &p.statements[1] {
+            Statement::Bind { label, expr } => {
+                assert_eq!(label, "done");
+                assert!(matches!(
+                    &expr.row,
+                    RowExpr::Iterate(it) if it.take == 4 && it.until == "score = 11"
+                ));
+            }
+        }
+        assert_eq!(p.roots[0].primary_head(), "done");
     }
 
     /// Regression: heredoc bodies must stay opaque — prose starting with `If` must not break

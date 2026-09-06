@@ -73,6 +73,24 @@ pub struct FlatMapEffectPayload {
     pub result_shape: ResultShape,
 }
 
+/// PLP-8 state iterator (`iterate … step … until … take N`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnfoldUntilPayload {
+    pub source: String,
+    pub item_binding: super::atoms::BindingName,
+    pub effect_template: EffectTemplate,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub until_predicates: Vec<PlanPredicate>,
+    pub take: u32,
+    /// Seed observe IR for post-step re-Get (required for side-effect-only mutators).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed_ir: Option<PlanExprIr>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval: Option<String>,
+    pub effect_class: EffectClass,
+    pub result_shape: ResultShape,
+}
+
 /// Typed step payload in a [`super::super::comp::PlasmComp`] DAG.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -83,6 +101,7 @@ pub enum PlasmStepPayload {
     Derive(DerivePayload),
     FlatMapRelation(FlatMapRelationPayload),
     FlatMapEffect(FlatMapEffectPayload),
+    UnfoldUntil(UnfoldUntilPayload),
 }
 
 impl PlasmStepPayload {
@@ -94,6 +113,7 @@ impl PlasmStepPayload {
             Self::Derive { .. } => PlasmStepKind::Derive,
             Self::FlatMapRelation { .. } => PlasmStepKind::FlatMapRelation,
             Self::FlatMapEffect { .. } => PlasmStepKind::FlatMapEffect,
+            Self::UnfoldUntil { .. } => PlasmStepKind::UnfoldUntil,
         }
     }
 
@@ -105,6 +125,7 @@ impl PlasmStepPayload {
             Self::Derive(p) => p.effect_class,
             Self::FlatMapRelation(p) => p.effect_class,
             Self::FlatMapEffect(p) => p.effect_class,
+            Self::UnfoldUntil(p) => p.effect_class,
         }
     }
 
@@ -116,6 +137,7 @@ impl PlasmStepPayload {
             Self::Derive(p) => p.result_shape,
             Self::FlatMapRelation(p) => p.result_shape,
             Self::FlatMapEffect(p) => p.result_shape,
+            Self::UnfoldUntil(p) => p.result_shape,
         }
     }
 
@@ -135,6 +157,11 @@ impl PlasmStepPayload {
             Self::Derive(p) => format!("derive {}", derive_kind_label(p.derive.kind)),
             Self::FlatMapRelation(p) => format!("relation {}", p.relation.relation),
             Self::FlatMapEffect(p) => format!("for_each {}", surface_label(p.effect_template.kind)),
+            Self::UnfoldUntil(p) => format!(
+                "iterate_until {} take {}",
+                surface_label(p.effect_template.kind),
+                p.take
+            ),
         }
     }
 }

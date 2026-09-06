@@ -152,35 +152,38 @@ fn is_foreach_surface(rhs: &str) -> bool {
     if t.starts_with('{') || t.starts_with("<<") || t.starts_with("_.") {
         return false;
     }
-    // Teaching opaque methods: `.m` + digits + `(`
-    if opaque_method_call(t) {
-        return true;
-    }
-    // Wire / domain method verbs used as for_each templates.
-    const VERBS: &[&str] = &[".update(", ".create(", ".delete(", ".label(", ".invoke("];
-    VERBS.iter().any(|v| t.contains(v))
+    // Teaching opaque methods (`.m12(`) or domain wire verbs (`.update(`, `.secured-touch(`).
+    method_call_at_depth_zero(t)
 }
 
-fn opaque_method_call(t: &str) -> bool {
-    // Match `.m` DIGITS `(` at depth 0 (not `.message`).
+/// `.method(` at paren/bracket/brace depth 0 outside quotes.
+/// Method names: leading alpha/`_`, then alnum / `_` / `-` (covers `m12` and `secured-touch`).
+pub(crate) fn method_call_at_depth_zero(t: &str) -> bool {
     let bytes = t.as_bytes();
     let mut i = 0;
     let mut depth = 0i32;
     let mut quote = None::<u8>;
-    while i + 2 < bytes.len() {
+    while i + 1 < bytes.len() {
         let b = bytes[i];
         match b {
             b'"' | b'\'' if quote == Some(b) => quote = None,
             b'"' | b'\'' if quote.is_none() => quote = Some(b),
             b'(' | b'[' | b'{' if quote.is_none() => depth += 1,
             b')' | b']' | b'}' if quote.is_none() => depth -= 1,
-            b'.' if quote.is_none() && depth == 0 && bytes[i + 1] == b'm' => {
-                let mut j = i + 2;
-                if j >= bytes.len() || !bytes[j].is_ascii_digit() {
+            b'.' if quote.is_none() && depth == 0 => {
+                let mut j = i + 1;
+                if j >= bytes.len()
+                    || !(bytes[j].is_ascii_alphabetic() || bytes[j] == b'_')
+                {
                     i += 1;
                     continue;
                 }
-                while j < bytes.len() && bytes[j].is_ascii_digit() {
+                j += 1;
+                while j < bytes.len()
+                    && (bytes[j].is_ascii_alphanumeric()
+                        || bytes[j] == b'_'
+                        || bytes[j] == b'-')
+                {
                     j += 1;
                 }
                 while j < bytes.len() && bytes[j].is_ascii_whitespace() {
@@ -240,6 +243,17 @@ mod tests {
     fn foreach_opaque_m_digit() {
         let a = parse_applicator("LangItem.m3(title=_.title)").unwrap();
         assert!(matches!(a, Applicator::ForEach { .. }));
+    }
+
+    #[test]
+    fn foreach_wire_update_and_secured_touch() {
+        let a = parse_applicator("LangItem(_.id).update(score=9, title=_.title)").unwrap();
+        assert!(matches!(a, Applicator::ForEach { .. }));
+        let b = parse_applicator(
+            "LangItem(_.id).secured-touch(access_token=auth.access_token)",
+        )
+        .unwrap();
+        assert!(matches!(b, Applicator::ForEach { .. }));
     }
 
     #[test]

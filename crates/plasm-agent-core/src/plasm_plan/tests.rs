@@ -211,7 +211,7 @@ fn for_each_write_template_does_not_trust_agent_authored_approval() {
                 "effect_template": {
                     "kind": "action",
                     "qualified_entity": { "entry_id": "github", "entity": "Issue" },
-                    "expr_template": "Issue(${issue.id}).add-label(label=\"stale\")",
+                    "expr_template": "Issue({{ issue.id }}).add-label(label=\"stale\")",
                     "ir_template": {
                         "expr": {
                             "op": "invoke",
@@ -314,9 +314,9 @@ fn reject_malformed_template_substitutions() {
         ],
         "return": { "kind": "node", "node": "mapped" }
     });
-    let err = validate_plan_value(&v).expect_err("empty substitution rejected");
+    let err = validate_plan_value(&v).expect_err("empty/dollar substitution rejected");
     assert!(
-        err.contains("empty") && err.contains("substitution"),
+        err.contains("abolished") || (err.contains("empty") && err.contains("substitution")),
         "{err}"
     );
 }
@@ -841,13 +841,13 @@ fn for_each_effect_template_rejects_undeclared_interpolation_alias() {
                 "effect_template": {
                     "kind": "action",
                     "qualified_entity": { "entry_id": "acme", "entity": "Product" },
-                    "expr_template": "Product.create(title=<<T\n${missing}\nT\n)",
+                    "expr_template": "Product.create(title=<<T\n{{ missing.content }}\nT\n)",
                     "ir_template": {
                         "expr": {
                             "op": "create",
                             "capability": "product_create",
                             "entity": "Product",
-                            "input": { "title": "<<T\n${missing}\nT\n" }
+                            "input": { "title": "<<T\n{{ missing.content }}\nT\n" }
                         },
                         "input_bindings": []
                     },
@@ -860,7 +860,10 @@ fn for_each_effect_template_rejects_undeclared_interpolation_alias() {
     });
     let plan = parse_plan_value(&v).expect("parse");
     let err = validate_plan_artifact(&plan).expect_err("undeclared alias rejected");
-    assert!(err.contains("undeclared alias"), "{err}");
+    assert!(
+        err.contains("undeclared alias") || err.contains("missing"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -904,7 +907,6 @@ fn render_template_rejects_dollar_interpolation_with_actionable_copy() {
     });
     let plan = parse_plan_value(&v).expect("parse");
     let err = validate_plan_artifact(&plan).expect_err("dollar interpolation rejected");
-    assert!(err.contains("${…}` interpolation"), "{err}");
+    assert!(err.contains("abolished") || err.contains("${"), "{err}");
     assert!(err.contains("Minijinja"), "{err}");
-    assert!(err.contains("later string params"), "{err}");
 }

@@ -269,6 +269,7 @@ fn upstream_node_ids(node: &ValidatedPlanNode) -> Vec<String> {
         ValidatedPlanNode::Compute(c) => vec![c.compute.source.clone()],
         ValidatedPlanNode::Derive(d) => vec![d.source.as_str().to_string()],
         ValidatedPlanNode::ForEach(f) => vec![f.source.as_str().to_string()],
+        ValidatedPlanNode::IterateUntil(f) => vec![f.source.as_str().to_string()],
         ValidatedPlanNode::RelationTraversal(r) => vec![r.relation.source.as_str().to_string()],
         ValidatedPlanNode::Surface(s) => s
             .depends_on

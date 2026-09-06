@@ -81,8 +81,8 @@ pub fn json_predicate_matches(
     rhs: &serde_json::Value,
 ) -> bool {
     match op {
-        JsonRowPredicateOp::Eq => lhs == rhs,
-        JsonRowPredicateOp::Ne => lhs != rhs,
+        JsonRowPredicateOp::Eq => json_values_eq_loose(lhs, rhs),
+        JsonRowPredicateOp::Ne => !json_values_eq_loose(lhs, rhs),
         JsonRowPredicateOp::Exists => !lhs.is_null(),
         JsonRowPredicateOp::Contains => lhs
             .as_str()
@@ -90,11 +90,31 @@ pub fn json_predicate_matches(
             .is_some_and(|(l, r)| l.contains(r)),
         JsonRowPredicateOp::In => rhs
             .as_array()
-            .is_some_and(|items| items.iter().any(|item| item == lhs)),
+            .is_some_and(|items| items.iter().any(|item| json_values_eq_loose(item, lhs))),
         JsonRowPredicateOp::Lt => compare_ordered(lhs, rhs, |l, r| l < r),
         JsonRowPredicateOp::Lte => compare_ordered(lhs, rhs, |l, r| l <= r),
         JsonRowPredicateOp::Gt => compare_ordered(lhs, rhs, |l, r| l > r),
         JsonRowPredicateOp::Gte => compare_ordered(lhs, rhs, |l, r| l >= r),
+    }
+}
+
+/// Strict JSON equality plus bool ↔ boolish-string (`true`/`True`/`false`/`False`).
+fn json_values_eq_loose(lhs: &serde_json::Value, rhs: &serde_json::Value) -> bool {
+    if lhs == rhs {
+        return true;
+    }
+    match (json_as_boolish(lhs), json_as_boolish(rhs)) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
+}
+
+fn json_as_boolish(v: &serde_json::Value) -> Option<bool> {
+    match v {
+        serde_json::Value::Bool(b) => Some(*b),
+        serde_json::Value::String(s) if s.eq_ignore_ascii_case("true") => Some(true),
+        serde_json::Value::String(s) if s.eq_ignore_ascii_case("false") => Some(false),
+        _ => None,
     }
 }
 
@@ -122,6 +142,25 @@ mod tests {
             &serde_json::json!("nope"),
             JsonRowPredicateOp::Gt,
             &serde_json::json!(0),
+        ));
+    }
+
+    #[test]
+    fn eq_unifies_bool_and_boolish_strings() {
+        assert!(json_predicate_matches(
+            &serde_json::json!(true),
+            JsonRowPredicateOp::Eq,
+            &serde_json::json!("true"),
+        ));
+        assert!(json_predicate_matches(
+            &serde_json::json!("True"),
+            JsonRowPredicateOp::Eq,
+            &serde_json::json!(true),
+        ));
+        assert!(!json_predicate_matches(
+            &serde_json::json!("True"),
+            JsonRowPredicateOp::Eq,
+            &serde_json::json!(false),
         ));
     }
 }

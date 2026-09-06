@@ -5,8 +5,8 @@ use crate::plasm_plan::{
     BindingName, EffectClass as PlanEffectClass, EffectTemplate, InputAlias, InputCardinalityProof,
     Plan, PlanNodeId, PlanNodeKind, PlanResultUse, PlanValue, QualifiedEntityKey,
     ResultShape as PlanResultShape, ValidatedComputeNode, ValidatedDataNode, ValidatedDeriveNode,
-    ValidatedForEachNode, ValidatedPlan, ValidatedPlanArtifact, ValidatedPlanDataInput,
-    ValidatedPlanExprIr, ValidatedPlanExprTemplate, ValidatedPlanNode,
+    ValidatedForEachNode, ValidatedIterateUntilNode, ValidatedPlan, ValidatedPlanArtifact,
+    ValidatedPlanDataInput, ValidatedPlanExprIr, ValidatedPlanExprTemplate, ValidatedPlanNode,
     ValidatedPlanRelationTraversal, ValidatedPlanReturn, ValidatedRelationTraversalNode,
     ValidatedSurfaceNode,
 };
@@ -16,7 +16,7 @@ use plasm_core::{
     InputCardinality as CoreInputCardinality, InvokePayload, MapPayload, PlanDataInput, PlanExprIr,
     PlanExprTemplate, PlanInputBinding, PlanPredicate, PlanQualifiedEntityKey,
     PlanRelationTraversal, PlasmBindGraph, PlasmComp, PlasmDataValue, PlasmReturn,
-    PlasmStepPayload, PurePayload, ResultShape, StepId, SurfaceKind,
+    PlasmStepPayload, PurePayload, ResultShape, StepId, SurfaceKind, UnfoldUntilPayload,
 };
 use std::collections::HashMap;
 
@@ -33,6 +33,9 @@ pub(crate) fn validated_node_to_step_payload(
         }
         ValidatedPlanNode::ForEach(n) => {
             Ok(PlasmStepPayload::FlatMapEffect(for_each_to_payload(n)?))
+        }
+        ValidatedPlanNode::IterateUntil(n) => {
+            Ok(PlasmStepPayload::UnfoldUntil(iterate_until_to_payload(n)?))
         }
     }
 }
@@ -111,6 +114,24 @@ fn for_each_to_payload(node: &ValidatedForEachNode) -> Result<FlatMapEffectPaylo
         effect_template: effect_template_to_core(&node.effect_template)?,
         projection: node.projection.clone(),
         predicates: convert_predicates(&node.predicates)?,
+        approval: node.approval.clone(),
+        effect_class: effect_class(node.effect_class),
+        result_shape: result_shape(node.result_shape),
+    })
+}
+
+fn iterate_until_to_payload(node: &ValidatedIterateUntilNode) -> Result<UnfoldUntilPayload, String> {
+    Ok(UnfoldUntilPayload {
+        source: node.source.as_str().to_string(),
+        item_binding: binding_name(&node.item_binding)?,
+        effect_template: effect_template_to_core(&node.effect_template)?,
+        until_predicates: convert_predicates(&node.until_predicates)?,
+        take: node.take,
+        seed_ir: node
+            .seed_ir
+            .as_ref()
+            .map(validated_expr_ir_to_plan)
+            .transpose()?,
         approval: node.approval.clone(),
         effect_class: effect_class(node.effect_class),
         result_shape: result_shape(node.result_shape),
@@ -338,6 +359,26 @@ pub(crate) fn step_payload_to_validated_node(
                 effect_template: effect_template_to_plan(&p.effect_template)?,
                 projection: p.projection.clone(),
                 predicates: convert_predicates_back(&p.predicates)?,
+                depends_on,
+                uses_result,
+                approval: p.approval.clone(),
+            }))
+        }
+        PlasmStepPayload::UnfoldUntil(p) => {
+            Ok(ValidatedPlanNode::IterateUntil(ValidatedIterateUntilNode {
+                id,
+                effect_class: plan_effect_class(p.effect_class),
+                result_shape: plan_result_shape(p.result_shape),
+                source: PlanNodeId::new(p.source.clone())?,
+                item_binding: BindingName::new(p.item_binding.as_str())?,
+                effect_template: effect_template_to_plan(&p.effect_template)?,
+                until_predicates: convert_predicates_back(&p.until_predicates)?,
+                take: p.take,
+                seed_ir: p
+                    .seed_ir
+                    .as_ref()
+                    .map(plan_expr_ir_to_validated)
+                    .transpose()?,
                 depends_on,
                 uses_result,
                 approval: p.approval.clone(),

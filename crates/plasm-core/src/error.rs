@@ -158,10 +158,11 @@ pub enum SchemaError {
     },
 
     #[error(
-        "Entity '{entity}' has multiple unscoped Query capabilities {capabilities:?} — set primary_query to the canonical list capability id"
+        "Entity '{entity}' has {count} Query capabilities {capabilities:?} — at most one kind:query per entity (compress with a selection discriminant + CML path branch, fold scoped lists into one query + relation materialize, or split entities)"
     )]
-    AmbiguousPrimaryQuery {
+    TooManyQueryCapabilities {
         entity: String,
+        count: usize,
         capabilities: Vec<String>,
     },
 
@@ -187,10 +188,11 @@ pub enum SchemaError {
     },
 
     #[error(
-        "Entity '{entity}' has multiple unscoped Search capabilities {capabilities:?} — set primary_search to the canonical search capability id"
+        "Entity '{entity}' has {count} Search capabilities {capabilities:?} — at most one kind:search per entity (compress with a selection discriminant + CML path branch, or split entities)"
     )]
-    AmbiguousPrimarySearch {
+    TooManySearchCapabilities {
         entity: String,
+        count: usize,
         capabilities: Vec<String>,
     },
 

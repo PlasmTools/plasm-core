@@ -156,15 +156,26 @@ pub(crate) fn content_reference_error(
                 )),
             )
         }
+        (_, ContinuationCapability::RenderContentScalar) => agent_program_error(
+            format!("Don't bind `{label}.content` as a surface expression."),
+            Some(format!(
+                "Pass `param={label}.content` into a capability string slot, or return `{label}` for the generated-text row."
+            )),
+        ),
         _ => agent_program_error(
             format!(
-                "`.content` exists only on row-to-text template bindings — `{label}` is not one."
+                "`.content` exists only on row-to-text template bindings (`label = source => <<TAG`) — `{label}` is not one."
             ),
             Some(format!(
-                "Use `{label}` for row fields, or add a row-to-text template binding (`{label} = source <<TAG …`) before `.content`."
+                "Plain heredoc / string bindings are already strings — pass `param={label}` (not `{label}.content`). Entity field dots use the taught wire name when the binding is a row."
             )),
         ),
     }
+}
+
+/// True when `path` is a `.content` stitch that is lawful only on render bindings.
+pub(crate) fn path_is_render_content_stitch(path: &[impl AsRef<str>]) -> bool {
+    path.first().is_some_and(|s| s.as_ref() == "content")
 }
 
 fn agent_program_error(head: impl AsRef<str>, help: Option<impl AsRef<str>>) -> String {

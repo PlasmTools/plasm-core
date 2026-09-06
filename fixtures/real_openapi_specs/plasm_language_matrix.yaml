@@ -50,6 +50,18 @@ paths:
                   title: "Beta"
                   score: 20
                   owner: "bob"
+                - id: "i3"
+                  title: "Gamma"
+                  score: 15
+                  owner: "alice"
+                - id: "i4"
+                  title: "Delta"
+                  score: 25
+                  owner: "alice"
+                - id: "i5"
+                  title: "Epsilon"
+                  score: 5
+                  owner: "carol"
     post:
       summary: Create item
       requestBody:
@@ -234,6 +246,35 @@ paths:
                     type: boolean
               example:
                 ok: true
+  /language/v1/items/{id}/secured_touch:
+    post:
+      summary: Secured touch (Bearer access_token; for_each auth×fanout matrix)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: Authorization
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Ack
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  id:
+                    type: string
+              example:
+                ok: true
+                id: "i1"
   /language/v1/items/broadcast:
     post:
       summary: Pathless broadcast (federated stamp matrix)

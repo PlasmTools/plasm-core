@@ -170,11 +170,8 @@ pub(crate) fn instantiate_expr_template_value(
             .collect::<Result<serde_json::Map<_, _>, String>>()
             .map(serde_json::Value::Object),
         serde_json::Value::String(s) => {
-            if !plasm_core::contains_dollar_interpolation(s) {
-                return Ok(serde_json::Value::String(s.clone()));
-            }
             let scope = plan_binding_scope_owned(env);
-            let out = plasm_core::interpolate_string_map(s, &scope)
+            let out = plasm_core::render_program_string(s, &scope)
                 .map_err(|e| format!("string interpolation: {e}"))?;
             Ok(serde_json::Value::String(out))
         }
@@ -185,14 +182,32 @@ pub(crate) fn instantiate_expr_template_value(
 pub(crate) fn plan_binding_scope_owned(
     env: &PlanEvalEnv<'_>,
 ) -> BTreeMap<String, plasm_core::Value> {
+    insert_plan_eval_scope(env, json_row_to_plasm_value)
+}
+
+fn insert_plan_eval_scope(
+    env: &PlanEvalEnv<'_>,
+    mut row_to_value: impl FnMut(&serde_json::Value) -> plasm_core::Value,
+) -> BTreeMap<String, plasm_core::Value> {
     let mut scope = BTreeMap::new();
+    // Flatten bound row fields first so `{{ title }}` works; aliases overwrite on conflict.
+    if let EvalScope::Bound { row, binding } = &env.scope {
+        let row_value = row_to_value(row);
+        if let plasm_core::Value::Object(map) = &row_value {
+            for (k, v) in map {
+                scope.insert(k.clone(), v.clone());
+            }
+        }
+        scope.insert(binding.as_str().to_string(), row_value.clone());
+        // Convention: `_` always names the row cursor when bound.
+        if binding.as_str() != "_" {
+            scope.insert("_".to_string(), row_value);
+        }
+    }
     for (alias, input) in env.inputs.rows {
-        let row_value = json_row_to_plasm_value(&input.row);
+        let row_value = row_to_value(&input.row);
         scope.insert(alias.as_str().to_string(), row_value.clone());
         scope.insert(input.node.as_str().to_string(), row_value);
-    }
-    if let EvalScope::Bound { row, binding } = &env.scope {
-        scope.insert(binding.as_str().to_string(), json_row_to_plasm_value(row));
     }
     scope
 }
@@ -626,37 +641,31 @@ pub(crate) fn render_template_with(
     env: &PlanEvalEnv<'_>,
     render_value: fn(&serde_json::Value) -> String,
 ) -> Result<String, String> {
-    plasm_core::text::interpolate_dollar_template(
-        template,
-        |raw_path| {
-            let rendered = resolve_template_path(raw_path, env)
-                .map(render_value)
-                .ok_or_else(|| format!("template path {raw_path:?} did not resolve"))?;
-            Ok(rendered)
-        },
-        plasm_core::text::DEFAULT_MAX_INTERPOLATED_LEN,
-    )
-    .map(|t| t.into_string())
-    .map_err(|e| e.to_string())
+    // Pre-format scalar leaves for Plasm surface display, then Minijinja-expand.
+    let scope = insert_plan_eval_scope(env, |row| json_row_to_display_plasm(row, render_value));
+    plasm_core::render_program_string(template, &scope).map_err(|e| e.to_string())
 }
 
-pub(crate) fn resolve_template_path<'a>(
-    raw_path: &str,
-    env: &'a PlanEvalEnv<'_>,
-) -> Option<&'a serde_json::Value> {
-    if let EvalScope::Bound { binding, .. } = &env.scope {
-        if raw_path == binding.as_str() || raw_path.starts_with(&format!("{binding}.")) {
-            return value_at_dotted(env.scope.row(), strip_binding(raw_path, binding));
+fn json_row_to_display_plasm(
+    row: &serde_json::Value,
+    render_value: fn(&serde_json::Value) -> String,
+) -> plasm_core::Value {
+    match row {
+        serde_json::Value::Object(map) => {
+            let mut out = indexmap::IndexMap::new();
+            for (k, v) in map {
+                out.insert(k.clone(), json_row_to_display_plasm(v, render_value));
+            }
+            plasm_core::Value::Object(out)
         }
+        serde_json::Value::Array(items) => plasm_core::Value::Array(
+            items
+                .iter()
+                .map(|v| json_row_to_display_plasm(v, render_value))
+                .collect(),
+        ),
+        other => plasm_core::Value::String(render_value(other)),
     }
-    let (alias, rest) = raw_path
-        .split_once('.')
-        .map_or((raw_path, ""), |(alias, rest)| (alias, rest));
-    let alias = InputAlias::new(alias.to_string()).ok()?;
-    env.inputs
-        .rows
-        .get(&alias)
-        .and_then(|input| value_at_dotted(&input.row, rest))
 }
 
 pub(crate) use plasm_core::json_value_to_plasm_value as json_to_plasm_value;

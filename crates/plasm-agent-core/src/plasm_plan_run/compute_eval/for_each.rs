@@ -3,12 +3,24 @@ use super::eval::{instantiate_raw_expr_template, wire_coercion_by_alias_from_inp
 use super::materialized_result_use_inputs;
 
 pub(crate) fn for_each_cross_uses(for_each: &ValidatedForEachNode) -> Vec<PlanResultUse> {
-    for_each
-        .uses_result
-        .iter()
-        .filter(|u| u.r#as.as_str() != for_each.item_binding.as_str())
-        .cloned()
-        .collect()
+    cross_uses_excluding_item(&for_each.uses_result, &for_each.item_binding)
+}
+
+/// Bound-row plan env shared by `for_each` and `iterate … until` template instantiation.
+pub(crate) fn bound_row_plan_eval_env<'a>(
+    item_binding: &'a crate::plasm_plan::BindingName,
+    row: &'a serde_json::Value,
+    input_rows: &'a BTreeMap<InputAlias, MaterializedInputRow>,
+    wire_coercion_by_alias: &'a BTreeMap<InputAlias, WireCoercionCtx<'a>>,
+) -> PlanEvalEnv<'a> {
+    PlanEvalEnv {
+        scope: EvalScope::Bound {
+            row,
+            binding: item_binding,
+        },
+        inputs: InputEnv { rows: input_rows },
+        wire_coercion_by_alias,
+    }
 }
 
 pub(crate) fn for_each_plan_eval_env<'a>(
@@ -17,16 +29,22 @@ pub(crate) fn for_each_plan_eval_env<'a>(
     input_rows: &'a BTreeMap<InputAlias, MaterializedInputRow>,
     wire_coercion_by_alias: &'a BTreeMap<InputAlias, WireCoercionCtx<'a>>,
 ) -> PlanEvalEnv<'a> {
-    let scope = EvalScope::Bound {
+    bound_row_plan_eval_env(
+        &for_each.item_binding,
         row,
-        binding: &for_each.item_binding,
-    };
-    let inputs = InputEnv { rows: input_rows };
-    PlanEvalEnv {
-        scope,
-        inputs,
+        input_rows,
         wire_coercion_by_alias,
-    }
+    )
+}
+
+pub(crate) fn cross_uses_excluding_item(
+    uses: &[PlanResultUse],
+    item_binding: &crate::plasm_plan::BindingName,
+) -> Vec<PlanResultUse> {
+    uses.iter()
+        .filter(|u| u.r#as.as_str() != item_binding.as_str())
+        .cloned()
+        .collect()
 }
 
 #[cfg(test)]

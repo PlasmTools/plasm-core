@@ -77,12 +77,7 @@ fn parse_wire_num_value(v: minijinja::Value) -> Result<f64, String> {
 }
 
 fn register_view_template_filters(env: &mut Environment<'_>) {
-    env.add_filter(
-        "urlencode",
-        |s: String| -> Result<String, minijinja::Error> {
-            Ok(url::form_urlencoded::byte_serialize(s.as_bytes()).collect())
-        },
-    );
+    plasm_core::register_shared_minijinja_filters(env);
     env.add_filter(
         "wire_query_suffix",
         |json_text: String| -> Result<String, minijinja::Error> {
@@ -127,9 +122,6 @@ fn register_view_template_filters(env: &mut Environment<'_>) {
             }
         },
     );
-    env.add_filter("strip_trailing_slash", |s: String| -> String {
-        s.trim_end_matches('/').to_string()
-    });
     env.add_filter(
         "json_encode",
         |v: minijinja::Value| -> Result<String, minijinja::Error> {
@@ -138,31 +130,6 @@ fn register_view_template_filters(env: &mut Environment<'_>) {
             serde_json::to_string(&json).map_err(|e| {
                 minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())
             })
-        },
-    );
-    env.add_filter(
-        "split",
-        |s: String, sep: String| -> Result<Vec<String>, minijinja::Error> {
-            if sep.is_empty() {
-                return Err(minijinja::Error::new(
-                    minijinja::ErrorKind::InvalidOperation,
-                    "split: separator must be non-empty",
-                ));
-            }
-            Ok(s.split(&sep).map(str::to_string).collect())
-        },
-    );
-    env.add_filter(
-        "split_part",
-        |s: String, sep: String, index: i64| -> Result<String, minijinja::Error> {
-            if sep.is_empty() {
-                return Err(minijinja::Error::new(
-                    minijinja::ErrorKind::InvalidOperation,
-                    "split_part: separator must be non-empty",
-                ));
-            }
-            let idx = usize::try_from(index.max(0)).unwrap_or(0);
-            Ok(s.split(&sep).nth(idx).unwrap_or("").to_string())
         },
     );
     env.add_filter(
@@ -392,7 +359,13 @@ fn render_view_template_with_nodes(
             message: format!("computed view template render error: {e}"),
         })?;
 
-    Ok(Value::String(rendered))
+    // `{{ bool_expr }}` stringifies via Display (`True`/`False`). Boolean entity fields and
+    // `until field = true` need real Bools — coerce the two Minijinja bool spellings only.
+    Ok(match rendered.trim() {
+        "true" | "True" => Value::Bool(true),
+        "false" | "False" => Value::Bool(false),
+        _ => Value::String(rendered),
+    })
 }
 
 #[cfg(test)]
@@ -508,5 +481,31 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, Value::String("http://x/d/foo".into()));
+    }
+
+    #[test]
+    fn is_liked_membership_in_histogram_object() {
+        use plasm_core::json_value_to_plasm_value;
+        let mut fields = IndexMap::new();
+        fields.insert("song_id".into(), Value::Integer(33));
+        fields.insert(
+            "liked_by_song_id".into(),
+            json_value_to_plasm_value(&serde_json::json!({"33": 1, "299": 1})),
+        );
+        let out = render_view_computed_template(
+            "{{ (song_id ~ '') in liked_by_song_id }}",
+            &IndexMap::new(),
+            &fields,
+        )
+        .unwrap();
+        assert_eq!(out, Value::Bool(true), "got {out:?}");
+        fields.insert("song_id".into(), Value::Integer(93));
+        let out = render_view_computed_template(
+            "{{ (song_id ~ '') in liked_by_song_id }}",
+            &IndexMap::new(),
+            &fields,
+        )
+        .unwrap();
+        assert_eq!(out, Value::Bool(false), "got {out:?}");
     }
 }

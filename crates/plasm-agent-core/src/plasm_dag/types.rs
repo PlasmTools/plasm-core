@@ -104,6 +104,18 @@ pub(in crate::plasm_dag) enum DagNodeSource {
         qualified_entity: QualifiedEntityKey,
         uses_result: Vec<serde_json::Value>,
     },
+    /// PLP-8 / IT-2: state iterator (`iterate … step … until … take N`).
+    IterateUntil {
+        seed: String,
+        parsed_step_template: serde_json::Value,
+        step_display: String,
+        effect_kind: PlanNodeKind,
+        qualified_entity: QualifiedEntityKey,
+        until_body: String,
+        until_predicates: Vec<crate::plasm_plan::PlanPredicate>,
+        take: u32,
+        uses_result: Vec<serde_json::Value>,
+    },
 }
 
 pub(in crate::plasm_dag) struct CompileState<'a> {

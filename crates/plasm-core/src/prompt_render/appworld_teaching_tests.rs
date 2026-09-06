@@ -119,3 +119,74 @@ fn appworld_venmo_login_teaches_mutation_result_field_alphabet() {
         "login Meaning must not emit chain: hint; got {meaning:?}"
     );
 }
+
+/// Spotify Player primary get must teach `e#{access_token=<wire>}` (RA-5), never song_id brace.
+#[test]
+fn appworld_spotify_player_teaches_access_token_not_song_id() {
+    let dir = apis_dir("appworld/spotify");
+    if !dir.exists() {
+        return;
+    }
+    let cgs = load_schema_dir(&dir).unwrap();
+    let exp = TeachingExposureSession::new(&cgs, "", &["Player", "LikedSong"]);
+    let body =
+        PromptPipelineConfig::default().render_teaching_first_wave_for_session(&cgs, &exp, None);
+    let (_, table) = split_tsv_teaching_contract_and_table(&body);
+    validate_teaching_tsv_teaching_table(&table).expect("valid teaching rows");
+
+    let player_get = table.lines().find(|l| {
+        let expr = l.split('\t').next().unwrap_or("").trim();
+        expr.starts_with('e')
+            && expr.contains("{access_token=<wire>}")
+            && !expr.contains('.')
+            && !expr.contains('~')
+    });
+    assert!(
+        player_get.is_some(),
+        "Player must teach e#{{access_token=<wire>}} primary get:\n{table}"
+    );
+    assert!(
+        !table.lines().any(|l| {
+            let expr = l.split('\t').next().unwrap_or("").trim();
+            // Player must not use song_id as get identity; LikedSong{song_id=} keyed get is lawful.
+            expr.starts_with('e')
+                && expr.contains("{song_id=<wire>}")
+                && !expr.contains('.')
+                && l.contains("playback")
+        }),
+        "Player must not teach song_id brace as get identity:\n{table}"
+    );
+    assert!(
+        table.lines().any(|l| {
+            let expr = l.split('\t').next().unwrap_or("").trim();
+            expr.contains("{access_token=<wire>}") && expr.contains("genre")
+        }) || table.lines().any(|l| l.contains("genre")),
+        "LikedSong teaching must surface genre:\n{table}"
+    );
+    assert!(
+        table.lines().any(|l| {
+            let expr = l.split('\t').next().unwrap_or("").trim();
+            expr.contains("{access_token=<wire>}") && expr.contains("is_liked")
+        }),
+        "Player primary get must teach is_liked (liked-shelf membership):\n{table}"
+    );
+
+    let body_filled = body.replace("<wire>", "tok");
+    let line = body_filled
+        .lines()
+        .find(|l| {
+            let expr = l.split('\t').next().unwrap_or("").trim();
+            expr.contains("{access_token=") && !expr.contains('.') && !expr.contains('~')
+        })
+        .expect("Player access_token get line");
+    let expr = line.split('\t').next().unwrap().trim();
+    // Strip projection bracket for parse if present
+    let expr_core = expr.split('[').next().unwrap().trim();
+    let parsed = crate::expr_parser::parse_session_line(expr_core, &cgs, Some(exp.symbol_map_arc()))
+        .unwrap_or_else(|e| panic!("parse Player teaching {expr_core:?}: {e}"));
+    assert!(
+        matches!(parsed.expr, crate::Expr::Get(_)),
+        "Player access_token teaching must lower to Get, got {:?}",
+        parsed.expr
+    );
+}

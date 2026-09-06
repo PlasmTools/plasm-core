@@ -27,7 +27,7 @@ pub use payload::{
     PlanExprIr, PlanExprTemplate, PlanInputBinding, PlanPredicate, PlanPredicateOp,
     PlanQualifiedEntityKey, PlanRelationTraversal, PlanResultUse, PlasmDataValue, PlasmStepPayload,
     PurePayload, RelationCardinality, RelationName, RelationSourceCardinality,
-    SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind, WithColumn, WithExpr,
-    WithExprError, WithLiteral,
+    SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind, UnfoldUntilPayload, WithColumn,
+    WithExpr, WithExprError, WithLiteral,
 };
 pub use step::{EffectBarrier, EffectClass, PlasmStep, PlasmStepKind, ResultShape, SurfaceKind};

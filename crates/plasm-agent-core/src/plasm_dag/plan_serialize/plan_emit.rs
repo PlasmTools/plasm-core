@@ -221,6 +221,49 @@ pub(in crate::plasm_dag) fn emit_plan_json_for_source(
                 }
             }))
         }
+        DagNodeSource::IterateUntil {
+            seed,
+            parsed_step_template,
+            step_display,
+            effect_kind,
+            qualified_entity,
+            until_body,
+            until_predicates,
+            take,
+            uses_result,
+        } => {
+            let mut depends = vec![seed.clone()];
+            for input in uses_result {
+                if let Some(n) = input.get("node").and_then(|v| v.as_str()) {
+                    if !depends.iter().any(|d| d == n) {
+                        depends.push(n.to_string());
+                    }
+                }
+            }
+            Ok(json!({
+                "id": node.id,
+                "kind": "iterate_until",
+                "effect_class": "side_effect",
+                "result_shape": "single",
+                "source": seed,
+                "item_binding": "_",
+                "take": take,
+                "until": until_body,
+                "predicates": until_predicates,
+                "depends_on": depends,
+                "uses_result": std::iter::once(json!({ "node": seed, "as": "_" })).chain(uses_result.iter().cloned()).collect::<Vec<_>>(),
+                "effect_template": {
+                    "kind": effect_kind,
+                    "qualified_entity": qualified_entity,
+                    "expr_template": step_display,
+                    "ir_template": parsed_step_template,
+                    "effect_class": "side_effect",
+                    "result_shape": "side_effect_ack",
+                    "projection": [],
+                    "input_bindings": [],
+                }
+            }))
+        }
     }
 }
 pub(in crate::plasm_dag) fn expr_template_json(

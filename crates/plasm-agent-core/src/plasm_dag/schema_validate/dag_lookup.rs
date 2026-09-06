@@ -22,7 +22,8 @@ pub(in crate::plasm_dag) fn resolve_surface_dag_node<'a>(
             DagNodeSource::Derive { .. }
             | DagNodeSource::ScalarExtract { .. }
             | DagNodeSource::Data(_)
-            | DagNodeSource::ForEach { .. } => return None,
+            | DagNodeSource::ForEach { .. }
+            | DagNodeSource::IterateUntil { .. } => return None,
         }
     }
     None
@@ -112,7 +113,8 @@ pub(in crate::plasm_dag) fn resolve_qualified_entity_for_dag_source(
             DagNodeSource::Derive { .. }
             | DagNodeSource::ScalarExtract { .. }
             | DagNodeSource::Data(_)
-            | DagNodeSource::ForEach { .. } => return None,
+            | DagNodeSource::ForEach { .. }
+            | DagNodeSource::IterateUntil { .. } => return None,
         }
     }
     None

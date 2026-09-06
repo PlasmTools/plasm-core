@@ -7,7 +7,7 @@ schema_overlay:
       collect: teams
       items_path:
       - teams
-    - capability: custom_field_query
+    - capability: space_fields
       for_each: teams
       bind:
         team_id: '{{ row.id }}'
@@ -57,9 +57,27 @@ schema_overlay:
     capabilities:
     - task_get
 entities:
-  Task:
+  Team:
     id_field: id
     primary_query: team_query
+    description: ClickUp workspace team (overlay source).
+    fields:
+      id:
+        required: true
+        value_ref: nv_wire_str_short
+  CustomField:
+    id_field: id
+    primary_query: space_fields
+    description: Workspace custom field definition (overlay source).
+    fields:
+      id:
+        required: true
+        value_ref: nv_wire_str_short
+      name:
+        required: false
+        value_ref: nv_wire_str_short
+  Task:
+    id_field: id
     description: ClickUp task (overlay augments with custom fields).
     fields:
       id:
@@ -72,11 +90,11 @@ capabilities:
   team_query:
     description: List authorized teams.
     kind: query
-    entity: Task
-  custom_field_query:
+    entity: Team
+  space_fields:
     description: List workspace custom fields.
     kind: query
-    entity: Task
+    entity: CustomField
     scope:
     - name: team_id
       value_ref: nv_wire_str_short

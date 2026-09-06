@@ -2,6 +2,10 @@
 
 use super::prelude::*;
 use super::types::{BindingContractSource, CompileState, DagNode, DagNodeSource};
+use crate::plasm_dag_surface_guards::{
+    content_reference_error, path_is_render_content_stitch, ContentReferenceSite,
+};
+use crate::program_binding::ContinuationCapability;
 
 pub(in crate::plasm_dag) fn binding_contract(
     state: &CompileState<'_>,
@@ -9,6 +13,32 @@ pub(in crate::plasm_dag) fn binding_contract(
 ) -> Option<ProgramBindingContract> {
     let node = state.get(label)?;
     Some(binding_contract_for_node(state, label, node))
+}
+
+/// Reject `label.content` when `label` is a scalar cell that is not a row-to-text render binding.
+pub(in crate::plasm_dag) fn reject_illegal_content_stitch(
+    state: &CompileState<'_>,
+    node: &str,
+    path: &[impl AsRef<str>],
+) -> Result<(), String> {
+    if !path_is_render_content_stitch(path) {
+        return Ok(());
+    }
+    let Some(contract) = binding_contract(state, node) else {
+        return Ok(());
+    };
+    if !matches!(
+        contract.continuation,
+        ContinuationCapability::RenderContentScalar
+    ) && contract.is_scalar_cell()
+    {
+        return Err(content_reference_error(
+            node,
+            ContentReferenceSite::Continuation,
+            contract.continuation,
+        ));
+    }
+    Ok(())
 }
 
 pub(in crate::plasm_dag) fn binding_contract_for_node(
@@ -213,7 +243,7 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
                 anchor: ContinuationAnchor::None,
             }
         }
-        DagNodeSource::Derive { .. } | DagNodeSource::ForEach { .. } => ProgramBindingContract {
+        DagNodeSource::Derive { .. } | DagNodeSource::ForEach { .. } | DagNodeSource::IterateUntil { .. } => ProgramBindingContract {
             label: label.to_string(),
             row_entity: QualifiedEntityKey {
                 entry_id: String::new(),

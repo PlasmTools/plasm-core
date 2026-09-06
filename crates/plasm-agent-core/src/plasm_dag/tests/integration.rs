@@ -3263,7 +3263,7 @@ detail"#;
         let session = test_session();
         let source = r#"items = LangItem | take 2
 created = items => LangItem.create(title=<<T
-row ${_.title}
+row {{ _.title }}
 T
 )
 created"#;
@@ -3299,7 +3299,7 @@ static body
 RPT
 items = LangItem | take 2
 created = items => LangItem.create(title=<<T
-${report.content}
+{{ report.content }}
 T
 )
 created"#;
@@ -3568,5 +3568,31 @@ updated"#,
         assert!(
             uses.iter().any(|u| u["node"] == "body"),
             "title=body must reference binding: {uses:?}"
+        );
+    }
+
+    #[test]
+    fn invoke_rejects_content_stitch_on_literal_heredoc_binding() {
+        let session = test_session();
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "heredoc-content-reject",
+            r#"body = <<B
+patch
+B
+item = LangItem("i1")
+bad = item.update(title=body.content)
+bad"#,
+        )
+        .expect_err("literal heredoc .content must fail at compile");
+        assert!(
+            err.contains("row-to-text") || err.contains("already strings"),
+            "expected option-A .content diagnostic, got: {err}"
+        );
+        assert!(
+            err.contains("param=body") || err.contains("`body`"),
+            "help must steer to bare string bind: {err}"
         );
     }

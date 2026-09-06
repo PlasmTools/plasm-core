@@ -188,6 +188,15 @@ pub enum PathSegment {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         suffix: Option<String>,
     },
+    /// Conditional segment: `then_expr` / `else_expr` must evaluate to a string or number.
+    /// The result may contain `/` so one branch can expand to multiple URL path parts
+    /// (e.g. `library/songs` vs `recommendations`).
+    #[serde(rename = "if")]
+    If {
+        condition: Box<CmlCond>,
+        then_expr: Box<CmlExpr>,
+        else_expr: Box<CmlExpr>,
+    },
 }
 
 /// Pagination mapping for a query capability.
@@ -676,15 +685,71 @@ impl PathSegment {
     }
 }
 
-/// Path segment variable names in order (CML `type: var` only).
+fn push_expr_var_names(expr: &CmlExpr, out: &mut Vec<String>) {
+    match expr {
+        CmlExpr::Var { name } => out.push(name.clone()),
+        CmlExpr::Const { .. }
+        | CmlExpr::GmailRfc5322SendBody {}
+        | CmlExpr::GmailRfc5322ReplySendBody {} => {}
+        CmlExpr::Object { fields } => {
+            for (_, e) in fields {
+                push_expr_var_names(e, out);
+            }
+        }
+        CmlExpr::Array { elements } => {
+            for e in elements {
+                push_expr_var_names(e, out);
+            }
+        }
+        CmlExpr::If {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            push_cond_var_names(condition, out);
+            push_expr_var_names(then_expr, out);
+            push_expr_var_names(else_expr, out);
+        }
+        CmlExpr::Join { expr, .. } => push_expr_var_names(expr, out),
+        CmlExpr::Format { vars, .. } => {
+            for e in vars.values() {
+                push_expr_var_names(e, out);
+            }
+        }
+        CmlExpr::Base64 { value } => push_expr_var_names(value, out),
+    }
+}
+
+fn push_cond_var_names(cond: &CmlCond, out: &mut Vec<String>) {
+    match cond {
+        CmlCond::Exists { var } => out.push(var.clone()),
+        CmlCond::Equals { left, right } => {
+            push_expr_var_names(left, out);
+            push_expr_var_names(right, out);
+        }
+        CmlCond::Bool { expr } => push_expr_var_names(expr, out),
+    }
+}
+
+/// Path segment variable names in order (`type: var` and vars referenced by `type: if`).
 pub fn path_var_names_from_request(req: &CmlRequest) -> Vec<String> {
-    req.path
-        .iter()
-        .filter_map(|seg| match seg {
-            PathSegment::Var { name, .. } => Some(name.clone()),
-            _ => None,
-        })
-        .collect()
+    let mut out = Vec::new();
+    for seg in &req.path {
+        match seg {
+            PathSegment::Var { name, .. } => out.push(name.clone()),
+            PathSegment::If {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
+                push_cond_var_names(condition, &mut out);
+                push_expr_var_names(then_expr, &mut out);
+                push_expr_var_names(else_expr, &mut out);
+            }
+            PathSegment::Literal { .. } => {}
+        }
+    }
+    out
 }
 
 impl CmlRequest {
@@ -903,6 +968,17 @@ pub fn eval_cond(cond: &CmlCond, env: &CmlEnv) -> Result<bool, CmlError> {
     }
 }
 
+fn path_value_to_string(value: &Value, context: &str) -> Result<String, CmlError> {
+    match value {
+        Value::String(s) => Ok(s.clone()),
+        Value::Integer(i) => Ok(i.to_string()),
+        Value::Float(f) => Ok(f.to_string()),
+        _ => Err(CmlError::TypeError {
+            message: format!("{context} must evaluate to string or number"),
+        }),
+    }
+}
+
 /// Evaluate a path segment
 pub fn eval_path_segment(segment: &PathSegment, env: &CmlEnv) -> Result<String, CmlError> {
     match segment {
@@ -912,20 +988,23 @@ pub fn eval_path_segment(segment: &PathSegment, env: &CmlEnv) -> Result<String, 
                 .get(name)
                 .ok_or_else(|| CmlError::VariableNotFound { name: name.clone() })?;
 
-            let mut s = match value {
-                Value::String(s) => s.clone(),
-                Value::Integer(i) => i.to_string(),
-                Value::Float(f) => f.to_string(),
-                _ => {
-                    return Err(CmlError::TypeError {
-                        message: format!("Path variable '{}' must be string or number", name),
-                    });
-                }
-            };
+            let mut s = path_value_to_string(value, &format!("Path variable '{name}'"))?;
             if let Some(tail) = suffix {
                 s.push_str(tail);
             }
             Ok(s)
+        }
+        PathSegment::If {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            let chosen = if eval_cond(condition, env)? {
+                eval_cml(then_expr, env)?
+            } else {
+                eval_cml(else_expr, env)?
+            };
+            path_value_to_string(&chosen, "Path `if` branch")
         }
     }
 }

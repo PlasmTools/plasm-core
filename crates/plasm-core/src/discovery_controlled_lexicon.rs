@@ -48,10 +48,20 @@ pub fn explicit_named_catalogs_from_intent(
 fn alias_matches_intent(alias: &str, intent_tokens: &HashSet<String>, intent_lower: &str) -> bool {
     let alias_lower = alias.to_ascii_lowercase();
     if alias.chars().any(char::is_whitespace) {
-        intent_lower.contains(&alias_lower)
-    } else {
-        intent_tokens.contains(&alias_lower) || intent_lower.contains(&alias_lower)
+        // Multi-word registry aliases: require the full phrase as a contiguous span.
+        return intent_lower.contains(&alias_lower);
     }
+    // Single-token / hyphenated entry ids: whole-token match only.
+    // Never use raw substring (`"headphones".contains("phone")`) — that falsely
+    // brand-locks short catalogs like `phone` under product-search intents.
+    if intent_tokens.contains(&alias_lower) {
+        return true;
+    }
+    let parts: Vec<&str> = alias_lower
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.len() >= 2)
+        .collect();
+    !parts.is_empty() && parts.iter().all(|part| intent_tokens.contains(*part))
 }
 
 #[cfg(test)]
@@ -79,6 +89,35 @@ mod tests {
         let named =
             explicit_named_catalogs_from_intent(&catalogs, "use prompt_matrix to triage", None);
         assert_eq!(named, vec!["prompt_matrix"]);
+    }
+
+    #[test]
+    fn short_entry_id_does_not_match_as_substring() {
+        let cgs = prompt_matrix();
+        let mut catalogs = IndexMap::new();
+        catalogs.insert("phone".into(), cgs.clone());
+        catalogs.insert("amazon".into(), cgs);
+
+        let named = explicit_named_catalogs_from_intent(
+            &catalogs,
+            "Login to Amazon and search products for headphones",
+            None,
+        );
+        assert_eq!(named, vec!["amazon".to_string()]);
+    }
+
+    #[test]
+    fn phone_entry_id_matches_whole_token() {
+        let cgs = prompt_matrix();
+        let mut catalogs = IndexMap::new();
+        catalogs.insert("phone".into(), cgs);
+
+        let named = explicit_named_catalogs_from_intent(
+            &catalogs,
+            "Login to Phone and list contacts",
+            None,
+        );
+        assert_eq!(named, vec!["phone".to_string()]);
     }
 
     fn prompt_matrix() -> CGS {

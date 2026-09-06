@@ -57,7 +57,7 @@ fn scoped_node_symbols_evaluate_against_singleton_inputs() {
             (
                 "title".to_string(),
                 PlanValue::Template {
-                    template: "${p.name} uses ${moveFacts.move}".to_string(),
+                    template: "{{ p.name }} uses {{ moveFacts.move }}".to_string(),
                     input_bindings: vec![],
                 },
             ),
@@ -141,13 +141,13 @@ fn for_each_cross_uses_materialization_wires_upstream_singleton() {
                 "effect_template": {
                     "kind": "action",
                     "qualified_entity": { "entry_id": "acme", "entity": "Product" },
-                    "expr_template": "Product.create(title=<<T\n${_.title} ${report.content}\nT\n)",
+                    "expr_template": "Product.create(title=<<T\n{{ _.title }} {{ report.content }}\nT\n)",
                     "ir_template": {
                         "expr": {
                             "op": "create",
                             "capability": "product_create",
                             "entity": "Product",
-                            "input": { "title": "<<T\n${_.title} ${report.content}\nT\n" }
+                            "input": { "title": "<<T\n{{ _.title }} {{ report.content }}\nT\n" }
                         },
                         "input_bindings": []
                     },
@@ -209,7 +209,7 @@ fn for_each_cross_uses_materialization_wires_upstream_singleton() {
     let empty_coercion = BTreeMap::new();
     let env = for_each_plan_eval_env(for_each, &row, &input_rows, &empty_coercion);
     let out =
-        instantiate_expr_template_value(&serde_json::json!("${_.title} ${report.content}"), &env)
+        instantiate_expr_template_value(&serde_json::json!("{{ _.title }} {{ report.content }}"), &env)
             .expect("interpolate");
     assert_eq!(out, serde_json::json!("Bolt STATS"));
 }

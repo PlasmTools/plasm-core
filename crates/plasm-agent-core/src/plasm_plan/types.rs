@@ -369,6 +369,7 @@ pub enum ValidatedPlanNode {
     Derive(ValidatedDeriveNode),
     Compute(ValidatedComputeNode),
     ForEach(ValidatedForEachNode),
+    IterateUntil(ValidatedIterateUntilNode),
     RelationTraversal(ValidatedRelationTraversalNode),
 }
 
@@ -439,6 +440,24 @@ pub struct ValidatedForEachNode {
     pub(crate) approval: Option<String>,
 }
 
+/// PLP-8 state iterator: observe seed, step+reobserve until predicate or bound exhaustion.
+#[derive(Debug, Clone)]
+pub struct ValidatedIterateUntilNode {
+    pub(crate) id: PlanNodeId,
+    pub(crate) effect_class: EffectClass,
+    pub(crate) result_shape: ResultShape,
+    pub(crate) source: PlanNodeId,
+    pub(crate) item_binding: BindingName,
+    pub(crate) effect_template: EffectTemplate,
+    pub(crate) until_predicates: Vec<PlanPredicate>,
+    pub(crate) take: u32,
+    /// Seed Get IR for re-observe after each step (PLP-8).
+    pub(crate) seed_ir: Option<ValidatedPlanExprIr>,
+    pub(crate) depends_on: Vec<PlanNodeId>,
+    pub(crate) uses_result: Vec<PlanResultUse>,
+    pub(crate) approval: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ValidatedRelationTraversalNode {
     pub(crate) id: PlanNodeId,
@@ -474,6 +493,7 @@ impl ValidatedPlanNode {
             Self::Derive(n) => &n.id,
             Self::Compute(n) => &n.id,
             Self::ForEach(n) => &n.id,
+            Self::IterateUntil(n) => &n.id,
             Self::RelationTraversal(n) => &n.id,
         }
     }
@@ -485,6 +505,7 @@ impl ValidatedPlanNode {
             Self::Derive(_) => PlanNodeKind::Derive,
             Self::Compute(_) => PlanNodeKind::Compute,
             Self::ForEach(_) => PlanNodeKind::ForEach,
+            Self::IterateUntil(_) => PlanNodeKind::IterateUntil,
             Self::RelationTraversal(_) => PlanNodeKind::Relation,
         }
     }
@@ -496,6 +517,7 @@ impl ValidatedPlanNode {
             Self::Derive(n) => n.effect_class,
             Self::Compute(n) => n.effect_class,
             Self::ForEach(n) => n.effect_class,
+            Self::IterateUntil(n) => n.effect_class,
             Self::RelationTraversal(n) => n.effect_class,
         }
     }
@@ -507,6 +529,7 @@ impl ValidatedPlanNode {
             Self::Derive(n) => n.result_shape,
             Self::Compute(n) => n.result_shape,
             Self::ForEach(n) => n.result_shape,
+            Self::IterateUntil(n) => n.result_shape,
             Self::RelationTraversal(n) => n.result_shape,
         }
     }
@@ -518,6 +541,7 @@ impl ValidatedPlanNode {
             Self::Derive(n) => &n.depends_on,
             Self::Compute(n) => &n.depends_on,
             Self::ForEach(n) => &n.depends_on,
+            Self::IterateUntil(n) => &n.depends_on,
             Self::RelationTraversal(n) => &n.depends_on,
         }
     }
@@ -529,6 +553,7 @@ impl ValidatedPlanNode {
             Self::Derive(n) => &n.uses_result,
             Self::Compute(n) => &n.uses_result,
             Self::ForEach(n) => &n.uses_result,
+            Self::IterateUntil(n) => &n.uses_result,
             Self::RelationTraversal(n) => &n.uses_result,
         }
     }
@@ -608,6 +633,7 @@ pub enum PlanNodeKind {
     Derive,
     Compute,
     ForEach,
+    IterateUntil,
     Relation,
 }
 
@@ -681,6 +707,12 @@ pub struct PlanNode {
     /// Paging cap for a surface query (Plasm program `e#…page_size(n)` / `.page_size(n)`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_size: Option<usize>,
+    /// Hard bound for `iterate_until` (PLP-8); required when `kind == IterateUntil`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub take: Option<u32>,
+    /// Until predicate body for `iterate_until` (same shape as `| where`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<String>,
 }
 
 /// Relation traversal on a validated plan node.

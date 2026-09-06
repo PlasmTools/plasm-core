@@ -65,6 +65,7 @@ mod value;
 
 pub mod applicator;
 pub mod collect_meta;
+pub mod iterate_until;
 pub mod pipe;
 pub mod program;
 pub mod value_expr;
@@ -74,6 +75,7 @@ pub use collect_meta::{normalize_nested_projection_field, peel_collect_meta, Col
 pub use heredoc_surface::{
     parse_tagged_heredoc_literal, tagged_heredoc_close_kind, HeredocCloseLineKind,
 };
+pub use iterate_until::{iterate_seed_is_label, try_parse_iterate_until, IterateUntilExpr};
 pub use pipe::{parse_pipe_expr, PipeExpr, PipeStage};
 pub use program::{
     parse_expr_node, parse_program_shape, ExprNode, ParsedProgram, RowExpr, Statement,

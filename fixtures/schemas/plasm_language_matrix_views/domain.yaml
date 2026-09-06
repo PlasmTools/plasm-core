@@ -1,4 +1,4 @@
-version: 3
+version: 4
 auth:
   scheme: none
 http_backend: http://127.0.0.1:9
@@ -71,7 +71,6 @@ entities:
     relations: {}
   LangItem:
     id_field: id
-    primary_query: langitem_query
     description: Primary matrix entity — list, search, CRUD, relations, actions.
     fields:
       id:
@@ -268,22 +267,13 @@ entities:
           view: lang_work_snapshot_empty
 capabilities:
   langitem_query:
-    description: List LangItem rows (no required HTTP filters)
-    kind: query
-    entity: LangItem
-    provides:
-    - id
-    - title
-    - score
-    - owner
-  langitem_query_owner:
-    description: List LangItem rows filtered by owner (required query param)
+    description: List LangItem rows (optional owner filter)
     kind: query
     entity: LangItem
     selection:
     - name: owner
       value_ref: nv_langitem_query_owner_owner
-      required: true
+      required: false
     provides:
     - id
     - title
@@ -894,7 +884,7 @@ views:
           kind: scope
           param: item_id
     - id: owner_items
-      capability: langitem_query_owner
+      capability: langitem_query
       bind:
         owner:
           kind: computed
@@ -950,7 +940,7 @@ views:
       capability: langviewer_get
       bind: {}
     - id: assigned_items
-      capability: langitem_query_owner
+      capability: langitem_query
       bind:
         owner:
           kind: node_field
@@ -980,7 +970,7 @@ views:
       capability: langviewer_nobody_get
       bind: {}
     - id: assigned_items
-      capability: langitem_query_owner
+      capability: langitem_query
       bind:
         owner:
           kind: node_field

@@ -1,5 +1,5 @@
 ---
-source: crates/plasm-core/src/prompt_render/tests.rs
+source: plasm-oss/crates/plasm-core/src/prompt_render/tests.rs
 expression: "super::PLASM_TOOL_DESCRIPTION"
 ---
 **Plasm** — **`logical_session_ref`** + **`program`**. Clean read-only plans execute inline (rows in tool **`content`**). Plans with any mutation / review gate return a **`run_ref`** (`pcN`, 10 min TTL) for **`plasm_run`**; do **not** echo the program.
@@ -8,10 +8,10 @@ expression: "super::PLASM_TOOL_DESCRIPTION"
 
 **Program shape:** one `plasm_expr`, or `label = …` bindings then **one** final return line (comma-separated roots on that line only). No prose, `return` keyword, fences, or table rows.
 
-**Strings:** JSON escapes in quotes (`\n` `\t` `\\` `\"`); tagged `<<TAG` … `TAG` heredocs for long bodies (real newlines). Pick one lane per open:
-- Literal — `body = <<TAG` … `TAG` (raw text, not Minijinja; a `key = value` body line is OK when asked)
-- Inline — `e#.m#(param=<<TAG` … `TAG)` …)
-- Render — `label = source => <<TAG` … `TAG` (Minijinja over `rows` and the source binding)
+**Strings:** JSON escapes in quotes (`\n` `\t` `\\` `\"`); tagged `<<TAG` … `TAG` heredocs (real newlines). **Minijinja only** (`{{ wire }}` / `{{ binding.content }}` / `| split_part`); marker-free opaque; `${…}`/`$$` abolished. Lanes:
+- Literal — `body = <<TAG` … `TAG` → **string**; pass `param=body` (never `body.content`)
+- Inline / fanout — `e#.m#(param=<<TAG` … `TAG)` — string arg; Minijinja for row wires
+- Render — `label = source => <<TAG` … `TAG` → content object; string params take **`label.content`** only here
 
 **Batch independent reads** (required): shared scope + multi-root return — not N tool cycles.
 ```
@@ -42,8 +42,9 @@ Batch reads aggressively. After a write use **`label.wire`** from that binding �
 **Forbidden as row algebra:** `.filter` / `.with` / `[proj]` / `.group_by` / `.sort` / `.limit`, `| update`, `| take 1` then `.update` for multi-row, bare `=> tags` without `_`.
 
 **Composition:**
-- Render body is Minijinja (e.g. `{% for r in rows %}- {{ r.id }}{% endfor %}`). Put `| where` and plural `rows => e#.m#…` on earlier binding lines; string params take **`binding.content`**. Interpolation: `${report.content}` (`$$` escapes `$`).
-- Plural write (prefer bind): `done = rows => e#.m#(…, _.f)` then include `done` among the final return roots. Bare `rows => e#.m#…` only when it is the program’s **sole** return root. Bare create: `e#.m#(param=…)` (long string args: inline heredoc lane).
+- After `label = source => <<TAG`, string params take **`label.content`** (or `{{ label.content }}`). Plain `body = <<TAG` is already a string — **`param=body`**, never `body.content`. Fanout args: `title=<<T\n{{ name }} — {{ code }}\nT`.
+- Plural write (prefer bind): `done = rows => e#.m#(…, _.f)` then include `done` among the final return roots. Bare `rows => e#.m#…` only when it is the program’s **sole** return root. Bare create: `e#.m#(param=…)` (long strings: inline heredoc or `body = <<TAG` then `param=body`).
+- **State iterate** (feedback loop; not foreach): `done = iterate seed step e#.m#(…, _.f) until field = value take N` — **`take N` required** (`N≥1`); re-observes seed after each step; bound exhaustion without predicate is an error. No unbounded `while`.
 - Quote scalars in `{…}` and string params.
 
 **Apply vs return:** A bare line `lhs => rhs` (no `label =`) is itself a return root. When more steps follow, bind it (`done = rows => e#.m#(…)`) and keep a single final return line of roots.

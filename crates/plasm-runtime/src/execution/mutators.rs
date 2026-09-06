@@ -417,9 +417,16 @@ impl ExecutionEngine {
                     .collect();
                 let count = entities.len();
 
-                if count > 0 {
+                // Merge only when `provides` names authoritative fields. Side-effect actions
+                // often echo a projection under an empty / wrong Ref (identity lives in method
+                // params, not the invoke target); merging that ghost must not satisfy later Gets.
+                // Always invalidate + poison when `invalidates_entities` is set — even if decode
+                // yields zero rows — so composed primary_read re-fetches live.
+                if count > 0 && !capability.provides.is_empty() {
                     mat.merge(entities.clone())?;
-                    mat.apply_post_mutation_cache_effects(capability, &entities, cgs)?;
+                }
+                if count > 0 || !capability.invalidates_entities.is_empty() {
+                    mat.apply_post_mutation_cache_effects(capability, cgs)?;
                     mat.poison_read_caches_after_mutation();
                 }
 

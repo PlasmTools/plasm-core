@@ -28,6 +28,7 @@ pub(crate) fn is_plasm_dag_source(src: &str) -> bool {
         let line = strip_line_comment(line).trim();
         !line.is_empty() && split_assignment_at_top_level(line).is_some()
     }) || src.contains("=>")
+        || src.trim_start().starts_with("iterate")
         || parse_pipe_expr(src).is_ok_and(|pipe| pipe.is_some())
         || peel_collect_meta(src)
             .map(|(_, meta)| !meta.is_empty())
@@ -303,6 +304,7 @@ fn lower_row_only_expr(
     row: RowExpr,
 ) -> Result<Vec<DagNode>, String> {
     match row {
+        RowExpr::Iterate(it) => lower_iterate_until(session, state, id, display, it),
         RowExpr::Pipe(pipe) => lower_pipe_row_expression(session, state, id, display, pipe),
         RowExpr::Primary { head, collect_meta } => {
             let head = head.trim();
@@ -327,6 +329,116 @@ fn lower_row_only_expr(
             lower_suffix_stream(session, state, id, display, head, suffixes, Some(id))
         }
     }
+}
+
+fn lower_iterate_until(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    id: &str,
+    display: &str,
+    it: plasm_core::expr_parser::IterateUntilExpr,
+) -> Result<Vec<DagNode>, String> {
+    let seed_is_label = plasm_core::expr_parser::iterate_seed_is_label(it.seed.as_str());
+    let seed_id = format!("__plasm_{id}_iterate_seed");
+    let mut prefix = if seed_is_label {
+        if !state.contains(it.seed.as_str()) {
+            return Err(format!(
+                "Plasm program `{id}`: iterate seed binding `{}` is unknown",
+                it.seed
+            ));
+        }
+        // Proven binding — require StaticSingleton at binding-contract time; reuse label as seed.
+        Vec::new()
+    } else {
+        compile_surface_nodes(session, state, &seed_id, it.seed.as_str())?
+    };
+    let seed_label = if seed_is_label {
+        it.seed.clone()
+    } else {
+        seed_id
+    };
+    if seed_is_label {
+        require_node(state, seed_label.as_str())?;
+    } else {
+        // Seed nodes must exist under seed_label before step parse can see `_` from uses.
+        let scratch = compile_state_with_nodes(state, &prefix);
+        require_node(&scratch, seed_label.as_str())?;
+    }
+
+    let scratch = if prefix.is_empty() {
+        None
+    } else {
+        Some(compile_state_with_nodes(state, &prefix))
+    };
+    let state = scratch.as_ref().unwrap_or(state);
+
+    let refs = state.program_node_id_set();
+    let parsed = parse_plasm_program_surface_for_dag(
+        session,
+        state.cross_cache,
+        state.pipeline,
+        it.step.trim(),
+        &refs,
+        true,
+        Some(id),
+    )?;
+    let uses = collect_template_uses_from_expr(&parsed.expr);
+    let (kind, qualified, _effect, _shape) = infer_surface_contract(session, &parsed.expr)?;
+    if !matches!(
+        kind,
+        PlanNodeKind::Create
+            | PlanNodeKind::Update
+            | PlanNodeKind::Delete
+            | PlanNodeKind::Action
+    ) {
+        return Err(format!(
+            "Plasm program `{id}` iterate step must be a write/side-effect expression"
+        ));
+    }
+
+    // Compile until predicate against seed entity (fail closed at lower time).
+    let cgs = cgs_for_qualified_entity(session, &qualified).ok_or_else(|| {
+        format!(
+            "catalog `{}` is not loaded for iterate entity `{}`",
+            qualified.entry_id, qualified.entity
+        )
+    })?;
+    let layer = plasm_core::CgsLayer::new(qualified.entry_id.as_str(), cgs.as_ref());
+    let stack = [layer];
+    let sym_map = state.sym_map_for(session);
+    let row_pred = plasm_core::parse_row_predicate_list(
+        qualified.entity.as_str(),
+        it.until.as_str(),
+        &stack,
+        sym_map,
+    )
+    .map_err(|e| format!("Plasm program `{id}` iterate until predicate: {e}"))?;
+    let until_predicates = crate::row_predicate_lower::lower_row_predicate_to_plan(
+        &row_pred,
+        session,
+        &qualified,
+        state.cross_cache,
+    )
+    .map_err(|e| format!("Plasm program `{id}` iterate until lower: {e}"))?;
+
+    prefix.push(DagNode {
+        id: id.to_string(),
+        expr: display.to_string(),
+        singleton: true,
+        page_size: None,
+        source: DagNodeSource::IterateUntil {
+            seed: seed_label,
+            parsed_step_template: expr_template_json(&parsed, &uses)?,
+            step_display: it.step.trim().to_string(),
+            effect_kind: kind,
+            qualified_entity: qualified,
+            until_body: it.until.clone(),
+            until_predicates,
+            take: it.take,
+            uses_result: uses,
+        },
+    });
+    Ok(prefix)
 }
 
 /// When the pipe head is not a bound label, decide catalog materialization vs unknown binding.
@@ -449,6 +561,9 @@ fn stage_row_expr_to_source(
             };
             Ok((nodes, out_id))
         }
+        RowExpr::Iterate(_) => Err(format!(
+            "Plasm program `{id}`: `iterate … until … take N` cannot be staged as an apply left-hand; bind it as its own expression"
+        )),
     }
 }
 

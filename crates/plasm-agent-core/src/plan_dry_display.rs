@@ -171,6 +171,12 @@ pub enum PlanDryOp {
         binding: String,
         body: String,
     },
+    IterateUntil {
+        source: String,
+        binding: String,
+        body: String,
+        take: u32,
+    },
     Relation {
         relation: String,
         target: String,
@@ -342,6 +348,7 @@ pub(crate) fn human_ux_headline_for_op(op: &PlanDryOp) -> String {
         PlanDryOp::With { columns } => format!("Add columns {}", columns.join(", ")),
         PlanDryOp::Render { .. } => "Render text".into(),
         PlanDryOp::ForEach { .. } => "For each row".into(),
+        PlanDryOp::IterateUntil { .. } => "Iterate until".into(),
         PlanDryOp::Relation { .. } => "Follow relation".into(),
         PlanDryOp::Data { .. } => "Static data".into(),
         PlanDryOp::Derive { .. } => "Derive rows".into(),
@@ -386,6 +393,12 @@ pub(crate) fn human_ux_summary_for_op(op: &PlanDryOp) -> String {
         PlanDryOp::ForEach {
             source, binding, ..
         } => format!("For each row in {source} as {binding}"),
+        PlanDryOp::IterateUntil {
+            source,
+            binding,
+            take,
+            ..
+        } => format!("Iterate {source} as {binding} until (take {take})"),
         PlanDryOp::Derive {
             source, binding, ..
         } => format!("Derive from {source} as {binding}"),
@@ -424,6 +437,14 @@ pub(crate) fn render_plan_dry_op(op: &PlanDryOp) -> String {
             body,
         } => {
             format!("for_each {source} as {binding} => {body}")
+        }
+        PlanDryOp::IterateUntil {
+            source,
+            binding,
+            body,
+            take,
+        } => {
+            format!("iterate_until {source} as {binding} => {body} take {take}")
         }
         PlanDryOp::Relation {
             relation,
@@ -474,6 +495,12 @@ fn compact_op_from_node(
             source: map_display_id(n.source.as_str(), display_map),
             binding: n.item_binding.as_str().to_string(),
             body: effect_template_body(&n.effect_template, es),
+        },
+        ValidatedPlanNode::IterateUntil(n) => PlanDryOp::IterateUntil {
+            source: map_display_id(n.source.as_str(), display_map),
+            binding: n.item_binding.as_str().to_string(),
+            body: effect_template_body(&n.effect_template, es),
+            take: n.take,
         },
     }
 }
@@ -600,6 +627,9 @@ fn step_upstream_labels(
                 ids.push(map_display_id(n.source.as_str(), display_map));
             }
             ValidatedPlanNode::ForEach(n) => {
+                ids.push(map_display_id(n.source.as_str(), display_map));
+            }
+            ValidatedPlanNode::IterateUntil(n) => {
                 ids.push(map_display_id(n.source.as_str(), display_map));
             }
             ValidatedPlanNode::RelationTraversal(n) => {
@@ -774,6 +804,7 @@ fn render_kind(kind: PlanNodeKind) -> &'static str {
         PlanNodeKind::Derive => "derive",
         PlanNodeKind::Compute => "compute",
         PlanNodeKind::ForEach => "for_each",
+        PlanNodeKind::IterateUntil => "iterate_until",
         PlanNodeKind::Relation => "relation",
     }
 }
@@ -865,7 +896,7 @@ fn next_synthetic_plan_label(
             counters.d += 1;
             format!("d{}", counters.d)
         }
-        ValidatedPlanNode::ForEach(_) => {
+        ValidatedPlanNode::ForEach(_) | ValidatedPlanNode::IterateUntil(_) => {
             counters.f += 1;
             format!("f{}", counters.f)
         }

@@ -244,34 +244,29 @@ impl SessionMaterialization {
             .retain(|reference, _| self.graph.get(reference).is_some());
     }
 
-    /// Mirror mutation fields onto invalidated read-model entities, evict stale graph rows,
-    /// and drop scoped query-index entries so composed views refetch live data.
+    /// Evict every cached row of each `invalidates_entities` type and drop scoped query /
+    /// response entries so composed primary_read re-fetches live.
+    ///
+    /// Type-wide eviction is mandatory: mutator echoes may decode under an empty or
+    /// wrong-keyed [`Ref`] (e.g. method params carry `access_token` while
+    /// `implicit_request_identity` identity never lands on the echo Ref). Surgical
+    /// remove-by-decoded-id would miss the seed Get row and leave iterate…until
+    /// re-observe satisfied from a stale Completeness::Complete graph hit.
     pub fn apply_post_mutation_cache_effects(
         &mut self,
         capability: &plasm_core::schema::CapabilitySchema,
-        merged_entities: &[crate::cache::CachedEntity],
         cgs: &plasm_core::CGS,
     ) -> Result<(), crate::RuntimeError> {
-        use std::collections::HashSet;
-
         if capability.invalidates_entities.is_empty() {
             return Ok(());
         }
 
         for target_type in &capability.invalidates_entities {
-            let Some(ent_def) = cgs.get_entity(target_type.as_str()) else {
+            if cgs.get_entity(target_type.as_str()).is_none() {
                 continue;
-            };
-            let mut target_ids = HashSet::new();
-            for source in merged_entities {
-                if let Some(id) = entity_id_for_target(source, ent_def) {
-                    target_ids.insert(id);
-                }
             }
-            for id in &target_ids {
-                let target_ref = Ref::new(target_type.as_str(), id);
-                self.graph.remove(&target_ref);
-            }
+            self.graph
+                .invalidate_matching(|e| e.reference.entity_type.as_str() == target_type.as_str());
             self.invalidate_after_mutation(target_type.as_str());
         }
         Ok(())
@@ -437,33 +432,6 @@ impl ExecutionCacheConsult {
     }
 }
 
-fn entity_id_string(entity: &crate::cache::CachedEntity, field: &str) -> Option<String> {
-    use plasm_core::Value;
-    entity.get_field(field).and_then(|v| match v.to_value() {
-        Value::String(s) => Some(s),
-        Value::Integer(i) => Some(i.to_string()),
-        _ => None,
-    })
-}
-
-fn entity_id_for_target(
-    entity: &crate::cache::CachedEntity,
-    target: &plasm_core::schema::EntityDef,
-) -> Option<String> {
-    let id_field = target.id_field.as_str();
-    if let Some(id) = entity_id_string(entity, id_field) {
-        return Some(id);
-    }
-    if id_field == "credit_card_account_id" {
-        return entity_id_string(entity, "account_id");
-    }
-    if id_field == "account_id" {
-        return entity_id_string(entity, "credit_card_account_id");
-    }
-    None
-}
-
-#[allow(clippy::only_used_in_recursion)]
 fn client_side_predicate_matches_entity(
     entity: &CachedEntity,
     pred: &plasm_core::Predicate,
@@ -580,23 +548,70 @@ mod tests {
         mat.query_index
             .insert(key.clone(), vec![Ref::new("CreditCardAccount", "cc1")]);
 
-        let locked = CachedEntity::from_decoded(
-            Ref::new("CreditCardAccountLocked", "cc1"),
-            [
-                ("account_id".into(), Value::String("cc1".into())),
-                ("balance".into(), Value::Integer(0)),
-            ]
-            .into_iter()
-            .collect(),
-            indexmap::IndexMap::new(),
-            2,
-            EntityCompleteness::Complete,
-        );
-        mat.apply_post_mutation_cache_effects(&cap, &[locked], &cgs)
+        // Type-wide eviction ignores mutator echo identity; only invalidates_entities matters.
+        mat.apply_post_mutation_cache_effects(&cap, &cgs)
             .unwrap();
 
         assert!(mat.get(&Ref::new("CreditCardAccount", "cc1")).is_none());
         assert!(mat.query_index.get(&key).is_none());
+    }
+
+    #[test]
+    fn post_mutation_type_wide_evicts_even_when_echo_ref_is_empty() {
+        use crate::cache::EntityCompleteness;
+        use plasm_core::schema::{
+            CapabilityKind, CapabilityMapping, CapabilitySchema, CapabilityTemplateJson,
+        };
+        use plasm_core::{CapabilityName, EntityName, Ref};
+
+        let domain = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../apis/tau3_banking/domain.yaml");
+        let mappings = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../apis/tau3_banking/mappings.yaml");
+        let cgs = plasm_core::loader::load_split_schema(&domain, &mappings).expect("cgs");
+
+        let cap = CapabilitySchema {
+            name: CapabilityName::from("CreditCardAccountLocked_pay_from_checking"),
+            description: String::new(),
+            kind: CapabilityKind::Action,
+            domain: EntityName::from("CreditCardAccountLocked"),
+            mapping: Some(CapabilityMapping {
+                template: CapabilityTemplateJson(serde_json::json!({ "method": "POST" })),
+            }),
+            derived: None,
+            inputs: Default::default(),
+            output_schema: None,
+            provides: vec![],
+            sanitizes: vec![],
+            deterministic: None,
+            scope_aggregate_key_policy: Default::default(),
+            preflight: None,
+            discovery: None,
+            identity_key: None,
+            invalidates_entities: vec!["CreditCardAccount".to_string()],
+        };
+
+        let mut mat = SessionMaterialization::new();
+        mat.insert(CachedEntity::from_decoded(
+            Ref::new("CreditCardAccount", "jwt-or-seed-id"),
+            [
+                ("account_id".into(), Value::String("jwt-or-seed-id".into())),
+                ("balance".into(), Value::Integer(3000)),
+            ]
+            .into_iter()
+            .collect(),
+            indexmap::IndexMap::new(),
+            1,
+            EntityCompleteness::Complete,
+        ))
+        .unwrap();
+
+        // Former surgical-by-echo-id path would miss this seed when the mutator decoded
+        // under an empty Ref; type-wide eviction clears the whole entity type.
+        mat.apply_post_mutation_cache_effects(&cap, &cgs)
+            .unwrap();
+
+        assert!(mat.get(&Ref::new("CreditCardAccount", "jwt-or-seed-id")).is_none());
     }
 
     #[test]

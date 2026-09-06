@@ -29,6 +29,15 @@ pub fn render_node_operation(node: &ValidatedPlanNode) -> String {
             let template = render_effect_template_expr(&n.effect_template);
             format!("for_each {source} as {binding} => {template}")
         }
+        ValidatedPlanNode::IterateUntil(n) => {
+            let source = n.source.as_str();
+            let binding = n.item_binding.as_str();
+            let template = render_effect_template_expr(&n.effect_template);
+            format!(
+                "iterate {source} as {binding} step {template} until … take {}",
+                n.take
+            )
+        }
     }
 }
 
@@ -242,14 +251,14 @@ pub(crate) fn render_plan_value(value: &PlanValue) -> String {
                     .join(", ")
             )
         }),
-        PlanValue::Symbol { path } => format!("${path}"),
+        PlanValue::Symbol { path } => format!("{{{{ {path} }}}}"),
         PlanValue::BindingSymbol { binding, path } => {
             let suffix = if path.is_empty() {
                 String::new()
             } else {
                 format!(".{}", path.join("."))
             };
-            format!("${binding}{suffix}")
+            format!("{{{{ {binding}{suffix} }}}}")
         }
         PlanValue::NodeSymbol { alias, path, .. } => {
             let suffix = if path.is_empty() {
@@ -257,7 +266,7 @@ pub(crate) fn render_plan_value(value: &PlanValue) -> String {
             } else {
                 format!(".{}", path.join("."))
             };
-            format!("${alias}{suffix}")
+            format!("{{{{ {alias}{suffix} }}}}")
         }
         PlanValue::Template { template, .. } => format!("template`{template}`"),
         PlanValue::EntityRefKey { key, .. } => render_plan_value(key),
@@ -340,6 +349,7 @@ pub(crate) fn render_kind(kind: PlanNodeKind) -> &'static str {
         PlanNodeKind::Derive => "derive",
         PlanNodeKind::Compute => "compute",
         PlanNodeKind::ForEach => "for_each",
+        PlanNodeKind::IterateUntil => "iterate_until",
         PlanNodeKind::Relation => "relation",
     }
 }

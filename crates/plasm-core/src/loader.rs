@@ -394,6 +394,9 @@ pub struct DomainCapability {
     /// List-backed keyed Get (`derive:`) — no `mappings.yaml` entry; runtime picks one row from `source`.
     #[serde(default)]
     pub derive: Option<DomainDerivedGetSpec>,
+    /// Entity types whose session graph rows should refresh after a successful mutating response.
+    #[serde(default)]
+    pub invalidates_entities: Vec<String>,
 }
 
 /// Authoring shape for [`crate::DerivedGetPlan`] on a `kind: get` capability.
@@ -526,6 +529,7 @@ pub fn finalize_cgs_load(cgs: &mut CGS) -> Result<(), String> {
 
     warn_scope_aggregate_policy_template_mismatches(cgs);
     warn_unlabeled_output_data(cgs);
+    warn_teaching_surface_fat(cgs);
 
     trace!("assemble_cgs: validate ok");
     Ok(())
@@ -1075,7 +1079,7 @@ fn assemble_cgs_core(
             output_schema: cap.output.clone(),
             provides: cap.provides.clone(),
             sanitizes: cap.sanitizes.clone(),
-            invalidates_entities: vec![],
+            invalidates_entities: cap.invalidates_entities.clone(),
             deterministic: cap.deterministic,
             scope_aggregate_key_policy: cap.scope_aggregate_key_policy.unwrap_or_default(),
             preflight: cap.preflight.clone(),
@@ -1140,6 +1144,13 @@ fn validate_compound_entity_identity(
 fn warn_unlabeled_output_data(cgs: &CGS) {
     for msg in cgs.unlabeled_output_data_warnings() {
         warn!(target: "plasm_core::loader", violation = %msg, "unlabeled output data");
+    }
+}
+
+/// Warn when an entity would teach a fat multi-arity / relation-nav surface (still taught in full).
+fn warn_teaching_surface_fat(cgs: &CGS) {
+    for msg in cgs.teaching_surface_fat_warnings() {
+        warn!(target: "plasm_core::loader", violation = %msg, "fat teaching surface");
     }
 }
 

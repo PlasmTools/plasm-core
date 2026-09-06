@@ -213,10 +213,10 @@ pub struct ResourceSchema {
     /// Capability **id** of the canonical **Get** on this entity (required when the entity declares 2+ Gets).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub primary_read: Option<String>,
-    /// Capability **id** of the canonical unscoped **Query** (required when the entity declares 2+ unscoped Queries).
+    /// Capability **id** of the canonical **Query** (obsolete for multi-query — illegal; optional explicit pointer when a sole Query exists).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub primary_query: Option<String>,
-    /// Capability **id** of the canonical unscoped **Search** (required when the entity declares 2+ unscoped Searches).
+    /// Capability **id** of the canonical unscoped **Search** (obsolete for multi-search — illegal; optional explicit pointer when a sole Search exists).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub primary_search: Option<String>,
     /// Typed-discovery vocabulary for this entity (optional).
@@ -2379,7 +2379,7 @@ pub struct EntityDef {
     /// Capability **id** of the canonical **Get** (required when 2+ Gets).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub primary_read: Option<String>,
-    /// Capability **id** of the canonical unscoped **Query** (required when 2+ unscoped Queries).
+    /// Capability **id** of the canonical **Query** (obsolete for multi-query — illegal; optional explicit pointer when a sole Query exists).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub primary_query: Option<String>,
     /// Capability **id** of the canonical unscoped **Search** (required when 2+ unscoped Searches).
@@ -3095,23 +3095,12 @@ impl CGS {
                 .into_iter()
                 .map(|c| c.name.to_string())
                 .collect();
-            let unscoped_queries: Vec<_> = self
-                .unscoped_capabilities(entity_name.as_str(), CapabilityKind::Query)
-                .into_iter()
-                .map(|c| c.name.to_string())
-                .collect();
-            if query_caps.len() > 1 && entity.primary_query.is_none() {
-                let ambiguous = match unscoped_queries.len() {
-                    0 => query_caps.clone(),
-                    1 => Vec::new(),
-                    _ => unscoped_queries.clone(),
-                };
-                if ambiguous.len() > 1 {
-                    return Err(SchemaError::AmbiguousPrimaryQuery {
-                        entity: entity_name.to_string(),
-                        capabilities: ambiguous,
-                    });
-                }
+            if query_caps.len() > 1 {
+                return Err(SchemaError::TooManyQueryCapabilities {
+                    entity: entity_name.to_string(),
+                    count: query_caps.len(),
+                    capabilities: query_caps,
+                });
             }
 
             let search_caps: Vec<_> = self
@@ -3119,23 +3108,12 @@ impl CGS {
                 .into_iter()
                 .map(|c| c.name.to_string())
                 .collect();
-            let unscoped_searches: Vec<_> = self
-                .unscoped_capabilities(entity_name.as_str(), CapabilityKind::Search)
-                .into_iter()
-                .map(|c| c.name.to_string())
-                .collect();
-            if search_caps.len() > 1 && entity.primary_search.is_none() {
-                let ambiguous = match unscoped_searches.len() {
-                    0 => search_caps.clone(),
-                    1 => Vec::new(),
-                    _ => unscoped_searches.clone(),
-                };
-                if ambiguous.len() > 1 {
-                    return Err(SchemaError::AmbiguousPrimarySearch {
-                        entity: entity_name.to_string(),
-                        capabilities: ambiguous,
-                    });
-                }
+            if search_caps.len() > 1 {
+                return Err(SchemaError::TooManySearchCapabilities {
+                    entity: entity_name.to_string(),
+                    count: search_caps.len(),
+                    capabilities: search_caps,
+                });
             }
         }
 
@@ -3466,31 +3444,10 @@ impl CGS {
         self.validate_pipeline_segment_disjointness()?;
         self.validate_capability_input_lanes()?;
 
-        // At most one parameterless (no required params at all) query/search per entity.
-        // Multiple unscoped query/search caps require explicit primary_query / primary_search on the entity.
-        // Only flag an error if there are multiple capabilities with zero required params
-        // (ambiguous which is the "list all" endpoint).
-        //
-        // Query and Search resolution are structurally disjoint: `resolve_query_capability`
+        // At most one kind:query and at most one kind:search per entity is enforced above.
+        // Query and Search resolution remain structurally disjoint: `resolve_query_capability`
         // only considers Query caps; Search is resolved at parse time (`Entity~"text"` stamps
         // `capability_name`) or by CLI dispatch (`"search"` verb). No cross-kind fallback.
-        for entity_name in self.entities.keys() {
-            for kind in [CapabilityKind::Query, CapabilityKind::Search] {
-                let parameterless: Vec<_> = self
-                    .find_capabilities(entity_name, kind)
-                    .into_iter()
-                    .filter(|cap| !cap.has_required_scope_param() && !cap.has_any_required_param())
-                    .collect();
-                if parameterless.len() > 1 {
-                    let names: Vec<_> = parameterless.iter().map(|c| c.name.as_str()).collect();
-                    return Err(SchemaError::DuplicateCapability {
-                        entity: entity_name.to_string(),
-                        kind: format!("{:?}", kind),
-                        capabilities: names.iter().map(|s| s.to_string()).collect(),
-                    });
-                }
-            }
-        }
 
         self.validate_schema_overlay()?;
         self.validate_views()?;
@@ -3816,6 +3773,63 @@ impl CGS {
             out.push(format!(
                 "entity '{entity_name}', field '{field_name}': read-provided {sem_label} string has no data_class — plan-flow treats this output as unlabeled (set data_class: to a key under data_classes:)"
             ));
+        }
+        out
+    }
+
+    /// Warn when an entity would teach a large multi-arity method or relation-nav surface.
+    ///
+    /// Thresholds are **warn-only** — the teaching renderer still emits every authored line.
+    /// Hard errors for competing list surfaces live on [`SchemaError::TooManyQueryCapabilities`] /
+    /// [`SchemaError::TooManySearchCapabilities`].
+    pub fn teaching_surface_fat_warnings(&self) -> Vec<String> {
+        const WARN_MULTI_ARITY_METHODS: usize = 16;
+        const WARN_REL_NAVS: usize = 4;
+
+        let mut out = Vec::new();
+        for (entity_name, entity) in &self.entities {
+            let method_count = self
+                .capabilities
+                .values()
+                .filter(|cap| {
+                    cap.domain.as_str() == entity_name.as_str()
+                        && matches!(
+                            cap.kind,
+                            CapabilityKind::Create
+                                | CapabilityKind::Update
+                                | CapabilityKind::Delete
+                                | CapabilityKind::Action
+                        )
+                        && !capability_is_zero_arity_invoke(cap)
+                })
+                .count()
+                + self.create_caps_for_anchor(entity_name.as_str()).len();
+            if method_count > WARN_MULTI_ARITY_METHODS {
+                out.push(format!(
+                    "entity '{entity_name}': {method_count} multi-arity methods will be taught (warn threshold {WARN_MULTI_ARITY_METHODS}) — compress actions or split entities if the teaching card is too large"
+                ));
+            }
+
+            let mut nav_count = entity.relations.len();
+            let rel_names: std::collections::HashSet<&str> =
+                entity.relations.keys().map(|s| s.as_str()).collect();
+            for (fname, field) in &entity.fields {
+                if rel_names.contains(fname.as_str()) {
+                    continue;
+                }
+                if field
+                    .named_value(self)
+                    .ok()
+                    .is_some_and(|nv| matches!(nv.field_type, FieldType::EntityRef { .. }))
+                {
+                    nav_count += 1;
+                }
+            }
+            if nav_count > WARN_REL_NAVS {
+                out.push(format!(
+                    "entity '{entity_name}': {nav_count} relation/entity_ref nav slots will be taught (warn threshold {WARN_REL_NAVS}) — prefer fewer edges or a tighter seed surface if the teaching card is too large"
+                ));
+            }
         }
         out
     }
@@ -5014,7 +5028,8 @@ impl CGS {
         self.capability_index_arc().create_caps_for_anchor(anchor)
     }
 
-    /// Primary unscoped **Query** — explicit [`EntityDef::primary_query`] when ambiguous; the sole unscoped Query when only one exists.
+    /// Primary **Query** — explicit [`EntityDef::primary_query`] when set; otherwise the sole Query on the entity.
+    /// Competing queries are a hard validate error ([`SchemaError::TooManyQueryCapabilities`]).
     pub fn primary_query_capability(&self, entity: &str) -> Option<&CapabilitySchema> {
         let unscoped = self.unscoped_capabilities(entity, CapabilityKind::Query);
         match unscoped.len() {
@@ -6149,6 +6164,190 @@ mod oauth_extension_tests {
 }
 
 #[cfg(test)]
+mod list_capability_cardinality_tests {
+    use super::*;
+
+    fn bare_query_cgs(entity: &str, query_names: &[&str]) -> CGS {
+        let mut cgs = CGS::new();
+        cgs.values.insert(
+            "fixture_str".into(),
+            NamedValueSchema {
+                domain: Default::default(),
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                array_items: None,
+                currency: None,
+            },
+        );
+        let id_field = FieldSchema {
+            name: "id".into(),
+            kind: FieldValueKind::Registry(ValueDomainKey::new("fixture_str").expect("key")),
+            description: String::new(),
+            required: true,
+            agent_presentation: None,
+            mime_type_hint: None,
+            attachment_media: None,
+            wire_path: None,
+            derive: None,
+            data_class: None,
+            currency_field: None,
+        };
+        cgs.add_resource(ResourceSchema {
+            name: entity.into(),
+            description: String::new(),
+            id_field: "id".into(),
+            id_format: None,
+            id_from: None,
+            fields: vec![id_field],
+            relations: vec![],
+            expression_aliases: vec![],
+            implicit_request_identity: false,
+            key_vars: vec![],
+            abstract_entity: false,
+            domain_projection_examples: false,
+            primary_read: None,
+            primary_query: None,
+            primary_search: None,
+            discovery: None,
+        })
+        .unwrap();
+        let tmpl =
+            serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "x"}]});
+        for name in query_names {
+            cgs.add_capability(CapabilitySchema {
+                name: (*name).into(),
+                description: String::new(),
+                kind: CapabilityKind::Query,
+                domain: entity.into(),
+                identity_key: None,
+                invalidates_entities: vec![],
+                mapping: Some(CapabilityMapping {
+                    template: tmpl.clone().into(),
+                }),
+                derived: None,
+                inputs: Default::default(),
+                output_schema: None,
+                provides: vec![],
+                scope_aggregate_key_policy: Default::default(),
+                preflight: None,
+                discovery: None,
+                sanitizes: vec![],
+                deterministic: None,
+            })
+            .unwrap();
+        }
+        cgs
+    }
+
+    #[test]
+    fn zero_or_one_query_validates() {
+        let mut zero = bare_query_cgs("Item", &[]);
+        zero.entities.get_mut("Item").unwrap().abstract_entity = true;
+        zero.validate().expect("abstract zero query ok");
+        bare_query_cgs("Item", &["item_query"])
+            .validate()
+            .expect("single query ok");
+    }
+
+    #[test]
+    fn two_queries_hard_error_names_entity_and_caps() {
+        let err = bare_query_cgs("Item", &["item_query", "item_other_query"])
+            .validate()
+            .expect_err("two queries must fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Item") && msg.contains("item_query") && msg.contains("item_other_query"),
+            "error must name entity and caps: {msg}"
+        );
+        assert!(
+            matches!(err, SchemaError::TooManyQueryCapabilities { .. }),
+            "expected TooManyQueryCapabilities, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn query_plus_search_still_ok() {
+        let mut cgs = bare_query_cgs("Item", &["item_query"]);
+        let tmpl =
+            serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "s"}]});
+        let q_field = InputFieldSchema {
+            name: "q".to_string(),
+            wire: InputFieldWire::Registry(ValueDomainKey::new("fixture_str").expect("key")),
+            required: true,
+            description: None,
+            default: None,
+            sink_class: None,
+            wire_json_path: None,
+            wire_array_element_key: None,
+        };
+        cgs.add_capability(CapabilitySchema {
+            name: "item_search".into(),
+            description: String::new(),
+            kind: CapabilityKind::Search,
+            domain: "Item".into(),
+            identity_key: None,
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
+                template: tmpl.into(),
+            }),
+            derived: None,
+            inputs: {
+                let mut inputs = CapabilityInputs::default();
+                inputs.selection = BackendSelectionSchema(vec![q_field]);
+                inputs
+            },
+            output_schema: None,
+            provides: vec![],
+            scope_aggregate_key_policy: Default::default(),
+            preflight: None,
+            discovery: None,
+            sanitizes: vec![],
+            deterministic: None,
+        })
+        .unwrap();
+        cgs.validate()
+            .expect("one query + one search must validate");
+    }
+
+    #[test]
+    fn two_searches_hard_error() {
+        let mut cgs = bare_query_cgs("Item", &[]);
+        let tmpl =
+            serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "s"}]});
+        for name in ["item_search_a", "item_search_b"] {
+            cgs.add_capability(CapabilitySchema {
+                name: name.into(),
+                description: String::new(),
+                kind: CapabilityKind::Search,
+                domain: "Item".into(),
+                identity_key: None,
+                invalidates_entities: vec![],
+                mapping: Some(CapabilityMapping {
+                    template: tmpl.clone().into(),
+                }),
+                derived: None,
+                inputs: Default::default(),
+                output_schema: None,
+                provides: vec![],
+                scope_aggregate_key_policy: Default::default(),
+                preflight: None,
+                discovery: None,
+                sanitizes: vec![],
+                deterministic: None,
+            })
+            .unwrap();
+        }
+        let err = cgs.validate().expect_err("two searches must fail");
+        assert!(
+            matches!(err, SchemaError::TooManySearchCapabilities { .. }),
+            "expected TooManySearchCapabilities, got {err:?}"
+        );
+    }
+}
+
+#[cfg(test)]
 mod view_bind_validation_tests {
     use std::path::Path;
 
@@ -6163,3 +6362,4 @@ mod view_bind_validation_tests {
             .expect("validate views fixture with node binds");
     }
 }
+

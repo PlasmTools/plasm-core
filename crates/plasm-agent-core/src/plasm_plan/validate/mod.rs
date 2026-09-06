@@ -193,37 +193,8 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
             validate_predicate(p, i, j)?;
         }
         if n.kind == PlanNodeKind::ForEach {
-            let source = n
-                .source
-                .as_ref()
-                .ok_or_else(|| format!("plan.nodes[{i}].source is required for for_each"))?;
-            if !by_id.contains_key(source) {
-                return Err(format!(
-                    "plan.nodes[{i}].source references unknown id {source:?}"
-                ));
-            }
-            let binding = n.item_binding.as_deref().unwrap_or_default();
-            if binding.trim().is_empty() {
-                return Err(format!(
-                    "plan.nodes[{i}].item_binding is required for for_each"
-                ));
-            }
-            let template = n
-                .effect_template
-                .as_ref()
-                .ok_or_else(|| format!("plan.nodes[{i}].effect_template is required"))?;
-            validate_effect_template(template, i)?;
-            let mut input_aliases: Vec<(&str, &str)> = Vec::new();
-            for u in &n.uses_result {
-                if u.r#as.as_str() != binding {
-                    input_aliases.push((u.r#as.as_str(), u.node.as_str()));
-                }
-            }
-            let ctx = plasm_core::TemplateRefContext {
-                row_binding: Some(binding),
-                input_aliases: &input_aliases,
-            };
-            validate_effect_template_interpolation(template, i, &ctx)?;
+            let (binding, template) =
+                validate_row_effect_source_and_template(n, i, &by_id, "for_each")?;
             for b in &template.input_bindings {
                 if !b.from.starts_with(&format!("{binding}."))
                     && b.from.as_str() != binding
@@ -235,6 +206,17 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
                     ));
                 }
             }
+        }
+        if n.kind == PlanNodeKind::IterateUntil {
+            require_iterate_hard_bound(n, i)?;
+            if n.until.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true)
+                && n.predicates.is_empty()
+            {
+                return Err(format!(
+                    "plan.nodes[{i}].until / predicates required for iterate_until"
+                ));
+            }
+            let _ = validate_row_effect_source_and_template(n, i, &by_id, "iterate_until")?;
         }
     }
 
@@ -337,6 +319,7 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
                     | PlanNodeKind::Delete
                     | PlanNodeKind::Action
                     | PlanNodeKind::ForEach
+                    | PlanNodeKind::IterateUntil
             ) || matches!(n.effect_class, EffectClass::Write | EffectClass::SideEffect)
         })
         .map(|n| PlanNodeId::new(n.id.clone()))
@@ -606,6 +589,55 @@ fn validated_node_from_raw(
                 approval: node.approval.clone(),
             }))
         }
+        PlanNodeKind::IterateUntil => {
+            let source = node
+                .source
+                .as_ref()
+                .ok_or_else(|| format!("plan.nodes[{node_index}].source is required"))
+                .and_then(|s| PlanNodeId::new(s.clone()))?;
+            let take = require_iterate_hard_bound(node, node_index)?;
+            if node.predicates.is_empty() {
+                return Err(format!(
+                    "plan.nodes[{node_index}].predicates required for iterate_until"
+                ));
+            }
+            Ok(ValidatedPlanNode::IterateUntil(ValidatedIterateUntilNode {
+                id,
+                effect_class: node.effect_class,
+                result_shape: node.result_shape,
+                source: source.clone(),
+                item_binding: node
+                    .item_binding
+                    .as_ref()
+                    .ok_or_else(|| format!("plan.nodes[{node_index}].item_binding is required"))
+                    .and_then(|s| BindingName::new(s.clone()))?,
+                effect_template: validated_effect_template(
+                    node.effect_template.as_ref().ok_or_else(|| {
+                        format!("plan.nodes[{node_index}].effect_template is required")
+                    })?,
+                    node_index,
+                )?,
+                until_predicates: node.predicates.clone(),
+                take,
+                seed_ir: Some(
+                    plan.nodes
+                        .iter()
+                        .find(|n| n.id == source.as_str())
+                        .and_then(|n| n.ir.as_ref())
+                        .ok_or_else(|| {
+                            format!(
+                                "plan.nodes[{node_index}]: iterate_until seed `{source}` must carry ir for re-observe"
+                            )
+                        })
+                        .and_then(|ir| {
+                            validated_plan_expr_ir(ir, node_index, "iterate_until.seed_ir")
+                        })?,
+                ),
+                depends_on,
+                uses_result,
+                approval: node.approval.clone(),
+            }))
+        }
     }
 }
 
@@ -666,6 +698,59 @@ fn validate_return_refs(
                 .collect::<Result<Vec<_>, _>>()?,
         }),
     }
+}
+
+fn require_iterate_hard_bound(node: &PlanNode, node_index: usize) -> Result<u32, String> {
+    let take = node.take.ok_or_else(|| {
+        format!("plan.nodes[{node_index}].take is required for iterate_until (hard bound; PLP-8)")
+    })?;
+    if take == 0 {
+        return Err(format!(
+            "plan.nodes[{node_index}].take must be ≥ 1 for iterate_until"
+        ));
+    }
+    Ok(take)
+}
+
+/// Shared source + item binding + effect-template interpolation checks for `for_each` / `iterate_until`.
+fn validate_row_effect_source_and_template<'a>(
+    n: &'a PlanNode,
+    i: usize,
+    by_id: &HashMap<String, usize>,
+    kind: &str,
+) -> Result<(&'a str, &'a EffectTemplate), String> {
+    let source = n
+        .source
+        .as_ref()
+        .ok_or_else(|| format!("plan.nodes[{i}].source is required for {kind}"))?;
+    if !by_id.contains_key(source) {
+        return Err(format!(
+            "plan.nodes[{i}].source references unknown id {source:?}"
+        ));
+    }
+    let binding = n.item_binding.as_deref().unwrap_or_default();
+    if binding.trim().is_empty() {
+        return Err(format!(
+            "plan.nodes[{i}].item_binding is required for {kind}"
+        ));
+    }
+    let template = n
+        .effect_template
+        .as_ref()
+        .ok_or_else(|| format!("plan.nodes[{i}].effect_template is required"))?;
+    validate_effect_template(template, i)?;
+    let mut input_aliases: Vec<(&str, &str)> = Vec::new();
+    for u in &n.uses_result {
+        if u.r#as.as_str() != binding {
+            input_aliases.push((u.r#as.as_str(), u.node.as_str()));
+        }
+    }
+    let ctx = plasm_core::TemplateRefContext {
+        row_binding: Some(binding),
+        input_aliases: &input_aliases,
+    };
+    validate_effect_template_interpolation(template, i, &ctx)?;
+    Ok((binding, template))
 }
 
 fn topological_order(plan: &Plan, adj: &[Vec<usize>]) -> Result<Vec<PlanNodeId>, String> {

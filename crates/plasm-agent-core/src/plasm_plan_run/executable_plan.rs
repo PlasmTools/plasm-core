@@ -22,8 +22,8 @@
 use super::*;
 use crate::plasm_plan::{
     ValidatedComputeNode, ValidatedDataNode, ValidatedDeriveNode, ValidatedForEachNode,
-    ValidatedPlanDataInput, ValidatedPlanNode, ValidatedRelationTraversalNode,
-    ValidatedSurfaceNode,
+    ValidatedIterateUntilNode, ValidatedPlanDataInput, ValidatedPlanNode,
+    ValidatedRelationTraversalNode, ValidatedSurfaceNode,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -43,6 +43,7 @@ pub(crate) enum IoStep {
     Surface(Box<ValidatedSurfaceNode>),
     Relation(Box<ValidatedRelationTraversalNode>),
     ForEach(Box<ValidatedForEachNode>),
+    IterateUntil(Box<ValidatedIterateUntilNode>),
 }
 
 /// Total classification of a validated plan node into the PEC execution taxonomy.
@@ -83,6 +84,9 @@ impl ExecStep {
             ValidatedPlanNode::Surface(n) => ExecStep::Io(IoStep::Surface(Box::new(n))),
             ValidatedPlanNode::RelationTraversal(n) => ExecStep::Io(IoStep::Relation(Box::new(n))),
             ValidatedPlanNode::ForEach(n) => ExecStep::Io(IoStep::ForEach(Box::new(n))),
+            ValidatedPlanNode::IterateUntil(n) => {
+                ExecStep::Io(IoStep::IterateUntil(Box::new(n)))
+            }
         }
     }
 
@@ -204,6 +208,7 @@ impl IoStep {
             IoStep::Surface(_) => "surface",
             IoStep::Relation(_) => "relation",
             IoStep::ForEach(_) => "foreach",
+            IoStep::IterateUntil(_) => "iterate_until",
         }
     }
 
@@ -212,6 +217,7 @@ impl IoStep {
             IoStep::Surface(n) => &n.id,
             IoStep::Relation(n) => &n.id,
             IoStep::ForEach(n) => &n.id,
+            IoStep::IterateUntil(n) => &n.id,
         }
     }
 }

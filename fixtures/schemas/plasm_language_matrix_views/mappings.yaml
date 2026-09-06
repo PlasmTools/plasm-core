@@ -7,21 +7,11 @@ langitem_query:
     value: v1
   - type: literal
     value: items
-
-langitem_query_owner:
-  method: GET
-  path:
-  - type: literal
-    value: language
-  - type: literal
-    value: v1
-  - type: literal
-    value: items
   query:
     type: object
     fields:
-    - ["owner", { type: var, name: owner }]
-
+    - [owner, { type: if, condition: { type: exists, var: owner },
+        then_expr: { type: var, name: owner }, else_expr: { type: const, value: null } }]
 langitem_search:
   method: GET
   path:

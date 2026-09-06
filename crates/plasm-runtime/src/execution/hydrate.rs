@@ -237,11 +237,25 @@ impl ExecutionEngine {
 
         while let Some(res) = stream.next().await {
             cooperative_cancel_check()?;
-            let (entity, source) = res?;
-            if source == ExecutionSource::Live {
-                extra_network += 1;
+            match res {
+                Ok((entity, source)) => {
+                    if source == ExecutionSource::Live {
+                        extra_network += 1;
+                    }
+                    mat.insert(entity)?;
+                }
+                Err(e) => {
+                    // List rows remain usable as summaries when a detail GET fails
+                    // (AppWorld and other mocks can 409/404 individual ids that still
+                    // appeared in the list page). Do not fail the whole query.
+                    tracing::warn!(
+                        entity = %entity_type,
+                        capability = %cap_name,
+                        error = %e,
+                        event = "hydrate_get_soft_fail"
+                    );
+                }
             }
-            mat.insert(entity)?;
         }
 
         let mut out = Vec::with_capacity(ordered_refs.len());

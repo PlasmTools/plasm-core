@@ -100,7 +100,11 @@ fn dry_stub_value_for_field_type(
         FieldType::Money => {
             let amount = rust_decimal::Decimal::from(i as i64);
             let m = crate::money::MoneyValue::new(amount, currency.map(str::to_string));
-            Value::Money(m)
+            let fmt = match value_format {
+                Some(ValueWireFormat::Money(f)) => f,
+                _ => crate::money::MoneyWireFormat::DecimalString,
+            };
+            Value::Money(m.with_format(fmt))
         }
         FieldType::Array => {
             let elem = match array_items {

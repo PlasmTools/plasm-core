@@ -125,7 +125,7 @@ fn mutating_for_each_infers_approval_without_agent_label() {
                 "effect_template": {
                     "kind": "action",
                     "qualified_entity": { "entry_id": "acme", "entity": "Product" },
-                    "expr_template": "Product(${product.id}).label(label=\"stale\")",
+                    "expr_template": "Product({{ product.id }}).label(label=\"stale\")",
                     "ir_template": {
                         "expr": {
                             "op": "invoke",
@@ -269,7 +269,7 @@ fn for_each_plan_eval_env_interpolates_row_and_cross_binding_strings() {
         wire_coercion_by_alias: &empty_coercion,
     };
     let out =
-        instantiate_expr_template_value(&serde_json::json!("${_.title} / ${report.content}"), &env)
+        instantiate_expr_template_value(&serde_json::json!("{{ _.title }} / {{ report.content }}"), &env)
             .expect("interpolate");
     assert_eq!(out, serde_json::json!("Bolt / STATS"));
 }

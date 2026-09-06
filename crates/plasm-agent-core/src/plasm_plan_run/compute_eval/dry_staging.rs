@@ -220,6 +220,27 @@ impl IoPort for DryIoPort<'_> {
                     Some(for_each.projection.clone()).filter(|p| !p.is_empty()),
                 )))
             }
+            IoStep::IterateUntil(it) => {
+                // Dry: stub final singleton state for the seed entity (step effects not invoked).
+                let qe = &it.effect_template.qualified_entity;
+                let target_loaded = self
+                    .es
+                    .contexts_by_entry
+                    .get(&qe.entry_id)
+                    .is_some_and(|ctx| ctx.cgs.entities.contains_key(qe.entity.as_str()));
+                if !target_loaded {
+                    return Ok(None);
+                }
+                let (rows, row_identities) =
+                    self.stub_entity_rows(qe, dry_stub_row_count(it.result_shape))?;
+                Ok(Some(MaterializedNode::inline_cache(
+                    qe.clone(),
+                    rows,
+                    row_identities,
+                    String::new(),
+                    None,
+                )))
+            }
         }
     }
 }

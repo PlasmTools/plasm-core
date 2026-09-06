@@ -37,8 +37,6 @@ use super::teaching_util::TEACHING_SEARCH_QUERY_LITERAL;
 use super::tsv_emit::relation_sym_shown_in_query_teaching_rows;
 use super::{EntityTeachingBlock, EntityTeachingExprRow, TeachingHeading};
 
-const MAX_MULTI_ARITY_METHOD_LINES: usize = 16;
-
 /// Non–zero-arity invoke/create/update: `e#($).m#(p#=…)` (same rules as parser dotted-call capability resolution).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn collect_multi_arity_method_lines(
@@ -131,7 +129,7 @@ pub(crate) fn collect_multi_arity_method_lines(
     }
 
     out.sort_by(|a, b| a.0.cmp(&b.0));
-    out.into_iter().take(MAX_MULTI_ARITY_METHOD_LINES).collect()
+    out
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -309,12 +307,7 @@ pub(crate) fn collect_entity_teaching_block(
         () => {
             if !query_caps.is_empty() {
                 let mut local_seen: HashSet<String> = HashSet::new();
-                let mut query_line_count: usize = 0;
-                const MAX_QUERY_LINES: usize = 2;
                 for cap in &query_caps {
-                    if query_line_count >= MAX_QUERY_LINES {
-                        break;
-                    }
                     let qgloss = crate::result_gloss::result_gloss_for_capability(
                         cap,
                         cgs,
@@ -356,7 +349,6 @@ pub(crate) fn collect_entity_teaching_block(
                             )
                         {
                             added = true;
-                            query_line_count += 1;
                         }
                     }
                     if !added {
@@ -387,7 +379,6 @@ pub(crate) fn collect_entity_teaching_block(
                                 )
                             {
                                 added = true;
-                                query_line_count += 1;
                             }
                         }
                     }
@@ -418,7 +409,6 @@ pub(crate) fn collect_entity_teaching_block(
                                     witness_taught,
                                 )
                             {
-                                query_line_count += 1;
                             }
                         }
                     }
@@ -691,8 +681,7 @@ pub(crate) fn collect_entity_teaching_block(
         }
     }
     nav_keys.sort();
-    const MAX_REL_NAV_LINES: usize = 4;
-    for rel in nav_keys.iter().take(MAX_REL_NAV_LINES) {
+    for rel in nav_keys.iter() {
         let (target_entity, rel_for_meta) =
             if let Some(rel_schema) = ent.relations.get(rel.as_str()) {
                 if !surface_allows_relation_nav(

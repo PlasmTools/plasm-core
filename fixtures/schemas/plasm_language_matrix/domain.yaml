@@ -1,4 +1,4 @@
-version: 2
+version: 3
 auth:
   scheme: none
 http_backend: http://127.0.0.1:9
@@ -35,7 +35,6 @@ entities:
           - key: detail
   LangTag:
     id_field: id
-    primary_query: langtag_query
     description: Tags scoped to a LangItem (query_scoped relation target).
     fields:
       id:
@@ -148,7 +147,6 @@ entities:
     relations: {}
   LangItem:
     id_field: id
-    primary_query: langitem_query
     description: Primary matrix entity — list, search, CRUD, relations, actions.
     fields:
       id:
@@ -226,7 +224,7 @@ entities:
         cardinality: many
         materialize:
           kind: query_scoped_bindings
-          capability: langtag_by_score_query
+          capability: langtag_query
           bindings:
             seq: score
       compound_branches:
@@ -284,28 +282,32 @@ entities:
         required: false
         value_ref: nv_lang_item_status
     relations: {}
+  LangCursor:
+    id_field: id
+    description: Neutral state cursor for PLP-8 iterate-until (phase advances only via tick).
+    fields:
+      id:
+        required: true
+        value_ref: nv_lang_cursor_id
+      phase:
+        required: true
+        value_ref: nv_lang_cursor_phase
+      ticks:
+        required: false
+        value_ref: nv_lang_cursor_ticks
+    relations: {}
 capabilities:
   langitem_query:
-    description: List LangItem rows (optional tags filter homographs tags relation wire)
+    description: List LangItem rows (optional tags filter; optional owner filter uses owner-scoped path)
     kind: query
     entity: LangItem
     selection:
     - name: tags
       value_ref: nv_langitem_query_tags
       required: false
-    provides:
-    - id
-    - title
-    - score
-    - owner
-  langitem_query_owner:
-    description: List LangItem rows filtered by owner (required query param)
-    kind: query
-    entity: LangItem
-    selection:
     - name: owner
       value_ref: nv_langitem_query_owner_owner
-      required: true
+      required: false
     provides:
     - id
     - title
@@ -410,6 +412,20 @@ capabilities:
     output:
       type: side_effect
       description: Records a ping against the item (matrix conformance).
+  langitem_secured_touch:
+    description: Secured side-effect touch on LangItem; Bearer access_token required (for_each auth fanout witness).
+    kind: action
+    entity: LangItem
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_lang_auth_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Records a secured touch against the item when Authorization is present.
   langitem_broadcast:
     description: Pathless side-effect broadcast on LangItem (federated stamp regression; no path id).
     kind: action
@@ -615,25 +631,16 @@ capabilities:
     - id
     - caption
   langtag_query:
-    description: List tags scoped to one LangItem
+    description: List tags scoped to one LangItem (item_id) or by parent score (seq)
     kind: query
     entity: LangTag
     scope:
     - name: item_id
       value_ref: nv_langtag_query_item_id
-      required: true
-    provides:
-    - id
-    - item_id
-    - label
-  langtag_by_score_query:
-    description: List tags filtered by parent LangItem score (integer scope param)
-    kind: query
-    entity: LangTag
-    scope:
+      required: false
     - name: seq
       value_ref: nv_langtag_by_score_query_seq
-      required: true
+      required: false
     provides:
     - id
     - item_id
@@ -672,7 +679,35 @@ capabilities:
     - id
     - item_id
     - note
+  langcursor_get:
+    description: Get LangCursor by id (observe phase for iterate-until re-read).
+    kind: get
+    entity: LangCursor
+    provides:
+    - id
+    - phase
+    - ticks
+  langcursor_tick:
+    description: Advance LangCursor phase one step (open → mid → done).
+    kind: action
+    entity: LangCursor
+    # Type-wide eviction so iterate…until re-Get cannot hit a Completeness::Complete seed row.
+    invalidates_entities:
+    - LangCursor
+    output:
+      type: side_effect
+      description: Advances the cursor phase toward done; re-observe via get after each tick.
 values:
+  nv_lang_cursor_id:
+    type: string
+  nv_lang_cursor_phase:
+    type: enum
+    enum:
+    - open
+    - mid
+    - done
+  nv_lang_cursor_ticks:
+    type: integer
   nv_lang_detail_id:
     type: string
   nv_lang_detail_body:
