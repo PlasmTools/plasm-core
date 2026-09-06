@@ -1,4 +1,4 @@
-version: 9
+version: 12
 entry_id: splitwise
 auth:
   scheme: none
@@ -87,7 +87,7 @@ entities:
         cardinality: many
         materialize:
           kind: query_scoped
-          capability: balance_group_query
+          capability: balance_query
           param: group_id
   GroupMember:
     abstract: true
@@ -109,7 +109,7 @@ entities:
   Expense:
     id_field: expense_id
     primary_query: expense_query
-    description: Shared expense with payer and debtors.
+    description: Shared expense among group members.
     discovery:
       names:
       - expense
@@ -296,7 +296,7 @@ entities:
         value_ref: nv_datetime
   Balance:
     id_field: you_owe_others
-    primary_query: balance_groups_query
+    primary_query: balance_query
     description: Debt position for a person or group.
     discovery:
       names:
@@ -362,7 +362,7 @@ entities:
         value_ref: nv_number
   Profile:
     id_field: email
-    description: Splitwise public profile (name and email).
+    description: Splitwise public profile.
     discovery:
       names:
       - profile
@@ -380,6 +380,41 @@ entities:
       registered_at:
         required: false
         value_ref: nv_datetime
+  PeerBalance:
+    id_field: you_owe_others
+    primary_query: peer_balance_query
+    description: Interpersonal balance with a counterparty.
+    discovery:
+      names:
+      - balance
+      - owing
+      - debt
+      seed_class: primary
+    fields:
+      you_owe_others:
+        required: false
+        value_ref: nv_number
+      others_owe_you:
+        required: false
+        value_ref: nv_number
+      email:
+        required: false
+        value_ref: nv_email
+      name:
+        required: false
+        value_ref: nv_str
+      group_id:
+        required: false
+        value_ref: nv_group_id
+      group_name:
+        required: false
+        value_ref: nv_str
+      direction:
+        required: false
+        value_ref: nv_balance_direction
+      amount:
+        required: false
+        value_ref: nv_number
 capabilities:
   login:
     description: Login to Splitwise; returns access_token for Bearer auth.
@@ -425,13 +460,6 @@ capabilities:
       required: true
     - name: delete
       value_ref: nv_bool
-      required: false
-    controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
       required: false
     provides:
     - group_id
@@ -606,7 +634,7 @@ capabilities:
       type: side_effect
       description: Issues a new invitation code for the group.
   expense_query:
-    description: List expenses in a group.
+    description: List expenses — with group_id for a group, or ungrouped when omitted.
     kind: query
     entity: Expense
     selection:
@@ -626,12 +654,6 @@ capabilities:
       value_ref: nv_number
       required: false
     controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
     - name: sort_by
       value_ref: nv_str
       required: false
@@ -645,38 +667,7 @@ capabilities:
     scope:
     - name: group_id
       value_ref: nv_group_id
-      required: true
-  expense_ungrouped_query:
-    description: List expenses not attached to a group.
-    kind: query
-    entity: Expense
-    selection:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: query
-      value_ref: nv_str
       required: false
-    - name: participant_email
-      value_ref: nv_email
-      required: false
-    controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
-    - name: sort_by
-      value_ref: nv_str
-      required: false
-    provides:
-    - expense_id
-    - group_id
-    - description
-    - paid_amount
-    - deleted
-    - created_at
   expense_get:
     description: Show one expense.
     kind: get
@@ -780,7 +771,7 @@ capabilities:
       type: side_effect
       description: Clears the deleted flag on the expense.
   expense_attach_receipt:
-    description: Attach a file-system receipt file to an expense.
+    description: Attach a file-system receipt file to an expense. receipt_file_path must be absolute /home/… (or resolved ~/subpath), not a relative path.
     kind: action
     entity: Expense
     payload:
@@ -817,7 +808,7 @@ capabilities:
       type: side_effect
       description: Removes the receipt file from the expense.
   payment_query:
-    description: List payments in a group.
+    description: List payments — with group_id for a group, or ungrouped when omitted.
     kind: query
     entity: Payment
     selection:
@@ -831,12 +822,6 @@ capabilities:
       value_ref: nv_email
       required: false
     controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
     - name: sort_by
       value_ref: nv_str
       required: false
@@ -850,38 +835,7 @@ capabilities:
     scope:
     - name: group_id
       value_ref: nv_group_id
-      required: true
-  payment_ungrouped_query:
-    description: List payments not attached to a group.
-    kind: query
-    entity: Payment
-    selection:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: query
-      value_ref: nv_str
       required: false
-    - name: participant_email
-      value_ref: nv_email
-      required: false
-    controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
-    - name: sort_by
-      value_ref: nv_str
-      required: false
-    provides:
-    - payment_id
-    - group_id
-    - description
-    - paid_amount
-    - deleted
-    - created_at
   payment_get:
     description: Show one payment.
     kind: get
@@ -942,7 +896,7 @@ capabilities:
           value_ref: nv_access_token
           required: true
   payment_update:
-    description: Update payment amount or description.
+    description: Update a settlement payment.
     kind: update
     entity: Payment
     payload:
@@ -973,7 +927,7 @@ capabilities:
       type: side_effect
       description: Restores the deleted payment.
   payment_attach_receipt:
-    description: Attach a file-system receipt file to a payment.
+    description: Attach a file-system receipt file to a payment. receipt_file_path must be absolute /home/… (or resolved ~/subpath), not a relative path.
     kind: action
     entity: Payment
     payload:
@@ -1009,72 +963,6 @@ capabilities:
     output:
       type: side_effect
       description: Removes the receipt file from the payment.
-  balance_person_query:
-    description: Show one person's total balance and per-group breakdown.
-    kind: query
-    entity: Balance
-    selection:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: email
-      value_ref: nv_email
-      required: true
-    provides:
-    - email
-    - group_id
-    - group_name
-    - direction
-    - amount
-  balance_people_query:
-    description: List balances between the current user and other people.
-    kind: query
-    entity: Balance
-    selection:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    provides:
-    - email
-    - name
-    - direction
-    - amount
-    - you_owe_others
-    - others_owe_you
-  balance_group_query:
-    description: List balances between members of one group.
-    kind: query
-    entity: Balance
-    scope:
-    - name: group_id
-      value_ref: nv_group_id
-      required: true
-    selection:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: email
-      value_ref: nv_email
-      required: false
-    provides:
-    - email
-    - name
-    - group_id
-    - direction
-    - amount
-  balance_groups_query:
-    description: List the current user's balance in each group.
-    kind: query
-    entity: Balance
-    selection:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    provides:
-    - group_id
-    - group_name
-    - you_owe_others
-    - others_owe_you
   settle_up:
     description: Settle up balances with a person (optionally within a group).
     kind: action
@@ -1111,13 +999,6 @@ capabilities:
     - name: access_token
       value_ref: nv_access_token
       required: true
-    controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
     provides:
     - expense_comment_id
     - expense_id
@@ -1239,13 +1120,6 @@ capabilities:
     - name: read
       value_ref: nv_read
       required: false
-    controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
     provides:
     - notification_id
     - type
@@ -1268,12 +1142,6 @@ capabilities:
       value_ref: nv_bool
       required: false
     controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
     - name: sort_by
       value_ref: nv_str
       required: false
@@ -1359,7 +1227,7 @@ capabilities:
     - email
     - registered_at
   user_search:
-    description: List or filter Splitwise users by name or email (includes balance direction and amount).
+    description: List or filter Splitwise users.
     kind: query
     entity: User
     selection:
@@ -1368,13 +1236,6 @@ capabilities:
       required: true
     - name: query
       value_ref: nv_str
-      required: false
-    controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
       required: false
     provides:
     - name
@@ -1389,6 +1250,58 @@ capabilities:
       target_terms:
       - user
       - member
+  balance_query:
+    description: List group balances by shelf — group | groups.
+    kind: query
+    entity: Balance
+    scope:
+    - name: group_id
+      value_ref: nv_group_id
+      required: false
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: shelf
+      value_ref: nv_balance_shelf
+      required: true
+      description: group | groups
+    - name: email
+      value_ref: nv_email
+      required: false
+    provides:
+    - amount
+    - direction
+    - email
+    - group_id
+    - group_name
+    - name
+    - others_owe_you
+    - you_owe_others
+  peer_balance_query:
+    description: List peer balances by shelf — person | people.
+    kind: query
+    entity: PeerBalance
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: shelf
+      value_ref: nv_peer_balance_shelf
+      required: true
+      description: person | people
+    - name: email
+      value_ref: nv_email
+      required: false
+    provides:
+    - amount
+    - direction
+    - email
+    - group_id
+    - group_name
+    - name
+    - others_owe_you
+    - you_owe_others
 values:
   nv_str:
     type: string
@@ -1441,7 +1354,7 @@ values:
     description: ISO datetime string.
   nv_file_path:
     type: string
-    description: Absolute file-system path for receipt upload.
+    description: Receipt file path for upload — absolute /home/… (or resolved ~/… with a subpath). Relative paths and bare ~ are rejected.
   nv_expense_comment_id:
     type: integer
     description: Expense comment primary key.
@@ -1459,7 +1372,7 @@ values:
     description: Whether a notification has been read.
   nv_balance_direction:
     type: enum
-    description: Who owes whom for a balance row.
+    description: Who owes whom for a balance entry.
     enum:
     - you_owe_them
     - they_owe_you
@@ -1494,13 +1407,25 @@ values:
     description: Notification message body.
   nv_activity_record_type:
     type: enum
-    description: Whether an activity row is an expense or a payment.
+    description: Whether an activity entry is an expense or a payment.
     enum:
     - expense
     - payment
   nv_activity_paid_by:
     type: json
-    description: Payer name and email on an activity row.
+    description: Payer identity on an activity entry.
   nv_activity_owed_by:
     type: json
-    description: Debtors (name, email, amount) on an activity row.
+    description: Debtor identities and amounts on an activity entry.
+  nv_balance_shelf:
+    type: enum
+    enum:
+    - group
+    - groups
+    description: Group balance shelf
+  nv_peer_balance_shelf:
+    type: enum
+    enum:
+    - person
+    - people
+    description: Peer balance shelf

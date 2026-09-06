@@ -1,4 +1,4 @@
-version: 4
+version: 6
 entry_id: todoist
 auth:
   scheme: none
@@ -186,7 +186,7 @@ entities:
         value_ref: nv_bool
   User:
     id_field: email
-    description: Todoist person (name and email) for invites and assignment.
+    description: Todoist person for invites and assignment.
     discovery:
       names:
       - user
@@ -207,7 +207,7 @@ entities:
         value_ref: nv_datetime
   Profile:
     id_field: email
-    description: Todoist public profile (name and email).
+    description: Todoist public profile.
     discovery:
       names:
       - profile
@@ -440,7 +440,7 @@ capabilities:
           value_ref: nv_section_id
           required: false
   task_update:
-    description: Update a task (title, due date, completion, etc.).
+    description: Update a task.
     kind: update
     entity: Task
     payload:
@@ -626,7 +626,7 @@ capabilities:
       value_ref: nv_access_token
       required: true
   task_comment_create:
-    description: Post a comment on a task.
+    description: Post a comment on a task. Comment body param is content (not comment_text or body).
     kind: create
     entity: TaskComment
     payload:
@@ -830,13 +830,6 @@ capabilities:
       required: true
     - name: read
       value_ref: nv_read
-      required: false
-    controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
       required: false
     provides:
     - notification_id

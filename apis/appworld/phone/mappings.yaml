@@ -11,6 +11,16 @@ _auth_header: &auth_header
           type: var
           name: access_token
 
+# AppWorld OpenAPI list endpoints use page_index (0-based) + page_limit (default 5, max 20).
+_appworld_page_index_limit: &appworld_page_index_limit
+  params:
+    page_index:
+      counter: 0
+    page_limit:
+      fixed: 20
+      role: page_size
+  strategy: page_number
+
 login:
   method: POST
   path:
@@ -51,17 +61,7 @@ contact_query:
         condition: { type: exists, var: relationship }
         then_expr: { type: var, name: relationship }
         else_expr: { type: const, value: null }
-    - - page_index
-      - type: if
-        condition: { type: exists, var: page_index }
-        then_expr: { type: var, name: page_index }
-        else_expr: { type: const, value: null }
-    - - page_limit
-      - type: if
-        condition: { type: exists, var: page_limit }
-        then_expr: { type: var, name: page_limit }
-        else_expr: { type: const, value: null }
-
+  pagination: *appworld_page_index_limit
 contact_create:
   method: POST
   path:
@@ -169,19 +169,7 @@ alarm_query:
   - { type: literal, value: phone }
   - { type: literal, value: alarms }
   headers: *auth_header
-  query:
-    type: object
-    fields:
-    - - page_index
-      - type: if
-        condition: { type: exists, var: page_index }
-        then_expr: { type: var, name: page_index }
-        else_expr: { type: const, value: null }
-    - - page_limit
-      - type: if
-        condition: { type: exists, var: page_limit }
-        then_expr: { type: var, name: page_limit }
-        else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
 
 alarm_get:
   method: GET
@@ -281,7 +269,13 @@ text_message_query:
   path:
   - { type: literal, value: phone }
   - { type: literal, value: messages }
-  - { type: literal, value: text }
+  - type: if
+    condition:
+      type: equals
+      left: { type: var, name: shelf }
+      right: { type: const, value: window }
+    then_expr: { type: const, value: text/window }
+    else_expr: { type: const, value: text }
   headers: *auth_header
   query:
     type: object
@@ -301,22 +295,27 @@ text_message_query:
         condition: { type: exists, var: only_latest_per_contact }
         then_expr: { type: var, name: only_latest_per_contact }
         else_expr: { type: const, value: null }
-    - - page_index
+    - - min_datetime
       - type: if
-        condition: { type: exists, var: page_index }
-        then_expr: { type: var, name: page_index }
+        condition: { type: exists, var: min_datetime }
+        then_expr: { type: var, name: min_datetime }
         else_expr: { type: const, value: null }
-    - - page_limit
+    - - max_datetime
       - type: if
-        condition: { type: exists, var: page_limit }
-        then_expr: { type: var, name: page_limit }
+        condition: { type: exists, var: max_datetime }
+        then_expr: { type: var, name: max_datetime }
         else_expr: { type: const, value: null }
     - - sort_by
       - type: if
         condition: { type: exists, var: sort_by }
         then_expr: { type: var, name: sort_by }
         else_expr: { type: const, value: null }
-
+    - - pagination_order
+      - type: if
+        condition: { type: exists, var: pagination_order }
+        then_expr: { type: var, name: pagination_order }
+        else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
 text_message_get:
   method: GET
   path:
@@ -348,50 +347,18 @@ text_message_delete:
   - { type: var, name: id }
   headers: *auth_header
 
-text_message_window:
-  method: GET
-  path:
-  - { type: literal, value: phone }
-  - { type: literal, value: messages }
-  - { type: literal, value: text }
-  - { type: literal, value: window }
-  headers: *auth_header
-  query:
-    type: object
-    fields:
-    - [phone_number, { type: var, name: phone_number }]
-    - - min_datetime
-      - type: if
-        condition: { type: exists, var: min_datetime }
-        then_expr: { type: var, name: min_datetime }
-        else_expr: { type: const, value: null }
-    - - max_datetime
-      - type: if
-        condition: { type: exists, var: max_datetime }
-        then_expr: { type: var, name: max_datetime }
-        else_expr: { type: const, value: null }
-    - - pagination_order
-      - type: if
-        condition: { type: exists, var: pagination_order }
-        then_expr: { type: var, name: pagination_order }
-        else_expr: { type: const, value: null }
-    - - page_index
-      - type: if
-        condition: { type: exists, var: page_index }
-        then_expr: { type: var, name: page_index }
-        else_expr: { type: const, value: null }
-    - - page_limit
-      - type: if
-        condition: { type: exists, var: page_limit }
-        then_expr: { type: var, name: page_limit }
-        else_expr: { type: const, value: null }
-
 voice_message_query:
   method: GET
   path:
   - { type: literal, value: phone }
   - { type: literal, value: messages }
-  - { type: literal, value: voice }
+  - type: if
+    condition:
+      type: equals
+      left: { type: var, name: shelf }
+      right: { type: const, value: window }
+    then_expr: { type: const, value: voice/window }
+    else_expr: { type: const, value: voice }
   headers: *auth_header
   query:
     type: object
@@ -411,22 +378,27 @@ voice_message_query:
         condition: { type: exists, var: only_latest_per_contact }
         then_expr: { type: var, name: only_latest_per_contact }
         else_expr: { type: const, value: null }
-    - - page_index
+    - - min_datetime
       - type: if
-        condition: { type: exists, var: page_index }
-        then_expr: { type: var, name: page_index }
+        condition: { type: exists, var: min_datetime }
+        then_expr: { type: var, name: min_datetime }
         else_expr: { type: const, value: null }
-    - - page_limit
+    - - max_datetime
       - type: if
-        condition: { type: exists, var: page_limit }
-        then_expr: { type: var, name: page_limit }
+        condition: { type: exists, var: max_datetime }
+        then_expr: { type: var, name: max_datetime }
         else_expr: { type: const, value: null }
     - - sort_by
       - type: if
         condition: { type: exists, var: sort_by }
         then_expr: { type: var, name: sort_by }
         else_expr: { type: const, value: null }
-
+    - - pagination_order
+      - type: if
+        condition: { type: exists, var: pagination_order }
+        then_expr: { type: var, name: pagination_order }
+        else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
 voice_message_send:
   method: POST
   path:
@@ -448,44 +420,6 @@ voice_message_delete:
   - { type: literal, value: voice }
   - { type: var, name: id }
   headers: *auth_header
-
-voice_message_window:
-  method: GET
-  path:
-  - { type: literal, value: phone }
-  - { type: literal, value: messages }
-  - { type: literal, value: voice }
-  - { type: literal, value: window }
-  headers: *auth_header
-  query:
-    type: object
-    fields:
-    - [phone_number, { type: var, name: phone_number }]
-    - - min_datetime
-      - type: if
-        condition: { type: exists, var: min_datetime }
-        then_expr: { type: var, name: min_datetime }
-        else_expr: { type: const, value: null }
-    - - max_datetime
-      - type: if
-        condition: { type: exists, var: max_datetime }
-        then_expr: { type: var, name: max_datetime }
-        else_expr: { type: const, value: null }
-    - - pagination_order
-      - type: if
-        condition: { type: exists, var: pagination_order }
-        then_expr: { type: var, name: pagination_order }
-        else_expr: { type: const, value: null }
-    - - page_index
-      - type: if
-        condition: { type: exists, var: page_index }
-        then_expr: { type: var, name: page_index }
-        else_expr: { type: const, value: null }
-    - - page_limit
-      - type: if
-        condition: { type: exists, var: page_limit }
-        then_expr: { type: var, name: page_limit }
-        else_expr: { type: const, value: null }
 
 profile_get:
   method: GET

@@ -1,4 +1,4 @@
-version: 5
+version: 7
 entry_id: simple_note
 auth:
   scheme: none
@@ -27,7 +27,7 @@ entities:
         value_ref: nv_str
   Note:
     id_field: note_id
-    description: A Simple Note document with title, content, and tags.
+    description: A Simple Note document.
     discovery:
       names:
       - note
@@ -126,12 +126,6 @@ capabilities:
       value_ref: nv_bool
       required: false
     controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
     - name: sort_by
       value_ref: nv_str
       required: false
@@ -187,7 +181,7 @@ capabilities:
     provides:
     - note_id
   note_update:
-    description: Update note title, content, tags, or pinned flag.
+    description: Update a note.
     kind: update
     entity: Note
     payload:

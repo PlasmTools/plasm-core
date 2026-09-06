@@ -11,6 +11,16 @@ _auth_header: &auth_header
           type: var
           name: access_token
 
+# AppWorld OpenAPI list endpoints use page_index (0-based) + page_limit (default 5, max 20).
+_appworld_page_index_limit: &appworld_page_index_limit
+  params:
+    page_index:
+      counter: 0
+    page_limit:
+      fixed: 20
+      role: page_size
+  strategy: page_number
+
 login:
   method: POST
   path:
@@ -32,57 +42,24 @@ logout:
   - { type: literal, value: logout }
   headers: *auth_header
 
-song_search:
-  method: GET
-  path:
-  - { type: literal, value: spotify }
-  - { type: literal, value: songs }
-  headers: *auth_header
-  query:
-    type: object
-    fields:
-    - - query
-      - type: if
-        condition: { type: exists, var: query }
-        then_expr: { type: var, name: query }
-        else_expr: { type: const, value: null }
-    - - genre
-      - type: if
-        condition: { type: exists, var: genre }
-        then_expr: { type: var, name: genre }
-        else_expr: { type: const, value: null }
-    - - artist_id
-      - type: if
-        condition: { type: exists, var: artist_id }
-        then_expr: { type: var, name: artist_id }
-        else_expr: { type: const, value: null }
-    - - album_id
-      - type: if
-        condition: { type: exists, var: album_id }
-        then_expr: { type: var, name: album_id }
-        else_expr: { type: const, value: null }
-    - - page_index
-      - type: if
-        condition: { type: exists, var: page_index }
-        then_expr: { type: var, name: page_index }
-        else_expr: { type: const, value: null }
-    - - page_limit
-      - type: if
-        condition: { type: exists, var: page_limit }
-        then_expr: { type: var, name: page_limit }
-        else_expr: { type: const, value: null }
-    - - sort_by
-      - type: if
-        condition: { type: exists, var: sort_by }
-        then_expr: { type: var, name: sort_by }
-        else_expr: { type: const, value: null }
 
 song_get:
   method: GET
   path:
   - { type: literal, value: spotify }
   - { type: literal, value: songs }
-  - { type: var, name: id }
+  - { type: var, name: song_id }
+  headers: *auth_header
+
+# Same Song detail wire as song_get — hydrates LikedSong.genre after liked_song_query.
+# Path param MUST be song_id (OpenAPI `/spotify/songs/{song_id}`); `id` is wrong and
+# breaks identity→path binding for LikedSong.id_field=song_id.
+liked_song_get:
+  method: GET
+  path:
+  - { type: literal, value: spotify }
+  - { type: literal, value: songs }
+  - { type: var, name: song_id }
   headers: *auth_header
 
 song_like:
@@ -127,21 +104,12 @@ downloaded_song_query:
         condition: { type: exists, var: max_downloaded_at }
         then_expr: { type: var, name: max_downloaded_at }
         else_expr: { type: const, value: null }
-    - - page_index
-      - type: if
-        condition: { type: exists, var: page_index }
-        then_expr: { type: var, name: page_index }
-        else_expr: { type: const, value: null }
-    - - page_limit
-      - type: if
-        condition: { type: exists, var: page_limit }
-        then_expr: { type: var, name: page_limit }
-        else_expr: { type: const, value: null }
     - - sort_by
       - type: if
         condition: { type: exists, var: sort_by }
         then_expr: { type: var, name: sort_by }
         else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
 
 song_download:
   method: POST
@@ -159,40 +127,6 @@ song_undownload:
   - { type: var, name: id }
   headers: *auth_header
 
-album_search:
-  method: GET
-  path:
-  - { type: literal, value: spotify }
-  - { type: literal, value: albums }
-  headers: *auth_header
-  query:
-    type: object
-    fields:
-    - - query
-      - type: if
-        condition: { type: exists, var: query }
-        then_expr: { type: var, name: query }
-        else_expr: { type: const, value: null }
-    - - genre
-      - type: if
-        condition: { type: exists, var: genre }
-        then_expr: { type: var, name: genre }
-        else_expr: { type: const, value: null }
-    - - page_index
-      - type: if
-        condition: { type: exists, var: page_index }
-        then_expr: { type: var, name: page_index }
-        else_expr: { type: const, value: null }
-    - - page_limit
-      - type: if
-        condition: { type: exists, var: page_limit }
-        then_expr: { type: var, name: page_limit }
-        else_expr: { type: const, value: null }
-    - - sort_by
-      - type: if
-        condition: { type: exists, var: sort_by }
-        then_expr: { type: var, name: sort_by }
-        else_expr: { type: const, value: null }
 
 album_get:
   method: GET
@@ -220,30 +154,6 @@ album_unlike:
   - { type: literal, value: like }
   headers: *auth_header
 
-artist_search:
-  method: GET
-  path:
-  - { type: literal, value: spotify }
-  - { type: literal, value: artists }
-  headers: *auth_header
-  query:
-    type: object
-    fields:
-    - - query
-      - type: if
-        condition: { type: exists, var: query }
-        then_expr: { type: var, name: query }
-        else_expr: { type: const, value: null }
-    - - page_index
-      - type: if
-        condition: { type: exists, var: page_index }
-        then_expr: { type: var, name: page_index }
-        else_expr: { type: const, value: null }
-    - - page_limit
-      - type: if
-        condition: { type: exists, var: page_limit }
-        then_expr: { type: var, name: page_limit }
-        else_expr: { type: const, value: null }
 
 artist_get:
   method: GET
@@ -269,35 +179,6 @@ artist_unfollow:
   - { type: var, name: id }
   headers: *auth_header
 
-playlist_search:
-  method: GET
-  path:
-  - { type: literal, value: spotify }
-  - { type: literal, value: playlists }
-  headers: *auth_header
-  query:
-    type: object
-    fields:
-    - - query
-      - type: if
-        condition: { type: exists, var: query }
-        then_expr: { type: var, name: query }
-        else_expr: { type: const, value: null }
-    - - page_index
-      - type: if
-        condition: { type: exists, var: page_index }
-        then_expr: { type: var, name: page_index }
-        else_expr: { type: const, value: null }
-    - - page_limit
-      - type: if
-        condition: { type: exists, var: page_limit }
-        then_expr: { type: var, name: page_limit }
-        else_expr: { type: const, value: null }
-    - - sort_by
-      - type: if
-        condition: { type: exists, var: sort_by }
-        then_expr: { type: var, name: sort_by }
-        else_expr: { type: const, value: null }
 
 playlist_get:
   method: GET
@@ -391,13 +272,17 @@ playlist_unlike:
   - { type: literal, value: like }
   headers: *auth_header
 
-player_current:
+player_current_wire:
   method: GET
   path:
   - { type: literal, value: spotify }
   - { type: literal, value: music_player }
   - { type: literal, value: current_song }
   headers: *auth_header
+
+player_current:
+  transport: view
+  view: player_current
 
 player_play:
   method: POST
@@ -574,42 +459,51 @@ liked_song_query:
   query: &page_sort_query
     type: object
     fields:
-    - - page_index
+    - - sort_by
       - type: if
-        condition: { type: exists, var: page_index }
-        then_expr: { type: var, name: page_index }
+        condition: { type: exists, var: sort_by }
+        then_expr: { type: var, name: sort_by }
         else_expr: { type: const, value: null }
-    - - page_limit
+  pagination: *appworld_page_index_limit
+
+song_library_query:
+  method: GET
+  path:
+  - { type: literal, value: spotify }
+  - type: if
+    condition:
+      type: equals
+      left: { type: var, name: shelf }
+      right: { type: const, value: recommendations }
+    then_expr: { type: const, value: recommendations }
+    else_expr:
+      type: if
+      condition:
+        type: equals
+        left: { type: var, name: shelf }
+        right: { type: const, value: library }
+      then_expr: { type: const, value: library/songs }
+      else_expr: { type: const, value: songs }
+  headers: *auth_header
+  query: &page_query
+    type: object
+    fields:
+    - - query
       - type: if
-        condition: { type: exists, var: page_limit }
-        then_expr: { type: var, name: page_limit }
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+    - - genre
+      - type: if
+        condition: { type: exists, var: genre }
+        then_expr: { type: var, name: genre }
         else_expr: { type: const, value: null }
     - - sort_by
       - type: if
         condition: { type: exists, var: sort_by }
         then_expr: { type: var, name: sort_by }
         else_expr: { type: const, value: null }
-
-song_library_query:
-  method: GET
-  path:
-  - { type: literal, value: spotify }
-  - { type: literal, value: library }
-  - { type: literal, value: songs }
-  headers: *auth_header
-  query: &page_query
-    type: object
-    fields:
-    - - page_index
-      - type: if
-        condition: { type: exists, var: page_index }
-        then_expr: { type: var, name: page_index }
-        else_expr: { type: const, value: null }
-    - - page_limit
-      - type: if
-        condition: { type: exists, var: page_limit }
-        then_expr: { type: var, name: page_limit }
-        else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
 
 song_library_add:
   method: POST
@@ -629,22 +523,38 @@ song_library_remove:
   - { type: var, name: id }
   headers: *auth_header
 
-song_recommendation_query:
-  method: GET
-  path:
-  - { type: literal, value: spotify }
-  - { type: literal, value: recommendations }
-  headers: *auth_header
-  query: *page_query
 
 album_library_query:
   method: GET
   path:
   - { type: literal, value: spotify }
-  - { type: literal, value: library }
-  - { type: literal, value: albums }
+  - type: if
+    condition:
+      type: equals
+      left: { type: var, name: shelf }
+      right: { type: const, value: library }
+    then_expr: { type: const, value: library/albums }
+    else_expr: { type: const, value: albums }
   headers: *auth_header
-  query: *page_query
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+    - - genre
+      - type: if
+        condition: { type: exists, var: genre }
+        then_expr: { type: var, name: genre }
+        else_expr: { type: const, value: null }
+    - - sort_by
+      - type: if
+        condition: { type: exists, var: sort_by }
+        then_expr: { type: var, name: sort_by }
+        else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
 
 album_library_add:
   method: POST
@@ -668,28 +578,32 @@ playlist_library_query:
   method: GET
   path:
   - { type: literal, value: spotify }
-  - { type: literal, value: library }
-  - { type: literal, value: playlists }
+  - type: if
+    condition:
+      type: equals
+      left: { type: var, name: shelf }
+      right: { type: const, value: library }
+    then_expr: { type: const, value: library/playlists }
+    else_expr: { type: const, value: playlists }
   headers: *auth_header
   query:
     type: object
     fields:
-    - - page_index
+    - - query
       - type: if
-        condition: { type: exists, var: page_index }
-        then_expr: { type: var, name: page_index }
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
         else_expr: { type: const, value: null }
-    - - page_limit
+    - - sort_by
       - type: if
-        condition: { type: exists, var: page_limit }
-        then_expr: { type: var, name: page_limit }
+        condition: { type: exists, var: sort_by }
+        then_expr: { type: var, name: sort_by }
         else_expr: { type: const, value: null }
     - - is_public
       - type: if
         condition: { type: exists, var: is_public }
         then_expr: { type: var, name: is_public }
         else_expr: { type: const, value: null }
-
 liked_playlist_query:
   method: GET
   path:
@@ -697,6 +611,7 @@ liked_playlist_query:
   - { type: literal, value: liked_playlists }
   headers: *auth_header
   query: *page_query
+  pagination: *appworld_page_index_limit
 
 liked_album_query:
   method: GET
@@ -705,14 +620,29 @@ liked_album_query:
   - { type: literal, value: liked_albums }
   headers: *auth_header
   query: *page_query
+  pagination: *appworld_page_index_limit
 
 following_artist_query:
   method: GET
   path:
   - { type: literal, value: spotify }
-  - { type: literal, value: following_artists }
+  - type: if
+    condition:
+      type: equals
+      left: { type: var, name: shelf }
+      right: { type: const, value: following }
+    then_expr: { type: const, value: following_artists }
+    else_expr: { type: const, value: artists }
   headers: *auth_header
-  query: *page_query
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
 
 song_review_create:
   method: POST
@@ -942,19 +872,7 @@ premium_subscription_query:
   - { type: literal, value: premium }
   - { type: literal, value: subscriptions }
   headers: *auth_header
-  query:
-    type: object
-    fields:
-    - - page_index
-      - type: if
-        condition: { type: exists, var: page_index }
-        then_expr: { type: var, name: page_index }
-        else_expr: { type: const, value: null }
-    - - page_limit
-      - type: if
-        condition: { type: exists, var: page_limit }
-        then_expr: { type: var, name: page_limit }
-        else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
 
 premium_subscribe:
   method: POST

@@ -1,4 +1,4 @@
-version: 6
+version: 7
 entry_id: file_system
 auth:
   scheme: none
@@ -27,7 +27,7 @@ entities:
         value_ref: nv_str
   File:
     id_field: path
-    description: A file with path and textual content (read, write, move, delete, compress).
+    description: A file stored in the AppWorld file system.
     discovery:
       names:
       - file
@@ -58,10 +58,7 @@ entities:
         value_ref: nv_path
   DirectoryEntry:
     id_field: path
-    description: 'A path returned when listing a directory (files and/or subfolders under a folder). Use
-      this to discover what is in a directory before reading or moving files.
-
-      '
+    description: A path entry returned when listing a directory.
     discovery:
       names:
       - directory
@@ -145,10 +142,7 @@ capabilities:
       type: side_effect
       description: Ends the File System session for this token.
   directory_query:
-    description: 'List file and subdirectory paths under a directory (optional substring match, entry_type
-      filter, or recursive walk).
-
-      '
+    description: List paths under a directory.
     kind: query
     entity: DirectoryEntry
     discovery:
@@ -487,7 +481,7 @@ values:
     description: Bearer access token from login.
   nv_path:
     type: string
-    description: Absolute or ~/ relative filesystem path.
+    description: Filesystem path — absolute (/home/…) or home-relative with a subpath (~/documents/…). Bare ~ alone is invalid (resolves to /~/).
   nv_content:
     type: document
     description: File body text.

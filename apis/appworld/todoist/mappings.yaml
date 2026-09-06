@@ -11,6 +11,16 @@ _auth_header: &auth_header
           type: var
           name: access_token
 
+# AppWorld OpenAPI list endpoints use page_index (0-based) + page_limit (default 5, max 20).
+_appworld_page_index_limit: &appworld_page_index_limit
+  params:
+    page_index:
+      counter: 0
+    page_limit:
+      fixed: 20
+      role: page_size
+  strategy: page_number
+
 login:
   method: POST
   path:
@@ -507,17 +517,7 @@ notification_query:
         condition: { type: exists, var: read }
         then_expr: { type: var, name: read }
         else_expr: { type: const, value: null }
-    - - page_index
-      - type: if
-        condition: { type: exists, var: page_index }
-        then_expr: { type: var, name: page_index }
-        else_expr: { type: const, value: null }
-    - - page_limit
-      - type: if
-        condition: { type: exists, var: page_limit }
-        then_expr: { type: var, name: page_limit }
-        else_expr: { type: const, value: null }
-
+  pagination: *appworld_page_index_limit
 notification_delete:
   method: DELETE
   path:

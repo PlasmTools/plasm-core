@@ -1,4 +1,4 @@
-version: 5
+version: 6
 entry_id: supervisor
 auth:
   scheme: none
@@ -37,8 +37,7 @@ entities:
   AccountPassword:
     id_field: account_name
     primary_read: account_password_get
-    description: Per-app password for the task principal — account_name is the app key, not a login email;
-      get by app key before login.
+    description: Per-app password for the task principal — account_name is the app key, not a login email.
     discovery:
       names:
       - password

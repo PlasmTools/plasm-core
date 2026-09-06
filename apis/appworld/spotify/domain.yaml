@@ -1,4 +1,4 @@
-version: 9
+version: 18
 entry_id: spotify
 auth:
   scheme: none
@@ -34,11 +34,7 @@ entities:
   Song:
     id_field: song_id
     primary_query: song_library_query
-    description: 'A Spotify track on the catalog and library shelf — search, open one track, save or
-      remove from the library, like/unlike, or offline download. Not the liked-songs shelf (use LikedSong)
-      and not the playback queue (use Player / QueueEntry).
-
-      '
+    description: A Spotify track on the catalog or library shelf. Not the liked-songs shelf (use LikedSong) and not the playback queue (use Player / QueueEntry).
     discovery:
       names:
       - song
@@ -85,10 +81,8 @@ entities:
   LikedSong:
     id_field: song_id
     primary_query: liked_song_query
-    description: 'A track on the user''s liked-songs shelf (hearted favorites). Distinct from the library
-      shelf and from catalog search — open Song for full catalog fields such as genre.
-
-      '
+    primary_read: liked_song_get
+    description: A track on the user's liked-songs shelf (hearted favorites). Distinct from the library shelf and from catalog search.
     discovery:
       names:
       - liked song
@@ -112,16 +106,27 @@ entities:
       duration:
         required: false
         value_ref: nv_int
+      # Filled by liked_song_get hydration (GET /songs/{song_id}); the liked_songs *list* wire has no genre.
+      genre:
+        required: false
+        value_ref: nv_genre
       liked_at:
         required: false
         value_ref: nv_datetime
+    relations:
+      song:
+        description: Catalog song for this liked shelf entry (genre and play stats live here on the Song GET).
+        target: Song
+        cardinality: one
+        materialize:
+          kind: get_scoped_bindings
+          capability: song_get
+          bindings:
+            song_id: song_id
   Album:
     id_field: album_id
     primary_query: album_library_query
-    description: 'An album on the catalog and library shelf — search, open, save or remove from the library,
-      like/unlike. Not the liked-albums shelf (use LikedAlbum).
-
-      '
+    description: An album on the catalog and library shelf. Not the liked-albums shelf (use LikedAlbum).
     discovery:
       names:
       - album
@@ -240,10 +245,7 @@ entities:
   Playlist:
     id_field: playlist_id
     primary_query: playlist_library_query
-    description: 'A playlist on the catalog and library shelf — create, edit, delete, add/remove songs,
-      like/unlike. Not the liked-playlists shelf (use LikedPlaylist).
-
-      '
+    description: A playlist on the catalog and library shelf. Not the liked-playlists shelf (use LikedPlaylist).
     discovery:
       names:
       - playlist
@@ -287,8 +289,7 @@ entities:
   LikedPlaylist:
     id_field: playlist_id
     primary_query: liked_playlist_query
-    description: 'A playlist on the user''s liked-playlists shelf. Distinct from playlists saved in the
-      library.
+    description: 'A playlist on the user''s liked-playlists shelf. Distinct from playlists saved in the library.
 
       '
     discovery:
@@ -347,12 +348,13 @@ entities:
         required: false
         value_ref: nv_datetime
   Player:
-    id_field: song_id
+    # Identity is the Bearer token (RA-5 get arg), not song_id — current playback has no path id;
+    # song_id/title/… are output of player_current only. Wire SongPlayerResponse has no access_token;
+    # request identity must override decode (same pattern as other bearer-scoped singletons).
+    id_field: access_token
+    implicit_request_identity: true
     primary_read: player_current
-    description: 'Playback control — play/pause, previous/next, seek, loop, volume, and shuffle or clear/rebuild
-      the queue. Distinct from browsing songs or playlists.
-
-      '
+    description: Current playback session and queue control. Distinct from browsing songs or playlists.
     discovery:
       names:
       - player
@@ -365,6 +367,9 @@ entities:
       - play
       seed_class: primary
     fields:
+      access_token:
+        required: true
+        value_ref: nv_access_token
       song_id:
         required: false
         value_ref: nv_song_id
@@ -377,6 +382,15 @@ entities:
       is_playing:
         required: false
         value_ref: nv_bool
+      # Composed on player_current view: true when current song_id is on the LikedSong shelf.
+      # Not on OpenAPI SongPlayerResponse — membership is Player×LikedSong, not a LikedSong field.
+      is_liked:
+        required: false
+        value_ref: nv_bool
+      # Intermediate for is_liked (song_id → count JSON from liked_song_query). Not a domain concept.
+      liked_by_song_id:
+        required: false
+        value_ref: nv_str
       volume:
         required: false
         value_ref: nv_int
@@ -506,7 +520,7 @@ entities:
         data_class: pii_payment
   PremiumPlan:
     id_field: monthly
-    description: Spotify premium pricing sheet (monthly and yearly amounts).
+    description: Spotify premium pricing sheet.
     discovery:
       names:
       - premium plan
@@ -581,46 +595,15 @@ capabilities:
     output:
       type: side_effect
       description: Ends the Spotify session for this token.
-  song_search:
-    description: Search songs.
-    kind: query
-    entity: Song
-    selection:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: query
-      value_ref: nv_str
-      required: false
-    - name: genre
-      value_ref: nv_genre
-      required: false
-    controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
-    - name: sort_by
-      value_ref: nv_str
-      required: false
-    provides:
-    - song_id
-    - title
-    - album_id
-    - album_title
-    - duration
-    - genre
-    - release_date
-    - play_count
-    - rating
-    - like_count
-    - shareable_link
   song_get:
     description: Show one song.
     kind: get
     entity: Song
+    # Scope slot so LikedSong.song (get_scoped_bindings) can bind parent.song_id → this get.
+    scope:
+    - name: song_id
+      value_ref: nv_song_id
+      required: true
     arguments:
       input_type:
         type: object
@@ -686,12 +669,6 @@ capabilities:
       value_ref: nv_datetime
       required: false
     controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
     - name: sort_by
       value_ref: nv_str
       required: false
@@ -730,37 +707,6 @@ capabilities:
     output:
       type: side_effect
       description: Removes this song from offline downloads.
-  album_search:
-    description: Search albums.
-    kind: query
-    entity: Album
-    selection:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: query
-      value_ref: nv_str
-      required: false
-    - name: genre
-      value_ref: nv_genre
-      required: false
-    controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
-    - name: sort_by
-      value_ref: nv_str
-      required: false
-    provides:
-    - album_id
-    - title
-    - genre
-    - rating
-    - like_count
-    - release_date
   album_get:
     description: Show one album.
     kind: get
@@ -807,29 +753,6 @@ capabilities:
     output:
       type: side_effect
       description: Unlikes the album.
-  artist_search:
-    description: Search artists.
-    kind: query
-    entity: Artist
-    selection:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: query
-      value_ref: nv_str
-      required: false
-    controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
-    provides:
-    - artist_id
-    - name
-    - genre
-    - follower_count
   artist_get:
     description: Show one artist.
     kind: get
@@ -874,37 +797,8 @@ capabilities:
     output:
       type: side_effect
       description: Unfollows the artist.
-  playlist_search:
-    description: Search playlists.
-    kind: query
-    entity: Playlist
-    selection:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: query
-      value_ref: nv_str
-      required: false
-    controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
-    - name: sort_by
-      value_ref: nv_str
-      required: false
-    provides:
-    - playlist_id
-    - title
-    - is_public
-    - rating
-    - like_count
-    - created_at
-    - shareable_link
   playlist_get:
-    description: Show one playlist including its songs.
+    description: Show one playlist.
     kind: get
     entity: Playlist
     arguments:
@@ -942,7 +836,7 @@ capabilities:
     provides:
     - playlist_id
   playlist_update:
-    description: Update a playlist's title and/or public visibility.
+    description: Update a playlist.
     kind: update
     entity: Playlist
     discovery:
@@ -1040,8 +934,8 @@ capabilities:
     output:
       type: side_effect
       description: Unlikes the playlist.
-  player_current:
-    description: Show the current song in the music player.
+  player_current_wire:
+    description: Show the current song on the music player wire (no liked-shelf membership).
     kind: get
     entity: Player
     arguments:
@@ -1057,8 +951,26 @@ capabilities:
     - position
     - is_playing
     - volume
+  player_current:
+    description: Show current playback including whether that song is on the liked shelf.
+    kind: get
+    entity: Player
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - song_id
+    - title
+    - position
+    - is_playing
+    - volume
+    - is_liked
   player_play:
-    description: Start or resume playback (optionally of a song, album, or playlist).
+    description: Start or resume playback.
     kind: action
     entity: Player
     discovery:
@@ -1123,8 +1035,10 @@ capabilities:
         - name: access_token
           value_ref: nv_access_token
           required: true
-    provides:
-    - song_id
+    # No provides: membership (`is_liked`) lives only on player_current. Side-effect-only so
+    # iterate…until re-observes the composed Get. Invalidate Player so re-Get is not cache-stale.
+    invalidates_entities:
+    - Player
     output:
       type: side_effect
       description: Moves playback to the previous song in the queue.
@@ -1148,8 +1062,8 @@ capabilities:
         - name: access_token
           value_ref: nv_access_token
           required: true
-    provides:
-    - song_id
+    invalidates_entities:
+    - Player
     output:
       type: side_effect
       description: Moves playback to the next song in the queue.
@@ -1332,8 +1246,8 @@ capabilities:
       type: side_effect
       description: Sets the playback volume.
   liked_song_query:
-    description: 'List songs the user has liked (heart/favorite). Distinct from the broader song library
-      and from catalog search — use this when the goal is liked tracks.
+    description: 'List songs the user has liked (heart/favorite). Distinct from the broader song library and from catalog
+      search — use this when the goal is liked tracks.
 
       '
     kind: query
@@ -1352,25 +1266,44 @@ capabilities:
       value_ref: nv_access_token
       required: true
     controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
     - name: sort_by
       value_ref: nv_str
       required: false
+    # Shelf list omits genre on the wire; declare it for hydrate/plan (liked_song_get fills values).
     provides:
     - song_id
     - title
     - album_id
     - album_title
     - duration
+    - genre
     - liked_at
+  liked_song_get:
+    description: Show one liked shelf entry as a catalog song detail (genre and play stats from GET /songs/{song_id}).
+    kind: get
+    entity: LikedSong
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - song_id
+    - title
+    - album_id
+    - album_title
+    - duration
+    - genre
+    - liked_at
+    - release_date
+    - play_count
+    - rating
+    - like_count
+    - shareable_link
   song_library_query:
-    description: 'List songs saved in the user''s song library (library shelf — not the same as liked
-      songs, and not a free-text catalog search).
+    description: 'List songs by shelf — catalog (optional query/genre filters), library saves, or personalized recommendations.
 
       '
     kind: query
@@ -1380,20 +1313,31 @@ capabilities:
       - list
       - show
       - library
+      - recommend
+      - search
       target_terms:
+      - song
+      - songs
+      - track
       - song library
-      - library songs
-      - my library
+      - recommendations
     selection:
     - name: access_token
       value_ref: nv_access_token
       required: true
-    controls:
-    - name: page_index
-      value_ref: nv_int
+    - name: shelf
+      value_ref: nv_song_shelf
+      required: true
+      description: catalog | library | recommendations
+    - name: query
+      value_ref: nv_str
       required: false
-    - name: page_limit
-      value_ref: nv_int
+    - name: genre
+      value_ref: nv_genre
+      required: false
+    controls:
+    - name: sort_by
+      value_ref: nv_str
       required: false
     provides:
     - song_id
@@ -1435,59 +1379,39 @@ capabilities:
     output:
       type: side_effect
       description: Removes this song from the library.
-  song_recommendation_query:
-    description: 'Personalized song recommendations for the authenticated user (suggested tracks — not
-      the current queue and not the liked/library shelves).
+  album_library_query:
+    description: 'List albums by shelf — catalog (optional query/genre filters) or saved library.
 
       '
     kind: query
-    entity: Song
+    entity: Album
     discovery:
       operation_terms:
-      - recommend
-      - suggest
-      - recommendations
+      - list
+      - show
+      - library
+      - search
       target_terms:
-      - song
-      - songs
-      - track
+      - album
+      - albums
+      - album library
     selection:
     - name: access_token
       value_ref: nv_access_token
       required: true
-    controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
-    provides:
-    - song_id
-    - title
-    - album_id
-    - album_title
-    - duration
-    - genre
-    - release_date
-    - play_count
-    - rating
-    - like_count
-    - shareable_link
-  album_library_query:
-    description: List albums saved to the user's library.
-    kind: query
-    entity: Album
-    selection:
-    - name: access_token
-      value_ref: nv_access_token
+    - name: shelf
+      value_ref: nv_album_shelf
       required: true
-    controls:
-    - name: page_index
-      value_ref: nv_int
+      description: catalog | library
+    - name: query
+      value_ref: nv_str
       required: false
-    - name: page_limit
-      value_ref: nv_int
+    - name: genre
+      value_ref: nv_genre
+      required: false
+    controls:
+    - name: sort_by
+      value_ref: nv_str
       required: false
     provides:
     - album_id
@@ -1525,22 +1449,35 @@ capabilities:
       type: side_effect
       description: Removes this album from the library.
   playlist_library_query:
-    description: List playlists in the user's library.
+    description: 'List playlists by shelf — catalog (optional query filter) or saved library.
+
+      '
     kind: query
     entity: Playlist
+    discovery:
+      operation_terms:
+      - list
+      - show
+      - library
+      - search
+      target_terms:
+      - playlist
+      - playlists
+      - playlist library
     selection:
     - name: access_token
       value_ref: nv_access_token
       required: true
-    - name: is_public
-      value_ref: nv_bool
+    - name: shelf
+      value_ref: nv_playlist_shelf
+      required: true
+      description: catalog | library
+    - name: query
+      value_ref: nv_str
       required: false
     controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
+    - name: sort_by
+      value_ref: nv_str
       required: false
     provides:
     - playlist_id
@@ -1566,13 +1503,6 @@ capabilities:
     - name: access_token
       value_ref: nv_access_token
       required: true
-    controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
     provides:
     - playlist_id
     - title
@@ -1597,13 +1527,6 @@ capabilities:
     - name: access_token
       value_ref: nv_access_token
       required: true
-    controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
     provides:
     - album_id
     - title
@@ -1613,19 +1536,31 @@ capabilities:
     - release_date
     - liked_at
   following_artist_query:
-    description: List artists the user follows.
+    description: 'List artists by shelf — catalog (optional query filter) or artists the user follows.
+
+      '
     kind: query
     entity: Artist
+    discovery:
+      operation_terms:
+      - list
+      - show
+      - follow
+      - search
+      target_terms:
+      - artist
+      - artists
+      - following
     selection:
     - name: access_token
       value_ref: nv_access_token
       required: true
-    controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
+    - name: shelf
+      value_ref: nv_artist_shelf
+      required: true
+      description: catalog | following
+    - name: query
+      value_ref: nv_str
       required: false
     provides:
     - artist_id
@@ -1891,13 +1826,6 @@ capabilities:
     - name: access_token
       value_ref: nv_access_token
       required: true
-    controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
     provides:
     - premium_subscription_id
     - start_date
@@ -1973,6 +1901,64 @@ capabilities:
       - genres
     provides:
     - name
+
+# OpenAPI SongPlayerResponse has no liked flag. Compose player wire + liked_songs list;
+# is_liked := current song_id appears in the liked shelf (Player membership, not LikedSong.is_liked).
+views:
+  player_current:
+    description: Current playback with liked-shelf membership for the song on the cursor.
+    capability: player_current
+    entity: Player
+    scope:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    nodes:
+    - id: wire
+      capability: player_current_wire
+      bind:
+        access_token:
+          kind: scope
+          param: access_token
+    - id: liked
+      capability: liked_song_query
+      bind:
+        access_token:
+          kind: scope
+          param: access_token
+    output:
+      access_token:
+        kind: scope
+        param: access_token
+      song_id:
+        kind: node_field
+        node: wire
+        field: song_id
+      title:
+        kind: node_field
+        node: wire
+        field: title
+      position:
+        kind: node_field
+        node: wire
+        field: position
+      is_playing:
+        kind: node_field
+        node: wire
+        field: is_playing
+      volume:
+        kind: node_field
+        node: wire
+        field: volume
+      liked_by_song_id:
+        kind: node_field_histogram_json
+        node: liked
+        field: song_id
+      is_liked:
+        kind: computed
+        # Histogram keys are decimal strings; coerce song_id for map lookup.
+        template: "{{ (song_id ~ '') in liked_by_song_id }}"
+
 values:
   nv_str:
     type: string
@@ -1989,6 +1975,31 @@ values:
   nv_access_token:
     type: string
     description: Bearer access token from login.
+  nv_song_shelf:
+    type: enum
+    enum:
+    - catalog
+    - library
+    - recommendations
+    description: Song list shelf — catalog browse/filter, saved library, or personalized recommendations.
+  nv_album_shelf:
+    type: enum
+    enum:
+    - catalog
+    - library
+    description: Album list shelf — catalog browse/filter or saved library.
+  nv_artist_shelf:
+    type: enum
+    enum:
+    - catalog
+    - following
+    description: Artist list shelf — catalog browse/filter or followed artists.
+  nv_playlist_shelf:
+    type: enum
+    enum:
+    - catalog
+    - library
+    description: Playlist list shelf — catalog browse/filter or saved library.
   nv_song_id:
     type: integer
     description: Song primary key.
@@ -2038,7 +2049,7 @@ values:
     - rock
   nv_file_path:
     type: string
-    description: File-system path for download or save.
+    description: File-system path for download or save — absolute /home/… or ~/subpath (bare ~ alone is invalid).
   nv_rating:
     type: integer
     description: Star rating from 1 to 5.
@@ -2059,8 +2070,8 @@ values:
     description: Integer.
   nv_like_count:
     type: integer
-    description: Community/social popularity tally for this item — how many users have liked it, not
-      whether the current user hearted it.
+    description: Community/social popularity tally for this item — how many users have liked it, not whether the current user
+      hearted it.
   nv_datetime:
     type: rfc3339
     description: ISO datetime string.

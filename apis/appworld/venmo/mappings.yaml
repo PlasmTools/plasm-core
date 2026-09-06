@@ -138,7 +138,13 @@ transaction_query:
   method: GET
   path:
   - { type: literal, value: venmo }
-  - { type: literal, value: transactions }
+  - type: if
+    condition:
+      type: equals
+      left: { type: var, name: shelf }
+      right: { type: const, value: social_feed }
+    then_expr: { type: const, value: social_feed }
+    else_expr: { type: const, value: transactions }
   headers: *auth_header
   query:
     type: object
@@ -236,7 +242,13 @@ payment_request_received_query:
   method: GET
   path:
   - { type: literal, value: venmo }
-  - { type: literal, value: received_payment_requests }
+  - type: if
+    condition:
+      type: equals
+      left: { type: var, name: polarity }
+      right: { type: const, value: sent }
+    then_expr: { type: const, value: sent_payment_requests }
+    else_expr: { type: const, value: received_payment_requests }
   headers: *auth_header
   query: &status_query
     type: object
@@ -246,14 +258,6 @@ payment_request_received_query:
         condition: { type: exists, var: status }
         then_expr: { type: var, name: status }
         else_expr: { type: const, value: null }
-  pagination: *appworld_page_index_limit
-payment_request_sent_query:
-  method: GET
-  path:
-  - { type: literal, value: venmo }
-  - { type: literal, value: sent_payment_requests }
-  headers: *auth_header
-  query: *status_query
   pagination: *appworld_page_index_limit
 payment_request_create:
   method: POST
@@ -494,7 +498,6 @@ notification_mark_all:
     type: object
     fields:
     - [read, { type: var, name: read }]
-social_feed_query:
   method: GET
   path:
   - { type: literal, value: venmo }

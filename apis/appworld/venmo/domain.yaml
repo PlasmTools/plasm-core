@@ -1,4 +1,4 @@
-version: 8
+version: 11
 entry_id: venmo
 data_classes:
   untrusted:
@@ -37,6 +37,18 @@ values:
   nv_description:
     type: markdown
     description: Payment or request note text.
+  nv_payment_request_polarity:
+    type: enum
+    enum:
+    - received
+    - sent
+    description: Whether to list payment requests received by you or sent by you.
+  nv_transaction_shelf:
+    type: enum
+    enum:
+    - mine
+    - social_feed
+    description: Personal transactions vs friends social feed.
   nv_status:
     type: enum
     description: Payment-request status filter.
@@ -153,9 +165,7 @@ entities:
         value_ref: nv_token_type
   User:
     id_field: email
-    description: >-
-      Resolve a Venmo person by name or email to a user_email before paying,
-      requesting money, or opening their profile — not friendship management.
+    description: Venmo person directory entry for payees and requesters — not friendship management.
     discovery:
       names:
       - user
@@ -189,9 +199,7 @@ entities:
           param: user_email
   Friend:
     id_field: email
-    description: >-
-      Resolve a named friend to a Venmo email before requesting or sending
-      money, or add/remove people on the friends list.
+    description: Venmo friends list — resolve friends before paying or requesting money.
     discovery:
       names:
       - friend
@@ -205,8 +213,6 @@ entities:
       - named friend
       - friend named
       seed_class: primary
-      # Teaching extra whenever a Venmo primary (PaymentRequest, Transaction, …)
-      # is FO-seeded — peer email is not inventable from create params alone.
       co_seed_with: catalog_primary
     fields:
       email:
@@ -239,8 +245,8 @@ entities:
   BankTransfer:
     id_field: bank_transfer_id
     primary_query: bank_transfer_query
-    description: History of money moved between a linked payment card and Venmo balance (deposits and
-      cash-outs) — not peer-to-peer payments (use Transaction).
+    description: History of money moved between a linked payment card and Venmo balance (deposits and cash-outs) — not peer-to-peer
+      payments (use Transaction).
     discovery:
       names:
       - bank transfer
@@ -270,8 +276,7 @@ entities:
   Transaction:
     id_field: transaction_id
     primary_query: transaction_query
-    description: Review completed transfers or send money you already owe — not for asking someone to
-      pay you.
+    description: Review completed transfers or send money you already owe — not for asking someone to pay you.
     discovery:
       names:
       - transaction
@@ -329,9 +334,7 @@ entities:
   PaymentRequest:
     id_field: payment_request_id
     primary_query: payment_request_received_query
-    description: >-
-      Money others asked you to pay (received payment requests). Not completed
-      transfers (use Transaction) or card↔balance moves (use Balance).
+    description: Payment requests you received (others asking you to pay). Not completed transfers (use Transaction) or card↔balance moves (use Balance).
     discovery:
       names:
       - payment request
@@ -367,8 +370,7 @@ entities:
         value_ref: nv_private
   PaymentCard:
     id_field: payment_card_id
-    description: A linked payment card used to fund balance moves and approve payment requests (match
-      by last digits when needed).
+    description: A linked payment card used to fund balance moves and approve payment requests.
     discovery:
       names:
       - payment card
@@ -419,7 +421,7 @@ entities:
         value_ref: nv_count
   Notification:
     id_field: notification_id
-    description: Manage Venmo inbox notifications (payment requests, reminders, received money).
+    description: Venmo inbox notification.
     discovery:
       names:
       - notification
@@ -477,7 +479,7 @@ capabilities:
       type: side_effect
       description: Ends the Venmo session represented by the access token.
   user_search:
-    description: Search Venmo users by name or email.
+    description: Search Venmo users by name or email. Results are fuzzy — before treating someone as on Venmo, confirm an exact email match on a returned row.
     kind: search
     entity: User
     selection:
@@ -511,9 +513,7 @@ capabilities:
     - registered_at
     - friends_since
   friend_query:
-    description: >-
-      Search friends by name or email and return their Venmo email for a later
-      pay or request step (or list another user's friends when scoped).
+    description: Search friends or list another user's friends.
     kind: query
     entity: Friend
     discovery:
@@ -663,13 +663,29 @@ capabilities:
     - payment_card_digits
     - created_at
   transaction_query:
-    description: Find the authenticated user's sent and received transactions.
+    description: 'List transactions by shelf — your sent/received history (optional filters) or friends social feed.
+
+      '
     kind: query
     entity: Transaction
+    discovery:
+      operation_terms:
+      - list
+      - show
+      - browse
+      target_terms:
+      - transaction
+      - transactions
+      - social feed
+      - friends feed
     selection:
     - name: access_token
       value_ref: nv_access_token
       required: true
+    - name: shelf
+      value_ref: nv_transaction_shelf
+      required: true
+      description: mine | social_feed
     - name: query
       value_ref: nv_search_query
     - name: user_email
@@ -697,16 +713,6 @@ capabilities:
     - transaction_id
     - amount
     - description
-    - created_at
-    - updated_at
-    - private
-    - like_count
-    - payment_card_digits
-    - comment_count
-    - sender_email
-    - sender_name
-    - receiver_email
-    - receiver_name
   transaction_get:
     description: Show the details of one Venmo transaction.
     kind: get
@@ -746,8 +752,8 @@ capabilities:
     provides:
     - transaction_id
   payment_request_received_query:
-    description: 'List payment requests other people sent to you (money you have been asked to pay). Filter
-      by status (pending / approved / denied) when needed.
+    description: 'List payment requests by polarity — received (money others asked you to pay) or sent (money you asked others
+      to pay). Filter by status when needed.
 
       '
     kind: query
@@ -757,18 +763,24 @@ capabilities:
       - list
       - show
       - received
+      - sent
       - pending
       target_terms:
       - payment request
       - requested money
       - charge
+      - money request
     selection:
     - name: access_token
       value_ref: nv_access_token
       required: true
+    - name: polarity
+      value_ref: nv_payment_request_polarity
+      required: true
+      description: received | sent
     - name: status
       value_ref: nv_status
-    provides: &id002
+    provides:
     - payment_request_id
     - amount
     - description
@@ -777,28 +789,6 @@ capabilities:
     - approved_at
     - denied_at
     - private
-  payment_request_sent_query:
-    description: 'List payment requests you sent to others (money you asked them to pay you). Filter by
-      status (pending / approved / denied) when needed.
-
-      '
-    kind: query
-    entity: PaymentRequest
-    discovery:
-      operation_terms:
-      - list
-      - show
-      - sent
-      target_terms:
-      - payment request
-      - money request
-    selection:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: status
-      value_ref: nv_status
-    provides: *id002
   payment_request_create:
     description: Ask another Venmo user to pay you (create a sent payment request).
     kind: create
@@ -873,7 +863,7 @@ capabilities:
       type: side_effect
       description: Marks the payment request as denied.
   payment_request_update:
-    description: Update amount, description, or privacy on a pending payment request you sent.
+    description: Update a pending payment request you sent.
     kind: update
     entity: PaymentRequest
     payload:
@@ -916,7 +906,7 @@ capabilities:
           value_ref: nv_access_token
           required: true
   transaction_update:
-    description: Update description or privacy on a transaction you sent.
+    description: Update a transaction you sent.
     kind: update
     entity: Transaction
     payload:
@@ -1085,13 +1075,6 @@ capabilities:
     - name: read
       value_ref: nv_read
       required: false
-    controls:
-    - name: page_index
-      value_ref: nv_count
-      required: false
-    - name: page_limit
-      value_ref: nv_count
-      required: false
     provides:
     - notification_id
     - type
@@ -1158,31 +1141,6 @@ capabilities:
     output:
       type: side_effect
       description: Updates the read status of every notification.
-  social_feed_query:
-    description: Browse friends' public Venmo transactions on your social feed.
-    kind: query
-    entity: Transaction
-    discovery:
-      operation_terms:
-      - show
-      - browse
-      - list
-      target_terms:
-      - social feed
-      - friends feed
-      - activity feed
-    selection:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    controls:
-    - name: page_index
-      value_ref: nv_count
-      required: false
-    - name: page_limit
-      value_ref: nv_count
-      required: false
-    provides: *id001
 auth:
   scheme: none
 http_backend: http://127.0.0.1:9000

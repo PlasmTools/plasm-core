@@ -1,4 +1,4 @@
-version: 5
+version: 8
 entry_id: amazon
 auth:
   scheme: none
@@ -55,12 +55,15 @@ entities:
         value_ref: nv_datetime
   Product:
     id_field: product_id
-    description: Amazon product listing.
+    description: Searchable Amazon retail catalog listing.
     discovery:
       names:
       - product
       - products
       - item
+      - product search
+      - catalog search
+      - browse products
       seed_class: primary
     fields:
       product_id:
@@ -118,7 +121,7 @@ entities:
         value_ref: nv_number
   ProductType:
     id_field: name
-    description: Product category label used to filter catalog search.
+    description: Product category in the retail catalog.
     discovery:
       names:
       - product type
@@ -131,7 +134,7 @@ entities:
         value_ref: nv_str
   ProductFeatureChoices:
     id_field: product_type
-    description: Aggregated color, size, and seller options for a product type filter.
+    description: Filterable feature options for a product type.
     discovery:
       names:
       - feature choices
@@ -210,7 +213,7 @@ entities:
         value_ref: nv_number
   Cart:
     id_field: total_cost
-    description: Shopping cart summary with totals and line items.
+    description: Current shopping cart.
     discovery:
       names:
       - cart
@@ -571,7 +574,7 @@ capabilities:
     - email
     - registered_at
   product_query:
-    description: Search products by query and filters.
+    description: Search the product catalog.
     kind: query
     entity: Product
     selection:
@@ -717,7 +720,7 @@ capabilities:
       - product type
       - category
   product_feature_choices_query:
-    description: Show aggregated color, size, and seller choices for a product type.
+    description: Show feature choices for a product type.
     kind: query
     entity: ProductFeatureChoices
     selection:
@@ -731,7 +734,7 @@ capabilities:
     - colors
     - relative_sizes
   cart_get:
-    description: Show the current cart totals and line items.
+    description: Show the current shopping cart.
     kind: get
     entity: Cart
     arguments:

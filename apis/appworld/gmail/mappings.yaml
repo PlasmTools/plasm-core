@@ -47,7 +47,7 @@ email_thread_query:
   - { type: literal, value: gmail }
   - { type: literal, value: email_threads }
   - { type: literal, value: category }
-  - { type: literal, value: inbox }
+  - { type: var, name: mailbox }
   headers: *auth_header
   query: &thread_search_query
     type: object
@@ -62,97 +62,7 @@ email_thread_query:
         condition: { type: exists, var: label }
         then_expr: { type: var, name: label }
         else_expr: { type: const, value: null }
-    - - starred
-      - type: if
-        condition: { type: exists, var: starred }
-        then_expr: { type: var, name: starred }
-        else_expr: { type: const, value: null }
-    - - read
-      - type: if
-        condition: { type: exists, var: read }
-        then_expr: { type: var, name: read }
-        else_expr: { type: const, value: null }
-    - - archived
-      - type: if
-        condition: { type: exists, var: archived }
-        then_expr: { type: var, name: archived }
-        else_expr: { type: const, value: null }
-    - - from_email
-      - type: if
-        condition: { type: exists, var: from_email }
-        then_expr: { type: var, name: from_email }
-        else_expr: { type: const, value: null }
-    - - to_email
-      - type: if
-        condition: { type: exists, var: to_email }
-        then_expr: { type: var, name: to_email }
-        else_expr: { type: const, value: null }
-    - - sort_by
-      - type: if
-        condition: { type: exists, var: sort_by }
-        then_expr: { type: var, name: sort_by }
-        else_expr: { type: const, value: null }
   pagination: *appworld_page_index_limit
-
-email_thread_outbox_query:
-  method: GET
-  path:
-  - { type: literal, value: gmail }
-  - { type: literal, value: email_threads }
-  - { type: literal, value: category }
-  - { type: literal, value: outbox }
-  headers: *auth_header
-  query: *thread_search_query
-  pagination: *appworld_page_index_limit
-
-email_thread_archived_query:
-  method: GET
-  path:
-  - { type: literal, value: gmail }
-  - { type: literal, value: email_threads }
-  - { type: literal, value: category }
-  - { type: literal, value: archived }
-  headers: *auth_header
-  query:
-    type: object
-    fields:
-    - - query
-      - type: if
-        condition: { type: exists, var: query }
-        then_expr: { type: var, name: query }
-        else_expr: { type: const, value: null }
-    - - label
-      - type: if
-        condition: { type: exists, var: label }
-        then_expr: { type: var, name: label }
-        else_expr: { type: const, value: null }
-    - - starred
-      - type: if
-        condition: { type: exists, var: starred }
-        then_expr: { type: var, name: starred }
-        else_expr: { type: const, value: null }
-    - - read
-      - type: if
-        condition: { type: exists, var: read }
-        then_expr: { type: var, name: read }
-        else_expr: { type: const, value: null }
-    - - from_email
-      - type: if
-        condition: { type: exists, var: from_email }
-        then_expr: { type: var, name: from_email }
-        else_expr: { type: const, value: null }
-    - - to_email
-      - type: if
-        condition: { type: exists, var: to_email }
-        then_expr: { type: var, name: to_email }
-        else_expr: { type: const, value: null }
-    - - sort_by
-      - type: if
-        condition: { type: exists, var: sort_by }
-        then_expr: { type: var, name: sort_by }
-        else_expr: { type: const, value: null }
-  pagination: *appworld_page_index_limit
-
 email_thread_get:
   method: GET
   path:
@@ -431,28 +341,6 @@ category_sizes_get:
   - { type: literal, value: gmail }
   - { type: literal, value: category_sizes }
   headers: *auth_header
-
-email_thread_spam_query:
-  method: GET
-  path:
-  - { type: literal, value: gmail }
-  - { type: literal, value: email_threads }
-  - { type: literal, value: category }
-  - { type: literal, value: spam }
-  headers: *auth_header
-  query: *thread_search_query
-  pagination: *appworld_page_index_limit
-
-email_thread_snoozed_query:
-  method: GET
-  path:
-  - { type: literal, value: gmail }
-  - { type: literal, value: email_threads }
-  - { type: literal, value: category }
-  - { type: literal, value: snoozed }
-  headers: *auth_header
-  query: *thread_search_query
-  pagination: *appworld_page_index_limit
 
 email_thread_label:
   method: POST

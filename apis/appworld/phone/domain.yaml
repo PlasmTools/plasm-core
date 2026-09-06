@@ -1,4 +1,4 @@
-version: 6
+version: 9
 entry_id: phone
 auth:
   scheme: none
@@ -13,7 +13,7 @@ data_classes:
 entities:
   AuthSession:
     id_field: access_token
-    description: Login session for Phone (Bearer token).
+    description: Login session for Phone (Bearer token). Username is the task principal's e164 phone number from Supervisor — not an email.
     discovery:
       names:
       - login
@@ -30,7 +30,7 @@ entities:
         value_ref: nv_str
   Contact:
     id_field: contact_id
-    description: Phone contact with name, number, and optional email/addresses.
+    description: Phone address-book contact.
     discovery:
       names:
       - contact
@@ -70,7 +70,7 @@ entities:
         value_ref: nv_datetime
   Alarm:
     id_field: alarm_id
-    description: Device alarm with time and repeat days.
+    description: Device alarm.
     discovery:
       names:
       - alarm
@@ -178,7 +178,7 @@ entities:
         value_ref: nv_str
 capabilities:
   login:
-    description: Login to Phone; returns access_token for Bearer auth.
+    description: Login to Phone with username=e164 phone (Supervisor me.phone_number) and account password; returns access_token for Bearer auth. Do not use email.
     kind: action
     entity: AuthSession
     payload:
@@ -224,13 +224,6 @@ capabilities:
       required: false
     - name: relationship
       value_ref: nv_contact_relationship
-      required: false
-    controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
       required: false
     provides:
     - contact_id
@@ -334,13 +327,6 @@ capabilities:
     - name: access_token
       value_ref: nv_access_token
       required: true
-    controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
     provides:
     - alarm_id
     - time
@@ -442,13 +428,17 @@ capabilities:
           value_ref: nv_access_token
           required: true
   text_message_query:
-    description: Search text messages.
+    description: List text messages by shelf — browse/search (optional filters) or datetime window with a contact.
     kind: query
     entity: TextMessage
     selection:
     - name: access_token
       value_ref: nv_access_token
       required: true
+    - name: shelf
+      value_ref: nv_message_shelf
+      required: true
+      description: list | window
     - name: query
       value_ref: nv_str
       required: false
@@ -458,15 +448,18 @@ capabilities:
     - name: only_latest_per_contact
       value_ref: nv_bool
       required: false
+    - name: min_datetime
+      value_ref: nv_datetime
+      required: false
+    - name: max_datetime
+      value_ref: nv_datetime
+      required: false
     controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
     - name: sort_by
       value_ref: nv_str
+      required: false
+    - name: pagination_order
+      value_ref: nv_pagination_order
       required: false
     provides:
     - text_message_id
@@ -519,45 +512,18 @@ capabilities:
         - name: access_token
           value_ref: nv_access_token
           required: true
-  text_message_window:
-    description: Show text messages with a contact in a datetime window.
-    kind: query
-    entity: TextMessage
-    selection:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: phone_number
-      value_ref: nv_phone
-      required: true
-    - name: min_datetime
-      value_ref: nv_datetime
-      required: false
-    - name: max_datetime
-      value_ref: nv_datetime
-      required: false
-    controls:
-    - name: pagination_order
-      value_ref: nv_pagination_order
-      required: false
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
-    provides:
-    - text_message_id
-    - message
-    - sent_at
   voice_message_query:
-    description: Search voice messages.
+    description: List voice messages by shelf — browse/search (optional filters) or datetime window with a contact.
     kind: query
     entity: VoiceMessage
     selection:
     - name: access_token
       value_ref: nv_access_token
       required: true
+    - name: shelf
+      value_ref: nv_message_shelf
+      required: true
+      description: list | window
     - name: query
       value_ref: nv_str
       required: false
@@ -567,15 +533,18 @@ capabilities:
     - name: only_latest_per_contact
       value_ref: nv_bool
       required: false
+    - name: min_datetime
+      value_ref: nv_datetime
+      required: false
+    - name: max_datetime
+      value_ref: nv_datetime
+      required: false
     controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
     - name: sort_by
       value_ref: nv_str
+      required: false
+    - name: pagination_order
+      value_ref: nv_pagination_order
       required: false
     provides:
     - voice_message_id
@@ -613,37 +582,6 @@ capabilities:
         - name: access_token
           value_ref: nv_access_token
           required: true
-  voice_message_window:
-    description: Show voice messages with a contact in a datetime window.
-    kind: query
-    entity: VoiceMessage
-    selection:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: phone_number
-      value_ref: nv_phone
-      required: true
-    - name: min_datetime
-      value_ref: nv_datetime
-      required: false
-    - name: max_datetime
-      value_ref: nv_datetime
-      required: false
-    controls:
-    - name: pagination_order
-      value_ref: nv_pagination_order
-      required: false
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
-    provides:
-    - voice_message_id
-    - message
-    - sent_at
   profile_get:
     description: Show phone profile by phone number.
     kind: get
@@ -700,7 +638,7 @@ values:
     description: Email address of a user or counterparty.
   nv_login_username:
     type: e164
-    description: Task-principal phone number from Supervisor — the login username for Phone (e164), not a counterparty.
+    description: Task-principal phone number from Supervisor (me.phone_number) — the Phone login username in e164 form. Never email; email login returns 401.
   nv_password:
     type: string
     description: Account-holder password for this service.
@@ -742,6 +680,12 @@ values:
     enum:
     - ascending
     - descending
+  nv_message_shelf:
+    type: enum
+    enum:
+    - list
+    - window
+    description: Message list shelf — browse/search vs datetime window with a contact.
   nv_weekday_list:
     type: array
     items:

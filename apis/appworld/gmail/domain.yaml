@@ -1,4 +1,4 @@
-version: 5
+version: 7
 entry_id: gmail
 auth:
   scheme: none
@@ -78,7 +78,7 @@ entities:
         value_ref: nv_datetime
   Email:
     id_field: email_id
-    description: A single email message with subject and body.
+    description: A single email message.
     discovery:
       names:
       - email
@@ -145,7 +145,7 @@ entities:
         value_ref: nv_datetime
   User:
     id_field: email
-    description: Gmail directory person (name and email) for addressing mail.
+    description: Gmail directory person for addressing mail.
     discovery:
       names:
       - user
@@ -167,7 +167,7 @@ entities:
         value_ref: nv_datetime
   CategorySizes:
     id_field: inbox
-    description: Thread and draft counts per mailbox category (inbox, outbox, archived, spam, drafts).
+    description: Mailbox category size snapshot.
     discovery:
       names:
       - category sizes
@@ -242,155 +242,44 @@ capabilities:
       type: side_effect
       description: Ends the Gmail session for this token.
   email_thread_query:
-    description: Search inbox threads (query/filters/pagination).
+    description: 'List email threads by mailbox (inbox/outbox/archived/spam/snoozed) with optional query/label filters.
+
+      '
     kind: query
     entity: EmailThread
+    discovery:
+      operation_terms:
+      - list
+      - show
+      - search
+      target_terms:
+      - email thread
+      - inbox
+      - outbox
+      - archived
+      - spam
+      - snoozed
     selection:
     - name: access_token
       value_ref: nv_access_token
       required: true
+    - name: mailbox
+      value_ref: nv_email_thread_mailbox
+      required: true
+      description: inbox | outbox | archived | spam | snoozed
     - name: query
       value_ref: nv_str
       required: false
     - name: label
       value_ref: nv_str
       required: false
-    - name: starred
-      value_ref: nv_bool
-      required: false
-    - name: read
-      value_ref: nv_bool
-      required: false
-    - name: archived
-      value_ref: nv_bool
-      required: false
-    - name: from_email
-      value_ref: nv_email
-      required: false
-    - name: to_email
-      value_ref: nv_email
-      required: false
-    controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
-    - name: sort_by
-      value_ref: nv_str
-      required: false
     provides:
     - email_thread_id
     - subject
-    - label
-    - read
-    - starred
-    - archived
-    - spam
-    - incoming
-    - outgoing
-    - created_at
-    - updated_at
-  email_thread_outbox_query:
-    description: Search outbox / sent threads.
-    kind: query
-    entity: EmailThread
-    selection:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: query
-      value_ref: nv_str
-      required: false
-    - name: label
-      value_ref: nv_str
-      required: false
-    - name: starred
-      value_ref: nv_bool
-      required: false
-    - name: read
-      value_ref: nv_bool
-      required: false
-    - name: archived
-      value_ref: nv_bool
-      required: false
-    - name: from_email
-      value_ref: nv_email
-      required: false
-    - name: to_email
-      value_ref: nv_email
-      required: false
-    controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
-    - name: sort_by
-      value_ref: nv_str
-      required: false
-    provides:
-    - email_thread_id
-    - subject
-    - label
-    - read
-    - starred
-    - archived
-    - spam
-    - incoming
-    - outgoing
-    - created_at
-    - updated_at
-  email_thread_archived_query:
-    description: Search archived threads.
-    kind: query
-    entity: EmailThread
-    selection:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: query
-      value_ref: nv_str
-      required: false
-    - name: label
-      value_ref: nv_str
-      required: false
-    - name: starred
-      value_ref: nv_bool
-      required: false
-    - name: read
-      value_ref: nv_bool
-      required: false
-    - name: from_email
-      value_ref: nv_email
-      required: false
-    - name: to_email
-      value_ref: nv_email
-      required: false
-    controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
-    - name: sort_by
-      value_ref: nv_str
-      required: false
-    provides:
-    - email_thread_id
-    - subject
-    - label
-    - read
-    - starred
-    - archived
-    - spam
-    - incoming
-    - outgoing
-    - created_at
-    - updated_at
+    - snippet
+    - category
+    - is_read
+    - is_starred
   email_thread_get:
     description: Show one email thread including messages.
     kind: get
@@ -627,13 +516,6 @@ capabilities:
     - name: access_token
       value_ref: nv_access_token
       required: true
-    controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
     provides:
     - draft_id
     - subject
@@ -753,19 +635,12 @@ capabilities:
     - email
     - registered_at
   user_query:
-    description: List or filter Gmail directory users by name or email before composing.
+    description: List or filter Gmail directory users before composing.
     kind: query
     entity: User
     selection:
     - name: query
       value_ref: nv_str
-      required: false
-    controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
       required: false
     provides:
     - first_name
@@ -782,7 +657,7 @@ capabilities:
       - recipient
       - contact
   category_sizes_get:
-    description: Show email thread counts per category and draft counts for the authenticated mailbox.
+    description: Show mailbox category size counts for the authenticated user.
     kind: get
     entity: CategorySizes
     arguments:
@@ -799,105 +674,6 @@ capabilities:
     - spam
     - unscheduled_drafts
     - scheduled_drafts
-  email_thread_spam_query:
-    description: Search spam threads.
-    kind: query
-    entity: EmailThread
-    selection:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: query
-      value_ref: nv_str
-      required: false
-    - name: label
-      value_ref: nv_str
-      required: false
-    - name: starred
-      value_ref: nv_bool
-      required: false
-    - name: read
-      value_ref: nv_bool
-      required: false
-    - name: archived
-      value_ref: nv_bool
-      required: false
-    - name: from_email
-      value_ref: nv_email
-      required: false
-    - name: to_email
-      value_ref: nv_email
-      required: false
-    controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
-    - name: sort_by
-      value_ref: nv_str
-      required: false
-    provides:
-    - email_thread_id
-    - subject
-    - label
-    - read
-    - starred
-    - archived
-    - spam
-    - incoming
-    - outgoing
-    - created_at
-    - updated_at
-  email_thread_snoozed_query:
-    description: Search snoozed threads.
-    kind: query
-    entity: EmailThread
-    selection:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: query
-      value_ref: nv_str
-      required: false
-    - name: label
-      value_ref: nv_str
-      required: false
-    - name: starred
-      value_ref: nv_bool
-      required: false
-    - name: read
-      value_ref: nv_bool
-      required: false
-    - name: from_email
-      value_ref: nv_email
-      required: false
-    - name: to_email
-      value_ref: nv_email
-      required: false
-    controls:
-    - name: page_index
-      value_ref: nv_int
-      required: false
-    - name: page_limit
-      value_ref: nv_int
-      required: false
-    - name: sort_by
-      value_ref: nv_str
-      required: false
-    provides:
-    - email_thread_id
-    - subject
-    - label
-    - read
-    - starred
-    - archived
-    - spam
-    - incoming
-    - outgoing
-    - created_at
-    - updated_at
   email_thread_label:
     description: Assign a label to a thread.
     kind: action
@@ -1068,6 +844,15 @@ capabilities:
           value_ref: nv_access_token
           required: true
 values:
+  nv_email_thread_mailbox:
+    type: enum
+    enum:
+    - inbox
+    - outbox
+    - archived
+    - spam
+    - snoozed
+    description: Mailbox shelf for listing email threads.
   nv_str:
     type: string
     description: Free-form string.
