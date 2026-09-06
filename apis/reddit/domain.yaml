@@ -282,6 +282,8 @@ capabilities:
       value_ref: nv_wire_sel_2fde0f3a716481f3
       required: false
       role: response_control
+    selection: []
+    scope: []
   post_get:
     kind: get
     entity: Post
@@ -362,6 +364,8 @@ capabilities:
       value_ref: nv_wire_str_short
       required: true
       role: scope
+    selection: []
+    scope: []
   comment_get:
     kind: get
     entity: Comment

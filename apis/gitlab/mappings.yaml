@@ -1,49 +1,126 @@
-# GitLab HTTP REST API v4 — CML mappings for apis/gitlab/domain.yaml.
-# Use --backend https://gitlab.com (or your self-managed origin). Paths are
-# relative to the API root; include /api/v4 via path segments below.
-
-# ── Project ─────────────────────────────────────────────────────────────────
-
 project_query:
   method: GET
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
   response: bare_list
   query:
     type: object
     fields:
-      - [search, { type: if, condition: { type: exists, var: search },
-                   then_expr: { type: var, name: search },
-                   else_expr: { type: const, value: null } }]
-      - [visibility, { type: if, condition: { type: exists, var: visibility },
-                      then_expr: { type: var, name: visibility },
-                      else_expr: { type: const, value: null } }]
-      - [archived, { type: if, condition: { type: exists, var: archived },
-                     then_expr: { type: var, name: archived },
-                     else_expr: { type: const, value: null } }]
-      - [owned, { type: if, condition: { type: exists, var: owned },
-                  then_expr: { type: var, name: owned },
-                  else_expr: { type: const, value: null } }]
-      - [membership, { type: if, condition: { type: exists, var: membership },
-                      then_expr: { type: var, name: membership },
-                      else_expr: { type: const, value: null } }]
-      - [starred, { type: if, condition: { type: exists, var: starred },
-                    then_expr: { type: var, name: starred },
-                    else_expr: { type: const, value: null } }]
-      - [order_by, { type: if, condition: { type: exists, var: order_by },
-                     then_expr: { type: var, name: order_by },
-                     else_expr: { type: const, value: null } }]
-      - [sort, { type: if, condition: { type: exists, var: sort },
-                 then_expr: { type: var, name: sort },
-                 else_expr: { type: const, value: null } }]
-      - [simple, { type: if, condition: { type: exists, var: simple },
-                   then_expr: { type: var, name: simple },
-                   else_expr: { type: const, value: null } }]
-      - [statistics, { type: if, condition: { type: exists, var: statistics },
-                      then_expr: { type: var, name: statistics },
-                      else_expr: { type: const, value: null } }]
+    - - search
+      - type: if
+        condition:
+          type: exists
+          var: search
+        then_expr:
+          type: var
+          name: search
+        else_expr:
+          type: const
+          value: null
+    - - visibility
+      - type: if
+        condition:
+          type: exists
+          var: visibility
+        then_expr:
+          type: var
+          name: visibility
+        else_expr:
+          type: const
+          value: null
+    - - archived
+      - type: if
+        condition:
+          type: exists
+          var: archived
+        then_expr:
+          type: var
+          name: archived
+        else_expr:
+          type: const
+          value: null
+    - - owned
+      - type: if
+        condition:
+          type: exists
+          var: owned
+        then_expr:
+          type: var
+          name: owned
+        else_expr:
+          type: const
+          value: null
+    - - membership
+      - type: if
+        condition:
+          type: exists
+          var: membership
+        then_expr:
+          type: var
+          name: membership
+        else_expr:
+          type: const
+          value: null
+    - - starred
+      - type: if
+        condition:
+          type: exists
+          var: starred
+        then_expr:
+          type: var
+          name: starred
+        else_expr:
+          type: const
+          value: null
+    - - order_by
+      - type: if
+        condition:
+          type: exists
+          var: order_by
+        then_expr:
+          type: var
+          name: order_by
+        else_expr:
+          type: const
+          value: null
+    - - sort
+      - type: if
+        condition:
+          type: exists
+          var: sort
+        then_expr:
+          type: var
+          name: sort
+        else_expr:
+          type: const
+          value: null
+    - - simple
+      - type: if
+        condition:
+          type: exists
+          var: simple
+        then_expr:
+          type: var
+          name: simple
+        else_expr:
+          type: const
+          value: null
+    - - statistics
+      - type: if
+        condition:
+          type: exists
+          var: statistics
+        then_expr:
+          type: var
+          name: statistics
+        else_expr:
+          type: const
+          value: null
   pagination:
     params:
       page:
@@ -55,77 +132,95 @@ project_query:
 project_get:
   method: GET
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: id }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: id
   response: single
   query:
     type: object
     fields:
-      - [statistics, { type: if, condition: { type: exists, var: statistics },
-                      then_expr: { type: var, name: statistics },
-                      else_expr: { type: const, value: null } }]
-
-# ── Issue ───────────────────────────────────────────────────────────────────
-
-issue_query:
-  method: GET
-  path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: issues }
-  response: bare_list
-  query:
-    type: object
-    fields:
-      - [state, { type: if, condition: { type: exists, var: state },
-                 then_expr: { type: var, name: state },
-                 else_expr: { type: const, value: null } }]
-      - [search, { type: if, condition: { type: exists, var: search },
-                   then_expr: { type: var, name: search },
-                   else_expr: { type: const, value: null } }]
-      - [scope, { type: if, condition: { type: exists, var: scope },
-                  then_expr: { type: var, name: scope },
-                  else_expr: { type: const, value: null } }]
-      - [order_by, { type: if, condition: { type: exists, var: order_by },
-                     then_expr: { type: var, name: order_by },
-                     else_expr: { type: const, value: null } }]
-      - [sort, { type: if, condition: { type: exists, var: sort },
-                 then_expr: { type: var, name: sort },
-                 else_expr: { type: const, value: null } }]
-  pagination:
-    params:
-      page:
-        counter: 1
-      per_page:
-        fixed: 20
-        role: page_size
-    strategy: page_number
+    - - statistics
+      - type: if
+        condition:
+          type: exists
+          var: statistics
+        then_expr:
+          type: var
+          name: statistics
+        else_expr:
+          type: const
+          value: null
 issue_for_project_query:
   method: GET
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: issues }
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: issue_for_project
+    then_expr:
+      type: const
+      value: api/v4/projects/{project_id}/issues
+    else_expr:
+      type: const
+      value: api/v4/issues
   response: bare_list
   query:
     type: object
     fields:
-      - [state, { type: if, condition: { type: exists, var: state },
-                 then_expr: { type: var, name: state },
-                 else_expr: { type: const, value: null } }]
-      - [search, { type: if, condition: { type: exists, var: search },
-                   then_expr: { type: var, name: search },
-                   else_expr: { type: const, value: null } }]
-      - [order_by, { type: if, condition: { type: exists, var: order_by },
-                     then_expr: { type: var, name: order_by },
-                     else_expr: { type: const, value: null } }]
-      - [sort, { type: if, condition: { type: exists, var: sort },
-                 then_expr: { type: var, name: sort },
-                 else_expr: { type: const, value: null } }]
+    - - project_id
+      - type: if
+        condition:
+          type: exists
+          var: project_id
+        then_expr:
+          type: var
+          name: project_id
+        else_expr:
+          type: const
+          value: null
+    - - state
+      - type: if
+        condition:
+          type: exists
+          var: state
+        then_expr:
+          type: var
+          name: state
+        else_expr:
+          type: const
+          value: null
+    - - search
+      - type: if
+        condition:
+          type: exists
+          var: search
+        then_expr:
+          type: var
+          name: search
+        else_expr:
+          type: const
+          value: null
+    - - scope
+      - type: if
+        condition:
+          type: exists
+          var: scope
+        then_expr:
+          type: var
+          name: scope
+        else_expr:
+          type: const
+          value: null
   pagination:
     params:
       page:
@@ -137,67 +232,74 @@ issue_for_project_query:
 issue_get:
   method: GET
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: issues }
-    - { type: var, name: iid }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: issues
+  - type: var
+    name: iid
   response: single
-
-# ── MergeRequest ────────────────────────────────────────────────────────────
-
-merge_request_query:
-  method: GET
-  path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: merge_requests }
-  response: bare_list
-  query:
-    type: object
-    fields:
-      - [state, { type: if, condition: { type: exists, var: state },
-                 then_expr: { type: var, name: state },
-                 else_expr: { type: const, value: null } }]
-      - [scope, { type: if, condition: { type: exists, var: scope },
-                  then_expr: { type: var, name: scope },
-                  else_expr: { type: const, value: null } }]
-      - [order_by, { type: if, condition: { type: exists, var: order_by },
-                     then_expr: { type: var, name: order_by },
-                     else_expr: { type: const, value: null } }]
-      - [sort, { type: if, condition: { type: exists, var: sort },
-                 then_expr: { type: var, name: sort },
-                 else_expr: { type: const, value: null } }]
-  pagination:
-    params:
-      page:
-        counter: 1
-      per_page:
-        fixed: 20
-        role: page_size
-    strategy: page_number
 merge_request_for_project_query:
   method: GET
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: merge_requests }
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: merge_request_for_project
+    then_expr:
+      type: const
+      value: api/v4/projects/{project_id}/merge_requests
+    else_expr:
+      type: const
+      value: api/v4/merge_requests
   response: bare_list
   query:
     type: object
     fields:
-      - [state, { type: if, condition: { type: exists, var: state },
-                 then_expr: { type: var, name: state },
-                 else_expr: { type: const, value: null } }]
-      - [order_by, { type: if, condition: { type: exists, var: order_by },
-                     then_expr: { type: var, name: order_by },
-                     else_expr: { type: const, value: null } }]
-      - [sort, { type: if, condition: { type: exists, var: sort },
-                 then_expr: { type: var, name: sort },
-                 else_expr: { type: const, value: null } }]
+    - - project_id
+      - type: if
+        condition:
+          type: exists
+          var: project_id
+        then_expr:
+          type: var
+          name: project_id
+        else_expr:
+          type: const
+          value: null
+    - - state
+      - type: if
+        condition:
+          type: exists
+          var: state
+        then_expr:
+          type: var
+          name: state
+        else_expr:
+          type: const
+          value: null
+    - - scope
+      - type: if
+        condition:
+          type: exists
+          var: scope
+        then_expr:
+          type: var
+          name: scope
+        else_expr:
+          type: const
+          value: null
   pagination:
     params:
       page:
@@ -209,378 +311,852 @@ merge_request_for_project_query:
 merge_request_get:
   method: GET
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: merge_requests }
-    - { type: var, name: iid }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: merge_requests
+  - type: var
+    name: iid
   response: single
-
-# ── Project writes ───────────────────────────────────────────────────────────
-
 project_create:
   method: POST
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
   response: single
   body:
     type: object
     fields:
-      - [name, { type: var, name: name }]
-      - [path, { type: if, condition: { type: exists, var: path },
-                  then_expr: { type: var, name: path },
-                  else_expr: { type: const, value: null } }]
-      - [namespace_id, { type: if, condition: { type: exists, var: namespace_id },
-                        then_expr: { type: var, name: namespace_id },
-                        else_expr: { type: const, value: null } }]
-      - [description, { type: if, condition: { type: exists, var: description },
-                      then_expr: { type: var, name: description },
-                      else_expr: { type: const, value: null } }]
-      - [visibility, { type: if, condition: { type: exists, var: visibility },
-                      then_expr: { type: var, name: visibility },
-                      else_expr: { type: const, value: null } }]
-      - [default_branch, { type: if, condition: { type: exists, var: default_branch },
-                          then_expr: { type: var, name: default_branch },
-                          else_expr: { type: const, value: null } }]
-      - [issues_enabled, { type: if, condition: { type: exists, var: issues_enabled },
-                          then_expr: { type: var, name: issues_enabled },
-                          else_expr: { type: const, value: null } }]
-      - [merge_requests_enabled, { type: if, condition: { type: exists, var: merge_requests_enabled },
-                                    then_expr: { type: var, name: merge_requests_enabled },
-                                    else_expr: { type: const, value: null } }]
-      - [wiki_enabled, { type: if, condition: { type: exists, var: wiki_enabled },
-                        then_expr: { type: var, name: wiki_enabled },
-                        else_expr: { type: const, value: null } }]
-
+    - - name
+      - type: var
+        name: name
+    - - path
+      - type: if
+        condition:
+          type: exists
+          var: path
+        then_expr:
+          type: var
+          name: path
+        else_expr:
+          type: const
+          value: null
+    - - namespace_id
+      - type: if
+        condition:
+          type: exists
+          var: namespace_id
+        then_expr:
+          type: var
+          name: namespace_id
+        else_expr:
+          type: const
+          value: null
+    - - description
+      - type: if
+        condition:
+          type: exists
+          var: description
+        then_expr:
+          type: var
+          name: description
+        else_expr:
+          type: const
+          value: null
+    - - visibility
+      - type: if
+        condition:
+          type: exists
+          var: visibility
+        then_expr:
+          type: var
+          name: visibility
+        else_expr:
+          type: const
+          value: null
+    - - default_branch
+      - type: if
+        condition:
+          type: exists
+          var: default_branch
+        then_expr:
+          type: var
+          name: default_branch
+        else_expr:
+          type: const
+          value: null
+    - - issues_enabled
+      - type: if
+        condition:
+          type: exists
+          var: issues_enabled
+        then_expr:
+          type: var
+          name: issues_enabled
+        else_expr:
+          type: const
+          value: null
+    - - merge_requests_enabled
+      - type: if
+        condition:
+          type: exists
+          var: merge_requests_enabled
+        then_expr:
+          type: var
+          name: merge_requests_enabled
+        else_expr:
+          type: const
+          value: null
+    - - wiki_enabled
+      - type: if
+        condition:
+          type: exists
+          var: wiki_enabled
+        then_expr:
+          type: var
+          name: wiki_enabled
+        else_expr:
+          type: const
+          value: null
 project_update:
   method: PUT
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: id }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: id
   response: single
   body:
     type: object
     fields:
-      - [name, { type: if, condition: { type: exists, var: name },
-                  then_expr: { type: var, name: name },
-                  else_expr: { type: const, value: null } }]
-      - [path, { type: if, condition: { type: exists, var: path },
-                  then_expr: { type: var, name: path },
-                  else_expr: { type: const, value: null } }]
-      - [description, { type: if, condition: { type: exists, var: description },
-                      then_expr: { type: var, name: description },
-                      else_expr: { type: const, value: null } }]
-      - [default_branch, { type: if, condition: { type: exists, var: default_branch },
-                          then_expr: { type: var, name: default_branch },
-                          else_expr: { type: const, value: null } }]
-      - [visibility, { type: if, condition: { type: exists, var: visibility },
-                      then_expr: { type: var, name: visibility },
-                      else_expr: { type: const, value: null } }]
-      - [issues_enabled, { type: if, condition: { type: exists, var: issues_enabled },
-                          then_expr: { type: var, name: issues_enabled },
-                          else_expr: { type: const, value: null } }]
-      - [merge_requests_enabled, { type: if, condition: { type: exists, var: merge_requests_enabled },
-                                    then_expr: { type: var, name: merge_requests_enabled },
-                                    else_expr: { type: const, value: null } }]
-      - [wiki_enabled, { type: if, condition: { type: exists, var: wiki_enabled },
-                        then_expr: { type: var, name: wiki_enabled },
-                        else_expr: { type: const, value: null } }]
-
+    - - name
+      - type: if
+        condition:
+          type: exists
+          var: name
+        then_expr:
+          type: var
+          name: name
+        else_expr:
+          type: const
+          value: null
+    - - path
+      - type: if
+        condition:
+          type: exists
+          var: path
+        then_expr:
+          type: var
+          name: path
+        else_expr:
+          type: const
+          value: null
+    - - description
+      - type: if
+        condition:
+          type: exists
+          var: description
+        then_expr:
+          type: var
+          name: description
+        else_expr:
+          type: const
+          value: null
+    - - default_branch
+      - type: if
+        condition:
+          type: exists
+          var: default_branch
+        then_expr:
+          type: var
+          name: default_branch
+        else_expr:
+          type: const
+          value: null
+    - - visibility
+      - type: if
+        condition:
+          type: exists
+          var: visibility
+        then_expr:
+          type: var
+          name: visibility
+        else_expr:
+          type: const
+          value: null
+    - - issues_enabled
+      - type: if
+        condition:
+          type: exists
+          var: issues_enabled
+        then_expr:
+          type: var
+          name: issues_enabled
+        else_expr:
+          type: const
+          value: null
+    - - merge_requests_enabled
+      - type: if
+        condition:
+          type: exists
+          var: merge_requests_enabled
+        then_expr:
+          type: var
+          name: merge_requests_enabled
+        else_expr:
+          type: const
+          value: null
+    - - wiki_enabled
+      - type: if
+        condition:
+          type: exists
+          var: wiki_enabled
+        then_expr:
+          type: var
+          name: wiki_enabled
+        else_expr:
+          type: const
+          value: null
 project_delete:
   method: DELETE
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: id }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: id
   response: single
-
-# ── Issue writes ────────────────────────────────────────────────────────────
-
 issue_create:
   method: POST
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: issues }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: issues
   response: single
   body:
     type: object
     fields:
-      - [title, { type: var, name: title }]
-      - [description, { type: if, condition: { type: exists, var: description },
-                       then_expr: { type: var, name: description },
-                       else_expr: { type: const, value: null } }]
-      - [confidential, { type: if, condition: { type: exists, var: confidential },
-                        then_expr: { type: var, name: confidential },
-                        else_expr: { type: const, value: null } }]
-      - [labels, { type: if, condition: { type: exists, var: labels },
-                   then_expr: { type: var, name: labels },
-                   else_expr: { type: const, value: null } }]
-      - [issue_type, { type: if, condition: { type: exists, var: issue_type },
-                      then_expr: { type: var, name: issue_type },
-                      else_expr: { type: const, value: null } }]
-      - [milestone_id, { type: if, condition: { type: exists, var: milestone_id },
-                        then_expr: { type: var, name: milestone_id },
-                        else_expr: { type: const, value: null } }]
-      - [assignee_ids, { type: if, condition: { type: exists, var: assignee_ids },
-                        then_expr: { type: var, name: assignee_ids },
-                        else_expr: { type: const, value: null } }]
-
+    - - title
+      - type: var
+        name: title
+    - - description
+      - type: if
+        condition:
+          type: exists
+          var: description
+        then_expr:
+          type: var
+          name: description
+        else_expr:
+          type: const
+          value: null
+    - - confidential
+      - type: if
+        condition:
+          type: exists
+          var: confidential
+        then_expr:
+          type: var
+          name: confidential
+        else_expr:
+          type: const
+          value: null
+    - - labels
+      - type: if
+        condition:
+          type: exists
+          var: labels
+        then_expr:
+          type: var
+          name: labels
+        else_expr:
+          type: const
+          value: null
+    - - issue_type
+      - type: if
+        condition:
+          type: exists
+          var: issue_type
+        then_expr:
+          type: var
+          name: issue_type
+        else_expr:
+          type: const
+          value: null
+    - - milestone_id
+      - type: if
+        condition:
+          type: exists
+          var: milestone_id
+        then_expr:
+          type: var
+          name: milestone_id
+        else_expr:
+          type: const
+          value: null
+    - - assignee_ids
+      - type: if
+        condition:
+          type: exists
+          var: assignee_ids
+        then_expr:
+          type: var
+          name: assignee_ids
+        else_expr:
+          type: const
+          value: null
 issue_update:
   method: PUT
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: issues }
-    - { type: var, name: iid }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: issues
+  - type: var
+    name: iid
   response: single
   body:
     type: object
     fields:
-      - [title, { type: if, condition: { type: exists, var: title },
-                  then_expr: { type: var, name: title },
-                  else_expr: { type: const, value: null } }]
-      - [description, { type: if, condition: { type: exists, var: description },
-                       then_expr: { type: var, name: description },
-                       else_expr: { type: const, value: null } }]
-      - [state_event, { type: if, condition: { type: exists, var: state_event },
-                      then_expr: { type: var, name: state_event },
-                      else_expr: { type: const, value: null } }]
-      - [confidential, { type: if, condition: { type: exists, var: confidential },
-                        then_expr: { type: var, name: confidential },
-                        else_expr: { type: const, value: null } }]
-      - [labels, { type: if, condition: { type: exists, var: labels },
-                   then_expr: { type: var, name: labels },
-                   else_expr: { type: const, value: null } }]
-      - [add_labels, { type: if, condition: { type: exists, var: add_labels },
-                      then_expr: { type: var, name: add_labels },
-                      else_expr: { type: const, value: null } }]
-      - [remove_labels, { type: if, condition: { type: exists, var: remove_labels },
-                         then_expr: { type: var, name: remove_labels },
-                         else_expr: { type: const, value: null } }]
-      - [milestone_id, { type: if, condition: { type: exists, var: milestone_id },
-                        then_expr: { type: var, name: milestone_id },
-                        else_expr: { type: const, value: null } }]
-      - [assignee_ids, { type: if, condition: { type: exists, var: assignee_ids },
-                        then_expr: { type: var, name: assignee_ids },
-                        else_expr: { type: const, value: null } }]
-
+    - - title
+      - type: if
+        condition:
+          type: exists
+          var: title
+        then_expr:
+          type: var
+          name: title
+        else_expr:
+          type: const
+          value: null
+    - - description
+      - type: if
+        condition:
+          type: exists
+          var: description
+        then_expr:
+          type: var
+          name: description
+        else_expr:
+          type: const
+          value: null
+    - - state_event
+      - type: if
+        condition:
+          type: exists
+          var: state_event
+        then_expr:
+          type: var
+          name: state_event
+        else_expr:
+          type: const
+          value: null
+    - - confidential
+      - type: if
+        condition:
+          type: exists
+          var: confidential
+        then_expr:
+          type: var
+          name: confidential
+        else_expr:
+          type: const
+          value: null
+    - - labels
+      - type: if
+        condition:
+          type: exists
+          var: labels
+        then_expr:
+          type: var
+          name: labels
+        else_expr:
+          type: const
+          value: null
+    - - add_labels
+      - type: if
+        condition:
+          type: exists
+          var: add_labels
+        then_expr:
+          type: var
+          name: add_labels
+        else_expr:
+          type: const
+          value: null
+    - - remove_labels
+      - type: if
+        condition:
+          type: exists
+          var: remove_labels
+        then_expr:
+          type: var
+          name: remove_labels
+        else_expr:
+          type: const
+          value: null
+    - - milestone_id
+      - type: if
+        condition:
+          type: exists
+          var: milestone_id
+        then_expr:
+          type: var
+          name: milestone_id
+        else_expr:
+          type: const
+          value: null
+    - - assignee_ids
+      - type: if
+        condition:
+          type: exists
+          var: assignee_ids
+        then_expr:
+          type: var
+          name: assignee_ids
+        else_expr:
+          type: const
+          value: null
 issue_delete:
   method: DELETE
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: issues }
-    - { type: var, name: iid }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: issues
+  - type: var
+    name: iid
   response: single
-
-# ── Merge request writes ─────────────────────────────────────────────────────
-
 merge_request_create:
   method: POST
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: merge_requests }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: merge_requests
   response: single
   body:
     type: object
     fields:
-      - [title, { type: var, name: title }]
-      - [source_branch, { type: var, name: source_branch }]
-      - [target_branch, { type: var, name: target_branch }]
-      - [description, { type: if, condition: { type: exists, var: description },
-                       then_expr: { type: var, name: description },
-                       else_expr: { type: const, value: null } }]
-      - [draft, { type: if, condition: { type: exists, var: draft },
-                 then_expr: { type: var, name: draft },
-                 else_expr: { type: const, value: null } }]
-      - [labels, { type: if, condition: { type: exists, var: labels },
-                   then_expr: { type: var, name: labels },
-                   else_expr: { type: const, value: null } }]
-      - [milestone_id, { type: if, condition: { type: exists, var: milestone_id },
-                        then_expr: { type: var, name: milestone_id },
-                        else_expr: { type: const, value: null } }]
-      - [remove_source_branch, { type: if, condition: { type: exists, var: remove_source_branch },
-                                then_expr: { type: var, name: remove_source_branch },
-                                else_expr: { type: const, value: null } }]
-
+    - - title
+      - type: var
+        name: title
+    - - source_branch
+      - type: var
+        name: source_branch
+    - - target_branch
+      - type: var
+        name: target_branch
+    - - description
+      - type: if
+        condition:
+          type: exists
+          var: description
+        then_expr:
+          type: var
+          name: description
+        else_expr:
+          type: const
+          value: null
+    - - draft
+      - type: if
+        condition:
+          type: exists
+          var: draft
+        then_expr:
+          type: var
+          name: draft
+        else_expr:
+          type: const
+          value: null
+    - - labels
+      - type: if
+        condition:
+          type: exists
+          var: labels
+        then_expr:
+          type: var
+          name: labels
+        else_expr:
+          type: const
+          value: null
+    - - milestone_id
+      - type: if
+        condition:
+          type: exists
+          var: milestone_id
+        then_expr:
+          type: var
+          name: milestone_id
+        else_expr:
+          type: const
+          value: null
+    - - remove_source_branch
+      - type: if
+        condition:
+          type: exists
+          var: remove_source_branch
+        then_expr:
+          type: var
+          name: remove_source_branch
+        else_expr:
+          type: const
+          value: null
 merge_request_update:
   method: PUT
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: merge_requests }
-    - { type: var, name: iid }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: merge_requests
+  - type: var
+    name: iid
   response: single
   body:
     type: object
     fields:
-      - [title, { type: if, condition: { type: exists, var: title },
-                  then_expr: { type: var, name: title },
-                  else_expr: { type: const, value: null } }]
-      - [description, { type: if, condition: { type: exists, var: description },
-                       then_expr: { type: var, name: description },
-                       else_expr: { type: const, value: null } }]
-      - [target_branch, { type: if, condition: { type: exists, var: target_branch },
-                         then_expr: { type: var, name: target_branch },
-                         else_expr: { type: const, value: null } }]
-      - [state_event, { type: if, condition: { type: exists, var: state_event },
-                      then_expr: { type: var, name: state_event },
-                      else_expr: { type: const, value: null } }]
-      - [draft, { type: if, condition: { type: exists, var: draft },
-                 then_expr: { type: var, name: draft },
-                 else_expr: { type: const, value: null } }]
-      - [labels, { type: if, condition: { type: exists, var: labels },
-                   then_expr: { type: var, name: labels },
-                   else_expr: { type: const, value: null } }]
-
+    - - title
+      - type: if
+        condition:
+          type: exists
+          var: title
+        then_expr:
+          type: var
+          name: title
+        else_expr:
+          type: const
+          value: null
+    - - description
+      - type: if
+        condition:
+          type: exists
+          var: description
+        then_expr:
+          type: var
+          name: description
+        else_expr:
+          type: const
+          value: null
+    - - target_branch
+      - type: if
+        condition:
+          type: exists
+          var: target_branch
+        then_expr:
+          type: var
+          name: target_branch
+        else_expr:
+          type: const
+          value: null
+    - - state_event
+      - type: if
+        condition:
+          type: exists
+          var: state_event
+        then_expr:
+          type: var
+          name: state_event
+        else_expr:
+          type: const
+          value: null
+    - - draft
+      - type: if
+        condition:
+          type: exists
+          var: draft
+        then_expr:
+          type: var
+          name: draft
+        else_expr:
+          type: const
+          value: null
+    - - labels
+      - type: if
+        condition:
+          type: exists
+          var: labels
+        then_expr:
+          type: var
+          name: labels
+        else_expr:
+          type: const
+          value: null
 merge_request_delete:
   method: DELETE
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: merge_requests }
-    - { type: var, name: iid }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: merge_requests
+  - type: var
+    name: iid
   response: single
-
 merge_request_merge:
   method: PUT
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: merge_requests }
-    - { type: var, name: iid }
-    - { type: literal, value: merge }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: merge_requests
+  - type: var
+    name: iid
+  - type: literal
+    value: merge
   response: single
   body:
     type: object
     fields:
-      - [merge_commit_message, { type: if, condition: { type: exists, var: merge_commit_message },
-                                then_expr: { type: var, name: merge_commit_message },
-                                else_expr: { type: const, value: null } }]
-      - [squash_commit_message, { type: if, condition: { type: exists, var: squash_commit_message },
-                                  then_expr: { type: var, name: squash_commit_message },
-                                  else_expr: { type: const, value: null } }]
-      - [should_remove_source_branch, { type: if, condition: { type: exists, var: should_remove_source_branch },
-                                        then_expr: { type: var, name: should_remove_source_branch },
-                                        else_expr: { type: const, value: null } }]
-      - [squash, { type: if, condition: { type: exists, var: squash },
-                  then_expr: { type: var, name: squash },
-                  else_expr: { type: const, value: null } }]
-      - [sha, { type: if, condition: { type: exists, var: sha },
-               then_expr: { type: var, name: sha },
-               else_expr: { type: const, value: null } }]
-      - [auto_merge, { type: if, condition: { type: exists, var: auto_merge },
-                     then_expr: { type: var, name: auto_merge },
-                     else_expr: { type: const, value: null } }]
-
-# ── Subscribe / time stats (GitLab issue & MR API) ───────────────────────────
-
+    - - merge_commit_message
+      - type: if
+        condition:
+          type: exists
+          var: merge_commit_message
+        then_expr:
+          type: var
+          name: merge_commit_message
+        else_expr:
+          type: const
+          value: null
+    - - squash_commit_message
+      - type: if
+        condition:
+          type: exists
+          var: squash_commit_message
+        then_expr:
+          type: var
+          name: squash_commit_message
+        else_expr:
+          type: const
+          value: null
+    - - should_remove_source_branch
+      - type: if
+        condition:
+          type: exists
+          var: should_remove_source_branch
+        then_expr:
+          type: var
+          name: should_remove_source_branch
+        else_expr:
+          type: const
+          value: null
+    - - squash
+      - type: if
+        condition:
+          type: exists
+          var: squash
+        then_expr:
+          type: var
+          name: squash
+        else_expr:
+          type: const
+          value: null
+    - - sha
+      - type: if
+        condition:
+          type: exists
+          var: sha
+        then_expr:
+          type: var
+          name: sha
+        else_expr:
+          type: const
+          value: null
+    - - auto_merge
+      - type: if
+        condition:
+          type: exists
+          var: auto_merge
+        then_expr:
+          type: var
+          name: auto_merge
+        else_expr:
+          type: const
+          value: null
 issue_subscribe:
   method: POST
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: issues }
-    - { type: var, name: iid }
-    - { type: literal, value: subscribe }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: issues
+  - type: var
+    name: iid
+  - type: literal
+    value: subscribe
   response: single
-
 issue_unsubscribe:
   method: POST
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: issues }
-    - { type: var, name: iid }
-    - { type: literal, value: unsubscribe }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: issues
+  - type: var
+    name: iid
+  - type: literal
+    value: unsubscribe
   response: single
-
 merge_request_subscribe:
   method: POST
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: merge_requests }
-    - { type: var, name: iid }
-    - { type: literal, value: subscribe }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: merge_requests
+  - type: var
+    name: iid
+  - type: literal
+    value: subscribe
   response: single
-
 merge_request_unsubscribe:
   method: POST
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: merge_requests }
-    - { type: var, name: iid }
-    - { type: literal, value: unsubscribe }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: merge_requests
+  - type: var
+    name: iid
+  - type: literal
+    value: unsubscribe
   response: single
-
 issue_time_stats:
   method: GET
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: issues }
-    - { type: var, name: iid }
-    - { type: literal, value: time_stats }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: issues
+  - type: var
+    name: iid
+  - type: literal
+    value: time_stats
   response: single
-
 merge_request_time_stats:
   method: GET
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: merge_requests }
-    - { type: var, name: iid }
-    - { type: literal, value: time_stats }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: merge_requests
+  - type: var
+    name: iid
+  - type: literal
+    value: time_stats
   response: single
-
-# ── Issue notes (paths per GitLab REST notes on issues) ──────────────────────
-
 issue_note_for_issue_query:
   method: GET
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: issues }
-    - { type: var, name: iid }
-    - { type: literal, value: notes }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: issues
+  - type: var
+    name: iid
+  - type: literal
+    value: notes
   response: bare_list
   pagination:
     params:
@@ -593,77 +1169,121 @@ issue_note_for_issue_query:
 issue_note_get:
   method: GET
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: issues }
-    - { type: var, name: iid }
-    - { type: literal, value: notes }
-    - { type: var, name: id }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: issues
+  - type: var
+    name: iid
+  - type: literal
+    value: notes
+  - type: var
+    name: id
   response: single
-
 issue_note_create:
   method: POST
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: issues }
-    - { type: var, name: iid }
-    - { type: literal, value: notes }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: issues
+  - type: var
+    name: iid
+  - type: literal
+    value: notes
   response: single
   body:
     type: object
     fields:
-      - [body, { type: var, name: body }]
-      - [confidential, { type: if, condition: { type: exists, var: confidential },
-                        then_expr: { type: var, name: confidential },
-                        else_expr: { type: const, value: null } }]
-
+    - - body
+      - type: var
+        name: body
+    - - confidential
+      - type: if
+        condition:
+          type: exists
+          var: confidential
+        then_expr:
+          type: var
+          name: confidential
+        else_expr:
+          type: const
+          value: null
 issue_note_update:
   method: PUT
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: issues }
-    - { type: var, name: iid }
-    - { type: literal, value: notes }
-    - { type: var, name: id }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: issues
+  - type: var
+    name: iid
+  - type: literal
+    value: notes
+  - type: var
+    name: id
   response: single
   body:
     type: object
     fields:
-      - [body, { type: var, name: body }]
-
+    - - body
+      - type: var
+        name: body
 issue_note_delete:
   method: DELETE
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: issues }
-    - { type: var, name: iid }
-    - { type: literal, value: notes }
-    - { type: var, name: id }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: issues
+  - type: var
+    name: iid
+  - type: literal
+    value: notes
+  - type: var
+    name: id
   response: single
-
-# ── Merge request notes ─────────────────────────────────────────────────────
-
 merge_request_note_for_mr_query:
   method: GET
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: merge_requests }
-    - { type: var, name: iid }
-    - { type: literal, value: notes }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: merge_requests
+  - type: var
+    name: iid
+  - type: literal
+    value: notes
   response: bare_list
   pagination:
     params:
@@ -676,74 +1296,110 @@ merge_request_note_for_mr_query:
 merge_request_note_get:
   method: GET
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: merge_requests }
-    - { type: var, name: iid }
-    - { type: literal, value: notes }
-    - { type: var, name: id }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: merge_requests
+  - type: var
+    name: iid
+  - type: literal
+    value: notes
+  - type: var
+    name: id
   response: single
-
 merge_request_note_create:
   method: POST
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: merge_requests }
-    - { type: var, name: iid }
-    - { type: literal, value: notes }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: merge_requests
+  - type: var
+    name: iid
+  - type: literal
+    value: notes
   response: single
   body:
     type: object
     fields:
-      - [body, { type: var, name: body }]
-
+    - - body
+      - type: var
+        name: body
 merge_request_note_update:
   method: PUT
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: merge_requests }
-    - { type: var, name: iid }
-    - { type: literal, value: notes }
-    - { type: var, name: id }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: merge_requests
+  - type: var
+    name: iid
+  - type: literal
+    value: notes
+  - type: var
+    name: id
   response: single
   body:
     type: object
     fields:
-      - [body, { type: var, name: body }]
-
+    - - body
+      - type: var
+        name: body
 merge_request_note_delete:
   method: DELETE
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: merge_requests }
-    - { type: var, name: iid }
-    - { type: literal, value: notes }
-    - { type: var, name: id }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: merge_requests
+  - type: var
+    name: iid
+  - type: literal
+    value: notes
+  - type: var
+    name: id
   response: single
-
-# ── Award emoji ─────────────────────────────────────────────────────────────
-
 issue_award_emoji_for_issue_query:
   method: GET
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: issues }
-    - { type: var, name: iid }
-    - { type: literal, value: award_emoji }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: issues
+  - type: var
+    name: iid
+  - type: literal
+    value: award_emoji
   response: bare_list
   pagination:
     params:
@@ -756,55 +1412,84 @@ issue_award_emoji_for_issue_query:
 issue_award_emoji_get:
   method: GET
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: issues }
-    - { type: var, name: iid }
-    - { type: literal, value: award_emoji }
-    - { type: var, name: id }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: issues
+  - type: var
+    name: iid
+  - type: literal
+    value: award_emoji
+  - type: var
+    name: id
   response: single
-
 issue_award_emoji_create:
   method: POST
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: issues }
-    - { type: var, name: iid }
-    - { type: literal, value: award_emoji }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: issues
+  - type: var
+    name: iid
+  - type: literal
+    value: award_emoji
   response: single
   body:
     type: object
     fields:
-      - [name, { type: var, name: name }]
-
+    - - name
+      - type: var
+        name: name
 issue_award_emoji_delete:
   method: DELETE
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: issues }
-    - { type: var, name: iid }
-    - { type: literal, value: award_emoji }
-    - { type: var, name: id }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: issues
+  - type: var
+    name: iid
+  - type: literal
+    value: award_emoji
+  - type: var
+    name: id
   response: single
-
 merge_request_award_emoji_for_mr_query:
   method: GET
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: merge_requests }
-    - { type: var, name: iid }
-    - { type: literal, value: award_emoji }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: merge_requests
+  - type: var
+    name: iid
+  - type: literal
+    value: award_emoji
   response: bare_list
   pagination:
     params:
@@ -817,41 +1502,64 @@ merge_request_award_emoji_for_mr_query:
 merge_request_award_emoji_get:
   method: GET
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: merge_requests }
-    - { type: var, name: iid }
-    - { type: literal, value: award_emoji }
-    - { type: var, name: id }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: merge_requests
+  - type: var
+    name: iid
+  - type: literal
+    value: award_emoji
+  - type: var
+    name: id
   response: single
-
 merge_request_award_emoji_create:
   method: POST
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: merge_requests }
-    - { type: var, name: iid }
-    - { type: literal, value: award_emoji }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: merge_requests
+  - type: var
+    name: iid
+  - type: literal
+    value: award_emoji
   response: single
   body:
     type: object
     fields:
-      - [name, { type: var, name: name }]
-
+    - - name
+      - type: var
+        name: name
 merge_request_award_emoji_delete:
   method: DELETE
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: v4 }
-    - { type: literal, value: projects }
-    - { type: var, name: project_id }
-    - { type: literal, value: merge_requests }
-    - { type: var, name: iid }
-    - { type: literal, value: award_emoji }
-    - { type: var, name: id }
+  - type: literal
+    value: api
+  - type: literal
+    value: v4
+  - type: literal
+    value: projects
+  - type: var
+    name: project_id
+  - type: literal
+    value: merge_requests
+  - type: var
+    name: iid
+  - type: literal
+    value: award_emoji
+  - type: var
+    name: id
   response: single

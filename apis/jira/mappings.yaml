@@ -1,62 +1,58 @@
-# Jira Cloud REST API v3 — CML mappings. Domain model in domain.yaml.
-#
-# Base URL: Jira Cloud site host (e.g. your-domain.atlassian.net — set the full HTTPS origin with --backend).
-# All paths are relative to the base URL.
-#
-# Authentication: JIRA_AUTH env var is injected as the Authorization header.
-#   Cloud:  JIRA_AUTH="Basic $(echo -n 'email@domain.com:api_token' | base64)"
-#   Server: JIRA_AUTH="Bearer <personal_access_token>"
-#
-# Issue fields are nested under the `fields` wrapper in Jira responses.
-# The `path:` annotations in domain.yaml handle the navigation automatically.
-# The decoder reads e.g. response["fields"]["summary"] for the `summary` field.
-#
-# JQL search (GET /rest/api/3/search/jql): primary issue discovery. Query params
-# `jql` (required), optional repeated `fields` (issue field ids), optional `expand`.
-# Cursor pagination: nextPageToken / isLast. Use --all to fetch all pages.
-#
-# Issue GET: uses `key` (e.g. PROJ-123) as the path variable — passed as `id`
-# from the entity id_field.
-#
-# User GET: unusual — accountId goes in the query string (?accountId=...), not
-# the path. The CML mapping puts `id` into the query block.
-#
-# Comment query: scoped to issueIdOrKey (the issue key from via_params).
-
-# ── Issue ────────────────────────────────────────────────────────────────────
-
 issue_get:
-  # GET /rest/api/3/issue/{issueIdOrKey}  — id = issue key (e.g. PROJ-123)
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: issue }
-    - { type: var, name: id }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: issue
+  - type: var
+    name: id
   response: single
-
 issue_jql:
-  # GET /rest/api/3/search/jql?jql=…&fields=…&fields=…&expand=…
-  # Cursor pagination: nextPageToken (absent when isLast=true).
-  # Returns {issues: [...], nextPageToken: "...", isLast: bool}
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: search }
-    - { type: literal, value: jql }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: search
+  - type: literal
+    value: jql
   query:
     type: object
     fields:
-      - [jql, { type: var, name: jql }]
-      - [fields, { type: if, condition: { type: exists, var: fields },
-                  then_expr: { type: var, name: fields },
-                  else_expr: { type: const, value: null } }]
-      - [expand, { type: if, condition: { type: exists, var: expand },
-                  then_expr: { type: var, name: expand },
-                  else_expr: { type: const, value: null } }]
+    - - jql
+      - type: var
+        name: query
+    - - fields
+      - type: if
+        condition:
+          type: exists
+          var: fields
+        then_expr:
+          type: var
+          name: fields
+        else_expr:
+          type: const
+          value: null
+    - - expand
+      - type: if
+        condition:
+          type: exists
+          var: expand
+        then_expr:
+          type: var
+          name: expand
+        else_expr:
+          type: const
+          value: null
   response:
     items: issues
   pagination:
@@ -71,42 +67,79 @@ issue_jql:
       absent: true
     strategy: cursor
 project_get:
-  # GET /rest/api/3/project/{projectIdOrKey}  — id = project key (e.g. PROJ)
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: project }
-    - { type: var, name: id }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: project
+  - type: var
+    name: id
   response: single
-
 project_query:
-  # GET /rest/api/3/project/search
-  # Offset pagination: startAt + maxResults + total.
-  # Returns PageBeanProject {values: [...], total, isLast}
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: project }
-    - { type: literal, value: search }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: project
+  - type: literal
+    value: search
   query:
     type: object
     fields:
-      - [query, { type: if, condition: { type: exists, var: query },
-                  then_expr: { type: var, name: query },
-                  else_expr: { type: const, value: null } }]
-      - [typeKey, { type: if, condition: { type: exists, var: typeKey },
-                    then_expr: { type: var, name: typeKey },
-                    else_expr: { type: const, value: null } }]
-      - [status,  { type: if, condition: { type: exists, var: status },
-                    then_expr: { type: var, name: status },
-                    else_expr: { type: const, value: null } }]
-      - [orderBy, { type: if, condition: { type: exists, var: orderBy },
-                    then_expr: { type: var, name: orderBy },
-                    else_expr: { type: const, value: null } }]
+    - - query
+      - type: if
+        condition:
+          type: exists
+          var: query
+        then_expr:
+          type: var
+          name: query
+        else_expr:
+          type: const
+          value: null
+    - - typeKey
+      - type: if
+        condition:
+          type: exists
+          var: typeKey
+        then_expr:
+          type: var
+          name: typeKey
+        else_expr:
+          type: const
+          value: null
+    - - status
+      - type: if
+        condition:
+          type: exists
+          var: status
+        then_expr:
+          type: var
+          name: status
+        else_expr:
+          type: const
+          value: null
+    - - orderBy
+      - type: if
+        condition:
+          type: exists
+          var: orderBy
+        then_expr:
+          type: var
+          name: orderBy
+        else_expr:
+          type: const
+          value: null
   response:
     items: values
   pagination:
@@ -119,28 +152,56 @@ project_query:
         role: page_size
     strategy: offset
 project_version_query:
-  # GET /rest/api/3/project/{projectIdOrKey}/version
-  # Scoped to a project; projectIdOrKey comes from the scope param.
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: project }
-    - { type: var, name: projectIdOrKey }
-    - { type: literal, value: version }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: project
+  - type: var
+    name: projectIdOrKey
+  - type: literal
+    value: version
   query:
     type: object
     fields:
-      - [query,   { type: if, condition: { type: exists, var: query },
-                    then_expr: { type: var, name: query },
-                    else_expr: { type: const, value: null } }]
-      - [status,  { type: if, condition: { type: exists, var: status },
-                    then_expr: { type: var, name: status },
-                    else_expr: { type: const, value: null } }]
-      - [orderBy, { type: if, condition: { type: exists, var: orderBy },
-                    then_expr: { type: var, name: orderBy },
-                    else_expr: { type: const, value: null } }]
+    - - query
+      - type: if
+        condition:
+          type: exists
+          var: query
+        then_expr:
+          type: var
+          name: query
+        else_expr:
+          type: const
+          value: null
+    - - status
+      - type: if
+        condition:
+          type: exists
+          var: status
+        then_expr:
+          type: var
+          name: status
+        else_expr:
+          type: const
+          value: null
+    - - orderBy
+      - type: if
+        condition:
+          type: exists
+          var: orderBy
+        then_expr:
+          type: var
+          name: orderBy
+        else_expr:
+          type: const
+          value: null
   response:
     items: values
   pagination:
@@ -153,53 +214,91 @@ project_version_query:
         role: page_size
     strategy: offset
 user_get:
-  # GET /rest/api/3/user?accountId=<id>
-  # Unusual: accountId in query string, not path.
-  # The `id` var (= accountId value from Ref) goes into the query block.
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: user }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: user
   response: single
   query:
     type: object
     fields:
-      - [accountId, { type: var, name: id }]
-
+    - - accountId
+      - type: var
+        name: id
 user_myself:
-  # GET /rest/api/3/myself — single User JSON (wrapped for decode via response: single)
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: myself }
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: issue_watcher
+    then_expr:
+      type: const
+      value: rest/api/3/issue/{issueIdOrKey}/watchers
+    else_expr:
+      type: const
+      value: rest/api/3/myself
   response: single
-
 user_search:
-  # GET /rest/api/3/user/search?query=<text>
-  # Returns a bare array; stops when page is shorter than maxResults.
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: user }
-    - { type: literal, value: search }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: user
+  - type: literal
+    value: search
   query:
     type: object
     fields:
-      - [query,     { type: if, condition: { type: exists, var: query },
-                      then_expr: { type: var, name: query },
-                      else_expr: { type: const, value: null } }]
-      - [accountId, { type: if, condition: { type: exists, var: accountId },
-                      then_expr: { type: var, name: accountId },
-                      else_expr: { type: const, value: null } }]
-      - [property,  { type: if, condition: { type: exists, var: property },
-                      then_expr: { type: var, name: property },
-                      else_expr: { type: const, value: null } }]
+    - - query
+      - type: if
+        condition:
+          type: exists
+          var: query
+        then_expr:
+          type: var
+          name: query
+        else_expr:
+          type: const
+          value: null
+    - - accountId
+      - type: if
+        condition:
+          type: exists
+          var: accountId
+        then_expr:
+          type: var
+          name: accountId
+        else_expr:
+          type: const
+          value: null
+    - - property
+      - type: if
+        condition:
+          type: exists
+          var: property
+        then_expr:
+          type: var
+          name: property
+        else_expr:
+          type: const
+          value: null
   response:
     items: values
   pagination:
@@ -212,22 +311,34 @@ user_search:
         role: page_size
     strategy: offset
 comment_query:
-  # GET /rest/api/3/issue/{issueIdOrKey}/comment
-  # Scoped to an issue; issueIdOrKey comes from via_param traversal.
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: issue }
-    - { type: var, name: issueIdOrKey }
-    - { type: literal, value: comment }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: issue
+  - type: var
+    name: issueIdOrKey
+  - type: literal
+    value: comment
   query:
     type: object
     fields:
-      - [orderBy, { type: if, condition: { type: exists, var: orderBy },
-                    then_expr: { type: var, name: orderBy },
-                    else_expr: { type: const, value: null } }]
+    - - orderBy
+      - type: if
+        condition:
+          type: exists
+          var: orderBy
+        then_expr:
+          type: var
+          name: orderBy
+        else_expr:
+          type: const
+          value: null
   response:
     items: comments
   pagination:
@@ -240,20 +351,32 @@ comment_query:
         role: page_size
     strategy: offset
 priority_query:
-  # GET /rest/api/3/priority/search
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: priority }
-    - { type: literal, value: search }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: priority
+  - type: literal
+    value: search
   query:
     type: object
     fields:
-      - [priorityName, { type: if, condition: { type: exists, var: priorityName },
-                         then_expr: { type: var, name: priorityName },
-                         else_expr: { type: const, value: null } }]
+    - - priorityName
+      - type: if
+        condition:
+          type: exists
+          var: priorityName
+        then_expr:
+          type: var
+          name: priorityName
+        else_expr:
+          type: const
+          value: null
   response:
     items: values
   pagination:
@@ -266,84 +389,111 @@ priority_query:
         role: page_size
     strategy: offset
 priority_get:
-  # GET /rest/api/3/priority/{id}
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: priority }
-    - { type: var, name: id }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: priority
+  - type: var
+    name: id
   response: single
-
-# ── Status ───────────────────────────────────────────────────────────────────
-
 status_query:
-  # GET /rest/api/3/status  — returns all global statuses (small list, no pagination)
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: status }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: status
   response: bare_list
-
 status_get:
-  # GET /rest/api/3/status/{idOrName}
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: status }
-    - { type: var, name: id }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: status
+  - type: var
+    name: id
   response: single
-
-# ── IssueType ────────────────────────────────────────────────────────────────
-
 issuetype_query:
-  # GET /rest/api/3/issuetype  — returns all issue types (small list)
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: issuetype }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: issuetype
   response: bare_list
-
 issuetype_get:
-  # GET /rest/api/3/issuetype/{id}
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: issuetype }
-    - { type: var, name: id }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: issuetype
+  - type: var
+    name: id
   response: single
-
-# ── Worklog ───────────────────────────────────────────────────────────────────
-
 worklog_query:
-  # GET /rest/api/3/issue/{issueIdOrKey}/worklog
-  # Returns {startAt, maxResults, total, worklogs: [...]}
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: issue }
-    - { type: var, name: issueIdOrKey }
-    - { type: literal, value: worklog }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: issue
+  - type: var
+    name: issueIdOrKey
+  - type: literal
+    value: worklog
   query:
     type: object
     fields:
-      - [startedAfter,  { type: if, condition: { type: exists, var: startedAfter },
-                          then_expr: { type: var, name: startedAfter },
-                          else_expr: { type: const, value: null } }]
-      - [startedBefore, { type: if, condition: { type: exists, var: startedBefore },
-                          then_expr: { type: var, name: startedBefore },
-                          else_expr: { type: const, value: null } }]
+    - - startedAfter
+      - type: if
+        condition:
+          type: exists
+          var: startedAfter
+        then_expr:
+          type: var
+          name: startedAfter
+        else_expr:
+          type: const
+          value: null
+    - - startedBefore
+      - type: if
+        condition:
+          type: exists
+          var: startedBefore
+        then_expr:
+          type: var
+          name: startedBefore
+        else_expr:
+          type: const
+          value: null
   response:
     items: worklogs
   pagination:
@@ -356,16 +506,20 @@ worklog_query:
         role: page_size
     strategy: offset
 changelog_query:
-  # GET /rest/api/3/issue/{issueIdOrKey}/changelog
-  # Returns PageBeanChangelog {values: [...], total, isLast}
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: issue }
-    - { type: var, name: issueIdOrKey }
-    - { type: literal, value: changelog }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: issue
+  - type: var
+    name: issueIdOrKey
+  - type: literal
+    value: changelog
   response:
     items: values
   pagination:
@@ -378,56 +532,78 @@ changelog_query:
         role: page_size
     strategy: offset
 remotelink_query:
-  # GET /rest/api/3/issue/{issueIdOrKey}/remotelink
-  # Returns a bare array of remote links (no pagination wrapper).
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: issue }
-    - { type: var, name: issueIdOrKey }
-    - { type: literal, value: remotelink }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: issue
+  - type: var
+    name: issueIdOrKey
+  - type: literal
+    value: remotelink
   response: bare_list
-
-# ── Transition ────────────────────────────────────────────────────────────────
-
 transition_query:
-  # GET /rest/api/3/issue/{issueIdOrKey}/transitions
-  # Returns {transitions: [...]} — small fixed list, no pagination.
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: issue }
-    - { type: var, name: issueIdOrKey }
-    - { type: literal, value: transitions }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: issue
+  - type: var
+    name: issueIdOrKey
+  - type: literal
+    value: transitions
   response:
     items: transitions
-
-# ── Component ────────────────────────────────────────────────────────────────
-
 component_query:
-  # GET /rest/api/3/project/{projectIdOrKey}/component
-  # Returns PageBeanComponentWithIssueCount {values: [...], total, isLast}
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: project }
-    - { type: var, name: projectIdOrKey }
-    - { type: literal, value: component }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: project
+  - type: var
+    name: projectIdOrKey
+  - type: literal
+    value: component
   query:
     type: object
     fields:
-      - [query,   { type: if, condition: { type: exists, var: query },
-                    then_expr: { type: var, name: query },
-                    else_expr: { type: const, value: null } }]
-      - [orderBy, { type: if, condition: { type: exists, var: orderBy },
-                    then_expr: { type: var, name: orderBy },
-                    else_expr: { type: const, value: null } }]
+    - - query
+      - type: if
+        condition:
+          type: exists
+          var: query
+        then_expr:
+          type: var
+          name: query
+        else_expr:
+          type: const
+          value: null
+    - - orderBy
+      - type: if
+        condition:
+          type: exists
+          var: orderBy
+        then_expr:
+          type: var
+          name: orderBy
+        else_expr:
+          type: const
+          value: null
   response:
     items: values
   pagination:
@@ -440,300 +616,442 @@ component_query:
         role: page_size
     strategy: offset
 component_get:
-  # GET /rest/api/3/component/{id}
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: component }
-    - { type: var, name: id }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: component
+  - type: var
+    name: id
   response: single
-
-# ── Writes (Issue) ────────────────────────────────────────────────────────────
-
 issue_create:
-  # POST /rest/api/3/issue  — body IssueUpdateDetails { fields: { project, issuetype, summary, ... } }
   method: POST
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: issue }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: issue
   body:
     type: object
     fields:
-      - [fields, { type: object, fields: [
-          [project, { type: object, fields: [[key, { type: var, name: project_key }]] }],
-          [issuetype, { type: object, fields: [[name, { type: var, name: issue_type }]] }],
-          [summary, { type: var, name: summary }],
-          [description, { type: if, condition: { type: exists, var: description },
-                          then_expr: { type: var, name: description },
-                          else_expr: { type: const, value: null } }]
-        ]}]
+    - - fields
+      - type: object
+        fields:
+        - - project
+          - type: object
+            fields:
+            - - key
+              - type: var
+                name: project_key
+        - - issuetype
+          - type: object
+            fields:
+            - - name
+              - type: var
+                name: issue_type
+        - - summary
+          - type: var
+            name: summary
+        - - description
+          - type: if
+            condition:
+              type: exists
+              var: description
+            then_expr:
+              type: var
+              name: description
+            else_expr:
+              type: const
+              value: null
   response: single
-
 issue_update:
-  # PUT /rest/api/3/issue/{issueIdOrKey}
   method: PUT
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: issue }
-    - { type: var, name: id }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: issue
+  - type: var
+    name: id
   body:
     type: object
     fields:
-      - [fields, { type: object, fields: [
-          [summary, { type: if, condition: { type: exists, var: summary },
-                      then_expr: { type: var, name: summary },
-                      else_expr: { type: const, value: null } }],
-          [description, { type: if, condition: { type: exists, var: description },
-                          then_expr: { type: var, name: description },
-                          else_expr: { type: const, value: null } }],
-          [assignee, { type: if, condition: { type: exists, var: assignee_id },
-                       then_expr: { type: object, fields: [[accountId, { type: var, name: assignee_id }]] },
-                       else_expr: { type: const, value: null } }],
-          [priority, { type: if, condition: { type: exists, var: priority_name },
-                       then_expr: { type: object, fields: [[name, { type: var, name: priority_name }]] },
-                       else_expr: { type: const, value: null } }],
-          [labels, { type: if, condition: { type: exists, var: labels },
-                     then_expr: { type: var, name: labels },
-                     else_expr: { type: const, value: null } }]
-        ]}]
+    - - fields
+      - type: object
+        fields:
+        - - summary
+          - type: if
+            condition:
+              type: exists
+              var: summary
+            then_expr:
+              type: var
+              name: summary
+            else_expr:
+              type: const
+              value: null
+        - - description
+          - type: if
+            condition:
+              type: exists
+              var: description
+            then_expr:
+              type: var
+              name: description
+            else_expr:
+              type: const
+              value: null
+        - - assignee
+          - type: if
+            condition:
+              type: exists
+              var: assignee_id
+            then_expr:
+              type: object
+              fields:
+              - - accountId
+                - type: var
+                  name: assignee_id
+            else_expr:
+              type: const
+              value: null
+        - - priority
+          - type: if
+            condition:
+              type: exists
+              var: priority_name
+            then_expr:
+              type: object
+              fields:
+              - - name
+                - type: var
+                  name: priority_name
+            else_expr:
+              type: const
+              value: null
+        - - labels
+          - type: if
+            condition:
+              type: exists
+              var: labels
+            then_expr:
+              type: var
+              name: labels
+            else_expr:
+              type: const
+              value: null
   response: single
-
 issue_delete:
-  # DELETE /rest/api/3/issue/{issueIdOrKey}
   method: DELETE
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: issue }
-    - { type: var, name: id }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: issue
+  - type: var
+    name: id
   response: single
-
 issue_transition:
-  # POST /rest/api/3/issue/{issueIdOrKey}/transitions  — typically HTTP 204
   method: POST
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: issue }
-    - { type: var, name: id }
-    - { type: literal, value: transitions }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: issue
+  - type: var
+    name: id
+  - type: literal
+    value: transitions
   body:
     type: object
     fields:
-      - [transition, { type: object, fields: [[id, { type: var, name: transition_id }]] }]
+    - - transition
+      - type: object
+        fields:
+        - - id
+          - type: var
+            name: transition_id
   response: single
-
-# ── Writes (Comment) ────────────────────────────────────────────────────────
-
 comment_create:
-  # POST /rest/api/3/issue/{issueIdOrKey}/comment  — minimal Atlassian Document Format body
   method: POST
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: issue }
-    - { type: var, name: issueIdOrKey }
-    - { type: literal, value: comment }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: issue
+  - type: var
+    name: issueIdOrKey
+  - type: literal
+    value: comment
   body:
     type: object
     fields:
-      - [body, { type: object, fields: [
-          [type, { type: const, value: doc }],
-          [version, { type: const, value: 1 }],
-          [content, { type: array, elements: [
-              { type: object, fields: [
-                [type, { type: const, value: paragraph }],
-                [content, { type: array, elements: [
-                    { type: object, fields: [
-                      [type, { type: const, value: text }],
-                      [text, { type: var, name: text }]
-                    ]}
-                ]}]
-              ]}
-          ]}]
-        ]}]
+    - - body
+      - type: object
+        fields:
+        - - type
+          - type: const
+            value: doc
+        - - version
+          - type: const
+            value: 1
+        - - content
+          - type: array
+            elements:
+            - type: object
+              fields:
+              - - type
+                - type: const
+                  value: paragraph
+              - - content
+                - type: array
+                  elements:
+                  - type: object
+                    fields:
+                    - - type
+                      - type: const
+                        value: text
+                    - - text
+                      - type: var
+                        name: text
   response: single
-
-# ── Attachments (metadata only; upload is multipart — not expressible in CML) ─
-
 attachment_get:
-  # GET /rest/api/3/attachment/{id}
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: attachment }
-    - { type: var, name: id }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: attachment
+  - type: var
+    name: id
   response: single
-
 attachment_delete:
-  # DELETE /rest/api/3/attachment/{id}
   method: DELETE
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: attachment }
-    - { type: var, name: id }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: attachment
+  - type: var
+    name: id
   response: single
-
-# ── Issue votes & watchers ───────────────────────────────────────────────────
-
 issue_vote_get:
-  # GET /rest/api/3/issue/{issueIdOrKey}/votes
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: issue }
-    - { type: var, name: issueIdOrKey }
-    - { type: literal, value: votes }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: issue
+  - type: var
+    name: issueIdOrKey
+  - type: literal
+    value: votes
   response: single
-
 issue_vote_add:
-  # POST /rest/api/3/issue/{issueIdOrKey}/votes
   method: POST
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: issue }
-    - { type: var, name: id }
-    - { type: literal, value: votes }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: issue
+  - type: var
+    name: id
+  - type: literal
+    value: votes
   response: single
-
 issue_vote_remove:
-  # DELETE /rest/api/3/issue/{issueIdOrKey}/votes
   method: DELETE
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: issue }
-    - { type: var, name: id }
-    - { type: literal, value: votes }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: issue
+  - type: var
+    name: id
+  - type: literal
+    value: votes
   response: single
-
-issue_watcher_query:
-  # GET /rest/api/3/issue/{issueIdOrKey}/watchers → { watchers: [...] }
-  method: GET
-  path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: issue }
-    - { type: var, name: issueIdOrKey }
-    - { type: literal, value: watchers }
-  response:
-    items: watchers
-
 issue_watcher_add:
-  # POST /rest/api/3/issue/{issueIdOrKey}/watchers
   method: POST
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: issue }
-    - { type: var, name: id }
-    - { type: literal, value: watchers }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: issue
+  - type: var
+    name: id
+  - type: literal
+    value: watchers
   body:
     type: object
     fields:
-      - [accountId, { type: if, condition: { type: exists, var: account_id },
-                      then_expr: { type: var, name: account_id },
-                      else_expr: { type: const, value: null } }]
+    - - accountId
+      - type: if
+        condition:
+          type: exists
+          var: account_id
+        then_expr:
+          type: var
+          name: account_id
+        else_expr:
+          type: const
+          value: null
   response: single
-
 issue_watcher_remove:
-  # DELETE /rest/api/3/issue/{issueIdOrKey}/watchers?accountId=…
   method: DELETE
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: issue }
-    - { type: var, name: id }
-    - { type: literal, value: watchers }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: issue
+  - type: var
+    name: id
+  - type: literal
+    value: watchers
   query:
     type: object
     fields:
-      - [accountId, { type: var, name: account_id }]
+    - - accountId
+      - type: var
+        name: account_id
   response: single
-
-# ── Create/edit metadata & bulk fetch ───────────────────────────────────────
-
 issue_editmeta_get:
-  # GET /rest/api/3/issue/{issueIdOrKey}/editmeta
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: issue }
-    - { type: var, name: issueIdOrKey }
-    - { type: literal, value: editmeta }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: issue
+  - type: var
+    name: issueIdOrKey
+  - type: literal
+    value: editmeta
   response: single
-
 issue_createmeta_get:
-  # GET /rest/api/3/issue/createmeta?projectKeys=…
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: issue }
-    - { type: literal, value: createmeta }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: issue
+  - type: literal
+    value: createmeta
   query:
     type: object
     fields:
-      - [projectKeys, { type: var, name: id }]
+    - - projectKeys
+      - type: var
+        name: id
   response: single
-
 issue_bulk_fetch:
-  # POST /rest/api/3/issue/bulkfetch
   method: POST
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: issue }
-    - { type: literal, value: bulkfetch }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: issue
+  - type: literal
+    value: bulkfetch
   body:
     type: object
     fields:
-      - [issueIdsOrKeys, { type: var, name: issue_keys }]
+    - - issueIdsOrKeys
+      - type: var
+        name: issue_keys
   response:
     items: issues
-
-# ── Groups & permissions ────────────────────────────────────────────────────
-
 group_query:
-  # GET /rest/api/3/groups/picker
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: groups }
-    - { type: literal, value: picker }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: groups
+  - type: literal
+    value: picker
   query:
     type: object
     fields:
-      - [query, { type: if, condition: { type: exists, var: query },
-                  then_expr: { type: var, name: query },
-                  else_expr: { type: const, value: null } }]
+    - - query
+      - type: if
+        condition:
+          type: exists
+          var: query
+        then_expr:
+          type: var
+          name: query
+        else_expr:
+          type: const
+          value: null
   response:
     items: groups
   pagination:
@@ -746,66 +1064,86 @@ group_query:
         role: page_size
     strategy: offset
 group_get:
-  # GET /rest/api/3/group?groupname=…
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: group }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: group
   query:
     type: object
     fields:
-      - [groupname, { type: var, name: id }]
+    - - groupname
+      - type: var
+        name: id
   response: single
-
 group_delete:
-  # DELETE /rest/api/3/group?groupname=…
   method: DELETE
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: group }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: group
   query:
     type: object
     fields:
-      - [groupname, { type: var, name: id }]
+    - - groupname
+      - type: var
+        name: id
   response: single
-
 mypermissions_get:
-  # GET /rest/api/3/mypermissions — Cloud requires `permissions` (comma-separated keys).
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: mypermissions }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: mypermissions
   query:
     type: object
     fields:
-      # Default bundle so `mypermissionset <id>` works without extra flags; narrow scope via REST if needed.
-      - [permissions, { type: const,
-          value: "BROWSE_PROJECTS,EDIT_ISSUES,CREATE_ISSUES,DELETE_ISSUES,ADMINISTER_PROJECTS,ASSIGN_ISSUES,TRANSITION_ISSUES" }]
+    - - permissions
+      - type: const
+        value: BROWSE_PROJECTS,EDIT_ISSUES,CREATE_ISSUES,DELETE_ISSUES,ADMINISTER_PROJECTS,ASSIGN_ISSUES,TRANSITION_ISSUES
   response: single
-
-# ── Filters & dashboards ──────────────────────────────────────────────────────
-
 filter_query:
-  # GET /rest/api/3/filter/search
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: filter }
-    - { type: literal, value: search }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: filter
+  - type: literal
+    value: search
   query:
     type: object
     fields:
-      - [filterName, { type: if, condition: { type: exists, var: filterName },
-                       then_expr: { type: var, name: filterName },
-                       else_expr: { type: const, value: null } }]
+    - - filterName
+      - type: if
+        condition:
+          type: exists
+          var: filterName
+        then_expr:
+          type: var
+          name: filterName
+        else_expr:
+          type: const
+          value: null
   response:
     items: values
   pagination:
@@ -818,31 +1156,46 @@ filter_query:
         role: page_size
     strategy: offset
 filter_get:
-  # GET /rest/api/3/filter/{id}
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: filter }
-    - { type: var, name: id }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: filter
+  - type: var
+    name: id
   response: single
-
 dashboard_query:
-  # GET /rest/api/3/dashboard/search
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: dashboard }
-    - { type: literal, value: search }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: dashboard
+  - type: literal
+    value: search
   query:
     type: object
     fields:
-      - [dashboardName, { type: if, condition: { type: exists, var: dashboardName },
-                          then_expr: { type: var, name: dashboardName },
-                          else_expr: { type: const, value: null } }]
+    - - dashboardName
+      - type: if
+        condition:
+          type: exists
+          var: dashboardName
+        then_expr:
+          type: var
+          name: dashboardName
+        else_expr:
+          type: const
+          value: null
   response:
     items: values
   pagination:
@@ -855,26 +1208,30 @@ dashboard_query:
         role: page_size
     strategy: offset
 dashboard_get:
-  # GET /rest/api/3/dashboard/{id}
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: dashboard }
-    - { type: var, name: id }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: dashboard
+  - type: var
+    name: id
   response: single
-
-# ── Webhooks ──────────────────────────────────────────────────────────────────
-
 webhook_query:
-  # GET /rest/api/3/webhook
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: webhook }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: webhook
   response:
     items: values
   pagination:
@@ -887,57 +1244,87 @@ webhook_query:
         role: page_size
     strategy: offset
 webhook_register:
-  # POST /rest/api/3/webhook — WebhookRegistrationDetails
   method: POST
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: webhook }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: webhook
   body:
     type: object
     fields:
-      - [url, { type: var, name: url }]
-      - [webhooks, { type: array, elements: [
-            { type: object, fields: [
-                [events, { type: var, name: events }],
-                [jqlFilter, { type: if, condition: { type: exists, var: jql_filter },
-                             then_expr: { type: var, name: jql_filter },
-                             else_expr: { type: const, value: null } }]
-              ]}
-          ]}]
+    - - url
+      - type: var
+        name: url
+    - - webhooks
+      - type: array
+        elements:
+        - type: object
+          fields:
+          - - events
+            - type: var
+              name: events
+          - - jqlFilter
+            - type: if
+              condition:
+                type: exists
+                var: jql_filter
+              then_expr:
+                type: var
+                name: jql_filter
+              else_expr:
+                type: const
+                value: null
   response: single
-
 webhook_delete:
-  # DELETE /rest/api/3/webhook — body { webhookIds: [ … ] }
   method: DELETE
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: api }
-    - { type: literal, value: "3" }
-    - { type: literal, value: webhook }
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: webhook
   body:
     type: object
     fields:
-      - [webhookIds, { type: array, elements: [{ type: var, name: id }] }]
+    - - webhookIds
+      - type: array
+        elements:
+        - type: var
+          name: id
   response: single
-
-# ── Jira Software (Agile) — same host, /rest/agile/1.0 ────────────────────────
-
 board_query:
-  # GET /rest/agile/1.0/board
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: agile }
-    - { type: literal, value: "1.0" }
-    - { type: literal, value: board }
+  - type: literal
+    value: rest
+  - type: literal
+    value: agile
+  - type: literal
+    value: '1.0'
+  - type: literal
+    value: board
   query:
     type: object
     fields:
-      - [projectKeyOrId, { type: if, condition: { type: exists, var: projectKeyOrId },
-                           then_expr: { type: var, name: projectKeyOrId },
-                           else_expr: { type: const, value: null } }]
+    - - projectKeyOrId
+      - type: if
+        condition:
+          type: exists
+          var: projectKeyOrId
+        then_expr:
+          type: var
+          name: projectKeyOrId
+        else_expr:
+          type: const
+          value: null
   response:
     items: values
   pagination:
@@ -950,26 +1337,34 @@ board_query:
         role: page_size
     strategy: offset
 board_get:
-  # GET /rest/agile/1.0/board/{boardId}
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: agile }
-    - { type: literal, value: "1.0" }
-    - { type: literal, value: board }
-    - { type: var, name: id }
+  - type: literal
+    value: rest
+  - type: literal
+    value: agile
+  - type: literal
+    value: '1.0'
+  - type: literal
+    value: board
+  - type: var
+    name: id
   response: single
-
 sprint_query:
-  # GET /rest/agile/1.0/board/{boardId}/sprint
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: agile }
-    - { type: literal, value: "1.0" }
-    - { type: literal, value: board }
-    - { type: var, name: boardId }
-    - { type: literal, value: sprint }
+  - type: literal
+    value: rest
+  - type: literal
+    value: agile
+  - type: literal
+    value: '1.0'
+  - type: literal
+    value: board
+  - type: var
+    name: boardId
+  - type: literal
+    value: sprint
   response:
     items: values
   pagination:
@@ -982,36 +1377,73 @@ sprint_query:
         role: page_size
     strategy: offset
 sprint_get:
-  # GET /rest/agile/1.0/sprint/{sprintId}
   method: GET
   path:
-    - { type: literal, value: rest }
-    - { type: literal, value: agile }
-    - { type: literal, value: "1.0" }
-    - { type: literal, value: sprint }
-    - { type: var, name: id }
+  - type: literal
+    value: rest
+  - type: literal
+    value: agile
+  - type: literal
+    value: '1.0'
+  - type: literal
+    value: sprint
+  - type: var
+    name: id
   response: single
-
 issue_transition_context_query:
   transport: view
   view: issue_transition_context
-
 issue_transition_context_get:
   transport: view
   view: issue_transition_context
-
 issue_browse_link_query:
   transport: view
   view: issue_browse_link
-
 issue_browse_link_get:
   transport: view
   view: issue_browse_link
-
 sprint_board_snapshot_query:
   transport: view
   view: sprint_board_snapshot
-
 sprint_board_snapshot_get:
   transport: view
   view: sprint_board_snapshot
+remote_link_get:
+  method: GET
+  path:
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: issuelink
+  - type: var
+    name: id
+transition_get:
+  method: GET
+  path:
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: transition
+  - type: var
+    name: id
+version_get:
+  method: GET
+  path:
+  - type: literal
+    value: rest
+  - type: literal
+    value: api
+  - type: literal
+    value: '3'
+  - type: literal
+    value: version
+  - type: var
+    name: id

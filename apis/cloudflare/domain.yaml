@@ -298,6 +298,8 @@ capabilities:
       value_ref: nv_ruleset_query_per_page
       required: false
       role: response_control
+    selection: []
+    scope: []
   ruleset_get:
     kind: get
     entity: Ruleset
@@ -521,8 +523,12 @@ views:
         node: legacy_packages
       security_surface_status:
         kind: computed
-        template: |
-          {%- if legacy_waf_present and not managed_waf_configured -%}legacy_heavy{%- elif custom_rules_configured and managed_waf_configured -%}managed_and_custom{%- elif managed_waf_configured or ddos_l7_configured -%}managed_surface{%- elif custom_rules_configured -%}custom_heavy{%- elif legacy_waf_present -%}legacy_only{%- else -%}minimal{%- endif -%}
+        template: '{%- if legacy_waf_present and not managed_waf_configured -%}legacy_heavy{%- elif custom_rules_configured
+          and managed_waf_configured -%}managed_and_custom{%- elif managed_waf_configured or ddos_l7_configured -%}managed_surface{%-
+          elif custom_rules_configured -%}custom_heavy{%- elif legacy_waf_present -%}legacy_only{%- else -%}minimal{%- endif
+          -%}
+
+          '
     relation_outputs:
     - relation: managed_waf_ruleset
       target: Ruleset
@@ -635,7 +641,6 @@ oauth:
           - cloudflare.zone.read
         - any_of:
           - cloudflare.zone.waf.edit
-# Bearer API tokens (`CLOUDFLARE_API_TOKEN`) plus optional outbound OAuth (`oauth:`) — tool-model `connect_profile` is mixed auth.
 auth:
   scheme: bearer_token
   env: CLOUDFLARE_API_TOKEN

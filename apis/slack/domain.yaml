@@ -1,4 +1,4 @@
-version: 3
+version: 4
 http_backend: https://slack.com/api
 data_classes:
   untrusted:
@@ -163,7 +163,7 @@ entities:
   User:
     id_field: id
     primary_read: user_info
-    primary_query: user_list
+    primary_query: channel_members
     description: A Slack workspace member.
     fields:
       id:
@@ -401,15 +401,6 @@ capabilities:
     description: List all channels (conversations) in the workspace.
     kind: query
     entity: Channel
-    parameters:
-    - name: exclude_archived
-      value_ref: nv_channel_list_exclude_archived
-      required: false
-      role: filter
-    - name: types
-      value_ref: nv_channel_list_types
-      required: false
-      role: filter
     provides:
     - id
     - name
@@ -423,6 +414,13 @@ capabilities:
     - is_member
     - is_shared
     - created
+    selection:
+    - name: exclude_archived
+      value_ref: nv_channel_list_exclude_archived
+      required: false
+    - name: types
+      value_ref: nv_channel_list_types
+      required: false
   channel_info:
     description: Get details about a single channel.
     kind: get
@@ -444,86 +442,79 @@ capabilities:
     - purpose
     - created
   channel_history:
-    description: List messages in channel history (materialize for Channel.messages).
+    description: List Message by shelf (channel_history | channel_history).
     kind: query
     entity: Message
-    parameters:
-    - name: channel
-      value_ref: nv_channel_history_channel
+    provides:
+    - ts
+    - type
+    - text
+    - subtype
+    - thread_ts
+    - reply_count
+    - latest_reply
+    - permalink
+    - channel
+    - user
+    selection:
+    - name: shelf
+      value_ref: nv_message_query_shelf
       required: true
-      role: scope
+      description: channel_history | channel_history
+    - name: ts
+      value_ref: nv_channel_replies_ts
+      required: false
+    controls:
     - name: oldest
       value_ref: nv_channel_history_oldest
       required: false
-      role: filter
     - name: latest
       value_ref: nv_channel_history_latest
       required: false
-      role: filter
     - name: inclusive
       value_ref: nv_wire_bool
       required: false
-      role: filter
-    provides:
-    - ts
-    - type
-    - text
-    - subtype
-    - thread_ts
-    - reply_count
-    - latest_reply
-    - permalink
-    - channel
-    - user
-  channel_replies:
-    description: Read replies in a Slack message thread — follow a discussion where people agreed on plans or rollout dates.
-    kind: query
-    entity: Message
-    discovery:
-      target_terms:
-      - thread
-      - channel discussion
-      - agreement
-      - rollout
-    parameters:
+    scope:
     - name: channel
-      value_ref: nv_channel_replies_channel
+      value_ref: nv_channel_history_channel
       required: true
-      role: scope
-    - name: ts
-      value_ref: nv_channel_replies_ts
-      required: true
-    provides:
-    - ts
-    - type
-    - text
-    - subtype
-    - thread_ts
-    - reply_count
-    - latest_reply
-    - permalink
-    - channel
-    - user
   channel_members:
-    description: List members of a channel.
+    description: List User by shelf (channel_members | user | usergroup_member).
     kind: query
     entity: User
-    parameters:
+    selection:
+    - name: shelf
+      value_ref: nv_user_query_shelf
+      required: true
+      description: channel_members | user | usergroup_member
+    - name: usergroup
+      value_ref: nv_usergroup_member_list_usergroup
+      required: false
+    scope:
     - name: channel
       value_ref: nv_channel_members_channel
       required: true
-      role: scope
+    controls:
+    - name: include_locale
+      value_ref: nv_wire_bool
+      required: false
+    - name: include_disabled
+      value_ref: nv_wire_bool
+      required: false
   channel_create:
     description: Create a new channel.
     kind: create
     entity: Channel
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: true
-    - name: is_private
-      value_ref: nv_wire_bool
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: true
+        - name: is_private
+          value_ref: nv_wire_bool
+          required: false
   channel_archive:
     description: Archive a channel.
     kind: action
@@ -556,66 +547,84 @@ capabilities:
     description: Rename a channel.
     kind: update
     entity: Channel
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: true
   channel_set_topic:
     description: Set the topic of a channel.
     kind: action
     entity: Channel
-    parameters:
-    - name: topic
-      value_ref: nv_wire_str_markdown
-      required: true
     output:
       type: side_effect
       description: Set the topic of a channel.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: topic
+          value_ref: nv_wire_str_markdown
+          required: true
   channel_set_purpose:
     description: Set the purpose of a channel.
     kind: action
     entity: Channel
-    parameters:
-    - name: purpose
-      value_ref: nv_wire_str_markdown
-      required: true
     output:
       type: side_effect
       description: Set the purpose of a channel.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: purpose
+          value_ref: nv_wire_str_markdown
+          required: true
   channel_invite:
     description: Invite a user to a channel.
     kind: action
     entity: Channel
-    parameters:
-    - name: users
-      value_ref: nv_channel_invite_users
-      required: true
-      sink_class: permission_grant
     output:
       type: side_effect
       description: Invite a user to a channel.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: users
+          value_ref: nv_channel_invite_users
+          required: true
+          sink_class: permission_grant
   channel_kick:
     description: Remove a user from a channel.
     kind: action
     entity: Channel
-    parameters:
-    - name: user
-      value_ref: nv_channel_kick_user
-      required: true
     output:
       type: side_effect
       description: Remove a user from a channel.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: user
+          value_ref: nv_channel_kick_user
+          required: true
   channel_mark:
     description: Mark the read position in a channel.
     kind: action
     entity: Channel
-    parameters:
-    - name: ts
-      value_ref: nv_wire_str_short
-      required: true
     output:
       type: side_effect
       description: Mark the read position in a channel.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: ts
+          value_ref: nv_wire_str_short
+          required: true
   message_search:
     description: Search Slack messages and threads for discussions about rollout dates, agreements, or follow-ups.
     kind: search
@@ -626,132 +635,133 @@ capabilities:
       - channel discussion
       - agreement
       - rollout
-    parameters:
+    selection:
     - name: query
       value_ref: nv_message_search_query
       required: true
-      role: search
-    - name: sort
-      value_ref: nv_message_search_sort
-      required: false
-      role: sort
     - name: sort_dir
       value_ref: nv_message_search_sort_dir
       required: false
-      role: sort_direction
     - name: highlight
       value_ref: nv_wire_bool
       required: false
-      role: response_control
+    controls:
+    - name: sort
+      value_ref: nv_message_search_sort
+      required: false
   message_post:
     description: Send a message to a channel.
     kind: create
     entity: Message
-    parameters:
-    - name: channel
-      value_ref: nv_message_post_channel
-      required: true
-    - name: text
-      value_ref: nv_message_post_text
-      required: false
-      sink_class: external_send
-    - name: thread_ts
-      value_ref: nv_message_post_thread_ts
-      required: false
-    - name: blocks
-      value_ref: nv_message_post_blocks
-      required: false
-    - name: attachments
-      value_ref: nv_message_post_attachments
-      required: false
-    - name: unfurl_links
-      value_ref: nv_message_post_unfurl_links
-      required: false
-    - name: unfurl_media
-      value_ref: nv_message_post_unfurl_media
-      required: false
-    - name: mrkdwn
-      value_ref: nv_message_post_mrkdwn
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: channel
+          value_ref: nv_message_post_channel
+          required: true
+        - name: text
+          value_ref: nv_message_post_text
+          required: false
+          sink_class: external_send
+        - name: thread_ts
+          value_ref: nv_message_post_thread_ts
+          required: false
+        - name: blocks
+          value_ref: nv_message_post_blocks
+          required: false
+        - name: attachments
+          value_ref: nv_message_post_attachments
+          required: false
+        - name: unfurl_links
+          value_ref: nv_message_post_unfurl_links
+          required: false
+        - name: unfurl_media
+          value_ref: nv_message_post_unfurl_media
+          required: false
+        - name: mrkdwn
+          value_ref: nv_message_post_mrkdwn
+          required: false
   message_update:
     description: Update a message.
     kind: update
     entity: Message
-    parameters:
-    - name: channel
-      value_ref: nv_message_update_channel
-      required: true
-    - name: text
-      value_ref: nv_wire_str_markdown
-      required: false
-      sink_class: external_send
-    - name: blocks
-      value_ref: nv_message_update_blocks
-      required: false
-    - name: attachments
-      value_ref: nv_message_update_attachments
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: channel
+          value_ref: nv_message_update_channel
+          required: true
+        - name: text
+          value_ref: nv_wire_str_markdown
+          required: false
+          sink_class: external_send
+        - name: blocks
+          value_ref: nv_message_update_blocks
+          required: false
+        - name: attachments
+          value_ref: nv_message_update_attachments
+          required: false
   message_delete:
     description: Delete a message.
     kind: delete
     entity: Message
-    parameters:
-    - name: channel
-      value_ref: nv_message_delete_channel
-      required: true
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: channel
+          value_ref: nv_message_delete_channel
+          required: true
   message_permalink:
     description: Get a permanent link to a message.
     kind: action
     entity: Message
-    parameters:
-    - name: channel
-      value_ref: nv_message_permalink_channel
-      required: true
     output:
       type: side_effect
       description: Get a permanent link to a message.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: channel
+          value_ref: nv_message_permalink_channel
+          required: true
   message_react_add:
     description: Add an emoji reaction to a message.
     kind: action
     entity: Message
-    parameters:
-    - name: channel
-      value_ref: nv_message_react_add_channel
-      required: true
-    - name: name
-      value_ref: nv_message_react_add_name
-      required: true
     output:
       type: side_effect
       description: Add an emoji reaction to a message.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: channel
+          value_ref: nv_message_react_add_channel
+          required: true
+        - name: name
+          value_ref: nv_message_react_add_name
+          required: true
   message_react_remove:
     description: Remove an emoji reaction from a message.
     kind: action
     entity: Message
-    parameters:
-    - name: channel
-      value_ref: nv_message_react_remove_channel
-      required: true
-    - name: name
-      value_ref: nv_wire_str_short
-      required: true
     output:
       type: side_effect
       description: Remove an emoji reaction from a message.
-  user_list:
-    description: List all users in the workspace.
-    kind: query
-    entity: User
-    parameters:
-    - name: include_locale
-      value_ref: nv_wire_bool
-      required: false
-      role: response_control
-    provides:
-    - id
-    - name
-    - is_bot
-    - deleted
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: channel
+          value_ref: nv_message_react_remove_channel
+          required: true
+        - name: name
+          value_ref: nv_wire_str_short
+          required: true
   user_info:
     description: Get info about a specific user.
     kind: get
@@ -773,13 +783,16 @@ capabilities:
     description: Look up a user by email address.
     kind: action
     entity: User
-    parameters:
-    - name: email
-      value_ref: nv_wire_str_short
-      required: true
     output:
       type: side_effect
       description: Look up a user by email address.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: email
+          value_ref: nv_wire_str_short
+          required: true
   user_get_presence:
     description: Get the presence status of a user.
     kind: action
@@ -795,27 +808,6 @@ capabilities:
     description: List files in the workspace, optionally filtered by user or channel.
     kind: query
     entity: File
-    parameters:
-    - name: user
-      value_ref: nv_file_list_user
-      required: false
-      role: filter
-    - name: channel
-      value_ref: nv_file_list_channel
-      required: false
-      role: filter
-    - name: types
-      value_ref: nv_file_list_types
-      required: false
-      role: filter
-    - name: ts_from
-      value_ref: nv_wire_num
-      required: false
-      role: filter
-    - name: ts_to
-      value_ref: nv_wire_num
-      required: false
-      role: filter
     provides:
     - id
     - name
@@ -825,6 +817,22 @@ capabilities:
     - size
     - created
     - is_public
+    selection:
+    - name: user
+      value_ref: nv_file_list_user
+      required: false
+    - name: channel
+      value_ref: nv_file_list_channel
+      required: false
+    - name: types
+      value_ref: nv_file_list_types
+      required: false
+    - name: ts_from
+      value_ref: nv_wire_num
+      required: false
+    - name: ts_to
+      value_ref: nv_wire_num
+      required: false
   file_info:
     description: Get info about a specific file.
     kind: get
@@ -845,16 +853,19 @@ capabilities:
     description: Upload a file to a channel.
     kind: create
     entity: File
-    parameters:
-    - name: channels
-      value_ref: nv_file_upload_channels
-      required: false
-    - name: content
-      value_ref: nv_file_upload_content
-      required: false
-    - name: filename
-      value_ref: nv_wire_str_short
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: channels
+          value_ref: nv_file_upload_channels
+          required: false
+        - name: content
+          value_ref: nv_file_upload_content
+          required: false
+        - name: filename
+          value_ref: nv_wire_str_short
+          required: false
   file_delete:
     description: Delete a file.
     kind: delete
@@ -870,19 +881,6 @@ capabilities:
     description: List all user groups in the workspace.
     kind: query
     entity: UserGroup
-    parameters:
-    - name: include_users
-      value_ref: nv_wire_bool
-      required: false
-      role: response_control
-    - name: include_count
-      value_ref: nv_wire_bool
-      required: false
-      role: response_control
-    - name: include_disabled
-      value_ref: nv_wire_bool
-      required: false
-      role: filter
     provides:
     - id
     - name
@@ -891,34 +889,51 @@ capabilities:
     - is_usergroup
     - date_create
     - user_count
+    selection:
+    - name: include_users
+      value_ref: nv_wire_bool
+      required: false
+    - name: include_count
+      value_ref: nv_wire_bool
+      required: false
+    controls:
+    - name: include_disabled
+      value_ref: nv_wire_bool
+      required: false
   usergroup_create:
     description: Create a new user group.
     kind: create
     entity: UserGroup
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: true
-    - name: handle
-      value_ref: nv_wire_str_short
-      required: false
-    - name: description
-      value_ref: nv_wire_str_markdown
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: true
+        - name: handle
+          value_ref: nv_wire_str_short
+          required: false
+        - name: description
+          value_ref: nv_wire_str_markdown
+          required: false
   usergroup_update:
     description: Update a user group.
     kind: update
     entity: UserGroup
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: false
-    - name: handle
-      value_ref: nv_wire_str_short
-      required: false
-    - name: description
-      value_ref: nv_wire_str_markdown
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: false
+        - name: handle
+          value_ref: nv_wire_str_short
+          required: false
+        - name: description
+          value_ref: nv_wire_str_markdown
+          required: false
   usergroup_enable:
     description: Enable a disabled user group.
     kind: action
@@ -933,19 +948,6 @@ capabilities:
     output:
       type: side_effect
       description: Disable an active user group.
-  usergroup_member_list:
-    description: List the members of a user group.
-    kind: query
-    entity: User
-    parameters:
-    - name: usergroup
-      value_ref: nv_usergroup_member_list_usergroup
-      required: true
-      role: scope
-    - name: include_disabled
-      value_ref: nv_wire_bool
-      required: false
-      role: filter
   team_info:
     description: Get information about the current workspace.
     kind: singleton
@@ -973,13 +975,16 @@ capabilities:
     description: Create a reminder for a user.
     kind: create
     entity: Reminder
-    parameters:
-    - name: text
-      value_ref: nv_wire_str_markdown
-      required: true
-    - name: time
-      value_ref: nv_reminder_add_time
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: text
+          value_ref: nv_wire_str_markdown
+          required: true
+        - name: time
+          value_ref: nv_reminder_add_time
+          required: true
   reminder_complete:
     description: Mark a reminder as complete.
     kind: action
@@ -995,15 +1000,15 @@ capabilities:
     description: List pinned items in a channel.
     kind: query
     entity: Pin
-    parameters:
-    - name: channel
-      value_ref: nv_pin_list_channel
-      required: true
-      role: scope
     provides:
     - id
     - type
     - created
+    selection: []
+    scope:
+    - name: channel
+      value_ref: nv_pin_list_channel
+      required: true
   pin_add:
     description: Pin by channel id and optional message timestamp.
     kind: action
@@ -1017,30 +1022,36 @@ capabilities:
       - pin
       - pinned item
       - pinned message
-    parameters:
-    - name: channel
-      value_ref: nv_pin_add_channel
-      required: true
-    - name: timestamp
-      value_ref: nv_pin_add_timestamp
-      required: false
     output:
       type: side_effect
       description: Pin a message or file to a channel.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: channel
+          value_ref: nv_pin_add_channel
+          required: true
+        - name: timestamp
+          value_ref: nv_pin_add_timestamp
+          required: false
   pin_remove:
     description: Remove a pinned item from a channel.
     kind: action
     entity: Pin
-    parameters:
-    - name: channel
-      value_ref: nv_pin_remove_channel
-      required: true
-    - name: timestamp
-      value_ref: nv_wire_str_short
-      required: false
     output:
       type: side_effect
       description: Remove a pinned item from a channel.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: channel
+          value_ref: nv_pin_remove_channel
+          required: true
+        - name: timestamp
+          value_ref: nv_wire_str_short
+          required: false
   bot_info:
     description: Get information about a bot user.
     kind: get
@@ -1053,11 +1064,6 @@ capabilities:
     description: List bookmarks in a channel.
     kind: query
     entity: Bookmark
-    parameters:
-    - name: channel
-      value_ref: nv_bookmark_list_channel
-      required: true
-      role: scope
     provides:
     - id
     - title
@@ -1067,116 +1073,137 @@ capabilities:
     - channel_id
     - rank
     - date_created
+    selection: []
+    scope:
+    - name: channel
+      value_ref: nv_bookmark_list_channel
+      required: true
   bookmark_add:
     description: Add a bookmark to a channel.
     kind: create
     entity: Bookmark
-    parameters:
-    - name: channel
-      value_ref: nv_bookmark_add_channel
-      required: true
-    - name: title
-      value_ref: nv_wire_str_short
-      required: true
-    - name: type
-      value_ref: nv_bookmark_add_type
-      required: true
-    - name: link
-      value_ref: nv_bookmark_add_link
-      required: false
-    - name: emoji
-      value_ref: nv_wire_str_short
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: channel
+          value_ref: nv_bookmark_add_channel
+          required: true
+        - name: title
+          value_ref: nv_wire_str_short
+          required: true
+        - name: type
+          value_ref: nv_bookmark_add_type
+          required: true
+        - name: link
+          value_ref: nv_bookmark_add_link
+          required: false
+        - name: emoji
+          value_ref: nv_wire_str_short
+          required: false
   bookmark_edit:
     description: Edit an existing bookmark.
     kind: update
     entity: Bookmark
-    parameters:
-    - name: channel
-      value_ref: nv_bookmark_edit_channel
-      required: true
-    - name: title
-      value_ref: nv_wire_str_short
-      required: false
-    - name: link
-      value_ref: nv_wire_str_short
-      required: false
-    - name: emoji
-      value_ref: nv_wire_str_short
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: channel
+          value_ref: nv_bookmark_edit_channel
+          required: true
+        - name: title
+          value_ref: nv_wire_str_short
+          required: false
+        - name: link
+          value_ref: nv_wire_str_short
+          required: false
+        - name: emoji
+          value_ref: nv_wire_str_short
+          required: false
   bookmark_remove:
     description: Remove a bookmark from a channel.
     kind: action
     entity: Bookmark
-    parameters:
-    - name: channel
-      value_ref: nv_bookmark_remove_channel
-      required: true
     output:
       type: side_effect
       description: Remove this bookmark from the Slack channel header.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: channel
+          value_ref: nv_bookmark_remove_channel
+          required: true
   scheduledmessage_list:
     description: List pending scheduled messages (optionally filtered to one channel).
     kind: query
     entity: ScheduledMessage
-    parameters:
-    - name: channel
-      value_ref: nv_scheduledmessage_list_channel
-      required: true
-      role: scope
-    - name: oldest
-      value_ref: nv_scheduledmessage_list_oldest
-      required: false
-    - name: latest
-      value_ref: nv_scheduledmessage_list_latest
-      required: false
     provides:
     - id
     - channel_id
     - post_at
     - date_created
     - text
+    selection: []
+    controls:
+    - name: oldest
+      value_ref: nv_scheduledmessage_list_oldest
+      required: false
+    - name: latest
+      value_ref: nv_scheduledmessage_list_latest
+      required: false
+    scope:
+    - name: channel
+      value_ref: nv_scheduledmessage_list_channel
+      required: true
   scheduledmessage_create:
     description: Schedule a message to be sent later (chat.scheduleMessage).
     kind: create
     entity: ScheduledMessage
-    parameters:
-    - name: channel
-      value_ref: nv_scheduledmessage_create_channel
-      required: true
-    - name: post_at
-      value_ref: nv_scheduledmessage_create_post_at
-      required: true
-    - name: text
-      value_ref: nv_scheduledmessage_create_text
-      required: false
-      sink_class: external_send
-    - name: thread_ts
-      value_ref: nv_scheduledmessage_create_thread_ts
-      required: false
-    - name: blocks
-      value_ref: nv_scheduledmessage_create_blocks
-      required: false
-    - name: attachments
-      value_ref: nv_scheduledmessage_create_attachments
-      required: false
-    - name: unfurl_links
-      value_ref: nv_wire_bool
-      required: false
-    - name: unfurl_media
-      value_ref: nv_wire_bool
-      required: false
-    - name: mrkdwn
-      value_ref: nv_scheduledmessage_create_mrkdwn
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: channel
+          value_ref: nv_scheduledmessage_create_channel
+          required: true
+        - name: post_at
+          value_ref: nv_scheduledmessage_create_post_at
+          required: true
+        - name: text
+          value_ref: nv_scheduledmessage_create_text
+          required: false
+          sink_class: external_send
+        - name: thread_ts
+          value_ref: nv_scheduledmessage_create_thread_ts
+          required: false
+        - name: blocks
+          value_ref: nv_scheduledmessage_create_blocks
+          required: false
+        - name: attachments
+          value_ref: nv_scheduledmessage_create_attachments
+          required: false
+        - name: unfurl_links
+          value_ref: nv_wire_bool
+          required: false
+        - name: unfurl_media
+          value_ref: nv_wire_bool
+          required: false
+        - name: mrkdwn
+          value_ref: nv_scheduledmessage_create_mrkdwn
+          required: false
   scheduledmessage_delete:
     description: Delete a pending scheduled message before it sends.
     kind: delete
     entity: ScheduledMessage
-    parameters:
-    - name: channel
-      value_ref: nv_scheduledmessage_delete_channel
-      required: true
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: channel
+          value_ref: nv_scheduledmessage_delete_channel
+          required: true
   auth_test:
     description: Test the authentication token and get caller identity.
     kind: singleton
@@ -1335,7 +1362,7 @@ oauth:
         - groups:history
         - im:history
         - mpim:history
-      channel_replies:
+      channel_history:
         any_of:
         - channels:history
         - groups:history
@@ -1415,7 +1442,7 @@ oauth:
       message_react_remove:
         any_of:
         - reactions:write
-      user_list:
+      channel_members:
         any_of:
         - users:read
       user_info:
@@ -1463,7 +1490,7 @@ oauth:
       usergroup_disable:
         any_of:
         - usergroups:write
-      usergroup_member_list:
+      channel_members:
         any_of:
         - usergroups:read
       team_info:
@@ -1989,3 +2016,16 @@ values:
     type: markdown
   nv_wire_str_short:
     type: string
+  nv_message_query_shelf:
+    type: enum
+    enum:
+    - channel_history
+    - channel_history
+    description: Message query shelf
+  nv_user_query_shelf:
+    type: enum
+    enum:
+    - channel_members
+    - user
+    - usergroup_member
+    description: User query shelf

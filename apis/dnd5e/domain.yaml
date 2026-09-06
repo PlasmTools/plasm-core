@@ -1,4 +1,4 @@
-version: 4
+version: 9
 auth:
   scheme: none
 http_backend: https://www.dnd5eapi.co
@@ -336,7 +336,7 @@ entities:
           param: class_index
   Subclass:
     id_field: index
-    primary_query: subclass_query
+    primary_query: class_subclasses
     description: A specialisation of a Class (e.g. Evocation Wizard).
     fields:
       index:
@@ -358,7 +358,7 @@ entities:
         cardinality: one
   Spell:
     id_field: index
-    primary_query: spell_query
+    primary_query: class_spells
     description: A magical effect a caster can invoke; identified by kebab-case slug.
     fields:
       index:
@@ -687,7 +687,7 @@ entities:
         value_ref: nv_background_name
   Trait:
     id_field: index
-    primary_query: trait_query
+    primary_query: race_traits
     description: A racial passive ability or characteristic.
     fields:
       index:
@@ -776,9 +776,25 @@ capabilities:
     - type
     - typical_speakers
   proficiency_query:
-    description: List all proficiencies.
+    description: List Proficiency by shelf (proficiency | class_proficiencies | race_proficiencies | subrace_proficiencies).
     kind: query
     entity: Proficiency
+    scope: []
+    selection:
+    - name: shelf
+      value_ref: nv_proficiency_query_shelf
+      required: true
+      description: proficiency | class_proficiencies | race_proficiencies | subrace_proficiencies
+    - name: class_index
+      value_ref: nv_class_proficiencies_query_class_index
+      required: false
+    - name: race_index
+      value_ref: nv_race_proficiencies_query_race_index
+      required: false
+    - name: subrace_index
+      value_ref: nv_subrace_proficiencies_query_subrace_index
+      required: false
+    controls: []
   proficiency_get:
     description: Retrieve one proficiency by index.
     kind: get
@@ -827,41 +843,13 @@ capabilities:
     description: Level-by-level progression rows for a class.
     kind: query
     entity: ClassLevel
-    parameters:
+    selection:
     - name: class_index
       value_ref: nv_class_level_query_class_index
       required: true
-      role: scope
     - name: subclass
       value_ref: nv_class_level_query_subclass
       required: false
-      role: filter
-  class_level_features_query:
-    description: Features gained at a specific class level.
-    kind: query
-    entity: Feature
-    parameters:
-    - name: class_index
-      value_ref: nv_class_level_features_query_class_index
-      required: true
-      role: scope
-    - name: class_level
-      value_ref: nv_wire_int
-      required: true
-      role: scope
-  class_spells_by_slot_query:
-    description: Spells of a given spell level available to a class.
-    kind: query
-    entity: Spell
-    parameters:
-    - name: class_index
-      value_ref: nv_class_spells_by_slot_query_class_index
-      required: true
-      role: scope
-    - name: spell_level
-      value_ref: nv_wire_int
-      required: true
-      role: scope
   class_spellcasting_get:
     description: Spellcasting rules block for a class (404 when the class does not cast).
     kind: get
@@ -879,81 +867,14 @@ capabilities:
     - prerequisites
     - proficiencies
     - proficiency_choices
-  class_proficiencies_query:
-    description: Starting proficiencies granted by the class.
-    kind: query
-    entity: Proficiency
-    parameters:
-    - name: class_index
-      value_ref: nv_class_proficiencies_query_class_index
-      required: true
-      role: scope
-  subclass_features_query:
-    description: Features listed for a subclass resource.
-    kind: query
-    entity: Feature
-    parameters:
-    - name: subclass_index
-      value_ref: nv_subclass_features_query_subclass_index
-      required: true
-      role: scope
   subclass_level_query:
     description: Subclass progression rows by character level.
     kind: query
     entity: SubclassLevel
-    parameters:
+    selection:
     - name: subclass_index
       value_ref: nv_subclass_level_query_subclass_index
       required: true
-      role: scope
-  race_proficiencies_query:
-    description: Proficiencies granted by a race.
-    kind: query
-    entity: Proficiency
-    parameters:
-    - name: race_index
-      value_ref: nv_race_proficiencies_query_race_index
-      required: true
-      role: scope
-  subrace_proficiencies_query:
-    description: Proficiencies granted by a subrace.
-    kind: query
-    entity: Proficiency
-    parameters:
-    - name: subrace_index
-      value_ref: nv_subrace_proficiencies_query_subrace_index
-      required: true
-      role: scope
-  subrace_traits_query:
-    description: Traits specific to a subrace.
-    kind: query
-    entity: Trait
-    parameters:
-    - name: subrace_index
-      value_ref: nv_subrace_traits_query_subrace_index
-      required: true
-      role: scope
-  spell_query:
-    description: List and filter spells by level, school, concentration, or ritual.
-    kind: query
-    entity: Spell
-    parameters:
-    - name: level
-      value_ref: nv_wire_int
-      required: false
-      role: filter
-    - name: school
-      value_ref: nv_spell_query_school
-      required: false
-      role: filter
-    - name: concentration
-      value_ref: nv_wire_bool
-      required: false
-      role: filter
-    - name: ritual
-      value_ref: nv_wire_bool
-      required: false
-      role: filter
   spell_get:
     description: Retrieve a single spell by its kebab-case index slug.
     kind: get
@@ -981,11 +902,10 @@ capabilities:
     description: List and filter monsters by one or more challenge ratings.
     kind: query
     entity: Monster
-    parameters:
+    selection:
     - name: challenge_rating
       value_ref: nv_monster_query_challenge_rating
       required: false
-      role: filter
   monster_get:
     description: Retrieve a single monster by its index slug.
     kind: get
@@ -1038,36 +958,68 @@ capabilities:
     - name
     - hit_die
   class_spells:
-    description: List all spells available to a specific class.
+    description: List Spell by shelf (class_spells_by_slot | spell | class_spells).
     kind: query
     entity: Spell
-    parameters:
-    - name: class_index
-      value_ref: nv_class_spells_class_index
+    selection:
+    - name: shelf
+      value_ref: nv_spell_query_shelf
       required: true
-      role: scope
+      description: class_spells_by_slot | spell | class_spells
     - name: level
       value_ref: nv_wire_int
       required: false
-      role: filter
+    - name: spell_level
+      value_ref: nv_wire_int
+      required: false
+    - name: school
+      value_ref: nv_spell_query_school
+      required: false
+    - name: concentration
+      value_ref: nv_wire_bool
+      required: false
+    - name: ritual
+      value_ref: nv_wire_bool
+      required: false
+    scope:
+    - name: class_index
+      value_ref: nv_class_spells_class_index
+      required: false
+    controls: []
   class_features:
-    description: List all features granted by a specific class.
+    description: List Feature by shelf (class_level_features | subclass_features | class_features).
     kind: query
     entity: Feature
-    parameters:
+    selection:
+    - name: shelf
+      value_ref: nv_feature_query_shelf
+      required: true
+      description: class_level_features | subclass_features | class_features
+    - name: class_level
+      value_ref: nv_wire_int
+      required: false
+    - name: subclass_index
+      value_ref: nv_subclass_features_query_subclass_index
+      required: false
+    scope:
     - name: class_index
       value_ref: nv_class_features_class_index
-      required: true
-      role: scope
+      required: false
+    controls: []
   class_subclasses:
-    description: List all subclasses available for a specific class.
+    description: List Subclass by shelf (class_subclasses | subclass).
     kind: query
     entity: Subclass
-    parameters:
+    selection:
+    - name: shelf
+      value_ref: nv_subclass_query_shelf
+      required: true
+      description: class_subclasses | subclass
+    scope:
     - name: class_index
       value_ref: nv_class_subclasses_class_index
-      required: true
-      role: scope
+      required: false
+    controls: []
   race_query:
     description: List all playable races.
     kind: query
@@ -1084,23 +1036,31 @@ capabilities:
     - alignment
     - age
   race_traits:
-    description: List all racial traits for a specific race.
+    description: List Trait by shelf (subrace_traits | race_traits | trait).
     kind: query
     entity: Trait
-    parameters:
+    selection:
+    - name: shelf
+      value_ref: nv_trait_query_shelf
+      required: true
+      description: subrace_traits | race_traits | trait
+    - name: subrace_index
+      value_ref: nv_subrace_traits_query_subrace_index
+      required: false
+    scope:
     - name: race_index
       value_ref: nv_race_traits_race_index
-      required: true
-      role: scope
+      required: false
+    controls: []
   race_subraces:
     description: List all subraces available for a specific race.
     kind: query
     entity: Subrace
-    parameters:
+    selection: []
+    scope:
     - name: race_index
       value_ref: nv_race_subraces_race_index
       required: true
-      role: scope
   equipment_query:
     description: List all equipment items.
     kind: query
@@ -1161,10 +1121,6 @@ capabilities:
     provides:
     - index
     - name
-  trait_query:
-    description: List all racial traits.
-    kind: query
-    entity: Trait
   trait_get:
     description: Retrieve a single racial trait by index slug.
     kind: get
@@ -1185,10 +1141,6 @@ capabilities:
     - index
     - name
     - desc
-  subclass_query:
-    description: List all subclasses.
-    kind: query
-    entity: Subclass
   subclass_get:
     description: Retrieve a single subclass by index slug.
     kind: get
@@ -1198,6 +1150,17 @@ capabilities:
     - name
     - subclass_flavor
     - desc
+  subrace_get:
+    description: Get a subrace by index.
+    kind: get
+    entity: Subrace
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: index
+          value_ref: nv_wire_str_short
+          required: true
 values:
   nv_ability_score_full_name:
     type: string
@@ -1759,3 +1722,38 @@ values:
     items:
       value_ref: nv_wire_str_short
     description: Verbal, somatic, and material component letters (V, S, M).
+  nv_proficiency_query_shelf:
+    type: enum
+    enum:
+    - proficiency
+    - class_proficiencies
+    - race_proficiencies
+    - subrace_proficiencies
+    description: Proficiency query shelf
+  nv_feature_query_shelf:
+    type: enum
+    enum:
+    - class_level_features
+    - subclass_features
+    - class_features
+    description: Feature query shelf
+  nv_spell_query_shelf:
+    type: enum
+    enum:
+    - class_spells_by_slot
+    - spell
+    - class_spells
+    description: Spell query shelf
+  nv_trait_query_shelf:
+    type: enum
+    enum:
+    - subrace_traits
+    - race_traits
+    - trait
+    description: Trait query shelf
+  nv_subclass_query_shelf:
+    type: enum
+    enum:
+    - class_subclasses
+    - subclass
+    description: Subclass query shelf

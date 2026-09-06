@@ -1,4 +1,4 @@
-version: 14
+version: 15
 entry_id: tau3_banking
 registry_aliases:
 - default
@@ -152,7 +152,7 @@ entities:
     relations: {}
   AgentToolkit:
     id_field: toolkit_id
-    description: "Session meta ops \u2014 verification, dual-control user tools, transfer, clock."
+    description: Session meta ops — verification, dual-control user tools, transfer, clock.
     fields:
       toolkit_id:
         required: true
@@ -397,8 +397,8 @@ entities:
   CreditLimitEligibility:
     abstract: true
     id_field: credit_card_account_id
-    description: CLI eligibility snapshot — tier thresholds, utilization, payment history, blockers, and
-      workflow_sequencing_hint when CLI must precede disputes or replacement orders.
+    description: CLI eligibility snapshot — tier thresholds, utilization, payment history, blockers, and workflow_sequencing_hint
+      when CLI must precede disputes or replacement orders.
     discovery:
       names:
       - CLI eligibility
@@ -544,8 +544,8 @@ entities:
   CreditCardClosureEligibility:
     abstract: true
     id_field: credit_card_account_id
-    description: Closure readiness snapshot — open disputes, pending replacements, balance, and
-      closure_hint per nv_closure_policy step order.
+    description: Closure readiness snapshot — open disputes, pending replacements, balance, and closure_hint per nv_closure_policy
+      step order.
     discovery:
       names:
       - closure eligibility
@@ -620,11 +620,6 @@ capabilities:
     description: Retrieve a banking customer profile for identity verification and servicing.
     kind: get
     entity: User
-    parameters:
-    - name: user_id
-      value_ref: nv_str
-      required: true
-      role: scope
     provides:
     - user_id
     - name
@@ -632,113 +627,119 @@ capabilities:
     - phone_number
     - address
     - date_of_birth
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: user_id
+          value_ref: nv_str
+          required: true
   get_user_information_by_email:
-    description: Find user by email.
+    description: Look up User by shelf — by_email or by_name.
     kind: query
     entity: User
-    parameters:
+    selection:
+    - name: shelf
+      value_ref: nv_user_lookup_shelf
+      required: true
+      description: by_email | by_name
     - name: email
       value_ref: nv_str
-      required: true
-      role: filter
+      required: false
+    - name: customer_name
+      value_ref: nv_str
+      required: false
     provides:
     - user_id
     - email
-  get_user_information_by_name:
-    description: Find user by name (case-sensitive).
-    kind: query
-    entity: User
-    parameters:
-    - name: customer_name
-      value_ref: nv_str
-      required: true
-      role: filter
-    provides:
-    - user_id
-    - name
   get_referrals_by_user:
     description: List referrals for a user.
     kind: query
     entity: Referral
-    parameters:
-    - name: user_id
-      value_ref: nv_str
-      required: true
-      role: filter
+    selection: []
     provides:
     - referral_id
     - referrer_id
+    scope:
+    - name: user_id
+      value_ref: nv_str
+      required: true
   get_credit_card_accounts_by_user:
     description: List credit card accounts for a user.
     kind: query
     entity: CreditCardAccount
-    parameters:
-    - name: user_id
-      value_ref: nv_str
-      required: true
-      role: filter
+    selection:
     - name: credit_card_account_id
       value_ref: nv_credit_card_account_id
       required: false
-      role: filter
     provides:
     - account_id
     - user_id
     - card_type
     - balance
     - credit_limit
+    scope:
+    - name: user_id
+      value_ref: nv_str
+      required: true
   get_credit_card_transactions_by_user:
     description: List credit card transactions for a user.
     kind: query
     entity: CreditCardTransaction
-    parameters:
-    - name: user_id
-      value_ref: nv_str
-      required: true
-      role: filter
+    selection: []
     provides:
     - transaction_id
     - user_id
+    scope:
+    - name: user_id
+      value_ref: nv_str
+      required: true
   change_user_email:
     description: Change user email.
     kind: update
     entity: User
-    parameters:
-    - name: user_id
-      value_ref: nv_str
-      required: true
-    - name: new_email
-      value_ref: nv_str
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: user_id
+          value_ref: nv_str
+          required: true
+        - name: new_email
+          value_ref: nv_str
+          required: true
   log_verification:
     description: Log identity verification.
     kind: action
     entity: AgentToolkit
-    parameters:
-    - name: name
-      value_ref: nv_str
-      required: true
-    - name: user_id
-      value_ref: nv_str
-      required: true
-    - name: address
-      value_ref: nv_str
-      required: true
-    - name: email
-      value_ref: nv_str
-      required: true
-    - name: phone_number
-      value_ref: nv_str
-      required: true
-    - name: date_of_birth
-      value_ref: nv_str
-      required: true
-    - name: time_verified
-      value_ref: nv_str
-      required: true
     output:
       type: side_effect
       description: Log identity verification.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_str
+          required: true
+        - name: user_id
+          value_ref: nv_str
+          required: true
+        - name: address
+          value_ref: nv_str
+          required: true
+        - name: email
+          value_ref: nv_str
+          required: true
+        - name: phone_number
+          value_ref: nv_str
+          required: true
+        - name: date_of_birth
+          value_ref: nv_str
+          required: true
+        - name: time_verified
+          value_ref: nv_str
+          required: true
   get_current_time:
     description: Get fixed eval clock.
     kind: action
@@ -750,48 +751,57 @@ capabilities:
     description: Transfer the customer to a human agent.
     kind: action
     entity: AgentToolkit
-    parameters:
-    - name: summary
-      value_ref: nv_str
-      required: true
-    - name: reason
-      value_ref: nv_str
-      required: true
     output:
       type: side_effect
       description: Hands the conversation to a human agent.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: summary
+          value_ref: nv_str
+          required: true
+        - name: reason
+          value_ref: nv_str
+          required: true
   give_discoverable_user_tool:
     description: Hand a dual-control portal tool to the customer (last-4, confirmations).
     kind: action
     entity: AgentToolkit
-    parameters:
-    - name: discoverable_tool_name
-      value_ref: nv_str
-      required: true
-    - name: arguments
-      value_ref: nv_str
-      required: true
     output:
       type: side_effect
       description: Grants a user-side portal tool for dual-control steps.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: discoverable_tool_name
+          value_ref: nv_str
+          required: true
+        - name: arguments
+          value_ref: nv_str
+          required: true
   AgentToolkit_example_noop:
     description: Harness placeholder noop (eval wiring only).
     kind: action
     entity: AgentToolkit
     output:
       type: side_effect
-      description: "No domain effect \u2014 harness placeholder."
+      description: No domain effect — harness placeholder.
   CreditCardTransaction_update_rewards:
     description: Update the rewards_earned field on a credit card transaction.
     kind: update
     entity: CreditCardTransactionLocked
-    parameters:
-    - name: transaction_id
-      value_ref: nv_str
-      required: true
-    - name: new_rewards_earned
-      value_ref: nv_str
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: transaction_id
+          value_ref: nv_str
+          required: true
+        - name: new_rewards_earned
+          value_ref: nv_str
+          required: true
   AgentToolkit_initial_transfer_0218:
     description: Special-protocol transfer request (lines may still be busy).
     kind: action
@@ -814,58 +824,11 @@ capabilities:
       type: side_effect
       description: Flags the case for the credit-bureau correction team.
   CreditCardDispute_file:
-    description: File a formal dispute for a credit card transaction. When the customer also requested a
-      credit limit increase on the same card, complete CLI submit and approve/deny first — open disputes
-      block further CLI eligibility. Omit `partial_refund_amount` unless resolution is a partial refund
-      (do not pass 0 for a full refund).
+    description: File a formal dispute for a credit card transaction. When the customer also requested a credit limit increase
+      on the same card, complete CLI submit and approve/deny first — open disputes block further CLI eligibility. Omit `partial_refund_amount`
+      unless resolution is a partial refund (do not pass 0 for a full refund).
     kind: action
     entity: CreditCardDispute
-    parameters:
-    - name: transaction_id
-      value_ref: nv_str
-      required: true
-    - name: card_action
-      value_ref: nv_str
-      required: true
-    - name: card_last_4_digits
-      value_ref: nv_str
-      required: true
-    - name: full_name
-      value_ref: nv_str
-      required: true
-    - name: user_id
-      value_ref: nv_str
-      required: true
-    - name: phone
-      value_ref: nv_str
-      required: true
-    - name: email
-      value_ref: nv_str
-      required: true
-    - name: address
-      value_ref: nv_str
-      required: true
-    - name: contacted_merchant
-      value_ref: nv_bool
-      required: true
-    - name: purchase_date
-      value_ref: nv_str
-      required: true
-    - name: issue_noticed_date
-      value_ref: nv_str
-      required: true
-    - name: dispute_reason
-      value_ref: nv_str
-      required: true
-    - name: resolution_requested
-      value_ref: nv_str
-      required: true
-    - name: eligible_for_provisional_credit
-      value_ref: nv_bool
-      required: true
-    - name: partial_refund_amount
-      value_ref: nv_num
-      required: false
     provides:
     - dispute_id
     - transaction_id
@@ -874,63 +837,60 @@ capabilities:
     output:
       type: side_effect
       description: File a formal dispute for a credit card transaction.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: transaction_id
+          value_ref: nv_str
+          required: true
+        - name: card_action
+          value_ref: nv_str
+          required: true
+        - name: card_last_4_digits
+          value_ref: nv_str
+          required: true
+        - name: full_name
+          value_ref: nv_str
+          required: true
+        - name: user_id
+          value_ref: nv_str
+          required: true
+        - name: phone
+          value_ref: nv_str
+          required: true
+        - name: email
+          value_ref: nv_str
+          required: true
+        - name: address
+          value_ref: nv_str
+          required: true
+        - name: contacted_merchant
+          value_ref: nv_bool
+          required: true
+        - name: purchase_date
+          value_ref: nv_str
+          required: true
+        - name: issue_noticed_date
+          value_ref: nv_str
+          required: true
+        - name: dispute_reason
+          value_ref: nv_str
+          required: true
+        - name: resolution_requested
+          value_ref: nv_str
+          required: true
+        - name: eligible_for_provisional_credit
+          value_ref: nv_bool
+          required: true
+        - name: partial_refund_amount
+          value_ref: nv_num
+          required: false
   DebitCardDispute_file:
-    description: File a formal dispute for a debit card transaction under Regulation E. Debit card disputes
-      affect actual bank funds and have different liability rules based on reporting timing.
+    description: File a formal dispute for a debit card transaction under Regulation E. Debit card disputes affect actual
+      bank funds and have different liability rules based on reporting timing.
     kind: action
     entity: DebitCardDispute
-    parameters:
-    - name: transaction_id
-      value_ref: nv_str
-      required: true
-    - name: account_id
-      value_ref: nv_str
-      required: true
-    - name: card_id
-      value_ref: nv_str
-      required: true
-    - name: user_id
-      value_ref: nv_str
-      required: true
-    - name: dispute_category
-      value_ref: nv_str
-      required: true
-    - name: transaction_date
-      value_ref: nv_str
-      required: true
-    - name: discovery_date
-      value_ref: nv_str
-      required: true
-    - name: disputed_amount
-      value_ref: nv_num
-      required: true
-    - name: transaction_type
-      value_ref: nv_str
-      required: true
-    - name: card_in_possession
-      value_ref: nv_bool
-      required: true
-    - name: pin_compromised
-      value_ref: nv_bool
-      required: true
-    - name: contacted_merchant
-      value_ref: nv_bool
-      required: true
-    - name: police_report_filed
-      value_ref: nv_bool
-      required: true
-    - name: written_statement_provided
-      value_ref: nv_bool
-      required: true
-    - name: provisional_credit_eligible
-      value_ref: nv_bool
-      required: true
-    - name: customer_max_liability_amount
-      value_ref: nv_num
-      required: true
-    - name: card_action
-      value_ref: nv_str
-      required: true
     provides:
     - dispute_id
     - transaction_id
@@ -938,33 +898,90 @@ capabilities:
     - status
     output:
       type: side_effect
-      description: File a formal dispute for a debit card transaction under Regulation E. Debit card disputes
-        affect actual bank funds and have different liability rules based on reporting timing.
+      description: File a formal dispute for a debit card transaction under Regulation E. Debit card disputes affect actual
+        bank funds and have different liability rules based on reporting timing.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: transaction_id
+          value_ref: nv_str
+          required: true
+        - name: account_id
+          value_ref: nv_str
+          required: true
+        - name: card_id
+          value_ref: nv_str
+          required: true
+        - name: user_id
+          value_ref: nv_str
+          required: true
+        - name: dispute_category
+          value_ref: nv_str
+          required: true
+        - name: transaction_date
+          value_ref: nv_str
+          required: true
+        - name: discovery_date
+          value_ref: nv_str
+          required: true
+        - name: disputed_amount
+          value_ref: nv_num
+          required: true
+        - name: transaction_type
+          value_ref: nv_str
+          required: true
+        - name: card_in_possession
+          value_ref: nv_bool
+          required: true
+        - name: pin_compromised
+          value_ref: nv_bool
+          required: true
+        - name: contacted_merchant
+          value_ref: nv_bool
+          required: true
+        - name: police_report_filed
+          value_ref: nv_bool
+          required: true
+        - name: written_statement_provided
+          value_ref: nv_bool
+          required: true
+        - name: provisional_credit_eligible
+          value_ref: nv_bool
+          required: true
+        - name: customer_max_liability_amount
+          value_ref: nv_num
+          required: true
+        - name: card_action
+          value_ref: nv_str
+          required: true
   DebitCard_set_recurring_block:
-    description: Block or unblock all recurring payments on a debit card. When blocked, all recurring/subscription
-      charges will be declined. One-time purchases are not affected.
+    description: Block or unblock all recurring payments on a debit card. When blocked, all recurring/subscription charges
+      will be declined. One-time purchases are not affected.
     kind: action
     entity: DebitCard
-    parameters:
-    - name: card_id
-      value_ref: nv_str
-      required: true
-    - name: block_recurring
-      value_ref: nv_bool
-      required: true
     output:
       type: side_effect
-      description: Block or unblock all recurring payments on a debit card. When blocked, all recurring/subscription
-        charges will be declined. One-time purchases are not affected.
+      description: Block or unblock all recurring payments on a debit card. When blocked, all recurring/subscription charges
+        will be declined. One-time purchases are not affected.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: card_id
+          value_ref: nv_str
+          required: true
+        - name: block_recurring
+          value_ref: nv_bool
+          required: true
   DebitCardDispute_list_by_user:
     description: List a customer's debit card dispute history for Regulation E servicing.
     kind: query
     entity: DebitCardDispute
-    parameters:
+    selection:
     - name: user_id
       value_ref: nv_str
       required: true
-      role: filter
     provides:
     - dispute_id
     - transaction_id
@@ -974,51 +991,54 @@ capabilities:
     description: Retrieve ATM deposit envelope/check images for a specific ATM deposit transaction.
     kind: get
     entity: BankTransaction
-    parameters:
-    - name: transaction_id
-      value_ref: nv_str
-      required: true
-      role: scope
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: transaction_id
+          value_ref: nv_str
+          required: true
   CreditCardOrder_order_replacement:
-    description: Order a replacement credit card for a customer. The old card will be automatically cancelled
-      when the replacement is ordered. When the customer also requested a credit limit increase on the same
-      card, complete CLI submit and approve/deny before ordering a replacement — pending replacement orders
-      block CLI eligibility.
+    description: Order a replacement credit card for a customer. The old card will be automatically cancelled when the replacement
+      is ordered. When the customer also requested a credit limit increase on the same card, complete CLI submit and approve/deny
+      before ordering a replacement — pending replacement orders block CLI eligibility.
     kind: action
     entity: CreditCardOrder
-    parameters:
-    - name: credit_card_account_id
-      value_ref: nv_str
-      required: true
-    - name: user_id
-      value_ref: nv_str
-      required: true
-    - name: shipping_address
-      value_ref: nv_str
-      required: true
-    - name: reason
-      value_ref: nv_str
-      required: true
-    - name: expedited_shipping
-      value_ref: nv_bool
-      required: true
     provides:
     - order_id
     - credit_card_account_id
     - status
     output:
       type: side_effect
-      description: Order a replacement credit card for a customer. The old card will be automatically
-        cancelled when the replacement is ordered.
+      description: Order a replacement credit card for a customer. The old card will be automatically cancelled when the replacement
+        is ordered.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: credit_card_account_id
+          value_ref: nv_str
+          required: true
+        - name: user_id
+          value_ref: nv_str
+          required: true
+        - name: shipping_address
+          value_ref: nv_str
+          required: true
+        - name: reason
+          value_ref: nv_str
+          required: true
+        - name: expedited_shipping
+          value_ref: nv_bool
+          required: true
   CreditCardDispute_list_by_user:
     description: List a customer's credit card transaction disputes for chargeback review.
     kind: query
     entity: CreditCardDispute
-    parameters:
+    selection:
     - name: user_id
       value_ref: nv_str
       required: true
-      role: filter
     provides:
     - dispute_id
     - transaction_id
@@ -1028,11 +1048,10 @@ capabilities:
     description: Check if a credit card account has any pending replacement card orders.
     kind: query
     entity: CreditCardOrder
-    parameters:
+    selection:
     - name: credit_card_account_id
       value_ref: nv_str
       required: true
-      role: filter
     provides:
     - order_id
     - credit_card_account_id
@@ -1049,19 +1068,22 @@ capabilities:
       - closure reason
       - why customer wants to close
       - retention
-    parameters:
-    - name: credit_card_account_id
-      value_ref: nv_str
-      required: true
-    - name: user_id
-      value_ref: nv_str
-      required: true
-    - name: closure_reason
-      value_ref: nv_closure_reason
-      required: true
     output:
       type: side_effect
       description: Log the reason why a customer wants to close their credit card account.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: credit_card_account_id
+          value_ref: nv_str
+          required: true
+        - name: user_id
+          value_ref: nv_str
+          required: true
+        - name: closure_reason
+          value_ref: nv_closure_reason
+          required: true
   ClosureReason_list_by_account:
     description: Closure reason history for a card — skip retention offers if any record within the past year.
     kind: query
@@ -1075,11 +1097,10 @@ capabilities:
       - closure reason history
       - prior retention attempts
       - abuse prevention
-    parameters:
+    selection:
     - name: credit_card_account_id
       value_ref: nv_str
       required: true
-      role: filter
     provides:
     - closure_reason_id
     - credit_card_account_id
@@ -1096,25 +1117,28 @@ capabilities:
       - statement credit
       - retention offer
       - bonus points alternative
-    parameters:
-    - name: user_id
-      value_ref: nv_str
-      required: true
-    - name: credit_card_account_id
-      value_ref: nv_str
-      required: true
-    - name: amount
-      value_ref: nv_num
-      required: true
-    - name: reason
-      value_ref: nv_str
-      required: true
     output:
       type: side_effect
       description: Apply a statement credit to a customer's credit card account.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: user_id
+          value_ref: nv_str
+          required: true
+        - name: credit_card_account_id
+          value_ref: nv_str
+          required: true
+        - name: amount
+          value_ref: nv_num
+          required: true
+        - name: reason
+          value_ref: nv_str
+          required: true
   CreditCardAccountLocked_apply_flag:
-    description: Apply an account flag — use annual_fee_waived for 2+ year customers with fee concerns
-      (loyalty benefit, one-year expiration). Under 2 years, offer downgrade instead.
+    description: Apply an account flag — use annual_fee_waived for 2+ year customers with fee concerns (loyalty benefit, one-year
+      expiration). Under 2 years, offer downgrade instead.
     kind: action
     entity: CreditCardAccountLocked
     discovery:
@@ -1125,31 +1149,33 @@ capabilities:
       - annual fee waiver
       - loyalty benefit
       - account flag
-    parameters:
-    - name: credit_card_account_id
-      value_ref: nv_str
-      required: true
-    - name: user_id
-      value_ref: nv_str
-      required: true
-    - name: flag_type
-      value_ref: nv_str
-      required: true
-    - name: expiration_date
-      value_ref: nv_str
-      required: true
-    - name: reason
-      value_ref: nv_str
-      required: true
     output:
       type: side_effect
-      description: Apply a flag to a customer's credit card account. Flags can include annual fee waivers,
-        promotional APR rates, rewards bonuses, or other account-level modifiers. Each flag has an effective
-        date and ex
+      description: Apply a flag to a customer's credit card account. Flags can include annual fee waivers, promotional APR
+        rates, rewards bonuses, or other account-level modifiers. Each flag has an effective date and ex
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: credit_card_account_id
+          value_ref: nv_str
+          required: true
+        - name: user_id
+          value_ref: nv_str
+          required: true
+        - name: flag_type
+          value_ref: nv_str
+          required: true
+        - name: expiration_date
+          value_ref: nv_str
+          required: true
+        - name: reason
+          value_ref: nv_str
+          required: true
   CreditCardAccountLocked_close:
-    description: Close a credit card permanently. Follow nv_closure_policy order — if pending disputes,
-      pending replacement, or account age block closure, inform the customer and do not write (no payment,
-      no closure reason, no close). Requires $0 balance only after steps 1–3 pass.
+    description: Close a credit card permanently. Follow nv_closure_policy order — if pending disputes, pending replacement,
+      or account age block closure, inform the customer and do not write (no payment, no closure reason, no close). Requires
+      $0 balance only after steps 1–3 pass.
     kind: action
     entity: CreditCardAccountLocked
     discovery:
@@ -1160,21 +1186,24 @@ capabilities:
       - close credit card
       - account closure
       - cancel credit card account
-    parameters:
-    - name: credit_card_account_id
-      value_ref: nv_str
-      required: true
-    - name: user_id
-      value_ref: nv_str
-      required: true
     output:
       type: side_effect
       description: Close a customer's credit card account permanently.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: credit_card_account_id
+          value_ref: nv_str
+          required: true
+        - name: user_id
+          value_ref: nv_str
+          required: true
   CreditCardAccountLocked_pay_from_checking:
-    description: Pay down a credit card balance from the customer's Rho-Bank checking account. Use only
-      when nv_closure_policy steps 1–3 already pass and an outstanding balance is the sole remaining blocker
-      (or the customer explicitly requests a payoff unrelated to a dispute-blocked closure). Do not pay
-      toward closure when a pending dispute still blocks the account.
+    description: Pay down a credit card balance from the customer's Rho-Bank checking account. Use only when nv_closure_policy
+      steps 1–3 already pass and an outstanding balance is the sole remaining blocker (or the customer explicitly requests
+      a payoff unrelated to a dispute-blocked closure). Do not pay toward closure when a pending dispute still blocks the
+      account.
     kind: action
     entity: CreditCardAccountLocked
     discovery:
@@ -1187,19 +1216,6 @@ capabilities:
       - pay from checking
       - pay off credit card
       - checking account payment
-    parameters:
-    - name: user_id
-      value_ref: nv_str
-      required: true
-    - name: checking_account_id
-      value_ref: nv_str
-      required: true
-    - name: credit_card_account_id
-      value_ref: nv_str
-      required: true
-    - name: amount
-      value_ref: nv_num
-      required: true
     provides:
     - account_id
     - user_id
@@ -1213,15 +1229,30 @@ capabilities:
     - CreditCardClosureEligibility
     output:
       type: side_effect
-      description: Pay off a credit card balance using funds from the customer's Rho-Bank checking account.
-        This deducts the specified amount from the checking account and reduces the credit card balance
-        by the same amount. Blocked when nv_closure_policy step 1 (open dispute) applies.
+      description: Pay off a credit card balance using funds from the customer's Rho-Bank checking account. This deducts the
+        specified amount from the checking account and reduces the credit card balance by the same amount. Blocked when nv_closure_policy
+        step 1 (open dispute) applies.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: user_id
+          value_ref: nv_str
+          required: true
+        - name: checking_account_id
+          value_ref: nv_str
+          required: true
+        - name: credit_card_account_id
+          value_ref: nv_str
+          required: true
+        - name: amount
+          value_ref: nv_num
+          required: true
   CreditLimitRequest_submit:
-    description: File a new PENDING credit limit increase. Workflow order — submit first to open a case,
-      then review eligibility on that pending request and approve or deny. Do not refuse to submit solely
-      because utilization exceeds the tier threshold; high utilization is a post-submit deny reason. Coach
-      `requested_increase_amount` to the tier max (`max_increase_amount`) before filing. Denied requests
-      do not start cooldown — after the customer fixes blockers, submit again as a new case.
+    description: File a new PENDING credit limit increase. Workflow order — submit first to open a case, then review eligibility
+      on that pending request and approve or deny. Do not refuse to submit solely because utilization exceeds the tier threshold;
+      high utilization is a post-submit deny reason. Coach `requested_increase_amount` to the tier max (`max_increase_amount`)
+      before filing. Denied requests do not start cooldown — after the customer fixes blockers, submit again as a new case.
     kind: action
     entity: CreditLimitRequest
     identity_key:
@@ -1238,16 +1269,6 @@ capabilities:
       - credit limit increase
       - CLI request
       - new CLI case
-    parameters:
-    - name: credit_card_account_id
-      value_ref: nv_credit_card_account_id
-      required: true
-    - name: user_id
-      value_ref: nv_user_id
-      required: true
-    - name: requested_increase_amount
-      value_ref: nv_cli_increase_amount
-      required: true
     provides:
     - request_id
     - status
@@ -1258,22 +1279,32 @@ capabilities:
     - CreditLimitEligibility
     output:
       type: side_effect
-      description: Creates a PENDING credit limit increase request. Witness includes request_id
-        (in provides) — bind approve from c1.request_id in the same program or read it from the
-        submit plasm_run row before approving.
+      description: Creates a PENDING credit limit increase request. Witness includes request_id (in provides) — bind approve
+        from c1.request_id in the same program or read it from the submit plasm_run row before approving.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: credit_card_account_id
+          value_ref: nv_credit_card_account_id
+          required: true
+        - name: user_id
+          value_ref: nv_user_id
+          required: true
+        - name: requested_increase_amount
+          value_ref: nv_cli_increase_amount
+          required: true
   CreditLimitRequest_list_by_account:
     description: List prior credit limit increase requests for a card.
     kind: query
     entity: CreditLimitRequest
-    parameters:
+    selection:
     - name: credit_card_account_id
       value_ref: nv_credit_card_account_id
       required: true
-      role: filter
     - name: status
       value_ref: nv_cli_status
       required: false
-      role: filter
     provides:
     - request_id
     - credit_card_account_id
@@ -1296,26 +1327,23 @@ capabilities:
       - payment history
       - on-time payments
       - consecutive payment months
-    parameters:
+    selection:
     - name: credit_card_account_id
       value_ref: nv_credit_card_account_id
       required: true
-      role: filter
     - name: months
       value_ref: nv_int
       required: true
-      role: filter
     provides:
     - payment_id
     - credit_card_account_id
     - amount
   CreditLimitRequest_deny:
-    description: Deny one pending CLI case by `request_id` after submit — post-submit review step. Pick
-      `denial_reason` from policy gloss (e.g. `high_utilization` when utilization is at or above the tier
-      max at decision time; `cooldown_period_active` when an approved CLI falls inside the tier cooldown
-      window). Terminal for that request — a new cycle needs a new submit. Denial does not trigger cooldown.
-      τ² DB semantics leave the original PENDING submit row in place; a separate DENIED row is appended — do
-      not re-deny or re-approve the same request_id.
+    description: Deny one pending CLI case by `request_id` after submit — post-submit review step. Pick `denial_reason` from
+      policy gloss (e.g. `high_utilization` when utilization is at or above the tier max at decision time; `cooldown_period_active`
+      when an approved CLI falls inside the tier cooldown window). Terminal for that request — a new cycle needs a new submit.
+      Denial does not trigger cooldown. τ² DB semantics leave the original PENDING submit row in place; a separate DENIED
+      row is appended — do not re-deny or re-approve the same request_id.
     kind: action
     entity: CreditLimitRequest
     identity_key:
@@ -1332,19 +1360,6 @@ capabilities:
       - high utilization
       - insufficient payment history
       - cooldown period
-    parameters:
-    - name: request_id
-      value_ref: nv_cli_request_id
-      required: true
-    - name: credit_card_account_id
-      value_ref: nv_credit_card_account_id
-      required: true
-    - name: user_id
-      value_ref: nv_user_id
-      required: true
-    - name: denial_reason
-      value_ref: nv_cli_denial_reason
-      required: true
     provides:
     - request_id
     - status
@@ -1357,11 +1372,27 @@ capabilities:
     output:
       type: side_effect
       description: Denies one pending credit limit increase request with a policy reason.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: request_id
+          value_ref: nv_cli_request_id
+          required: true
+        - name: credit_card_account_id
+          value_ref: nv_credit_card_account_id
+          required: true
+        - name: user_id
+          value_ref: nv_user_id
+          required: true
+        - name: denial_reason
+          value_ref: nv_cli_denial_reason
+          required: true
   CreditLimitRequest_approve:
-    description: Approve one pending CLI case by `request_id`. `new_credit_limit` is the approved total
-      limit (not the increase delta). Terminal for that request — a new cycle needs a new submit. τ² DB
-      semantics leave the original PENDING submit row in place; a separate APPROVED row is appended and the
-      card limit updates — trust the APPROVED witness; do not re-approve the same request_id.
+    description: Approve one pending CLI case by `request_id`. `new_credit_limit` is the approved total limit (not the increase
+      delta). Terminal for that request — a new cycle needs a new submit. τ² DB semantics leave the original PENDING submit
+      row in place; a separate APPROVED row is appended and the card limit updates — trust the APPROVED witness; do not re-approve
+      the same request_id.
     kind: action
     entity: CreditLimitRequest
     identity_key:
@@ -1375,19 +1406,6 @@ capabilities:
       - credit limit increase
       - CLI approval
       - pending request
-    parameters:
-    - name: request_id
-      value_ref: nv_cli_request_id
-      required: true
-    - name: credit_card_account_id
-      value_ref: nv_credit_card_account_id
-      required: true
-    - name: user_id
-      value_ref: nv_user_id
-      required: true
-    - name: new_credit_limit
-      value_ref: nv_cli_new_limit
-      required: true
     provides:
     - request_id
     - status
@@ -1400,12 +1418,27 @@ capabilities:
     output:
       type: side_effect
       description: Approves one pending credit limit increase request at the new total limit.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: request_id
+          value_ref: nv_cli_request_id
+          required: true
+        - name: credit_card_account_id
+          value_ref: nv_credit_card_account_id
+          required: true
+        - name: user_id
+          value_ref: nv_user_id
+          required: true
+        - name: new_credit_limit
+          value_ref: nv_cli_new_limit
+          required: true
   CreditLimitEligibility_query:
-    description: CLI eligibility review — tier thresholds, utilization, payment months, disputes, cooldown,
-      required_reads_checklist, and workflow_sequencing_hint. Use to coach the customer and to decide
-      approve/deny on a pending request; it does not replace submit when utilization is high — submit
-      first, then deny with `high_utilization` if still over tier max. When the customer also wants a
-      dispute and/or replacement card, complete CLI submit and decision before those writes.
+    description: CLI eligibility review — tier thresholds, utilization, payment months, disputes, cooldown, required_reads_checklist,
+      and workflow_sequencing_hint. Use to coach the customer and to decide approve/deny on a pending request; it does not
+      replace submit when utilization is high — submit first, then deny with `high_utilization` if still over tier max. When
+      the customer also wants a dispute and/or replacement card, complete CLI submit and decision before those writes.
     kind: query
     entity: CreditLimitEligibility
     discovery:
@@ -1421,15 +1454,13 @@ capabilities:
       - tier requirements
       - payment history requirement
       - cooldown period
-    parameters:
+    selection:
     - name: credit_card_account_id
       value_ref: nv_credit_card_account_id
       required: true
-      role: scope
     - name: user_id
       value_ref: nv_user_id
       required: true
-      role: scope
     provides:
     - credit_card_account_id
     - user_id
@@ -1456,9 +1487,9 @@ capabilities:
     - required_reads_checklist
     - workflow_sequencing_hint
   CreditCardClosureEligibility_query:
-    description: Closure readiness review — open disputes, pending replacements, balance, and closure_hint
-      per nv_closure_policy. Use before any closure write; when blocked_open_dispute, inform the
-      customer and STOP (no payment, closure reason, retention, or close on this call).
+    description: Closure readiness review — open disputes, pending replacements, balance, and closure_hint per nv_closure_policy.
+      Use before any closure write; when blocked_open_dispute, inform the customer and STOP (no payment, closure reason, retention,
+      or close on this call).
     kind: query
     entity: CreditCardClosureEligibility
     discovery:
@@ -1473,15 +1504,13 @@ capabilities:
       - closure blocked
       - pending dispute
       - retention protocol
-    parameters:
+    selection:
     - name: credit_card_account_id
       value_ref: nv_credit_card_account_id
       required: true
-      role: scope
     - name: user_id
       value_ref: nv_user_id
       required: true
-      role: scope
     provides:
     - credit_card_account_id
     - user_id
@@ -1492,51 +1521,56 @@ capabilities:
     - card_balance
     - closure_hint
   BankAccount_open:
-    description: Open a new bank account. Follow nv_bank_reorg_policy for multi-account reorganizations.
-      Navy Blue and other LLC business products require account_type business_checking (not checking).
-      Silver Plus personal savings requires account_type savings plus product name in account_class.
+    description: Open a new bank account. Follow nv_bank_reorg_policy for multi-account reorganizations. Navy Blue and other
+      LLC business products require account_type business_checking (not checking). Silver Plus personal savings requires account_type
+      savings plus product name in account_class.
     kind: action
     entity: BankAccount
-    parameters:
-    - name: user_id
-      value_ref: nv_str
-      required: true
-    - name: account_type
-      value_ref: nv_bank_account_type
-      required: true
-    - name: account_class
-      value_ref: nv_str
-      required: true
-      description: Full official product name (e.g. Navy Blue, Silver Plus Account).
     output:
       type: side_effect
       description: Open a new bank account for a customer.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: user_id
+          value_ref: nv_str
+          required: true
+        - name: account_type
+          value_ref: nv_bank_account_type
+          required: true
+        - name: account_class
+          value_ref: nv_str
+          required: true
+          description: Full official product name (e.g. Navy Blue, Silver Plus Account).
   BankAccount_close:
     description: Close a customer's bank account (checking or savings).
     kind: action
     entity: BankAccount
-    parameters:
-    - name: account_id
-      value_ref: nv_str
-      required: true
-    - name: reason
-      value_ref: nv_str
-      required: true
-    - name: waive_early_closure_fee
-      value_ref: nv_bool
-      required: true
     output:
       type: side_effect
       description: Close a customer's bank account (checking or savings).
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: account_id
+          value_ref: nv_str
+          required: true
+        - name: reason
+          value_ref: nv_str
+          required: true
+        - name: waive_early_closure_fee
+          value_ref: nv_bool
+          required: true
   BankAccount_list_by_user:
     description: Retrieve all accounts (checking, savings, credit cards) for a customer.
     kind: query
     entity: BankAccount
-    parameters:
+    selection:
     - name: user_id
       value_ref: nv_str
       required: true
-      role: filter
     provides:
     - account_id
     - user_id
@@ -1549,89 +1583,98 @@ capabilities:
     description: Transfer funds from one bank account to another.
     kind: action
     entity: BankAccount
-    parameters:
-    - name: source_account_id
-      value_ref: nv_str
-      required: true
-    - name: destination_account_id
-      value_ref: nv_str
-      required: true
-    - name: amount
-      value_ref: nv_num
-      required: true
     output:
       type: side_effect
       description: Transfer funds from one bank account to another.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: source_account_id
+          value_ref: nv_str
+          required: true
+        - name: destination_account_id
+          value_ref: nv_str
+          required: true
+        - name: amount
+          value_ref: nv_num
+          required: true
   BankAccount_apply_checking_credit:
     description: Apply a credit to a customer's checking account.
     kind: action
     entity: BankAccount
-    parameters:
-    - name: account_id
-      value_ref: nv_str
-      required: true
-    - name: amount
-      value_ref: nv_num
-      required: true
-    - name: credit_type
-      value_ref: nv_str
-      required: true
     output:
       type: side_effect
       description: Apply a credit to a customer's checking account.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: account_id
+          value_ref: nv_str
+          required: true
+        - name: amount
+          value_ref: nv_num
+          required: true
+        - name: credit_type
+          value_ref: nv_str
+          required: true
   BankAccount_apply_savings_credit:
-    description: Apply a credit to a customer's savings account for interest corrections, fee refunds,
-      or goodwill adjustments.
+    description: Apply a credit to a customer's savings account for interest corrections, fee refunds, or goodwill adjustments.
     kind: action
     entity: BankAccount
-    parameters:
-    - name: account_id
-      value_ref: nv_str
-      required: true
-    - name: amount
-      value_ref: nv_num
-      required: true
-    - name: credit_type
-      value_ref: nv_str
-      required: true
     output:
       type: side_effect
-      description: Apply a credit to a customer's savings account for interest corrections, fee refunds,
-        or goodwill adjustments.
+      description: Apply a credit to a customer's savings account for interest corrections, fee refunds, or goodwill adjustments.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: account_id
+          value_ref: nv_str
+          required: true
+        - name: amount
+          value_ref: nv_num
+          required: true
+        - name: credit_type
+          value_ref: nv_str
+          required: true
   BankAccount_report_interest_discrepancy:
-    description: Submit a report for interest calculation discrepancies to the backend team for investigation.
-      Use this when the interest credited to a customer's account does not match expected APY calculations.
+    description: Submit a report for interest calculation discrepancies to the backend team for investigation. Use this when
+      the interest credited to a customer's account does not match expected APY calculations.
     kind: action
     entity: BankAccount
-    parameters:
-    - name: account_id
-      value_ref: nv_str
-      required: true
-    - name: user_id
-      value_ref: nv_str
-      required: true
-    - name: expected_apy
-      value_ref: nv_num
-      required: true
-    - name: actual_apy
-      value_ref: nv_num
-      required: true
-    - name: amount_difference
-      value_ref: nv_num
-      required: true
     output:
       type: side_effect
-      description: Submit a report for interest calculation discrepancies to the backend team for investigation.
-        Use this when the interest credited to a customer's account does not match expected APY calculations.
+      description: Submit a report for interest calculation discrepancies to the backend team for investigation. Use this
+        when the interest credited to a customer's account does not match expected APY calculations.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: account_id
+          value_ref: nv_str
+          required: true
+        - name: user_id
+          value_ref: nv_str
+          required: true
+        - name: expected_apy
+          value_ref: nv_num
+          required: true
+        - name: actual_apy
+          value_ref: nv_num
+          required: true
+        - name: amount_difference
+          value_ref: nv_num
+          required: true
   BankTransaction_list_by_account:
     description: Retrieve the transaction history for a bank account.
     kind: query
     entity: BankTransaction
-    parameters:
+    selection:
     - name: account_id
       value_ref: nv_str
       required: true
-      role: filter
     provides:
     - transaction_id
     - account_id
@@ -1640,31 +1683,6 @@ capabilities:
     description: Order a new debit card for a customer's checking account.
     kind: action
     entity: DebitCard
-    parameters:
-    - name: account_id
-      value_ref: nv_str
-      required: true
-    - name: user_id
-      value_ref: nv_str
-      required: true
-    - name: delivery_option
-      value_ref: nv_str
-      required: true
-    - name: delivery_fee
-      value_ref: nv_num
-      required: true
-    - name: card_design
-      value_ref: nv_str
-      required: true
-    - name: design_fee
-      value_ref: nv_num
-      required: true
-    - name: shipping_address
-      value_ref: nv_str
-      required: true
-    - name: excess_replacement_fee
-      value_ref: nv_num
-      required: true
     provides:
     - card_id
     - account_id
@@ -1672,181 +1690,229 @@ capabilities:
     output:
       type: side_effect
       description: Order a new debit card for a customer's checking account.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: account_id
+          value_ref: nv_str
+          required: true
+        - name: user_id
+          value_ref: nv_str
+          required: true
+        - name: delivery_option
+          value_ref: nv_str
+          required: true
+        - name: delivery_fee
+          value_ref: nv_num
+          required: true
+        - name: card_design
+          value_ref: nv_str
+          required: true
+        - name: design_fee
+          value_ref: nv_num
+          required: true
+        - name: shipping_address
+          value_ref: nv_str
+          required: true
+        - name: excess_replacement_fee
+          value_ref: nv_num
+          required: true
   DebitCard_activate_new:
-    description: Activate a NEW debit card for a customer. Use ONLY for first-time cards on a checking
-      account (issue_reason = 'new_account' or 'first_card'). For replacement or reissued cards, use the
-      appropriate var
+    description: Activate a NEW debit card for a customer. Use ONLY for first-time cards on a checking account (issue_reason
+      = 'new_account' or 'first_card'). For replacement or reissued cards, use the appropriate var
     kind: action
     entity: DebitCard
-    parameters:
-    - name: card_id
-      value_ref: nv_str
-      required: true
-    - name: last_4_digits
-      value_ref: nv_str
-      required: true
-    - name: expiration_date
-      value_ref: nv_str
-      required: true
-    - name: cvv
-      value_ref: nv_str
-      required: true
-    - name: pin
-      value_ref: nv_str
-      required: true
     output:
       type: side_effect
-      description: Activate a NEW debit card for a customer. Use ONLY for first-time cards on a checking
-        account (issue_reason = 'new_account' or 'first_card'). For replacement or reissued cards, use
-        the appropriate var
+      description: Activate a NEW debit card for a customer. Use ONLY for first-time cards on a checking account (issue_reason
+        = 'new_account' or 'first_card'). For replacement or reissued cards, use the appropriate var
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: card_id
+          value_ref: nv_str
+          required: true
+        - name: last_4_digits
+          value_ref: nv_str
+          required: true
+        - name: expiration_date
+          value_ref: nv_str
+          required: true
+        - name: cvv
+          value_ref: nv_str
+          required: true
+        - name: pin
+          value_ref: nv_str
+          required: true
   DebitCard_activate_replacement:
-    description: Activate a REPLACEMENT debit card. Use ONLY for cards replacing lost, stolen, or fraud-suspected
-      cards (issue_reason = 'lost', 'stolen', or 'fraud'). For new or reissued cards, use the appropriate
-      var
+    description: Activate a REPLACEMENT debit card. Use ONLY for cards replacing lost, stolen, or fraud-suspected cards (issue_reason
+      = 'lost', 'stolen', or 'fraud'). For new or reissued cards, use the appropriate var
     kind: action
     entity: DebitCard
-    parameters:
-    - name: card_id
-      value_ref: nv_str
-      required: true
-    - name: last_4_digits
-      value_ref: nv_str
-      required: true
-    - name: expiration_date
-      value_ref: nv_str
-      required: true
-    - name: cvv
-      value_ref: nv_str
-      required: true
-    - name: pin
-      value_ref: nv_str
-      required: true
     output:
       type: side_effect
-      description: Activate a REPLACEMENT debit card. Use ONLY for cards replacing lost, stolen, or fraud-suspected
-        cards (issue_reason = 'lost', 'stolen', or 'fraud'). For new or reissued cards, use the appropriate
-        var
+      description: Activate a REPLACEMENT debit card. Use ONLY for cards replacing lost, stolen, or fraud-suspected cards
+        (issue_reason = 'lost', 'stolen', or 'fraud'). For new or reissued cards, use the appropriate var
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: card_id
+          value_ref: nv_str
+          required: true
+        - name: last_4_digits
+          value_ref: nv_str
+          required: true
+        - name: expiration_date
+          value_ref: nv_str
+          required: true
+        - name: cvv
+          value_ref: nv_str
+          required: true
+        - name: pin
+          value_ref: nv_str
+          required: true
   DebitCard_activate_reissue:
-    description: Activate a REISSUED debit card. Use ONLY for cards reissued due to expiration, damage,
-      design upgrade, or bank-initiated replacement (issue_reason = 'expired', 'damaged', 'upgrade', or
-      'bank_reissue')
+    description: Activate a REISSUED debit card. Use ONLY for cards reissued due to expiration, damage, design upgrade, or
+      bank-initiated replacement (issue_reason = 'expired', 'damaged', 'upgrade', or 'bank_reissue')
     kind: action
     entity: DebitCard
-    parameters:
-    - name: card_id
-      value_ref: nv_str
-      required: true
-    - name: last_4_digits
-      value_ref: nv_str
-      required: true
-    - name: expiration_date
-      value_ref: nv_str
-      required: true
-    - name: cvv
-      value_ref: nv_str
-      required: true
-    - name: pin
-      value_ref: nv_str
-      required: true
     output:
       type: side_effect
-      description: Activate a REISSUED debit card. Use ONLY for cards reissued due to expiration, damage,
-        design upgrade, or bank-initiated replacement (issue_reason = 'expired', 'damaged', 'upgrade',
-        or 'bank_reissue')
+      description: Activate a REISSUED debit card. Use ONLY for cards reissued due to expiration, damage, design upgrade,
+        or bank-initiated replacement (issue_reason = 'expired', 'damaged', 'upgrade', or 'bank_reissue')
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: card_id
+          value_ref: nv_str
+          required: true
+        - name: last_4_digits
+          value_ref: nv_str
+          required: true
+        - name: expiration_date
+          value_ref: nv_str
+          required: true
+        - name: cvv
+          value_ref: nv_str
+          required: true
+        - name: pin
+          value_ref: nv_str
+          required: true
   DebitCard_close:
     description: Close or cancel a debit card permanently.
     kind: action
     entity: DebitCard
-    parameters:
-    - name: card_id
-      value_ref: nv_str
-      required: true
-    - name: reason
-      value_ref: nv_str
-      required: true
     output:
       type: side_effect
       description: Close or cancel a debit card permanently.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: card_id
+          value_ref: nv_str
+          required: true
+        - name: reason
+          value_ref: nv_str
+          required: true
   DebitCard_freeze:
     description: Temporarily freeze a debit card. The card can be unfrozen later.
     kind: action
     entity: DebitCard
-    parameters:
-    - name: card_id
-      value_ref: nv_str
-      required: true
     output:
       type: side_effect
       description: Temporarily freeze a debit card. The card can be unfrozen later.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: card_id
+          value_ref: nv_str
+          required: true
   DebitCard_unfreeze:
     description: Unfreeze a previously frozen debit card.
     kind: action
     entity: DebitCard
-    parameters:
-    - name: card_id
-      value_ref: nv_str
-      required: true
     output:
       type: side_effect
       description: Unfreeze a previously frozen debit card.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: card_id
+          value_ref: nv_str
+          required: true
   DebitCard_clear_fraud_alert:
     description: Clear a fraud alert or velocity block on a debit card.
     kind: action
     entity: DebitCard
-    parameters:
-    - name: card_id
-      value_ref: nv_str
-      required: true
-    - name: reason
-      value_ref: nv_str
-      required: true
     output:
       type: side_effect
       description: Clear a fraud alert or velocity block on a debit card.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: card_id
+          value_ref: nv_str
+          required: true
+        - name: reason
+          value_ref: nv_str
+          required: true
   DebitCard_reset_pin:
     description: Reset a debit card PIN when the customer has forgotten it.
     kind: action
     entity: DebitCard
-    parameters:
-    - name: card_id
-      value_ref: nv_str
-      required: true
-    - name: last_4_digits
-      value_ref: nv_str
-      required: true
-    - name: new_pin
-      value_ref: nv_str
-      required: true
     output:
       type: side_effect
       description: Reset a debit card PIN when the customer has forgotten it.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: card_id
+          value_ref: nv_str
+          required: true
+        - name: last_4_digits
+          value_ref: nv_str
+          required: true
+        - name: new_pin
+          value_ref: nv_str
+          required: true
   DebitCard_change_pin:
     description: Change a debit card PIN when the customer knows their current PIN.
     kind: action
     entity: DebitCard
-    parameters:
-    - name: card_id
-      value_ref: nv_str
-      required: true
-    - name: current_pin
-      value_ref: nv_str
-      required: true
-    - name: new_pin
-      value_ref: nv_str
-      required: true
     output:
       type: side_effect
       description: Change a debit card PIN when the customer knows their current PIN.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: card_id
+          value_ref: nv_str
+          required: true
+        - name: current_pin
+          value_ref: nv_str
+          required: true
+        - name: new_pin
+          value_ref: nv_str
+          required: true
   DebitCard_list_by_account:
-    description: Retrieve all debit cards associated with a checking account. Returns card details including
-      status, issue reason, and expiration date.
+    description: Retrieve all debit cards associated with a checking account. Returns card details including status, issue
+      reason, and expiration date.
     kind: query
     entity: DebitCard
-    parameters:
+    selection:
     - name: account_id
       value_ref: nv_str
       required: true
-      role: filter
     provides:
     - card_id
     - account_id
@@ -1856,19 +1922,36 @@ capabilities:
     description: Request a temporary 24-hour increase to a debit card's daily ATM or purchase limit.
     kind: action
     entity: DebitCard
-    parameters:
-    - name: card_id
-      value_ref: nv_str
-      required: true
-    - name: limit_type
-      value_ref: nv_str
-      required: true
-    - name: new_limit
-      value_ref: nv_int
-      required: true
     output:
       type: side_effect
       description: Request a temporary 24-hour increase to a debit card's daily ATM or purchase limit.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: card_id
+          value_ref: nv_str
+          required: true
+        - name: limit_type
+          value_ref: nv_str
+          required: true
+        - name: new_limit
+          value_ref: nv_int
+          required: true
+  referral_get:
+    description: Fetch one referral by id.
+    kind: get
+    entity: Referral
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: referral_id
+          value_ref: nv_str
+          required: true
+    provides:
+    - referral_id
+    - referrer_id
 views:
   credit_limit_eligibility:
     description: Composed CLI readiness projection for one card and customer.
@@ -1986,57 +2069,50 @@ views:
         field: requested_increase_amount
       utilization_pct:
         kind: computed
-        template: '{%- set bal = card_balance | wire_num -%}{%- set lim = card_limit | wire_num
-          -%}{%- if lim > 0 -%}{{ ((bal / lim) * 100) | round(1) }}{%- else -%}0{%- endif
-          -%}
+        template: '{%- set bal = card_balance | wire_num -%}{%- set lim = card_limit | wire_num -%}{%- if lim > 0 -%}{{ ((bal
+          / lim) * 100) | round(1) }}{%- else -%}0{%- endif -%}
 
           '
       tier_max_increase_pct:
         kind: computed
-        template: '{%- if card_type and ''Bronze'' in card_type -%}25{%- elif card_type
-          and ''Silver'' in card_type -%}50{%- elif card_type and ''Gold'' in card_type
-          -%}50{%- else -%}25{%- endif -%}
+        template: '{%- if card_type and ''Bronze'' in card_type -%}25{%- elif card_type and ''Silver'' in card_type -%}50{%-
+          elif card_type and ''Gold'' in card_type -%}50{%- else -%}25{%- endif -%}
 
           '
       tier_max_utilization_pct:
         kind: computed
-        template: '{%- if card_type and ''Bronze'' in card_type -%}70{%- elif card_type
-          and ''Silver'' in card_type -%}80{%- elif card_type and ''Gold'' in card_type
-          -%}90{%- else -%}70{%- endif -%}
+        template: '{%- if card_type and ''Bronze'' in card_type -%}70{%- elif card_type and ''Silver'' in card_type -%}80{%-
+          elif card_type and ''Gold'' in card_type -%}90{%- else -%}70{%- endif -%}
 
           '
       tier_min_payment_months:
         kind: computed
-        template: '{%- if card_type and ''Bronze'' in card_type -%}6{%- elif card_type
-          and ''Silver'' in card_type -%}3{%- elif card_type and ''Gold'' in card_type
-          -%}3{%- else -%}6{%- endif -%}
+        template: '{%- if card_type and ''Bronze'' in card_type -%}6{%- elif card_type and ''Silver'' in card_type -%}3{%-
+          elif card_type and ''Gold'' in card_type -%}3{%- else -%}6{%- endif -%}
 
           '
       tier_cooldown_days:
         kind: computed
-        template: '{%- if card_type and ''Bronze'' in card_type -%}120{%- elif card_type
-          and ''Silver'' in card_type -%}90{%- elif card_type and ''Gold'' in card_type
-          -%}60{%- else -%}120{%- endif -%}
+        template: '{%- if card_type and ''Bronze'' in card_type -%}120{%- elif card_type and ''Silver'' in card_type -%}90{%-
+          elif card_type and ''Gold'' in card_type -%}60{%- else -%}120{%- endif -%}
 
           '
       tier_min_account_age_days:
         kind: computed
-        template: '{%- if card_type and ''Bronze'' in card_type -%}120{%- elif card_type
-          and ''Silver'' in card_type -%}90{%- elif card_type and ''Gold'' in card_type
-          -%}60{%- else -%}120{%- endif -%}
+        template: '{%- if card_type and ''Bronze'' in card_type -%}120{%- elif card_type and ''Silver'' in card_type -%}90{%-
+          elif card_type and ''Gold'' in card_type -%}60{%- else -%}120{%- endif -%}
 
           '
       payment_months_met:
         kind: computed
-        template: '{%- if payment_row_count | wire_num >= tier_min_payment_months | wire_num
-          -%}true{%- else -%}false{%- endif -%}
+        template: '{%- if payment_row_count | wire_num >= tier_min_payment_months | wire_num -%}true{%- else -%}false{%- endif
+          -%}
 
           '
       max_increase_amount:
         kind: computed
-        template: '{%- set lim = card_limit | wire_num -%}{%- set pct = tier_max_increase_pct
-          | wire_num -%}{%- if lim > 0 and pct > 0 -%}{{ (lim * pct / 100) | int }}{%-
-          else -%}0{%- endif -%}
+        template: '{%- set lim = card_limit | wire_num -%}{%- set pct = tier_max_increase_pct | wire_num -%}{%- if lim > 0
+          and pct > 0 -%}{{ (lim * pct / 100) | int }}{%- else -%}0{%- endif -%}
 
           '
       approved_request_count:
@@ -2052,17 +2128,15 @@ views:
         field: submitted_date
       days_since_last_approval:
         kind: computed
-        template: '{%- set ref = last_approved_decision_date if last_approved_decision_date
-          and last_approved_decision_date != ''null'' else last_approved_submitted_date -%}{%-
-          if ref and approved_request_count | wire_num > 0 -%}{{ ref | wire_days_since
-          | int }}{%- else -%}9999{%- endif -%}
+        template: '{%- set ref = last_approved_decision_date if last_approved_decision_date and last_approved_decision_date
+          != ''null'' else last_approved_submitted_date -%}{%- if ref and approved_request_count | wire_num > 0 -%}{{ ref
+          | wire_days_since | int }}{%- else -%}9999{%- endif -%}
 
           '
       cooldown_period_active:
         kind: computed
-        template: '{%- if approved_request_count | wire_num > 0 and days_since_last_approval
-          | wire_num < tier_cooldown_days | wire_num -%}true{%- else -%}false{%- endif
-          -%}
+        template: '{%- if approved_request_count | wire_num > 0 and days_since_last_approval | wire_num < tier_cooldown_days
+          | wire_num -%}true{%- else -%}false{%- endif -%}
 
           '
       required_reads_checklist:
@@ -2214,7 +2288,6 @@ views:
 values:
   nv_str:
     type: string
-
     description: Generic short string.
   nv_bool:
     type: boolean
@@ -2227,38 +2300,35 @@ values:
     description: Integer quantity.
   nv_user_id:
     type: string
-
     description: Banking customer id.
   nv_credit_card_account_id:
     type: string
-
     description: Credit card account id.
   nv_cli_request_id:
     type: string
-
-    description: Credit limit increase request id (`cli_*`). In one program, bind approve from submit
-      — `c1 = e3.m7(…)` then `e3(c1.request_id).m4(request_id=c1.request_id, …)`; do not invent
-      `request_id` literals. τ² leaves the original PENDING submit record after approve/deny; a separate
-      APPROVED or DENIED record is appended — do not call approve/deny again on the same request_id.
+    description: Credit limit increase request id (`cli_*`). In one program, bind approve from submit — `c1 = e3.m7(…)` then
+      `e3(c1.request_id).m4(request_id=c1.request_id, …)`; do not invent `request_id` literals. τ² leaves the original PENDING
+      submit record after approve/deny; a separate APPROVED or DENIED record is appended — do not call approve/deny again
+      on the same request_id.
   nv_cli_increase_amount:
     type: integer
-    description: Requested credit limit increase in whole dollars (not the new total limit). Must not
-      exceed the tier maximum per request — Entry-tier 25%, Mid-tier 50%, Premium-tier 50% of current
-      credit limit. Coach the customer to the tier cap before filing.
+    description: Requested credit limit increase in whole dollars (not the new total limit). Must not exceed the tier maximum
+      per request — Entry-tier 25%, Mid-tier 50%, Premium-tier 50% of current credit limit. Coach the customer to the tier
+      cap before filing.
   nv_cli_new_limit:
     type: integer
-    description: Approved total credit limit in whole dollars on approve — not the increase delta alone.
-      Successful approve witness has status APPROVED and this total limit; if unclear, read CLI history or
-      card limit instead of re-approving the same request_id.
+    description: Approved total credit limit in whole dollars on approve — not the increase delta alone. Successful approve
+      witness has status APPROVED and this total limit; if unclear, read CLI history or card limit instead of re-approving
+      the same request_id.
   nv_cli_status:
     type: enum
     enum:
     - PENDING
     - DENIED
     - APPROVED
-    description: CLI case status. PENDING awaits approve or deny; DENIED and APPROVED are terminal for
-      that request_id (τ² appends a new row; the submit PENDING row is not mutated in place). Denied
-      requests do not trigger cooldown — customer may remediate and submit a new case.
+    description: CLI case status. PENDING awaits approve or deny; DENIED and APPROVED are terminal for that request_id (τ²
+      appends a new row; the submit PENDING row is not mutated in place). Denied requests do not trigger cooldown — customer
+      may remediate and submit a new case.
   nv_cli_denial_reason:
     type: enum
     enum:
@@ -2271,44 +2341,42 @@ values:
     - insufficient_payment_history
     - requested_amount_exceeds_limit
     - other
-    description: 'Policy reason when denying a CLI. insufficient_account_age: account younger than tier
-      minimum (Entry 120d, Mid 90d, Premium 60d). cooldown_period_active: approved request within tier
-      cooldown (Entry 120d, Mid 90d, Premium 60d) — denials do not trigger cooldown. pending_disputes:
-      open disputes on the account. pending_replacement_card: outstanding replacement card order.
-      past_due_balance: account not in good standing. high_utilization: utilization at or above tier max
-      (Entry below 70%, Mid below 80%, Premium below 90%). insufficient_payment_history: fewer consecutive
-      on-time months than tier requires (Entry 6, Mid 3, Premium 3). requested_amount_exceeds_limit:
-      increase over tier max percent of current limit.'
+    description: 'Policy reason when denying a CLI. insufficient_account_age: account younger than tier minimum (Entry 120d,
+      Mid 90d, Premium 60d). cooldown_period_active: approved request within tier cooldown (Entry 120d, Mid 90d, Premium 60d)
+      — denials do not trigger cooldown. pending_disputes: open disputes on the account. pending_replacement_card: outstanding
+      replacement card order. past_due_balance: account not in good standing. high_utilization: utilization at or above tier
+      max (Entry below 70%, Mid below 80%, Premium below 90%). insufficient_payment_history: fewer consecutive on-time months
+      than tier requires (Entry 6, Mid 3, Premium 3). requested_amount_exceeds_limit: increase over tier max percent of current
+      limit.'
   nv_card_type:
     type: string
-
-    description: 'Rho-Bank credit card product name. Maps to CLI tier policy — Entry-tier: Bronze Rewards
-      Card (and Business Bronze); Mid-tier: Silver cards; Premium-tier: Gold cards. Tier thresholds are
-      documented on nv_cli_denial_reason.'
+    description: 'Rho-Bank credit card product name. Maps to CLI tier policy — Entry-tier: Bronze Rewards Card (and Business
+      Bronze); Mid-tier: Silver cards; Premium-tier: Gold cards. Tier thresholds are documented on nv_cli_denial_reason.'
   nv_closure_policy:
     type: string
+    description: 'Credit card closure retention protocol (KB doc_credit_cards_credit_card_account_logistics_003).
 
-    description: |-
-      Credit card closure retention protocol (KB doc_credit_cards_credit_card_account_logistics_003).
       Before retention offers or any closure write, verify eligibility in this order:
-      1. Pending disputes — query dispute history; if any active/pending dispute exists, explain closure is blocked until resolution and STOP. Do not pay balance, log closure reason, or close on this call.
+
+      1. Pending disputes — query dispute history; if any active/pending dispute exists, explain closure is blocked until
+      resolution and STOP. Do not pay balance, log closure reason, or close on this call.
+
       2. Pending replacement cards — if any outstanding replacement order, explain and STOP.
+
       3. Minimum account age — account must be open 60+ days; if not, explain and STOP.
+
       4. Outstanding balance — only if steps 1–3 pass: customer may pay from checking, then proceed.
-      After closure request: 45 days to redeem rewards; annual fee refundable if closed within 37 days of fee posting.
+
+      After closure request: 45 days to redeem rewards; annual fee refundable if closed within 37 days of fee posting.'
   nv_retention_policy:
     type: markdown
-
-    description: 'Retention before closure: skip offers if closure reason logged within past year. Annual
-      fee concern — waive one year if customer 2+ years (loyalty benefit flag), else offer no-annual-fee
-      downgrade. Retention offers if still closing — Entry-tier 500 points or $5 credit, Mid-tier 2000
-      points or $20 credit, Premium-tier 5000 points or $50 credit.'
+    description: 'Retention before closure: skip offers if closure reason logged within past year. Annual fee concern — waive
+      one year if customer 2+ years (loyalty benefit flag), else offer no-annual-fee downgrade. Retention offers if still
+      closing — Entry-tier 500 points or $5 credit, Mid-tier 2000 points or $20 credit, Premium-tier 5000 points or $50 credit.'
   nv_downgrade_policy:
     type: markdown
-
-    description: 'Downgrade to no-annual-fee card: Bronze Rewards Card (personal) or Business Bronze
-      Rewards Card (business); same category only. Preserves credit limit, account number, and history;
-      unredeemed rewards transfer at same value.'
+    description: 'Downgrade to no-annual-fee card: Bronze Rewards Card (personal) or Business Bronze Rewards Card (business);
+      same category only. Preserves credit limit, account number, and history; unredeemed rewards transfer at same value.'
   nv_closure_reason:
     type: enum
     enum:
@@ -2327,17 +2395,26 @@ values:
     - savings
     - business_checking
     - business_savings
-    description: 'Bank account wire type for open_bank_account. Personal checking/savings use checking
-      or savings. LLC/business products (Navy Blue, Lime Green, True Blue, Sky Blue) require business_checking.
-      Business savings products require business_savings.'
+    description: Bank account wire type for open_bank_account. Personal checking/savings use checking or savings. LLC/business
+      products (Navy Blue, Lime Green, True Blue, Sky Blue) require business_checking. Business savings products require business_savings.
   nv_bank_reorg_policy:
     type: markdown
+    description: 'Multi-account banking reorganization ordering (KB bank account eligibility).
 
-    description: |-
-      Multi-account banking reorganization ordering (KB bank account eligibility).
       Valid order when customer requests closures and opens together:
+
       1. Open business checking first — blocked if any account already has CLOSED status.
+
       2. Open personal savings — requires a personal checking account open at least 14 days.
+
       3. Close old savings (transfer balance to new savings).
+
       4. Close old checking (split/transfer balances, then close).
-      Query BankAccount_list_by_user for account_type, account_class, date_opened, and status before planning.
+
+      Query BankAccount_list_by_user for account_type, account_class, date_opened, and status before planning.'
+  nv_user_lookup_shelf:
+    type: enum
+    enum:
+    - by_email
+    - by_name
+    description: Look up User by shelf — by_email or by_name.

@@ -1,346 +1,751 @@
-# D&D 5e SRD API (public read-only; set published site origin with --backend).
-# Paths include the api prefix; do not double-append /api on --backend.
-
 ability_score_query:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: ability-scores }]
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: ability-scores
 ability_score_get:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: ability-scores }, { type: var, name: id }]
-
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: ability-scores
+  - type: var
+    name: id
 alignment_query:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: alignments }]
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: alignments
 alignment_get:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: alignments }, { type: var, name: id }]
-
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: alignments
+  - type: var
+    name: id
 damage_type_query:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: damage-types }]
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: damage-types
 damage_type_get:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: damage-types }, { type: var, name: id }]
-
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: damage-types
+  - type: var
+    name: id
 equipment_category_query:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: equipment-categories }]
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: equipment-categories
 equipment_category_get:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: equipment-categories }, { type: var, name: id }]
-
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: equipment-categories
+  - type: var
+    name: id
 weapon_property_query:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: weapon-properties }]
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: weapon-properties
 weapon_property_get:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: weapon-properties }, { type: var, name: id }]
-
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: weapon-properties
+  - type: var
+    name: id
 language_query:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: languages }]
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: languages
 language_get:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: languages }, { type: var, name: id }]
-
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: languages
+  - type: var
+    name: id
 proficiency_query:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: proficiencies }]
+  path:
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: class_proficiencies
+    then_expr:
+      type: const
+      value: api/classes/{class_index}/proficiencies
+    else_expr:
+      type: if
+      condition:
+        type: equals
+        left:
+          type: var
+          name: shelf
+        right:
+          type: const
+          value: race_proficiencies
+      then_expr:
+        type: const
+        value: api/races/{race_index}/proficiencies
+      else_expr:
+        type: if
+        condition:
+          type: equals
+          left:
+            type: var
+            name: shelf
+          right:
+            type: const
+            value: subrace_proficiencies
+        then_expr:
+          type: const
+          value: api/subraces/{subrace_index}/proficiencies
+        else_expr:
+          type: const
+          value: api/proficiencies
+  query:
+    type: object
+    fields:
+    - - class_index
+      - type: if
+        condition:
+          type: exists
+          var: class_index
+        then_expr:
+          type: var
+          name: class_index
+        else_expr:
+          type: const
+          value: null
+    - - race_index
+      - type: if
+        condition:
+          type: exists
+          var: race_index
+        then_expr:
+          type: var
+          name: race_index
+        else_expr:
+          type: const
+          value: null
+    - - subrace_index
+      - type: if
+        condition:
+          type: exists
+          var: subrace_index
+        then_expr:
+          type: var
+          name: subrace_index
+        else_expr:
+          type: const
+          value: null
 proficiency_get:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: proficiencies }, { type: var, name: id }]
-
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: proficiencies
+  - type: var
+    name: id
 rule_query:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: rules }]
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: rules
 rule_get:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: rules }, { type: var, name: id }]
-
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: rules
+  - type: var
+    name: id
 rule_section_query:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: rule-sections }]
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: rule-sections
 rule_section_get:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: rule-sections }, { type: var, name: id }]
-
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: rule-sections
+  - type: var
+    name: id
 feat_query:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: feats }]
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: feats
 feat_get:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: feats }, { type: var, name: id }]
-
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: feats
+  - type: var
+    name: id
 class_level_query:
   method: GET
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: classes }
-    - { type: var, name: class_index }
-    - { type: literal, value: levels }
+  - type: literal
+    value: api
+  - type: literal
+    value: classes
+  - type: var
+    name: class_index
+  - type: literal
+    value: levels
   query:
     type: object
     fields:
-      - - subclass
-        - type: if
-          condition: { type: exists, var: subclass }
-          then_expr: { type: var, name: subclass }
-          else_expr: { type: const, value: null }
-
-class_level_features_query:
-  method: GET
-  path:
-    - { type: literal, value: api }
-    - { type: literal, value: classes }
-    - { type: var, name: class_index }
-    - { type: literal, value: levels }
-    - { type: var, name: class_level }
-    - { type: literal, value: features }
-
-class_spells_by_slot_query:
-  method: GET
-  path:
-    - { type: literal, value: api }
-    - { type: literal, value: classes }
-    - { type: var, name: class_index }
-    - { type: literal, value: levels }
-    - { type: var, name: spell_level }
-    - { type: literal, value: spells }
-
+    - - subclass
+      - type: if
+        condition:
+          type: exists
+          var: subclass
+        then_expr:
+          type: var
+          name: subclass
+        else_expr:
+          type: const
+          value: null
 class_spellcasting_get:
   method: GET
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: classes }
-    - { type: var, name: id }
-    - { type: literal, value: spellcasting }
-
+  - type: literal
+    value: api
+  - type: literal
+    value: classes
+  - type: var
+    name: id
+  - type: literal
+    value: spellcasting
 class_multiclassing_get:
   method: GET
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: classes }
-    - { type: var, name: id }
-    - { type: literal, value: multi-classing }
-
-class_proficiencies_query:
-  method: GET
-  path:
-    - { type: literal, value: api }
-    - { type: literal, value: classes }
-    - { type: var, name: class_index }
-    - { type: literal, value: proficiencies }
-
-subclass_query:
-  method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: subclasses }]
+  - type: literal
+    value: api
+  - type: literal
+    value: classes
+  - type: var
+    name: id
+  - type: literal
+    value: multi-classing
 subclass_get:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: subclasses }, { type: var, name: id }]
-
-subclass_features_query:
-  method: GET
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: subclasses }
-    - { type: var, name: subclass_index }
-    - { type: literal, value: features }
-
+  - type: literal
+    value: api
+  - type: literal
+    value: subclasses
+  - type: var
+    name: id
 subclass_level_query:
   method: GET
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: subclasses }
-    - { type: var, name: subclass_index }
-    - { type: literal, value: levels }
-
-race_proficiencies_query:
-  method: GET
-  path:
-    - { type: literal, value: api }
-    - { type: literal, value: races }
-    - { type: var, name: race_index }
-    - { type: literal, value: proficiencies }
-
-subrace_proficiencies_query:
-  method: GET
-  path:
-    - { type: literal, value: api }
-    - { type: literal, value: subraces }
-    - { type: var, name: subrace_index }
-    - { type: literal, value: proficiencies }
-
-subrace_traits_query:
-  method: GET
-  path:
-    - { type: literal, value: api }
-    - { type: literal, value: subraces }
-    - { type: var, name: subrace_index }
-    - { type: literal, value: traits }
-
-spell_query:
-  method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: spells }]
-  query:
-    type: object
-    fields:
-      - - level
-        - type: if
-          condition: { type: exists, var: level }
-          then_expr: { type: var, name: level }
-          else_expr: { type: const, value: null }
-      - - school
-        - type: if
-          condition: { type: exists, var: school }
-          then_expr: { type: var, name: school }
-          else_expr: { type: const, value: null }
-      - - concentration
-        - type: if
-          condition: { type: exists, var: concentration }
-          then_expr: { type: var, name: concentration }
-          else_expr: { type: const, value: null }
-      - - ritual
-        - type: if
-          condition: { type: exists, var: ritual }
-          then_expr: { type: var, name: ritual }
-          else_expr: { type: const, value: null }
-
+  - type: literal
+    value: api
+  - type: literal
+    value: subclasses
+  - type: var
+    name: subclass_index
+  - type: literal
+    value: levels
 spell_get:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: spells }, { type: var, name: id }]
-
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: spells
+  - type: var
+    name: id
 monster_query:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: monsters }]
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: monsters
   query:
     type: object
     fields:
-      - - challenge_rating
-        - type: if
-          condition: { type: exists, var: challenge_rating }
-          then_expr: { type: var, name: challenge_rating }
-          else_expr: { type: const, value: null }
-
+    - - challenge_rating
+      - type: if
+        condition:
+          type: exists
+          var: challenge_rating
+        then_expr:
+          type: var
+          name: challenge_rating
+        else_expr:
+          type: const
+          value: null
 monster_get:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: monsters }, { type: var, name: id }]
-
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: monsters
+  - type: var
+    name: id
 class_query:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: classes }]
-
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: classes
 class_get:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: classes }, { type: var, name: id }]
-
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: classes
+  - type: var
+    name: id
 class_spells:
   method: GET
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: classes }
-    - { type: var, name: class_index }
-    - { type: literal, value: spells }
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: spell
+    then_expr:
+      type: const
+      value: api/spells
+    else_expr:
+      type: if
+      condition:
+        type: equals
+        left:
+          type: var
+          name: shelf
+        right:
+          type: const
+          value: class_spells
+      then_expr:
+        type: const
+        value: api/classes/{class_index}/spells
+      else_expr:
+        type: const
+        value: api/classes/{class_index}/levels/{spell_level}/spells
   query:
     type: object
     fields:
-      - - level
-        - type: if
-          condition: { type: exists, var: level }
-          then_expr: { type: var, name: level }
-          else_expr: { type: const, value: null }
-
+    - - class_index
+      - type: if
+        condition:
+          type: exists
+          var: class_index
+        then_expr:
+          type: var
+          name: class_index
+        else_expr:
+          type: const
+          value: null
+    - - level
+      - type: if
+        condition:
+          type: exists
+          var: level
+        then_expr:
+          type: var
+          name: level
+        else_expr:
+          type: const
+          value: null
+    - - spell_level
+      - type: if
+        condition:
+          type: exists
+          var: spell_level
+        then_expr:
+          type: var
+          name: spell_level
+        else_expr:
+          type: const
+          value: null
+    - - school
+      - type: if
+        condition:
+          type: exists
+          var: school
+        then_expr:
+          type: var
+          name: school
+        else_expr:
+          type: const
+          value: null
+    - - concentration
+      - type: if
+        condition:
+          type: exists
+          var: concentration
+        then_expr:
+          type: var
+          name: concentration
+        else_expr:
+          type: const
+          value: null
+    - - ritual
+      - type: if
+        condition:
+          type: exists
+          var: ritual
+        then_expr:
+          type: var
+          name: ritual
+        else_expr:
+          type: const
+          value: null
 class_features:
   method: GET
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: classes }
-    - { type: var, name: class_index }
-    - { type: literal, value: features }
-
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: subclass_features
+    then_expr:
+      type: const
+      value: api/subclasses/{subclass_index}/features
+    else_expr:
+      type: if
+      condition:
+        type: equals
+        left:
+          type: var
+          name: shelf
+        right:
+          type: const
+          value: class_features
+      then_expr:
+        type: const
+        value: api/classes/{class_index}/features
+      else_expr:
+        type: const
+        value: api/classes/{class_index}/levels/{class_level}/features
+  query:
+    type: object
+    fields:
+    - - class_index
+      - type: if
+        condition:
+          type: exists
+          var: class_index
+        then_expr:
+          type: var
+          name: class_index
+        else_expr:
+          type: const
+          value: null
+    - - class_level
+      - type: if
+        condition:
+          type: exists
+          var: class_level
+        then_expr:
+          type: var
+          name: class_level
+        else_expr:
+          type: const
+          value: null
+    - - subclass_index
+      - type: if
+        condition:
+          type: exists
+          var: subclass_index
+        then_expr:
+          type: var
+          name: subclass_index
+        else_expr:
+          type: const
+          value: null
 class_subclasses:
   method: GET
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: classes }
-    - { type: var, name: class_index }
-    - { type: literal, value: subclasses }
-
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: subclass
+    then_expr:
+      type: const
+      value: api/subclasses
+    else_expr:
+      type: const
+      value: api/classes/{class_index}/subclasses
+  query:
+    type: object
+    fields:
+    - - class_index
+      - type: if
+        condition:
+          type: exists
+          var: class_index
+        then_expr:
+          type: var
+          name: class_index
+        else_expr:
+          type: const
+          value: null
 race_query:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: races }]
-
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: races
 race_get:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: races }, { type: var, name: id }]
-
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: races
+  - type: var
+    name: id
 race_traits:
   method: GET
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: races }
-    - { type: var, name: race_index }
-    - { type: literal, value: traits }
-
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: race_traits
+    then_expr:
+      type: const
+      value: api/races/{race_index}/traits
+    else_expr:
+      type: if
+      condition:
+        type: equals
+        left:
+          type: var
+          name: shelf
+        right:
+          type: const
+          value: trait
+      then_expr:
+        type: const
+        value: api/traits
+      else_expr:
+        type: const
+        value: api/subraces/{subrace_index}/traits
+  query:
+    type: object
+    fields:
+    - - race_index
+      - type: if
+        condition:
+          type: exists
+          var: race_index
+        then_expr:
+          type: var
+          name: race_index
+        else_expr:
+          type: const
+          value: null
+    - - subrace_index
+      - type: if
+        condition:
+          type: exists
+          var: subrace_index
+        then_expr:
+          type: var
+          name: subrace_index
+        else_expr:
+          type: const
+          value: null
 race_subraces:
   method: GET
   path:
-    - { type: literal, value: api }
-    - { type: literal, value: races }
-    - { type: var, name: race_index }
-    - { type: literal, value: subraces }
-
+  - type: literal
+    value: api
+  - type: literal
+    value: races
+  - type: var
+    name: race_index
+  - type: literal
+    value: subraces
 equipment_query:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: equipment }]
-
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: equipment
 equipment_get:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: equipment }, { type: var, name: id }]
-
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: equipment
+  - type: var
+    name: id
 magic_item_query:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: magic-items }]
-
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: magic-items
 magic_item_get:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: magic-items }, { type: var, name: id }]
-
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: magic-items
+  - type: var
+    name: id
 skill_query:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: skills }]
-
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: skills
 skill_get:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: skills }, { type: var, name: id }]
-
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: skills
+  - type: var
+    name: id
 condition_query:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: conditions }]
-
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: conditions
 condition_get:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: conditions }, { type: var, name: id }]
-
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: conditions
+  - type: var
+    name: id
 background_query:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: backgrounds }]
-
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: backgrounds
 background_get:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: backgrounds }, { type: var, name: id }]
-
-trait_query:
-  method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: traits }]
-
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: backgrounds
+  - type: var
+    name: id
 trait_get:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: traits }, { type: var, name: id }]
-
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: traits
+  - type: var
+    name: id
 magic_school_query:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: magic-schools }]
-
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: magic-schools
 magic_school_get:
   method: GET
-  path: [{ type: literal, value: api }, { type: literal, value: magic-schools }, { type: var, name: id }]
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: magic-schools
+  - type: var
+    name: id
+subrace_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: subraces
+  - type: var
+    name: index

@@ -1,4 +1,4 @@
-version: 4
+version: 8
 http_backend: https://discord.com/api/v10
 data_classes:
   untrusted:
@@ -216,7 +216,7 @@ entities:
         cardinality: many
         materialize:
           kind: query_scoped
-          capability: channel_webhook_list
+          capability: guild_webhook_list
           param: channel_id
       threads:
         description: Threads created under this channel.
@@ -224,7 +224,7 @@ entities:
         cardinality: many
         materialize:
           kind: query_scoped
-          capability: channel_thread_list_archived_public
+          capability: guild_active_thread_list
           param: channel_id
   Message:
     id_field: id
@@ -420,7 +420,7 @@ entities:
         cardinality: many
         materialize:
           kind: query_scoped
-          capability: application_emoji_list
+          capability: guild_emoji_list
           param: application_id
       entitlements:
         description: Entitlements for this application.
@@ -547,7 +547,7 @@ entities:
     relations: {}
   Invite:
     id_field: id
-    primary_query: guild_invite_list
+    primary_query: channel_invite_list
     description: An invite code and metadata.
     fields:
       id:
@@ -985,7 +985,7 @@ capabilities:
   guild_create:
     kind: create
     entity: Guild
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -993,7 +993,7 @@ capabilities:
   guild_update:
     kind: update
     entity: Guild
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1017,7 +1017,7 @@ capabilities:
   channel_update:
     kind: update
     entity: Channel
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1028,16 +1028,16 @@ capabilities:
   channel_list_for_guild:
     kind: query
     entity: Channel
-    parameters:
+    selection: []
+    scope:
     - name: guild_id
       value_ref: nv_channel_list_for_guild_guild_id
       required: true
-      role: scope
   channel_dm_create:
     kind: create
     entity: Channel
     description: Opens a DM channel with recipients described in the JSON body.
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1053,11 +1053,7 @@ capabilities:
       target_terms:
       - message
       - discord message
-    parameters:
-    - name: channel_id
-      value_ref: nv_message_in_channel_channel_id
-      required: true
-      role: scope
+    selection:
     - name: around
       value_ref: nv_wire_str_short
       required: false
@@ -1067,9 +1063,14 @@ capabilities:
     - name: after
       value_ref: nv_wire_str_short
       required: false
+    controls:
     - name: limit
       value_ref: nv_wire_int
       required: false
+    scope:
+    - name: channel_id
+      value_ref: nv_message_in_channel_channel_id
+      required: true
   message_get:
     kind: get
     entity: Message
@@ -1084,12 +1085,7 @@ capabilities:
       target_terms:
       - message
       - discord message
-    parameters:
-    - name: channel_id
-      value_ref: nv_message_create_channel_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1101,12 +1097,7 @@ capabilities:
   message_update:
     kind: update
     entity: Message
-    parameters:
-    - name: channel_id
-      value_ref: nv_message_update_channel_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1118,20 +1109,17 @@ capabilities:
   message_delete:
     kind: delete
     entity: Message
-    parameters:
-    - name: channel_id
-      value_ref: nv_message_delete_channel_id
-      required: true
-      role: scope
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: channel_id
+          value_ref: nv_message_delete_channel_id
+          required: true
   message_bulk_delete:
     kind: action
     entity: Message
-    parameters:
-    - name: channel_id
-      value_ref: nv_message_bulk_delete_channel_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1146,16 +1134,18 @@ capabilities:
   message_crosspost:
     kind: action
     entity: Message
-    parameters:
-    - name: channel_id
-      value_ref: nv_message_crosspost_channel_id
-      required: true
-      role: scope
     provides:
     - id
     - channel_id
     - content
     - timestamp
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: channel_id
+          value_ref: nv_message_crosspost_channel_id
+          required: true
   message_reply:
     description: Post a reply in the same channel with message_reference to the target. Runtime preflight runs message_get.
       and merges parent_* (parent id/channel for the reference).
@@ -1165,18 +1155,6 @@ capabilities:
     - kind: hydrate_invoke_target
       get: message_get
       prefix: parent
-    parameters:
-    - name: channel_id
-      value_ref: nv_message_reply_channel_id
-      required: true
-      role: scope
-    - name: content
-      value_ref: nv_message_reply_content
-      required: true
-      sink_class: external_send
-    - name: tts
-      value_ref: nv_message_reply_tts
-      required: false
     provides:
     - id
     - channel_id
@@ -1185,26 +1163,32 @@ capabilities:
     output:
       type: side_effect
       description: Creates a reply message in the channel.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: channel_id
+          value_ref: nv_message_reply_channel_id
+          required: true
+        - name: content
+          value_ref: nv_message_reply_content
+          required: true
+          sink_class: external_send
+        - name: tts
+          value_ref: nv_message_reply_tts
+          required: false
   message_search_in_guild:
     kind: search
     entity: Message
-    parameters:
-    - name: guild_id
-      value_ref: nv_message_search_in_guild_guild_id
+    selection:
+    - name: query
+      value_ref: nv_wire_str_short
       required: true
-      role: scope
     - name: content
       value_ref: nv_wire_str_short
       required: false
-      role: search
     - name: author_id
       value_ref: nv_message_search_in_guild_author_id
-      required: false
-    - name: limit
-      value_ref: nv_wire_int
-      required: false
-    - name: offset
-      value_ref: nv_wire_int
       required: false
     - name: channel_id
       value_ref: nv_message_search_in_guild_channel_id
@@ -1215,6 +1199,17 @@ capabilities:
     - name: pinned
       value_ref: nv_wire_bool
       required: false
+    controls:
+    - name: limit
+      value_ref: nv_wire_int
+      required: false
+    - name: offset
+      value_ref: nv_wire_int
+      required: false
+    scope:
+    - name: guild_id
+      value_ref: nv_message_search_in_guild_guild_id
+      required: true
   channel_typing:
     kind: action
     entity: Channel
@@ -1227,39 +1222,38 @@ capabilities:
   user_leave_guild:
     kind: action
     entity: User
-    parameters:
-    - name: guild_id
-      value_ref: nv_user_leave_guild_guild_id
-      required: true
     output:
       type: side_effect
       description: Leaves the guild for the current user token.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: guild_id
+          value_ref: nv_user_leave_guild_guild_id
+          required: true
   guild_member_list:
     kind: query
     entity: GuildMember
-    parameters:
-    - name: guild_id
-      value_ref: nv_guild_member_list_guild_id
-      required: true
-      role: scope
-    - name: limit
-      value_ref: nv_wire_int
-      required: false
+    selection:
     - name: after
       value_ref: nv_wire_str_short
       required: false
+    controls:
+    - name: limit
+      value_ref: nv_wire_int
+      required: false
+    scope:
+    - name: guild_id
+      value_ref: nv_guild_member_list_guild_id
+      required: true
   guild_member_get:
     kind: get
     entity: GuildMember
   guild_member_put:
     kind: action
     entity: GuildMember
-    parameters:
-    - name: guild_id
-      value_ref: nv_guild_member_put_guild_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1272,12 +1266,7 @@ capabilities:
   guild_member_patch:
     kind: update
     entity: GuildMember
-    parameters:
-    - name: guild_id
-      value_ref: nv_guild_member_patch_guild_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1285,46 +1274,47 @@ capabilities:
   guild_member_remove:
     kind: delete
     entity: GuildMember
-    parameters:
-    - name: guild_id
-      value_ref: nv_guild_member_remove_guild_id
-      required: true
-      role: scope
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: guild_id
+          value_ref: nv_guild_member_remove_guild_id
+          required: true
   guild_member_role_add:
     kind: action
     entity: GuildMember
-    parameters:
-    - name: guild_id
-      value_ref: nv_guild_member_role_add_guild_id
-      required: true
-      role: scope
-    - name: role_id
-      value_ref: nv_guild_member_role_add_role_id
-      required: true
-      sink_class: permission_grant
     output:
       type: side_effect
       description: Assigns a role to a guild member.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: guild_id
+          value_ref: nv_guild_member_role_add_guild_id
+          required: true
+        - name: role_id
+          value_ref: nv_guild_member_role_add_role_id
+          required: true
+          sink_class: permission_grant
   guild_member_role_remove:
     kind: delete
     entity: GuildMember
-    parameters:
-    - name: guild_id
-      value_ref: nv_guild_member_role_remove_guild_id
-      required: true
-      role: scope
-    - name: role_id
-      value_ref: nv_guild_member_role_remove_role_id
-      required: true
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: guild_id
+          value_ref: nv_guild_member_role_remove_guild_id
+          required: true
+        - name: role_id
+          value_ref: nv_guild_member_role_remove_role_id
+          required: true
   guild_member_me_patch:
     kind: update
     entity: GuildMember
-    parameters:
-    - name: guild_id
-      value_ref: nv_guild_member_me_patch_guild_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1332,23 +1322,18 @@ capabilities:
   guild_role_list:
     kind: query
     entity: Role
-    parameters:
+    selection: []
+    scope:
     - name: guild_id
       value_ref: nv_guild_role_list_guild_id
       required: true
-      role: scope
   role_get:
     kind: get
     entity: Role
   role_create:
     kind: create
     entity: Role
-    parameters:
-    - name: guild_id
-      value_ref: nv_role_create_guild_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1356,12 +1341,7 @@ capabilities:
   role_update:
     kind: update
     entity: Role
-    parameters:
-    - name: guild_id
-      value_ref: nv_role_update_guild_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1369,20 +1349,17 @@ capabilities:
   role_delete:
     kind: delete
     entity: Role
-    parameters:
-    - name: guild_id
-      value_ref: nv_role_delete_guild_id
-      required: true
-      role: scope
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: guild_id
+          value_ref: nv_role_delete_guild_id
+          required: true
   guild_roles_positions_patch:
     kind: action
     entity: Role
-    parameters:
-    - name: guild_id
-      value_ref: nv_guild_roles_positions_patch_guild_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1393,29 +1370,25 @@ capabilities:
   ban_list:
     kind: query
     entity: Ban
-    parameters:
-    - name: guild_id
-      value_ref: nv_ban_list_guild_id
-      required: true
-      role: scope
-    - name: limit
-      value_ref: nv_wire_int
-      required: false
+    selection:
     - name: after
       value_ref: nv_wire_str_short
       required: false
+    controls:
+    - name: limit
+      value_ref: nv_wire_int
+      required: false
+    scope:
+    - name: guild_id
+      value_ref: nv_ban_list_guild_id
+      required: true
   ban_get:
     kind: get
     entity: Ban
   ban_put:
     kind: action
     entity: Ban
-    parameters:
-    - name: guild_id
-      value_ref: nv_ban_put_guild_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1427,18 +1400,20 @@ capabilities:
   ban_delete:
     kind: delete
     entity: Ban
-    parameters:
-    - name: guild_id
-      value_ref: nv_ban_delete_guild_id
-      required: true
-      role: scope
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: guild_id
+          value_ref: nv_ban_delete_guild_id
+          required: true
   channel_overwrite_get:
     kind: get
     entity: ChannelPermissionOverwrite
   channel_overwrite_put:
     kind: update
     entity: ChannelPermissionOverwrite
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1462,7 +1437,7 @@ capabilities:
   application_update:
     kind: update
     entity: Application
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1470,26 +1445,21 @@ capabilities:
   application_command_list:
     kind: query
     entity: ApplicationCommand
-    parameters:
-    - name: application_id
-      value_ref: nv_application_command_list_application_id
-      required: true
-      role: scope
+    selection:
     - name: with_localizations
       value_ref: nv_wire_bool
       required: false
+    scope:
+    - name: application_id
+      value_ref: nv_application_command_list_application_id
+      required: true
   application_command_get:
     kind: get
     entity: ApplicationCommand
   application_command_create:
     kind: create
     entity: ApplicationCommand
-    parameters:
-    - name: application_id
-      value_ref: nv_application_command_create_application_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1497,12 +1467,7 @@ capabilities:
   application_command_update:
     kind: update
     entity: ApplicationCommand
-    parameters:
-    - name: application_id
-      value_ref: nv_application_command_update_application_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1510,20 +1475,17 @@ capabilities:
   application_command_delete:
     kind: delete
     entity: ApplicationCommand
-    parameters:
-    - name: application_id
-      value_ref: nv_application_command_delete_application_id
-      required: true
-      role: scope
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: application_id
+          value_ref: nv_application_command_delete_application_id
+          required: true
   application_command_bulk_put:
     kind: action
     entity: ApplicationCommand
-    parameters:
-    - name: application_id
-      value_ref: nv_application_command_bulk_put_application_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1534,29 +1496,20 @@ capabilities:
   guild_application_command_list:
     kind: query
     entity: GuildApplicationCommand
-    parameters:
+    selection:
     - name: application_id
       value_ref: nv_guild_application_command_list_application_id
       required: true
     - name: guild_id
       value_ref: nv_guild_application_command_list_guild_id
       required: true
-      role: scope
   guild_application_command_get:
     kind: get
     entity: GuildApplicationCommand
   guild_application_command_create:
     kind: create
     entity: GuildApplicationCommand
-    parameters:
-    - name: application_id
-      value_ref: nv_guild_application_command_create_application_id
-      required: true
-    - name: guild_id
-      value_ref: nv_guild_application_command_create_guild_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1564,15 +1517,7 @@ capabilities:
   guild_application_command_update:
     kind: update
     entity: GuildApplicationCommand
-    parameters:
-    - name: application_id
-      value_ref: nv_guild_application_command_update_application_id
-      required: true
-    - name: guild_id
-      value_ref: nv_guild_application_command_update_guild_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1580,22 +1525,20 @@ capabilities:
   guild_application_command_delete:
     kind: delete
     entity: GuildApplicationCommand
-    parameters:
-    - name: application_id
-      value_ref: nv_guild_application_command_delete_application_id
-      required: true
-    - name: guild_id
-      value_ref: nv_guild_application_command_delete_guild_id
-      required: true
-      role: scope
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: application_id
+          value_ref: nv_guild_application_command_delete_application_id
+          required: true
+        - name: guild_id
+          value_ref: nv_guild_application_command_delete_guild_id
+          required: true
   entitlement_list:
     kind: query
     entity: Entitlement
-    parameters:
-    - name: application_id
-      value_ref: nv_entitlement_list_application_id
-      required: true
-      role: scope
+    selection:
     - name: user_id
       value_ref: nv_entitlement_list_user_id
       required: false
@@ -1605,27 +1548,27 @@ capabilities:
     - name: guild_id
       value_ref: nv_entitlement_list_guild_id
       required: false
-    - name: limit
-      value_ref: nv_wire_int
-      required: false
     - name: after
       value_ref: nv_wire_str_short
       required: false
     - name: exclude_ended
       value_ref: nv_wire_bool
       required: false
+    controls:
+    - name: limit
+      value_ref: nv_wire_int
+      required: false
+    scope:
+    - name: application_id
+      value_ref: nv_entitlement_list_application_id
+      required: true
   entitlement_get:
     kind: get
     entity: Entitlement
   entitlement_create:
     kind: create
     entity: Entitlement
-    parameters:
-    - name: application_id
-      value_ref: nv_entitlement_create_application_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1633,47 +1576,47 @@ capabilities:
   entitlement_delete:
     kind: delete
     entity: Entitlement
-    parameters:
-    - name: application_id
-      value_ref: nv_entitlement_delete_application_id
-      required: true
-      role: scope
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: application_id
+          value_ref: nv_entitlement_delete_application_id
+          required: true
   entitlement_consume:
     kind: action
     entity: Entitlement
-    parameters:
-    - name: application_id
-      value_ref: nv_entitlement_consume_application_id
-      required: true
-      role: scope
     output:
       type: side_effect
       description: Marks a consumable entitlement as consumed.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: application_id
+          value_ref: nv_entitlement_consume_application_id
+          required: true
   guild_webhook_list:
     kind: query
     entity: Webhook
-    parameters:
+    selection:
+    - name: shelf
+      value_ref: nv_webhook_query_shelf
+      required: true
+      description: guild_webhook | channel_webhook
+    scope:
     - name: guild_id
       value_ref: nv_guild_webhook_list_guild_id
-      required: true
-      role: scope
-  channel_webhook_list:
-    kind: query
-    entity: Webhook
-    parameters:
+      required: false
     - name: channel_id
       value_ref: nv_channel_webhook_list_channel_id
-      required: true
-      role: scope
+      required: false
+    controls: []
+    description: List Webhook by shelf (guild_webhook | channel_webhook).
   channel_webhook_create:
     kind: create
     entity: Webhook
-    parameters:
-    - name: channel_id
-      value_ref: nv_channel_webhook_create_channel_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1684,7 +1627,7 @@ capabilities:
   webhook_update:
     kind: update
     entity: Webhook
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1695,12 +1638,7 @@ capabilities:
   channel_invite_create:
     kind: create
     entity: Invite
-    parameters:
-    - name: channel_id
-      value_ref: nv_channel_invite_create_channel_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1708,19 +1646,20 @@ capabilities:
   channel_invite_list:
     kind: query
     entity: Invite
-    parameters:
+    selection:
+    - name: shelf
+      value_ref: nv_invite_query_shelf
+      required: true
+      description: channel_invite | guild_invite
     - name: channel_id
       value_ref: nv_channel_invite_list_channel_id
       required: true
-      role: scope
-  guild_invite_list:
-    kind: query
-    entity: Invite
-    parameters:
     - name: guild_id
       value_ref: nv_guild_invite_list_guild_id
-      required: true
-      role: scope
+      required: false
+    scope: []
+    controls: []
+    description: List Invite by shelf (channel_invite | guild_invite).
   invite_get:
     kind: get
     entity: Invite
@@ -1733,7 +1672,7 @@ capabilities:
   stage_instance_create:
     kind: create
     entity: StageInstance
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1759,26 +1698,21 @@ capabilities:
   scheduled_event_list:
     kind: query
     entity: ScheduledEvent
-    parameters:
-    - name: guild_id
-      value_ref: nv_scheduled_event_list_guild_id
-      required: true
-      role: scope
+    selection:
     - name: with_user_count
       value_ref: nv_wire_bool
       required: false
+    scope:
+    - name: guild_id
+      value_ref: nv_scheduled_event_list_guild_id
+      required: true
   scheduled_event_get:
     kind: get
     entity: ScheduledEvent
   scheduled_event_create:
     kind: create
     entity: ScheduledEvent
-    parameters:
-    - name: guild_id
-      value_ref: nv_scheduled_event_create_guild_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1786,12 +1720,7 @@ capabilities:
   scheduled_event_update:
     kind: update
     entity: ScheduledEvent
-    parameters:
-    - name: guild_id
-      value_ref: nv_scheduled_event_update_guild_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1799,31 +1728,28 @@ capabilities:
   scheduled_event_delete:
     kind: delete
     entity: ScheduledEvent
-    parameters:
-    - name: guild_id
-      value_ref: nv_scheduled_event_delete_guild_id
-      required: true
-      role: scope
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: guild_id
+          value_ref: nv_scheduled_event_delete_guild_id
+          required: true
   soundboard_sound_list:
     kind: query
     entity: SoundboardSound
-    parameters:
+    selection: []
+    scope:
     - name: guild_id
       value_ref: nv_soundboard_sound_list_guild_id
       required: true
-      role: scope
   soundboard_sound_get:
     kind: get
     entity: SoundboardSound
   soundboard_sound_create:
     kind: create
     entity: SoundboardSound
-    parameters:
-    - name: guild_id
-      value_ref: nv_soundboard_sound_create_guild_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1831,12 +1757,7 @@ capabilities:
   soundboard_sound_update:
     kind: update
     entity: SoundboardSound
-    parameters:
-    - name: guild_id
-      value_ref: nv_soundboard_sound_update_guild_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1844,15 +1765,17 @@ capabilities:
   soundboard_sound_delete:
     kind: delete
     entity: SoundboardSound
-    parameters:
-    - name: guild_id
-      value_ref: nv_soundboard_sound_delete_guild_id
-      required: true
-      role: scope
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: guild_id
+          value_ref: nv_soundboard_sound_delete_guild_id
+          required: true
   channel_send_soundboard_sound:
     kind: action
     entity: Channel
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1863,20 +1786,15 @@ capabilities:
   guild_template_list:
     kind: query
     entity: GuildTemplate
-    parameters:
+    selection: []
+    scope:
     - name: guild_id
       value_ref: nv_guild_template_list_guild_id
       required: true
-      role: scope
   guild_template_create:
     kind: create
     entity: GuildTemplate
-    parameters:
-    - name: guild_id
-      value_ref: nv_guild_template_create_guild_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1884,10 +1802,6 @@ capabilities:
   template_fetch_by_code:
     kind: action
     entity: PublicGuildTemplate
-    parameters:
-    - name: code
-      value_ref: nv_wire_str_short
-      required: true
     provides:
     - code
     - name
@@ -1895,18 +1809,20 @@ capabilities:
     - usage_count
     - creator_id
     - serialized_source_guild
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: code
+          value_ref: nv_wire_str_short
+          required: true
   guild_template_get:
     kind: get
     entity: GuildTemplate
   guild_template_sync:
     kind: update
     entity: GuildTemplate
-    parameters:
-    - name: guild_id
-      value_ref: nv_guild_template_sync_guild_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1914,11 +1830,7 @@ capabilities:
   guild_from_template_create:
     kind: create
     entity: Guild
-    parameters:
-    - name: code
-      value_ref: nv_wire_str_short
-      required: true
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1926,23 +1838,18 @@ capabilities:
   auto_moderation_rule_list:
     kind: query
     entity: AutoModerationRule
-    parameters:
+    selection: []
+    scope:
     - name: guild_id
       value_ref: nv_auto_moderation_rule_list_guild_id
       required: true
-      role: scope
   auto_moderation_rule_get:
     kind: get
     entity: AutoModerationRule
   auto_moderation_rule_create:
     kind: create
     entity: AutoModerationRule
-    parameters:
-    - name: guild_id
-      value_ref: nv_auto_moderation_rule_create_guild_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1950,12 +1857,7 @@ capabilities:
   auto_moderation_rule_update:
     kind: update
     entity: AutoModerationRule
-    parameters:
-    - name: guild_id
-      value_ref: nv_auto_moderation_rule_update_guild_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -1963,34 +1865,38 @@ capabilities:
   auto_moderation_rule_delete:
     kind: delete
     entity: AutoModerationRule
-    parameters:
-    - name: guild_id
-      value_ref: nv_auto_moderation_rule_delete_guild_id
-      required: true
-      role: scope
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: guild_id
+          value_ref: nv_auto_moderation_rule_delete_guild_id
+          required: true
   guild_integration_list:
     kind: query
     entity: GuildIntegration
-    parameters:
+    selection: []
+    scope:
     - name: guild_id
       value_ref: nv_guild_integration_list_guild_id
       required: true
-      role: scope
   guild_integration_delete:
     kind: delete
     entity: GuildIntegration
-    parameters:
-    - name: guild_id
-      value_ref: nv_guild_integration_delete_guild_id
-      required: true
-      role: scope
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: guild_id
+          value_ref: nv_guild_integration_delete_guild_id
+          required: true
   guild_welcome_screen_get:
     kind: get
     entity: WelcomeScreen
   guild_welcome_screen_patch:
     kind: update
     entity: WelcomeScreen
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -2001,7 +1907,7 @@ capabilities:
   guild_widget_patch:
     kind: update
     entity: GuildWidget
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -2009,63 +1915,65 @@ capabilities:
   guild_active_thread_list:
     kind: query
     entity: Thread
-    parameters:
+    selection:
+    - name: shelf
+      value_ref: nv_thread_query_shelf
+      required: true
+      description: guild_active_thread | channel_thread_archived_public
+    - name: before
+      value_ref: nv_wire_str_short
+      required: false
+    scope:
     - name: guild_id
       value_ref: nv_guild_active_thread_list_guild_id
-      required: true
-      role: scope
+      required: false
+    - name: channel_id
+      value_ref: nv_channel_thread_list_archived_public_channel_id
+      required: false
+    controls:
+    - name: limit
+      value_ref: nv_wire_int
+      required: false
+    description: List Thread by shelf (guild_active_thread | channel_thread_archived_public).
   channel_thread_create:
     kind: create
     entity: Thread
-    parameters:
-    - name: channel_id
-      value_ref: nv_channel_thread_create_channel_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
         fields: []
-  channel_thread_list_archived_public:
-    kind: query
-    entity: Thread
-    parameters:
-    - name: channel_id
-      value_ref: nv_channel_thread_list_archived_public_channel_id
-      required: true
-      role: scope
-    - name: before
-      value_ref: nv_wire_str_short
-      required: false
-    - name: limit
-      value_ref: nv_wire_int
-      required: false
   guild_emoji_list:
     kind: query
     entity: CustomEmoji
-    parameters:
+    selection:
+    - name: shelf
+      value_ref: nv_customemoji_query_shelf
+      required: true
+      description: guild_emoji | application_emoji
+    scope:
     - name: guild_id
       value_ref: nv_guild_emoji_list_guild_id
-      required: true
-      role: scope
+      required: false
+    - name: application_id
+      value_ref: nv_application_emoji_list_application_id
+      required: false
+    controls: []
+    description: List CustomEmoji by shelf (guild_emoji | application_emoji).
   guild_emoji_get:
     kind: get
     entity: CustomEmoji
-    parameters:
-    - name: guild_id
-      value_ref: nv_guild_emoji_get_guild_id
-      required: true
-      role: scope
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: guild_id
+          value_ref: nv_guild_emoji_get_guild_id
+          required: true
   guild_emoji_create:
     kind: create
     entity: CustomEmoji
-    parameters:
-    - name: guild_id
-      value_ref: nv_guild_emoji_create_guild_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -2073,12 +1981,7 @@ capabilities:
   guild_emoji_update:
     kind: update
     entity: CustomEmoji
-    parameters:
-    - name: guild_id
-      value_ref: nv_guild_emoji_update_guild_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -2086,36 +1989,27 @@ capabilities:
   guild_emoji_delete:
     kind: delete
     entity: CustomEmoji
-    parameters:
-    - name: guild_id
-      value_ref: nv_guild_emoji_delete_guild_id
-      required: true
-      role: scope
-  application_emoji_list:
-    kind: query
-    entity: CustomEmoji
-    parameters:
-    - name: application_id
-      value_ref: nv_application_emoji_list_application_id
-      required: true
-      role: scope
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: guild_id
+          value_ref: nv_guild_emoji_delete_guild_id
+          required: true
   application_emoji_get:
     kind: get
     entity: CustomEmoji
-    parameters:
-    - name: application_id
-      value_ref: nv_application_emoji_get_application_id
-      required: true
-      role: scope
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: application_id
+          value_ref: nv_application_emoji_get_application_id
+          required: true
   application_emoji_create:
     kind: create
     entity: CustomEmoji
-    parameters:
-    - name: application_id
-      value_ref: nv_application_emoji_create_application_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -2123,12 +2017,7 @@ capabilities:
   application_emoji_update:
     kind: update
     entity: CustomEmoji
-    parameters:
-    - name: application_id
-      value_ref: nv_application_emoji_update_application_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -2136,35 +2025,39 @@ capabilities:
   application_emoji_delete:
     kind: delete
     entity: CustomEmoji
-    parameters:
-    - name: application_id
-      value_ref: nv_application_emoji_delete_application_id
-      required: true
-      role: scope
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: application_id
+          value_ref: nv_application_emoji_delete_application_id
+          required: true
   guild_audit_log_fetch:
     kind: action
     entity: AuditLog
-    parameters:
-    - name: guild_id
-      value_ref: nv_guild_audit_log_fetch_guild_id
-      required: true
-      role: scope
-    - name: user_id
-      value_ref: nv_guild_audit_log_fetch_user_id
-      required: false
-    - name: action_type
-      value_ref: nv_wire_int
-      required: false
-    - name: before
-      value_ref: nv_wire_str_short
-      required: false
-    - name: limit
-      value_ref: nv_wire_int
-      required: false
     provides:
     - id
     - audit_log_entries
     - users
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: guild_id
+          value_ref: nv_guild_audit_log_fetch_guild_id
+          required: true
+        - name: user_id
+          value_ref: nv_guild_audit_log_fetch_user_id
+          required: false
+        - name: action_type
+          value_ref: nv_wire_int
+          required: false
+        - name: before
+          value_ref: nv_wire_str_short
+          required: false
+        - name: limit
+          value_ref: nv_wire_int
+          required: false
   gateway_url_fetch:
     kind: action
     entity: Gateway
@@ -2181,7 +2074,7 @@ capabilities:
   interaction_callback:
     kind: action
     entity: Interaction
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -2192,28 +2085,25 @@ capabilities:
   guild_sticker_list:
     kind: query
     entity: Sticker
-    parameters:
+    selection: []
+    scope:
     - name: guild_id
       value_ref: nv_guild_sticker_list_guild_id
       required: true
-      role: scope
   guild_sticker_get:
     kind: get
     entity: Sticker
-    parameters:
-    - name: guild_id
-      value_ref: nv_guild_sticker_get_guild_id
-      required: true
-      role: scope
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: guild_id
+          value_ref: nv_guild_sticker_get_guild_id
+          required: true
   guild_sticker_create:
     kind: create
     entity: Sticker
-    parameters:
-    - name: guild_id
-      value_ref: nv_guild_sticker_create_guild_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -2221,12 +2111,7 @@ capabilities:
   guild_sticker_update:
     kind: update
     entity: Sticker
-    parameters:
-    - name: guild_id
-      value_ref: nv_guild_sticker_update_guild_id
-      required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -2234,74 +2119,84 @@ capabilities:
   guild_sticker_delete:
     kind: delete
     entity: Sticker
-    parameters:
-    - name: guild_id
-      value_ref: nv_guild_sticker_delete_guild_id
-      required: true
-      role: scope
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: guild_id
+          value_ref: nv_guild_sticker_delete_guild_id
+          required: true
   guild_prune_preview:
     kind: action
     entity: Guild
-    parameters:
-    - name: guild_id
-      value_ref: nv_guild_prune_preview_guild_id
-      required: true
-      role: scope
-    - name: days
-      value_ref: nv_wire_int
-      required: false
-    - name: include_roles
-      value_ref: nv_wire_str_short
-      required: false
     provides:
     - id
     - pruned
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: guild_id
+          value_ref: nv_guild_prune_preview_guild_id
+          required: true
+        - name: days
+          value_ref: nv_wire_int
+          required: false
+        - name: include_roles
+          value_ref: nv_wire_str_short
+          required: false
   guild_prune_execute:
     kind: action
     entity: Guild
     description: Prunes inactive members from the guild according to the request body.
-    parameters:
-    - name: guild_id
-      value_ref: nv_guild_prune_execute_guild_id
-      required: true
-      role: scope
-    - name: days
-      value_ref: nv_guild_prune_execute_days
-      required: false
-    - name: compute_prune_count
-      value_ref: nv_guild_prune_execute_compute_prune_count
-      required: false
     provides:
     - id
     - pruned
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: guild_id
+          value_ref: nv_guild_prune_execute_guild_id
+          required: true
+        - name: days
+          value_ref: nv_guild_prune_execute_days
+          required: false
+        - name: compute_prune_count
+          value_ref: nv_guild_prune_execute_compute_prune_count
+          required: false
   channel_pin_add:
     kind: action
     entity: Message
-    parameters:
-    - name: channel_id
-      value_ref: nv_channel_pin_add_channel_id
-      required: true
-      role: scope
-    - name: message_id
-      value_ref: nv_channel_pin_add_message_id
-      required: true
     output:
       type: side_effect
       description: Pins a message in the channel.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: channel_id
+          value_ref: nv_channel_pin_add_channel_id
+          required: true
+        - name: message_id
+          value_ref: nv_channel_pin_add_message_id
+          required: true
   channel_pin_remove:
     kind: action
     entity: Message
-    parameters:
-    - name: channel_id
-      value_ref: nv_channel_pin_remove_channel_id
-      required: true
-      role: scope
-    - name: message_id
-      value_ref: nv_channel_pin_remove_message_id
-      required: true
     output:
       type: side_effect
       description: Unpins a message in the channel.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: channel_id
+          value_ref: nv_channel_pin_remove_channel_id
+          required: true
+        - name: message_id
+          value_ref: nv_channel_pin_remove_message_id
+          required: true
 auth:
   scheme: api_key_header
   header: Authorization
@@ -2762,3 +2657,27 @@ values:
     items:
       value_ref: nv_wire_str_short
     description: Message ids to delete in bulk (2-100).
+  nv_webhook_query_shelf:
+    type: enum
+    enum:
+    - guild_webhook
+    - channel_webhook
+    description: Webhook query shelf
+  nv_invite_query_shelf:
+    type: enum
+    enum:
+    - channel_invite
+    - guild_invite
+    description: Invite query shelf
+  nv_thread_query_shelf:
+    type: enum
+    enum:
+    - guild_active_thread
+    - channel_thread_archived_public
+    description: Thread query shelf
+  nv_customemoji_query_shelf:
+    type: enum
+    enum:
+    - guild_emoji
+    - application_emoji
+    description: CustomEmoji query shelf

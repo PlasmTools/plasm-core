@@ -263,6 +263,8 @@ capabilities:
       value_ref: nv_channel_query_team_id
       required: true
       role: scope
+    selection: []
+    scope: []
   channel_get:
     description: Get a channel in a team when both team and channel identifiers are known.
     kind: get
@@ -327,6 +329,8 @@ capabilities:
       value_ref: nv_chat_message_query_chat_id
       required: true
       role: scope
+    selection: []
+    scope: []
   chat_message_get:
     description: Get a message in a chat when both chat and message identifiers are known.
     kind: get
@@ -374,6 +378,8 @@ capabilities:
       value_ref: nv_channel_message_query_channel_id
       required: true
       role: scope
+    selection: []
+    scope: []
   channel_message_get:
     description: Get a channel message when team, channel, and message identifiers are known.
     kind: get

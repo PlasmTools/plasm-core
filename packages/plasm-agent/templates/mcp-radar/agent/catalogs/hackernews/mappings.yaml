@@ -6,21 +6,22 @@
 item_search:
   method: GET
   path:
-  - type: literal
-    value: "https://hn.algolia.com/api/v1/search"
-  response:
-    items: hits
+  - type: if
+    condition:
+      type: equals
+      left: { type: var, name: shelf }
+      right: { type: const, value: by_date }
+    then_expr: { type: const, value: https://hn.algolia.com/api/v1/search_by_date }
+    else_expr: { type: const, value: https://hn.algolia.com/api/v1/search }
   query:
     type: object
     fields:
-    - - query
-      - type: var
-        name: query
+    - [query, { type: var, name: query }]
     - - tags
       - type: if
         condition: { type: exists, var: tags }
         then_expr: { type: var, name: tags }
-        else_expr: { type: const, value: "story" }
+        else_expr: { type: const, value: story }
     - - page
       - type: if
         condition: { type: exists, var: page }
@@ -31,35 +32,11 @@ item_search:
         condition: { type: exists, var: per_page }
         then_expr: { type: var, name: per_page }
         else_expr: { type: const, value: null }
-
-item_search_by_date:
-  method: GET
-  path:
-  - type: literal
-    value: "https://hn.algolia.com/api/v1/search_by_date"
   response:
     items: hits
-  query:
-    type: object
-    fields:
-    - - query
-      - type: var
-        name: query
-    - - tags
-      - type: if
-        condition: { type: exists, var: tags }
-        then_expr: { type: var, name: tags }
-        else_expr: { type: const, value: "story" }
-    - - page
-      - type: if
-        condition: { type: exists, var: page }
-        then_expr: { type: var, name: page }
-        else_expr: { type: const, value: null }
-    - - hitsPerPage
-      - type: if
-        condition: { type: exists, var: per_page }
-        then_expr: { type: var, name: per_page }
-        else_expr: { type: const, value: null }
+    total: nbHits
+    field_map:
+      id: objectID
 
 item_feed_query:
   method: GET

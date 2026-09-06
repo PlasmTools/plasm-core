@@ -21,39 +21,26 @@ get_user_information_by_id:
 get_user_information_by_email:
   method: POST
   path:
-  - type: literal
-    value: v1
-  - type: literal
-    value: tau3
-  - type: literal
-    value: banking
-  - type: literal
-    value: get_user_information_by_email
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: by_name
+    then_expr:
+      type: const
+      value: v1/tau3/banking/get_user_information_by_name
+    else_expr:
+      type: const
+      value: v1/tau3/banking/get_user_information_by_email
   body:
     type: object
     fields:
     - - email
       - name: email
-        type: var
-  response:
-    items: result
-    single: true
-get_user_information_by_name:
-  method: POST
-  path:
-  - type: literal
-    value: v1
-  - type: literal
-    value: tau3
-  - type: literal
-    value: banking
-  - type: literal
-    value: get_user_information_by_name
-  body:
-    type: object
-    fields:
-    - - customer_name
-      - name: customer_name
         type: var
   response:
     items: result
@@ -1324,3 +1311,14 @@ DebitCard_request_limit_increase:
     - - new_limit
       - name: new_limit
         type: var
+referral_get:
+  method: POST
+  path:
+  - type: literal
+    value: v1/tau3/banking/get_referral_by_id
+  body:
+    type: object
+    fields:
+    - - referral_id
+      - type: var
+        name: referral_id

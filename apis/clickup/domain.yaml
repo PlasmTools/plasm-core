@@ -1,4 +1,4 @@
-version: 7
+version: 13
 http_backend: https://api.clickup.com/api
 data_classes:
   untrusted:
@@ -20,7 +20,7 @@ schema_overlay:
       collect: teams
       items_path:
       - teams
-    - capability: custom_field_query
+    - capability: space_fields
       for_each: teams
       bind:
         team_id: '{{ row.id }}'
@@ -215,7 +215,7 @@ entities:
           seed_nav: locate
         materialize:
           kind: query_scoped
-          capability: folder_list_query
+          capability: list_query
           param: folder_id
   List:
     id_field: id
@@ -249,7 +249,7 @@ entities:
           param: list_id
   Task:
     id_field: id
-    primary_query: task_query
+    primary_query: list_task_query
     description: A ClickUp work item in a list.
     discovery:
       names:
@@ -369,7 +369,7 @@ entities:
     relations: {}
   View:
     id_field: id
-    primary_query: view_query
+    primary_query: space_views
     description: A saved view configuration.
     fields:
       id:
@@ -447,7 +447,7 @@ entities:
     relations: {}
   Comment:
     id_field: id
-    primary_query: list_comments
+    primary_query: comment_query
     description: A comment on a task or view.
     discovery:
       names:
@@ -613,14 +613,25 @@ capabilities:
     kind: singleton
     entity: User
   team_member_query:
-    description: List members in a workspace.
+    description: List Member by shelf (team_member | list_members | task_member).
     kind: query
     entity: Member
-    parameters:
+    selection:
+    - name: shelf
+      value_ref: nv_member_query_shelf
+      required: true
+      description: team_member | list_members | task_member
     - name: team_id
       value_ref: nv_team_member_query_team_id
       required: true
-      role: scope
+    - name: list_id
+      value_ref: nv_list_members_list_id
+      required: false
+    - name: task_id
+      value_ref: nv_task_member_query_task_id
+      required: false
+    scope: []
+    controls: []
   team_seats:
     description: Get workspace seat usage.
     kind: get
@@ -641,71 +652,89 @@ capabilities:
     description: Create a new space in the workspace.
     kind: create
     entity: Space
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: true
-    - name: multiple_assignees
-      value_ref: nv_wire_bool
-      required: false
-    - name: features
-      value_ref: nv_team_create_space_features
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: true
+        - name: multiple_assignees
+          value_ref: nv_wire_bool
+          required: false
+        - name: features
+          value_ref: nv_team_create_space_features
+          required: false
   team_create_goal:
     description: Create a new goal in the workspace.
     kind: create
     entity: Goal
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: true
-    - name: due_date
-      value_ref: nv_team_create_goal_due_date
-      required: false
-    - name: description
-      value_ref: nv_wire_str_markdown
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: true
+        - name: due_date
+          value_ref: nv_team_create_goal_due_date
+          required: false
+        - name: description
+          value_ref: nv_wire_str_markdown
+          required: false
   team_create_group:
     description: Create a user group in the workspace.
     kind: create
     entity: Group
-    parameters:
-    - name: team_id
-      value_ref: nv_team_create_group_team_id
-      required: true
-    - name: name
-      value_ref: nv_wire_str_short
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: team_id
+          value_ref: nv_team_create_group_team_id
+          required: true
+        - name: name
+          value_ref: nv_wire_str_short
+          required: true
   team_create_webhook:
     description: Register a webhook for the workspace.
     kind: create
     entity: Webhook
-    parameters:
-    - name: endpoint
-      value_ref: nv_wire_str_short
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: endpoint
+          value_ref: nv_wire_str_short
+          required: true
   team_create_view:
     description: Create a view at workspace level.
     kind: create
     entity: View
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: true
   team_create_time_entry:
     description: Create a manual time entry.
     kind: create
     entity: TimeEntry
-    parameters:
-    - name: tid
-      value_ref: nv_wire_str_short
-      required: false
-    - name: start
-      value_ref: nv_team_create_time_entry_start
-      required: false
-    - name: stop
-      value_ref: nv_team_create_time_entry_stop
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: tid
+          value_ref: nv_wire_str_short
+          required: false
+        - name: start
+          value_ref: nv_team_create_time_entry_start
+          required: false
+        - name: stop
+          value_ref: nv_team_create_time_entry_stop
+          required: false
   team_start_time_entry:
     description: Start a running time entry.
     kind: action
@@ -724,15 +753,15 @@ capabilities:
     description: List spaces in a workspace.
     kind: query
     entity: Space
-    parameters:
-    - name: team_id
-      value_ref: nv_space_query_team_id
-      required: true
-      role: scope
+    selection: []
+    controls:
     - name: archived
       value_ref: nv_wire_bool
       required: false
-      role: filter
+    scope:
+    - name: team_id
+      value_ref: nv_space_query_team_id
+      required: true
   space_get:
     kind: get
     entity: Space
@@ -745,16 +774,19 @@ capabilities:
     description: Update space properties.
     kind: update
     entity: Space
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: false
-    - name: color
-      value_ref: nv_wire_str_short
-      required: false
-    - name: private
-      value_ref: nv_wire_bool
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: false
+        - name: color
+          value_ref: nv_wire_str_short
+          required: false
+        - name: private
+          value_ref: nv_wire_bool
+          required: false
   space_delete:
     description: Delete a space.
     kind: delete
@@ -763,49 +795,80 @@ capabilities:
     description: Create a folder in the space.
     kind: create
     entity: Folder
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: true
   space_create_list:
     description: Create a folderless list in the space.
     kind: create
     entity: List
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: true
   space_views:
-    description: List views for a space.
+    description: List View by shelf (space_views | folder_views | view).
     kind: query
     entity: View
-    parameters:
+    selection:
+    - name: shelf
+      value_ref: nv_view_query_shelf
+      required: true
+      description: space_views | folder_views | view
     - name: space_id
       value_ref: nv_space_views_space_id
       required: true
-      role: scope
+    - name: folder_id
+      value_ref: nv_folder_views_folder_id
+      required: false
+    - name: team_id
+      value_ref: nv_view_query_team_id
+      required: false
+    scope: []
+    controls: []
   space_fields:
-    description: List custom fields accessible in a space.
+    description: List CustomField by shelf (space_fields | folder_fields | list_fields | custom_field).
     kind: query
     entity: CustomField
-    parameters:
+    selection:
+    - name: shelf
+      value_ref: nv_customfield_query_shelf
+      required: true
+      description: space_fields | folder_fields | list_fields | custom_field
     - name: space_id
       value_ref: nv_space_fields_space_id
       required: true
-      role: scope
+    - name: folder_id
+      value_ref: nv_folder_fields_folder_id
+      required: false
+    - name: list_id
+      value_ref: nv_list_fields_list_id
+      required: false
+    - name: team_id
+      value_ref: nv_space_fields_team_id
+      required: false
+    scope: []
+    controls: []
   folder_query:
     description: List folders in a space.
     kind: query
     entity: Folder
-    parameters:
-    - name: space_id
-      value_ref: nv_folder_query_space_id
-      required: true
-      role: scope
+    selection: []
+    controls:
     - name: archived
       value_ref: nv_wire_bool
       required: false
-      role: filter
+    scope:
+    - name: space_id
+      value_ref: nv_folder_query_space_id
+      required: true
   folder_get:
     kind: get
     entity: Folder
@@ -816,10 +879,13 @@ capabilities:
     description: Update folder properties.
     kind: update
     entity: Folder
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: false
   folder_delete:
     description: Delete a folder.
     kind: delete
@@ -828,54 +894,33 @@ capabilities:
     description: Create a list in the folder.
     kind: create
     entity: List
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: true
-  folder_views:
-    description: List views for a folder.
-    kind: query
-    entity: View
-    parameters:
-    - name: folder_id
-      value_ref: nv_folder_views_folder_id
-      required: true
-      role: scope
-  folder_fields:
-    description: List custom fields on a folder.
-    kind: query
-    entity: CustomField
-    parameters:
-    - name: folder_id
-      value_ref: nv_folder_fields_folder_id
-      required: true
-      role: scope
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: true
   list_query:
-    description: List folderless lists in a space.
+    description: List List by shelf (list | folder).
     kind: query
     entity: List
-    parameters:
+    selection:
+    - name: shelf
+      value_ref: nv_list_query_shelf
+      required: true
+      description: list | folder
+    controls:
+    - name: archived
+      value_ref: nv_wire_bool
+      required: false
+    scope:
     - name: space_id
       value_ref: nv_list_query_space_id
-      required: true
-      role: scope
-    - name: archived
-      value_ref: nv_wire_bool
       required: false
-      role: filter
-  folder_list_query:
-    description: List lists inside a folder.
-    kind: query
-    entity: List
-    parameters:
     - name: folder_id
       value_ref: nv_folder_list_query_folder_id
-      required: true
-      role: scope
-    - name: archived
-      value_ref: nv_wire_bool
       required: false
-      role: filter
   list_get:
     kind: get
     entity: List
@@ -887,138 +932,80 @@ capabilities:
     description: Update list properties.
     kind: update
     entity: List
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: false
-    - name: status
-      value_ref: nv_wire_str_short
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: false
+        - name: status
+          value_ref: nv_wire_str_short
+          required: false
   list_delete:
     description: Delete a list.
     kind: delete
     entity: List
-  list_members:
-    description: List members of a list.
-    kind: query
-    entity: Member
-    parameters:
-    - name: list_id
-      value_ref: nv_list_members_list_id
-      required: true
-      role: scope
-  list_comments:
-    description: List comments on a list.
-    kind: query
-    entity: Comment
-    parameters:
-    - name: list_id
-      value_ref: nv_list_comments_list_id
-      required: true
-      role: scope
-  list_fields:
-    description: List custom fields on a list.
-    kind: query
-    entity: CustomField
-    parameters:
-    - name: list_id
-      value_ref: nv_list_fields_list_id
-      required: true
-      role: scope
-  task_query:
-    description: Query ClickUp tasks across a workspace.
+  list_task_query:
+    description: List Task by shelf (task | list_task | view_tasks).
     kind: query
     entity: Task
     discovery:
       target_terms:
       - task
       - clickup task
-    parameters:
+    selection:
+    - name: shelf
+      value_ref: nv_task_query_shelf
+      required: true
+      description: task | list_task | view_tasks
     - name: team_id
       value_ref: nv_task_query_team_id
-      required: true
-      role: scope
-    - name: order_by
-      value_ref: nv_wire_sel_3ccc56c1be864adb
       required: false
-      role: sort
-    - name: reverse
-      value_ref: nv_wire_bool
-      required: false
-      role: sort_direction
-    - name: subtasks
-      value_ref: nv_wire_bool
-      required: false
-      role: filter
-    - name: include_closed
-      value_ref: nv_wire_bool
-      required: false
-      role: filter
-    - name: archived
-      value_ref: nv_wire_bool
-      required: false
-      role: filter
     - name: date_created_gt
       value_ref: nv_task_query_date_created_gt
       required: false
-      role: filter
     - name: date_created_lt
       value_ref: nv_task_query_date_created_lt
       required: false
-      role: filter
     - name: date_updated_gt
       value_ref: nv_task_query_date_updated_gt
       required: false
-      role: filter
     - name: date_updated_lt
       value_ref: nv_task_query_date_updated_lt
       required: false
-      role: filter
     - name: due_date_gt
       value_ref: nv_task_query_due_date_gt
       required: false
-      role: filter
     - name: due_date_lt
       value_ref: nv_task_query_due_date_lt
       required: false
-      role: filter
-    - name: include_markdown_description
-      value_ref: nv_wire_bool
+    - name: view_id
+      value_ref: nv_view_tasks_view_id
       required: false
-      role: response_control
-  list_task_query:
-    description: List ClickUp tasks in a list.
-    kind: query
-    entity: Task
-    discovery:
-      target_terms:
-      - task
-      - clickup task
-    parameters:
-    - name: list_id
-      value_ref: nv_list_task_query_list_id
-      required: true
-      role: scope
+    controls:
     - name: order_by
       value_ref: nv_wire_sel_3ccc56c1be864adb
       required: false
-      role: sort
     - name: reverse
       value_ref: nv_wire_bool
       required: false
-      role: sort_direction
     - name: subtasks
       value_ref: nv_wire_bool
       required: false
-      role: filter
     - name: include_closed
       value_ref: nv_wire_bool
       required: false
-      role: filter
     - name: include_markdown_description
       value_ref: nv_wire_bool
       required: false
-      role: response_control
+    - name: archived
+      value_ref: nv_wire_bool
+      required: false
+    scope:
+    - name: list_id
+      value_ref: nv_list_task_query_list_id
+      required: false
   task_get:
     kind: get
     entity: Task
@@ -1041,35 +1028,38 @@ capabilities:
     description: Update task properties.
     kind: update
     entity: Task
-    parameters:
-    - name: name
-      value_ref: nv_task_update_name
-      required: false
-    - name: description
-      value_ref: nv_task_update_description
-      required: false
-      sink_class: external_publish
-    - name: status
-      value_ref: nv_task_update_status
-      required: false
-    - name: priority
-      value_ref: nv_task_update_priority
-      required: false
-    - name: due_date
-      value_ref: nv_task_update_due_date
-      required: false
-    - name: start_date
-      value_ref: nv_task_update_start_date
-      required: false
-    - name: time_estimate
-      value_ref: nv_task_update_time_estimate
-      required: false
-    - name: archived
-      value_ref: nv_task_update_archived
-      required: false
-    - name: parent
-      value_ref: nv_task_update_parent
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_task_update_name
+          required: false
+        - name: description
+          value_ref: nv_task_update_description
+          required: false
+          sink_class: external_publish
+        - name: status
+          value_ref: nv_task_update_status
+          required: false
+        - name: priority
+          value_ref: nv_task_update_priority
+          required: false
+        - name: due_date
+          value_ref: nv_task_update_due_date
+          required: false
+        - name: start_date
+          value_ref: nv_task_update_start_date
+          required: false
+        - name: time_estimate
+          value_ref: nv_task_update_time_estimate
+          required: false
+        - name: archived
+          value_ref: nv_task_update_archived
+          required: false
+        - name: parent
+          value_ref: nv_task_update_parent
+          required: false
   list_create_task:
     description: Create a ClickUp task in a list.
     kind: create
@@ -1081,23 +1071,26 @@ capabilities:
       target_terms:
       - task
       - clickup task
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: true
-    - name: description
-      value_ref: nv_list_create_task_description
-      required: false
-      sink_class: external_publish
-    - name: status
-      value_ref: nv_list_create_task_status
-      required: false
-    - name: priority
-      value_ref: nv_wire_int
-      required: false
-    - name: due_date
-      value_ref: nv_list_create_task_due_date
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: true
+        - name: description
+          value_ref: nv_list_create_task_description
+          required: false
+          sink_class: external_publish
+        - name: status
+          value_ref: nv_list_create_task_status
+          required: false
+        - name: priority
+          value_ref: nv_wire_int
+          required: false
+        - name: due_date
+          value_ref: nv_list_create_task_due_date
+          required: false
   task_delete:
     description: Delete a task.
     kind: delete
@@ -1106,11 +1099,14 @@ capabilities:
     description: Add a comment to a task.
     kind: create
     entity: Comment
-    parameters:
-    - name: comment_text
-      value_ref: nv_wire_str_short
-      required: true
-      sink_class: external_publish
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: comment_text
+          value_ref: nv_wire_str_short
+          required: true
+          sink_class: external_publish
   task_create_attachment:
     description: Upload an attachment to a task.
     kind: action
@@ -1122,38 +1118,47 @@ capabilities:
     description: Create a checklist on a task.
     kind: action
     entity: Task
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: false
     output:
       type: side_effect
       description: Create a checklist on a task.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: false
   task_add_dependency:
     description: Add a dependency to a task.
     kind: action
     entity: Task
-    parameters:
-    - name: depends_on
-      value_ref: nv_wire_str_short
-      required: false
     output:
       type: side_effect
       description: Add a dependency to a task.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: depends_on
+          value_ref: nv_wire_str_short
+          required: false
   task_remove_dependency:
     description: Remove a dependency from a task.
     kind: action
     entity: Task
-    parameters:
-    - name: depends_on
-      value_ref: nv_wire_str_short
-      required: true
-    - name: dependency_of
-      value_ref: nv_wire_str_short
-      required: true
     output:
       type: side_effect
       description: Remove a dependency from a task.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: depends_on
+          value_ref: nv_wire_str_short
+          required: true
+        - name: dependency_of
+          value_ref: nv_wire_str_short
+          required: true
   task_time_in_status:
     description: Get time spent in each status.
     kind: get
@@ -1166,53 +1171,52 @@ capabilities:
     description: List tracked time intervals on a task.
     kind: query
     entity: TimeInterval
-    parameters:
+    selection:
     - name: task_id
       value_ref: nv_task_intervals_task_id
       required: true
-      role: scope
   task_create_interval:
     description: Create a time interval on a task.
     kind: create
     entity: TimeInterval
-    parameters:
-    - name: start
-      value_ref: nv_task_create_interval_start
-      required: false
-    - name: end
-      value_ref: nv_task_create_interval_end
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: start
+          value_ref: nv_task_create_interval_start
+          required: false
+        - name: end
+          value_ref: nv_task_create_interval_end
+          required: false
   task_tag_add:
     description: Add a tag to a task.
     kind: action
     entity: Task
-    parameters:
-    - name: tag_name
-      value_ref: nv_wire_str_short
-      required: true
     output:
       type: side_effect
       description: Add a tag to a task.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: tag_name
+          value_ref: nv_wire_str_short
+          required: true
   task_tag_remove:
     description: Remove a tag from a task.
     kind: action
     entity: Task
-    parameters:
-    - name: tag_name
-      value_ref: nv_wire_str_short
-      required: true
     output:
       type: side_effect
       description: Remove a tag from a task.
-  view_query:
-    description: List views in a workspace.
-    kind: query
-    entity: View
-    parameters:
-    - name: team_id
-      value_ref: nv_view_query_team_id
-      required: true
-      role: scope
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: tag_name
+          value_ref: nv_wire_str_short
+          required: true
   view_get:
     kind: get
     entity: View
@@ -1224,50 +1228,37 @@ capabilities:
     description: Update view properties.
     kind: update
     entity: View
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: false
   view_delete:
     description: Delete a view.
     kind: delete
     entity: View
-  view_tasks:
-    description: List tasks shown by a view.
-    kind: query
-    entity: Task
-    parameters:
-    - name: view_id
-      value_ref: nv_view_tasks_view_id
-      required: true
-      role: scope
-  view_comments:
-    description: List comments on a view.
-    kind: query
-    entity: Comment
-    parameters:
-    - name: view_id
-      value_ref: nv_view_comments_view_id
-      required: true
-      role: scope
   view_create_comment:
     description: Add a comment to a view.
     kind: create
     entity: Comment
-    parameters:
-    - name: comment_text
-      value_ref: nv_wire_str_short
-      required: true
-      sink_class: external_publish
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: comment_text
+          value_ref: nv_wire_str_short
+          required: true
+          sink_class: external_publish
   goal_query:
     description: List goals in a workspace.
     kind: query
     entity: Goal
-    parameters:
+    selection:
     - name: team_id
       value_ref: nv_goal_query_team_id
       required: true
-      role: scope
   goal_get:
     kind: get
     entity: Goal
@@ -1281,17 +1272,20 @@ capabilities:
     description: Update goal properties.
     kind: update
     entity: Goal
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: false
-    - name: due_date
-      value_ref: nv_goal_update_due_date
-      required: false
-    - name: description
-      value_ref: nv_wire_str_markdown
-      required: false
-      sink_class: external_publish
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: false
+        - name: due_date
+          value_ref: nv_goal_update_due_date
+          required: false
+        - name: description
+          value_ref: nv_wire_str_markdown
+          required: false
+          sink_class: external_publish
   goal_delete:
     description: Delete a goal.
     kind: delete
@@ -1300,13 +1294,16 @@ capabilities:
     description: Add a key result to a goal.
     kind: create
     entity: KeyResult
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: true
-    - name: type
-      value_ref: nv_wire_str_short
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: true
+        - name: type
+          value_ref: nv_wire_str_short
+          required: false
   key_result_get:
     kind: get
     entity: KeyResult
@@ -1319,26 +1316,40 @@ capabilities:
     description: Update key result properties.
     kind: update
     entity: KeyResult
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: false
-    - name: current
-      value_ref: nv_wire_int
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: false
+        - name: current
+          value_ref: nv_wire_int
+          required: false
   key_result_delete:
     description: Delete a key result.
     kind: delete
     entity: KeyResult
   comment_query:
-    description: List comments on a task.
+    description: List Comment by shelf (list_comments | view_comments | comment).
     kind: query
     entity: Comment
-    parameters:
+    selection:
+    - name: shelf
+      value_ref: nv_comment_query_shelf
+      required: true
+      description: list_comments | view_comments | comment
+    - name: list_id
+      value_ref: nv_list_comments_list_id
+      required: false
+    - name: view_id
+      value_ref: nv_view_comments_view_id
+      required: false
+    scope:
     - name: task_id
       value_ref: nv_comment_query_task_id
-      required: true
-      role: scope
+      required: false
+    controls: []
   comment_get:
     kind: get
     entity: Comment
@@ -1350,91 +1361,70 @@ capabilities:
     description: Update comment text.
     kind: update
     entity: Comment
-    parameters:
-    - name: comment_text
-      value_ref: nv_wire_str_short
-      required: false
-      sink_class: external_publish
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: comment_text
+          value_ref: nv_wire_str_short
+          required: false
+          sink_class: external_publish
   comment_delete:
     description: Delete a comment.
     kind: delete
     entity: Comment
-  custom_field_query:
-    description: List accessible custom fields in a workspace.
-    kind: query
-    entity: CustomField
-    parameters:
-    - name: team_id
-      value_ref: nv_custom_field_query_team_id
-      required: true
-      role: scope
   custom_task_type_query:
     description: List custom task types in a workspace.
     kind: query
     entity: CustomTaskType
-    parameters:
+    selection:
     - name: team_id
       value_ref: nv_custom_task_type_query_team_id
       required: true
-      role: scope
   tag_query:
     description: List tags in a space.
     kind: query
     entity: Tag
-    parameters:
+    selection:
     - name: space_id
       value_ref: nv_tag_query_space_id
       required: true
-      role: scope
-  task_member_query:
-    description: List members assigned to a task.
-    kind: query
-    entity: Member
-    parameters:
-    - name: task_id
-      value_ref: nv_task_member_query_task_id
-      required: true
-      role: scope
   role_query:
     description: List custom roles in a workspace.
     kind: query
     entity: Role
-    parameters:
+    selection:
     - name: team_id
       value_ref: nv_role_query_team_id
       required: true
-      role: scope
   time_entry_query:
     description: List time entries in a workspace.
     kind: query
     entity: TimeEntry
-    parameters:
+    selection:
     - name: team_id
       value_ref: nv_time_entry_query_team_id
       required: true
-      role: scope
   template_query:
     description: List templates in a workspace.
     kind: query
     entity: Template
-    parameters:
+    selection:
     - name: team_id
       value_ref: nv_template_query_team_id
       required: true
-      role: scope
+    controls:
     - name: page
       value_ref: nv_wire_int
       required: false
-      role: response_control
   webhook_query:
     description: List webhooks in a workspace.
     kind: query
     entity: Webhook
-    parameters:
+    selection:
     - name: team_id
       value_ref: nv_webhook_query_team_id
       required: true
-      role: scope
   webhook_get:
     kind: get
     entity: Webhook
@@ -1446,10 +1436,13 @@ capabilities:
     description: Update webhook properties.
     kind: update
     entity: Webhook
-    parameters:
-    - name: endpoint
-      value_ref: nv_wire_str_short
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: endpoint
+          value_ref: nv_wire_str_short
+          required: false
   webhook_delete:
     description: Delete a webhook.
     kind: delete
@@ -1458,19 +1451,21 @@ capabilities:
     description: List user groups in a workspace.
     kind: query
     entity: Group
-    parameters:
+    selection:
     - name: team_id
       value_ref: nv_group_query_team_id
       required: true
-      role: scope
   group_update:
     description: Update group properties.
     kind: update
     entity: Group
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: false
   group_delete:
     description: Delete a user group.
     kind: delete
@@ -1508,7 +1503,7 @@ values:
   nv_custom_field_name:
     type: string
     description: Custom field label.
-  nv_custom_field_query_team_id:
+  nv_space_fields_team_id:
     type: entity_ref
     target: Team
   nv_custom_field_type:
@@ -1675,10 +1670,12 @@ values:
     description: Task description (plain text or markdown).
   nv_task_due_date:
     type: unix_ms
-    description: Due date/time as Unix ms on the wire. For updates, this is not for status labels or progress notes—use the. `status` and `description` fields instead.
+    description: Due date/time as Unix ms on the wire. For updates, this is not for status labels or progress notes—use the.
+      `status` and `description` fields instead.
   nv_task_id:
     type: string
-    description: ClickUp task id (string). Use the exact value from the API, task URL, or list response—alphanumeric custom. ids (e.g. 86abc1234). Do not invent or paraphrase ids; a mistyped id yields 404 or failed requests.
+    description: ClickUp task id (string). Use the exact value from the API, task URL, or list response—alphanumeric custom.
+      ids (e.g. 86abc1234). Do not invent or paraphrase ids; a mistyped id yields 404 or failed requests.
   nv_task_intervals_task_id:
     type: entity_ref
     target: Task
@@ -1736,7 +1733,8 @@ values:
     description: Only `true` or `false` to archive or restore. Never pass status sentences, notes, or markdown here.
   nv_task_update_description:
     type: markdown
-    description: Longer notes, checklists, bracketed context, and commentary. Use this instead of stuffing prose into `due_date`. or `archived`.
+    description: Longer notes, checklists, bracketed context, and commentary. Use this instead of stuffing prose into `due_date`.
+      or `archived`.
   nv_task_update_due_date:
     type: unix_ms
     description: 'Due date/time only: RFC 3339, or other supported date forms.'
@@ -1755,7 +1753,8 @@ values:
     description: Start date/time in the same accepted formats as `due_date` (date slot, not status text).
   nv_task_update_status:
     type: string
-    description: Workflow status name as defined in the list/space (e.g. "To do", "In progress", "Done"). Use this for state. labels—not the `due_date` or `archived` fields.
+    description: Workflow status name as defined in the list/space (e.g. "To do", "In progress", "Done"). Use this for state.
+      labels—not the `due_date` or `archived` fields.
   nv_task_update_time_estimate:
     type: integer
     description: Estimate in milliseconds (ClickUp `time_estimate`).
@@ -1896,3 +1895,45 @@ values:
   nv_workspace_seat_usage_members:
     type: json
     description: Filled/total/empty member seats (nested object from API).
+  nv_member_query_shelf:
+    type: enum
+    enum:
+    - team_member
+    - list_members
+    - task_member
+    description: Member query shelf
+  nv_view_query_shelf:
+    type: enum
+    enum:
+    - space_views
+    - folder_views
+    - view
+    description: View query shelf
+  nv_customfield_query_shelf:
+    type: enum
+    enum:
+    - space_fields
+    - folder_fields
+    - list_fields
+    - custom_field
+    description: CustomField query shelf
+  nv_list_query_shelf:
+    type: enum
+    enum:
+    - list
+    - folder
+    description: List query shelf
+  nv_comment_query_shelf:
+    type: enum
+    enum:
+    - list_comments
+    - view_comments
+    - comment
+    description: Comment query shelf
+  nv_task_query_shelf:
+    type: enum
+    enum:
+    - task
+    - list_task
+    - view_tasks
+    description: Task query shelf

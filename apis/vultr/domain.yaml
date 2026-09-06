@@ -1878,6 +1878,8 @@ capabilities:
     - name: show_pending_charges
       value_ref: nv_wire_bool
       required: false
+    selection: []
+    scope: []
   instance_get:
     kind: get
     entity: Instance
@@ -2045,6 +2047,8 @@ capabilities:
       value_ref: nv_firewallrule_query_firewall_group_id
       required: true
       role: scope
+    selection: []
+    scope: []
   firewallrule_get:
     kind: get
     entity: FirewallRule
@@ -2262,6 +2266,8 @@ capabilities:
       value_ref: nv_dnsrecord_query_domain
       required: true
       role: scope
+    selection: []
+    scope: []
   dnsrecord_get:
     kind: get
     entity: DnsRecord
@@ -2436,6 +2442,8 @@ capabilities:
       value_ref: nv_vkeavailableupgrade_query_vke_id
       required: true
       role: scope
+    selection: []
+    scope: []
   kubernetescluster_start_upgrade:
     kind: action
     entity: KubernetesCluster
@@ -2534,6 +2542,8 @@ capabilities:
       value_ref: nv_baremetalipv4_query_bare_metal_id
       required: true
       role: scope
+    selection: []
+    scope: []
   baremetalipv6_query:
     kind: query
     entity: BareMetalIpV6
@@ -2542,6 +2552,8 @@ capabilities:
       value_ref: nv_baremetalipv6_query_bare_metal_id
       required: true
       role: scope
+    selection: []
+    scope: []
   baremetal_set_ipv4_reverse:
     kind: action
     entity: BareMetal
@@ -2610,6 +2622,8 @@ capabilities:
       value_ref: nv_baremetalvpc_query_bare_metal_id
       required: true
       role: scope
+    selection: []
+    scope: []
   baremetalvpc2_query:
     kind: query
     entity: BareMetalVpc2Attachment
@@ -2618,6 +2632,8 @@ capabilities:
       value_ref: nv_baremetalvpc2_query_bare_metal_id
       required: true
       role: scope
+    selection: []
+    scope: []
   baremetal_vpc2_attach:
     kind: action
     entity: BareMetal
@@ -2705,6 +2721,8 @@ capabilities:
       value_ref: nv_kubernetesnodepool_query_vke_id
       required: true
       role: scope
+    selection: []
+    scope: []
   kubernetesnodepool_get:
     kind: get
     entity: KubernetesNodePool
@@ -2740,6 +2758,8 @@ capabilities:
       value_ref: nv_wire_str_short
       required: true
       role: scope
+    selection: []
+    scope: []
   kubernetesnodepoollabel_get:
     kind: get
     entity: KubernetesNodePoolLabel
@@ -2774,6 +2794,8 @@ capabilities:
       value_ref: nv_wire_str_short
       required: true
       role: scope
+    selection: []
+    scope: []
   kubernetesnodepooltaint_get:
     kind: get
     entity: KubernetesNodePoolTaint
@@ -2816,6 +2838,8 @@ capabilities:
       value_ref: nv_cdnpushzonefile_query_push_zone_id
       required: true
       role: scope
+    selection: []
+    scope: []
   cdnpushzonefile_get:
     kind: get
     entity: CdnPushZoneFile

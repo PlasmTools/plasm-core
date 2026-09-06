@@ -1,1581 +1,3022 @@
-# Grafana HTTP API — CML mappings (Phase 1–3).
-# Semantic model: domain.yaml. OpenAPI: /public/api-merged.json on a running Grafana instance.
-#
-# Base URL: Grafana /api prefix (http_backend in domain.yaml; override with --backend).
-# Auth: Bearer GRAFANA_SERVICE_ACCOUNT_TOKEN (service account recommended).
-
-# ── Dashboard ────────────────────────────────────────────────────────────────
-
 dashboard_query:
   method: GET
   path:
-    - { type: literal, value: search }
+  - type: literal
+    value: search
   query:
     type: object
     fields:
-      - [type, { type: const, value: dash-db }]
-      - [query, { type: if, condition: { type: exists, var: query },
-                  then_expr: { type: var, name: query },
-                  else_expr: { type: const, value: null } }]
-      - [tag, { type: if, condition: { type: exists, var: tag },
-                then_expr: { type: var, name: tag },
-                else_expr: { type: const, value: null } }]
-      - [folderUIDs, { type: if, condition: { type: exists, var: folder_uid },
-                       then_expr: { type: var, name: folder_uid },
-                       else_expr: { type: const, value: null } }]
-      - [limit, { type: if, condition: { type: exists, var: limit },
-                  then_expr: { type: var, name: limit },
-                  else_expr: { type: const, value: null } }]
-
+    - - type
+      - type: const
+        value: dash-db
+    - - query
+      - type: if
+        condition:
+          type: exists
+          var: query
+        then_expr:
+          type: var
+          name: query
+        else_expr:
+          type: const
+          value: null
+    - - tag
+      - type: if
+        condition:
+          type: exists
+          var: tag
+        then_expr:
+          type: var
+          name: tag
+        else_expr:
+          type: const
+          value: null
+    - - folderUIDs
+      - type: if
+        condition:
+          type: exists
+          var: folder_uid
+        then_expr:
+          type: var
+          name: folder_uid
+        else_expr:
+          type: const
+          value: null
+    - - limit
+      - type: if
+        condition:
+          type: exists
+          var: limit
+        then_expr:
+          type: var
+          name: limit
+        else_expr:
+          type: const
+          value: null
 dashboard_get:
   method: GET
   path:
-    - { type: literal, value: dashboards }
-    - { type: literal, value: uid }
-    - { type: var, name: uid }
+  - type: literal
+    value: dashboards
+  - type: literal
+    value: uid
+  - type: var
+    name: uid
   response:
     items: dashboard
     single: true
-
 dashboard_save:
   method: POST
   path:
-    - { type: literal, value: dashboards }
-    - { type: literal, value: db }
+  - type: literal
+    value: dashboards
+  - type: literal
+    value: db
   body:
     type: object
     fields:
-      - [dashboard, { type: var, name: dashboard }]
-      - [folderUid, { type: if, condition: { type: exists, var: folder_uid },
-                      then_expr: { type: var, name: folder_uid },
-                      else_expr: { type: const, value: null } }]
-      - [overwrite, { type: if, condition: { type: exists, var: overwrite },
-                     then_expr: { type: var, name: overwrite },
-                     else_expr: { type: const, value: null } }]
-      - [message, { type: if, condition: { type: exists, var: message },
-                    then_expr: { type: var, name: message },
-                    else_expr: { type: const, value: null } }]
-
+    - - dashboard
+      - type: var
+        name: dashboard
+    - - folderUid
+      - type: if
+        condition:
+          type: exists
+          var: folder_uid
+        then_expr:
+          type: var
+          name: folder_uid
+        else_expr:
+          type: const
+          value: null
+    - - overwrite
+      - type: if
+        condition:
+          type: exists
+          var: overwrite
+        then_expr:
+          type: var
+          name: overwrite
+        else_expr:
+          type: const
+          value: null
+    - - message
+      - type: if
+        condition:
+          type: exists
+          var: message
+        then_expr:
+          type: var
+          name: message
+        else_expr:
+          type: const
+          value: null
 dashboard_delete:
   method: DELETE
   path:
-    - { type: literal, value: dashboards }
-    - { type: literal, value: uid }
-    - { type: var, name: id }
-
+  - type: literal
+    value: dashboards
+  - type: literal
+    value: uid
+  - type: var
+    name: id
 dashboard_summary_query:
   transport: view
   view: dashboard_summary
-
 dashboard_summary_get:
   transport: view
   view: dashboard_summary
-
-# ── Folder ───────────────────────────────────────────────────────────────────
-
 folder_query:
   method: GET
   path:
-    - { type: literal, value: folders }
-
+  - type: literal
+    value: folders
 folder_get:
   method: GET
   path:
-    - { type: literal, value: folders }
-    - { type: var, name: id }
-
+  - type: literal
+    value: folders
+  - type: var
+    name: id
 folder_create:
   method: POST
   path:
-    - { type: literal, value: folders }
+  - type: literal
+    value: folders
   body:
     type: object
     fields:
-      - [title, { type: var, name: title }]
-      - [uid, { type: if, condition: { type: exists, var: uid },
-                then_expr: { type: var, name: uid },
-                else_expr: { type: const, value: null } }]
-
+    - - title
+      - type: var
+        name: title
+    - - uid
+      - type: if
+        condition:
+          type: exists
+          var: uid
+        then_expr:
+          type: var
+          name: uid
+        else_expr:
+          type: const
+          value: null
 folder_update:
   method: PUT
   path:
-    - { type: literal, value: folders }
-    - { type: var, name: id }
+  - type: literal
+    value: folders
+  - type: var
+    name: id
   body:
     type: object
     fields:
-      - [title, { type: if, condition: { type: exists, var: title },
-                  then_expr: { type: var, name: title },
-                  else_expr: { type: const, value: null } }]
-      - [uid, { type: if, condition: { type: exists, var: uid },
-                then_expr: { type: var, name: uid },
-                else_expr: { type: const, value: null } }]
-      - [overwrite, { type: if, condition: { type: exists, var: overwrite },
-                      then_expr: { type: var, name: overwrite },
-                      else_expr: { type: const, value: null } }]
-
+    - - title
+      - type: if
+        condition:
+          type: exists
+          var: title
+        then_expr:
+          type: var
+          name: title
+        else_expr:
+          type: const
+          value: null
+    - - uid
+      - type: if
+        condition:
+          type: exists
+          var: uid
+        then_expr:
+          type: var
+          name: uid
+        else_expr:
+          type: const
+          value: null
+    - - overwrite
+      - type: if
+        condition:
+          type: exists
+          var: overwrite
+        then_expr:
+          type: var
+          name: overwrite
+        else_expr:
+          type: const
+          value: null
 folder_delete:
   method: DELETE
   path:
-    - { type: literal, value: folders }
-    - { type: var, name: id }
-
-# ── Datasource ───────────────────────────────────────────────────────────────
-
+  - type: literal
+    value: folders
+  - type: var
+    name: id
 datasource_query:
   method: GET
   path:
-    - { type: literal, value: datasources }
-
+  - type: literal
+    value: datasources
 datasource_get:
   method: GET
   path:
-    - { type: literal, value: datasources }
-    - { type: literal, value: uid }
-    - { type: var, name: id }
-
+  - type: literal
+    value: datasources
+  - type: literal
+    value: uid
+  - type: var
+    name: id
 datasource_create:
   method: POST
   path:
-    - { type: literal, value: datasources }
+  - type: literal
+    value: datasources
   body:
     type: object
     fields:
-      - [name, { type: var, name: name }]
-      - [type, { type: var, name: type }]
-      - [url, { type: if, condition: { type: exists, var: url },
-                then_expr: { type: var, name: url },
-                else_expr: { type: const, value: null } }]
-      - [access, { type: if, condition: { type: exists, var: access },
-                   then_expr: { type: var, name: access },
-                   else_expr: { type: const, value: null } }]
-      - [isDefault, { type: if, condition: { type: exists, var: is_default },
-                      then_expr: { type: var, name: is_default },
-                      else_expr: { type: const, value: null } }]
-      - [jsonData, { type: if, condition: { type: exists, var: json_data },
-                     then_expr: { type: var, name: json_data },
-                     else_expr: { type: const, value: null } }]
-      - [secureJsonData, { type: if, condition: { type: exists, var: secure_json_data },
-                           then_expr: { type: var, name: secure_json_data },
-                           else_expr: { type: const, value: null } }]
-
+    - - name
+      - type: var
+        name: name
+    - - type
+      - type: var
+        name: type
+    - - url
+      - type: if
+        condition:
+          type: exists
+          var: url
+        then_expr:
+          type: var
+          name: url
+        else_expr:
+          type: const
+          value: null
+    - - access
+      - type: if
+        condition:
+          type: exists
+          var: access
+        then_expr:
+          type: var
+          name: access
+        else_expr:
+          type: const
+          value: null
+    - - isDefault
+      - type: if
+        condition:
+          type: exists
+          var: is_default
+        then_expr:
+          type: var
+          name: is_default
+        else_expr:
+          type: const
+          value: null
+    - - jsonData
+      - type: if
+        condition:
+          type: exists
+          var: json_data
+        then_expr:
+          type: var
+          name: json_data
+        else_expr:
+          type: const
+          value: null
+    - - secureJsonData
+      - type: if
+        condition:
+          type: exists
+          var: secure_json_data
+        then_expr:
+          type: var
+          name: secure_json_data
+        else_expr:
+          type: const
+          value: null
 datasource_update:
   method: PUT
   path:
-    - { type: literal, value: datasources }
-    - { type: literal, value: uid }
-    - { type: var, name: id }
+  - type: literal
+    value: datasources
+  - type: literal
+    value: uid
+  - type: var
+    name: id
   body:
     type: object
     fields:
-      - [name, { type: var, name: name }]
-      - [type, { type: var, name: type }]
-      - [url, { type: if, condition: { type: exists, var: url },
-                then_expr: { type: var, name: url },
-                else_expr: { type: const, value: null } }]
-      - [access, { type: if, condition: { type: exists, var: access },
-                   then_expr: { type: var, name: access },
-                   else_expr: { type: const, value: null } }]
-      - [isDefault, { type: if, condition: { type: exists, var: is_default },
-                      then_expr: { type: var, name: is_default },
-                      else_expr: { type: const, value: null } }]
-      - [jsonData, { type: if, condition: { type: exists, var: json_data },
-                     then_expr: { type: var, name: json_data },
-                     else_expr: { type: const, value: null } }]
-      - [secureJsonData, { type: if, condition: { type: exists, var: secure_json_data },
-                           then_expr: { type: var, name: secure_json_data },
-                           else_expr: { type: const, value: null } }]
-
+    - - name
+      - type: var
+        name: name
+    - - type
+      - type: var
+        name: type
+    - - url
+      - type: if
+        condition:
+          type: exists
+          var: url
+        then_expr:
+          type: var
+          name: url
+        else_expr:
+          type: const
+          value: null
+    - - access
+      - type: if
+        condition:
+          type: exists
+          var: access
+        then_expr:
+          type: var
+          name: access
+        else_expr:
+          type: const
+          value: null
+    - - isDefault
+      - type: if
+        condition:
+          type: exists
+          var: is_default
+        then_expr:
+          type: var
+          name: is_default
+        else_expr:
+          type: const
+          value: null
+    - - jsonData
+      - type: if
+        condition:
+          type: exists
+          var: json_data
+        then_expr:
+          type: var
+          name: json_data
+        else_expr:
+          type: const
+          value: null
+    - - secureJsonData
+      - type: if
+        condition:
+          type: exists
+          var: secure_json_data
+        then_expr:
+          type: var
+          name: secure_json_data
+        else_expr:
+          type: const
+          value: null
 datasource_delete:
   method: DELETE
   path:
-    - { type: literal, value: datasources }
-    - { type: literal, value: uid }
-    - { type: var, name: id }
-
+  - type: literal
+    value: datasources
+  - type: literal
+    value: uid
+  - type: var
+    name: id
 datasource_query_run:
   method: POST
   path:
-    - { type: literal, value: ds }
-    - { type: literal, value: query }
+  - type: literal
+    value: ds
+  - type: literal
+    value: query
   body:
     type: object
     fields:
-      - [queries, { type: array, elements: [
-          { type: object, fields: [
-            [refId, { type: if, condition: { type: exists, var: ref_id },
-                      then_expr: { type: var, name: ref_id },
-                      else_expr: { type: const, value: "A" } }],
-            [datasource, { type: object, fields: [
-              [type, { type: var, name: ds_type }],
-              [uid, { type: var, name: id }]
-            ]}],
-            [expr, { type: var, name: expr }],
-            [instant, { type: if, condition: { type: exists, var: instant },
-                         then_expr: { type: var, name: instant },
-                         else_expr: { type: const, value: true } }]
-          ]}
-        ]}]
-      - [from, { type: if, condition: { type: exists, var: from },
-                 then_expr: { type: var, name: from },
-                 else_expr: { type: const, value: null } }]
-      - [to, { type: if, condition: { type: exists, var: to },
-               then_expr: { type: var, name: to },
-               else_expr: { type: const, value: null } }]
+    - - queries
+      - type: array
+        elements:
+        - type: object
+          fields:
+          - - refId
+            - type: if
+              condition:
+                type: exists
+                var: ref_id
+              then_expr:
+                type: var
+                name: ref_id
+              else_expr:
+                type: const
+                value: A
+          - - datasource
+            - type: object
+              fields:
+              - - type
+                - type: var
+                  name: ds_type
+              - - uid
+                - type: var
+                  name: id
+          - - expr
+            - type: var
+              name: expr
+          - - instant
+            - type: if
+              condition:
+                type: exists
+                var: instant
+              then_expr:
+                type: var
+                name: instant
+              else_expr:
+                type: const
+                value: true
+    - - from
+      - type: if
+        condition:
+          type: exists
+          var: from
+        then_expr:
+          type: var
+          name: from
+        else_expr:
+          type: const
+          value: null
+    - - to
+      - type: if
+        condition:
+          type: exists
+          var: to
+        then_expr:
+          type: var
+          name: to
+        else_expr:
+          type: const
+          value: null
   response:
     single: true
-
-# ── Annotation ───────────────────────────────────────────────────────────────
-
 annotation_query:
   method: GET
   path:
-    - { type: literal, value: annotations }
+  - type: literal
+    value: annotations
   query:
     type: object
     fields:
-      - [from, { type: if, condition: { type: exists, var: from },
-                 then_expr: { type: var, name: from },
-                 else_expr: { type: const, value: null } }]
-      - [to, { type: if, condition: { type: exists, var: to },
-               then_expr: { type: var, name: to },
-               else_expr: { type: const, value: null } }]
-      - [dashboardUID, { type: if, condition: { type: exists, var: dashboard_uid },
-                         then_expr: { type: var, name: dashboard_uid },
-                         else_expr: { type: const, value: null } }]
-      - [tags, { type: if, condition: { type: exists, var: tags },
-                 then_expr: { type: var, name: tags },
-                 else_expr: { type: const, value: null } }]
-      - [limit, { type: if, condition: { type: exists, var: limit },
-                  then_expr: { type: var, name: limit },
-                  else_expr: { type: const, value: null } }]
-
+    - - from
+      - type: if
+        condition:
+          type: exists
+          var: from
+        then_expr:
+          type: var
+          name: from
+        else_expr:
+          type: const
+          value: null
+    - - to
+      - type: if
+        condition:
+          type: exists
+          var: to
+        then_expr:
+          type: var
+          name: to
+        else_expr:
+          type: const
+          value: null
+    - - dashboardUID
+      - type: if
+        condition:
+          type: exists
+          var: dashboard_uid
+        then_expr:
+          type: var
+          name: dashboard_uid
+        else_expr:
+          type: const
+          value: null
+    - - tags
+      - type: if
+        condition:
+          type: exists
+          var: tags
+        then_expr:
+          type: var
+          name: tags
+        else_expr:
+          type: const
+          value: null
+    - - limit
+      - type: if
+        condition:
+          type: exists
+          var: limit
+        then_expr:
+          type: var
+          name: limit
+        else_expr:
+          type: const
+          value: null
 annotation_get:
   method: GET
   path:
-    - { type: literal, value: annotations }
-    - { type: var, name: id }
-
+  - type: literal
+    value: annotations
+  - type: var
+    name: id
 annotation_create:
   method: POST
   path:
-    - { type: literal, value: annotations }
+  - type: literal
+    value: annotations
   body:
     type: object
     fields:
-      - [text, { type: var, name: text }]
-      - [dashboardUID, { type: if, condition: { type: exists, var: dashboard_uid },
-                          then_expr: { type: var, name: dashboard_uid },
-                          else_expr: { type: const, value: null } }]
-      - [panelId, { type: if, condition: { type: exists, var: panel_id },
-                     then_expr: { type: var, name: panel_id },
-                     else_expr: { type: const, value: null } }]
-      - [time, { type: if, condition: { type: exists, var: time },
-                 then_expr: { type: var, name: time },
-                 else_expr: { type: const, value: null } }]
-      - [timeEnd, { type: if, condition: { type: exists, var: time_end },
-                    then_expr: { type: var, name: time_end },
-                    else_expr: { type: const, value: null } }]
-      - [tags, { type: if, condition: { type: exists, var: tags },
-                 then_expr: { type: var, name: tags },
-                 else_expr: { type: const, value: null } }]
-
+    - - text
+      - type: var
+        name: text
+    - - dashboardUID
+      - type: if
+        condition:
+          type: exists
+          var: dashboard_uid
+        then_expr:
+          type: var
+          name: dashboard_uid
+        else_expr:
+          type: const
+          value: null
+    - - panelId
+      - type: if
+        condition:
+          type: exists
+          var: panel_id
+        then_expr:
+          type: var
+          name: panel_id
+        else_expr:
+          type: const
+          value: null
+    - - time
+      - type: if
+        condition:
+          type: exists
+          var: time
+        then_expr:
+          type: var
+          name: time
+        else_expr:
+          type: const
+          value: null
+    - - timeEnd
+      - type: if
+        condition:
+          type: exists
+          var: time_end
+        then_expr:
+          type: var
+          name: time_end
+        else_expr:
+          type: const
+          value: null
+    - - tags
+      - type: if
+        condition:
+          type: exists
+          var: tags
+        then_expr:
+          type: var
+          name: tags
+        else_expr:
+          type: const
+          value: null
 annotation_update:
   method: PATCH
   path:
-    - { type: literal, value: annotations }
-    - { type: var, name: id }
+  - type: literal
+    value: annotations
+  - type: var
+    name: id
   body:
     type: object
     fields:
-      - [text, { type: if, condition: { type: exists, var: text },
-                 then_expr: { type: var, name: text },
-                 else_expr: { type: const, value: null } }]
-      - [time, { type: if, condition: { type: exists, var: time },
-                 then_expr: { type: var, name: time },
-                 else_expr: { type: const, value: null } }]
-      - [timeEnd, { type: if, condition: { type: exists, var: time_end },
-                    then_expr: { type: var, name: time_end },
-                    else_expr: { type: const, value: null } }]
-      - [tags, { type: if, condition: { type: exists, var: tags },
-                 then_expr: { type: var, name: tags },
-                 else_expr: { type: const, value: null } }]
-
+    - - text
+      - type: if
+        condition:
+          type: exists
+          var: text
+        then_expr:
+          type: var
+          name: text
+        else_expr:
+          type: const
+          value: null
+    - - time
+      - type: if
+        condition:
+          type: exists
+          var: time
+        then_expr:
+          type: var
+          name: time
+        else_expr:
+          type: const
+          value: null
+    - - timeEnd
+      - type: if
+        condition:
+          type: exists
+          var: time_end
+        then_expr:
+          type: var
+          name: time_end
+        else_expr:
+          type: const
+          value: null
+    - - tags
+      - type: if
+        condition:
+          type: exists
+          var: tags
+        then_expr:
+          type: var
+          name: tags
+        else_expr:
+          type: const
+          value: null
 annotation_delete:
   method: DELETE
   path:
-    - { type: literal, value: annotations }
-    - { type: var, name: id }
-
+  - type: literal
+    value: annotations
+  - type: var
+    name: id
 annotation_tag_query:
   method: GET
   path:
-    - { type: literal, value: annotations }
-    - { type: literal, value: tags }
+  - type: literal
+    value: annotations
+  - type: literal
+    value: tags
   query:
     type: object
     fields:
-      - [tag, { type: if, condition: { type: exists, var: tag },
-                then_expr: { type: var, name: tag },
-                else_expr: { type: const, value: null } }]
+    - - tag
+      - type: if
+        condition:
+          type: exists
+          var: tag
+        then_expr:
+          type: var
+          name: tag
+        else_expr:
+          type: const
+          value: null
   response:
-    items_path: [result, tags]
-
-# ── Alert rules (provisioning API) ───────────────────────────────────────────
-
+    items_path:
+    - result
+    - tags
 alert_rule_query:
   method: GET
   path:
-    - { type: literal, value: v1 }
-    - { type: literal, value: provisioning }
-    - { type: literal, value: alert-rules }
-
+  - type: literal
+    value: v1
+  - type: literal
+    value: provisioning
+  - type: literal
+    value: alert-rules
 alert_rule_get:
   method: GET
   path:
-    - { type: literal, value: v1 }
-    - { type: literal, value: provisioning }
-    - { type: literal, value: alert-rules }
-    - { type: var, name: id }
-
+  - type: literal
+    value: v1
+  - type: literal
+    value: provisioning
+  - type: literal
+    value: alert-rules
+  - type: var
+    name: id
 alert_rule_create:
   method: POST
   path:
-    - { type: literal, value: v1 }
-    - { type: literal, value: provisioning }
-    - { type: literal, value: alert-rules }
+  - type: literal
+    value: v1
+  - type: literal
+    value: provisioning
+  - type: literal
+    value: alert-rules
   headers:
     type: object
     fields:
-      - [X-Disable-Provenance, { type: const, value: "true" }]
+    - - X-Disable-Provenance
+      - type: const
+        value: 'true'
   body:
     type: object
     fields:
-      - [title, { type: var, name: title }]
-      - [folderUID, { type: var, name: folderUID }]
-      - [ruleGroup, { type: var, name: ruleGroup }]
-      - [condition, { type: var, name: condition }]
-      - [data, { type: var, name: data }]
-      - [for, { type: if, condition: { type: exists, var: for },
-               then_expr: { type: var, name: for },
-               else_expr: { type: const, value: null } }]
-      - [noDataState, { type: if, condition: { type: exists, var: noDataState },
-                       then_expr: { type: var, name: noDataState },
-                       else_expr: { type: const, value: null } }]
-      - [execErrState, { type: if, condition: { type: exists, var: execErrState },
-                        then_expr: { type: var, name: execErrState },
-                        else_expr: { type: const, value: null } }]
-
+    - - title
+      - type: var
+        name: title
+    - - folderUID
+      - type: var
+        name: folderUID
+    - - ruleGroup
+      - type: var
+        name: ruleGroup
+    - - condition
+      - type: var
+        name: condition
+    - - data
+      - type: var
+        name: data
+    - - for
+      - type: if
+        condition:
+          type: exists
+          var: for
+        then_expr:
+          type: var
+          name: for
+        else_expr:
+          type: const
+          value: null
+    - - noDataState
+      - type: if
+        condition:
+          type: exists
+          var: noDataState
+        then_expr:
+          type: var
+          name: noDataState
+        else_expr:
+          type: const
+          value: null
+    - - execErrState
+      - type: if
+        condition:
+          type: exists
+          var: execErrState
+        then_expr:
+          type: var
+          name: execErrState
+        else_expr:
+          type: const
+          value: null
 alert_rule_update:
   method: PUT
   path:
-    - { type: literal, value: v1 }
-    - { type: literal, value: provisioning }
-    - { type: literal, value: alert-rules }
-    - { type: var, name: id }
+  - type: literal
+    value: v1
+  - type: literal
+    value: provisioning
+  - type: literal
+    value: alert-rules
+  - type: var
+    name: id
   headers:
     type: object
     fields:
-      - [X-Disable-Provenance, { type: const, value: "true" }]
+    - - X-Disable-Provenance
+      - type: const
+        value: 'true'
   body:
     type: object
     fields:
-      - [uid, { type: var, name: id }]
-      - [title, { type: var, name: title }]
-      - [folderUID, { type: var, name: folderUID }]
-      - [ruleGroup, { type: var, name: ruleGroup }]
-      - [condition, { type: var, name: condition }]
-      - [data, { type: var, name: data }]
-      - [for, { type: if, condition: { type: exists, var: for },
-               then_expr: { type: var, name: for },
-               else_expr: { type: const, value: null } }]
-      - [noDataState, { type: if, condition: { type: exists, var: noDataState },
-                       then_expr: { type: var, name: noDataState },
-                       else_expr: { type: const, value: null } }]
-      - [execErrState, { type: if, condition: { type: exists, var: execErrState },
-                        then_expr: { type: var, name: execErrState },
-                        else_expr: { type: const, value: null } }]
-
+    - - uid
+      - type: var
+        name: id
+    - - title
+      - type: var
+        name: title
+    - - folderUID
+      - type: var
+        name: folderUID
+    - - ruleGroup
+      - type: var
+        name: ruleGroup
+    - - condition
+      - type: var
+        name: condition
+    - - data
+      - type: var
+        name: data
+    - - for
+      - type: if
+        condition:
+          type: exists
+          var: for
+        then_expr:
+          type: var
+          name: for
+        else_expr:
+          type: const
+          value: null
+    - - noDataState
+      - type: if
+        condition:
+          type: exists
+          var: noDataState
+        then_expr:
+          type: var
+          name: noDataState
+        else_expr:
+          type: const
+          value: null
+    - - execErrState
+      - type: if
+        condition:
+          type: exists
+          var: execErrState
+        then_expr:
+          type: var
+          name: execErrState
+        else_expr:
+          type: const
+          value: null
 alert_rule_delete:
   method: DELETE
   path:
-    - { type: literal, value: v1 }
-    - { type: literal, value: provisioning }
-    - { type: literal, value: alert-rules }
-    - { type: var, name: id }
-
-# ── Alerting routing (provisioning) ──────────────────────────────────────────
-
+  - type: literal
+    value: v1
+  - type: literal
+    value: provisioning
+  - type: literal
+    value: alert-rules
+  - type: var
+    name: id
 contact_point_query:
   method: GET
   path:
-    - { type: literal, value: v1 }
-    - { type: literal, value: provisioning }
-    - { type: literal, value: contact-points }
-
+  - type: literal
+    value: v1
+  - type: literal
+    value: provisioning
+  - type: literal
+    value: contact-points
 contact_point_get:
   method: GET
   path:
-    - { type: literal, value: v1 }
-    - { type: literal, value: provisioning }
-    - { type: literal, value: contact-points }
-    - { type: var, name: id }
-
+  - type: literal
+    value: v1
+  - type: literal
+    value: provisioning
+  - type: literal
+    value: contact-points
+  - type: var
+    name: id
 contact_point_create:
   method: POST
   path:
-    - { type: literal, value: v1 }
-    - { type: literal, value: provisioning }
-    - { type: literal, value: contact-points }
+  - type: literal
+    value: v1
+  - type: literal
+    value: provisioning
+  - type: literal
+    value: contact-points
   headers:
     type: object
     fields:
-      - [X-Disable-Provenance, { type: const, value: "true" }]
+    - - X-Disable-Provenance
+      - type: const
+        value: 'true'
   body:
     type: object
     fields:
-      - [name, { type: var, name: name }]
-      - [type, { type: var, name: type }]
-      - [settings, { type: var, name: settings }]
-      - [disableResolveMessage, { type: if, condition: { type: exists, var: disableResolveMessage },
-                                   then_expr: { type: var, name: disableResolveMessage },
-                                   else_expr: { type: const, value: null } }]
-      - [uid, { type: if, condition: { type: exists, var: uid },
-                then_expr: { type: var, name: uid },
-                else_expr: { type: const, value: null } }]
-
+    - - name
+      - type: var
+        name: name
+    - - type
+      - type: var
+        name: type
+    - - settings
+      - type: var
+        name: settings
+    - - disableResolveMessage
+      - type: if
+        condition:
+          type: exists
+          var: disableResolveMessage
+        then_expr:
+          type: var
+          name: disableResolveMessage
+        else_expr:
+          type: const
+          value: null
+    - - uid
+      - type: if
+        condition:
+          type: exists
+          var: uid
+        then_expr:
+          type: var
+          name: uid
+        else_expr:
+          type: const
+          value: null
 contact_point_update:
   method: PUT
   path:
-    - { type: literal, value: v1 }
-    - { type: literal, value: provisioning }
-    - { type: literal, value: contact-points }
-    - { type: var, name: id }
+  - type: literal
+    value: v1
+  - type: literal
+    value: provisioning
+  - type: literal
+    value: contact-points
+  - type: var
+    name: id
   headers:
     type: object
     fields:
-      - [X-Disable-Provenance, { type: const, value: "true" }]
+    - - X-Disable-Provenance
+      - type: const
+        value: 'true'
   body:
     type: object
     fields:
-      - [uid, { type: var, name: id }]
-      - [name, { type: var, name: name }]
-      - [type, { type: var, name: type }]
-      - [settings, { type: var, name: settings }]
-      - [disableResolveMessage, { type: if, condition: { type: exists, var: disableResolveMessage },
-                                   then_expr: { type: var, name: disableResolveMessage },
-                                   else_expr: { type: const, value: null } }]
-
+    - - uid
+      - type: var
+        name: id
+    - - name
+      - type: var
+        name: name
+    - - type
+      - type: var
+        name: type
+    - - settings
+      - type: var
+        name: settings
+    - - disableResolveMessage
+      - type: if
+        condition:
+          type: exists
+          var: disableResolveMessage
+        then_expr:
+          type: var
+          name: disableResolveMessage
+        else_expr:
+          type: const
+          value: null
 contact_point_delete:
   method: DELETE
   path:
-    - { type: literal, value: v1 }
-    - { type: literal, value: provisioning }
-    - { type: literal, value: contact-points }
-    - { type: var, name: id }
-
+  - type: literal
+    value: v1
+  - type: literal
+    value: provisioning
+  - type: literal
+    value: contact-points
+  - type: var
+    name: id
 notification_policy_get:
   method: GET
   path:
-    - { type: literal, value: v1 }
-    - { type: literal, value: provisioning }
-    - { type: literal, value: policies }
+  - type: literal
+    value: v1
+  - type: literal
+    value: provisioning
+  - type: literal
+    value: policies
   response:
     single: true
-
 notification_policy_update:
   method: PUT
   path:
-    - { type: literal, value: v1 }
-    - { type: literal, value: provisioning }
-    - { type: literal, value: policies }
+  - type: literal
+    value: v1
+  - type: literal
+    value: provisioning
+  - type: literal
+    value: policies
   body:
     type: object
     fields:
-      - [receiver, { type: var, name: receiver }]
-      - [group_by, { type: var, name: group_by }]
-      - [routes, { type: if, condition: { type: exists, var: routes },
-                   then_expr: { type: var, name: routes },
-                   else_expr: { type: const, value: null } }]
-
+    - - receiver
+      - type: var
+        name: receiver
+    - - group_by
+      - type: var
+        name: group_by
+    - - routes
+      - type: if
+        condition:
+          type: exists
+          var: routes
+        then_expr:
+          type: var
+          name: routes
+        else_expr:
+          type: const
+          value: null
 notification_policy_reset:
   method: DELETE
   path:
-    - { type: literal, value: v1 }
-    - { type: literal, value: provisioning }
-    - { type: literal, value: policies }
-
+  - type: literal
+    value: v1
+  - type: literal
+    value: provisioning
+  - type: literal
+    value: policies
 mute_timing_query:
   method: GET
   path:
-    - { type: literal, value: v1 }
-    - { type: literal, value: provisioning }
-    - { type: literal, value: mute-timings }
-
+  - type: literal
+    value: v1
+  - type: literal
+    value: provisioning
+  - type: literal
+    value: mute-timings
 mute_timing_get:
   method: GET
   path:
-    - { type: literal, value: v1 }
-    - { type: literal, value: provisioning }
-    - { type: literal, value: mute-timings }
-    - { type: var, name: id }
-
+  - type: literal
+    value: v1
+  - type: literal
+    value: provisioning
+  - type: literal
+    value: mute-timings
+  - type: var
+    name: id
 mute_timing_create:
   method: POST
   path:
-    - { type: literal, value: v1 }
-    - { type: literal, value: provisioning }
-    - { type: literal, value: mute-timings }
+  - type: literal
+    value: v1
+  - type: literal
+    value: provisioning
+  - type: literal
+    value: mute-timings
   headers:
     type: object
     fields:
-      - [X-Disable-Provenance, { type: const, value: "true" }]
+    - - X-Disable-Provenance
+      - type: const
+        value: 'true'
   body:
     type: object
     fields:
-      - [name, { type: var, name: name }]
-      - [time_intervals, { type: var, name: time_intervals }]
-
+    - - name
+      - type: var
+        name: name
+    - - time_intervals
+      - type: var
+        name: time_intervals
 mute_timing_update:
   method: PUT
   path:
-    - { type: literal, value: v1 }
-    - { type: literal, value: provisioning }
-    - { type: literal, value: mute-timings }
-    - { type: var, name: id }
+  - type: literal
+    value: v1
+  - type: literal
+    value: provisioning
+  - type: literal
+    value: mute-timings
+  - type: var
+    name: id
   headers:
     type: object
     fields:
-      - [X-Disable-Provenance, { type: const, value: "true" }]
+    - - X-Disable-Provenance
+      - type: const
+        value: 'true'
   body:
     type: object
     fields:
-      - [name, { type: var, name: name }]
-      - [time_intervals, { type: var, name: time_intervals }]
-
+    - - name
+      - type: var
+        name: name
+    - - time_intervals
+      - type: var
+        name: time_intervals
 mute_timing_delete:
   method: DELETE
   path:
-    - { type: literal, value: v1 }
-    - { type: literal, value: provisioning }
-    - { type: literal, value: mute-timings }
-    - { type: var, name: id }
-
-# ── Alertmanager silences ────────────────────────────────────────────────────
-
+  - type: literal
+    value: v1
+  - type: literal
+    value: provisioning
+  - type: literal
+    value: mute-timings
+  - type: var
+    name: id
 silence_query:
   method: GET
   path:
-    - { type: literal, value: alertmanager }
-    - { type: literal, value: grafana }
-    - { type: literal, value: api }
-    - { type: literal, value: v2 }
-    - { type: literal, value: silences }
-
+  - type: literal
+    value: alertmanager
+  - type: literal
+    value: grafana
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: silences
 silence_get:
   method: GET
   path:
-    - { type: literal, value: alertmanager }
-    - { type: literal, value: grafana }
-    - { type: literal, value: api }
-    - { type: literal, value: v2 }
-    - { type: literal, value: silence }
-    - { type: var, name: id }
-
+  - type: literal
+    value: alertmanager
+  - type: literal
+    value: grafana
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: silence
+  - type: var
+    name: id
 silence_create:
   method: POST
   path:
-    - { type: literal, value: alertmanager }
-    - { type: literal, value: grafana }
-    - { type: literal, value: api }
-    - { type: literal, value: v2 }
-    - { type: literal, value: silences }
+  - type: literal
+    value: alertmanager
+  - type: literal
+    value: grafana
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: silences
   body:
     type: object
     fields:
-      - [matchers, { type: var, name: matchers }]
-      - [startsAt, { type: var, name: startsAt }]
-      - [endsAt, { type: var, name: endsAt }]
-      - [createdBy, { type: var, name: createdBy }]
-      - [comment, { type: var, name: comment }]
-
+    - - matchers
+      - type: var
+        name: matchers
+    - - startsAt
+      - type: var
+        name: startsAt
+    - - endsAt
+      - type: var
+        name: endsAt
+    - - createdBy
+      - type: var
+        name: createdBy
+    - - comment
+      - type: var
+        name: comment
 silence_delete:
   method: DELETE
   path:
-    - { type: literal, value: alertmanager }
-    - { type: literal, value: grafana }
-    - { type: literal, value: api }
-    - { type: literal, value: v2 }
-    - { type: literal, value: silence }
-    - { type: var, name: id }
-
-# ── Teams ────────────────────────────────────────────────────────────────────
-
+  - type: literal
+    value: alertmanager
+  - type: literal
+    value: grafana
+  - type: literal
+    value: api
+  - type: literal
+    value: v2
+  - type: literal
+    value: silence
+  - type: var
+    name: id
 team_query:
   method: GET
   path:
-    - { type: literal, value: teams }
-    - { type: literal, value: search }
+  - type: literal
+    value: teams
+  - type: literal
+    value: search
   query:
     type: object
     fields:
-      - [query, { type: if, condition: { type: exists, var: query },
-                  then_expr: { type: var, name: query },
-                  else_expr: { type: const, value: null } }]
-      - [page, { type: if, condition: { type: exists, var: page },
-                 then_expr: { type: var, name: page },
-                 else_expr: { type: const, value: null } }]
-      - [perpage, { type: if, condition: { type: exists, var: perpage },
-                    then_expr: { type: var, name: perpage },
-                    else_expr: { type: const, value: null } }]
+    - - query
+      - type: if
+        condition:
+          type: exists
+          var: query
+        then_expr:
+          type: var
+          name: query
+        else_expr:
+          type: const
+          value: null
+    - - page
+      - type: if
+        condition:
+          type: exists
+          var: page
+        then_expr:
+          type: var
+          name: page
+        else_expr:
+          type: const
+          value: null
+    - - perpage
+      - type: if
+        condition:
+          type: exists
+          var: perpage
+        then_expr:
+          type: var
+          name: perpage
+        else_expr:
+          type: const
+          value: null
   response:
     items: teams
-
 team_get:
   method: GET
   path:
-    - { type: literal, value: teams }
-    - { type: var, name: team_id }
-
+  - type: literal
+    value: teams
+  - type: var
+    name: team_id
 team_create:
   method: POST
   path:
-    - { type: literal, value: teams }
+  - type: literal
+    value: teams
   body:
     type: object
     fields:
-      - [name, { type: var, name: name }]
-      - [email, { type: if, condition: { type: exists, var: email },
-                  then_expr: { type: var, name: email },
-                  else_expr: { type: const, value: null } }]
-
+    - - name
+      - type: var
+        name: name
+    - - email
+      - type: if
+        condition:
+          type: exists
+          var: email
+        then_expr:
+          type: var
+          name: email
+        else_expr:
+          type: const
+          value: null
 team_update:
   method: PUT
   path:
-    - { type: literal, value: teams }
-    - { type: var, name: team_id }
+  - type: literal
+    value: teams
+  - type: var
+    name: team_id
   body:
     type: object
     fields:
-      - [name, { type: if, condition: { type: exists, var: name },
-                 then_expr: { type: var, name: name },
-                 else_expr: { type: const, value: null } }]
-      - [email, { type: if, condition: { type: exists, var: email },
-                  then_expr: { type: var, name: email },
-                  else_expr: { type: const, value: null } }]
-
+    - - name
+      - type: if
+        condition:
+          type: exists
+          var: name
+        then_expr:
+          type: var
+          name: name
+        else_expr:
+          type: const
+          value: null
+    - - email
+      - type: if
+        condition:
+          type: exists
+          var: email
+        then_expr:
+          type: var
+          name: email
+        else_expr:
+          type: const
+          value: null
 team_delete:
   method: DELETE
   path:
-    - { type: literal, value: teams }
-    - { type: var, name: team_id }
-
-# ── Organization users ───────────────────────────────────────────────────────
-
+  - type: literal
+    value: teams
+  - type: var
+    name: team_id
 org_user_query:
   method: GET
   path:
-    - { type: literal, value: org }
-    - { type: literal, value: users }
-
+  - type: literal
+    value: org
+  - type: literal
+    value: users
 org_user_update:
   method: PATCH
   path:
-    - { type: literal, value: org }
-    - { type: literal, value: users }
-    - { type: var, name: user_id }
+  - type: literal
+    value: org
+  - type: literal
+    value: users
+  - type: var
+    name: user_id
   body:
     type: object
     fields:
-      - [role, { type: var, name: role }]
-
+    - - role
+      - type: var
+        name: role
 org_user_delete:
   method: DELETE
   path:
-    - { type: literal, value: org }
-    - { type: literal, value: users }
-    - { type: var, name: user_id }
-
-# ── Library elements ─────────────────────────────────────────────────────────
-
+  - type: literal
+    value: org
+  - type: literal
+    value: users
+  - type: var
+    name: user_id
 library_element_query:
   method: GET
   path:
-    - { type: literal, value: library-elements }
+  - type: literal
+    value: library-elements
   query:
     type: object
     fields:
-      - [searchString, { type: if, condition: { type: exists, var: searchString },
-                         then_expr: { type: var, name: searchString },
-                         else_expr: { type: const, value: null } }]
-      - [kind, { type: if, condition: { type: exists, var: kind },
-                 then_expr: { type: var, name: kind },
-                 else_expr: { type: const, value: null } }]
-      - [folderUIDs, { type: if, condition: { type: exists, var: folderUIDs },
-                       then_expr: { type: var, name: folderUIDs },
-                       else_expr: { type: const, value: null } }]
-      - [perPage, { type: if, condition: { type: exists, var: perPage },
-                    then_expr: { type: var, name: perPage },
-                    else_expr: { type: const, value: null } }]
+    - - searchString
+      - type: if
+        condition:
+          type: exists
+          var: searchString
+        then_expr:
+          type: var
+          name: searchString
+        else_expr:
+          type: const
+          value: null
+    - - kind
+      - type: if
+        condition:
+          type: exists
+          var: kind
+        then_expr:
+          type: var
+          name: kind
+        else_expr:
+          type: const
+          value: null
+    - - folderUIDs
+      - type: if
+        condition:
+          type: exists
+          var: folderUIDs
+        then_expr:
+          type: var
+          name: folderUIDs
+        else_expr:
+          type: const
+          value: null
+    - - perPage
+      - type: if
+        condition:
+          type: exists
+          var: perPage
+        then_expr:
+          type: var
+          name: perPage
+        else_expr:
+          type: const
+          value: null
   response:
-    items_path: [result, elements]
-
+    items_path:
+    - result
+    - elements
 library_element_get:
   method: GET
   path:
-    - { type: literal, value: library-elements }
-    - { type: var, name: id }
+  - type: literal
+    value: library-elements
+  - type: var
+    name: id
   response:
     single: true
-    items_path: [result]
-
+    items_path:
+    - result
 library_element_create:
   method: POST
   path:
-    - { type: literal, value: library-elements }
+  - type: literal
+    value: library-elements
   body:
     type: object
     fields:
-      - [name, { type: var, name: name }]
-      - [kind, { type: var, name: kind }]
-      - [model, { type: var, name: model }]
-      - [folderUid, { type: if, condition: { type: exists, var: folderUid },
-                      then_expr: { type: var, name: folderUid },
-                      else_expr: { type: const, value: null } }]
-
+    - - name
+      - type: var
+        name: name
+    - - kind
+      - type: var
+        name: kind
+    - - model
+      - type: var
+        name: model
+    - - folderUid
+      - type: if
+        condition:
+          type: exists
+          var: folderUid
+        then_expr:
+          type: var
+          name: folderUid
+        else_expr:
+          type: const
+          value: null
 library_element_update:
   method: PATCH
   path:
-    - { type: literal, value: library-elements }
-    - { type: var, name: id }
+  - type: literal
+    value: library-elements
+  - type: var
+    name: id
   body:
     type: object
     fields:
-      - [name, { type: var, name: name }]
-      - [kind, { type: var, name: kind }]
-      - [model, { type: var, name: model }]
-      - [folderUid, { type: if, condition: { type: exists, var: folderUid },
-                      then_expr: { type: var, name: folderUid },
-                      else_expr: { type: const, value: null } }]
+    - - name
+      - type: var
+        name: name
+    - - kind
+      - type: var
+        name: kind
+    - - model
+      - type: var
+        name: model
+    - - folderUid
+      - type: if
+        condition:
+          type: exists
+          var: folderUid
+        then_expr:
+          type: var
+          name: folderUid
+        else_expr:
+          type: const
+          value: null
   response:
     single: true
-    items_path: [result]
-
+    items_path:
+    - result
 library_element_delete:
   method: DELETE
   path:
-    - { type: literal, value: library-elements }
-    - { type: var, name: id }
-# Phase 3 mappings — appended to mappings.yaml (RBAC, explorers, plugins, views, render).
-
-# ── RBAC ─────────────────────────────────────────────────────────────────────
-
+  - type: literal
+    value: library-elements
+  - type: var
+    name: id
 rbac_role_query:
   method: GET
   path:
-    - { type: literal, value: access-control }
-    - { type: literal, value: roles }
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: org_user_rbac_role
+    then_expr:
+      type: const
+      value: access-control/users/{user_id}/roles
+    else_expr:
+      type: if
+      condition:
+        type: equals
+        left:
+          type: var
+          name: shelf
+        right:
+          type: const
+          value: team_rbac_role
+      then_expr:
+        type: const
+        value: access-control/teams/{team_id}/roles
+      else_expr:
+        type: const
+        value: access-control/roles
   query:
     type: object
     fields:
-      - [delegatable, { type: if, condition: { type: exists, var: delegatable_only },
-                       then_expr: { type: var, name: delegatable_only },
-                       else_expr: { type: const, value: null } }]
-
+    - - delegatable_only
+      - type: if
+        condition:
+          type: exists
+          var: delegatable_only
+        then_expr:
+          type: var
+          name: delegatable_only
+        else_expr:
+          type: const
+          value: null
+    - - user_id
+      - type: if
+        condition:
+          type: exists
+          var: user_id
+        then_expr:
+          type: var
+          name: user_id
+        else_expr:
+          type: const
+          value: null
+    - - team_id
+      - type: if
+        condition:
+          type: exists
+          var: team_id
+        then_expr:
+          type: var
+          name: team_id
+        else_expr:
+          type: const
+          value: null
 rbac_role_get:
   method: GET
   path:
-    - { type: literal, value: access-control }
-    - { type: literal, value: roles }
-    - { type: var, name: id }
-
+  - type: literal
+    value: access-control
+  - type: literal
+    value: roles
+  - type: var
+    name: id
 rbac_role_create:
   method: POST
   path:
-    - { type: literal, value: access-control }
-    - { type: literal, value: roles }
+  - type: literal
+    value: access-control
+  - type: literal
+    value: roles
   body:
     type: object
     fields:
-      - [name, { type: var, name: name }]
-      - [description, { type: if, condition: { type: exists, var: description },
-                         then_expr: { type: var, name: description },
-                         else_expr: { type: const, value: null } }]
-      - [uid, { type: if, condition: { type: exists, var: uid },
-                then_expr: { type: var, name: uid },
-                else_expr: { type: const, value: null } }]
-      - [global, { type: if, condition: { type: exists, var: global },
-                   then_expr: { type: var, name: global },
-                   else_expr: { type: const, value: null } }]
-      - [permissions, { type: var, name: permissions }]
-
+    - - name
+      - type: var
+        name: name
+    - - description
+      - type: if
+        condition:
+          type: exists
+          var: description
+        then_expr:
+          type: var
+          name: description
+        else_expr:
+          type: const
+          value: null
+    - - uid
+      - type: if
+        condition:
+          type: exists
+          var: uid
+        then_expr:
+          type: var
+          name: uid
+        else_expr:
+          type: const
+          value: null
+    - - global
+      - type: if
+        condition:
+          type: exists
+          var: global
+        then_expr:
+          type: var
+          name: global
+        else_expr:
+          type: const
+          value: null
+    - - permissions
+      - type: var
+        name: permissions
 rbac_role_update:
   method: PUT
   path:
-    - { type: literal, value: access-control }
-    - { type: literal, value: roles }
-    - { type: var, name: id }
+  - type: literal
+    value: access-control
+  - type: literal
+    value: roles
+  - type: var
+    name: id
   body:
     type: object
     fields:
-      - [uid, { type: var, name: id }]
-      - [name, { type: if, condition: { type: exists, var: name },
-                  then_expr: { type: var, name: name },
-                  else_expr: { type: const, value: null } }]
-      - [description, { type: if, condition: { type: exists, var: description },
-                         then_expr: { type: var, name: description },
-                         else_expr: { type: const, value: null } }]
-      - [version, { type: var, name: version }]
-      - [global, { type: if, condition: { type: exists, var: global },
-                   then_expr: { type: var, name: global },
-                   else_expr: { type: const, value: null } }]
-      - [permissions, { type: var, name: permissions }]
-
+    - - uid
+      - type: var
+        name: id
+    - - name
+      - type: if
+        condition:
+          type: exists
+          var: name
+        then_expr:
+          type: var
+          name: name
+        else_expr:
+          type: const
+          value: null
+    - - description
+      - type: if
+        condition:
+          type: exists
+          var: description
+        then_expr:
+          type: var
+          name: description
+        else_expr:
+          type: const
+          value: null
+    - - version
+      - type: var
+        name: version
+    - - global
+      - type: if
+        condition:
+          type: exists
+          var: global
+        then_expr:
+          type: var
+          name: global
+        else_expr:
+          type: const
+          value: null
+    - - permissions
+      - type: var
+        name: permissions
 rbac_role_delete:
   method: DELETE
   path:
-    - { type: literal, value: access-control }
-    - { type: literal, value: roles }
-    - { type: var, name: id }
+  - type: literal
+    value: access-control
+  - type: literal
+    value: roles
+  - type: var
+    name: id
   query:
     type: object
     fields:
-      - [force, { type: if, condition: { type: exists, var: force },
-                  then_expr: { type: var, name: force },
-                  else_expr: { type: const, value: null } }]
-
+    - - force
+      - type: if
+        condition:
+          type: exists
+          var: force
+        then_expr:
+          type: var
+          name: force
+        else_expr:
+          type: const
+          value: null
 rbac_role_assignment_get:
   method: GET
   path:
-    - { type: literal, value: access-control }
-    - { type: literal, value: roles }
-    - { type: var, name: id }
-    - { type: literal, value: assignments }
+  - type: literal
+    value: access-control
+  - type: literal
+    value: roles
+  - type: var
+    name: id
+  - type: literal
+    value: assignments
   response:
     single: true
-
-org_user_rbac_role_query:
-  method: GET
-  path:
-    - { type: literal, value: access-control }
-    - { type: literal, value: users }
-    - { type: var, name: user_id }
-    - { type: literal, value: roles }
-
 org_user_role_assign:
   method: POST
   path:
-    - { type: literal, value: access-control }
-    - { type: literal, value: users }
-    - { type: var, name: user_id }
-    - { type: literal, value: roles }
+  - type: literal
+    value: access-control
+  - type: literal
+    value: users
+  - type: var
+    name: user_id
+  - type: literal
+    value: roles
   body:
     type: object
     fields:
-      - [roleUid, { type: var, name: role_uid }]
-      - [global, { type: if, condition: { type: exists, var: global },
-                   then_expr: { type: var, name: global },
-                   else_expr: { type: const, value: null } }]
-
+    - - roleUid
+      - type: var
+        name: role_uid
+    - - global
+      - type: if
+        condition:
+          type: exists
+          var: global
+        then_expr:
+          type: var
+          name: global
+        else_expr:
+          type: const
+          value: null
 org_user_roles_set:
   method: PUT
   path:
-    - { type: literal, value: access-control }
-    - { type: literal, value: users }
-    - { type: var, name: user_id }
-    - { type: literal, value: roles }
+  - type: literal
+    value: access-control
+  - type: literal
+    value: users
+  - type: var
+    name: user_id
+  - type: literal
+    value: roles
   body:
     type: object
     fields:
-      - [roleUids, { type: var, name: role_uids }]
-      - [global, { type: if, condition: { type: exists, var: global },
-                   then_expr: { type: var, name: global },
-                   else_expr: { type: const, value: null } }]
-
+    - - roleUids
+      - type: var
+        name: role_uids
+    - - global
+      - type: if
+        condition:
+          type: exists
+          var: global
+        then_expr:
+          type: var
+          name: global
+        else_expr:
+          type: const
+          value: null
 org_user_role_revoke:
   method: DELETE
   path:
-    - { type: literal, value: access-control }
-    - { type: literal, value: users }
-    - { type: var, name: user_id }
-    - { type: literal, value: roles }
-    - { type: var, name: role_uid }
-
-team_rbac_role_query:
-  method: GET
-  path:
-    - { type: literal, value: access-control }
-    - { type: literal, value: teams }
-    - { type: var, name: team_id }
-    - { type: literal, value: roles }
-
+  - type: literal
+    value: access-control
+  - type: literal
+    value: users
+  - type: var
+    name: user_id
+  - type: literal
+    value: roles
+  - type: var
+    name: role_uid
 team_role_assign:
   method: POST
   path:
-    - { type: literal, value: access-control }
-    - { type: literal, value: teams }
-    - { type: var, name: team_id }
-    - { type: literal, value: roles }
+  - type: literal
+    value: access-control
+  - type: literal
+    value: teams
+  - type: var
+    name: team_id
+  - type: literal
+    value: roles
   body:
     type: object
     fields:
-      - [roleUid, { type: var, name: role_uid }]
-      - [global, { type: if, condition: { type: exists, var: global },
-                   then_expr: { type: var, name: global },
-                   else_expr: { type: const, value: null } }]
-
+    - - roleUid
+      - type: var
+        name: role_uid
+    - - global
+      - type: if
+        condition:
+          type: exists
+          var: global
+        then_expr:
+          type: var
+          name: global
+        else_expr:
+          type: const
+          value: null
 team_roles_set:
   method: PUT
   path:
-    - { type: literal, value: access-control }
-    - { type: literal, value: teams }
-    - { type: var, name: team_id }
-    - { type: literal, value: roles }
+  - type: literal
+    value: access-control
+  - type: literal
+    value: teams
+  - type: var
+    name: team_id
+  - type: literal
+    value: roles
   body:
     type: object
     fields:
-      - [roleUids, { type: var, name: role_uids }]
-      - [global, { type: if, condition: { type: exists, var: global },
-                   then_expr: { type: var, name: global },
-                   else_expr: { type: const, value: null } }]
-
+    - - roleUids
+      - type: var
+        name: role_uids
+    - - global
+      - type: if
+        condition:
+          type: exists
+          var: global
+        then_expr:
+          type: var
+          name: global
+        else_expr:
+          type: const
+          value: null
 team_role_revoke:
   method: DELETE
   path:
-    - { type: literal, value: access-control }
-    - { type: literal, value: teams }
-    - { type: var, name: team_id }
-    - { type: literal, value: roles }
-    - { type: var, name: role_uid }
-
+  - type: literal
+    value: access-control
+  - type: literal
+    value: teams
+  - type: var
+    name: team_id
+  - type: literal
+    value: roles
+  - type: var
+    name: role_uid
 resource_permission_query:
   method: GET
   path:
-    - { type: literal, value: access-control }
-    - { type: var, name: resource }
-    - { type: var, name: resource_id }
-
+  - type: literal
+    value: access-control
+  - type: var
+    name: resource
+  - type: var
+    name: resource_id
 resource_type_description_get:
   method: GET
   path:
-    - { type: literal, value: access-control }
-    - { type: var, name: resource }
-    - { type: literal, value: description }
+  - type: literal
+    value: access-control
+  - type: var
+    name: resource
+  - type: literal
+    value: description
   response:
     single: true
-
-# ── Datasource explorers ───────────────────────────────────────────────────────
-
 datasource_prometheus_label_names_query:
   method: GET
   path:
-    - { type: literal, value: datasources }
-    - { type: literal, value: uid }
-    - { type: var, name: id }
-    - { type: literal, value: resources }
-    - { type: literal, value: api }
-    - { type: literal, value: v1 }
-    - { type: literal, value: labels }
+  - type: literal
+    value: datasources
+  - type: literal
+    value: uid
+  - type: var
+    name: id
+  - type: literal
+    value: resources
+  - type: literal
+    value: api
+  - type: literal
+    value: v1
+  - type: literal
+    value: labels
   query:
     type: object
     fields:
-      - [start, { type: if, condition: { type: exists, var: from },
-                  then_expr: { type: var, name: from },
-                  else_expr: { type: const, value: null } }]
-      - [end, { type: if, condition: { type: exists, var: to },
-                then_expr: { type: var, name: to },
-                else_expr: { type: const, value: null } }]
+    - - start
+      - type: if
+        condition:
+          type: exists
+          var: from
+        then_expr:
+          type: var
+          name: from
+        else_expr:
+          type: const
+          value: null
+    - - end
+      - type: if
+        condition:
+          type: exists
+          var: to
+        then_expr:
+          type: var
+          name: to
+        else_expr:
+          type: const
+          value: null
   response:
     single: true
-
 datasource_prometheus_label_values_query:
   method: GET
   path:
-    - { type: literal, value: datasources }
-    - { type: literal, value: uid }
-    - { type: var, name: id }
-    - { type: literal, value: resources }
-    - { type: literal, value: api }
-    - { type: literal, value: v1 }
-    - { type: literal, value: label }
-    - { type: var, name: label_name }
-    - { type: literal, value: values }
+  - type: literal
+    value: datasources
+  - type: literal
+    value: uid
+  - type: var
+    name: id
+  - type: literal
+    value: resources
+  - type: literal
+    value: api
+  - type: literal
+    value: v1
+  - type: literal
+    value: label
+  - type: var
+    name: label_name
+  - type: literal
+    value: values
   query:
     type: object
     fields:
-      - [start, { type: if, condition: { type: exists, var: from },
-                  then_expr: { type: var, name: from },
-                  else_expr: { type: const, value: null } }]
-      - [end, { type: if, condition: { type: exists, var: to },
-                then_expr: { type: var, name: to },
-                else_expr: { type: const, value: null } }]
+    - - start
+      - type: if
+        condition:
+          type: exists
+          var: from
+        then_expr:
+          type: var
+          name: from
+        else_expr:
+          type: const
+          value: null
+    - - end
+      - type: if
+        condition:
+          type: exists
+          var: to
+        then_expr:
+          type: var
+          name: to
+        else_expr:
+          type: const
+          value: null
   response:
     single: true
-
 datasource_prometheus_metric_names_query:
   method: GET
   path:
-    - { type: literal, value: datasources }
-    - { type: literal, value: uid }
-    - { type: var, name: id }
-    - { type: literal, value: resources }
-    - { type: literal, value: api }
-    - { type: literal, value: v1 }
-    - { type: literal, value: label }
-    - { type: literal, value: __name__ }
-    - { type: literal, value: values }
+  - type: literal
+    value: datasources
+  - type: literal
+    value: uid
+  - type: var
+    name: id
+  - type: literal
+    value: resources
+  - type: literal
+    value: api
+  - type: literal
+    value: v1
+  - type: literal
+    value: label
+  - type: literal
+    value: __name__
+  - type: literal
+    value: values
   query:
     type: object
     fields:
-      - [start, { type: if, condition: { type: exists, var: from },
-                  then_expr: { type: var, name: from },
-                  else_expr: { type: const, value: null } }]
-      - [end, { type: if, condition: { type: exists, var: to },
-                then_expr: { type: var, name: to },
-                else_expr: { type: const, value: null } }]
-      - - match[]
-        - type: if
-          condition: { type: exists, var: regex }
-          then_expr: { type: var, name: regex }
-          else_expr: { type: const, value: null }
+    - - start
+      - type: if
+        condition:
+          type: exists
+          var: from
+        then_expr:
+          type: var
+          name: from
+        else_expr:
+          type: const
+          value: null
+    - - end
+      - type: if
+        condition:
+          type: exists
+          var: to
+        then_expr:
+          type: var
+          name: to
+        else_expr:
+          type: const
+          value: null
+    - - match[]
+      - type: if
+        condition:
+          type: exists
+          var: regex
+        then_expr:
+          type: var
+          name: regex
+        else_expr:
+          type: const
+          value: null
   response:
     single: true
-
 datasource_loki_label_names_query:
   method: GET
   path:
-    - { type: literal, value: datasources }
-    - { type: literal, value: uid }
-    - { type: var, name: id }
-    - { type: literal, value: proxy }
-    - { type: literal, value: loki }
-    - { type: literal, value: api }
-    - { type: literal, value: v1 }
-    - { type: literal, value: labels }
+  - type: literal
+    value: datasources
+  - type: literal
+    value: uid
+  - type: var
+    name: id
+  - type: literal
+    value: proxy
+  - type: literal
+    value: loki
+  - type: literal
+    value: api
+  - type: literal
+    value: v1
+  - type: literal
+    value: labels
   query:
     type: object
     fields:
-      - [start, { type: if, condition: { type: exists, var: from },
-                  then_expr: { type: var, name: from },
-                  else_expr: { type: const, value: null } }]
-      - [end, { type: if, condition: { type: exists, var: to },
-                then_expr: { type: var, name: to },
-                else_expr: { type: const, value: null } }]
+    - - start
+      - type: if
+        condition:
+          type: exists
+          var: from
+        then_expr:
+          type: var
+          name: from
+        else_expr:
+          type: const
+          value: null
+    - - end
+      - type: if
+        condition:
+          type: exists
+          var: to
+        then_expr:
+          type: var
+          name: to
+        else_expr:
+          type: const
+          value: null
   response:
     single: true
-
 datasource_loki_label_values_query:
   method: GET
   path:
-    - { type: literal, value: datasources }
-    - { type: literal, value: uid }
-    - { type: var, name: id }
-    - { type: literal, value: proxy }
-    - { type: literal, value: loki }
-    - { type: literal, value: api }
-    - { type: literal, value: v1 }
-    - { type: literal, value: label }
-    - { type: var, name: label_name }
-    - { type: literal, value: values }
+  - type: literal
+    value: datasources
+  - type: literal
+    value: uid
+  - type: var
+    name: id
+  - type: literal
+    value: proxy
+  - type: literal
+    value: loki
+  - type: literal
+    value: api
+  - type: literal
+    value: v1
+  - type: literal
+    value: label
+  - type: var
+    name: label_name
+  - type: literal
+    value: values
   query:
     type: object
     fields:
-      - [start, { type: if, condition: { type: exists, var: from },
-                  then_expr: { type: var, name: from },
-                  else_expr: { type: const, value: null } }]
-      - [end, { type: if, condition: { type: exists, var: to },
-                then_expr: { type: var, name: to },
-                else_expr: { type: const, value: null } }]
+    - - start
+      - type: if
+        condition:
+          type: exists
+          var: from
+        then_expr:
+          type: var
+          name: from
+        else_expr:
+          type: const
+          value: null
+    - - end
+      - type: if
+        condition:
+          type: exists
+          var: to
+        then_expr:
+          type: var
+          name: to
+        else_expr:
+          type: const
+          value: null
   response:
     single: true
-
 datasource_loki_patterns_query:
   method: GET
   path:
-    - { type: literal, value: datasources }
-    - { type: literal, value: uid }
-    - { type: var, name: id }
-    - { type: literal, value: proxy }
-    - { type: literal, value: loki }
-    - { type: literal, value: api }
-    - { type: literal, value: v1 }
-    - { type: literal, value: patterns }
+  - type: literal
+    value: datasources
+  - type: literal
+    value: uid
+  - type: var
+    name: id
+  - type: literal
+    value: proxy
+  - type: literal
+    value: loki
+  - type: literal
+    value: api
+  - type: literal
+    value: v1
+  - type: literal
+    value: patterns
   query:
     type: object
     fields:
-      - [query, { type: var, name: logql }]
-      - [start, { type: if, condition: { type: exists, var: from },
-                  then_expr: { type: var, name: from },
-                  else_expr: { type: const, value: null } }]
-      - [end, { type: if, condition: { type: exists, var: to },
-                then_expr: { type: var, name: to },
-                else_expr: { type: const, value: null } }]
-      - [step, { type: if, condition: { type: exists, var: step },
-                 then_expr: { type: var, name: step },
-                 else_expr: { type: const, value: null } }]
+    - - query
+      - type: var
+        name: logql
+    - - start
+      - type: if
+        condition:
+          type: exists
+          var: from
+        then_expr:
+          type: var
+          name: from
+        else_expr:
+          type: const
+          value: null
+    - - end
+      - type: if
+        condition:
+          type: exists
+          var: to
+        then_expr:
+          type: var
+          name: to
+        else_expr:
+          type: const
+          value: null
+    - - step
+      - type: if
+        condition:
+          type: exists
+          var: step
+        then_expr:
+          type: var
+          name: step
+        else_expr:
+          type: const
+          value: null
   response:
     single: true
-
 datasource_loki_stats_query:
   method: GET
   path:
-    - { type: literal, value: datasources }
-    - { type: literal, value: uid }
-    - { type: var, name: id }
-    - { type: literal, value: proxy }
-    - { type: literal, value: loki }
-    - { type: literal, value: api }
-    - { type: literal, value: v1 }
-    - { type: literal, value: index }
-    - { type: literal, value: stats }
+  - type: literal
+    value: datasources
+  - type: literal
+    value: uid
+  - type: var
+    name: id
+  - type: literal
+    value: proxy
+  - type: literal
+    value: loki
+  - type: literal
+    value: api
+  - type: literal
+    value: v1
+  - type: literal
+    value: index
+  - type: literal
+    value: stats
   query:
     type: object
     fields:
-      - [query, { type: var, name: logql }]
-      - [start, { type: if, condition: { type: exists, var: from },
-                  then_expr: { type: var, name: from },
-                  else_expr: { type: const, value: null } }]
-      - [end, { type: if, condition: { type: exists, var: to },
-                then_expr: { type: var, name: to },
-                else_expr: { type: const, value: null } }]
+    - - query
+      - type: var
+        name: logql
+    - - start
+      - type: if
+        condition:
+          type: exists
+          var: from
+        then_expr:
+          type: var
+          name: from
+        else_expr:
+          type: const
+          value: null
+    - - end
+      - type: if
+        condition:
+          type: exists
+          var: to
+        then_expr:
+          type: var
+          name: to
+        else_expr:
+          type: const
+          value: null
   response:
     single: true
-
 datasource_clickhouse_query_run:
   method: POST
   path:
-    - { type: literal, value: ds }
-    - { type: literal, value: query }
+  - type: literal
+    value: ds
+  - type: literal
+    value: query
   body:
     type: object
     fields:
-      - [queries, { type: array, elements: [
-          { type: object, fields: [
-            [refId, { type: const, value: "A" }],
-            [datasource, { type: object, fields: [
-              [type, { type: var, name: ds_type }],
-              [uid, { type: var, name: id }]
-            ]}],
-            [rawSql, { type: var, name: query }],
-            [format, { type: const, value: 1 }]
-          ]}
-        ]}]
-      - [from, { type: if, condition: { type: exists, var: from },
-                 then_expr: { type: var, name: from },
-                 else_expr: { type: const, value: null } }]
-      - [to, { type: if, condition: { type: exists, var: to },
-               then_expr: { type: var, name: to },
-               else_expr: { type: const, value: null } }]
+    - - queries
+      - type: array
+        elements:
+        - type: object
+          fields:
+          - - refId
+            - type: const
+              value: A
+          - - datasource
+            - type: object
+              fields:
+              - - type
+                - type: var
+                  name: ds_type
+              - - uid
+                - type: var
+                  name: id
+          - - rawSql
+            - type: var
+              name: query
+          - - format
+            - type: const
+              value: 1
+    - - from
+      - type: if
+        condition:
+          type: exists
+          var: from
+        then_expr:
+          type: var
+          name: from
+        else_expr:
+          type: const
+          value: null
+    - - to
+      - type: if
+        condition:
+          type: exists
+          var: to
+        then_expr:
+          type: var
+          name: to
+        else_expr:
+          type: const
+          value: null
   response:
     single: true
-
 datasource_clickhouse_table_query:
   method: POST
   path:
-    - { type: literal, value: ds }
-    - { type: literal, value: query }
+  - type: literal
+    value: ds
+  - type: literal
+    value: query
   body:
     type: object
     fields:
-      - [queries, { type: array, elements: [
-          { type: object, fields: [
-            [refId, { type: const, value: "A" }],
-            [datasource, { type: object, fields: [
-              [type, { type: var, name: ds_type }],
-              [uid, { type: var, name: id }]
-            ]}],
-            [rawSql, { type: const, value: "SELECT database, name, engine, total_rows, total_bytes FROM system.tables WHERE database NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema') ORDER BY database, name LIMIT 500" }],
-            [format, { type: const, value: 1 }]
-          ]}
-        ]}]
+    - - queries
+      - type: array
+        elements:
+        - type: object
+          fields:
+          - - refId
+            - type: const
+              value: A
+          - - datasource
+            - type: object
+              fields:
+              - - type
+                - type: var
+                  name: ds_type
+              - - uid
+                - type: var
+                  name: id
+          - - rawSql
+            - type: const
+              value: SELECT database, name, engine, total_rows, total_bytes FROM system.tables WHERE database NOT IN ('system',
+                'INFORMATION_SCHEMA', 'information_schema') ORDER BY database, name LIMIT 500
+          - - format
+            - type: const
+              value: 1
   response:
     single: true
-
 datasource_clickhouse_column_query:
   method: POST
   path:
-    - { type: literal, value: ds }
-    - { type: literal, value: query }
+  - type: literal
+    value: ds
+  - type: literal
+    value: query
   body:
     type: object
     fields:
-      - [queries, { type: array, elements: [
-          { type: object, fields: [
-            [refId, { type: const, value: "A" }],
-            [datasource, { type: object, fields: [
-              [type, { type: var, name: ds_type }],
-              [uid, { type: var, name: id }]
-            ]}],
-            [rawSql, { type: format, template: "SELECT name, type, default_kind AS default_type, comment FROM system.columns WHERE database = coalesce(nullIf('{database}', ''), 'default') AND table = '{table}' ORDER BY position LIMIT 1000",
-              vars: { database: { type: if, condition: { type: exists, var: database },
-                                   then_expr: { type: var, name: database },
-                                   else_expr: { type: const, value: "" } },
-                      table: { type: var, name: table } } }],
-            [format, { type: const, value: 1 }]
-          ]}
-        ]}]
+    - - queries
+      - type: array
+        elements:
+        - type: object
+          fields:
+          - - refId
+            - type: const
+              value: A
+          - - datasource
+            - type: object
+              fields:
+              - - type
+                - type: var
+                  name: ds_type
+              - - uid
+                - type: var
+                  name: id
+          - - rawSql
+            - type: format
+              template: SELECT name, type, default_kind AS default_type, comment FROM system.columns WHERE database = coalesce(nullIf('{database}',
+                ''), 'default') AND table = '{table}' ORDER BY position LIMIT 1000
+              vars:
+                database:
+                  type: if
+                  condition:
+                    type: exists
+                    var: database
+                  then_expr:
+                    type: var
+                    name: database
+                  else_expr:
+                    type: const
+                    value: ''
+                table:
+                  type: var
+                  name: table
+          - - format
+            - type: const
+              value: 1
   response:
     single: true
-
-# ── Navigation / render / views ──────────────────────────────────────────────
-
 frontend_settings_query:
   method: GET
   path:
-    - { type: literal, value: frontend }
-    - { type: literal, value: settings }
+  - type: literal
+    value: frontend
+  - type: literal
+    value: settings
   response:
     single: true
-
 deeplink_generate_query:
   transport: view
   view: deeplink_generate
-
 panel_query_run:
   method: POST
   path:
-    - { type: literal, value: ds }
-    - { type: literal, value: query }
+  - type: literal
+    value: ds
+  - type: literal
+    value: query
   body:
     type: object
     fields:
-      - [queries, { type: array, elements: [
-          { type: object, fields: [
-            [refId, { type: const, value: "A" }],
-            [datasource, { type: object, fields: [
-              [type, { type: var, name: ds_type }],
-              [uid, { type: var, name: id }]
-            ]}],
-            [expr, { type: var, name: expr }],
-            [instant, { type: if, condition: { type: exists, var: instant },
-                         then_expr: { type: var, name: instant },
-                         else_expr: { type: const, value: true } }]
-          ]}
-        ]}]
-      - [from, { type: if, condition: { type: exists, var: from },
-                 then_expr: { type: var, name: from },
-                 else_expr: { type: const, value: null } }]
-      - [to, { type: if, condition: { type: exists, var: to },
-               then_expr: { type: var, name: to },
-               else_expr: { type: const, value: null } }]
+    - - queries
+      - type: array
+        elements:
+        - type: object
+          fields:
+          - - refId
+            - type: const
+              value: A
+          - - datasource
+            - type: object
+              fields:
+              - - type
+                - type: var
+                  name: ds_type
+              - - uid
+                - type: var
+                  name: id
+          - - expr
+            - type: var
+              name: expr
+          - - instant
+            - type: if
+              condition:
+                type: exists
+                var: instant
+              then_expr:
+                type: var
+                name: instant
+              else_expr:
+                type: const
+                value: true
+    - - from
+      - type: if
+        condition:
+          type: exists
+          var: from
+        then_expr:
+          type: var
+          name: from
+        else_expr:
+          type: const
+          value: null
+    - - to
+      - type: if
+        condition:
+          type: exists
+          var: to
+        then_expr:
+          type: var
+          name: to
+        else_expr:
+          type: const
+          value: null
   response:
     single: true
-
 panel_render_query:
   method: GET
   path:
-    - { type: literal, value: .. }
-    - { type: literal, value: .. }
-    - { type: literal, value: render }
-    - { type: literal, value: d-solo }
-    - { type: var, name: dashboard_uid }
+  - type: literal
+    value: ..
+  - type: literal
+    value: ..
+  - type: literal
+    value: render
+  - type: literal
+    value: d-solo
+  - type: var
+    name: dashboard_uid
   query:
     type: object
     fields:
-      - [panelId, { type: if, condition: { type: exists, var: panel_id },
-                    then_expr: { type: var, name: panel_id },
-                    else_expr: { type: const, value: null } }]
-      - [width, { type: if, condition: { type: exists, var: width },
-                  then_expr: { type: var, name: width },
-                  else_expr: { type: const, value: null } }]
-      - [height, { type: if, condition: { type: exists, var: height },
-                   then_expr: { type: var, name: height },
-                   else_expr: { type: const, value: null } }]
-      - [from, { type: if, condition: { type: exists, var: from },
-                 then_expr: { type: var, name: from },
-                 else_expr: { type: const, value: null } }]
-      - [to, { type: if, condition: { type: exists, var: to },
-               then_expr: { type: var, name: to },
-               else_expr: { type: const, value: null } }]
-      - [theme, { type: if, condition: { type: exists, var: theme },
-                   then_expr: { type: var, name: theme },
-                   else_expr: { type: const, value: null } }]
-      - [kiosk, { type: const, value: "true" }]
+    - - panelId
+      - type: if
+        condition:
+          type: exists
+          var: panel_id
+        then_expr:
+          type: var
+          name: panel_id
+        else_expr:
+          type: const
+          value: null
+    - - width
+      - type: if
+        condition:
+          type: exists
+          var: width
+        then_expr:
+          type: var
+          name: width
+        else_expr:
+          type: const
+          value: null
+    - - height
+      - type: if
+        condition:
+          type: exists
+          var: height
+        then_expr:
+          type: var
+          name: height
+        else_expr:
+          type: const
+          value: null
+    - - from
+      - type: if
+        condition:
+          type: exists
+          var: from
+        then_expr:
+          type: var
+          name: from
+        else_expr:
+          type: const
+          value: null
+    - - to
+      - type: if
+        condition:
+          type: exists
+          var: to
+        then_expr:
+          type: var
+          name: to
+        else_expr:
+          type: const
+          value: null
+    - - theme
+      - type: if
+        condition:
+          type: exists
+          var: theme
+        then_expr:
+          type: var
+          name: theme
+        else_expr:
+          type: const
+          value: null
+    - - kiosk
+      - type: const
+        value: 'true'
   headers:
     type: object
     fields:
-      - [Accept, { type: const, value: "image/*" }]
-
-# ── Sift (grafana-ml-app) ──────────────────────────────────────────────────────
-
+    - - Accept
+      - type: const
+        value: image/*
 sift_investigation_query:
   method: GET
   path:
-    - { type: literal, value: plugins }
-    - { type: literal, value: grafana-ml-app }
-    - { type: literal, value: resources }
-    - { type: literal, value: sift }
-    - { type: literal, value: api }
-    - { type: literal, value: v1 }
-    - { type: literal, value: investigations }
+  - type: literal
+    value: plugins
+  - type: literal
+    value: grafana-ml-app
+  - type: literal
+    value: resources
+  - type: literal
+    value: sift
+  - type: literal
+    value: api
+  - type: literal
+    value: v1
+  - type: literal
+    value: investigations
   query:
     type: object
     fields:
-      - [limit, { type: if, condition: { type: exists, var: limit },
-                  then_expr: { type: var, name: limit },
-                  else_expr: { type: const, value: null } }]
-
+    - - limit
+      - type: if
+        condition:
+          type: exists
+          var: limit
+        then_expr:
+          type: var
+          name: limit
+        else_expr:
+          type: const
+          value: null
 sift_investigation_get:
   method: GET
   path:
-    - { type: literal, value: plugins }
-    - { type: literal, value: grafana-ml-app }
-    - { type: literal, value: resources }
-    - { type: literal, value: sift }
-    - { type: literal, value: api }
-    - { type: literal, value: v1 }
-    - { type: literal, value: investigations }
-    - { type: var, name: id }
-
+  - type: literal
+    value: plugins
+  - type: literal
+    value: grafana-ml-app
+  - type: literal
+    value: resources
+  - type: literal
+    value: sift
+  - type: literal
+    value: api
+  - type: literal
+    value: v1
+  - type: literal
+    value: investigations
+  - type: var
+    name: id
 sift_investigation_create:
   method: POST
   path:
-    - { type: literal, value: plugins }
-    - { type: literal, value: grafana-ml-app }
-    - { type: literal, value: resources }
-    - { type: literal, value: sift }
-    - { type: literal, value: api }
-    - { type: literal, value: v1 }
-    - { type: literal, value: investigations }
+  - type: literal
+    value: plugins
+  - type: literal
+    value: grafana-ml-app
+  - type: literal
+    value: resources
+  - type: literal
+    value: sift
+  - type: literal
+    value: api
+  - type: literal
+    value: v1
+  - type: literal
+    value: investigations
   body:
     type: object
     fields:
-      - [name, { type: var, name: name }]
-      - [labels, { type: var, name: labels }]
-      - [start, { type: if, condition: { type: exists, var: start },
-                   then_expr: { type: var, name: start },
-                   else_expr: { type: const, value: null } }]
-      - [end, { type: if, condition: { type: exists, var: end },
-                 then_expr: { type: var, name: end },
-                 else_expr: { type: const, value: null } }]
-      - [checks, { type: if, condition: { type: exists, var: checks },
-                   then_expr: { type: var, name: checks },
-                   else_expr: { type: const, value: null } }]
-
+    - - name
+      - type: var
+        name: name
+    - - labels
+      - type: var
+        name: labels
+    - - start
+      - type: if
+        condition:
+          type: exists
+          var: start
+        then_expr:
+          type: var
+          name: start
+        else_expr:
+          type: const
+          value: null
+    - - end
+      - type: if
+        condition:
+          type: exists
+          var: end
+        then_expr:
+          type: var
+          name: end
+        else_expr:
+          type: const
+          value: null
+    - - checks
+      - type: if
+        condition:
+          type: exists
+          var: checks
+        then_expr:
+          type: var
+          name: checks
+        else_expr:
+          type: const
+          value: null
 sift_analysis_query:
   method: GET
   path:
-    - { type: literal, value: plugins }
-    - { type: literal, value: grafana-ml-app }
-    - { type: literal, value: resources }
-    - { type: literal, value: sift }
-    - { type: literal, value: api }
-    - { type: literal, value: v1 }
-    - { type: literal, value: investigations }
-    - { type: var, name: investigation_id }
-    - { type: literal, value: analyses }
-
-# ── Incident (grafana-irm-app RPC) ───────────────────────────────────────────
-
+  - type: literal
+    value: plugins
+  - type: literal
+    value: grafana-ml-app
+  - type: literal
+    value: resources
+  - type: literal
+    value: sift
+  - type: literal
+    value: api
+  - type: literal
+    value: v1
+  - type: literal
+    value: investigations
+  - type: var
+    name: investigation_id
+  - type: literal
+    value: analyses
 incident_query:
   method: POST
   path:
-    - { type: literal, value: plugins }
-    - { type: literal, value: grafana-irm-app }
-    - { type: literal, value: resources }
-    - { type: literal, value: api }
-    - { type: literal, value: v1 }
-    - { type: literal, value: IncidentsService.QueryIncidentPreviews }
+  - type: literal
+    value: plugins
+  - type: literal
+    value: grafana-irm-app
+  - type: literal
+    value: resources
+  - type: literal
+    value: api
+  - type: literal
+    value: v1
+  - type: literal
+    value: IncidentsService.QueryIncidentPreviews
   body:
     type: object
     fields:
-      - [query, { type: object, fields: [
-          [limit, { type: if, condition: { type: exists, var: limit },
-                    then_expr: { type: var, name: limit },
-                    else_expr: { type: const, value: 10 } }],
-          [orderDirection, { type: const, value: DESC }],
-          [queryString, { type: if, condition: { type: exists, var: query_string },
-                           then_expr: { type: var, name: query_string },
-                           else_expr: { type: const, value: null } }]
-        ]}]
+    - - query
+      - type: object
+        fields:
+        - - limit
+          - type: if
+            condition:
+              type: exists
+              var: limit
+            then_expr:
+              type: var
+              name: limit
+            else_expr:
+              type: const
+              value: 10
+        - - orderDirection
+          - type: const
+            value: DESC
+        - - queryString
+          - type: if
+            condition:
+              type: exists
+              var: query_string
+            then_expr:
+              type: var
+              name: query_string
+            else_expr:
+              type: const
+              value: null
   response:
-    items_path: [incidentPreviews]
-
+    items_path:
+    - incidentPreviews
 incident_get:
   method: POST
   path:
-    - { type: literal, value: plugins }
-    - { type: literal, value: grafana-irm-app }
-    - { type: literal, value: resources }
-    - { type: literal, value: api }
-    - { type: literal, value: v1 }
-    - { type: literal, value: IncidentsService.GetIncident }
+  - type: literal
+    value: plugins
+  - type: literal
+    value: grafana-irm-app
+  - type: literal
+    value: resources
+  - type: literal
+    value: api
+  - type: literal
+    value: v1
+  - type: literal
+    value: IncidentsService.GetIncident
   body:
     type: object
     fields:
-      - [incidentID, { type: var, name: id }]
+    - - incidentID
+      - type: var
+        name: id
   response:
     single: true
-    items_path: [incident]
-
+    items_path:
+    - incident
 incident_create:
   method: POST
   path:
-    - { type: literal, value: plugins }
-    - { type: literal, value: grafana-irm-app }
-    - { type: literal, value: resources }
-    - { type: literal, value: api }
-    - { type: literal, value: v1 }
-    - { type: literal, value: IncidentsService.CreateIncident }
+  - type: literal
+    value: plugins
+  - type: literal
+    value: grafana-irm-app
+  - type: literal
+    value: resources
+  - type: literal
+    value: api
+  - type: literal
+    value: v1
+  - type: literal
+    value: IncidentsService.CreateIncident
   body:
     type: object
     fields:
-      - [title, { type: var, name: title }]
-      - [severity, { type: var, name: severity }]
-      - [roomPrefix, { type: var, name: room_prefix }]
-      - [isDrill, { type: if, condition: { type: exists, var: is_drill },
-                    then_expr: { type: var, name: is_drill },
-                    else_expr: { type: const, value: null } }]
-      - [labels, { type: if, condition: { type: exists, var: labels },
-                    then_expr: { type: var, name: labels },
-                    else_expr: { type: const, value: null } }]
+    - - title
+      - type: var
+        name: title
+    - - severity
+      - type: var
+        name: severity
+    - - roomPrefix
+      - type: var
+        name: room_prefix
+    - - isDrill
+      - type: if
+        condition:
+          type: exists
+          var: is_drill
+        then_expr:
+          type: var
+          name: is_drill
+        else_expr:
+          type: const
+          value: null
+    - - labels
+      - type: if
+        condition:
+          type: exists
+          var: labels
+        then_expr:
+          type: var
+          name: labels
+        else_expr:
+          type: const
+          value: null
   response:
     single: true
-    items_path: [incident]
-
+    items_path:
+    - incident
 incident_activity_create:
   method: POST
   path:
-    - { type: literal, value: plugins }
-    - { type: literal, value: grafana-irm-app }
-    - { type: literal, value: resources }
-    - { type: literal, value: api }
-    - { type: literal, value: v1 }
-    - { type: literal, value: ActivityService.AddActivity }
+  - type: literal
+    value: plugins
+  - type: literal
+    value: grafana-irm-app
+  - type: literal
+    value: resources
+  - type: literal
+    value: api
+  - type: literal
+    value: v1
+  - type: literal
+    value: ActivityService.AddActivity
   body:
     type: object
     fields:
-      - [incidentID, { type: var, name: incident_id }]
-      - [activityKind, { type: const, value: userNote }]
-      - [body, { type: var, name: body }]
-      - [eventTime, { type: if, condition: { type: exists, var: event_time },
-                      then_expr: { type: var, name: event_time },
-                      else_expr: { type: const, value: null } }]
+    - - incidentID
+      - type: var
+        name: incident_id
+    - - activityKind
+      - type: const
+        value: userNote
+    - - body
+      - type: var
+        name: body
+    - - eventTime
+      - type: if
+        condition:
+          type: exists
+          var: event_time
+        then_expr:
+          type: var
+          name: event_time
+        else_expr:
+          type: const
+          value: null
   response:
     single: true
-    items_path: [activityItem]
-
-# ── OnCall (grafana-irm-app proxy) ───────────────────────────────────────────
-
+    items_path:
+    - activityItem
 oncall_schedule_query:
   method: GET
   path:
-    - { type: literal, value: plugins }
-    - { type: literal, value: grafana-irm-app }
-    - { type: literal, value: resources }
-    - { type: literal, value: schedules }
+  - type: literal
+    value: plugins
+  - type: literal
+    value: grafana-irm-app
+  - type: literal
+    value: resources
+  - type: literal
+    value: schedules
   query:
     type: object
     fields:
-      - [team, { type: if, condition: { type: exists, var: team_id },
-                 then_expr: { type: var, name: team_id },
-                 else_expr: { type: const, value: null } }]
-      - [page, { type: if, condition: { type: exists, var: page },
-                 then_expr: { type: var, name: page },
-                 else_expr: { type: const, value: null } }]
+    - - team
+      - type: if
+        condition:
+          type: exists
+          var: team_id
+        then_expr:
+          type: var
+          name: team_id
+        else_expr:
+          type: const
+          value: null
+    - - page
+      - type: if
+        condition:
+          type: exists
+          var: page
+        then_expr:
+          type: var
+          name: page
+        else_expr:
+          type: const
+          value: null
   response:
     items: results
-
 oncall_shift_get:
   method: GET
   path:
-    - { type: literal, value: plugins }
-    - { type: literal, value: grafana-irm-app }
-    - { type: literal, value: resources }
-    - { type: literal, value: oncall_shifts }
-    - { type: var, name: id }
-
+  - type: literal
+    value: plugins
+  - type: literal
+    value: grafana-irm-app
+  - type: literal
+    value: resources
+  - type: literal
+    value: oncall_shifts
+  - type: var
+    name: id
 oncall_user_query:
   method: GET
   path:
-    - { type: literal, value: plugins }
-    - { type: literal, value: grafana-irm-app }
-    - { type: literal, value: resources }
-    - { type: literal, value: users }
+  - type: literal
+    value: plugins
+  - type: literal
+    value: grafana-irm-app
+  - type: literal
+    value: resources
+  - type: literal
+    value: users
   query:
     type: object
     fields:
-      - [search, { type: if, condition: { type: exists, var: username },
-                   then_expr: { type: var, name: username },
-                   else_expr: { type: const, value: null } }]
-      - [page, { type: if, condition: { type: exists, var: page },
-                 then_expr: { type: var, name: page },
-                 else_expr: { type: const, value: null } }]
+    - - search
+      - type: if
+        condition:
+          type: exists
+          var: username
+        then_expr:
+          type: var
+          name: username
+        else_expr:
+          type: const
+          value: null
+    - - page
+      - type: if
+        condition:
+          type: exists
+          var: page
+        then_expr:
+          type: var
+          name: page
+        else_expr:
+          type: const
+          value: null
   response:
     items: results
-
 oncall_team_query:
   method: GET
   path:
-    - { type: literal, value: plugins }
-    - { type: literal, value: grafana-irm-app }
-    - { type: literal, value: resources }
-    - { type: literal, value: teams }
+  - type: literal
+    value: plugins
+  - type: literal
+    value: grafana-irm-app
+  - type: literal
+    value: resources
+  - type: literal
+    value: teams
   query:
     type: object
     fields:
-      - [page, { type: if, condition: { type: exists, var: page },
-                 then_expr: { type: var, name: page },
-                 else_expr: { type: const, value: null } }]
+    - - page
+      - type: if
+        condition:
+          type: exists
+          var: page
+        then_expr:
+          type: var
+          name: page
+        else_expr:
+          type: const
+          value: null
   response:
     items: results
-
 oncall_alert_group_query:
   method: GET
   path:
-    - { type: literal, value: plugins }
-    - { type: literal, value: grafana-irm-app }
-    - { type: literal, value: resources }
-    - { type: literal, value: alertgroups }
+  - type: literal
+    value: plugins
+  - type: literal
+    value: grafana-irm-app
+  - type: literal
+    value: resources
+  - type: literal
+    value: alertgroups
   query:
     type: object
     fields:
-      - - status
-        - type: if
+    - - status
+      - type: if
+        condition:
+          type: equals
+          left:
+            type: var
+            name: state
+          right:
+            type: const
+            value: new
+        then_expr:
+          type: const
+          value: '0'
+        else_expr:
+          type: if
           condition:
             type: equals
-            left: { type: var, name: state }
-            right: { type: const, value: new }
-          then_expr: { type: const, value: "0" }
+            left:
+              type: var
+              name: state
+            right:
+              type: const
+              value: acknowledged
+          then_expr:
+            type: const
+            value: '1'
           else_expr:
             type: if
             condition:
               type: equals
-              left: { type: var, name: state }
-              right: { type: const, value: acknowledged }
-            then_expr: { type: const, value: "1" }
+              left:
+                type: var
+                name: state
+              right:
+                type: const
+                value: resolved
+            then_expr:
+              type: const
+              value: '2'
             else_expr:
               type: if
               condition:
                 type: equals
-                left: { type: var, name: state }
-                right: { type: const, value: resolved }
-              then_expr: { type: const, value: "2" }
+                left:
+                  type: var
+                  name: state
+                right:
+                  type: const
+                  value: silenced
+              then_expr:
+                type: const
+                value: '3'
               else_expr:
-                type: if
-                condition:
-                  type: equals
-                  left: { type: var, name: state }
-                  right: { type: const, value: silenced }
-                then_expr: { type: const, value: "3" }
-                else_expr: { type: const, value: null }
-      - [team, { type: if, condition: { type: exists, var: team_id },
-                 then_expr: { type: var, name: team_id },
-                 else_expr: { type: const, value: null } }]
-      - [search, { type: if, condition: { type: exists, var: name },
-                    then_expr: { type: var, name: name },
-                    else_expr: { type: const, value: null } }]
-      - [page, { type: if, condition: { type: exists, var: page },
-                 then_expr: { type: var, name: page },
-                 else_expr: { type: const, value: null } }]
+                type: const
+                value: null
+    - - team
+      - type: if
+        condition:
+          type: exists
+          var: team_id
+        then_expr:
+          type: var
+          name: team_id
+        else_expr:
+          type: const
+          value: null
+    - - search
+      - type: if
+        condition:
+          type: exists
+          var: name
+        then_expr:
+          type: var
+          name: name
+        else_expr:
+          type: const
+          value: null
+    - - page
+      - type: if
+        condition:
+          type: exists
+          var: page
+        then_expr:
+          type: var
+          name: page
+        else_expr:
+          type: const
+          value: null
   response:
     items: results
-
 oncall_alert_group_get:
   method: GET
   path:
-    - { type: literal, value: plugins }
-    - { type: literal, value: grafana-irm-app }
-    - { type: literal, value: resources }
-    - { type: literal, value: alertgroups }
-    - { type: var, name: id }
+  - type: literal
+    value: plugins
+  - type: literal
+    value: grafana-irm-app
+  - type: literal
+    value: resources
+  - type: literal
+    value: alertgroups
+  - type: var
+    name: id

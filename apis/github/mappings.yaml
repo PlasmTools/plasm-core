@@ -1,40 +1,40 @@
-# GitHub REST API — CML mappings (HTTP wiring). Domain model in domain.yaml.
-#
-# Base URL: GitHub REST (api.github.com origin — set the HTTPS base with --backend).
-#
-# Compound-key path variables (owner, repo, number) are injected into the CML
-# environment automatically from Ref.key_vars when capabilities that carry a
-# compound Ref are executed. Plain-scope params (owner, repo on query/search
-# capabilities) resolve from the predicate environment as usual.
-#
-# Pagination: GitHub list endpoints use per_page + page with Link: rel=next
-# header. We use offset_limit-style Counter params (page counter + fixed
-# per_page) and stop on short-page heuristic since GitHub doesn't return a
-# `next` URL field in the body (only in the Link header). Bare-list response
-# because GitHub list endpoints return plain JSON arrays.
-#
-# Search endpoints return {"total_count": N, "items": [...]} — use items_list
-# response preset.
-
-# ── Repository ──────────────────────────────────────────────────────────────
-
 repo_search:
   method: GET
   path:
-    - { type: literal, value: search }
-    - { type: literal, value: repositories }
+  - type: literal
+    value: search
+  - type: literal
+    value: repositories
   response:
     items: items
   query:
     type: object
     fields:
-      - [q, { type: var, name: q }]
-      - [sort, { type: if, condition: { type: exists, var: sort },
-                 then_expr: { type: var, name: sort },
-                 else_expr: { type: const, value: null } }]
-      - [order, { type: if, condition: { type: exists, var: order },
-                  then_expr: { type: var, name: order },
-                  else_expr: { type: const, value: null } }]
+    - - q
+      - type: var
+        name: q
+    - - sort
+      - type: if
+        condition:
+          type: exists
+          var: sort
+        then_expr:
+          type: var
+          name: sort
+        else_expr:
+          type: const
+          value: null
+    - - order
+      - type: if
+        condition:
+          type: exists
+          var: order
+        then_expr:
+          type: var
+          name: order
+        else_expr:
+          type: const
+          value: null
   pagination:
     params:
       page:
@@ -47,51 +47,97 @@ repo_search:
 user_repos_query:
   method: GET
   path:
-    - { type: literal, value: users }
-    - { type: var, name: username }
-    - { type: literal, value: repos }
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: auth_user_repos
+    then_expr:
+      type: const
+      value: user/repos
+    else_expr:
+      type: if
+      condition:
+        type: equals
+        left:
+          type: var
+          name: shelf
+        right:
+          type: const
+          value: repo_forks
+      then_expr:
+        type: const
+        value: repos/{owner}/{repo}/forks
+      else_expr:
+        type: if
+        condition:
+          type: equals
+          left:
+            type: var
+            name: shelf
+          right:
+            type: const
+            value: org_repos
+        then_expr:
+          type: const
+          value: orgs/{org}/repos
+        else_expr:
+          type: if
+          condition:
+            type: equals
+            left:
+              type: var
+              name: shelf
+            right:
+              type: const
+              value: org_public_repos
+          then_expr:
+            type: const
+            value: orgs/{org}/repos
+          else_expr:
+            type: const
+            value: users/{username}/repos
   response: bare_list
   query:
     type: object
     fields:
-      - [type, { type: if, condition: { type: exists, var: type },
-                 then_expr: { type: var, name: type },
-                 else_expr: { type: const, value: null } }]
-      - [sort, { type: if, condition: { type: exists, var: sort },
-                 then_expr: { type: var, name: sort },
-                 else_expr: { type: const, value: null } }]
-      - [direction, { type: if, condition: { type: exists, var: direction },
-                      then_expr: { type: var, name: direction },
-                      else_expr: { type: const, value: null } }]
-  pagination:
-    params:
-      page:
-        counter: 1
-      per_page:
-        fixed: 30
-        role: page_size
-    strategy: page_number
-auth_user_repos_query:
-  method: GET
-  path:
-    - { type: literal, value: user }
-    - { type: literal, value: repos }
-  response: bare_list
-  query:
-    type: object
-    fields:
-      - [visibility, { type: if, condition: { type: exists, var: visibility },
-                       then_expr: { type: var, name: visibility },
-                       else_expr: { type: const, value: null } }]
-      - [affiliation, { type: if, condition: { type: exists, var: affiliation },
-                       then_expr: { type: var, name: affiliation },
-                       else_expr: { type: const, value: null } }]
-      - [sort, { type: if, condition: { type: exists, var: sort },
-                 then_expr: { type: var, name: sort },
-                 else_expr: { type: const, value: null } }]
-      - [direction, { type: if, condition: { type: exists, var: direction },
-                      then_expr: { type: var, name: direction },
-                      else_expr: { type: const, value: null } }]
+    - - type
+      - type: if
+        condition:
+          type: exists
+          var: type
+        then_expr:
+          type: var
+          name: type
+        else_expr:
+          type: const
+          value: null
+    - - sort
+      - type: if
+        condition:
+          type: exists
+          var: sort
+        then_expr:
+          type: var
+          name: sort
+        else_expr:
+          type: const
+          value: null
+    - - direction
+      - type: if
+        condition:
+          type: exists
+          var: direction
+        then_expr:
+          type: var
+          name: direction
+        else_expr:
+          type: const
+          value: null
   pagination:
     params:
       page:
@@ -101,50 +147,48 @@ auth_user_repos_query:
         role: page_size
     strategy: page_number
 repo_get:
-  # GET /repos/{owner}/{repo} — second segment is the repo slug (domain field `repo`, wire `name`).
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
   response: single
-
 repo_collaborators_query:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: collaborators }
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: org_members
+    then_expr:
+      type: const
+      value: orgs/{org}/members
+    else_expr:
+      type: const
+      value: repos/{owner}/{repo}/collaborators
   response: bare_list
   query:
     type: object
     fields:
-      - [affiliation, { type: if, condition: { type: exists, var: affiliation },
-                       then_expr: { type: var, name: affiliation },
-                       else_expr: { type: const, value: null } }]
-  pagination:
-    params:
-      page:
-        counter: 1
-      per_page:
-        fixed: 30
-        role: page_size
-    strategy: page_number
-repo_forks_query:
-  method: GET
-  path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: forks }
-  response: bare_list
-  query:
-    type: object
-    fields:
-      - [sort, { type: if, condition: { type: exists, var: sort },
-                 then_expr: { type: var, name: sort },
-                 else_expr: { type: const, value: null } }]
+    - - affiliation
+      - type: if
+        condition:
+          type: exists
+          var: affiliation
+        then_expr:
+          type: var
+          name: affiliation
+        else_expr:
+          type: const
+          value: null
   pagination:
     params:
       page:
@@ -154,68 +198,37 @@ repo_forks_query:
         role: page_size
     strategy: page_number
 issue_get:
-  # GET /repos/{owner}/{repo}/issues/{number}
-  # key_vars [owner, repo, number] are injected into CML env from the compound Ref.
-  # The runtime also pre-injects them into the response JSON so the decoder can
-  # reconstruct the compound Ref from the response body.
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: issues }
-    - { type: var, name: number }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: issues
+  - type: var
+    name: number
   response: single
-
-issue_query:
-  method: GET
-  path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: issues }
-  response: bare_list
-  query:
-    type: object
-    fields:
-      - [state, { type: if, condition: { type: exists, var: state },
-                  then_expr: { type: var, name: state },
-                  else_expr: { type: const, value: null } }]
-      - [assignee, { type: if, condition: { type: exists, var: assignee },
-                     then_expr: { type: var, name: assignee },
-                     else_expr: { type: const, value: null } }]
-      - [labels, { type: if, condition: { type: exists, var: labels },
-                   then_expr: { type: var, name: labels },
-                   else_expr: { type: const, value: null } }]
-      - [milestone, { type: if, condition: { type: exists, var: milestone },
-                      then_expr: { type: var, name: milestone },
-                      else_expr: { type: const, value: null } }]
-      - [since, { type: if, condition: { type: exists, var: since },
-                  then_expr: { type: var, name: since },
-                  else_expr: { type: const, value: null } }]
-      - [sort, { type: if, condition: { type: exists, var: sort },
-                 then_expr: { type: var, name: sort },
-                 else_expr: { type: const, value: null } }]
-      - [direction, { type: if, condition: { type: exists, var: direction },
-                      then_expr: { type: var, name: direction },
-                      else_expr: { type: const, value: null } }]
-  pagination:
-    params:
-      page:
-        counter: 1
-      per_page:
-        fixed: 30
-        role: page_size
-    strategy: page_number
 issue_sub_issue_query:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: issues }
-    - { type: var, name: issue_number }
-    - { type: literal, value: sub_issues }
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: issue_sub_issue
+    then_expr:
+      type: const
+      value: repos/{owner}/{repo}/issues/{issue_number}/sub_issues
+    else_expr:
+      type: const
+      value: repos/{owner}/{repo}/issues
   response: bare_list
   pagination:
     params:
@@ -228,20 +241,40 @@ issue_sub_issue_query:
 issue_search:
   method: GET
   path:
-    - { type: literal, value: search }
-    - { type: literal, value: issues }
+  - type: literal
+    value: search
+  - type: literal
+    value: issues
   response:
     items: items
   query:
     type: object
     fields:
-      - [q, { type: var, name: q }]
-      - [sort, { type: if, condition: { type: exists, var: sort },
-                 then_expr: { type: var, name: sort },
-                 else_expr: { type: const, value: null } }]
-      - [order, { type: if, condition: { type: exists, var: order },
-                  then_expr: { type: var, name: order },
-                  else_expr: { type: const, value: null } }]
+    - - q
+      - type: var
+        name: q
+    - - sort
+      - type: if
+        condition:
+          type: exists
+          var: sort
+        then_expr:
+          type: var
+          name: sort
+        else_expr:
+          type: const
+          value: null
+    - - order
+      - type: if
+        condition:
+          type: exists
+          var: order
+        then_expr:
+          type: var
+          name: order
+        else_expr:
+          type: const
+          value: null
   pagination:
     params:
       page:
@@ -252,42 +285,89 @@ issue_search:
         role: page_size
     strategy: page_number
 pr_get:
-  # GET /repos/{owner}/{repo}/pulls/{number}
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: pulls }
-    - { type: var, name: number }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: pulls
+  - type: var
+    name: number
   response: single
-
 pr_query:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: pulls }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: pulls
   response: bare_list
   query:
     type: object
     fields:
-      - [state, { type: if, condition: { type: exists, var: state },
-                  then_expr: { type: var, name: state },
-                  else_expr: { type: const, value: null } }]
-      - [head, { type: if, condition: { type: exists, var: head },
-                 then_expr: { type: var, name: head },
-                 else_expr: { type: const, value: null } }]
-      - [base, { type: if, condition: { type: exists, var: base },
-                 then_expr: { type: var, name: base },
-                 else_expr: { type: const, value: null } }]
-      - [sort, { type: if, condition: { type: exists, var: sort },
-                 then_expr: { type: var, name: sort },
-                 else_expr: { type: const, value: null } }]
-      - [direction, { type: if, condition: { type: exists, var: direction },
-                      then_expr: { type: var, name: direction },
-                      else_expr: { type: const, value: null } }]
+    - - state
+      - type: if
+        condition:
+          type: exists
+          var: state
+        then_expr:
+          type: var
+          name: state
+        else_expr:
+          type: const
+          value: null
+    - - head
+      - type: if
+        condition:
+          type: exists
+          var: head
+        then_expr:
+          type: var
+          name: head
+        else_expr:
+          type: const
+          value: null
+    - - base
+      - type: if
+        condition:
+          type: exists
+          var: base
+        then_expr:
+          type: var
+          name: base
+        else_expr:
+          type: const
+          value: null
+    - - sort
+      - type: if
+        condition:
+          type: exists
+          var: sort
+        then_expr:
+          type: var
+          name: sort
+        else_expr:
+          type: const
+          value: null
+    - - direction
+      - type: if
+        condition:
+          type: exists
+          var: direction
+        then_expr:
+          type: var
+          name: direction
+        else_expr:
+          type: const
+          value: null
   pagination:
     params:
       page:
@@ -299,50 +379,51 @@ pr_query:
 pr_search:
   method: GET
   path:
-    - { type: literal, value: search }
-    - { type: literal, value: issues }
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: pr_touching_path
+    then_expr:
+      type: const
+      value: search/issues
+    else_expr:
+      type: const
+      value: search/issues
   response:
     items: items
   query:
     type: object
     fields:
-      - [q, { type: var, name: q }]
-      - [sort, { type: if, condition: { type: exists, var: sort },
-                 then_expr: { type: var, name: sort },
-                 else_expr: { type: const, value: null } }]
-      - [order, { type: if, condition: { type: exists, var: order },
-                  then_expr: { type: var, name: order },
-                  else_expr: { type: const, value: null } }]
-  pagination:
-    params:
-      page:
-        counter: 1
-        max: 33
-      per_page:
-        fixed: 30
-        role: page_size
-    strategy: page_number
-pr_touching_path_search:
-  method: GET
-  path:
-    - { type: literal, value: search }
-    - { type: literal, value: issues }
-  response:
-    items: items
-  query:
-    type: object
-    fields:
-      - [q, { type: format, template: "repo:{owner}/{repo} is:pr {q}", vars: {
-              owner: { type: var, name: owner },
-              repo:  { type: var, name: repo },
-              q:     { type: var, name: q }
-            } }]
-      - [sort, { type: if, condition: { type: exists, var: sort },
-                 then_expr: { type: var, name: sort },
-                 else_expr: { type: const, value: null } }]
-      - [order, { type: if, condition: { type: exists, var: order },
-                  then_expr: { type: var, name: order },
-                  else_expr: { type: const, value: null } }]
+    - - q
+      - type: var
+        name: q
+    - - sort
+      - type: if
+        condition:
+          type: exists
+          var: sort
+        then_expr:
+          type: var
+          name: sort
+        else_expr:
+          type: const
+          value: null
+    - - order
+      - type: if
+        condition:
+          type: exists
+          var: order
+        then_expr:
+          type: var
+          name: order
+        else_expr:
+          type: const
+          value: null
   pagination:
     params:
       page:
@@ -355,32 +436,84 @@ pr_touching_path_search:
 commit_query:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: commits }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: commits
   response: bare_list
   query:
     type: object
     fields:
-      - [sha, { type: if, condition: { type: exists, var: sha },
-                then_expr: { type: var, name: sha },
-                else_expr: { type: const, value: null } }]
-      - [path, { type: if, condition: { type: exists, var: path },
-                 then_expr: { type: var, name: path },
-                 else_expr: { type: const, value: null } }]
-      - [author, { type: if, condition: { type: exists, var: by_author },
-                   then_expr: { type: var, name: by_author },
-                   else_expr: { type: const, value: null } }]
-      - [committer, { type: if, condition: { type: exists, var: by_committer },
-                    then_expr: { type: var, name: by_committer },
-                    else_expr: { type: const, value: null } }]
-      - [since, { type: if, condition: { type: exists, var: since },
-                 then_expr: { type: var, name: since },
-                 else_expr: { type: const, value: null } }]
-      - [until, { type: if, condition: { type: exists, var: until },
-                 then_expr: { type: var, name: until },
-                 else_expr: { type: const, value: null } }]
+    - - sha
+      - type: if
+        condition:
+          type: exists
+          var: sha
+        then_expr:
+          type: var
+          name: sha
+        else_expr:
+          type: const
+          value: null
+    - - path
+      - type: if
+        condition:
+          type: exists
+          var: path
+        then_expr:
+          type: var
+          name: path
+        else_expr:
+          type: const
+          value: null
+    - - author
+      - type: if
+        condition:
+          type: exists
+          var: by_author
+        then_expr:
+          type: var
+          name: by_author
+        else_expr:
+          type: const
+          value: null
+    - - committer
+      - type: if
+        condition:
+          type: exists
+          var: by_committer
+        then_expr:
+          type: var
+          name: by_committer
+        else_expr:
+          type: const
+          value: null
+    - - since
+      - type: if
+        condition:
+          type: exists
+          var: since
+        then_expr:
+          type: var
+          name: since
+        else_expr:
+          type: const
+          value: null
+    - - until
+      - type: if
+        condition:
+          type: exists
+          var: until
+        then_expr:
+          type: var
+          name: until
+        else_expr:
+          type: const
+          value: null
   pagination:
     params:
       page:
@@ -392,38 +525,60 @@ commit_query:
 commit_get:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: commits }
-    - { type: var, name: sha }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: commits
+  - type: var
+    name: sha
   response: single
-
 commit_file_get:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: contents }
-    - { type: var, name: filename }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: contents
+  - type: var
+    name: filename
   query:
     type: object
     fields:
-      - [ref, { type: if, condition: { type: exists, var: ref },
-                then_expr: { type: var, name: ref },
-                else_expr: { type: const, value: null } }]
+    - - ref
+      - type: if
+        condition:
+          type: exists
+          var: ref
+        then_expr:
+          type: var
+          name: ref
+        else_expr:
+          type: const
+          value: null
   response: single
-
 pr_review_query:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: pulls }
-    - { type: var, name: pull_number }
-    - { type: literal, value: reviews }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: pulls
+  - type: var
+    name: pull_number
+  - type: literal
+    value: reviews
   response: bare_list
   pagination:
     params:
@@ -436,12 +591,18 @@ pr_review_query:
 pr_file_query:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: pulls }
-    - { type: var, name: pull_number }
-    - { type: literal, value: files }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: pulls
+  - type: var
+    name: pull_number
+  - type: literal
+    value: files
   response: bare_list
   pagination:
     params:
@@ -454,19 +615,33 @@ pr_file_query:
 pr_review_comment_query:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: pulls }
-    - { type: var, name: pull_number }
-    - { type: literal, value: comments }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: pulls
+  - type: var
+    name: pull_number
+  - type: literal
+    value: comments
   response: bare_list
   query:
     type: object
     fields:
-      - [since, { type: if, condition: { type: exists, var: since },
-                  then_expr: { type: var, name: since },
-                  else_expr: { type: const, value: null } }]
+    - - since
+      - type: if
+        condition:
+          type: exists
+          var: since
+        then_expr:
+          type: var
+          name: since
+        else_expr:
+          type: const
+          value: null
   pagination:
     params:
       page:
@@ -478,10 +653,14 @@ pr_review_comment_query:
 branch_query:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: branches }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: branches
   response: bare_list
   pagination:
     params:
@@ -494,20 +673,28 @@ branch_query:
 branch_get:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: branches }
-    - { type: var, name: name }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: branches
+  - type: var
+    name: name
   response: single
-
 repo_tags_query:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: tags }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: tags
   response: bare_list
   pagination:
     params:
@@ -520,29 +707,47 @@ repo_tags_query:
 repo_tag_get:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: git }
-    - { type: literal, value: refs }
-    - { type: literal, value: tags }
-    - { type: var, name: name }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: git
+  - type: literal
+    value: refs
+  - type: literal
+    value: tags
+  - type: var
+    name: name
   response: single
-
 contributor_query:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: contributors }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: contributors
   response: bare_list
   query:
     type: object
     fields:
-      - [anon, { type: if, condition: { type: exists, var: anon },
-                 then_expr: { type: var, name: anon },
-                 else_expr: { type: const, value: null } }]
+    - - anon
+      - type: if
+        condition:
+          type: exists
+          var: anon
+        then_expr:
+          type: var
+          name: anon
+        else_expr:
+          type: const
+          value: null
   pagination:
     params:
       page:
@@ -554,11 +759,16 @@ contributor_query:
 workflow_query:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: actions }
-    - { type: literal, value: workflows }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: actions
+  - type: literal
+    value: workflows
   response:
     items: workflows
   pagination:
@@ -572,58 +782,121 @@ workflow_query:
 workflow_get:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: actions }
-    - { type: literal, value: workflows }
-    - { type: var, name: id }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: actions
+  - type: literal
+    value: workflows
+  - type: var
+    name: id
   response: single
-
 workflow_dispatch:
   method: POST
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: actions }
-    - { type: literal, value: workflows }
-    - { type: var, name: id }
-    - { type: literal, value: dispatches }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: actions
+  - type: literal
+    value: workflows
+  - type: var
+    name: id
+  - type: literal
+    value: dispatches
   body:
     type: object
     fields:
-      - [ref, { type: var, name: ref }]
+    - - ref
+      - type: var
+        name: ref
   response: single
-
 workflow_run_query:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: actions }
-    - { type: literal, value: runs }
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: workflow_run_by_workflow
+    then_expr:
+      type: const
+      value: repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs
+    else_expr:
+      type: const
+      value: repos/{owner}/{repo}/actions/runs
   response:
     items: workflow_runs
   query:
     type: object
     fields:
-      - [branch, { type: if, condition: { type: exists, var: branch },
-                  then_expr: { type: var, name: branch },
-                  else_expr: { type: const, value: null } }]
-      - [event, { type: if, condition: { type: exists, var: event },
-                  then_expr: { type: var, name: event },
-                  else_expr: { type: const, value: null } }]
-      - [status, { type: if, condition: { type: exists, var: status },
-                  then_expr: { type: var, name: status },
-                  else_expr: { type: const, value: null } }]
-      - [actor, { type: if, condition: { type: exists, var: actor },
-                 then_expr: { type: var, name: actor },
-                 else_expr: { type: const, value: null } }]
-      - [head_sha, { type: if, condition: { type: exists, var: head_sha },
-                    then_expr: { type: var, name: head_sha },
-                    else_expr: { type: const, value: null } }]
+    - - branch
+      - type: if
+        condition:
+          type: exists
+          var: branch
+        then_expr:
+          type: var
+          name: branch
+        else_expr:
+          type: const
+          value: null
+    - - event
+      - type: if
+        condition:
+          type: exists
+          var: event
+        then_expr:
+          type: var
+          name: event
+        else_expr:
+          type: const
+          value: null
+    - - status
+      - type: if
+        condition:
+          type: exists
+          var: status
+        then_expr:
+          type: var
+          name: status
+        else_expr:
+          type: const
+          value: null
+    - - actor
+      - type: if
+        condition:
+          type: exists
+          var: actor
+        then_expr:
+          type: var
+          name: actor
+        else_expr:
+          type: const
+          value: null
+    - - head_sha
+      - type: if
+        condition:
+          type: exists
+          var: head_sha
+        then_expr:
+          type: var
+          name: head_sha
+        else_expr:
+          type: const
+          value: null
   pagination:
     params:
       page:
@@ -635,112 +908,124 @@ workflow_run_query:
 workflow_run_get:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: actions }
-    - { type: literal, value: runs }
-    - { type: var, name: id }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: actions
+  - type: literal
+    value: runs
+  - type: var
+    name: id
   response: single
-
-workflow_run_by_workflow_query:
-  method: GET
-  path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: actions }
-    - { type: literal, value: workflows }
-    - { type: var, name: workflow_id }
-    - { type: literal, value: runs }
-  response:
-    items: workflow_runs
-  query:
-    type: object
-    fields:
-      - [branch, { type: if, condition: { type: exists, var: branch },
-                  then_expr: { type: var, name: branch },
-                  else_expr: { type: const, value: null } }]
-      - [event, { type: if, condition: { type: exists, var: event },
-                  then_expr: { type: var, name: event },
-                  else_expr: { type: const, value: null } }]
-      - [status, { type: if, condition: { type: exists, var: status },
-                  then_expr: { type: var, name: status },
-                  else_expr: { type: const, value: null } }]
-  pagination:
-    params:
-      page:
-        counter: 1
-      per_page:
-        fixed: 30
-        role: page_size
-    strategy: page_number
 workflow_run_rerun:
   method: POST
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: actions }
-    - { type: literal, value: runs }
-    - { type: var, name: id }
-    - { type: literal, value: rerun }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: actions
+  - type: literal
+    value: runs
+  - type: var
+    name: id
+  - type: literal
+    value: rerun
   response: single
-
 workflow_run_rerun_failed_jobs:
   method: POST
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: actions }
-    - { type: literal, value: runs }
-    - { type: var, name: id }
-    - { type: literal, value: rerun-failed-jobs }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: actions
+  - type: literal
+    value: runs
+  - type: var
+    name: id
+  - type: literal
+    value: rerun-failed-jobs
   response: single
-
 workflow_run_cancel:
   method: POST
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: actions }
-    - { type: literal, value: runs }
-    - { type: var, name: id }
-    - { type: literal, value: cancel }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: actions
+  - type: literal
+    value: runs
+  - type: var
+    name: id
+  - type: literal
+    value: cancel
   response: single
-
 workflow_run_logs_delete:
   method: DELETE
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: actions }
-    - { type: literal, value: runs }
-    - { type: var, name: id }
-    - { type: literal, value: logs }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: actions
+  - type: literal
+    value: runs
+  - type: var
+    name: id
+  - type: literal
+    value: logs
   response: single
-
 workflow_job_query:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: actions }
-    - { type: literal, value: runs }
-    - { type: var, name: run_id }
-    - { type: literal, value: jobs }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: actions
+  - type: literal
+    value: runs
+  - type: var
+    name: run_id
+  - type: literal
+    value: jobs
   response:
     items: jobs
   query:
     type: object
     fields:
-      - [filter, { type: if, condition: { type: exists, var: filter },
-                   then_expr: { type: var, name: filter },
-                   else_expr: { type: const, value: null } }]
+    - - filter
+      - type: if
+        condition:
+          type: exists
+          var: filter
+        then_expr:
+          type: var
+          name: filter
+        else_expr:
+          type: const
+          value: null
   pagination:
     params:
       page:
@@ -752,13 +1037,20 @@ workflow_job_query:
 workflow_artifact_query:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: actions }
-    - { type: literal, value: runs }
-    - { type: var, name: run_id }
-    - { type: literal, value: artifacts }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: actions
+  - type: literal
+    value: runs
+  - type: var
+    name: run_id
+  - type: literal
+    value: artifacts
   response:
     items: artifacts
   pagination:
@@ -772,49 +1064,72 @@ workflow_artifact_query:
 workflow_run_usage_get:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: actions }
-    - { type: literal, value: runs }
-    - { type: var, name: run_id }
-    - { type: literal, value: timing }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: actions
+  - type: literal
+    value: runs
+  - type: var
+    name: run_id
+  - type: literal
+    value: timing
   response: single
-
-# ── User ─────────────────────────────────────────────────────────────────────
-
 user_get:
-  # GET /users/{username} — id_field is login (string), maps to {id} in CML env
   method: GET
   path:
-    - { type: literal, value: users }
-    - { type: var, name: id }
+  - type: literal
+    value: users
+  - type: var
+    name: id
   response: single
-
 user_get_me:
-  # GET /user — singleton, no path vars needed
   method: GET
   path:
-    - { type: literal, value: user }
+  - type: literal
+    value: user
   response: single
-
 user_search:
   method: GET
   path:
-    - { type: literal, value: search }
-    - { type: literal, value: users }
+  - type: literal
+    value: search
+  - type: literal
+    value: users
   response:
     items: items
   query:
     type: object
     fields:
-      - [q, { type: var, name: q }]
-      - [sort, { type: if, condition: { type: exists, var: sort },
-                 then_expr: { type: var, name: sort },
-                 else_expr: { type: const, value: null } }]
-      - [order, { type: if, condition: { type: exists, var: order },
-                  then_expr: { type: var, name: order },
-                  else_expr: { type: const, value: null } }]
+    - - q
+      - type: var
+        name: q
+    - - sort
+      - type: if
+        condition:
+          type: exists
+          var: sort
+        then_expr:
+          type: var
+          name: sort
+        else_expr:
+          type: const
+          value: null
+    - - order
+      - type: if
+        condition:
+          type: exists
+          var: order
+        then_expr:
+          type: var
+          name: order
+        else_expr:
+          type: const
+          value: null
   pagination:
     params:
       page:
@@ -827,10 +1142,21 @@ user_search:
 label_query:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: labels }
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: issue_label
+    then_expr:
+      type: const
+      value: repos/{owner}/{repo}/issues/{issue_number}/labels
+    else_expr:
+      type: const
+      value: repos/{owner}/{repo}/labels
   response: bare_list
   pagination:
     params:
@@ -843,51 +1169,65 @@ label_query:
 label_get:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: labels }
-    - { type: var, name: name }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: labels
+  - type: var
+    name: name
   response: single
-
-issue_label_query:
-  method: GET
-  path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: issues }
-    - { type: var, name: issue_number }
-    - { type: literal, value: labels }
-  response: bare_list
-  pagination:
-    params:
-      page:
-        counter: 1
-      per_page:
-        fixed: 100
-        role: page_size
-    strategy: page_number
 milestone_query:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: milestones }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: milestones
   response: bare_list
   query:
     type: object
     fields:
-      - [state, { type: if, condition: { type: exists, var: state },
-                  then_expr: { type: var, name: state },
-                  else_expr: { type: const, value: null } }]
-      - [sort, { type: if, condition: { type: exists, var: sort },
-                 then_expr: { type: var, name: sort },
-                 else_expr: { type: const, value: null } }]
-      - [direction, { type: if, condition: { type: exists, var: direction },
-                      then_expr: { type: var, name: direction },
-                      else_expr: { type: const, value: null } }]
+    - - state
+      - type: if
+        condition:
+          type: exists
+          var: state
+        then_expr:
+          type: var
+          name: state
+        else_expr:
+          type: const
+          value: null
+    - - sort
+      - type: if
+        condition:
+          type: exists
+          var: sort
+        then_expr:
+          type: var
+          name: sort
+        else_expr:
+          type: const
+          value: null
+    - - direction
+      - type: if
+        condition:
+          type: exists
+          var: direction
+        then_expr:
+          type: var
+          name: direction
+        else_expr:
+          type: const
+          value: null
   pagination:
     params:
       page:
@@ -899,79 +1239,154 @@ milestone_query:
 milestone_get:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: milestones }
-    - { type: var, name: number }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: milestones
+  - type: var
+    name: number
   response: single
-
 milestone_create:
   method: POST
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: milestones }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: milestones
   body:
     type: object
     fields:
-      - [title, { type: var, name: title }]
-      - [description, { type: if, condition: { type: exists, var: description },
-                        then_expr: { type: var, name: description },
-                        else_expr: { type: const, value: null } }]
-      - [state, { type: if, condition: { type: exists, var: state },
-                  then_expr: { type: var, name: state },
-                  else_expr: { type: const, value: null } }]
-      - [due_on, { type: if, condition: { type: exists, var: due_on },
-                  then_expr: { type: var, name: due_on },
-                  else_expr: { type: const, value: null } }]
+    - - title
+      - type: var
+        name: title
+    - - description
+      - type: if
+        condition:
+          type: exists
+          var: description
+        then_expr:
+          type: var
+          name: description
+        else_expr:
+          type: const
+          value: null
+    - - state
+      - type: if
+        condition:
+          type: exists
+          var: state
+        then_expr:
+          type: var
+          name: state
+        else_expr:
+          type: const
+          value: null
+    - - due_on
+      - type: if
+        condition:
+          type: exists
+          var: due_on
+        then_expr:
+          type: var
+          name: due_on
+        else_expr:
+          type: const
+          value: null
   response: single
-
 milestone_update:
   method: PATCH
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: milestones }
-    - { type: var, name: number }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: milestones
+  - type: var
+    name: number
   body:
     type: object
     fields:
-      - [title, { type: if, condition: { type: exists, var: title },
-                  then_expr: { type: var, name: title },
-                  else_expr: { type: const, value: null } }]
-      - [description, { type: if, condition: { type: exists, var: description },
-                        then_expr: { type: var, name: description },
-                        else_expr: { type: const, value: null } }]
-      - [state, { type: if, condition: { type: exists, var: state },
-                  then_expr: { type: var, name: state },
-                  else_expr: { type: const, value: null } }]
-      - [due_on, { type: if, condition: { type: exists, var: due_on },
-                  then_expr: { type: var, name: due_on },
-                  else_expr: { type: const, value: null } }]
+    - - title
+      - type: if
+        condition:
+          type: exists
+          var: title
+        then_expr:
+          type: var
+          name: title
+        else_expr:
+          type: const
+          value: null
+    - - description
+      - type: if
+        condition:
+          type: exists
+          var: description
+        then_expr:
+          type: var
+          name: description
+        else_expr:
+          type: const
+          value: null
+    - - state
+      - type: if
+        condition:
+          type: exists
+          var: state
+        then_expr:
+          type: var
+          name: state
+        else_expr:
+          type: const
+          value: null
+    - - due_on
+      - type: if
+        condition:
+          type: exists
+          var: due_on
+        then_expr:
+          type: var
+          name: due_on
+        else_expr:
+          type: const
+          value: null
   response: single
-
 milestone_delete:
   method: DELETE
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: milestones }
-    - { type: var, name: number }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: milestones
+  - type: var
+    name: number
   response: single
-
-# ── Release ──────────────────────────────────────────────────────────────────
-
 release_query:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: releases }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: releases
   response: bare_list
   pagination:
     params:
@@ -984,135 +1399,231 @@ release_query:
 release_get:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: releases }
-    - { type: var, name: id }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: releases
+  - type: var
+    name: id
   response: single
-
 release_create:
   method: POST
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: releases }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: releases
   body:
     type: object
     fields:
-      - [tag_name, { type: var, name: tag_name }]
-      - [name, { type: if, condition: { type: exists, var: name },
-                 then_expr: { type: var, name: name },
-                 else_expr: { type: const, value: null } }]
-      - [body, { type: if, condition: { type: exists, var: body },
-                 then_expr: { type: var, name: body },
-                 else_expr: { type: const, value: null } }]
-      - [draft, { type: if, condition: { type: exists, var: draft },
-                  then_expr: { type: var, name: draft },
-                  else_expr: { type: const, value: null } }]
-      - [prerelease, { type: if, condition: { type: exists, var: prerelease },
-                      then_expr: { type: var, name: prerelease },
-                      else_expr: { type: const, value: null } }]
-      - [target_commitish, { type: if, condition: { type: exists, var: target_commitish },
-                             then_expr: { type: var, name: target_commitish },
-                             else_expr: { type: const, value: null } }]
-      - [generate_release_notes, { type: if, condition: { type: exists, var: generate_release_notes },
-                                    then_expr: { type: var, name: generate_release_notes },
-                                    else_expr: { type: const, value: null } }]
+    - - tag_name
+      - type: var
+        name: tag_name
+    - - name
+      - type: if
+        condition:
+          type: exists
+          var: name
+        then_expr:
+          type: var
+          name: name
+        else_expr:
+          type: const
+          value: null
+    - - body
+      - type: if
+        condition:
+          type: exists
+          var: body
+        then_expr:
+          type: var
+          name: body
+        else_expr:
+          type: const
+          value: null
+    - - draft
+      - type: if
+        condition:
+          type: exists
+          var: draft
+        then_expr:
+          type: var
+          name: draft
+        else_expr:
+          type: const
+          value: null
+    - - prerelease
+      - type: if
+        condition:
+          type: exists
+          var: prerelease
+        then_expr:
+          type: var
+          name: prerelease
+        else_expr:
+          type: const
+          value: null
+    - - target_commitish
+      - type: if
+        condition:
+          type: exists
+          var: target_commitish
+        then_expr:
+          type: var
+          name: target_commitish
+        else_expr:
+          type: const
+          value: null
+    - - generate_release_notes
+      - type: if
+        condition:
+          type: exists
+          var: generate_release_notes
+        then_expr:
+          type: var
+          name: generate_release_notes
+        else_expr:
+          type: const
+          value: null
   response: single
-
 release_update:
   method: PATCH
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: releases }
-    - { type: var, name: id }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: releases
+  - type: var
+    name: id
   body:
     type: object
     fields:
-      - [tag_name, { type: if, condition: { type: exists, var: tag_name },
-                     then_expr: { type: var, name: tag_name },
-                     else_expr: { type: const, value: null } }]
-      - [name, { type: if, condition: { type: exists, var: name },
-                 then_expr: { type: var, name: name },
-                 else_expr: { type: const, value: null } }]
-      - [body, { type: if, condition: { type: exists, var: body },
-                 then_expr: { type: var, name: body },
-                 else_expr: { type: const, value: null } }]
-      - [draft, { type: if, condition: { type: exists, var: draft },
-                  then_expr: { type: var, name: draft },
-                  else_expr: { type: const, value: null } }]
-      - [prerelease, { type: if, condition: { type: exists, var: prerelease },
-                      then_expr: { type: var, name: prerelease },
-                      else_expr: { type: const, value: null } }]
-      - [target_commitish, { type: if, condition: { type: exists, var: target_commitish },
-                             then_expr: { type: var, name: target_commitish },
-                             else_expr: { type: const, value: null } }]
+    - - tag_name
+      - type: if
+        condition:
+          type: exists
+          var: tag_name
+        then_expr:
+          type: var
+          name: tag_name
+        else_expr:
+          type: const
+          value: null
+    - - name
+      - type: if
+        condition:
+          type: exists
+          var: name
+        then_expr:
+          type: var
+          name: name
+        else_expr:
+          type: const
+          value: null
+    - - body
+      - type: if
+        condition:
+          type: exists
+          var: body
+        then_expr:
+          type: var
+          name: body
+        else_expr:
+          type: const
+          value: null
+    - - draft
+      - type: if
+        condition:
+          type: exists
+          var: draft
+        then_expr:
+          type: var
+          name: draft
+        else_expr:
+          type: const
+          value: null
+    - - prerelease
+      - type: if
+        condition:
+          type: exists
+          var: prerelease
+        then_expr:
+          type: var
+          name: prerelease
+        else_expr:
+          type: const
+          value: null
+    - - target_commitish
+      - type: if
+        condition:
+          type: exists
+          var: target_commitish
+        then_expr:
+          type: var
+          name: target_commitish
+        else_expr:
+          type: const
+          value: null
   response: single
-
 release_delete:
   method: DELETE
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: releases }
-    - { type: var, name: id }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: releases
+  - type: var
+    name: id
   response: single
-
-# ── IssueComment ─────────────────────────────────────────────────────────────
-
 issue_comment_query:
-  # GET /repos/{owner}/{repo}/issues/{issue_number}/comments
-  # scope params: owner, repo, issue_number (caller supplies all three; see domain README)
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: issues }
-    - { type: var, name: issue_number }
-    - { type: literal, value: comments }
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: repo_comment
+    then_expr:
+      type: const
+      value: repos/{owner}/{repo}/issues/comments
+    else_expr:
+      type: const
+      value: repos/{owner}/{repo}/issues/{issue_number}/comments
   response: bare_list
   query:
     type: object
     fields:
-      - [since, { type: if, condition: { type: exists, var: since },
-                  then_expr: { type: var, name: since },
-                  else_expr: { type: const, value: null } }]
-  pagination:
-    params:
-      page:
-        counter: 1
-      per_page:
-        fixed: 30
-        role: page_size
-    strategy: page_number
-repo_comment_query:
-  # GET /repos/{owner}/{repo}/issues/comments  (all issue comments in a repo)
-  method: GET
-  path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: issues }
-    - { type: literal, value: comments }
-  response: bare_list
-  query:
-    type: object
-    fields:
-      - [sort, { type: if, condition: { type: exists, var: sort },
-                 then_expr: { type: var, name: sort },
-                 else_expr: { type: const, value: null } }]
-      - [direction, { type: if, condition: { type: exists, var: direction },
-                      then_expr: { type: var, name: direction },
-                      else_expr: { type: const, value: null } }]
-      - [since, { type: if, condition: { type: exists, var: since },
-                  then_expr: { type: var, name: since },
-                  else_expr: { type: const, value: null } }]
+    - - since
+      - type: if
+        condition:
+          type: exists
+          var: since
+        then_expr:
+          type: var
+          name: since
+        else_expr:
+          type: const
+          value: null
   pagination:
     params:
       page:
@@ -1122,101 +1633,28 @@ repo_comment_query:
         role: page_size
     strategy: page_number
 org_get:
-  # GET /orgs/{org} — id_field is login; CML env uses `id` for the path segment
   method: GET
   path:
-    - { type: literal, value: orgs }
-    - { type: var, name: id }
+  - type: literal
+    value: orgs
+  - type: var
+    name: id
   response: single
-
 issue_type_query:
   method: GET
   path:
-    - { type: literal, value: orgs }
-    - { type: var, name: org }
-    - { type: literal, value: issue-types }
+  - type: literal
+    value: orgs
+  - type: var
+    name: org
+  - type: literal
+    value: issue-types
   response: bare_list
-
-org_repos_query:
-  method: GET
-  path:
-    - { type: literal, value: orgs }
-    - { type: var, name: org }
-    - { type: literal, value: repos }
-  response: bare_list
-  query:
-    type: object
-    fields:
-      - [type, { type: if, condition: { type: exists, var: type },
-                 then_expr: { type: var, name: type },
-                 else_expr: { type: const, value: null } }]
-      - [sort, { type: if, condition: { type: exists, var: sort },
-                 then_expr: { type: var, name: sort },
-                 else_expr: { type: const, value: null } }]
-      - [direction, { type: if, condition: { type: exists, var: direction },
-                      then_expr: { type: var, name: direction },
-                      else_expr: { type: const, value: null } }]
-  pagination:
-    params:
-      page:
-        counter: 1
-      per_page:
-        fixed: 30
-        role: page_size
-    strategy: page_number
-org_public_repos_query:
-  method: GET
-  path:
-    - { type: literal, value: orgs }
-    - { type: var, name: org }
-    - { type: literal, value: repos }
-  response: bare_list
-  query:
-    type: object
-    fields:
-      - [type, { type: var, name: visibility }]
-      - [sort, { type: if, condition: { type: exists, var: sort },
-                 then_expr: { type: var, name: sort },
-                 else_expr: { type: const, value: null } }]
-      - [direction, { type: if, condition: { type: exists, var: direction },
-                      then_expr: { type: var, name: direction },
-                      else_expr: { type: const, value: null } }]
-  pagination:
-    params:
-      page:
-        counter: 1
-      per_page:
-        fixed: 30
-        role: page_size
-    strategy: page_number
-org_members_query:
-  method: GET
-  path:
-    - { type: literal, value: orgs }
-    - { type: var, name: org }
-    - { type: literal, value: members }
-  response: bare_list
-  query:
-    type: object
-    fields:
-      - [filter, { type: if, condition: { type: exists, var: filter },
-                  then_expr: { type: var, name: filter },
-                  else_expr: { type: const, value: null } }]
-      - [role, { type: if, condition: { type: exists, var: role },
-                 then_expr: { type: var, name: role },
-                 else_expr: { type: const, value: null } }]
-  pagination:
-    params:
-      page:
-        counter: 1
-      per_page:
-        fixed: 30
-        role: page_size
-    strategy: page_number
 gist_query:
   method: GET
   path:
-    - { type: literal, value: gists }
+  - type: literal
+    value: gists
   response: bare_list
   pagination:
     params:
@@ -1229,32 +1667,64 @@ gist_query:
 gist_get:
   method: GET
   path:
-    - { type: literal, value: gists }
-    - { type: var, name: id }
+  - type: literal
+    value: gists
+  - type: var
+    name: id
   response: single
-
-# ── Notification ─────────────────────────────────────────────────────────────
-
 notification_query:
   method: GET
   path:
-    - { type: literal, value: notifications }
+  - type: literal
+    value: notifications
   response: bare_list
   query:
     type: object
     fields:
-      - [all, { type: if, condition: { type: exists, var: all },
-                then_expr: { type: var, name: all },
-                else_expr: { type: const, value: null } }]
-      - [participating, { type: if, condition: { type: exists, var: participating },
-                        then_expr: { type: var, name: participating },
-                        else_expr: { type: const, value: null } }]
-      - [since, { type: if, condition: { type: exists, var: since },
-                 then_expr: { type: var, name: since },
-                 else_expr: { type: const, value: null } }]
-      - [before, { type: if, condition: { type: exists, var: before },
-                  then_expr: { type: var, name: before },
-                  else_expr: { type: const, value: null } }]
+    - - all
+      - type: if
+        condition:
+          type: exists
+          var: all
+        then_expr:
+          type: var
+          name: all
+        else_expr:
+          type: const
+          value: null
+    - - participating
+      - type: if
+        condition:
+          type: exists
+          var: participating
+        then_expr:
+          type: var
+          name: participating
+        else_expr:
+          type: const
+          value: null
+    - - since
+      - type: if
+        condition:
+          type: exists
+          var: since
+        then_expr:
+          type: var
+          name: since
+        else_expr:
+          type: const
+          value: null
+    - - before
+      - type: if
+        condition:
+          type: exists
+          var: before
+        then_expr:
+          type: var
+          name: before
+        else_expr:
+          type: const
+          value: null
   pagination:
     params:
       page:
@@ -1266,605 +1736,1206 @@ notification_query:
 notification_get:
   method: GET
   path:
-    - { type: literal, value: notifications }
-    - { type: literal, value: threads }
-    - { type: var, name: id }
+  - type: literal
+    value: notifications
+  - type: literal
+    value: threads
+  - type: var
+    name: id
   response: single
-
 notification_mark_read:
-  # Returns 205 Reset Content with no JSON body — runtime treats as side-effect action
   method: PATCH
   path:
-    - { type: literal, value: notifications }
-    - { type: literal, value: threads }
-    - { type: var, name: id }
+  - type: literal
+    value: notifications
+  - type: literal
+    value: threads
+  - type: var
+    name: id
   response: single
-
 issue_triage_context_query:
   transport: view
   view: issue_triage_context
-
 pr_context_query:
   transport: view
   view: pr_context
-
 workflow_run_context_query:
   transport: view
   view: workflow_run_context
-
-# ── Writes (issues, PRs, labels, contents) ───────────────────────────────────
-
 issue_create:
-  # POST /repos/{owner}/{repo}/issues
   method: POST
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: issues }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: issues
   body:
     type: object
     fields:
-      - [title, { type: var, name: title }]
-      - [body, { type: if, condition: { type: exists, var: body },
-                 then_expr: { type: var, name: body },
-                 else_expr: { type: const, value: null } }]
-      - [labels, { type: if, condition: { type: exists, var: labels },
-                   then_expr: { type: var, name: labels },
-                   else_expr: { type: const, value: null } }]
-      - [assignees, { type: if, condition: { type: exists, var: assignees },
-                     then_expr: { type: var, name: assignees },
-                     else_expr: { type: const, value: null } }]
-      - [milestone, { type: if, condition: { type: exists, var: milestone },
-                      then_expr: { type: var, name: milestone },
-                      else_expr: { type: const, value: null } }]
+    - - title
+      - type: var
+        name: title
+    - - body
+      - type: if
+        condition:
+          type: exists
+          var: body
+        then_expr:
+          type: var
+          name: body
+        else_expr:
+          type: const
+          value: null
+    - - labels
+      - type: if
+        condition:
+          type: exists
+          var: labels
+        then_expr:
+          type: var
+          name: labels
+        else_expr:
+          type: const
+          value: null
+    - - assignees
+      - type: if
+        condition:
+          type: exists
+          var: assignees
+        then_expr:
+          type: var
+          name: assignees
+        else_expr:
+          type: const
+          value: null
+    - - milestone
+      - type: if
+        condition:
+          type: exists
+          var: milestone
+        then_expr:
+          type: var
+          name: milestone
+        else_expr:
+          type: const
+          value: null
   response: single
-
 issue_update:
   method: PATCH
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: issues }
-    - { type: var, name: number }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: issues
+  - type: var
+    name: number
   body:
     type: object
     fields:
-      - [title, { type: if, condition: { type: exists, var: title },
-                  then_expr: { type: var, name: title },
-                  else_expr: { type: const, value: null } }]
-      - [body, { type: if, condition: { type: exists, var: body },
-                 then_expr: { type: var, name: body },
-                 else_expr: { type: const, value: null } }]
-      - [state, { type: if, condition: { type: exists, var: state },
-                  then_expr: { type: var, name: state },
-                  else_expr: { type: const, value: null } }]
-      - [state_reason, { type: if, condition: { type: exists, var: state_reason },
-                         then_expr: { type: var, name: state_reason },
-                         else_expr: { type: const, value: null } }]
-      - [labels, { type: if, condition: { type: exists, var: labels },
-                   then_expr: { type: var, name: labels },
-                   else_expr: { type: const, value: null } }]
-      - [assignees, { type: if, condition: { type: exists, var: assignees },
-                     then_expr: { type: var, name: assignees },
-                     else_expr: { type: const, value: null } }]
-      - [milestone, { type: if, condition: { type: exists, var: milestone },
-                      then_expr: { type: var, name: milestone },
-                      else_expr: { type: const, value: null } }]
-      - [locked, { type: if, condition: { type: exists, var: locked },
-                  then_expr: { type: var, name: locked },
-                  else_expr: { type: const, value: null } }]
+    - - title
+      - type: if
+        condition:
+          type: exists
+          var: title
+        then_expr:
+          type: var
+          name: title
+        else_expr:
+          type: const
+          value: null
+    - - body
+      - type: if
+        condition:
+          type: exists
+          var: body
+        then_expr:
+          type: var
+          name: body
+        else_expr:
+          type: const
+          value: null
+    - - state
+      - type: if
+        condition:
+          type: exists
+          var: state
+        then_expr:
+          type: var
+          name: state
+        else_expr:
+          type: const
+          value: null
+    - - state_reason
+      - type: if
+        condition:
+          type: exists
+          var: state_reason
+        then_expr:
+          type: var
+          name: state_reason
+        else_expr:
+          type: const
+          value: null
+    - - labels
+      - type: if
+        condition:
+          type: exists
+          var: labels
+        then_expr:
+          type: var
+          name: labels
+        else_expr:
+          type: const
+          value: null
+    - - assignees
+      - type: if
+        condition:
+          type: exists
+          var: assignees
+        then_expr:
+          type: var
+          name: assignees
+        else_expr:
+          type: const
+          value: null
+    - - milestone
+      - type: if
+        condition:
+          type: exists
+          var: milestone
+        then_expr:
+          type: var
+          name: milestone
+        else_expr:
+          type: const
+          value: null
+    - - locked
+      - type: if
+        condition:
+          type: exists
+          var: locked
+        then_expr:
+          type: var
+          name: locked
+        else_expr:
+          type: const
+          value: null
   response: single
-
 issue_delete:
   method: DELETE
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: issues }
-    - { type: var, name: number }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: issues
+  - type: var
+    name: number
   response: single
-
 issue_sub_issue_add:
   method: POST
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: issues }
-    - { type: var, name: number }
-    - { type: literal, value: sub_issues }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: issues
+  - type: var
+    name: number
+  - type: literal
+    value: sub_issues
   body:
     type: object
     fields:
-      - [sub_issue_id, { type: var, name: sub_issue_id }]
-      - [replace_parent, { type: if, condition: { type: exists, var: replace_parent },
-                           then_expr: { type: var, name: replace_parent },
-                           else_expr: { type: const, value: null } }]
+    - - sub_issue_id
+      - type: var
+        name: sub_issue_id
+    - - replace_parent
+      - type: if
+        condition:
+          type: exists
+          var: replace_parent
+        then_expr:
+          type: var
+          name: replace_parent
+        else_expr:
+          type: const
+          value: null
   response: single
-
 issue_sub_issue_remove:
   method: DELETE
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: issues }
-    - { type: var, name: number }
-    - { type: literal, value: sub_issue }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: issues
+  - type: var
+    name: number
+  - type: literal
+    value: sub_issue
   body:
     type: object
     fields:
-      - [sub_issue_id, { type: var, name: sub_issue_id }]
+    - - sub_issue_id
+      - type: var
+        name: sub_issue_id
   response: single
-
 issue_sub_issue_reprioritize:
   method: PATCH
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: issues }
-    - { type: var, name: number }
-    - { type: literal, value: sub_issues }
-    - { type: literal, value: priority }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: issues
+  - type: var
+    name: number
+  - type: literal
+    value: sub_issues
+  - type: literal
+    value: priority
   body:
     type: object
     fields:
-      - [sub_issue_id, { type: var, name: sub_issue_id }]
-      - [after_id, { type: if, condition: { type: exists, var: after_id },
-                     then_expr: { type: var, name: after_id },
-                     else_expr: { type: const, value: null } }]
-      - [before_id, { type: if, condition: { type: exists, var: before_id },
-                      then_expr: { type: var, name: before_id },
-                      else_expr: { type: const, value: null } }]
+    - - sub_issue_id
+      - type: var
+        name: sub_issue_id
+    - - after_id
+      - type: if
+        condition:
+          type: exists
+          var: after_id
+        then_expr:
+          type: var
+          name: after_id
+        else_expr:
+          type: const
+          value: null
+    - - before_id
+      - type: if
+        condition:
+          type: exists
+          var: before_id
+        then_expr:
+          type: var
+          name: before_id
+        else_expr:
+          type: const
+          value: null
   response: single
-
 issue_assignees_add:
   method: POST
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: issues }
-    - { type: var, name: number }
-    - { type: literal, value: assignees }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: issues
+  - type: var
+    name: number
+  - type: literal
+    value: assignees
   body:
     type: object
     fields:
-      - [assignees, { type: var, name: assignees }]
+    - - assignees
+      - type: var
+        name: assignees
   response: single
-
 issue_assignees_remove:
   method: DELETE
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: issues }
-    - { type: var, name: number }
-    - { type: literal, value: assignees }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: issues
+  - type: var
+    name: number
+  - type: literal
+    value: assignees
   body:
     type: object
     fields:
-      - [assignees, { type: var, name: assignees }]
+    - - assignees
+      - type: var
+        name: assignees
   response: single
-
 issue_assign_copilot:
   method: POST
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: issues }
-    - { type: var, name: number }
-    - { type: literal, value: assignees }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: issues
+  - type: var
+    name: number
+  - type: literal
+    value: assignees
   body:
     type: object
     fields:
-      - [assignees, { type: const, value: ["copilot-swe-agent[bot]"] }]
-      - [agent_assignment, { type: object, fields:
-          [
-            [target_repo, { type: var, name: target_repo }],
-            [base_branch, { type: var, name: base_branch }],
-            [custom_instructions, { type: if, condition: { type: exists, var: custom_instructions },
-                                    then_expr: { type: var, name: custom_instructions },
-                                    else_expr: { type: const, value: null } }],
-            [custom_agent, { type: if, condition: { type: exists, var: custom_agent },
-                             then_expr: { type: var, name: custom_agent },
-                             else_expr: { type: const, value: null } }],
-            [model, { type: if, condition: { type: exists, var: model },
-                      then_expr: { type: var, name: model },
-                      else_expr: { type: const, value: null } }]
-          ] }]
+    - - assignees
+      - type: const
+        value:
+        - copilot-swe-agent[bot]
+    - - agent_assignment
+      - type: object
+        fields:
+        - - target_repo
+          - type: var
+            name: target_repo
+        - - base_branch
+          - type: var
+            name: base_branch
+        - - custom_instructions
+          - type: if
+            condition:
+              type: exists
+              var: custom_instructions
+            then_expr:
+              type: var
+              name: custom_instructions
+            else_expr:
+              type: const
+              value: null
+        - - custom_agent
+          - type: if
+            condition:
+              type: exists
+              var: custom_agent
+            then_expr:
+              type: var
+              name: custom_agent
+            else_expr:
+              type: const
+              value: null
+        - - model
+          - type: if
+            condition:
+              type: exists
+              var: model
+            then_expr:
+              type: var
+              name: model
+            else_expr:
+              type: const
+              value: null
   response: single
-
 issue_comment_create:
   method: POST
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: issues }
-    - { type: var, name: issue_number }
-    - { type: literal, value: comments }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: issues
+  - type: var
+    name: issue_number
+  - type: literal
+    value: comments
   body:
     type: object
     fields:
-      - [body, { type: var, name: body }]
+    - - body
+      - type: var
+        name: body
   response: single
-
 issue_comment_update:
   method: PATCH
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: issues }
-    - { type: literal, value: comments }
-    - { type: var, name: id }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: issues
+  - type: literal
+    value: comments
+  - type: var
+    name: id
   body:
     type: object
     fields:
-      - [body, { type: var, name: body }]
+    - - body
+      - type: var
+        name: body
   response: single
-
 issue_comment_delete:
-  # DELETE /repos/{owner}/{repo}/issues/comments/{comment_id}
   method: DELETE
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: issues }
-    - { type: literal, value: comments }
-    - { type: var, name: id }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: issues
+  - type: literal
+    value: comments
+  - type: var
+    name: id
   response: single
-
 pr_update:
   method: PATCH
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: pulls }
-    - { type: var, name: number }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: pulls
+  - type: var
+    name: number
   body:
     type: object
     fields:
-      - [title, { type: if, condition: { type: exists, var: title },
-                  then_expr: { type: var, name: title },
-                  else_expr: { type: const, value: null } }]
-      - [body, { type: if, condition: { type: exists, var: body },
-                 then_expr: { type: var, name: body },
-                 else_expr: { type: const, value: null } }]
-      - [state, { type: if, condition: { type: exists, var: state },
-                  then_expr: { type: var, name: state },
-                  else_expr: { type: const, value: null } }]
-      - [base, { type: if, condition: { type: exists, var: base },
-                 then_expr: { type: var, name: base },
-                 else_expr: { type: const, value: null } }]
+    - - title
+      - type: if
+        condition:
+          type: exists
+          var: title
+        then_expr:
+          type: var
+          name: title
+        else_expr:
+          type: const
+          value: null
+    - - body
+      - type: if
+        condition:
+          type: exists
+          var: body
+        then_expr:
+          type: var
+          name: body
+        else_expr:
+          type: const
+          value: null
+    - - state
+      - type: if
+        condition:
+          type: exists
+          var: state
+        then_expr:
+          type: var
+          name: state
+        else_expr:
+          type: const
+          value: null
+    - - base
+      - type: if
+        condition:
+          type: exists
+          var: base
+        then_expr:
+          type: var
+          name: base
+        else_expr:
+          type: const
+          value: null
   response: single
-
 pr_merge:
   method: PUT
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: pulls }
-    - { type: var, name: number }
-    - { type: literal, value: merge }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: pulls
+  - type: var
+    name: number
+  - type: literal
+    value: merge
   body:
     type: object
     fields:
-      - [commit_title, { type: if, condition: { type: exists, var: commit_title },
-                         then_expr: { type: var, name: commit_title },
-                         else_expr: { type: const, value: null } }]
-      - [commit_message, { type: if, condition: { type: exists, var: commit_message },
-                           then_expr: { type: var, name: commit_message },
-                           else_expr: { type: const, value: null } }]
-      - [merge_method, { type: if, condition: { type: exists, var: merge_method },
-                         then_expr: { type: var, name: merge_method },
-                         else_expr: { type: const, value: null } }]
+    - - commit_title
+      - type: if
+        condition:
+          type: exists
+          var: commit_title
+        then_expr:
+          type: var
+          name: commit_title
+        else_expr:
+          type: const
+          value: null
+    - - commit_message
+      - type: if
+        condition:
+          type: exists
+          var: commit_message
+        then_expr:
+          type: var
+          name: commit_message
+        else_expr:
+          type: const
+          value: null
+    - - merge_method
+      - type: if
+        condition:
+          type: exists
+          var: merge_method
+        then_expr:
+          type: var
+          name: merge_method
+        else_expr:
+          type: const
+          value: null
   response: single
-
 pr_update_branch:
   method: PUT
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: pulls }
-    - { type: var, name: number }
-    - { type: literal, value: update-branch }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: pulls
+  - type: var
+    name: number
+  - type: literal
+    value: update-branch
   body:
     type: object
     fields:
-      - [expected_head_sha, { type: if, condition: { type: exists, var: expected_head_sha },
-                              then_expr: { type: var, name: expected_head_sha },
-                              else_expr: { type: const, value: null } }]
+    - - expected_head_sha
+      - type: if
+        condition:
+          type: exists
+          var: expected_head_sha
+        then_expr:
+          type: var
+          name: expected_head_sha
+        else_expr:
+          type: const
+          value: null
   response: single
-
 pr_create:
-  # POST /repos/{owner}/{repo}/pulls
   method: POST
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: pulls }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: pulls
   body:
     type: object
     fields:
-      - [title, { type: var, name: title }]
-      - [head, { type: var, name: head }]
-      - [base, { type: var, name: base }]
-      - [body, { type: if, condition: { type: exists, var: body },
-                 then_expr: { type: var, name: body },
-                 else_expr: { type: const, value: null } }]
-      - [draft, { type: if, condition: { type: exists, var: draft },
-                  then_expr: { type: var, name: draft },
-                  else_expr: { type: const, value: null } }]
-      - [maintainer_can_modify, { type: if, condition: { type: exists, var: maintainer_can_modify },
-                                  then_expr: { type: var, name: maintainer_can_modify },
-                                  else_expr: { type: const, value: null } }]
-      - [issue, { type: if, condition: { type: exists, var: issue },
-                  then_expr: { type: var, name: issue },
-                  else_expr: { type: const, value: null } }]
+    - - title
+      - type: var
+        name: title
+    - - head
+      - type: var
+        name: head
+    - - base
+      - type: var
+        name: base
+    - - body
+      - type: if
+        condition:
+          type: exists
+          var: body
+        then_expr:
+          type: var
+          name: body
+        else_expr:
+          type: const
+          value: null
+    - - draft
+      - type: if
+        condition:
+          type: exists
+          var: draft
+        then_expr:
+          type: var
+          name: draft
+        else_expr:
+          type: const
+          value: null
+    - - maintainer_can_modify
+      - type: if
+        condition:
+          type: exists
+          var: maintainer_can_modify
+        then_expr:
+          type: var
+          name: maintainer_can_modify
+        else_expr:
+          type: const
+          value: null
+    - - issue
+      - type: if
+        condition:
+          type: exists
+          var: issue
+        then_expr:
+          type: var
+          name: issue
+        else_expr:
+          type: const
+          value: null
   response: single
-
 pr_review_create:
   method: POST
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: pulls }
-    - { type: var, name: pull_number }
-    - { type: literal, value: reviews }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: pulls
+  - type: var
+    name: pull_number
+  - type: literal
+    value: reviews
   body:
     type: object
     fields:
-      - [body, { type: if, condition: { type: exists, var: body },
-                 then_expr: { type: var, name: body },
-                 else_expr: { type: const, value: null } }]
-      - [commit_id, { type: if, condition: { type: exists, var: commit_id },
-                      then_expr: { type: var, name: commit_id },
-                      else_expr: { type: const, value: null } }]
-      - [event, { type: if, condition: { type: exists, var: event },
-                  then_expr: { type: var, name: event },
-                  else_expr: { type: const, value: null } }]
+    - - body
+      - type: if
+        condition:
+          type: exists
+          var: body
+        then_expr:
+          type: var
+          name: body
+        else_expr:
+          type: const
+          value: null
+    - - commit_id
+      - type: if
+        condition:
+          type: exists
+          var: commit_id
+        then_expr:
+          type: var
+          name: commit_id
+        else_expr:
+          type: const
+          value: null
+    - - event
+      - type: if
+        condition:
+          type: exists
+          var: event
+        then_expr:
+          type: var
+          name: event
+        else_expr:
+          type: const
+          value: null
   response: single
-
 pr_review_submit:
   method: POST
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: pulls }
-    - { type: var, name: pull_number }
-    - { type: literal, value: reviews }
-    - { type: var, name: id }
-    - { type: literal, value: events }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: pulls
+  - type: var
+    name: pull_number
+  - type: literal
+    value: reviews
+  - type: var
+    name: id
+  - type: literal
+    value: events
   body:
     type: object
     fields:
-      - [event, { type: var, name: event }]
-      - [body, { type: if, condition: { type: exists, var: body },
-                 then_expr: { type: var, name: body },
-                 else_expr: { type: const, value: null } }]
+    - - event
+      - type: var
+        name: event
+    - - body
+      - type: if
+        condition:
+          type: exists
+          var: body
+        then_expr:
+          type: var
+          name: body
+        else_expr:
+          type: const
+          value: null
   response: single
-
 pr_review_delete:
   method: DELETE
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: pulls }
-    - { type: var, name: pull_number }
-    - { type: literal, value: reviews }
-    - { type: var, name: id }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: pulls
+  - type: var
+    name: pull_number
+  - type: literal
+    value: reviews
+  - type: var
+    name: id
   response: single
-
 pr_review_comment_create:
   method: POST
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: pulls }
-    - { type: var, name: pull_number }
-    - { type: literal, value: comments }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: pulls
+  - type: var
+    name: pull_number
+  - type: literal
+    value: comments
   body:
     type: object
     fields:
-      - [body, { type: var, name: body }]
-      - [commit_id, { type: if, condition: { type: exists, var: commit_id },
-                      then_expr: { type: var, name: commit_id },
-                      else_expr: { type: const, value: null } }]
-      - [path, { type: if, condition: { type: exists, var: path },
-                 then_expr: { type: var, name: path },
-                 else_expr: { type: const, value: null } }]
-      - [line, { type: if, condition: { type: exists, var: line },
-                 then_expr: { type: var, name: line },
-                 else_expr: { type: const, value: null } }]
-      - [side, { type: if, condition: { type: exists, var: side },
-                 then_expr: { type: var, name: side },
-                 else_expr: { type: const, value: null } }]
-      - [start_line, { type: if, condition: { type: exists, var: start_line },
-                       then_expr: { type: var, name: start_line },
-                       else_expr: { type: const, value: null } }]
-      - [start_side, { type: if, condition: { type: exists, var: start_side },
-                       then_expr: { type: var, name: start_side },
-                       else_expr: { type: const, value: null } }]
-      - [subject_type, { type: if, condition: { type: exists, var: subject_type },
-                         then_expr: { type: var, name: subject_type },
-                         else_expr: { type: const, value: null } }]
-      - [in_reply_to, { type: if, condition: { type: exists, var: in_reply_to },
-                        then_expr: { type: var, name: in_reply_to },
-                        else_expr: { type: const, value: null } }]
+    - - body
+      - type: var
+        name: body
+    - - commit_id
+      - type: if
+        condition:
+          type: exists
+          var: commit_id
+        then_expr:
+          type: var
+          name: commit_id
+        else_expr:
+          type: const
+          value: null
+    - - path
+      - type: if
+        condition:
+          type: exists
+          var: path
+        then_expr:
+          type: var
+          name: path
+        else_expr:
+          type: const
+          value: null
+    - - line
+      - type: if
+        condition:
+          type: exists
+          var: line
+        then_expr:
+          type: var
+          name: line
+        else_expr:
+          type: const
+          value: null
+    - - side
+      - type: if
+        condition:
+          type: exists
+          var: side
+        then_expr:
+          type: var
+          name: side
+        else_expr:
+          type: const
+          value: null
+    - - start_line
+      - type: if
+        condition:
+          type: exists
+          var: start_line
+        then_expr:
+          type: var
+          name: start_line
+        else_expr:
+          type: const
+          value: null
+    - - start_side
+      - type: if
+        condition:
+          type: exists
+          var: start_side
+        then_expr:
+          type: var
+          name: start_side
+        else_expr:
+          type: const
+          value: null
+    - - subject_type
+      - type: if
+        condition:
+          type: exists
+          var: subject_type
+        then_expr:
+          type: var
+          name: subject_type
+        else_expr:
+          type: const
+          value: null
+    - - in_reply_to
+      - type: if
+        condition:
+          type: exists
+          var: in_reply_to
+        then_expr:
+          type: var
+          name: in_reply_to
+        else_expr:
+          type: const
+          value: null
   response: single
-
 label_create:
   method: POST
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: labels }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: labels
   body:
     type: object
     fields:
-      - [name, { type: var, name: name }]
-      - [color, { type: if, condition: { type: exists, var: color },
-                  then_expr: { type: var, name: color },
-                  else_expr: { type: const, value: null } }]
-      - [description, { type: if, condition: { type: exists, var: description },
-                        then_expr: { type: var, name: description },
-                        else_expr: { type: const, value: null } }]
+    - - name
+      - type: var
+        name: name
+    - - color
+      - type: if
+        condition:
+          type: exists
+          var: color
+        then_expr:
+          type: var
+          name: color
+        else_expr:
+          type: const
+          value: null
+    - - description
+      - type: if
+        condition:
+          type: exists
+          var: description
+        then_expr:
+          type: var
+          name: description
+        else_expr:
+          type: const
+          value: null
   response: single
-
 label_update:
-  # PATCH /repos/{owner}/{repo}/labels/{name}
   method: PATCH
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: labels }
-    - { type: var, name: name }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: labels
+  - type: var
+    name: name
   body:
     type: object
     fields:
-      - [new_name, { type: if, condition: { type: exists, var: new_name },
-                    then_expr: { type: var, name: new_name },
-                    else_expr: { type: const, value: null } }]
-      - [color, { type: if, condition: { type: exists, var: color },
-                  then_expr: { type: var, name: color },
-                  else_expr: { type: const, value: null } }]
-      - [description, { type: if, condition: { type: exists, var: description },
-                        then_expr: { type: var, name: description },
-                        else_expr: { type: const, value: null } }]
+    - - new_name
+      - type: if
+        condition:
+          type: exists
+          var: new_name
+        then_expr:
+          type: var
+          name: new_name
+        else_expr:
+          type: const
+          value: null
+    - - color
+      - type: if
+        condition:
+          type: exists
+          var: color
+        then_expr:
+          type: var
+          name: color
+        else_expr:
+          type: const
+          value: null
+    - - description
+      - type: if
+        condition:
+          type: exists
+          var: description
+        then_expr:
+          type: var
+          name: description
+        else_expr:
+          type: const
+          value: null
   response: single
-
 label_delete:
-  # DELETE /repos/{owner}/{repo}/labels/{name}
   method: DELETE
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: labels }
-    - { type: var, name: name }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: labels
+  - type: var
+    name: name
   response: single
-
 repo_content_create:
   method: PUT
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: contents }
-    - { type: var, name: path }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: contents
+  - type: var
+    name: path
   body:
     type: object
     fields:
-      - [message, { type: var, name: message }]
-      - [content, { type: base64, value: { type: var, name: content } }]
-      - [branch, { type: if, condition: { type: exists, var: branch },
-                  then_expr: { type: var, name: branch },
-                  else_expr: { type: const, value: null } }]
+    - - message
+      - type: var
+        name: message
+    - - content
+      - type: base64
+        value:
+          type: var
+          name: content
+    - - branch
+      - type: if
+        condition:
+          type: exists
+          var: branch
+        then_expr:
+          type: var
+          name: branch
+        else_expr:
+          type: const
+          value: null
   response: single
-
 repo_content_update:
   method: PUT
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: contents }
-    - { type: var, name: path }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: contents
+  - type: var
+    name: path
   body:
     type: object
     fields:
-      - [message, { type: var, name: message }]
-      - [content, { type: base64, value: { type: var, name: content } }]
-      - [branch, { type: if, condition: { type: exists, var: branch },
-                  then_expr: { type: var, name: branch },
-                  else_expr: { type: const, value: null } }]
-      - [sha, { type: var, name: sha }]
+    - - message
+      - type: var
+        name: message
+    - - content
+      - type: base64
+        value:
+          type: var
+          name: content
+    - - branch
+      - type: if
+        condition:
+          type: exists
+          var: branch
+        then_expr:
+          type: var
+          name: branch
+        else_expr:
+          type: const
+          value: null
+    - - sha
+      - type: var
+        name: sha
   response: single
-
 repo_branch_create:
   method: POST
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: git }
-    - { type: literal, value: refs }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: git
+  - type: literal
+    value: refs
   body:
     type: object
     fields:
-      - [ref, { type: format, template: "refs/heads/{name}", vars: {
-              name: { type: var, name: name }
-            } }]
-      - [sha, { type: var, name: sha }]
+    - - ref
+      - type: format
+        template: refs/heads/{name}
+        vars:
+          name:
+            type: var
+            name: name
+    - - sha
+      - type: var
+        name: sha
   response: single
   conflict_rules:
-    - when:
-        status: 422
-        body_json_path: message
-        contains: Reference already exists
-      kind: resource_exists
-      extract:
-        entity: Repository
-        fields:
-          name: $.ref
-      hint: Branch ref already exists
-
+  - when:
+      status: 422
+      body_json_path: message
+      contains: Reference already exists
+    kind: resource_exists
+    extract:
+      entity: Repository
+      fields:
+        name: $.ref
+    hint: Branch ref already exists
 repo_content_delete:
   method: DELETE
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: contents }
-    - { type: var, name: path }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: contents
+  - type: var
+    name: path
   body:
     type: object
     fields:
-      - [message, { type: var, name: message }]
-      - [sha, { type: var, name: sha }]
-      - [branch, { type: if, condition: { type: exists, var: branch },
-                  then_expr: { type: var, name: branch },
-                  else_expr: { type: const, value: null } }]
+    - - message
+      - type: var
+        name: message
+    - - sha
+      - type: var
+        name: sha
+    - - branch
+      - type: if
+        condition:
+          type: exists
+          var: branch
+        then_expr:
+          type: var
+          name: branch
+        else_expr:
+          type: const
+          value: null
   response: single
-
 pr_review_get:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: pulls }
-    - { type: var, name: pull_number }
-    - { type: literal, value: reviews }
-    - { type: var, name: id }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: pulls
+  - type: var
+    name: pull_number
+  - type: literal
+    value: reviews
+  - type: var
+    name: id
   response: single
-
 pr_review_comment_get:
   method: GET
   path:
-    - { type: literal, value: repos }
-    - { type: var, name: owner }
-    - { type: var, name: repo }
-    - { type: literal, value: pulls }
-    - { type: literal, value: comments }
-    - { type: var, name: id }
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: pulls
+  - type: literal
+    value: comments
+  - type: var
+    name: id
   response: single
+pr_file_get:
+  method: GET
+  path:
+  - type: literal
+    value: repos
+  - type: literal
+    value: _
+  - type: literal
+    value: pulls
+  - type: literal
+    value: files
+  - type: var
+    name: filename

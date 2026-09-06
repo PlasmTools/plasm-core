@@ -1,4 +1,4 @@
-version: 8
+version: 11
 http_backend: https://graph.microsoft.com
 data_classes:
   untrusted:
@@ -16,7 +16,7 @@ data_classes:
 entities:
   MailFolder:
     id_field: id
-    primary_query: mail_folder_query
+    primary_query: mail_folder_child_query
     description: A mail folder in the signed-in mailbox.
     discovery:
       names:
@@ -70,7 +70,7 @@ entities:
             mailFolderId: id
   Message:
     id_field: id
-    primary_query: message_query
+    primary_query: message_folder_query
     description: An Outlook mail item — list threads/conversations via conversation grouping on messages.
     discovery:
       names:
@@ -254,7 +254,7 @@ entities:
             calendarId: id
   Event:
     id_field: id
-    primary_query: event_query
+    primary_query: event_calendar_query
     description: A calendar event in the signed-in user's schedule.
     discovery:
       names:
@@ -312,25 +312,22 @@ entities:
         value_ref: nv_event_web_link
     relations: {}
 capabilities:
-  mail_folder_query:
-    kind: query
-    entity: MailFolder
-    description: List the root-level folders in the mailbox.
-    parameters:
-    - name: includeHiddenFolders
-      value_ref: nv_mail_folder_query_include_hidden_folders
-      required: false
   mail_folder_child_query:
     kind: query
     entity: MailFolder
-    description: List child folders underneath a folder.
-    parameters:
-    - name: mailFolderId
-      value_ref: nv_mail_folder_child_query_mail_folder_id
+    description: List MailFolder by shelf (mail_folder | mail_folder_child).
+    selection:
+    - name: shelf
+      value_ref: nv_mailfolder_query_shelf
       required: true
-      role: scope
+      description: mail_folder | mail_folder_child
+    controls:
     - name: includeHiddenFolders
       value_ref: nv_mail_folder_child_query_include_hidden_folders
+      required: false
+    scope:
+    - name: mailFolderId
+      value_ref: nv_mail_folder_child_query_mail_folder_id
       required: false
   mail_folder_get:
     kind: get
@@ -345,41 +342,10 @@ capabilities:
     - totalItemCount
     - wellKnownName
     - isHidden
-  message_query:
-    kind: query
-    entity: Message
-    description: Find mail conversation threads and messages.
-    discovery:
-      target_terms:
-      - conversation thread
-      - thread
-      - message
-    provides:
-    - id
-    - subject
-    - bodyPreview
-    - parentFolderId
-    - fromAddress
-    - fromName
-    - receivedDateTime
-    - sentDateTime
-    - hasAttachments
-    - isDraft
-    - isRead
-    - importance
-    - categories
-    - webLink
-    parameters:
-    - name: filter
-      value_ref: nv_message_query_filter
-      required: false
-    - name: orderBy
-      value_ref: nv_message_query_order_by
-      required: false
   message_folder_query:
     kind: query
     entity: Message
-    description: List messages in a specific folder.
+    description: List Message by shelf (message | message_folder).
     provides:
     - id
     - subject
@@ -395,16 +361,21 @@ capabilities:
     - importance
     - categories
     - webLink
-    parameters:
-    - name: mailFolderId
-      value_ref: nv_message_folder_query_mail_folder_id
+    selection:
+    - name: shelf
+      value_ref: nv_message_query_shelf
       required: true
-      role: scope
+      description: message | message_folder
     - name: filter
       value_ref: nv_message_folder_query_filter
       required: false
+    controls:
     - name: orderBy
       value_ref: nv_message_folder_query_order_by
+      required: false
+    scope:
+    - name: mailFolderId
+      value_ref: nv_message_folder_query_mail_folder_id
       required: false
   message_get:
     kind: get
@@ -433,57 +404,66 @@ capabilities:
     kind: create
     entity: Message
     description: Create a draft message in the mailbox.
-    parameters:
-    - name: subject
-      value_ref: nv_message_create_subject
-      required: true
-    - name: bodyContent
-      value_ref: nv_message_create_body_content
-      required: true
-      sink_class: external_send
-    - name: bodyContentType
-      value_ref: nv_message_create_body_content_type
-      required: false
-    - name: toAddress
-      value_ref: nv_message_create_to_address
-      required: true
     provides:
     - id
     - subject
     - bodyPreview
     - isDraft
     - parentFolderId
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: subject
+          value_ref: nv_message_create_subject
+          required: true
+        - name: bodyContent
+          value_ref: nv_message_create_body_content
+          required: true
+          sink_class: external_send
+        - name: bodyContentType
+          value_ref: nv_message_create_body_content_type
+          required: false
+        - name: toAddress
+          value_ref: nv_message_create_to_address
+          required: true
   message_update:
     kind: update
     entity: Message
     description: Update mailbox state fields on a message.
-    parameters:
-    - name: isRead
-      value_ref: nv_message_update_is_read
-      required: false
-    - name: importance
-      value_ref: nv_message_update_importance
-      required: false
-    - name: categories
-      value_ref: nv_message_update_categories
-      required: false
     provides:
     - id
     - parentFolderId
     - isRead
     - importance
     - categories
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: isRead
+          value_ref: nv_message_update_is_read
+          required: false
+        - name: importance
+          value_ref: nv_message_update_importance
+          required: false
+        - name: categories
+          value_ref: nv_message_update_categories
+          required: false
   message_move:
     kind: action
     entity: Message
     description: Move a message into another folder.
-    parameters:
-    - name: destinationFolderId
-      value_ref: nv_message_move_destination_folder_id
-      required: true
     output:
       type: side_effect
       description: Moves the message into another folder in the mailbox.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: destinationFolderId
+          value_ref: nv_message_move_destination_folder_id
+          required: true
   message_send:
     kind: action
     entity: Message
@@ -507,11 +487,11 @@ capabilities:
     - isInline
     - lastModifiedDateTime
     - contentId
-    parameters:
+    selection: []
+    scope:
     - name: messageId
       value_ref: nv_attachment_query_message_id
       required: true
-      role: scope
   attachment_get:
     kind: action
     entity: Attachment
@@ -525,11 +505,13 @@ capabilities:
     - lastModifiedDateTime
     - contentId
     - contentBytes
-    parameters:
-    - name: messageId
-      value_ref: nv_attachment_get_message_id
-      required: true
-      role: scope
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: messageId
+          value_ref: nv_attachment_get_message_id
+          required: true
   mailbox_triage_query:
     kind: query
     entity: MailboxTriage
@@ -572,43 +554,10 @@ capabilities:
     - canEdit
     - ownerName
     - ownerAddress
-  event_query:
-    kind: query
-    entity: Event
-    description: List events across all calendars in the default mailbox view.
-    discovery:
-      operation_terms:
-      - list events
-      - list calendar events
-      target_terms:
-      - event
-      - calendar event
-      - meeting
-    provides:
-    - id
-    - subject
-    - bodyPreview
-    - startDateTime
-    - endDateTime
-    - startTimeZone
-    - endTimeZone
-    - locationDisplayName
-    - isAllDay
-    - isCancelled
-    - organizerName
-    - organizerAddress
-    - webLink
-    parameters:
-    - name: filter
-      value_ref: nv_event_query_filter
-      required: false
-    - name: orderBy
-      value_ref: nv_event_query_order_by
-      required: false
   event_calendar_query:
     kind: query
     entity: Event
-    description: List events in a specific calendar.
+    description: List Event by shelf (event | event_calendar).
     provides:
     - id
     - subject
@@ -623,16 +572,21 @@ capabilities:
     - organizerName
     - organizerAddress
     - webLink
-    parameters:
-    - name: calendarId
-      value_ref: nv_event_calendar_query_calendar_id
+    selection:
+    - name: shelf
+      value_ref: nv_event_query_shelf
       required: true
-      role: scope
+      description: event | event_calendar
     - name: filter
       value_ref: nv_event_calendar_query_filter
       required: false
+    controls:
     - name: orderBy
       value_ref: nv_event_calendar_query_order_by
+      required: false
+    scope:
+    - name: calendarId
+      value_ref: nv_event_calendar_query_calendar_id
       required: false
   event_get:
     kind: get
@@ -656,34 +610,37 @@ capabilities:
     kind: create
     entity: Event
     description: Create a new calendar event.
-    parameters:
-    - name: subject
-      value_ref: nv_event_create_subject
-      required: true
-    - name: startDateTime
-      value_ref: nv_event_create_start_date_time
-      required: true
-    - name: endDateTime
-      value_ref: nv_event_create_end_date_time
-      required: true
-    - name: timeZone
-      value_ref: nv_event_create_time_zone
-      required: false
-    - name: bodyContent
-      value_ref: nv_event_create_body_content
-      required: false
-    - name: bodyContentType
-      value_ref: nv_event_create_body_content_type
-      required: false
-    - name: locationDisplayName
-      value_ref: nv_event_create_location_display_name
-      required: false
     provides:
     - id
     - subject
     - startDateTime
     - endDateTime
     - webLink
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: subject
+          value_ref: nv_event_create_subject
+          required: true
+        - name: startDateTime
+          value_ref: nv_event_create_start_date_time
+          required: true
+        - name: endDateTime
+          value_ref: nv_event_create_end_date_time
+          required: true
+        - name: timeZone
+          value_ref: nv_event_create_time_zone
+          required: false
+        - name: bodyContent
+          value_ref: nv_event_create_body_content
+          required: false
+        - name: bodyContentType
+          value_ref: nv_event_create_body_content_type
+          required: false
+        - name: locationDisplayName
+          value_ref: nv_event_create_location_display_name
+          required: false
   event_delete:
     kind: delete
     entity: Event
@@ -696,7 +653,7 @@ views:
     scope: []
     nodes:
     - id: folders
-      capability: mail_folder_query
+      capability: mail_folder_child_query
       bind: {}
     output:
       snapshotKey:
@@ -710,8 +667,9 @@ views:
         node: folders
       triage_status:
         kind: computed
-        template: |
-          {%- if not has_folders -%}empty_mailbox{%- else -%}folders_ready{%- endif -%}
+        template: '{%- if not has_folders -%}empty_mailbox{%- else -%}folders_ready{%- endif -%}
+
+          '
     relation_outputs:
     - relation: root_folders
       target: MailFolder
@@ -956,3 +914,21 @@ values:
     items:
       value_ref: nv_wire_str_short
     description: Categories to store on the message.
+  nv_mailfolder_query_shelf:
+    type: enum
+    enum:
+    - mail_folder
+    - mail_folder_child
+    description: MailFolder query shelf
+  nv_message_query_shelf:
+    type: enum
+    enum:
+    - message
+    - message_folder
+    description: Message query shelf
+  nv_event_query_shelf:
+    type: enum
+    enum:
+    - event
+    - event_calendar
+    description: Event query shelf

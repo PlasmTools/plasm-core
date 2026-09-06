@@ -1,89 +1,83 @@
 openid_userinfo_get:
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: userinfo
+  - type: literal
+    value: v2
+  - type: literal
+    value: userinfo
   response: single
-  headers: &restli_headers
+  headers: &id001
     type: object
     fields:
-      - - X-Restli-Protocol-Version
-        - type: const
-          value: "2.0.0"
-
+    - - X-Restli-Protocol-Version
+      - type: const
+        value: 2.0.0
 member_me_get:
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: me
+  - type: literal
+    value: v2
+  - type: literal
+    value: me
   response: single
-  headers: *restli_headers
-
-ugc_post_query:
-  method: GET
-  path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: ugcPosts
-  response:
-    items: elements
-  query:
-    type: object
-    fields:
-      - - q
-        - type: const
-          value: authors
-      - - authors
-        - type: var
-          name: authors
-      - - sortBy
-        - type: if
-          condition: { type: exists, var: sortBy }
-          then_expr: { type: var, name: sortBy }
-          else_expr: { type: const, value: null }
-  pagination:
-    params:
-      start:
-        counter: 0
-        step: 10
-      count:
-        fixed: 10
-        role: page_size
-    strategy: offset
-  headers: *restli_headers
-
+  headers: *id001
 ugc_post_query_for_member:
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: ugcPosts
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: ugc_post_query_for_member
+    then_expr:
+      type: const
+      value: v2/ugcPosts
+    else_expr:
+      type: if
+      condition:
+        type: equals
+        left:
+          type: var
+          name: shelf
+        right:
+          type: const
+          value: ugc_post_query_for_organization
+      then_expr:
+        type: const
+        value: v2/ugcPosts
+      else_expr:
+        type: const
+        value: v2/ugcPosts
   response:
     items: elements
   query:
     type: object
     fields:
-      - - q
-        - type: const
-          value: authors
-      - - authors
-        - type: format
-          template: "List(urn%3Ali%3Aperson%3A{id})"
-          vars:
-            id:
-              type: var
-              name: member
-      - - sortBy
-        - type: if
-          condition: { type: exists, var: sortBy }
-          then_expr: { type: var, name: sortBy }
-          else_expr: { type: const, value: null }
+    - - q
+      - type: const
+        value: authors
+    - - authors
+      - type: format
+        template: List(urn%3Ali%3Aperson%3A{id})
+        vars:
+          id:
+            type: var
+            name: member
+    - - sortBy
+      - type: if
+        condition:
+          type: exists
+          var: sortBy
+        then_expr:
+          type: var
+          name: sortBy
+        else_expr:
+          type: const
+          value: null
   pagination:
     params:
       start:
@@ -93,200 +87,178 @@ ugc_post_query_for_member:
         fixed: 10
         role: page_size
     strategy: offset
-  headers: *restli_headers
-
-ugc_post_query_for_organization:
-  method: GET
-  path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: ugcPosts
-  response:
-    items: elements
-  query:
-    type: object
-    fields:
-      - - q
-        - type: const
-          value: authors
-      - - authors
-        - type: format
-          template: "List(urn%3Ali%3Aorganization%3A{id})"
-          vars:
-            id:
-              type: var
-              name: organization
-      - - sortBy
-        - type: if
-          condition: { type: exists, var: sortBy }
-          then_expr: { type: var, name: sortBy }
-          else_expr: { type: const, value: null }
-  pagination:
-    params:
-      start:
-        counter: 0
-        step: 10
-      count:
-        fixed: 10
-        role: page_size
-    strategy: offset
-  headers: *restli_headers
-
+  headers: *id001
 ugc_post_get:
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: ugcPosts
-    - type: var
-      name: id
+  - type: literal
+    value: v2
+  - type: literal
+    value: ugcPosts
+  - type: var
+    name: id
   response: single
   query:
     type: object
     fields:
-      - - viewContext
-        - type: if
-          condition: { type: exists, var: viewContext }
-          then_expr: { type: var, name: viewContext }
-          else_expr: { type: const, value: AUTHOR }
-  headers: *restli_headers
-
+    - - viewContext
+      - type: if
+        condition:
+          type: exists
+          var: viewContext
+        then_expr:
+          type: var
+          name: viewContext
+        else_expr:
+          type: const
+          value: AUTHOR
+  headers: *id001
 ugc_post_create:
   method: POST
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: ugcPosts
+  - type: literal
+    value: v2
+  - type: literal
+    value: ugcPosts
   response: single
   body:
     type: object
     fields:
-      - - author
-        - type: var
-          name: authorUrn
-      - - lifecycleState
-        - type: const
-          value: PUBLISHED
-      - - specificContent
-        - type: object
-          fields:
-            - - com.linkedin.ugc.ShareContent
+    - - author
+      - type: var
+        name: authorUrn
+    - - lifecycleState
+      - type: const
+        value: PUBLISHED
+    - - specificContent
+      - type: object
+        fields:
+        - - com.linkedin.ugc.ShareContent
+          - type: object
+            fields:
+            - - shareCommentary
               - type: object
                 fields:
-                  - - shareCommentary
+                - - text
+                  - type: var
+                    name: shareCommentary
+            - - shareMediaCategory
+              - type: var
+                name: shareMediaCategory
+            - - media
+              - type: if
+                condition:
+                  type: exists
+                  var: articleOriginalUrl
+                then_expr:
+                  type: array
+                  elements:
+                  - type: object
+                    fields:
+                    - - status
+                      - type: const
+                        value: READY
+                    - - originalUrl
+                      - type: var
+                        name: articleOriginalUrl
+                    - - title
+                      - type: if
+                        condition:
+                          type: exists
+                          var: articleTitle
+                        then_expr:
+                          type: object
+                          fields:
+                          - - text
+                            - type: var
+                              name: articleTitle
+                        else_expr:
+                          type: const
+                          value: null
+                    - - description
+                      - type: if
+                        condition:
+                          type: exists
+                          var: articleDescription
+                        then_expr:
+                          type: object
+                          fields:
+                          - - text
+                            - type: var
+                              name: articleDescription
+                        else_expr:
+                          type: const
+                          value: null
+                else_expr:
+                  type: if
+                  condition:
+                    type: exists
+                    var: imageMediaUrn
+                  then_expr:
+                    type: array
+                    elements:
                     - type: object
                       fields:
-                        - - text
-                          - type: var
-                            name: shareCommentary
-                  - - shareMediaCategory
-                    - type: var
-                      name: shareMediaCategory
-                  - - media
-                    - type: if
-                      condition: { type: exists, var: articleOriginalUrl }
-                      then_expr:
-                        type: array
-                        elements:
-                          - type: object
-                            fields:
-                              - - status
-                                - type: const
-                                  value: READY
-                              - - originalUrl
-                                - type: var
-                                  name: articleOriginalUrl
-                              - - title
-                                - type: if
-                                  condition: { type: exists, var: articleTitle }
-                                  then_expr:
-                                    type: object
-                                    fields:
-                                      - - text
-                                        - type: var
-                                          name: articleTitle
-                                  else_expr: { type: const, value: null }
-                              - - description
-                                - type: if
-                                  condition: { type: exists, var: articleDescription }
-                                  then_expr:
-                                    type: object
-                                    fields:
-                                      - - text
-                                        - type: var
-                                          name: articleDescription
-                                  else_expr: { type: const, value: null }
-                      else_expr:
-                        type: if
-                        condition: { type: exists, var: imageMediaUrn }
-                        then_expr:
-                          type: array
-                          elements:
-                            - type: object
-                              fields:
-                                - - status
-                                  - type: const
-                                    value: READY
-                                - - media
-                                  - type: var
-                                    name: imageMediaUrn
-                        else_expr:
-                          type: array
-                          elements: []
-      - - visibility
-        - type: object
-          fields:
-            - - com.linkedin.ugc.MemberNetworkVisibility
-              - type: var
-                name: visibility
-  headers: *restli_headers
-
+                      - - status
+                        - type: const
+                          value: READY
+                      - - media
+                        - type: var
+                          name: imageMediaUrn
+                  else_expr:
+                    type: array
+                    elements: []
+    - - visibility
+      - type: object
+        fields:
+        - - com.linkedin.ugc.MemberNetworkVisibility
+          - type: var
+            name: visibility
+  headers: *id001
 media_upload_register:
   method: POST
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: assets
+  - type: literal
+    value: v2
+  - type: literal
+    value: assets
   response:
     single: true
-    items_path: [value]
+    items_path:
+    - value
   query:
     type: object
     fields:
-      - - action
-        - type: const
-          value: registerUpload
+    - - action
+      - type: const
+        value: registerUpload
   body:
     type: object
     fields:
-      - - registerUploadRequest
-        - type: object
-          fields:
-            - - recipes
-              - type: array
-                elements:
-                  - type: format
-                    template: "urn:li:digitalmediaRecipe:{recipe}"
-                    vars:
-                      recipe:
-                        type: var
-                        name: recipe
-            - - owner
-              - type: var
-                name: ownerUrn
-            - - serviceRelationships
-              - type: array
-                elements:
-                  - type: object
-                    fields:
-                      - - relationshipType
-                        - type: const
-                          value: OWNER
-                      - - identifier
-                        - type: const
-                          value: urn:li:userGeneratedContent
-  headers: *restli_headers
+    - - registerUploadRequest
+      - type: object
+        fields:
+        - - recipes
+          - type: array
+            elements:
+            - type: format
+              template: urn:li:digitalmediaRecipe:{recipe}
+              vars:
+                recipe:
+                  type: var
+                  name: recipe
+        - - owner
+          - type: var
+            name: ownerUrn
+        - - serviceRelationships
+          - type: array
+            elements:
+            - type: object
+              fields:
+              - - relationshipType
+                - type: const
+                  value: OWNER
+              - - identifier
+                - type: const
+                  value: urn:li:userGeneratedContent
+  headers: *id001

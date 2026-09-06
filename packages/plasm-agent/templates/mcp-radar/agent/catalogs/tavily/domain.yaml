@@ -1,9 +1,19 @@
-version: 2
+version: 5
 http_backend: https://api.tavily.com
+data_classes:
+  untrusted:
+    description: Externally sourced, arbitrary web content (prompt-injection surface).
+    severity: untrusted
 entities:
   SearchResult:
     id_field: url
     description: A ranked web search result from Tavily Search.
+    discovery:
+      names:
+      - web search
+      - search result
+      - search
+      seed_class: primary
     fields:
       url:
         required: true
@@ -11,21 +21,30 @@ entities:
       title:
         required: false
         value_ref: nv_search_result_title
+        data_class: untrusted
       content:
         required: false
         value_ref: nv_search_result_content
+        data_class: untrusted
       score:
         required: false
         value_ref: nv_search_result_score
       raw_content:
         required: false
         value_ref: nv_search_result_raw_content
+        data_class: untrusted
       favicon:
         required: false
         value_ref: nv_search_result_favicon
   ExtractResult:
     id_field: url
+    primary_query: url_extract
     description: Extracted or crawled page content from Tavily Extract / Crawl.
+    discovery:
+      names:
+      - extract
+      - crawl
+      - page content
     fields:
       url:
         required: true
@@ -33,6 +52,7 @@ entities:
       raw_content:
         required: false
         value_ref: nv_extract_result_raw_content
+        data_class: untrusted
       favicon:
         required: false
         value_ref: nv_extract_result_favicon
@@ -58,6 +78,7 @@ entities:
       content:
         required: false
         value_ref: nv_research_task_content
+        data_class: untrusted
       response_time:
         required: false
         value_ref: nv_research_task_response_time
@@ -73,6 +94,12 @@ capabilities:
     - name: query
       value_ref: nv_wire_str_short
       required: true
+    - name: search_depth
+      value_ref: nv_web_search_search_depth
+      required: false
+    - name: chunks_per_source
+      value_ref: nv_wire_int
+      required: false
     - name: topic
       value_ref: nv_web_search_topic
       required: false
@@ -85,6 +112,12 @@ capabilities:
     - name: end_date
       value_ref: nv_wire_str_short
       required: false
+    - name: include_answer
+      value_ref: nv_wire_bool
+      required: false
+    - name: include_raw_content
+      value_ref: nv_wire_bool
+      required: false
     - name: include_domains
       value_ref: nv_web_search_include_domains
       required: false
@@ -94,24 +127,15 @@ capabilities:
     - name: country
       value_ref: nv_wire_str_short
       required: false
+    - name: auto_parameters
+      value_ref: nv_wire_bool
+      required: false
     - name: exact_match
       value_ref: nv_wire_bool
       required: false
     controls:
-    - name: search_depth
-      value_ref: nv_web_search_search_depth
-      required: false
-    - name: chunks_per_source
-      value_ref: nv_wire_int
-      required: false
     - name: max_results
       value_ref: nv_wire_int
-      required: false
-    - name: include_answer
-      value_ref: nv_wire_bool
-      required: false
-    - name: include_raw_content
-      value_ref: nv_wire_bool
       required: false
     - name: include_images
       value_ref: nv_wire_bool
@@ -119,21 +143,21 @@ capabilities:
     - name: include_favicon
       value_ref: nv_wire_bool
       required: false
-    - name: auto_parameters
-      value_ref: nv_wire_bool
-      required: false
   url_extract:
     kind: query
     entity: ExtractResult
-    description: Extract cleaned content from one or more URLs.
+    description: List ExtractResult by shelf (url_extract | site_crawl).
     selection:
+    - name: shelf
+      value_ref: nv_extractresult_query_shelf
+      required: true
+      description: url_extract | site_crawl
     - name: urls
       value_ref: nv_url_extract_urls
       required: true
     - name: query
       value_ref: nv_wire_str_short
       required: false
-    controls:
     - name: extract_depth
       value_ref: nv_url_extract_extract_depth
       required: false
@@ -143,40 +167,29 @@ capabilities:
     - name: chunks_per_source
       value_ref: nv_wire_int
       required: false
-    - name: include_images
-      value_ref: nv_wire_bool
-      required: false
-    - name: include_favicon
-      value_ref: nv_wire_bool
-      required: false
-  site_crawl:
-    kind: query
-    entity: ExtractResult
-    description: Graph-based website traversal — crawl multiple pages in parallel.
-    scope:
     - name: url
       value_ref: nv_wire_str_short
-      required: true
-    selection:
+      required: false
     - name: instructions
       value_ref: nv_wire_str_short
       required: false
-    controls:
     - name: max_depth
       value_ref: nv_wire_int
       required: false
     - name: max_breadth
       value_ref: nv_wire_int
       required: false
-    - name: limit
-      value_ref: nv_wire_int
-      required: false
-    - name: chunks_per_source
-      value_ref: nv_wire_int
-      required: false
+    controls:
     - name: include_images
       value_ref: nv_wire_bool
       required: false
+    - name: include_favicon
+      value_ref: nv_wire_bool
+      required: false
+    - name: limit
+      value_ref: nv_wire_int
+      required: false
+    scope: []
   research_create:
     kind: create
     entity: ResearchTask
@@ -345,3 +358,9 @@ values:
     type: array
     items:
       value_ref: nv_wire_str_short
+  nv_extractresult_query_shelf:
+    type: enum
+    enum:
+    - url_extract
+    - site_crawl
+    description: ExtractResult query shelf

@@ -1,4 +1,4 @@
-version: 4
+version: 5
 http_backend: https://api.tavily.com
 data_classes:
   untrusted:
@@ -90,23 +90,16 @@ capabilities:
     kind: search
     entity: SearchResult
     description: AI-powered web search. Returns ranked results with optional LLM answer.
-    parameters:
+    selection:
     - name: query
       value_ref: nv_wire_str_short
       required: true
-      role: search
     - name: search_depth
       value_ref: nv_web_search_search_depth
       required: false
-      role: response_control
     - name: chunks_per_source
       value_ref: nv_wire_int
       required: false
-      role: response_control
-    - name: max_results
-      value_ref: nv_wire_int
-      required: false
-      role: response_control
     - name: topic
       value_ref: nv_web_search_topic
       required: false
@@ -122,19 +115,9 @@ capabilities:
     - name: include_answer
       value_ref: nv_wire_bool
       required: false
-      role: response_control
     - name: include_raw_content
       value_ref: nv_wire_bool
       required: false
-      role: response_control
-    - name: include_images
-      value_ref: nv_wire_bool
-      required: false
-      role: response_control
-    - name: include_favicon
-      value_ref: nv_wire_bool
-      required: false
-      role: response_control
     - name: include_domains
       value_ref: nv_web_search_include_domains
       required: false
@@ -147,15 +130,28 @@ capabilities:
     - name: auto_parameters
       value_ref: nv_wire_bool
       required: false
-      role: response_control
     - name: exact_match
+      value_ref: nv_wire_bool
+      required: false
+    controls:
+    - name: max_results
+      value_ref: nv_wire_int
+      required: false
+    - name: include_images
+      value_ref: nv_wire_bool
+      required: false
+    - name: include_favicon
       value_ref: nv_wire_bool
       required: false
   url_extract:
     kind: query
     entity: ExtractResult
-    description: Extract cleaned content from one or more URLs.
-    parameters:
+    description: List ExtractResult by shelf (url_extract | site_crawl).
+    selection:
+    - name: shelf
+      value_ref: nv_extractresult_query_shelf
+      required: true
+      description: url_extract | site_crawl
     - name: urls
       value_ref: nv_url_extract_urls
       required: true
@@ -165,55 +161,35 @@ capabilities:
     - name: extract_depth
       value_ref: nv_url_extract_extract_depth
       required: false
-      role: response_control
     - name: format
       value_ref: nv_url_extract_format
       required: false
-      role: response_control
     - name: chunks_per_source
       value_ref: nv_wire_int
       required: false
-      role: response_control
-    - name: include_images
-      value_ref: nv_wire_bool
-      required: false
-      role: response_control
-    - name: include_favicon
-      value_ref: nv_wire_bool
-      required: false
-      role: response_control
-  site_crawl:
-    kind: query
-    entity: ExtractResult
-    description: Graph-based website traversal — crawl multiple pages in parallel.
-    parameters:
     - name: url
       value_ref: nv_wire_str_short
-      required: true
-      role: scope
+      required: false
     - name: instructions
       value_ref: nv_wire_str_short
       required: false
     - name: max_depth
       value_ref: nv_wire_int
       required: false
-      role: response_control
     - name: max_breadth
       value_ref: nv_wire_int
       required: false
-      role: response_control
-    - name: limit
-      value_ref: nv_wire_int
-      required: false
-      role: response_control
-    - name: chunks_per_source
-      value_ref: nv_wire_int
-      required: false
-      role: response_control
+    controls:
     - name: include_images
       value_ref: nv_wire_bool
       required: false
-      role: response_control
+    - name: include_favicon
+      value_ref: nv_wire_bool
+      required: false
+    - name: limit
+      value_ref: nv_wire_int
+      required: false
+    scope: []
   research_create:
     kind: create
     entity: ResearchTask
@@ -224,16 +200,19 @@ capabilities:
     - status
     - input
     - model
-    parameters:
-    - name: input
-      value_ref: nv_wire_str_short
-      required: true
-    - name: model
-      value_ref: nv_research_create_model
-      required: false
-    - name: citation_format
-      value_ref: nv_research_create_citation_format
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: input
+          value_ref: nv_wire_str_short
+          required: true
+        - name: model
+          value_ref: nv_research_create_model
+          required: false
+        - name: citation_format
+          value_ref: nv_research_create_citation_format
+          required: false
   research_get:
     kind: get
     entity: ResearchTask
@@ -379,3 +358,9 @@ values:
     type: array
     items:
       value_ref: nv_wire_str_short
+  nv_extractresult_query_shelf:
+    type: enum
+    enum:
+    - url_extract
+    - site_crawl
+    description: ExtractResult query shelf

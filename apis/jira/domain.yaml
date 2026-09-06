@@ -1,4 +1,4 @@
-version: 6
+version: 7
 http_backend: https://your-domain.atlassian.net
 data_classes:
   untrusted:
@@ -7,72 +7,71 @@ data_classes:
   external_publish:
     description: Public-visible issue or comment content within the project.
     severity: critical
-
 schema_overlay:
   source:
     steps:
-      - capability: project_query
-        collect: projects
-        items_path:
-          - values
-      - capability: issue_createmeta_get
-        for_each: projects
-        bind:
-          id: "{{ row.key }}"
-        merge:
-          kind: append_array
-          path:
-            - projects
+    - capability: project_query
+      collect: projects
+      items_path:
+      - values
+    - capability: issue_createmeta_get
+      for_each: projects
+      bind:
+        id: '{{ row.key }}'
+      merge:
+        kind: append_array
+        path:
+        - projects
   projection:
     mode: per_scope_entity
     items_path:
-      - projects
+    - projects
     nested_items_path:
-      - issuetypes
+    - issuetypes
   entity:
     from_template: Issue
     name:
-      template: "Issue__{{ parent.key | sanitize_identifier }}__{{ row.name | join_sanitize('__', ' ') }}"
+      template: Issue__{{ parent.key | sanitize_identifier }}__{{ row.name | join_sanitize('__', ' ') }}
     scope_key:
-      template: "{{ parent.key }}:{{ row.name }}"
+      template: '{{ parent.key }}:{{ row.name }}'
     static_fields:
       project_key:
-        template: "{{ parent.key }}"
+        template: '{{ parent.key }}'
         value_ref: nv_issue_project_key
       issuetype:
-        template: "{{ row.name }}"
+        template: '{{ row.name }}'
         value_ref: nv_wire_str_short
     dynamic_fields:
       from:
         kind: object_map
         path:
-          - fields
+        - fields
       skip:
         wire_name_path: []
         values_in:
-          - summary
-          - description
-          - issuetype
-          - project
-          - reporter
-          - assignee
-          - priority
-          - labels
-          - attachment
-          - duedate
-          - components
-          - fixVersions
-          - versions
-          - environment
-          - timetracking
-          - security
-          - parent
+        - summary
+        - description
+        - issuetype
+        - project
+        - reporter
+        - assignee
+        - priority
+        - labels
+        - attachment
+        - duedate
+        - components
+        - fixVersions
+        - versions
+        - environment
+        - timetracking
+        - security
+        - parent
       wire_name_path: []
       wire_type_path:
-        - schema
-        - type
+      - schema
+      - type
       name:
-        template: "{{ field_key | sanitize_identifier }}"
+        template: '{{ field_key | sanitize_identifier }}'
       type_map:
         string: nv_wire_str_short
         number: nv_wire_num
@@ -89,18 +88,17 @@ schema_overlay:
       extract:
         kind: path_segments
         segments:
-          - fields
-          - "{{ field_key }}"
+        - fields
+        - '{{ field_key }}'
   decode:
     scope:
       params:
-        - project
-        - issuetype
+      - project
+      - issuetype
       key:
-        template: "{{ ambient.project }}:{{ ambient.issuetype }}"
+        template: '{{ ambient.project }}:{{ ambient.issuetype }}'
     capabilities:
-      - issue_createmeta_get
-
+    - issue_createmeta_get
 entities:
   Issue:
     id_field: key
@@ -892,19 +890,16 @@ capabilities:
     entity: Issue
     description: Search issues with JQL—filter, sort, and shape the result set; optional field and expansion hints narrow.
       or enrich what comes back per issue.
-    parameters:
-    - name: jql
+    selection:
+    - name: query
       value_ref: nv_issue_jql_jql
       required: true
-      role: search
     - name: fields
       value_ref: nv_issue_jql_fields
       required: false
-      role: response_control
     - name: expand
       value_ref: nv_issue_jql_expand
       required: false
-      role: response_control
   issue_create:
     kind: create
     entity: Issue
@@ -913,21 +908,24 @@ capabilities:
     - key
     - id
     - summary
-    parameters:
-    - name: project_key
-      value_ref: nv_issue_create_project_key
-      required: true
-    - name: issue_type
-      value_ref: nv_issue_create_issue_type
-      required: true
-    - name: summary
-      value_ref: nv_issue_create_summary
-      required: true
-      sink_class: external_publish
-    - name: description
-      value_ref: nv_issue_create_description
-      required: false
-      sink_class: external_publish
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: project_key
+          value_ref: nv_issue_create_project_key
+          required: true
+        - name: issue_type
+          value_ref: nv_issue_create_issue_type
+          required: true
+        - name: summary
+          value_ref: nv_issue_create_summary
+          required: true
+          sink_class: external_publish
+        - name: description
+          value_ref: nv_issue_create_description
+          required: false
+          sink_class: external_publish
   issue_update:
     kind: update
     entity: Issue
@@ -942,24 +940,27 @@ capabilities:
     - assignee_id
     - assignee_name
     - labels
-    parameters:
-    - name: summary
-      value_ref: nv_issue_update_summary
-      required: false
-      sink_class: external_publish
-    - name: description
-      value_ref: nv_issue_update_description
-      required: false
-      sink_class: external_publish
-    - name: assignee_id
-      value_ref: nv_issue_update_assignee_id
-      required: false
-    - name: priority_name
-      value_ref: nv_issue_update_priority_name
-      required: false
-    - name: labels
-      value_ref: nv_issue_update_labels
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: summary
+          value_ref: nv_issue_update_summary
+          required: false
+          sink_class: external_publish
+        - name: description
+          value_ref: nv_issue_update_description
+          required: false
+          sink_class: external_publish
+        - name: assignee_id
+          value_ref: nv_issue_update_assignee_id
+          required: false
+        - name: priority_name
+          value_ref: nv_issue_update_priority_name
+          required: false
+        - name: labels
+          value_ref: nv_issue_update_labels
+          required: false
   issue_delete:
     kind: delete
     entity: Issue
@@ -978,10 +979,13 @@ capabilities:
     output:
       type: side_effect
       description: The issue leaves its current status and enters the status targeted by the chosen transition.
-    parameters:
-    - name: transition_id
-      value_ref: nv_issue_transition_transition_id
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: transition_id
+          value_ref: nv_issue_transition_transition_id
+          required: true
   project_get:
     kind: get
     entity: Project
@@ -999,41 +1003,39 @@ capabilities:
     kind: query
     entity: Project
     description: List and search projects.
-    parameters:
+    selection:
     - name: query
       value_ref: nv_wire_str_short
       required: false
-      role: search
     - name: typeKey
       value_ref: nv_wire_str_short
       required: false
+    controls:
     - name: status
       value_ref: nv_project_query_status
       required: false
     - name: orderBy
       value_ref: nv_project_query_order_by
       required: false
-      role: sort
   project_version_query:
     kind: query
     entity: Version
     description: List versions for a project.
-    parameters:
+    scope:
     - name: projectIdOrKey
       value_ref: nv_project_version_query_project_id_or_key
       required: true
-      role: scope
+    selection:
     - name: query
       value_ref: nv_wire_str_short
       required: false
-      role: search
+    controls:
     - name: status
       value_ref: nv_wire_str_short
       required: false
     - name: orderBy
       value_ref: nv_project_version_query_order_by
       required: false
-      role: sort
   user_get:
     kind: get
     entity: User
@@ -1048,7 +1050,7 @@ capabilities:
   user_myself:
     kind: query
     entity: User
-    description: Current authenticated user (who the credentials represent).
+    description: List User by shelf (user_myself | issue_watcher).
     provides:
     - accountId
     - displayName
@@ -1056,15 +1058,24 @@ capabilities:
     - active
     - timeZone
     - accountType
+    scope:
+    - name: issueIdOrKey
+      value_ref: nv_issue_watcher_query_issue_id_or_key
+      required: false
+    selection:
+    - name: shelf
+      value_ref: nv_user_query_shelf
+      required: true
+      description: user_myself | issue_watcher
+    controls: []
   user_search:
     kind: search
     entity: User
     description: Search for users by display name or accountId.
-    parameters:
+    selection:
     - name: query
       value_ref: nv_wire_str_short
-      required: false
-      role: search
+      required: true
     - name: accountId
       value_ref: nv_wire_str_short
       required: false
@@ -1087,15 +1098,18 @@ capabilities:
     - body
     - author_id
     - created
-    parameters:
+    scope:
     - name: issueIdOrKey
       value_ref: nv_comment_create_issue_id_or_key
       required: true
-      role: scope
-    - name: text
-      value_ref: nv_comment_create_text
-      required: true
-      sink_class: external_publish
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: text
+          value_ref: nv_comment_create_text
+          required: true
+          sink_class: external_publish
   comment_query:
     kind: query
     entity: Comment
@@ -1106,20 +1120,20 @@ capabilities:
       target_terms:
       - comment
       - issue comment
-    parameters:
+    scope:
     - name: issueIdOrKey
       value_ref: nv_comment_query_issue_id_or_key
       required: true
-      role: scope
+    controls:
     - name: orderBy
       value_ref: nv_comment_query_order_by
       required: false
-      role: sort
+    selection: []
   priority_query:
     kind: query
     entity: Priority
     description: List issue priorities.
-    parameters:
+    selection:
     - name: priorityName
       value_ref: nv_wire_str_short
       required: false
@@ -1164,11 +1178,11 @@ capabilities:
     kind: query
     entity: Worklog
     description: List worklogs (time-tracking entries) for an issue.
-    parameters:
+    scope:
     - name: issueIdOrKey
       value_ref: nv_worklog_query_issue_id_or_key
       required: true
-      role: scope
+    selection:
     - name: startedAfter
       value_ref: nv_wire_int
       required: false
@@ -1179,46 +1193,45 @@ capabilities:
     kind: query
     entity: Changelog
     description: List changelog entries (field change history) for an issue.
-    parameters:
+    scope:
     - name: issueIdOrKey
       value_ref: nv_changelog_query_issue_id_or_key
       required: true
-      role: scope
+    selection: []
   remotelink_query:
     kind: query
     entity: RemoteLink
     description: List remote links attached to an issue.
-    parameters:
+    scope:
     - name: issueIdOrKey
       value_ref: nv_remotelink_query_issue_id_or_key
       required: true
-      role: scope
+    selection: []
   transition_query:
     kind: query
     entity: Transition
     description: List available workflow transitions for an issue.
-    parameters:
+    scope:
     - name: issueIdOrKey
       value_ref: nv_transition_query_issue_id_or_key
       required: true
-      role: scope
+    selection: []
   component_query:
     kind: query
     entity: Component
     description: List components for a project.
-    parameters:
+    scope:
     - name: projectIdOrKey
       value_ref: nv_component_query_project_id_or_key
       required: true
-      role: scope
+    selection:
     - name: query
       value_ref: nv_wire_str_short
       required: false
-      role: search
+    controls:
     - name: orderBy
       value_ref: nv_component_query_order_by
       required: false
-      role: sort
   component_get:
     kind: get
     entity: Component
@@ -1279,28 +1292,22 @@ capabilities:
     description: Discover what must be supplied when creating an issue in a project (issue types and field metadata).
     provides:
     - projects
-    parameters:
-    - name: id
-      value_ref: nv_issue_project_key
-      required: false
-      description: Project key for projectKeys query (required when schema overlay bind is used).
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: id
+          value_ref: nv_issue_project_key
+          required: false
+          description: Project key for projectKeys query (required when schema overlay bind is used).
   issue_bulk_fetch:
     kind: query
     entity: Issue
     description: Load several issues or id in one round-trip for dashboards or migration tools.
-    parameters:
+    selection:
     - name: issue_keys
       value_ref: nv_issue_bulk_fetch_issue_keys
       required: true
-  issue_watcher_query:
-    kind: query
-    entity: User
-    description: Accounts watching this issue for notifications.
-    parameters:
-    - name: issueIdOrKey
-      value_ref: nv_issue_watcher_query_issue_id_or_key
-      required: true
-      role: scope
   issue_watcher_add:
     kind: action
     entity: Issue
@@ -1308,10 +1315,13 @@ capabilities:
     output:
       type: side_effect
       description: The chosen account is subscribed to issue notifications.
-    parameters:
-    - name: account_id
-      value_ref: nv_issue_watcher_add_account_id
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: account_id
+          value_ref: nv_issue_watcher_add_account_id
+          required: false
   issue_watcher_remove:
     kind: action
     entity: Issue
@@ -1319,19 +1329,21 @@ capabilities:
     output:
       type: side_effect
       description: The account is no longer watching the issue.
-    parameters:
-    - name: account_id
-      value_ref: nv_issue_watcher_remove_account_id
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: account_id
+          value_ref: nv_issue_watcher_remove_account_id
+          required: true
   group_query:
     kind: query
     entity: Group
     description: Find groups by name for permission and membership tasks.
-    parameters:
+    selection:
     - name: query
       value_ref: nv_wire_str_short
       required: false
-      role: search
   group_get:
     kind: get
     entity: Group
@@ -1354,11 +1366,10 @@ capabilities:
     kind: query
     entity: SavedFilter
     description: Search saved JQL filters you can use or share.
-    parameters:
+    selection:
     - name: filterName
       value_ref: nv_wire_str_short
       required: false
-      role: search
   filter_get:
     kind: get
     entity: SavedFilter
@@ -1373,11 +1384,10 @@ capabilities:
     kind: query
     entity: Dashboard
     description: Search dashboards available to you.
-    parameters:
+    selection:
     - name: dashboardName
       value_ref: nv_wire_str_short
       required: false
-      role: search
   dashboard_get:
     kind: get
     entity: Dashboard
@@ -1390,11 +1400,10 @@ capabilities:
     kind: query
     entity: Board
     description: Boards on the site, optionally narrowed to a project (Jira Software).
-    parameters:
+    selection:
     - name: projectKeyOrId
       value_ref: nv_board_query_project_key_or_id
       required: false
-      role: filter
   board_get:
     kind: get
     entity: Board
@@ -1407,11 +1416,10 @@ capabilities:
     kind: query
     entity: Sprint
     description: Sprints on a board (active, future, closed).
-    parameters:
+    scope:
     - name: boardId
       value_ref: nv_wire_int
       required: true
-      role: scope
   sprint_get:
     kind: get
     entity: Sprint
@@ -1434,16 +1442,19 @@ capabilities:
     output:
       type: side_effect
       description: Jira records new webhook endpoints for this app; check the API response for created ids or validation errors.
-    parameters:
-    - name: url
-      value_ref: nv_webhook_register_url
-      required: true
-    - name: jql_filter
-      value_ref: nv_webhook_register_jql_filter
-      required: false
-    - name: events
-      value_ref: nv_webhook_register_events
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: url
+          value_ref: nv_webhook_register_url
+          required: true
+        - name: jql_filter
+          value_ref: nv_webhook_register_jql_filter
+          required: false
+        - name: events
+          value_ref: nv_webhook_register_events
+          required: true
   webhook_delete:
     kind: delete
     entity: Webhook
@@ -1452,17 +1463,16 @@ capabilities:
     kind: query
     entity: IssueTransitionContext
     description: Load issue summary and available workflow transitions in one composed read.
-    parameters:
-    - name: issue_key
-      value_ref: nv_jira_issue_transition_context_issue_key
-      required: true
-      role: scope
     provides:
     - issue_key
     - summary
     - status
     - transition_count
     - has_transitions
+    selection:
+    - name: issue_key
+      value_ref: nv_jira_issue_transition_context_issue_key
+      required: true
   issue_transition_context_get:
     kind: get
     entity: IssueTransitionContext
@@ -1477,16 +1487,15 @@ capabilities:
     kind: query
     entity: IssueBrowseLink
     description: Assemble the Jira web browse URL for an issue.
-    parameters:
-    - name: issue_key
-      value_ref: nv_jira_issue_browse_link_issue_key
-      required: true
-      role: scope
     provides:
     - issue_key
     - summary
     - site_base
     - url
+    selection:
+    - name: issue_key
+      value_ref: nv_jira_issue_browse_link_issue_key
+      required: true
   issue_browse_link_get:
     kind: get
     entity: IssueBrowseLink
@@ -1500,11 +1509,6 @@ capabilities:
     kind: query
     entity: SprintBoardSnapshot
     description: Load sprint dates/state and issues in that sprint in one composed read.
-    parameters:
-    - name: sprint_id
-      value_ref: nv_jira_sprint_board_sprint_id
-      required: true
-      role: scope
     provides:
     - sprint_id
     - name
@@ -1512,6 +1516,10 @@ capabilities:
     - startDate
     - endDate
     - issue_count
+    selection:
+    - name: sprint_id
+      value_ref: nv_jira_sprint_board_sprint_id
+      required: true
   sprint_board_snapshot_get:
     kind: get
     entity: SprintBoardSnapshot
@@ -1523,6 +1531,39 @@ capabilities:
     - startDate
     - endDate
     - issue_count
+  remote_link_get:
+    description: Get RemoteLink by id.
+    kind: get
+    entity: RemoteLink
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: id
+          value_ref: nv_wire_str_short
+          required: true
+  transition_get:
+    description: Get Transition by id.
+    kind: get
+    entity: Transition
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: id
+          value_ref: nv_wire_str_short
+          required: true
+  version_get:
+    description: Get a project version by id.
+    kind: get
+    entity: Version
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: id
+          value_ref: nv_wire_str_short
+          required: true
 views:
   issue_transition_context:
     description: Issue triage snapshot with transition count and refs to available workflow moves.
@@ -1606,8 +1647,9 @@ views:
         param: site_base
       url:
         kind: computed
-        template: |
-          {{ site_base | strip_trailing_slash }}/browse/{{ issue_key }}
+        template: '{{ site_base | strip_trailing_slash }}/browse/{{ issue_key }}
+
+          '
     relation_outputs:
     - relation: issue
       target: Issue
@@ -1632,7 +1674,7 @@ views:
     - id: sprint_issues
       capability: issue_jql
       bind:
-        jql:
+        query:
           kind: computed
           template: sprint = {{ sprint_row.id }}
     output:
@@ -1804,7 +1846,7 @@ oauth:
       issue_createmeta_get:
         any_of:
         - read:jira-work
-      issue_watcher_query:
+      user_myself:
         any_of:
         - read:jira-work
       issue_watcher_add:
@@ -2124,8 +2166,8 @@ values:
     type: array
     items:
       value_ref: nv_wire_str_short
-    description: Issue field ids to include in each issue. Omit for server defaults; repeat.
-      the flag for multiple values (--fields summary --fields status).
+    description: Issue field ids to include in each issue. Omit for server defaults; repeat. the flag for multiple values
+      (--fields summary --fields status).
   nv_issue_labels:
     type: array
     items:
@@ -2144,3 +2186,9 @@ values:
     items:
       value_ref: nv_wire_str_short
     description: Event types to deliver (repeat --events).
+  nv_user_query_shelf:
+    type: enum
+    enum:
+    - user_myself
+    - issue_watcher
+    description: User query shelf

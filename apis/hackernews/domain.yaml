@@ -1,4 +1,4 @@
-version: 4
+version: 5
 auth:
   scheme: none
 http_backend: https://hacker-news.firebaseio.com
@@ -155,49 +155,24 @@ capabilities:
     - id
     - title
     - url
-    parameters:
+    selection:
+    - name: shelf
+      value_ref: nv_item_search_shelf
+      required: true
+      description: relevance | by_date
     - name: query
       value_ref: nv_wire_str_short
       required: true
-      role: search
     - name: tags
       value_ref: nv_wire_str_short
       required: false
-      role: filter
+    controls:
     - name: page
       value_ref: nv_wire_int
       required: false
-      role: response_control
     - name: per_page
       value_ref: nv_wire_int
       required: false
-      role: response_control
-  item_search_by_date:
-    description: Same as item_search but sorted by time (search_by_date). Use for recency; combine with item_get for full.
-      items.
-    kind: search
-    entity: Item
-    provides:
-    - id
-    - title
-    - url
-    parameters:
-    - name: query
-      value_ref: nv_wire_str_short
-      required: true
-      role: search
-    - name: tags
-      value_ref: nv_wire_str_short
-      required: false
-      role: filter
-    - name: page
-      value_ref: nv_wire_int
-      required: false
-      role: response_control
-    - name: per_page
-      value_ref: nv_wire_int
-      required: false
-      role: response_control
   item_feed_query:
     description: Browse Hacker News front-page feeds — top, new, best, ask, or show stories for trending discussion.
     kind: query
@@ -214,11 +189,10 @@ capabilities:
       - rising
     provides:
     - id
-    parameters:
+    selection:
     - name: feed
       value_ref: nv_item_feed_query_feed
       required: true
-      role: filter
   max_item_id_query:
     description: Current largest item id (maxitem.json).
     kind: query
@@ -352,3 +326,9 @@ values:
     items:
       value_ref: nv_wire_int
     description: Poll option item ids when type is poll (empty or absent otherwise).
+  nv_item_search_shelf:
+    type: enum
+    enum:
+    - relevance
+    - by_date
+    description: Search HN items by shelf — relevance or by_date.

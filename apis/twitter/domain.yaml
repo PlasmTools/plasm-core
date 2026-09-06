@@ -1,4 +1,4 @@
-version: 3
+version: 4
 http_backend: https://api.x.com
 data_classes:
   untrusted:
@@ -69,7 +69,7 @@ entities:
         cardinality: many
         materialize:
           kind: query_scoped
-          capability: tweet_mentions_query
+          capability: tweet_timeline_query
           param: id
       liked_tweets:
         description: Posts this user has liked.
@@ -77,7 +77,7 @@ entities:
         cardinality: many
         materialize:
           kind: query_scoped
-          capability: user_liked_tweets_query
+          capability: tweet_timeline_query
           param: id
   Tweet:
     id_field: id
@@ -175,7 +175,7 @@ entities:
         cardinality: many
         materialize:
           kind: query_scoped
-          capability: list_tweets_query
+          capability: tweet_timeline_query
           param: id
 capabilities:
   user_get:
@@ -189,34 +189,24 @@ capabilities:
     kind: query
     entity: User
     description: Resolve up to 100 users by handle (username).
-    parameters:
+    selection:
     - name: usernames
       value_ref: nv_user_query_usernames
       required: true
   tweet_get:
     kind: get
     entity: Tweet
-  tweet_lookup_query:
-    kind: query
-    entity: Tweet
-    description: Batch lookup of posts by snowflake id (comma-separated on the wire).
-    parameters:
-    - name: ids
-      value_ref: nv_tweet_lookup_query_ids
-      required: true
   tweet_search:
     kind: search
     entity: Tweet
     description: Recent search over the last seven days of public posts.
-    parameters:
+    selection:
     - name: query
       value_ref: nv_wire_str_short
       required: true
-      role: search
     - name: sort_order
       value_ref: nv_tweet_search_sort_order
       required: false
-      role: sort
     - name: start_time
       value_ref: nv_wire_date_rfc3339
       required: false
@@ -232,57 +222,35 @@ capabilities:
   tweet_timeline_query:
     kind: query
     entity: Tweet
-    description: Posts authored by a specific user.
-    parameters:
+    description: List Tweet by shelf (tweet_lookup | tweet_timeline | tweet_mentions | user_liked_tweets | list_tweets).
+    scope:
     - name: id
       value_ref: nv_tweet_timeline_query_id
+      required: false
+    selection:
+    - name: shelf
+      value_ref: nv_tweet_query_shelf
       required: true
-      role: scope
+      description: tweet_lookup | tweet_timeline | tweet_mentions | user_liked_tweets | list_tweets
+    - name: start_time
+      value_ref: nv_wire_date_rfc3339
+      required: false
+    - name: end_time
+      value_ref: nv_wire_date_rfc3339
+      required: false
+    - name: since_id
+      value_ref: nv_wire_str_short
+      required: false
+    - name: until_id
+      value_ref: nv_wire_str_short
+      required: false
+    - name: ids
+      value_ref: nv_tweet_lookup_query_ids
+      required: false
+    controls:
     - name: exclude
       value_ref: nv_tweet_timeline_query_exclude
       required: false
-    - name: start_time
-      value_ref: nv_wire_date_rfc3339
-      required: false
-    - name: end_time
-      value_ref: nv_wire_date_rfc3339
-      required: false
-    - name: since_id
-      value_ref: nv_wire_str_short
-      required: false
-    - name: until_id
-      value_ref: nv_wire_str_short
-      required: false
-  tweet_mentions_query:
-    kind: query
-    entity: Tweet
-    description: Posts that mention a specific user.
-    parameters:
-    - name: id
-      value_ref: nv_tweet_mentions_query_id
-      required: true
-      role: scope
-    - name: start_time
-      value_ref: nv_wire_date_rfc3339
-      required: false
-    - name: end_time
-      value_ref: nv_wire_date_rfc3339
-      required: false
-    - name: since_id
-      value_ref: nv_wire_str_short
-      required: false
-    - name: until_id
-      value_ref: nv_wire_str_short
-      required: false
-  user_liked_tweets_query:
-    kind: query
-    entity: Tweet
-    description: Posts liked by a specific user.
-    parameters:
-    - name: id
-      value_ref: nv_user_liked_tweets_query_id
-      required: true
-      role: scope
   tweet_create:
     kind: create
     entity: Tweet
@@ -290,17 +258,20 @@ capabilities:
     provides:
     - id
     - text
-    parameters:
-    - name: text
-      value_ref: nv_wire_str_markdown
-      required: true
-      sink_class: external_publish
-    - name: quote_tweet_id
-      value_ref: nv_tweet_create_quote_tweet_id
-      required: false
-    - name: reply_to_tweet_id
-      value_ref: nv_tweet_create_reply_to_tweet_id
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: text
+          value_ref: nv_wire_str_markdown
+          required: true
+          sink_class: external_publish
+        - name: quote_tweet_id
+          value_ref: nv_tweet_create_quote_tweet_id
+          required: false
+        - name: reply_to_tweet_id
+          value_ref: nv_tweet_create_reply_to_tweet_id
+          required: false
   tweet_delete:
     kind: action
     entity: Tweet
@@ -316,31 +287,25 @@ capabilities:
     provides:
     - id
     - name
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: true
-    - name: description
-      value_ref: nv_wire_str_markdown
-      required: false
-    - name: private
-      value_ref: nv_wire_bool
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: true
+        - name: description
+          value_ref: nv_wire_str_markdown
+          required: false
+        - name: private
+          value_ref: nv_wire_bool
+          required: false
   list_delete:
     kind: action
     entity: List
     output:
       type: side_effect
       description: Deletes the list when the authenticated user owns it.
-  list_tweets_query:
-    kind: query
-    entity: Tweet
-    description: Posts from members of a specific list.
-    parameters:
-    - name: id
-      value_ref: nv_list_tweets_query_id
-      required: true
-      role: scope
 oauth:
   provider: twitter
   scopes:
@@ -444,7 +409,7 @@ oauth:
           - tweet.read
         - any_of:
           - users.read
-      tweet_lookup_query:
+      tweet_timeline_query:
         all_of:
         - any_of:
           - tweet.read
@@ -462,13 +427,13 @@ oauth:
           - tweet.read
         - any_of:
           - users.read
-      tweet_mentions_query:
+      tweet_timeline_query:
         all_of:
         - any_of:
           - tweet.read
         - any_of:
           - users.read
-      user_liked_tweets_query:
+      tweet_timeline_query:
         all_of:
         - any_of:
           - like.read
@@ -518,7 +483,7 @@ oauth:
           - tweet.read
         - any_of:
           - users.read
-      list_tweets_query:
+      tweet_timeline_query:
         all_of:
         - any_of:
           - list.read
@@ -635,3 +600,12 @@ values:
     type: array
     items:
       value_ref: nv_wire_str_short
+  nv_tweet_query_shelf:
+    type: enum
+    enum:
+    - tweet_lookup
+    - tweet_timeline
+    - tweet_mentions
+    - user_liked_tweets
+    - list_tweets
+    description: Tweet query shelf

@@ -568,6 +568,8 @@ capabilities:
     provides:
     - id
     - body
+    selection: []
+    scope: []
   document_search:
     kind: search
     entity: Document
@@ -705,7 +707,9 @@ capabilities:
     kind: create
     entity: Issue
     description: Create an issue.
-    identity_key: [team, title]
+    identity_key:
+    - team
+    - title
     provides:
     - identifier
     - title
@@ -1163,9 +1167,11 @@ views:
         field: title
       url:
         kind: computed
-        template: |
-          {%- set team_key = issue_identifier.split('-')[0] -%}
+        template: '{%- set team_key = issue_identifier.split(''-'')[0] -%}
+
           https://linear.app/{{ team_key }}/issue/{{ issue_identifier }}
+
+          '
     relation_outputs:
     - relation: issue
       target: Issue
@@ -1241,132 +1247,197 @@ oauth:
   requirements:
     capabilities:
       issue_search:
-        any_of: [read]
+        any_of:
+        - read
       issue_get:
-        any_of: [read]
+        any_of:
+        - read
       user_viewer:
-        any_of: [read]
+        any_of:
+        - read
       user_search:
-        any_of: [read]
+        any_of:
+        - read
       team_query:
-        any_of: [read]
+        any_of:
+        - read
       team_get:
-        any_of: [read]
+        any_of:
+        - read
       project_query:
-        any_of: [read]
+        any_of:
+        - read
       project_get:
-        any_of: [read]
+        any_of:
+        - read
       project_search:
-        any_of: [read]
+        any_of:
+        - read
       cycle_query:
-        any_of: [read]
+        any_of:
+        - read
       cycle_get:
-        any_of: [read]
+        any_of:
+        - read
       workflow_state_query:
-        any_of: [read]
+        any_of:
+        - read
       label_query:
-        any_of: [read]
+        any_of:
+        - read
       comment_by_issue_query:
-        any_of: [read]
+        any_of:
+        - read
       document_search:
-        any_of: [read]
+        any_of:
+        - read
       document_get:
-        any_of: [read]
+        any_of:
+        - read
       document_update:
-        any_of: [write]
+        any_of:
+        - write
       initiative_query:
-        any_of: [read]
+        any_of:
+        - read
       initiative_get:
-        any_of: [read]
+        any_of:
+        - read
       initiative_update:
-        any_of: [write]
+        any_of:
+        - write
       project_milestone_query:
-        any_of: [read]
+        any_of:
+        - read
       project_milestone_create:
-        any_of: [write]
+        any_of:
+        - write
       project_milestone_update:
-        any_of: [write]
+        any_of:
+        - write
       project_update_query:
-        any_of: [read]
+        any_of:
+        - read
       project_update_create:
-        any_of: [write]
+        any_of:
+        - write
       issue_create:
-        any_of: [issues:create, write]
+        any_of:
+        - issues:create
+        - write
       issue_update:
-        any_of: [write]
+        any_of:
+        - write
       issue_delete:
-        any_of: [write]
+        any_of:
+        - write
       comment_create:
-        any_of: [comments:create, write]
+        any_of:
+        - comments:create
+        - write
       project_create:
-        any_of: [write]
+        any_of:
+        - write
       project_update:
-        any_of: [write]
+        any_of:
+        - write
       issue_context_query:
-        any_of: [read]
+        any_of:
+        - read
       issue_context_get:
-        any_of: [read]
+        any_of:
+        - read
       my_work_query:
-        any_of: [read]
+        any_of:
+        - read
       my_work_get:
-        any_of: [read]
+        any_of:
+        - read
       project_context_query:
-        any_of: [read]
+        any_of:
+        - read
       project_context_get:
-        any_of: [read]
+        any_of:
+        - read
       issue_navigation_link_query:
-        any_of: [read]
+        any_of:
+        - read
       issue_navigation_link_get:
-        any_of: [read]
+        any_of:
+        - read
       cycle_board_snapshot_query:
-        any_of: [read]
+        any_of:
+        - read
       cycle_board_snapshot_get:
-        any_of: [read]
+        any_of:
+        - read
     relations:
       Issue.team:
-        any_of: [read]
+        any_of:
+        - read
       Issue.project:
-        any_of: [read]
+        any_of:
+        - read
       Issue.assignee:
-        any_of: [read]
+        any_of:
+        - read
       Issue.state:
-        any_of: [read]
+        any_of:
+        - read
       Issue.cycle:
-        any_of: [read]
+        any_of:
+        - read
       Issue.labels:
-        any_of: [read]
+        any_of:
+        - read
       Issue.parent:
-        any_of: [read]
+        any_of:
+        - read
       Issue.children:
-        any_of: [read]
+        any_of:
+        - read
       Issue.comments:
-        any_of: [read]
+        any_of:
+        - read
       Comment.issue:
-        any_of: [read]
+        any_of:
+        - read
       Cycle.team:
-        any_of: [read]
+        any_of:
+        - read
       ProjectMilestone.project:
-        any_of: [read]
+        any_of:
+        - read
       ProjectUpdate.project:
-        any_of: [read]
+        any_of:
+        - read
       IssueContext.issue:
-        any_of: [read]
+        any_of:
+        - read
       IssueContext.comments:
-        any_of: [read]
+        any_of:
+        - read
       MyWorkSnapshot.viewer:
-        any_of: [read]
+        any_of:
+        - read
       MyWorkSnapshot.issues:
-        any_of: [read]
+        any_of:
+        - read
       ProjectContext.project:
-        any_of: [read]
+        any_of:
+        - read
       ProjectContext.updates:
-        any_of: [read]
+        any_of:
+        - read
       IssueNavigationLink.issue:
-        any_of: [read]
+        any_of:
+        - read
       CycleBoardSnapshot.cycle:
-        any_of: [read]
+        any_of:
+        - read
       CycleBoardSnapshot.issues:
-        any_of: [read]
+        any_of:
+        - read
 auth:
   scheme: api_key_header
   header: Authorization
@@ -1437,7 +1508,10 @@ values:
     type: uuid
   nv_project_update_health:
     type: enum
-    enum: [onTrack, atRisk, offTrack]
+    enum:
+    - onTrack
+    - atRisk
+    - offTrack
   nv_linear_issue_url:
     type: string
   nv_wire_int:

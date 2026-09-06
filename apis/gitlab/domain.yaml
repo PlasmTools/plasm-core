@@ -1,4 +1,4 @@
-version: 5
+version: 7
 http_backend: https://gitlab.com
 data_classes:
   untrusted:
@@ -83,7 +83,7 @@ entities:
           param: project_id
   Issue:
     id_field: id
-    primary_query: issue_query
+    primary_query: issue_for_project_query
     key_vars:
     - project_id
     - iid
@@ -166,7 +166,7 @@ entities:
             iid: iid
   MergeRequest:
     id_field: id
-    primary_query: merge_request_query
+    primary_query: merge_request_for_project_query
     key_vars:
     - project_id
     - iid
@@ -379,16 +379,12 @@ capabilities:
     kind: query
     entity: Project
     description: List projects visible to the authenticated account.
-    parameters:
+    selection:
     - name: search
       value_ref: nv_wire_str_short
       required: false
-      role: search
     - name: visibility
       value_ref: nv_wire_sel_8807b75f968505fb
-      required: false
-    - name: archived
-      value_ref: nv_wire_bool
       required: false
     - name: owned
       value_ref: nv_wire_bool
@@ -399,30 +395,25 @@ capabilities:
     - name: starred
       value_ref: nv_wire_bool
       required: false
-    - name: order_by
-      value_ref: nv_project_query_order_by
-      required: false
-      role: sort
-    - name: sort
-      value_ref: nv_wire_sel_1b3907e07c1297e8
-      required: false
-      role: sort_direction
     - name: simple
       value_ref: nv_wire_bool
       required: false
-      role: response_control
     - name: statistics
       value_ref: nv_wire_bool
       required: false
-      role: response_control
+    controls:
+    - name: archived
+      value_ref: nv_wire_bool
+      required: false
+    - name: order_by
+      value_ref: nv_project_query_order_by
+      required: false
+    - name: sort
+      value_ref: nv_wire_sel_1b3907e07c1297e8
+      required: false
   project_get:
     kind: get
     entity: Project
-    parameters:
-    - name: statistics
-      value_ref: nv_wire_bool
-      required: false
-      role: response_control
     provides:
     - id
     - name
@@ -439,53 +430,42 @@ capabilities:
     - forks_count
     - ssh_url_to_repo
     - http_url_to_repo
-  issue_query:
-    kind: query
-    entity: Issue
-    description: List issues for the current user across projects.
-    parameters:
-    - name: state
-      value_ref: nv_wire_sel_c4015a1a98023521
-      required: false
-    - name: search
-      value_ref: nv_wire_str_short
-      required: false
-      role: search
-    - name: scope
-      value_ref: nv_issue_query_scope
-      required: false
-    - name: order_by
-      value_ref: nv_wire_sel_bc45924eafff6feb
-      required: false
-      role: sort
-    - name: sort
-      value_ref: nv_wire_sel_1b3907e07c1297e8
-      required: false
-      role: sort_direction
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: statistics
+          value_ref: nv_wire_bool
+          required: false
   issue_for_project_query:
     kind: query
     entity: Issue
-    description: List issues within a single project.
-    parameters:
-    - name: project_id
-      value_ref: nv_issue_for_project_query_project_id
+    description: List Issue by shelf (issue | issue_for_project).
+    selection:
+    - name: shelf
+      value_ref: nv_issue_query_shelf
       required: true
-      role: scope
+      description: issue | issue_for_project
     - name: state
       value_ref: nv_wire_sel_c4015a1a98023521
       required: false
     - name: search
       value_ref: nv_wire_str_short
       required: false
-      role: search
+    - name: scope
+      value_ref: nv_issue_query_scope
+      required: false
+    controls:
     - name: order_by
       value_ref: nv_wire_sel_bc45924eafff6feb
       required: false
-      role: sort
     - name: sort
       value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
-      role: sort_direction
+    scope:
+    - name: project_id
+      value_ref: nv_issue_for_project_query_project_id
+      required: false
   issue_get:
     kind: get
     entity: Issue
@@ -504,45 +484,32 @@ capabilities:
     - closed_at
     - web_url
     - labels
-  merge_request_query:
+  merge_request_for_project_query:
     kind: query
     entity: MergeRequest
-    description: List merge requests visible to the authenticated user.
-    parameters:
+    description: List MergeRequest by shelf (merge_request | merge_request_for_project).
+    selection:
+    - name: shelf
+      value_ref: nv_mergerequest_query_shelf
+      required: true
+      description: merge_request | merge_request_for_project
     - name: state
       value_ref: nv_wire_sel_e25280eac2a90f88
       required: false
     - name: scope
       value_ref: nv_merge_request_query_scope
       required: false
+    controls:
     - name: order_by
       value_ref: nv_wire_sel_7c59fc7f43f5debc
       required: false
-      role: sort
     - name: sort
       value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
-      role: sort_direction
-  merge_request_for_project_query:
-    kind: query
-    entity: MergeRequest
-    description: List merge requests for a project.
-    parameters:
+    scope:
     - name: project_id
       value_ref: nv_merge_request_for_project_query_project_id
-      required: true
-      role: scope
-    - name: state
-      value_ref: nv_wire_sel_e25280eac2a90f88
       required: false
-    - name: order_by
-      value_ref: nv_wire_sel_7c59fc7f43f5debc
-      required: false
-      role: sort
-    - name: sort
-      value_ref: nv_wire_sel_1b3907e07c1297e8
-      required: false
-      role: sort_direction
   merge_request_get:
     kind: get
     entity: MergeRequest
@@ -567,65 +534,71 @@ capabilities:
     kind: create
     entity: Project
     description: Create a new project under the authenticated user or namespace.
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: true
-    - name: path
-      value_ref: nv_wire_str_short
-      required: false
-    - name: namespace_id
-      value_ref: nv_wire_int
-      required: false
-    - name: description
-      value_ref: nv_wire_str_markdown
-      required: false
-      sink_class: external_publish
-    - name: visibility
-      value_ref: nv_wire_sel_8807b75f968505fb
-      required: false
-    - name: default_branch
-      value_ref: nv_wire_str_short
-      required: false
-    - name: issues_enabled
-      value_ref: nv_wire_bool
-      required: false
-    - name: merge_requests_enabled
-      value_ref: nv_wire_bool
-      required: false
-    - name: wiki_enabled
-      value_ref: nv_wire_bool
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: true
+        - name: path
+          value_ref: nv_wire_str_short
+          required: false
+        - name: namespace_id
+          value_ref: nv_wire_int
+          required: false
+        - name: description
+          value_ref: nv_wire_str_markdown
+          required: false
+          sink_class: external_publish
+        - name: visibility
+          value_ref: nv_wire_sel_8807b75f968505fb
+          required: false
+        - name: default_branch
+          value_ref: nv_wire_str_short
+          required: false
+        - name: issues_enabled
+          value_ref: nv_wire_bool
+          required: false
+        - name: merge_requests_enabled
+          value_ref: nv_wire_bool
+          required: false
+        - name: wiki_enabled
+          value_ref: nv_wire_bool
+          required: false
   project_update:
     kind: update
     entity: Project
     description: Update project attributes.
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: false
-    - name: path
-      value_ref: nv_wire_str_short
-      required: false
-    - name: description
-      value_ref: nv_wire_str_markdown
-      required: false
-      sink_class: external_publish
-    - name: default_branch
-      value_ref: nv_wire_str_short
-      required: false
-    - name: visibility
-      value_ref: nv_wire_sel_8807b75f968505fb
-      required: false
-    - name: issues_enabled
-      value_ref: nv_wire_bool
-      required: false
-    - name: merge_requests_enabled
-      value_ref: nv_wire_bool
-      required: false
-    - name: wiki_enabled
-      value_ref: nv_wire_bool
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: false
+        - name: path
+          value_ref: nv_wire_str_short
+          required: false
+        - name: description
+          value_ref: nv_wire_str_markdown
+          required: false
+          sink_class: external_publish
+        - name: default_branch
+          value_ref: nv_wire_str_short
+          required: false
+        - name: visibility
+          value_ref: nv_wire_sel_8807b75f968505fb
+          required: false
+        - name: issues_enabled
+          value_ref: nv_wire_bool
+          required: false
+        - name: merge_requests_enabled
+          value_ref: nv_wire_bool
+          required: false
+        - name: wiki_enabled
+          value_ref: nv_wire_bool
+          required: false
   project_delete:
     kind: delete
     entity: Project
@@ -640,67 +613,73 @@ capabilities:
       - open issue
       target_terms:
       - issue
-    parameters:
-    - name: project_id
-      value_ref: nv_issue_create_project_id
-      required: true
-    - name: title
-      value_ref: nv_wire_str_short
-      required: true
-      sink_class: external_publish
-    - name: description
-      value_ref: nv_wire_str_markdown
-      required: false
-      sink_class: external_publish
-    - name: confidential
-      value_ref: nv_wire_bool
-      required: false
-    - name: labels
-      value_ref: nv_issue_create_labels
-      required: false
-    - name: issue_type
-      value_ref: nv_issue_create_issue_type
-      required: false
-    - name: milestone_id
-      value_ref: nv_wire_int
-      required: false
-    - name: assignee_ids
-      value_ref: nv_issue_create_assignee_ids
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: project_id
+          value_ref: nv_issue_create_project_id
+          required: true
+        - name: title
+          value_ref: nv_wire_str_short
+          required: true
+          sink_class: external_publish
+        - name: description
+          value_ref: nv_wire_str_markdown
+          required: false
+          sink_class: external_publish
+        - name: confidential
+          value_ref: nv_wire_bool
+          required: false
+        - name: labels
+          value_ref: nv_issue_create_labels
+          required: false
+        - name: issue_type
+          value_ref: nv_issue_create_issue_type
+          required: false
+        - name: milestone_id
+          value_ref: nv_wire_int
+          required: false
+        - name: assignee_ids
+          value_ref: nv_issue_create_assignee_ids
+          required: false
   issue_update:
     kind: update
     entity: Issue
     description: Update an existing issue.
-    parameters:
-    - name: title
-      value_ref: nv_wire_str_short
-      required: false
-      sink_class: external_publish
-    - name: description
-      value_ref: nv_wire_str_markdown
-      required: false
-      sink_class: external_publish
-    - name: state_event
-      value_ref: nv_wire_sel_a821a0002dfcca16
-      required: false
-    - name: confidential
-      value_ref: nv_wire_bool
-      required: false
-    - name: labels
-      value_ref: nv_issue_update_labels
-      required: false
-    - name: add_labels
-      value_ref: nv_issue_update_add_labels
-      required: false
-    - name: remove_labels
-      value_ref: nv_issue_update_remove_labels
-      required: false
-    - name: milestone_id
-      value_ref: nv_wire_int
-      required: false
-    - name: assignee_ids
-      value_ref: nv_issue_update_assignee_ids
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: title
+          value_ref: nv_wire_str_short
+          required: false
+          sink_class: external_publish
+        - name: description
+          value_ref: nv_wire_str_markdown
+          required: false
+          sink_class: external_publish
+        - name: state_event
+          value_ref: nv_wire_sel_a821a0002dfcca16
+          required: false
+        - name: confidential
+          value_ref: nv_wire_bool
+          required: false
+        - name: labels
+          value_ref: nv_issue_update_labels
+          required: false
+        - name: add_labels
+          value_ref: nv_issue_update_add_labels
+          required: false
+        - name: remove_labels
+          value_ref: nv_issue_update_remove_labels
+          required: false
+        - name: milestone_id
+          value_ref: nv_wire_int
+          required: false
+        - name: assignee_ids
+          value_ref: nv_issue_update_assignee_ids
+          required: false
   issue_delete:
     kind: delete
     entity: Issue
@@ -718,61 +697,67 @@ capabilities:
       - merge request
       - mr
       - reviewers
-    parameters:
-    - name: project_id
-      value_ref: nv_merge_request_create_project_id
-      required: true
-    - name: title
-      value_ref: nv_wire_str_short
-      required: true
-      sink_class: external_publish
-    - name: source_branch
-      value_ref: nv_wire_str_short
-      required: true
-    - name: target_branch
-      value_ref: nv_wire_str_short
-      required: true
-    - name: description
-      value_ref: nv_wire_str_markdown
-      required: false
-      sink_class: external_publish
-    - name: draft
-      value_ref: nv_wire_bool
-      required: false
-    - name: labels
-      value_ref: nv_merge_request_create_labels
-      required: false
-    - name: milestone_id
-      value_ref: nv_wire_int
-      required: false
-    - name: remove_source_branch
-      value_ref: nv_wire_bool
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: project_id
+          value_ref: nv_merge_request_create_project_id
+          required: true
+        - name: title
+          value_ref: nv_wire_str_short
+          required: true
+          sink_class: external_publish
+        - name: source_branch
+          value_ref: nv_wire_str_short
+          required: true
+        - name: target_branch
+          value_ref: nv_wire_str_short
+          required: true
+        - name: description
+          value_ref: nv_wire_str_markdown
+          required: false
+          sink_class: external_publish
+        - name: draft
+          value_ref: nv_wire_bool
+          required: false
+        - name: labels
+          value_ref: nv_merge_request_create_labels
+          required: false
+        - name: milestone_id
+          value_ref: nv_wire_int
+          required: false
+        - name: remove_source_branch
+          value_ref: nv_wire_bool
+          required: false
   merge_request_update:
     kind: update
     entity: MergeRequest
     description: Update merge request fields.
-    parameters:
-    - name: title
-      value_ref: nv_wire_str_short
-      required: false
-      sink_class: external_publish
-    - name: description
-      value_ref: nv_wire_str_markdown
-      required: false
-      sink_class: external_publish
-    - name: target_branch
-      value_ref: nv_wire_str_short
-      required: false
-    - name: state_event
-      value_ref: nv_wire_sel_a821a0002dfcca16
-      required: false
-    - name: draft
-      value_ref: nv_wire_bool
-      required: false
-    - name: labels
-      value_ref: nv_merge_request_update_labels
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: title
+          value_ref: nv_wire_str_short
+          required: false
+          sink_class: external_publish
+        - name: description
+          value_ref: nv_wire_str_markdown
+          required: false
+          sink_class: external_publish
+        - name: target_branch
+          value_ref: nv_wire_str_short
+          required: false
+        - name: state_event
+          value_ref: nv_wire_sel_a821a0002dfcca16
+          required: false
+        - name: draft
+          value_ref: nv_wire_bool
+          required: false
+        - name: labels
+          value_ref: nv_merge_request_update_labels
+          required: false
   merge_request_delete:
     kind: delete
     entity: MergeRequest
@@ -781,25 +766,6 @@ capabilities:
     kind: action
     entity: MergeRequest
     description: Merge the merge request when allowed.
-    parameters:
-    - name: merge_commit_message
-      value_ref: nv_wire_str_short
-      required: false
-    - name: squash_commit_message
-      value_ref: nv_wire_str_short
-      required: false
-    - name: should_remove_source_branch
-      value_ref: nv_wire_bool
-      required: false
-    - name: squash
-      value_ref: nv_wire_bool
-      required: false
-    - name: sha
-      value_ref: nv_wire_str_short
-      required: false
-    - name: auto_merge
-      value_ref: nv_wire_bool
-      required: false
     provides:
     - id
     - iid
@@ -807,6 +773,28 @@ capabilities:
     - title
     - state
     - merged_at
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: merge_commit_message
+          value_ref: nv_wire_str_short
+          required: false
+        - name: squash_commit_message
+          value_ref: nv_wire_str_short
+          required: false
+        - name: should_remove_source_branch
+          value_ref: nv_wire_bool
+          required: false
+        - name: squash
+          value_ref: nv_wire_bool
+          required: false
+        - name: sha
+          value_ref: nv_wire_str_short
+          required: false
+        - name: auto_merge
+          value_ref: nv_wire_bool
+          required: false
   issue_subscribe:
     kind: action
     entity: Issue
@@ -857,11 +845,11 @@ capabilities:
     kind: query
     entity: IssueNote
     description: List notes on a project issue.
-    parameters:
+    selection: []
+    scope:
     - name: project_id
       value_ref: nv_issue_note_for_issue_query_project_id
       required: true
-      role: scope
     - name: iid
       value_ref: nv_wire_int
       required: true
@@ -878,29 +866,35 @@ capabilities:
     kind: create
     entity: IssueNote
     description: Add a note to an issue.
-    parameters:
-    - name: project_id
-      value_ref: nv_issue_note_create_project_id
-      required: true
-    - name: iid
-      value_ref: nv_wire_int
-      required: true
-    - name: body
-      value_ref: nv_wire_str_markdown
-      required: true
-      sink_class: external_publish
-    - name: confidential
-      value_ref: nv_wire_bool
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: project_id
+          value_ref: nv_issue_note_create_project_id
+          required: true
+        - name: iid
+          value_ref: nv_wire_int
+          required: true
+        - name: body
+          value_ref: nv_wire_str_markdown
+          required: true
+          sink_class: external_publish
+        - name: confidential
+          value_ref: nv_wire_bool
+          required: false
   issue_note_update:
     kind: update
     entity: IssueNote
     description: Edit an issue note.
-    parameters:
-    - name: body
-      value_ref: nv_wire_str_markdown
-      required: true
-      sink_class: external_publish
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: body
+          value_ref: nv_wire_str_markdown
+          required: true
+          sink_class: external_publish
   issue_note_delete:
     kind: delete
     entity: IssueNote
@@ -909,11 +903,11 @@ capabilities:
     kind: query
     entity: MergeRequestNote
     description: List notes on a merge request.
-    parameters:
+    selection: []
+    scope:
     - name: project_id
       value_ref: nv_merge_request_note_for_mr_query_project_id
       required: true
-      role: scope
     - name: iid
       value_ref: nv_wire_int
       required: true
@@ -929,26 +923,32 @@ capabilities:
     kind: create
     entity: MergeRequestNote
     description: Add a note to a merge request.
-    parameters:
-    - name: project_id
-      value_ref: nv_merge_request_note_create_project_id
-      required: true
-    - name: iid
-      value_ref: nv_wire_int
-      required: true
-    - name: body
-      value_ref: nv_wire_str_markdown
-      required: true
-      sink_class: external_publish
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: project_id
+          value_ref: nv_merge_request_note_create_project_id
+          required: true
+        - name: iid
+          value_ref: nv_wire_int
+          required: true
+        - name: body
+          value_ref: nv_wire_str_markdown
+          required: true
+          sink_class: external_publish
   merge_request_note_update:
     kind: update
     entity: MergeRequestNote
     description: Edit a merge request note.
-    parameters:
-    - name: body
-      value_ref: nv_wire_str_markdown
-      required: true
-      sink_class: external_publish
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: body
+          value_ref: nv_wire_str_markdown
+          required: true
+          sink_class: external_publish
   merge_request_note_delete:
     kind: delete
     entity: MergeRequestNote
@@ -957,11 +957,10 @@ capabilities:
     kind: query
     entity: IssueAwardEmoji
     description: List award emoji on an issue.
-    parameters:
+    selection:
     - name: project_id
       value_ref: nv_issue_award_emoji_for_issue_query_project_id
       required: true
-      role: scope
     - name: iid
       value_ref: nv_wire_int
       required: true
@@ -977,16 +976,19 @@ capabilities:
     kind: create
     entity: IssueAwardEmoji
     description: Add an emoji reaction to an issue.
-    parameters:
-    - name: project_id
-      value_ref: nv_issue_award_emoji_create_project_id
-      required: true
-    - name: iid
-      value_ref: nv_wire_int
-      required: true
-    - name: name
-      value_ref: nv_wire_str_short
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: project_id
+          value_ref: nv_issue_award_emoji_create_project_id
+          required: true
+        - name: iid
+          value_ref: nv_wire_int
+          required: true
+        - name: name
+          value_ref: nv_wire_str_short
+          required: true
   issue_award_emoji_delete:
     kind: delete
     entity: IssueAwardEmoji
@@ -995,11 +997,10 @@ capabilities:
     kind: query
     entity: MergeRequestAwardEmoji
     description: List award emoji on a merge request.
-    parameters:
+    selection:
     - name: project_id
       value_ref: nv_merge_request_award_emoji_for_mr_query_project_id
       required: true
-      role: scope
     - name: iid
       value_ref: nv_wire_int
       required: true
@@ -1015,16 +1016,19 @@ capabilities:
     kind: create
     entity: MergeRequestAwardEmoji
     description: Add an emoji reaction to a merge request.
-    parameters:
-    - name: project_id
-      value_ref: nv_merge_request_award_emoji_create_project_id
-      required: true
-    - name: iid
-      value_ref: nv_wire_int
-      required: true
-    - name: name
-      value_ref: nv_wire_str_short
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: project_id
+          value_ref: nv_merge_request_award_emoji_create_project_id
+          required: true
+        - name: iid
+          value_ref: nv_wire_int
+          required: true
+        - name: name
+          value_ref: nv_wire_str_short
+          required: true
   merge_request_award_emoji_delete:
     kind: delete
     entity: MergeRequestAwardEmoji
@@ -1227,3 +1231,15 @@ values:
     type: array
     items:
       value_ref: nv_wire_str_short
+  nv_issue_query_shelf:
+    type: enum
+    enum:
+    - issue
+    - issue_for_project
+    description: Issue query shelf
+  nv_mergerequest_query_shelf:
+    type: enum
+    enum:
+    - merge_request
+    - merge_request_for_project
+    description: MergeRequest query shelf

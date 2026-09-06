@@ -594,6 +594,8 @@ capabilities:
     - name: useDomainAdminAccess
       value_ref: nv_wire_bool
       required: false
+    selection: []
+    scope: []
   permissions_get:
     kind: get
     entity: DrivePermission
@@ -677,6 +679,8 @@ capabilities:
     - name: startModifiedTime
       value_ref: nv_wire_str_short
       required: false
+    selection: []
+    scope: []
   comments_get:
     kind: get
     entity: DriveComment
@@ -735,6 +739,8 @@ capabilities:
     - name: pageSize
       value_ref: nv_wire_int
       required: false
+    selection: []
+    scope: []
   replies_get:
     kind: get
     entity: DriveReply
@@ -788,6 +794,8 @@ capabilities:
     - name: pageSize
       value_ref: nv_wire_int
       required: false
+    selection: []
+    scope: []
   revisions_get:
     kind: get
     entity: DriveRevision
