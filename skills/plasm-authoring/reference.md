@@ -139,19 +139,19 @@ entities:
         cardinality: one|many
     domain_projection_examples: false   # optional — default true
     primary_read: <get_capability_id>       # required when entity has 2+ Get capabilities
-    primary_query: <query_capability_id>    # required when entity has 2+ competing Query capabilities (see below)
-    primary_search: <search_capability_id>  # required when entity has 2+ competing Search capabilities
+    primary_query: <query_capability_id>    # obsolete for multi-query (illegal); optional explicit pointer when a sole query exists
+    primary_search: <search_capability_id>  # obsolete for multi-search (illegal); optional explicit pointer when a sole search exists
 ```
 
-**Primary read/query/search (mandatory when ambiguous):** Load validation **fails** when an entity declares competing read capabilities without an explicit primary:
+**Primary read (mandatory when ambiguous):** Load validation **fails** when an entity declares competing **Get** capabilities without an explicit primary:
 
 | Field | Required when | Names |
 |-------|---------------|-------|
 | `primary_read` | 2+ `get` / `singleton` on entity | Get capability id |
-| `primary_query` | 2+ unscoped `query`, **or** 2+ scoped-only queries with no unscoped query | Query capability id |
-| `primary_search` | Same rules for `search` | Search capability id |
 
-Single Get, single unscoped Query/Search, or exactly one unscoped query among several scoped queries — **no annotation needed**. There is **no** YAML-order or lexicographic auto-pick among ambiguous caps.
+**List cardinality law (hard error):** An entity may declare **at most one** `kind: query` and **at most one** `kind: search`. Two or more queries (including scoped twins) or two or more searches is a load/validate failure — compress with a selection discriminant + CML path branch, fold scoped lists into one query + relation `materialize`, or split entities. `primary_query` / `primary_search` **do not** excuse competing list caps (obsolete for that case).
+
+Single Get, single Query, single Search — **no annotation needed**. There is **no** YAML-order or lexicographic auto-pick among ambiguous Gets.
 
 Optional **`primary_read:`** on entities with one Get still overrides projection witness field order when set explicitly.
 
@@ -425,6 +425,25 @@ Lanes are **structurally disjoint** (RA-1). Legacy flat `parameters:` / `role:` 
 
 Transmission over HTTP is still controlled by CML `query:` / `path:` / body in `mappings.yaml`. **`validate_cgs_capability_templates` rejects slots that never appear as CML vars** (or pagination keys) — do not invent selection wires the vendor does not expose.
 
+### Same-type list compression
+
+**Law:** Same return entity + same taught selection arity → **one** list capability (or a **real** entity split). Competing `kind: query` caps that differ only by HTTP path while sharing brace shape are **RPC residue**.
+
+| Symptom | Wrong fix | Right compression |
+|---------|-----------|-------------------|
+| Twin queries `Song{access_token}` → `/library/songs` and `/recommendations` | Teach both lines; raise teaching-line caps; special-case brace-dedupe | One query with **selection discriminant** (e.g. `shelf: library\|recommendations`) + CML `path:` `type: if` branching |
+| Liked vs library shelves with different domain meaning | Force one query with a confusing flag | **Entity split** (`LikedSong` vs `Song`) — polarity is a different object |
+| Scoped list vs unscoped index (`team_id` required vs absent) | Declare two `kind: query` caps | **Illegal** — fold into **one** query with optional `scope` / selection + CML path branch; pair parent relation **`materialize`** with that single query |
+| `kind: search` (required `q`) vs `kind: query` (field filters) | Merge into one | **Lawful two capabilities** — one query + one search |
+
+**Hard validate:** `CGS::validate` rejects entities with >1 `kind: query` or >1 `kind: search` (`TooManyQueryCapabilities` / `TooManySearchCapabilities`). Teaching renderers must **not** silently drop authored method/relation lines; fat surfaces emit **warnings** only.
+
+**Token / auth placement:** Action/get token lanes (`arguments` / `payload`) must not look like list filters on sibling entities. Document in entity/capability descriptions when a key is an auth/action arg (e.g. Player play `song_id`) versus brace selection on a list entity (e.g. LikedSong `{access_token}`).
+
+**Host pointers (not catalog YAML):** Semantic auto-seed / intent-only `plasm_context` — [docs/intent-discovery.md](../../../docs/intent-discovery.md). Federated sessions and incremental symbols — [docs/incremental-teaching-prompts.md](../../../docs/incremental-teaching-prompts.md). Catalog-directed value coerce (RA-8) — [docs/plasm-language-surface-invariants.md](../../../docs/plasm-language-surface-invariants.md).
+
+**Do not** lead with raising teaching-line caps or special-casing brace-dedupe. Fix catalogs first; revisit the renderer only if lawful distinct-shape secondaries still cannot teach.
+
 ### Foreign key fields (`entity_ref`)
 
 Use `entity_ref` when a field stores another entity's primary key. Declare the referenced entity in `target`. The CGS validates that `target` names a defined entity.
@@ -509,8 +528,8 @@ Plasm does **not** synthesize an implicit get-by-id from `id_field` alone — ob
 
 When an upstream API rejects a **static** parameter combination (GitHub `pr_create` refuses `title` together with `issue`), stamp that in the catalog — do **not** special-case it in the host.
 
-1. Keep the conflicting params on `parameters:` (both typically `required: false`).
-2. Add a sibling `input_schema:` with empty object `fields: []` (merge keeps parameter-derived fields) and `validation.cross_field_rules`:
+1. Keep the conflicting slots on the appropriate **lanes** (`selection` / `arguments` / `payload`; both typically `required: false`).
+2. Add a sibling `input_schema:` with empty object `fields: []` (merge keeps lane-derived fields) and `validation.cross_field_rules`:
    - `exactly_one` — one of the listed fields must be present
    - `mutually_exclusive` — at most one may be present
    - `at_least_one` / `all_or_none` / `implies` as needed
@@ -789,7 +808,7 @@ Plasm catalogs carry **static information-flow facts** that the host uses at **p
 |----------------------|----------------------|-------|
 | `source_labels` | Field `data_class:` | `entities.*.fields` |
 | Derived read outputs | *(computed)* | Union of `data_class` over `effective_provides(cap)` fields |
-| `sink_params` | Param `sink_class:` | `input_schema` object fields **or** capability `parameters:` rows (mutating caps) |
+| `sink_params` | Param `sink_class:` | `input_schema` object fields **or** mutating-capability **`payload` / `arguments`** lane fields |
 | `sanitizers` | `sanitizes:` | Capability declaration |
 
 **Closed registry:** every `data_class`, every `sanitizes` entry, and every `sink_class` value must be declared under top-level **`data_classes:`**. `CGS::validate` rejects unknown keys (`UnknownDataClass`). **Sink class names use the same registry** as data labels — register sink roles (e.g. `external_send`) as `data_classes` entries with a clear `description`.
@@ -917,17 +936,15 @@ After semantic modeling, run a **flow annotation pass**:
 
 **`query` vs `search`**: Use `query` when the API filters by field equality/range predicates. Use `search` when the primary input is a free-text relevance query and results are ranked, not field-filtered. Search capabilities are excluded from reverse-traversal FK lookups.
 
-### Multiple query capabilities per entity (disambiguation)
+### Multiple query capabilities per entity — **illegal**
 
-An entity can have multiple `kind: query` (or `kind: search`) capabilities. The compiler and planner pick among them using capability identity and **lane** shapes (`scope` / `selection` / `controls`).
+An entity may have **at most one** `kind: query` and **at most one** `kind: search`. Competing list caps (including unscoped+scoped twins) fail load validation. Compress per [Same-type list compression](#same-type-list-compression). Do **not** declare both unscoped and scoped as separate queries; fold scope into the single query and wire parent relations via `materialize`.
 
-| Capability shape | Resolution hint |
-|------------------|-----------------|
-| No required selection/scope (or only optional selection) | Often the default list capability for the entity |
-| Required selection keys, empty `scope` | Additional caps need distinct selection signatures |
-| Required `scope` slots | Scoped list — typically combined with relation `materialize` |
-
-Among non-scoped caps, at most one may be parameterless (validation rule).
+| Capability shape | Authoring |
+|------------------|-----------|
+| Unscoped index + parent-scoped sublist | One query; optional `scope` / selection; CML `path:` `type: if`; relation `materialize` |
+| Competing shelves / polarities (same taught arity) | One query + selection discriminant, **or** entity split |
+| Free-text relevance vs field filters | One `search` + one `query` (lawful pair) |
 
 ### Required Parameters
 
@@ -943,7 +960,7 @@ capabilities:
   pet_findByStatus:
     kind: query
     entity: Pet
-    parameters:
+    selection:
       - name: status
         value_ref: pet_status
         required: true
@@ -1088,7 +1105,7 @@ For `action`, if you rely on the default empty `provides`, you **must** add `out
 
 | Annotation | Direction | Meaning |
 |------------|-----------|---------|
-| `parameters:` | input | What the API endpoint accepts |
+| Lanes (`scope` / `selection` / `controls` / `arguments` / `payload`) | input | What the API endpoint accepts |
 | `provides:` | output | Which entity fields the response populates |
 | `mutates:` | write set | Which entity fields this capability changes *(roadmap)* |
 
@@ -1357,6 +1374,8 @@ else_expr: <cml_expr>
 ```
 
 **Conditions** (`CmlCond` in `plasm-cml`): `exists` (variable bound), `equals` (compare two expressions), `bool` (truthy eval). Prefer `exists` for optional query params.
+
+**Path segments** may also be `type: if` (same condition / then / else shape). The chosen branch must evaluate to a string or number and **may contain `/`** so one discriminant can expand to multiple URL parts (e.g. shelf `library` → `library/songs`, `recommendations` → `recommendations`).
 
 #### Array join (CSV / pipe serialisation)
 
