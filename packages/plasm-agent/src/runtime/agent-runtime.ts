@@ -1,5 +1,6 @@
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
 
 import type { LoadedCatalog } from "../catalog/loader.js";
 import { FilesystemCatalogLoader } from "../catalog/loader.js";
@@ -42,6 +43,11 @@ export interface AgentRuntimeConfig {
   stateWorld?: AgentWorkflowWorldDefinition;
   hookRunner?: HookRunner;
   getAuthoringContext?: () => AuthoringContext;
+  /**
+   * Directory for materializing run snapshots for harness TS transforms.
+   * Defaults to `PLASM_RUN_ARTIFACTS_DIR` or `<agentRoot>/.plasm/artefacts`.
+   */
+  artefactWorkspaceRoot?: string;
 }
 
 export interface DiscoverInput {
@@ -50,8 +56,12 @@ export interface DiscoverInput {
 
 export interface PlasmContextInput {
   intent: string;
-  seeds: Array<{ api: string; entity: string }>;
+  sessionMode?: "new" | "extend";
+  seeds?: Array<{ api: string; entity: string }>;
+  logicalSessionRef?: string;
   rankedCapabilities?: string[] | null;
+  /** When true, `new` without seeds auto-picks via discover; seeds on `new` are rejected. */
+  autoSeed?: boolean;
 }
 
 export interface PlasmPlanInput {
@@ -63,6 +73,12 @@ export interface PlasmPlanInput {
 export interface PlasmRunInput {
   logicalSessionRef: string;
   runRef: string;
+  reasoning?: string;
+}
+
+export interface PlasmReadRunArtifactInput {
+  logicalSessionRef: string;
+  runId: string;
   reasoning?: string;
 }
 
@@ -128,11 +144,19 @@ export class AgentRuntime {
   readonly sessionManager: SessionManager;
   readonly archive: AgentArchiveStore | null;
   readonly hostTransport: HostTransportFn | null;
+  readonly artefactWorkspaceRoot: string;
   private readonly agentRoot: string;
   private readonly archiveEnabled: boolean;
   private readonly hookRunner?: HookRunner;
   private readonly getAuthoringContext?: () => AuthoringContext;
   private loadedCatalogs: LoadedCatalog[] = [];
+  /**
+   * One auto-seed workflow session per AgentRuntime process.
+   * Models often rephrase `intent` on repeat `new` — do not remint or re-FO.
+   * Holds the live AgentSessionState (not a detached card) so plasm / plasm_run
+   * resolve without depending on durable store list scans.
+   */
+  private workflowSession: AgentSessionState | null = null;
 
   constructor(config: AgentRuntimeConfig) {
     this.agentRoot = path.resolve(config.agentRoot);
@@ -151,6 +175,12 @@ export class AgentRuntime {
     this.archiveEnabled = config.archiveEnabled ?? true;
     this.hookRunner = config.hookRunner;
     this.getAuthoringContext = config.getAuthoringContext;
+    const envArtefacts = process.env.PLASM_RUN_ARTIFACTS_DIR?.trim();
+    this.artefactWorkspaceRoot = path.resolve(
+      config.artefactWorkspaceRoot ??
+        envArtefacts ??
+        path.join(this.agentRoot, ".plasm", "artefacts"),
+    );
     if (config.archive === null) {
       this.archive = null;
     } else if (config.archive) {
@@ -166,6 +196,7 @@ export class AgentRuntime {
     if (this.archive) {
       await this.archive.bootstrap();
     }
+    await mkdir(this.artefactWorkspaceRoot, { recursive: true });
     const loader = new FilesystemCatalogLoader();
     const catalogs = await loader.discover(this.agentRoot);
     for (const catalog of catalogs) {
@@ -209,53 +240,159 @@ export class AgentRuntime {
 
   async plasmContext(input: PlasmContextInput): Promise<string> {
     const intent = input.intent.trim();
-    const entryId = input.seeds[0]?.api;
-    const catalogCgsHash = entryId ? this.catalogHashForEntry(entryId) : undefined;
+    const sessionMode = input.sessionMode ?? "new";
+    const autoSeed = input.autoSeed ?? false;
+    let seeds = input.seeds ?? [];
 
     return plasmSpans.toolContext(
       {
         intent,
-        entryId,
-        catalogCgsHash,
+        entryId: seeds[0]?.api,
+        catalogCgsHash: seeds[0]?.api ? this.catalogHashForEntry(seeds[0].api) : undefined,
       },
       async (span) => {
         if (!intent) throw new Error("plasm_context requires `intent`");
-        if (!input.seeds.length) throw new Error("plasm_context requires non-empty `seeds`");
+
+        if (sessionMode === "extend") {
+          const ref = input.logicalSessionRef?.trim();
+          const session = ref
+            ? await this.requireSessionByRef(ref)
+            : (this.workflowSession ?? (await this.sessionManager.get(intent)));
+          if (!session) {
+            throw new Error(
+              "plasm_context extend: unknown logical_session_ref — call session_mode new first",
+            );
+          }
+          this.workflowSession = session;
+          if (seeds.length) {
+            const before = new Set(session.seeds.map(seedKey));
+            const merged = mergeSeeds(session.seeds, seeds);
+            const hasNew = merged.length > before.size;
+            const started = Date.now();
+            const exposure = await this.engine.synthesizeTeaching(intent, seeds);
+            if (exposure.tsv.trim()) {
+              session.teachingTsv = session.teachingTsv
+                ? `${session.teachingTsv.trim()}\n\n${exposure.tsv.trim()}`
+                : exposure.tsv.trim();
+              session.waves.push({
+                entryId: seeds[0]?.api ?? "unknown",
+                entities: seeds.map((s) => s.entity),
+                tsv: exposure.tsv,
+                at: new Date().toISOString(),
+              });
+            }
+            session.seeds = merged;
+            await this.sessionManager.update(session);
+            span.setAttribute("plasm.logical_session_ref", session.logicalSessionRef);
+            await this.recordToolTrace("tool", "plasm_context", started, {
+              intent,
+              logical_session_ref: session.logicalSessionRef,
+              session_mode: "extend",
+              trace_id: activeTraceId() ?? span.spanContext().traceId,
+            });
+            return formatPlasmContextMarkdown(
+              session.logicalSessionRef,
+              exposure.tsv,
+              !hasNew && !exposure.tsv.trim(),
+            );
+          }
+          span.setAttribute("plasm.logical_session_ref", session.logicalSessionRef);
+          // Re-surface the full teaching card — empty deltas still need e#/m# visible.
+          return formatPlasmContextMarkdown(
+            session.logicalSessionRef,
+            session.teachingTsv,
+            true,
+          );
+        }
+
+        // Idempotent auto-seed `new`: return the open workflow session before FO / expose.
+        if (autoSeed && this.workflowSession) {
+          span.setAttribute("plasm.logical_session_ref", this.workflowSession.logicalSessionRef);
+          return formatPlasmContextMarkdown(
+            this.workflowSession.logicalSessionRef,
+            this.workflowSession.teachingTsv,
+            true,
+          );
+        }
+
+        if (autoSeed) {
+          if (seeds.length) {
+            throw new Error(
+              'plasm_context auto-seed: omit `seeds` on session_mode "new" (host selects entities from intent)',
+            );
+          }
+          if (typeof this.engine.selectAutoSeeds !== "function") {
+            throw new Error(
+              "plasm_context auto-seed: engine missing selectAutoSeeds — rebuild @plasm_lang/engine (semantic spine)",
+            );
+          }
+          const routed = await this.engine.selectAutoSeeds(intent);
+          if (routed.decision !== "ready" || !routed.seeds.length) {
+            return [
+              `**plasm_context** auto-seed: ${routed.decision} (no session minted).`,
+              routed.reasoning ? `Reasoning: ${routed.reasoning}` : "",
+              "Rephrase intent with the provider brand, or pass routing_ref + clarify_choice when offered.",
+              "",
+              routed.markdown.trim() || "(no breakout markdown)",
+            ]
+              .filter(Boolean)
+              .join("\n");
+          }
+          seeds = routed.seeds;
+        } else if (!seeds.length) {
+          throw new Error(
+            "plasm_context requires non-empty `seeds` when auto-seed is off (or set PLASM_DISCOVERY_SEMANTIC_AUTO_SEED=1)",
+          );
+        }
 
         void input.rankedCapabilities;
 
-        let session = await this.openOrExtendSession(intent);
-        const before = new Set(session.seeds.map(seedKey));
-        const merged = mergeSeeds(session.seeds, input.seeds);
-        const hasNew = merged.length > before.size;
+        const entryId = seeds[0]?.api;
+        const catalogCgsHash = entryId ? this.catalogHashForEntry(entryId) : undefined;
+        if (catalogCgsHash) span.setAttribute("plasm.catalog_cgs_hash", catalogCgsHash);
+
+        const ids = mintLogicalSessionId(
+          this.sessionManager.tenant(),
+          `${intent}\0new\0${Date.now()}`,
+        );
+        const session = await this.sessionManager.getOrCreate(
+          `${intent}\0${ids.logicalSessionRef}`,
+          ids.logicalSessionRef,
+          ids.logicalSessionId,
+        );
 
         const started = Date.now();
-        const exposure = await this.engine.synthesizeTeaching(intent, input.seeds);
-        const reused = !hasNew && !exposure.tsv.trim();
-
-        if (exposure.tsv.trim()) {
-          session.teachingTsv = session.teachingTsv
-            ? `${session.teachingTsv.trim()}\n\n${exposure.tsv.trim()}`
-            : exposure.tsv.trim();
-          session.waves.push({
-            entryId: input.seeds[0]?.api ?? "unknown",
-            entities: input.seeds.map((s) => s.entity),
+        const exposure = await this.engine.synthesizeTeaching(intent, seeds);
+        if (!exposure.tsv.trim()) {
+          throw new Error(
+            "plasm_context new: empty language card after seed exposure — host defect (check catalog entry_id binding)",
+          );
+        }
+        session.seeds = seeds;
+        session.teachingTsv = exposure.tsv.trim();
+        session.waves = [
+          {
+            entryId: seeds[0]?.api ?? "unknown",
+            entities: seeds.map((s) => s.entity),
             tsv: exposure.tsv,
             at: new Date().toISOString(),
-          });
-        }
-        session.seeds = merged;
+          },
+        ];
+        session.planCommits = [];
         await this.sessionManager.update(session);
+        this.workflowSession = session;
 
         span.setAttribute("plasm.logical_session_ref", session.logicalSessionRef);
         await this.recordToolTrace("tool", "plasm_context", started, {
           intent,
           logical_session_ref: session.logicalSessionRef,
           entry_id: entryId,
+          session_mode: "new",
+          auto_seed: autoSeed,
           trace_id: activeTraceId() ?? span.spanContext().traceId,
         });
 
-        return formatPlasmContextMarkdown(session.logicalSessionRef, exposure.tsv, reused);
+        return formatPlasmContextMarkdown(session.logicalSessionRef, exposure.tsv, false);
       },
     );
   }
@@ -386,6 +523,14 @@ export class AgentRuntime {
           });
         }
 
+        await this.materializeRunArtefact(runId, {
+          run_id: runId,
+          plan_commit_ref: input.runRef,
+          message: result.message,
+          results: parseRowsJson(result.rowsJson),
+          ok: result.ok,
+        });
+
         await this.recordToolTrace("plasm", "plasm.live_run", started, {
           intent: session.intent,
           logical_session_ref: session.logicalSessionRef,
@@ -405,9 +550,48 @@ export class AgentRuntime {
           logicalSessionRef: session.logicalSessionRef,
         });
 
-        return formatPlasmRunMarkdown(result.message, result.ok, result.rowsJson);
+        return formatPlasmRunMarkdown(result.message, result.ok, result.rowsJson, runId);
       },
     );
+  }
+
+  async readRunArtifact(input: PlasmReadRunArtifactInput): Promise<string> {
+    void input.reasoning;
+    await this.requireSessionByRef(input.logicalSessionRef);
+    if (!this.archive || typeof this.archive.getRun !== "function") {
+      throw new Error("plasm_read_run_artifact: archive store unavailable");
+    }
+    const snap = await this.archive.getRun(input.runId.trim());
+    if (!snap) {
+      throw new Error(`plasm_read_run_artifact: unknown run_id \`${input.runId}\``);
+    }
+    if (
+      snap.logical_session_ref &&
+      snap.logical_session_ref !== input.logicalSessionRef.trim()
+    ) {
+      throw new Error(
+        "plasm_read_run_artifact: run_id does not belong to this logical_session_ref",
+      );
+    }
+    await this.materializeRunArtefact(snap.run_id, snap);
+    return [
+      `**run_id:** \`${snap.run_id}\``,
+      "Materialized under artefact workspace for **plasm_artefact_transform**.",
+      "",
+      "```json",
+      JSON.stringify(snap, null, 2),
+      "```",
+    ].join("\n");
+  }
+
+  private async materializeRunArtefact(runId: string, payload: unknown): Promise<void> {
+    const safe = runId.replace(/[^a-zA-Z0-9_-]/g, "");
+    if (!safe) return;
+    const dir = path.join(this.artefactWorkspaceRoot, "artefacts");
+    await mkdir(dir, { recursive: true });
+    const body = `${JSON.stringify(payload, null, 2)}\n`;
+    await writeFile(path.join(dir, `${safe}.json`), body, "utf8");
+    await writeFile(path.join(dir, "latest.json"), body, "utf8");
   }
 
   private async emitHook(
@@ -463,12 +647,20 @@ export class AgentRuntime {
   }
 
   private async requireSessionByRef(ref: string): Promise<AgentSessionState> {
-    const session = await this.sessionManager.getByLogicalRef(ref);
+    const key = ref.trim();
+    if (this.workflowSession?.logicalSessionRef === key) {
+      return this.workflowSession;
+    }
+    const session = await this.sessionManager.getByLogicalRef(key);
     if (!session) {
+      const open = this.workflowSession?.logicalSessionRef;
       throw new Error(
-        `unknown logical_session_ref \`${ref}\` — call plasm_context first with a stable intent`,
+        open
+          ? `unknown logical_session_ref \`${key}\` — open workflow is \`${open}\` (reuse it verbatim)`
+          : `unknown logical_session_ref \`${key}\` — call plasm_context first with a stable intent`,
       );
     }
+    this.workflowSession = session;
     return session;
   }
 }

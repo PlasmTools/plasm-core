@@ -4,13 +4,14 @@ export function formatPlasmContextMarkdown(
   reused: boolean,
 ): string {
   const delta = tsv.trim();
+  const header = `**logical_session_ref:** \`${logicalSessionRef}\``;
   if (!delta) {
     if (reused) {
-      return `\`${logicalSessionRef}\`\n\nUnchanged — seeds already exposed. Next: \`plasm\` / \`plasm_run\`.\n`;
+      return `${header}\n\nUnchanged — seeds already exposed. Next: \`plasm\` / \`plasm_run\`.\n`;
     }
-    return `\`${logicalSessionRef}\`\n`;
+    return `${header}\n`;
   }
-  return `\`${logicalSessionRef}\`\n\n\`\`\`tsv\n${delta}\n\`\`\`\n`;
+  return `${header}\n\n\`\`\`tsv\n${delta}\n\`\`\`\n`;
 }
 
 export function formatPlasmDryRunMarkdown(summary: string, runRef: string): string {
@@ -21,9 +22,13 @@ export function formatPlasmRunMarkdown(
   message: string,
   ok: boolean,
   rowsJson?: string,
+  runId?: string,
 ): string {
   if (!ok) return `**plasm_run** (pending transport)\n\n${message}`;
+  const runLine = runId
+    ? `\n\n**run_id:** \`${runId}\` — call **plasm_read_run_artifact** with this id when you need the full snapshot.`
+    : "";
   const rows = rowsJson?.trim();
-  if (!rows) return message;
-  return `${message}\n\n\`\`\`json\n${rows}\n\`\`\``;
+  if (!rows) return `${message}${runLine}`;
+  return `${message}${runLine}\n\n\`\`\`json\n${rows}\n\`\`\``;
 }

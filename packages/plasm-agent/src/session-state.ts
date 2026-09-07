@@ -88,6 +88,9 @@ export class LocalSessionStore implements SessionStore {
 }
 
 export class SessionManager {
+  /** Hot index by wire ref — getByLogicalRef must not depend on store list scans. */
+  private readonly byLogicalRef = new Map<string, AgentSessionState>();
+
   constructor(
     readonly store: SessionStore,
     private readonly tenantScope = "local",
@@ -98,21 +101,33 @@ export class SessionManager {
   }
 
   async get(intent: string): Promise<AgentSessionState | null> {
-    return this.store.get(intent);
+    const session = await this.store.get(intent);
+    if (session) this.index(session);
+    return session;
   }
 
   async getByLogicalRef(ref: string): Promise<AgentSessionState | null> {
+    const key = ref.trim();
+    if (!key) return null;
+    const hot = this.byLogicalRef.get(key);
+    if (hot) return hot;
     const intents = await this.store.listIntents();
     for (const intent of intents) {
       const session = await this.store.get(intent);
-      if (session?.logicalSessionRef === ref) return session;
+      if (session?.logicalSessionRef === key) {
+        this.index(session);
+        return session;
+      }
     }
     return null;
   }
 
   async getOrCreate(intent: string, logicalSessionRef: string, logicalSessionId: string) {
     const existing = await this.store.get(intent);
-    if (existing) return existing;
+    if (existing) {
+      this.index(existing);
+      return existing;
+    }
     const fresh: AgentSessionState = {
       intent,
       logicalSessionRef,
@@ -125,11 +140,17 @@ export class SessionManager {
       updatedAt: new Date().toISOString(),
     };
     await this.store.put(fresh);
+    this.index(fresh);
     return fresh;
   }
 
   async update(state: AgentSessionState): Promise<void> {
     state.updatedAt = new Date().toISOString();
     await this.store.put(state);
+    this.index(state);
+  }
+
+  private index(state: AgentSessionState): void {
+    this.byLogicalRef.set(state.logicalSessionRef.trim(), state);
   }
 }

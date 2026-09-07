@@ -49,6 +49,11 @@ export interface EveToolLoopOptions {
   onStepStart?: () => void | Promise<void>;
   onStepFinish?: (step: AgentStepEvent) => void | Promise<void>;
   modelOptions?: EveToolLoopModelOptions;
+  /**
+   * Force tool use for this loop (eval hosts: prevent prose refusal with zero tools).
+   * Applied on every streamText step until the loop exits.
+   */
+  toolChoice?: "auto" | "required" | "none" | { type: "tool"; toolName: string };
 }
 
 export interface EveToolLoopResult {
@@ -108,6 +113,10 @@ export async function runEveToolLoop(options: EveToolLoopOptions): Promise<EveTo
           stopWhen: stepCountIs(1),
           runtimeContext: runtimeContext as Context,
           experimental_telemetry: telemetry,
+          // Force tools only on the first step — later steps must be free to emit DONE.
+          ...(stepIndex === 0 && options.toolChoice !== undefined
+            ? { toolChoice: options.toolChoice }
+            : {}),
           ...(options.modelOptions?.temperature !== undefined
             ? { temperature: options.modelOptions.temperature }
             : {}),
@@ -117,7 +126,6 @@ export async function runEveToolLoop(options: EveToolLoopOptions): Promise<EveTo
           ...(options.modelOptions?.topP !== undefined ? { topP: options.modelOptions.topP } : {}),
           ...(options.modelOptions?.topK !== undefined ? { topK: options.modelOptions.topK } : {}),
         });
-
         const [text, finishReason, steps, usage, response] = await Promise.all([
           streamResult.text,
           streamResult.finishReason,
@@ -143,7 +151,11 @@ export async function runEveToolLoop(options: EveToolLoopOptions): Promise<EveTo
       usage: stepResult.usage,
     });
 
-    finalText = stepResult.text;
+    finalText = stepResult.text?.trim()
+      ? finalText
+        ? `${finalText}\n${stepResult.text}`
+        : stepResult.text
+      : finalText;
     lastUsage = stepResult.usage;
     aggregatedSteps.push(...stepResult.steps);
     messages = stepResult.response.messages as ModelMessage[];
