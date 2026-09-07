@@ -1,4 +1,7 @@
 //! Host transport bridge: route outbound HTTP through a NAPI threadsafe JS callback.
+//!
+//! Body encoding must match MCP/`ReqwestHttpTransport`: JSON vs `form_urlencoded`
+//! (and multipart rejected until supported). Never force JSON for form bodies.
 
 use async_trait::async_trait;
 use napi::bindgen_prelude::*;
@@ -6,7 +9,7 @@ use napi::threadsafe_function::ThreadsafeFunction;
 use plasm_compile::{CompiledRequest, HttpBodyFormat, HttpMethod};
 use plasm_runtime::auth::ResolvedAuth;
 use plasm_runtime::error::RuntimeError;
-use plasm_runtime::http_transport::{compiled_http_url, HttpTransport};
+use plasm_runtime::http_transport::{compiled_http_url, plasm_value_to_form_urlencoded, HttpTransport};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -106,6 +109,7 @@ impl JsCallbackHttpTransport {
         url: String,
         auth: Option<ResolvedAuth>,
         body: Option<String>,
+        content_type: Option<&str>,
     ) -> JsTransportRequest {
         let mut headers = HashMap::new();
         if let Some(a) = auth {
@@ -114,6 +118,9 @@ impl JsCallbackHttpTransport {
                     headers.insert(key, value);
                 }
             }
+        }
+        if let Some(ct) = content_type {
+            headers.insert("content-type".into(), ct.into());
         }
         JsTransportRequest {
             method: method.to_string(),
@@ -166,22 +173,35 @@ fn compiled_method_label(m: &HttpMethod) -> &'static str {
     }
 }
 
-fn body_json_string(
+/// Encode outbound body for the JS host callback — same law as MCP reqwest transport.
+fn encode_outbound_body(
     request: &CompiledRequest,
-) -> std::result::Result<Option<String>, RuntimeError> {
-    if request.body_format == HttpBodyFormat::Multipart {
-        return Err(RuntimeError::ConfigurationError {
+) -> std::result::Result<Option<(String, &'static str)>, RuntimeError> {
+    match request.body_format {
+        HttpBodyFormat::Multipart => Err(RuntimeError::ConfigurationError {
             message: "host transport callback does not support multipart bodies yet".into(),
-        });
+        }),
+        HttpBodyFormat::Json => {
+            let Some(body) = &request.body else {
+                return Ok(None);
+            };
+            let encoded =
+                serde_json::to_string(body).map_err(|e| RuntimeError::SerializationError {
+                    message: format!("JSON encode outbound body: {e}"),
+                })?;
+            Ok(Some((encoded, "application/json; charset=utf-8")))
+        }
+        HttpBodyFormat::FormUrlencoded => {
+            let Some(body) = &request.body else {
+                return Ok(None);
+            };
+            let encoded = plasm_value_to_form_urlencoded(body)?;
+            Ok(Some((
+                encoded,
+                "application/x-www-form-urlencoded",
+            )))
+        }
     }
-    let Some(body) = &request.body else {
-        return Ok(None);
-    };
-    serde_json::to_string(body)
-        .map(Some)
-        .map_err(|e| RuntimeError::SerializationError {
-            message: format!("JSON encode outbound body: {e}"),
-        })
 }
 
 #[async_trait]
@@ -194,8 +214,11 @@ impl HttpTransport for JsCallbackHttpTransport {
     ) -> std::result::Result<(serde_json::Value, Option<String>), RuntimeError> {
         let url = compiled_http_url(base_url, request);
         let method = compiled_method_label(&request.method);
-        let body = body_json_string(request)?;
-        let req = self.build_request(method, url, auth, body);
+        let (body, content_type) = match encode_outbound_body(request)? {
+            Some((b, ct)) => (Some(b), Some(ct)),
+            None => (None, None),
+        };
+        let req = self.build_request(method, url, auth, body, content_type);
         let resp = self.invoke(req).await?;
         Self::parse_response(resp)
     }
@@ -205,8 +228,51 @@ impl HttpTransport for JsCallbackHttpTransport {
         url: &str,
         auth: Option<ResolvedAuth>,
     ) -> std::result::Result<(serde_json::Value, Option<String>), RuntimeError> {
-        let req = self.build_request("GET", url.to_string(), auth, None);
+        let req = self.build_request("GET", url.to_string(), auth, None, None);
         let resp = self.invoke(req).await?;
         Self::parse_response(resp)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::encode_outbound_body;
+    use indexmap::IndexMap;
+    use plasm_compile::{CompiledRequest, HttpBodyFormat, HttpMethod};
+    use plasm_core::Value;
+
+    fn base_request(format: HttpBodyFormat, body: Option<Value>) -> CompiledRequest {
+        CompiledRequest {
+            method: HttpMethod::Post,
+            path: "/auth/token".into(),
+            query: None,
+            body,
+            body_format: format,
+            multipart: None,
+            headers: None,
+        }
+    }
+
+    #[test]
+    fn form_urlencoded_encodes_scalar_pairs_not_json() {
+        let mut fields = IndexMap::new();
+        fields.insert("username".into(), Value::String("joyce@x.com".into()));
+        fields.insert("password".into(), Value::String("s3cret".into()));
+        let req = base_request(HttpBodyFormat::FormUrlencoded, Some(Value::Object(fields)));
+        let (body, ct) = encode_outbound_body(&req).expect("encode").expect("body");
+        assert_eq!(ct, "application/x-www-form-urlencoded");
+        assert!(!body.starts_with('{'), "must not JSON-encode form body: {body}");
+        assert!(body.contains("username=joyce"), "{body}");
+        assert!(body.contains("password=s3cret"), "{body}");
+    }
+
+    #[test]
+    fn json_body_sets_json_content_type() {
+        let mut fields = IndexMap::new();
+        fields.insert("ok".into(), Value::Bool(true));
+        let req = base_request(HttpBodyFormat::Json, Some(Value::Object(fields)));
+        let (body, ct) = encode_outbound_body(&req).expect("encode").expect("body");
+        assert_eq!(ct, "application/json; charset=utf-8");
+        assert!(body.contains("\"ok\":true") || body.contains("\"ok\": true"), "{body}");
     }
 }

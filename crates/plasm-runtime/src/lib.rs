@@ -185,7 +185,9 @@ pub use hosted_oauth_kv::{
     HOSTED_OAUTH_EXPIRY_SKEW_SECS, OUTBOUND_OAUTH_KV_VERSION,
 };
 pub use http_resilience::{HttpResiliencePolicy, ResilientHttpTransport};
-pub use http_transport::{HttpTransport, ReqwestHttpTransport};
+pub use http_transport::{
+    plasm_value_to_form_urlencoded, HttpTransport, ReqwestHttpTransport,
+};
 pub use live_run_telemetry::{
     drain_active_live_http_trace_entries, drain_active_live_page_audits,
     record_live_http_completion, record_live_http_trace, record_live_page_audit,

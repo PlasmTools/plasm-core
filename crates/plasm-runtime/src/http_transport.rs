@@ -590,7 +590,7 @@ fn plasm_attachment_bytes_for_multipart(
     })
 }
 
-fn plasm_value_to_form_urlencoded(body: &Value) -> Result<String, RuntimeError> {
+pub fn plasm_value_to_form_urlencoded(body: &Value) -> Result<String, RuntimeError> {
     let m = body
         .as_object()
         .ok_or_else(|| RuntimeError::ConfigurationError {
@@ -1414,6 +1414,44 @@ mod json_wire_tests {
                 .contains("resolver-owned authentication header"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn compiled_form_urlencoded_request_sets_form_content_type_and_pairs() {
+        use super::plasm_value_to_form_urlencoded;
+        let body = Value::Object(IndexMap::from([
+            ("username".into(), Value::String("joyce@x.com".into())),
+            ("password".into(), Value::String("s3cret".into())),
+        ]));
+        let encoded = plasm_value_to_form_urlencoded(&body).expect("form");
+        assert!(!encoded.starts_with('{'), "{encoded}");
+        assert!(encoded.contains("username=joyce"), "{encoded}");
+        assert!(encoded.contains("password=s3cret"), "{encoded}");
+
+        let request = CompiledRequest {
+            method: HttpMethod::Post,
+            path: "/auth/token".into(),
+            query: None,
+            body: Some(body),
+            body_format: HttpBodyFormat::FormUrlencoded,
+            multipart: None,
+            headers: None,
+        };
+        let client = reqwest::Client::new();
+        let builder = build_compiled_reqwest(&client, "https://api.example.test", &request, None)
+            .expect("builder");
+        let req = builder.build().expect("build");
+        let ct = req
+            .headers()
+            .get(CONTENT_TYPE)
+            .expect("content-type")
+            .to_str()
+            .expect("ct str");
+        assert_eq!(ct, "application/x-www-form-urlencoded");
+        let bytes = req.body().expect("body").as_bytes().expect("bytes");
+        let decoded = std::str::from_utf8(bytes).expect("utf8");
+        assert!(decoded.contains("username=joyce"), "{decoded}");
+        assert!(!decoded.starts_with('{'), "{decoded}");
     }
 }
 
