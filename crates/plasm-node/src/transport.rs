@@ -9,7 +9,9 @@ use napi::threadsafe_function::ThreadsafeFunction;
 use plasm_compile::{CompiledRequest, HttpBodyFormat, HttpMethod};
 use plasm_runtime::auth::ResolvedAuth;
 use plasm_runtime::error::RuntimeError;
-use plasm_runtime::http_transport::{compiled_http_url, plasm_value_to_form_urlencoded, HttpTransport};
+use plasm_runtime::http_transport::{
+    compiled_http_url, compiled_template_headers, plasm_value_to_form_urlencoded, HttpTransport,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -110,8 +112,14 @@ impl JsCallbackHttpTransport {
         auth: Option<ResolvedAuth>,
         body: Option<String>,
         content_type: Option<&str>,
+        template_headers: Vec<(String, String)>,
     ) -> JsTransportRequest {
         let mut headers = HashMap::new();
+        for (key, value) in template_headers {
+            if !key.trim().is_empty() && !value.trim().is_empty() {
+                headers.insert(key, value);
+            }
+        }
         if let Some(a) = auth {
             for (key, value) in a.headers {
                 if !key.trim().is_empty() && !value.trim().is_empty() {
@@ -218,7 +226,8 @@ impl HttpTransport for JsCallbackHttpTransport {
             Some((b, ct)) => (Some(b), Some(ct)),
             None => (None, None),
         };
-        let req = self.build_request(method, url, auth, body, content_type);
+        let template_headers = compiled_template_headers(request, auth.as_ref())?;
+        let req = self.build_request(method, url, auth, body, content_type, template_headers);
         let resp = self.invoke(req).await?;
         Self::parse_response(resp)
     }
@@ -228,7 +237,7 @@ impl HttpTransport for JsCallbackHttpTransport {
         url: &str,
         auth: Option<ResolvedAuth>,
     ) -> std::result::Result<(serde_json::Value, Option<String>), RuntimeError> {
-        let req = self.build_request("GET", url.to_string(), auth, None, None);
+        let req = self.build_request("GET", url.to_string(), auth, None, None, Vec::new());
         let resp = self.invoke(req).await?;
         Self::parse_response(resp)
     }

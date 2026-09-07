@@ -286,43 +286,58 @@ fn build_compiled_reqwest(
         }
     }
 
-    if let Some(headers) = &request.headers {
-        let json_val = plasm_value_to_json(headers)?;
-        if let Some(obj) = json_val.as_object() {
-            for (key, value) in obj {
-                let header_val = match value {
-                    serde_json::Value::Null => continue,
-                    serde_json::Value::String(s) => {
-                        if s.trim().is_empty() {
-                            continue;
-                        }
-                        s.clone()
-                    }
-                    serde_json::Value::Number(n) => n.to_string(),
-                    serde_json::Value::Bool(b) => b.to_string(),
-                    other => other.to_string(),
-                };
-                if header_val.trim().is_empty() {
-                    continue;
-                }
-                if let Some((resolved_key, _)) = auth.as_ref().and_then(|resolved| {
-                    resolved
-                        .headers
-                        .iter()
-                        .find(|(resolved_key, _)| resolved_key.eq_ignore_ascii_case(key))
-                }) {
-                    return Err(RuntimeError::ConfigurationError {
-                        message: format!(
-                            "CML template header `{key}` conflicts with resolver-owned authentication header `{resolved_key}`"
-                        ),
-                    });
-                }
-                req_builder = req_builder.header(key, header_val);
-            }
-        }
+    for (key, header_val) in compiled_template_headers(request, auth.as_ref())? {
+        req_builder = req_builder.header(key, header_val);
     }
 
     Ok(apply_resolved_auth(req_builder, auth))
+}
+
+/// CML template headers for the outbound wire (Authorization bearer from `access_token`, etc.).
+/// Shared by reqwest MCP transport and the NAPI JS host callback — must stay in lockstep.
+pub fn compiled_template_headers(
+    request: &CompiledRequest,
+    auth: Option<&ResolvedAuth>,
+) -> Result<Vec<(String, String)>, RuntimeError> {
+    let mut out = Vec::new();
+    let Some(headers) = &request.headers else {
+        return Ok(out);
+    };
+    let json_val = plasm_value_to_json(headers)?;
+    let Some(obj) = json_val.as_object() else {
+        return Ok(out);
+    };
+    for (key, value) in obj {
+        let header_val = match value {
+            serde_json::Value::Null => continue,
+            serde_json::Value::String(s) => {
+                if s.trim().is_empty() {
+                    continue;
+                }
+                s.clone()
+            }
+            serde_json::Value::Number(n) => n.to_string(),
+            serde_json::Value::Bool(b) => b.to_string(),
+            other => other.to_string(),
+        };
+        if header_val.trim().is_empty() {
+            continue;
+        }
+        if let Some((resolved_key, _)) = auth.and_then(|resolved| {
+            resolved
+                .headers
+                .iter()
+                .find(|(resolved_key, _)| resolved_key.eq_ignore_ascii_case(key))
+        }) {
+            return Err(RuntimeError::ConfigurationError {
+                message: format!(
+                    "CML template header `{key}` conflicts with resolver-owned authentication header `{resolved_key}`"
+                ),
+            });
+        }
+        out.push((key.clone(), header_val));
+    }
+    Ok(out)
 }
 
 #[async_trait]
@@ -1452,6 +1467,28 @@ mod json_wire_tests {
         let decoded = std::str::from_utf8(bytes).expect("utf8");
         assert!(decoded.contains("username=joyce"), "{decoded}");
         assert!(!decoded.starts_with('{'), "{decoded}");
+    }
+
+    #[test]
+    fn compiled_template_headers_emit_authorization_bearer() {
+        use super::compiled_template_headers;
+        let headers = Value::Object(IndexMap::from([(
+            "Authorization".into(),
+            Value::String("Bearer tok-abc".into()),
+        )]));
+        let request = CompiledRequest {
+            method: HttpMethod::Get,
+            path: "/friends".into(),
+            query: None,
+            body: None,
+            body_format: HttpBodyFormat::Json,
+            multipart: None,
+            headers: Some(headers),
+        };
+        let pairs = compiled_template_headers(&request, None).expect("headers");
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].0, "Authorization");
+        assert_eq!(pairs[0].1, "Bearer tok-abc");
     }
 }
 
