@@ -5,6 +5,9 @@ use indexmap::IndexMap;
 use plasm_agent_core::discovery_human_format::{
     format_discovery_markdown_for_mcp, DiscoveryTablePolicy,
 };
+use plasm_agent_core::discovery_routing::{
+    build_auto_seed_breakout_markdown, discover_preview_markdown, AutoSeedRouteOutcome,
+};
 use plasm_agent_core::execute_session::ExecuteSession;
 use plasm_agent_core::http::{build_plasm_host_state, PlasmHostBootstrap};
 use plasm_agent_core::http_execute::CapabilitySeed;
@@ -98,6 +101,18 @@ pub struct DryRunResult {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct DiscoverResult {
     pub markdown: String,
+}
+
+/// Semantic auto-seed outcome for intent-only `plasm_context` (same spine as MCP host).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AutoSeedResult {
+    /// `ready` | `noop` | `clarify` | `hard_miss` | `routing_error`
+    pub decision: String,
+    /// Workflow seeds + teaching satellites (co_seed / identity_pair), ready only.
+    pub seeds: Vec<(String, String)>,
+    /// Breakout markdown when not ready; empty on ready.
+    pub markdown: String,
+    pub reasoning: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -217,7 +232,12 @@ impl AgentEngine {
                     .unwrap_or_else(|| format!("{:?}", cap.kind).to_lowercase()),
                 entity: cap.domain.to_string(),
                 invoke_wire_name: capability_method_label_kebab(cap),
-                input_schema: cap.input_schema.clone(),
+                // Prefer payload, else arguments (CapabilityInputs lanes — no legacy `input_schema`).
+                input_schema: cap
+                    .inputs
+                    .payload
+                    .clone()
+                    .or_else(|| cap.inputs.arguments.clone()),
                 provides: cgs.effective_ordered_response_fields(cap),
                 output_schema: cap.output_schema.clone(),
             })
@@ -234,12 +254,11 @@ impl AgentEngine {
     }
 
     pub fn load_catalog(&mut self, catalog_path: &Path) -> Result<CatalogInfo> {
-        let cgs = if catalog_path.is_file() {
+        let mut cgs = if catalog_path.is_file() {
             load_schema(catalog_path).map_err(|e| anyhow!("{e}"))?
         } else {
             load_schema_dir(catalog_path).map_err(|e| anyhow!("{e}"))?
         };
-        let digest = cgs.catalog_cgs_hash_hex();
         let entry_id = cgs
             .entry_id
             .clone()
@@ -253,6 +272,9 @@ impl AgentEngine {
                     .unwrap_or("default")
                     .to_string()
             });
+        // Federated teaching / surface keys require CGS.entry_id == registry map key.
+        cgs.bind_registry_entry_id(&entry_id);
+        let digest = cgs.catalog_cgs_hash_hex();
         if let Some(existing) = self.catalog_digests.get(&entry_id) {
             if existing != &digest {
                 return Err(anyhow!(
@@ -369,15 +391,7 @@ impl AgentEngine {
                 "discover_capabilities `intent` must be a non-empty string"
             ));
         }
-        let pairs: Vec<RegistryEntryPair> = self
-            .catalogs
-            .iter()
-            .map(|(id, cgs)| (id.clone(), id.clone(), Vec::new(), cgs.clone()))
-            .collect();
-        if pairs.is_empty() {
-            return Err(anyhow!("no catalogs loaded — call loadCatalog first"));
-        }
-        let registry = InMemoryCgsRegistry::from_pairs(pairs);
+        let registry = self.registry()?;
         let query = CapabilityQuery {
             tokens: vec![intent.to_string()],
             ..CapabilityQuery::default()
@@ -388,6 +402,44 @@ impl AgentEngine {
         Ok(DiscoverResult {
             markdown: formatted.markdown,
         })
+    }
+
+    /// Intent → FO seeds + teaching satellites (`admit_co_seed` / identity pair).
+    /// Lexicon browse (`discover`) is not used for session minting.
+    pub async fn select_auto_seeds(&self, intent: &str) -> Result<AutoSeedResult> {
+        let registry = self.registry()?;
+        Self::select_auto_seeds_on(&registry, intent).await
+    }
+
+    /// FO routing on an already-cloned registry (NAPI holds the engine mutex only while cloning).
+    pub async fn select_auto_seeds_on(
+        registry: &InMemoryCgsRegistry,
+        intent: &str,
+    ) -> Result<AutoSeedResult> {
+        let intent = intent.trim();
+        if intent.is_empty() {
+            return Err(anyhow!(
+                "select_auto_seeds `intent` must be a non-empty string"
+            ));
+        }
+        let outcome =
+            plasm_agent_core::discovery_seed_select::route_intent_to_seeds(
+                registry, intent, None, None,
+            )
+            .await;
+        Ok(map_auto_seed_outcome(registry, intent, outcome))
+    }
+
+    pub(crate) fn registry(&self) -> Result<InMemoryCgsRegistry> {
+        let pairs: Vec<RegistryEntryPair> = self
+            .catalogs
+            .iter()
+            .map(|(id, cgs)| (id.clone(), id.clone(), Vec::new(), cgs.clone()))
+            .collect();
+        if pairs.is_empty() {
+            return Err(anyhow!("no catalogs loaded — call loadCatalog first"));
+        }
+        Ok(InMemoryCgsRegistry::from_pairs(pairs))
     }
 
     pub fn dry_run(&mut self, program: &str) -> Result<DryRunResult> {
@@ -756,6 +808,69 @@ fn primary_entry_id_from_seeds(seeds: &[CapabilitySeed]) -> Option<String> {
     ids.into_iter().next()
 }
 
+fn map_auto_seed_outcome(
+    registry: &InMemoryCgsRegistry,
+    intent: &str,
+    outcome: AutoSeedRouteOutcome,
+) -> AutoSeedResult {
+    match outcome {
+        AutoSeedRouteOutcome::Ready {
+            seeds,
+            teaching_satellites,
+            reasoning,
+            ..
+        } => {
+            let mut merged = seeds;
+            for (entry_id, entity) in teaching_satellites {
+                if merged
+                    .iter()
+                    .any(|(e, n)| e == &entry_id && n.eq_ignore_ascii_case(&entity))
+                {
+                    continue;
+                }
+                merged.push((entry_id, entity));
+            }
+            AutoSeedResult {
+                decision: "ready".into(),
+                seeds: merged,
+                markdown: String::new(),
+                reasoning: Some(reasoning),
+            }
+        }
+        AutoSeedRouteOutcome::Noop { reasoning, .. } => AutoSeedResult {
+            decision: "noop".into(),
+            seeds: Vec::new(),
+            markdown: String::new(),
+            reasoning: Some(reasoning),
+        },
+        abstain @ (AutoSeedRouteOutcome::Clarify { .. }
+        | AutoSeedRouteOutcome::HardMiss { .. }
+        | AutoSeedRouteOutcome::RoutingError { .. }) => {
+            let decision = match &abstain {
+                AutoSeedRouteOutcome::Clarify { .. } => "clarify",
+                AutoSeedRouteOutcome::HardMiss { .. } => "hard_miss",
+                AutoSeedRouteOutcome::RoutingError { .. } => "routing_error",
+                _ => unreachable!(),
+            };
+            let reasoning = match &abstain {
+                AutoSeedRouteOutcome::Clarify { reasoning, .. }
+                | AutoSeedRouteOutcome::HardMiss { reasoning, .. } => Some(reasoning.clone()),
+                AutoSeedRouteOutcome::RoutingError { message, .. } => Some(message.clone()),
+                _ => None,
+            };
+            let preview = discover_preview_markdown(registry, intent, None);
+            let markdown =
+                build_auto_seed_breakout_markdown(&abstain, intent, preview.as_deref());
+            AutoSeedResult {
+                decision: decision.into(),
+                seeds: Vec::new(),
+                markdown,
+                reasoning,
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -937,5 +1052,113 @@ mod tests {
         let arr = parsed.as_array().expect("entity rows array");
         assert!(!arr.is_empty());
         assert_eq!(arr[0]["id"], "p1");
+    }
+
+    #[test]
+    fn expose_seeds_federated_supervisor_venmo_teaches_methods() {
+        use plasm_core::load_schema_dir;
+        use plasm_core::prompt_pipeline::PromptPipelineConfig;
+        use plasm_core::symbol_tuning::TeachingExposureSession;
+        use plasm_core::CGS;
+        use std::sync::Arc;
+
+        let apis = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/appworld");
+        if !apis.is_dir() {
+            return;
+        }
+        let mut supervisor = load_schema_dir(&apis.join("supervisor")).unwrap();
+        supervisor.bind_registry_entry_id("supervisor");
+        let mut venmo = load_schema_dir(&apis.join("venmo")).unwrap();
+        venmo.bind_registry_entry_id("venmo");
+
+        let mut exp =
+            TeachingExposureSession::new(&supervisor, "supervisor", &["Supervisor"]);
+        let layers = [&supervisor as &CGS, &venmo as &CGS];
+        exp.expose_entities(&layers, Arc::new(venmo.clone()), "venmo", &["PaymentRequest"]);
+        let by_entry: IndexMap<String, &CGS> = [
+            ("supervisor".into(), &supervisor),
+            ("venmo".into(), &venmo),
+        ]
+        .into_iter()
+        .collect();
+        let control = PromptPipelineConfig::default().render_teaching_exposure_delta_federated(
+            &by_entry,
+            &exp,
+            &exp.qualified_entities_since(0),
+            None,
+        );
+
+        let mut engine = AgentEngine::new();
+        for name in ["supervisor", "venmo"] {
+            engine
+                .load_catalog(&apis.join(name))
+                .expect("load");
+        }
+        let seeds = vec![
+            CapabilitySeed {
+                entry_id: "venmo".into(),
+                entity: "PaymentRequest".into(),
+            },
+            CapabilitySeed {
+                entry_id: "supervisor".into(),
+                entity: "Supervisor".into(),
+            },
+        ];
+        let teach = engine.expose_seeds("", &seeds).expect("expose");
+        assert!(
+            control.len() > 800,
+            "control itself truncated — env/catalog issue"
+        );
+        assert!(
+            teach.tsv.len() > 800,
+            "federated teach truncated: {} (control={})",
+            teach.tsv.len(),
+            control.len()
+        );
+        assert!(
+            teach.tsv.contains("e2.") || teach.tsv.contains("Ask another"),
+            "missing PaymentRequest methods"
+        );
+    }
+
+    /// Same acquisition pattern as NAPI `PlasmEngine` (async Mutex, no blocking_lock).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_dry_runs_under_async_mutex_complete() {
+        use std::time::{Duration, Instant};
+        use tokio::sync::Mutex;
+
+        let mut boot = AgentEngine::new();
+        let info = boot.load_catalog(&execute_tiny_dir()).expect("load");
+        boot.expose_seeds(
+            "concurrent dry",
+            &[CapabilitySeed {
+                entry_id: info.entry_id.clone(),
+                entity: "Product".into(),
+            }],
+        )
+        .expect("expose");
+        let shared = Arc::new(Mutex::new(boot));
+
+        let started = Instant::now();
+        let mut handles = Vec::with_capacity(8);
+        for _ in 0..8 {
+            let eng = Arc::clone(&shared);
+            handles.push(tokio::spawn(async move {
+                let mut g = eng.lock().await;
+                g.dry_run("e1")
+            }));
+        }
+        for (i, h) in handles.into_iter().enumerate() {
+            let dry = h
+                .await
+                .expect("join")
+                .unwrap_or_else(|e| panic!("dry_run[{i}]: {e}"));
+            assert!(dry.plan_commit_ref.starts_with("pc"), "{}", dry.plan_commit_ref);
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "parallel dry_run hung ({:?})",
+            started.elapsed()
+        );
     }
 }

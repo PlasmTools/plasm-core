@@ -14,7 +14,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 plasm-core = { path = "../plasm-core" }
-plasm-agent-core = { path = "../plasm-agent-core", default-features = false }
+plasm-agent-core = { path = "../plasm-agent-core", default-features = false, features = ["semantic-auto-seed"] }
 plasm-runtime = { path = "../plasm-runtime" }
 plasm-compile = { path = "../plasm-compile" }
 anyhow = { workspace = true }
@@ -22,7 +22,7 @@ async-trait = { workspace = true }
 indexmap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 napi = { version = "3", default-features = false, features = ["napi9", "napi4", "serde-json", "async"] }
 napi-derive = "3"
 

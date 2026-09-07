@@ -51,6 +51,13 @@ export interface PlasmEngine {
   ): Promise<TeachingExposureResult>;
   dryRun(program: string, executeSessionRef?: string): Promise<DryRunResult>;
   discover(intent: string): Promise<{ markdown: string }>;
+  /** Semantic FO + co_seed / identity_pair — session mint path (not lexicon browse). */
+  selectAutoSeeds?(intent: string): Promise<{
+    decision: string;
+    seeds: Array<{ api: string; entity: string }>;
+    markdown: string;
+    reasoning?: string | null;
+  }>;
   runPlan(planCommitRef: string): Promise<{ ok: boolean; message: string; rowsJson?: string; metaJson?: string }>;
   runPlanLive?(
     planCommitRef: string,
@@ -61,31 +68,37 @@ export interface PlasmEngine {
 }
 
 type NativePlasmEngine = {
-  loadCatalog(catalogDir: string): {
+  loadCatalog(catalogDir: string): Promise<{
     entryId: string;
     catalogCgsHash: string;
-  };
+  }>;
   exposeSeeds(
     intent: string,
     seeds: Array<{ api: string; entity: string }>,
-  ): {
+  ): Promise<{
     tsv: string;
     deltaRefs: string[];
-  };
-  dryRun(program: string): {
+  }>;
+  dryRun(program: string): Promise<{
     planCommitRef: string;
     summary: string;
     compJson: string;
-  };
-  discover(intent: string): {
+  }>;
+  discover(intent: string): Promise<{
     markdown: string;
-  };
-  runPlan(planCommitRef: string): {
+  }>;
+  selectAutoSeeds(intent: string): Promise<{
+    decision: string;
+    seeds: Array<{ api: string; entity: string }>;
+    markdown: string;
+    reasoning?: string | null;
+  }>;
+  runPlan(planCommitRef: string): Promise<{
     ok: boolean;
     message: string;
     rowsJson?: string;
     metaJson?: string;
-  };
+  }>;
   runPlanLive(
     planCommitRef: string,
     transport: (request: HostTransportRequest) => Promise<HostTransportResponse>,
@@ -95,7 +108,7 @@ type NativePlasmEngine = {
     rowsJson?: string;
     metaJson?: string;
   }>;
-  introspectCatalog(entryId: string): string;
+  introspectCatalog(entryId: string): Promise<string>;
 };
 
 type NativeConstructor = new () => NativePlasmEngine;
@@ -124,7 +137,7 @@ export class NapiPlasmEngine implements PlasmEngine {
   }
 
   async loadCatalog(catalog: LoadedCatalog): Promise<void> {
-    const info = this.native.loadCatalog(catalog.rootDir);
+    const info = await this.native.loadCatalog(catalog.rootDir);
     this.loaded.push({
       ...catalog,
       manifest: {
@@ -140,7 +153,7 @@ export class NapiPlasmEngine implements PlasmEngine {
     seeds: Array<{ api: string; entity: string }>,
   ): Promise<TeachingExposureResult> {
     void this.loaded;
-    const result = this.native.exposeSeeds(intent, seeds);
+    const result = await this.native.exposeSeeds(intent, seeds);
     return {
       tsv: result.tsv,
       deltaRefs: result.deltaRefs,
@@ -149,7 +162,7 @@ export class NapiPlasmEngine implements PlasmEngine {
 
   async dryRun(program: string, executeSessionRef?: string): Promise<DryRunResult> {
     void executeSessionRef;
-    const result = this.native.dryRun(program);
+    const result = await this.native.dryRun(program);
     let compJson: unknown;
     try {
       compJson = JSON.parse(result.compJson) as unknown;
@@ -165,6 +178,15 @@ export class NapiPlasmEngine implements PlasmEngine {
 
   async discover(intent: string): Promise<{ markdown: string }> {
     return this.native.discover(intent);
+  }
+
+  async selectAutoSeeds(intent: string): Promise<{
+    decision: string;
+    seeds: Array<{ api: string; entity: string }>;
+    markdown: string;
+    reasoning?: string | null;
+  }> {
+    return this.native.selectAutoSeeds(intent);
   }
 
   async runPlan(planCommitRef: string): Promise<{ ok: boolean; message: string; rowsJson?: string }> {
@@ -220,6 +242,20 @@ export class StubPlasmEngine implements PlasmEngine {
   async discover(intent: string): Promise<{ markdown: string }> {
     return {
       markdown: `# Discovery stub\n\nIntent: ${intent}\n\nLoad @plasm_lang/engine native binding for real discovery TSV.`,
+    };
+  }
+
+  async selectAutoSeeds(intent: string): Promise<{
+    decision: string;
+    seeds: Array<{ api: string; entity: string }>;
+    markdown: string;
+    reasoning?: string | null;
+  }> {
+    return {
+      decision: "routing_error",
+      seeds: [],
+      markdown: `## Couldn't route this intent\n\nStub engine — build @plasm_lang/engine for semantic auto-seed.\n\nIntent: ${intent}`,
+      reasoning: "stub engine",
     };
   }
 

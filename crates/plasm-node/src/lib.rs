@@ -5,8 +5,8 @@ mod transport;
 mod types;
 
 pub use engine::{
-    AgentEngine, CapabilityIntrospection, CatalogInfo, CatalogIntrospection, DiscoverResult,
-    DryRunResult, EntityIntrospection, RunPlanResult, TeachingExposureResult,
+    AgentEngine, AutoSeedResult, CapabilityIntrospection, CatalogInfo, CatalogIntrospection,
+    DiscoverResult, DryRunResult, EntityIntrospection, RunPlanResult, TeachingExposureResult,
 };
 pub use types::{JsTransportRequest, JsTransportResponse};
 
@@ -51,6 +51,15 @@ pub struct JsDiscoverResult {
 }
 
 #[napi(object)]
+pub struct JsAutoSeedResult {
+    /// `ready` | `noop` | `clarify` | `hard_miss` | `routing_error`
+    pub decision: String,
+    pub seeds: Vec<JsSeed>,
+    pub markdown: String,
+    pub reasoning: Option<String>,
+}
+
+#[napi(object)]
 pub struct JsRunPlanResult {
     pub ok: bool,
     pub message: String,
@@ -64,6 +73,12 @@ fn map_err(err: anyhow::Error) -> Error {
     Error::from_reason(err.to_string())
 }
 
+/// In-process Plasm engine for NAPI.
+///
+/// **Mutex law (full cutover):** every method acquires `inner` only via
+/// `lock().await`. Never use `blocking_lock` — mixing sync `blocking_lock` with
+/// async NAPI entrypoints deadlocks under parallel JS tool calls (e.g. concurrent
+/// `plasm` dry-runs) on the Tokio runtime that services napi-rs async.
 #[napi]
 pub struct PlasmEngine {
     inner: Arc<Mutex<InnerEngine>>,
@@ -85,8 +100,8 @@ impl PlasmEngine {
     }
 
     #[napi]
-    pub fn load_catalog(&self, catalog_dir: String) -> Result<JsCatalogInfo> {
-        let mut engine = self.inner.blocking_lock();
+    pub async fn load_catalog(&self, catalog_dir: String) -> Result<JsCatalogInfo> {
+        let mut engine = self.inner.lock().await;
         let info = engine
             .load_catalog(PathBuf::from(catalog_dir).as_path())
             .map_err(map_err)?;
@@ -97,8 +112,12 @@ impl PlasmEngine {
     }
 
     #[napi]
-    pub fn expose_seeds(&self, intent: String, seeds: Vec<JsSeed>) -> Result<JsTeachingResult> {
-        let mut engine = self.inner.blocking_lock();
+    pub async fn expose_seeds(
+        &self,
+        intent: String,
+        seeds: Vec<JsSeed>,
+    ) -> Result<JsTeachingResult> {
+        let mut engine = self.inner.lock().await;
         let capability_seeds: Vec<CapabilitySeed> = seeds
             .into_iter()
             .map(|s| CapabilitySeed {
@@ -116,15 +135,15 @@ impl PlasmEngine {
     }
 
     #[napi]
-    pub fn introspect_catalog(&self, entry_id: String) -> Result<String> {
-        let engine = self.inner.blocking_lock();
+    pub async fn introspect_catalog(&self, entry_id: String) -> Result<String> {
+        let engine = self.inner.lock().await;
         let info = engine.introspect_catalog(&entry_id).map_err(map_err)?;
         serde_json::to_string(&info).map_err(|e| Error::from_reason(e.to_string()))
     }
 
     #[napi]
-    pub fn dry_run(&self, program: String) -> Result<JsDryRunResult> {
-        let mut engine = self.inner.blocking_lock();
+    pub async fn dry_run(&self, program: String) -> Result<JsDryRunResult> {
+        let mut engine = self.inner.lock().await;
         let result = engine.dry_run(&program).map_err(map_err)?;
         Ok(JsDryRunResult {
             plan_commit_ref: result.plan_commit_ref,
@@ -135,17 +154,42 @@ impl PlasmEngine {
     }
 
     #[napi]
-    pub fn discover(&self, intent: String) -> Result<JsDiscoverResult> {
-        let engine = self.inner.blocking_lock();
+    pub async fn discover(&self, intent: String) -> Result<JsDiscoverResult> {
+        let engine = self.inner.lock().await;
         let result = engine.discover(&intent).map_err(map_err)?;
         Ok(JsDiscoverResult {
             markdown: result.markdown,
         })
     }
 
+    /// Semantic auto-seed (FO + co_seed / identity_pair). Prefer over browse `discover` for session mint.
+    ///
+    /// Clones the registry under a short lock, then runs FO **outside** the mutex so concurrent
+    /// `dry_run` / `expose_seeds` are not serialized behind the LLM round-trip.
     #[napi]
-    pub fn run_plan(&self, plan_commit_ref: String) -> Result<JsRunPlanResult> {
-        let mut engine = self.inner.blocking_lock();
+    pub async fn select_auto_seeds(&self, intent: String) -> Result<JsAutoSeedResult> {
+        let registry = {
+            let engine = self.inner.lock().await;
+            engine.registry().map_err(map_err)?
+        };
+        let result = InnerEngine::select_auto_seeds_on(&registry, &intent)
+            .await
+            .map_err(map_err)?;
+        Ok(JsAutoSeedResult {
+            decision: result.decision,
+            seeds: result
+                .seeds
+                .into_iter()
+                .map(|(api, entity)| JsSeed { api, entity })
+                .collect(),
+            markdown: result.markdown,
+            reasoning: result.reasoning,
+        })
+    }
+
+    #[napi]
+    pub async fn run_plan(&self, plan_commit_ref: String) -> Result<JsRunPlanResult> {
+        let mut engine = self.inner.lock().await;
         let result = engine.run_plan(&plan_commit_ref).map_err(map_err)?;
         Ok(JsRunPlanResult {
             ok: result.ok,
@@ -163,6 +207,8 @@ impl PlasmEngine {
         plan_commit_ref: String,
         transport: JsHostTransport,
     ) -> Result<JsRunPlanResult> {
+        // Hold the mutex for the full live run: execute session + plan commits are
+        // exclusive. Host transport callbacks must not re-enter PlasmEngine.
         let callback_transport = {
             let engine = self.inner.lock().await;
             let entry_id = engine.primary_entry_id();
@@ -179,5 +225,19 @@ impl PlasmEngine {
             rows_json: result.rows_json,
             meta_json: result.meta_json,
         })
+    }
+}
+
+#[cfg(test)]
+mod mutex_law_tests {
+    /// Full cutover guard: sync acquisition on the shared Tokio mutex must not return.
+    #[test]
+    fn plasm_engine_napi_surface_forbids_blocking_lock() {
+        let src = include_str!("lib.rs");
+        let forbidden = concat!("self.inner.", "blocking_lock", "(");
+        assert!(
+            !src.contains(forbidden),
+            "plasm-node NAPI surface must use lock().await only — sync mutex acquisition deadlocks under parallel JS tool calls"
+        );
     }
 }
