@@ -27,11 +27,11 @@ use crate::http_execute::{
 use crate::plan_dry_display;
 pub use crate::plan_dry_display::PlanDryReview;
 use crate::plasm_plan::{
-    AggregateFunction, BindingName, ComputeOp, ComputeTemplate, EffectClass, FieldPath, InputAlias,
-    Plan, PlanExprTemplate, PlanNodeId, PlanNodeKind, PlanResultUse, PlanValue, QualifiedEntityKey,
-    RelationSourceCardinality, ValidatedForEachNode, ValidatedPlan, ValidatedPlanDataInput,
-    ValidatedPlanExprTemplate, ValidatedPlanNode, ValidatedPlanState,
-    ValidatedRelationTraversalNode, PLAN_RENDER_MAX_OUTPUT_CHARS, PLAN_RENDER_MAX_ROWS,
+    BindingName, ComputeOp, ComputeTemplate, EffectClass, InputAlias, Plan, PlanNodeId,
+    PlanNodeKind, PlanResultUse, PlanValue, QualifiedEntityKey, RelationSourceCardinality,
+    ValidatedForEachNode, ValidatedPlan, ValidatedPlanDataInput, ValidatedPlanExprTemplate,
+    ValidatedPlanNode, ValidatedPlanState, ValidatedRelationTraversalNode,
+    PLAN_RENDER_MAX_OUTPUT_CHARS, PLAN_RENDER_MAX_ROWS,
 };
 use crate::server_state::PlasmHostState;
 use crate::trace_hub::{CodePlanRunArtifactRef, McpPlasmTraceSink};
@@ -102,8 +102,7 @@ pub(crate) use parse::{
     entry_scoped_execute_session, propagate_row_identities, row_identities_from_entities,
 };
 pub(crate) use row_json::{
-    cached_entity_row_json, predicate_matches, value_at_dotted, value_at_field_path,
-    value_at_segments,
+    cached_entity_row_json, predicate_matches, value_at_dotted, value_at_segments,
 };
 
 #[cfg(test)]
@@ -112,11 +111,52 @@ use crate::plasm_plan::{parse_plan_value, validate_plan_artifact};
 pub use crate::trace_hub::PlanRunTraceHooks;
 pub use plan_lowering::{lowered_ir_digest_from_validated_plan, LoweredIrDigest};
 
+/// Agent-facing plan outcome — never encoded by overwriting protocol `version`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PlanAgentOutcome {
+    /// Clean / reviewable plan or live run (not a correctable diagnostic).
+    #[default]
+    Ready,
+    /// Correctable program failure (`needs_fix`).
+    NeedsFix,
+    /// Flow policy denial (`deny`).
+    Deny,
+}
+
+impl PlanAgentOutcome {
+    pub fn as_wire(self) -> Option<&'static str> {
+        match self {
+            Self::Ready => None,
+            Self::NeedsFix => Some("needs_fix"),
+            Self::Deny => Some("deny"),
+        }
+    }
+
+    pub fn metrics_label(self) -> &'static str {
+        match self {
+            Self::Ready => "success",
+            Self::NeedsFix => "needs_fix",
+            Self::Deny => "deny",
+        }
+    }
+
+    pub fn from_verdict(verdict: crate::plan_dry_display::PlanDryVerdict) -> Self {
+        match verdict {
+            crate::plan_dry_display::PlanDryVerdict::NeedsFix => Self::NeedsFix,
+            crate::plan_dry_display::PlanDryVerdict::Deny => Self::Deny,
+            _ => Self::Ready,
+        }
+    }
+}
+
 /// Outcome of [`ExecutePipeline::run_program`]: the same `node_results` / optional run payload shape as an MCP
 /// live `plasm_run` response (fenced JSON), without Markdown framing.
 #[derive(Debug, Clone)]
 pub struct PlasmPlanRunResult {
+    /// Plan/protocol version from dry evaluation (never `"needs_fix"` / `"deny"`).
     pub version: serde_json::Value,
+    /// Discriminant for correctable agent responses (default Ready at construction sites).
+    pub agent_outcome: PlanAgentOutcome,
     /// One entry per `plan.nodes[]` with `ir`, `simulation`, and optional `id`.
     pub node_results: Vec<serde_json::Value>,
     pub graph_summary: serde_json::Value,
@@ -133,6 +173,24 @@ pub struct PlasmPlanRunResult {
     /// Dry-run review responses only (`run_ref` / `pcN`): inline plan DAG for FullApps
     /// `structuredContent.ui`. Fused clean-reads leave this `None` (rows go to Run Explorer).
     pub inline_plan_ui: Option<crate::mcp_ui_payload::UiInlinePlanPayload>,
+}
+
+impl PlasmPlanRunResult {
+    /// Metrics / logging label for this result.
+    #[must_use]
+    pub fn metrics_label(&self) -> &'static str {
+        self.agent_outcome.metrics_label()
+    }
+
+    /// Wire dry verdict when this is a correctable diagnostic.
+    #[must_use]
+    pub fn agent_verdict(&self) -> Option<crate::plan_dry_display::PlanDryVerdict> {
+        match self.agent_outcome {
+            PlanAgentOutcome::Ready => None,
+            PlanAgentOutcome::NeedsFix => Some(crate::plan_dry_display::PlanDryVerdict::NeedsFix),
+            PlanAgentOutcome::Deny => Some(crate::plan_dry_display::PlanDryVerdict::Deny),
+        }
+    }
 }
 
 /// Dry-run a program plan: validate, type-check, and render simulation JSON per node.
@@ -169,6 +227,19 @@ impl DryPlasmPlanEvaluation {
                 self.validated_plan(),
             ),
         )
+    }
+
+    /// MCP/NAPI fused execute: Proceed + Clean + no remote mutation.
+    /// Advisory unbounded lists stay on `run_ref` (`needs_review` is not Proceed).
+    #[must_use]
+    pub fn fuse_clean_read(&self) -> bool {
+        let decision = crate::plan_gate::plan_gate(
+            &self.evaluate_gate(),
+            crate::plan_gate::PlanGateContext::without_commit(false),
+        );
+        matches!(decision, crate::PlanGateDecision::Proceed(_))
+            && matches!(self.flow.verdict, crate::plan_flow::FlowVerdict::Clean)
+            && !crate::plan_flow::validated_plan_has_remote_mutation(self.validated_plan())
     }
 
     /// Mint sealed admission for plan commit registration.
@@ -325,7 +396,7 @@ pub(crate) fn evaluate_plasm_plan_dry(
     let validated = parse_and_validate_plan_json(plan)?;
     let artifact = plasm_comp_from_validated(&validated);
     let bundle = PlasmCompBundle::new(artifact)?;
-    evaluate_plasm_comp_dry(es, &bundle)
+    evaluate_plasm_comp_dry(es, &bundle).map_err(|e| e.into())
 }
 
 fn graph_summary_with_approval_receipts(

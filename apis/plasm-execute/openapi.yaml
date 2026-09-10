@@ -164,7 +164,7 @@ paths:
       responses:
         "200":
           description: |
-            Single expression — same JSON/table/toon/ndjson as before.
+            Single expression — same JSON/table/ndjson as before.
             Multiple expressions — `application/json` batch object (`batch`, `step_count`, `steps[]` with
             `semantic.intent`, `semantic.summary`, `result`) or `application/x-ndjson` with one JSON object per line per step.
         "400":

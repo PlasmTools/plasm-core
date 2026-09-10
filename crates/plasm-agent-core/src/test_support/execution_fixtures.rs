@@ -30,7 +30,7 @@ pub fn synthetic_published_result_step_with_paging(
             CachedEntity::from_decoded(
                 Ref {
                     entity_type: "Move".into(),
-                    key: EntityKey::Simple(format!("m{i}").into()),
+                    key: EntityKey::Simple(plasm_core::IdentitySlot::lit(format!("m{i}"))),
                 },
                 fields,
                 IndexMap::new(),

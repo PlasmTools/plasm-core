@@ -1,0 +1,1119 @@
+_request_auth: &request_auth
+  scheme: bearer
+  token: { type: var, name: access_token }
+
+# AppWorld OpenAPI list endpoints use page_index (0-based) + page_limit (default 5, max 20).
+_appworld_page_index_limit: &appworld_page_index_limit
+  params:
+    page_index:
+      counter: 0
+    page_limit:
+      fixed: 20
+      role: page_size
+  strategy: page_number
+login:
+  method: POST
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: auth
+  - type: literal
+    value: token
+  body_format: form_urlencoded
+  body:
+    type: object
+    fields:
+    - - username
+      - type: var
+        name: username
+    - - password
+      - type: var
+        name: password
+logout:
+  method: POST
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: auth
+  - type: literal
+    value: logout
+  auth: *request_auth
+group_query:
+  method: GET
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: groups
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - delete
+      - type: if
+        condition:
+          type: exists
+          var: delete
+        then_expr:
+          type: var
+          name: delete
+        else_expr:
+          type: const
+          value: null
+  pagination: *appworld_page_index_limit
+group_get:
+  method: GET
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: groups
+  - type: var
+    name: id
+  auth: *request_auth
+group_create:
+  method: POST
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: groups
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - name
+      - type: var
+        name: name
+    - - member_emails
+      - type: var
+        name: member_emails
+    - - description
+      - type: if
+        condition:
+          type: exists
+          var: description
+        then_expr:
+          type: var
+          name: description
+        else_expr:
+          type: const
+          value: null
+group_update:
+  method: PATCH
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: groups
+  - type: var
+    name: id
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - name
+      - type: if
+        condition:
+          type: exists
+          var: name
+        then_expr:
+          type: var
+          name: name
+        else_expr:
+          type: const
+          value: null
+    - - description
+      - type: if
+        condition:
+          type: exists
+          var: description
+        then_expr:
+          type: var
+          name: description
+        else_expr:
+          type: const
+          value: null
+group_delete:
+  method: DELETE
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: groups
+  - type: var
+    name: id
+  auth: *request_auth
+group_add_member:
+  method: POST
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: groups
+  - type: var
+    name: id
+  - type: literal
+    value: members
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - user_email
+      - type: var
+        name: user_email
+group_remove_member:
+  method: DELETE
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: groups
+  - type: var
+    name: id
+  - type: literal
+    value: members
+  - type: var
+    name: user_email
+  auth: *request_auth
+group_exit:
+  method: POST
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: groups
+  - type: var
+    name: id
+  - type: literal
+    value: members
+  - type: literal
+    value: exit
+  auth: *request_auth
+group_undelete:
+  method: PATCH
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: groups
+  - type: var
+    name: id
+  - type: literal
+    value: undelete
+  auth: *request_auth
+group_accept_invitation:
+  method: POST
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: group_invitation
+  - type: var
+    name: invitation_code
+  - type: literal
+    value: accept
+  auth: *request_auth
+group_regenerate_invitation:
+  method: PATCH
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: group_invitation
+  - type: var
+    name: id
+  - type: literal
+    value: regenerate
+  auth: *request_auth
+expense_query:
+  method: GET
+  path:
+  - type: literal
+    value: splitwise
+  - type: if
+    condition:
+      type: exists
+      var: group_id
+    then_expr:
+      type: format
+      template: group/{group_id}/expenses
+      vars:
+        group_id:
+          type: var
+          name: group_id
+    else_expr:
+      type: const
+      value: no_group/expenses
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition:
+          type: exists
+          var: query
+        then_expr:
+          type: var
+          name: query
+        else_expr:
+          type: const
+          value: null
+    - - participant_email
+      - type: if
+        condition:
+          type: exists
+          var: participant_email
+        then_expr:
+          type: var
+          name: participant_email
+        else_expr:
+          type: const
+          value: null
+    - - min_amount
+      - type: if
+        condition:
+          type: exists
+          var: min_amount
+        then_expr:
+          type: var
+          name: min_amount
+        else_expr:
+          type: const
+          value: null
+    - - max_amount
+      - type: if
+        condition:
+          type: exists
+          var: max_amount
+        then_expr:
+          type: var
+          name: max_amount
+        else_expr:
+          type: const
+          value: null
+    - - sort_by
+      - type: if
+        condition:
+          type: exists
+          var: sort_by
+        then_expr:
+          type: var
+          name: sort_by
+        else_expr:
+          type: const
+          value: null
+  pagination: *appworld_page_index_limit
+expense_get:
+  method: GET
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: expenses
+  - type: var
+    name: id
+  auth: *request_auth
+expense_create:
+  method: POST
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: expenses
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - description
+      - type: var
+        name: description
+    - - paid_amount
+      - type: var
+        name: paid_amount
+    - - payer_email
+      - type: var
+        name: payer_email
+    - - debtor_emails
+      - type: var
+        name: debtor_emails
+    - - debt_amounts
+      - type: if
+        condition:
+          type: exists
+          var: debt_amounts
+        then_expr:
+          type: var
+          name: debt_amounts
+        else_expr:
+          type: const
+          value: null
+    - - group_id
+      - type: if
+        condition:
+          type: exists
+          var: group_id
+        then_expr:
+          type: var
+          name: group_id
+        else_expr:
+          type: const
+          value: null
+expense_update:
+  method: PATCH
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: expenses
+  - type: var
+    name: id
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - description
+      - type: if
+        condition:
+          type: exists
+          var: description
+        then_expr:
+          type: var
+          name: description
+        else_expr:
+          type: const
+          value: null
+    - - paid_amount
+      - type: if
+        condition:
+          type: exists
+          var: paid_amount
+        then_expr:
+          type: var
+          name: paid_amount
+        else_expr:
+          type: const
+          value: null
+    - - payer_email
+      - type: if
+        condition:
+          type: exists
+          var: payer_email
+        then_expr:
+          type: var
+          name: payer_email
+        else_expr:
+          type: const
+          value: null
+    - - debtor_emails
+      - type: if
+        condition:
+          type: exists
+          var: debtor_emails
+        then_expr:
+          type: var
+          name: debtor_emails
+        else_expr:
+          type: const
+          value: null
+    - - debt_amounts
+      - type: if
+        condition:
+          type: exists
+          var: debt_amounts
+        then_expr:
+          type: var
+          name: debt_amounts
+        else_expr:
+          type: const
+          value: null
+expense_delete:
+  method: DELETE
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: expenses
+  - type: var
+    name: id
+  auth: *request_auth
+expense_undelete:
+  method: PATCH
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: expenses
+  - type: var
+    name: id
+  - type: literal
+    value: undelete
+  auth: *request_auth
+expense_attach_receipt:
+  method: POST
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: expenses
+  - type: var
+    name: id
+  - type: literal
+    value: file
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - receipt_file_path
+      - type: var
+        name: receipt_file_path
+    - - overwrite
+      - type: if
+        condition:
+          type: exists
+          var: overwrite
+        then_expr:
+          type: var
+          name: overwrite
+        else_expr:
+          type: const
+          value: null
+    - - file_system_access_token
+      - type: var
+        name: file_system_access_token
+expense_delete_receipt:
+  method: DELETE
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: expenses
+  - type: var
+    name: id
+  - type: literal
+    value: file
+  auth: *request_auth
+payment_query:
+  method: GET
+  path:
+  - type: literal
+    value: splitwise
+  - type: if
+    condition:
+      type: exists
+      var: group_id
+    then_expr:
+      type: format
+      template: group/{group_id}/payments
+      vars:
+        group_id:
+          type: var
+          name: group_id
+    else_expr:
+      type: const
+      value: no_group/payments
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition:
+          type: exists
+          var: query
+        then_expr:
+          type: var
+          name: query
+        else_expr:
+          type: const
+          value: null
+    - - participant_email
+      - type: if
+        condition:
+          type: exists
+          var: participant_email
+        then_expr:
+          type: var
+          name: participant_email
+        else_expr:
+          type: const
+          value: null
+    - - sort_by
+      - type: if
+        condition:
+          type: exists
+          var: sort_by
+        then_expr:
+          type: var
+          name: sort_by
+        else_expr:
+          type: const
+          value: null
+  pagination: *appworld_page_index_limit
+payment_get:
+  method: GET
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: payments
+  - type: var
+    name: id
+  auth: *request_auth
+payment_create:
+  method: POST
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: payments
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - payer_email
+      - type: var
+        name: payer_email
+    - - receiver_email
+      - type: var
+        name: receiver_email
+    - - amount
+      - type: var
+        name: amount
+    - - group_id
+      - type: if
+        condition:
+          type: exists
+          var: group_id
+        then_expr:
+          type: var
+          name: group_id
+        else_expr:
+          type: const
+          value: null
+    - - description
+      - type: if
+        condition:
+          type: exists
+          var: description
+        then_expr:
+          type: var
+          name: description
+        else_expr:
+          type: const
+          value: null
+payment_delete:
+  method: DELETE
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: payments
+  - type: var
+    name: id
+  auth: *request_auth
+payment_update:
+  method: PATCH
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: payments
+  - type: var
+    name: id
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - amount
+      - type: if
+        condition:
+          type: exists
+          var: amount
+        then_expr:
+          type: var
+          name: amount
+        else_expr:
+          type: const
+          value: null
+    - - description
+      - type: if
+        condition:
+          type: exists
+          var: description
+        then_expr:
+          type: var
+          name: description
+        else_expr:
+          type: const
+          value: null
+payment_undelete:
+  method: PATCH
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: payments
+  - type: var
+    name: id
+  - type: literal
+    value: undelete
+  auth: *request_auth
+payment_attach_receipt:
+  method: POST
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: payments
+  - type: var
+    name: id
+  - type: literal
+    value: file
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - receipt_file_path
+      - type: var
+        name: receipt_file_path
+    - - overwrite
+      - type: if
+        condition:
+          type: exists
+          var: overwrite
+        then_expr:
+          type: var
+          name: overwrite
+        else_expr:
+          type: const
+          value: null
+    - - file_system_access_token
+      - type: var
+        name: file_system_access_token
+payment_delete_receipt:
+  method: DELETE
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: payments
+  - type: var
+    name: id
+  - type: literal
+    value: file
+  auth: *request_auth
+settle_up:
+  method: POST
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: settle_up
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - email
+      - type: var
+        name: email
+    - - group_id
+      - type: if
+        condition:
+          type: exists
+          var: group_id
+        then_expr:
+          type: var
+          name: group_id
+        else_expr:
+          type: const
+          value: null
+    - - description
+      - type: if
+        condition:
+          type: exists
+          var: description
+        then_expr:
+          type: var
+          name: description
+        else_expr:
+          type: const
+          value: null
+expense_comment_query:
+  method: GET
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: expenses
+  - type: var
+    name: expense_id
+  - type: literal
+    value: comments
+  auth: *request_auth
+  pagination: *appworld_page_index_limit
+expense_comment_create:
+  method: POST
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: expenses
+  - type: var
+    name: expense_id
+  - type: literal
+    value: comments
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - comment
+      - type: var
+        name: comment
+expense_comment_update:
+  method: PATCH
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: expense_comments
+  - type: var
+    name: id
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - comment
+      - type: var
+        name: comment
+expense_comment_delete:
+  method: DELETE
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: expense_comments
+  - type: var
+    name: id
+  auth: *request_auth
+payment_comment_query:
+  method: GET
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: payments
+  - type: var
+    name: payment_id
+  - type: literal
+    value: comments
+  auth: *request_auth
+  pagination: *appworld_page_index_limit
+payment_comment_create:
+  method: POST
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: payments
+  - type: var
+    name: payment_id
+  - type: literal
+    value: comments
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - comment
+      - type: var
+        name: comment
+payment_comment_update:
+  method: PATCH
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: payment_comments
+  - type: var
+    name: id
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - comment
+      - type: var
+        name: comment
+payment_comment_delete:
+  method: DELETE
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: payment_comments
+  - type: var
+    name: id
+  auth: *request_auth
+notification_query:
+  method: GET
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: notifications
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - read
+      - type: if
+        condition:
+          type: exists
+          var: read
+        then_expr:
+          type: var
+          name: read
+        else_expr:
+          type: const
+          value: null
+  pagination: *appworld_page_index_limit
+activity_query:
+  method: GET
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: account
+  - type: literal
+    value: activity
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - show_expenses
+      - type: if
+        condition:
+          type: exists
+          var: show_expenses
+        then_expr:
+          type: var
+          name: show_expenses
+        else_expr:
+          type: const
+          value: null
+    - - show_payments
+      - type: if
+        condition:
+          type: exists
+          var: show_payments
+        then_expr:
+          type: var
+          name: show_payments
+        else_expr:
+          type: const
+          value: null
+    - - sort_by
+      - type: if
+        condition:
+          type: exists
+          var: sort_by
+        then_expr:
+          type: var
+          name: sort_by
+        else_expr:
+          type: const
+          value: null
+  pagination: *appworld_page_index_limit
+notification_delete:
+  method: DELETE
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: notifications
+  - type: var
+    name: id
+  auth: *request_auth
+notification_mark:
+  method: PATCH
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: notifications
+  - type: var
+    name: id
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - read
+      - type: var
+        name: read
+notification_delete_all:
+  method: DELETE
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: notifications
+  auth: *request_auth
+notification_mark_all:
+  method: PATCH
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: notifications
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - read
+      - type: var
+        name: read
+profile_get:
+  method: GET
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: profile
+  query:
+    type: object
+    fields:
+    - - email
+      - type: if
+        condition:
+          type: exists
+          var: email
+        then_expr:
+          type: var
+          name: email
+        else_expr:
+          type: const
+          value: null
+user_search:
+  method: GET
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: users
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition:
+          type: exists
+          var: query
+        then_expr:
+          type: var
+          name: query
+        else_expr:
+          type: const
+          value: null
+  pagination: *appworld_page_index_limit
+balance_query:
+  method: GET
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: balance
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: group
+    then_expr:
+      type: const
+      value: group
+    else_expr:
+      type: const
+      value: groups
+  headers: &id002
+    type: object
+    fields:
+    - - Authorization
+      - type: format
+        template: Bearer {token}
+        vars:
+          token:
+            type: var
+            name: access_token
+  query:
+    type: object
+    fields:
+    - - group_id
+      - type: if
+        condition:
+          type: exists
+          var: group_id
+        then_expr:
+          type: var
+          name: group_id
+        else_expr:
+          type: const
+          value: null
+    - - email
+      - type: if
+        condition:
+          type: exists
+          var: email
+        then_expr:
+          type: var
+          name: email
+        else_expr:
+          type: const
+          value: null
+peer_balance_query:
+  method: POST
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: balance
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: person
+    then_expr:
+      type: const
+      value: person
+    else_expr:
+      type: const
+      value: people
+  headers: *id002
+  body:
+    type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: person
+    then_expr:
+      type: object
+      fields:
+      - - email
+        - type: var
+          name: email
+    else_expr:
+      type: object
+      fields: []

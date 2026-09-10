@@ -1,11 +1,32 @@
-//! Capability legend parsing for teaching TSV rows.
+//! Capability legend parsing for language card rows.
 
 use super::input_legend::{CapabilityInputLegend, RowContractLegend};
-use super::tsv_emit::parse_trailing_projection_bracket;
 use super::TeachingExprLine;
 
 pub(crate) const LEGEND_EM_DESC_SEP: &str = " — ";
-pub(crate) const PROJECTION_WITNESS_LEGEND_MARK: &str = "· projection";
+
+/// True when `expr` is a nullary method call (`… .mN()` / `… .kebab()` with empty args).
+pub(crate) fn teaching_expr_is_nullary_method_call(expr: &str) -> bool {
+    let t = expr.trim();
+    let Some(head) = t.strip_suffix("()") else {
+        return false;
+    };
+    // Reject empty / bare entity / get forms.
+    let Some(dot) = head.rfind('.') else {
+        return false;
+    };
+    let method = &head[dot + 1..];
+    !method.is_empty()
+        && method
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// Singleton entity gloss (not `()`, not `[…]` list).
+pub(crate) fn teaching_result_is_singleton_entity_gloss(result_type: &str) -> bool {
+    let rt = result_type.trim();
+    !rt.is_empty() && rt != "()" && !rt.starts_with('[')
+}
 
 /// Capability sig / human prose tail after result gloss — shared when assembling [`TeachingExprLine`] tails.
 pub(crate) fn apply_compact_legend_remainder(row: &mut TeachingExprLine, remainder: &str) {
@@ -50,13 +71,12 @@ pub(crate) fn teaching_expr_line_from_layers(
         };
     }
     // Arrow is assigned by the push pipeline from the validated domain-line kind; default here.
-    let is_projection_teaching = gloss.is_some_and(|g| g.contains(PROJECTION_WITNESS_LEGEND_MARK))
-        && parse_trailing_projection_bracket(expr.trim()).is_some();
     let mut row = TeachingExprLine {
         expression: expr,
         result_type: gloss.map(|s| s.to_string()).unwrap_or_default(),
         legend: CapabilityInputLegend::default(),
-        is_projection_teaching,
+        is_projection_teaching: false,
+        is_singleton_row_fetch: false,
         row_contract,
         arrow: super::ReturnArrow::Single,
     };
@@ -155,5 +175,32 @@ pub(crate) fn fill_scope_optional_from_sig(
         }
     } else if !tail.is_empty() {
         *orphan = tail.to_string();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nullary_method_call_detects_empty_parens() {
+        assert!(teaching_expr_is_nullary_method_call("e2.m2()"));
+        assert!(teaching_expr_is_nullary_method_call("e1.me()"));
+        assert!(teaching_expr_is_nullary_method_call("Supervisor.current()"));
+        assert!(!teaching_expr_is_nullary_method_call("e2"));
+        assert!(!teaching_expr_is_nullary_method_call("e2(email)"));
+        assert!(!teaching_expr_is_nullary_method_call(
+            "e4.m3(username=$, password=$)"
+        ));
+        assert!(!teaching_expr_is_nullary_method_call("e5{status=\"open\"}"));
+    }
+
+    #[test]
+    fn singleton_entity_gloss_rejects_lists_and_unit() {
+        assert!(teaching_result_is_singleton_entity_gloss("e2"));
+        assert!(teaching_result_is_singleton_entity_gloss("Supervisor"));
+        assert!(!teaching_result_is_singleton_entity_gloss("()"));
+        assert!(!teaching_result_is_singleton_entity_gloss("[e2]"));
+        assert!(!teaching_result_is_singleton_entity_gloss(""));
     }
 }

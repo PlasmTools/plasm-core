@@ -78,11 +78,6 @@ pub fn execute_cli_expression(entity_cli_name: &str) -> Span {
 // --- MCP ---------------------------------------------------------------------
 
 #[inline]
-pub(crate) fn mcp_tool_discover_capabilities() -> Span {
-    tracing::info_span!("plasm_agent.mcp.tool.discover_capabilities")
-}
-
-#[inline]
 pub(crate) fn mcp_tool_plasm_context(logical_session_ref: &str) -> Span {
     tracing::info_span!(
         "plasm_agent.mcp.tool.plasm_context",
@@ -229,6 +224,86 @@ pub fn security_incoming_http(principal: bool, tenant_id: &str) -> Span {
         principal = principal,
         tenant_id = tenant_id,
     )
+}
+
+// --- OAuth link (outbound hosted_kv) -----------------------------------------
+
+#[inline]
+pub(crate) fn oauth_link_start() -> Span {
+    tracing::info_span!("plasm_agent.oauth_link.start", oauth.phase = "start",)
+}
+
+#[inline]
+pub(crate) fn oauth_link_device_start() -> Span {
+    tracing::info_span!(
+        "plasm_agent.oauth_link.device_start",
+        oauth.phase = "device_start",
+    )
+}
+
+#[inline]
+pub(crate) fn oauth_link_device_poll() -> Span {
+    tracing::info_span!(
+        "plasm_agent.oauth_link.device_poll",
+        oauth.phase = "device_poll",
+    )
+}
+
+#[inline]
+pub(crate) fn oauth_link_token_exchange(entry_id: &str) -> Span {
+    tracing::info_span!(
+        "plasm_agent.oauth_link.token_exchange",
+        oauth.phase = "token_exchange",
+        entry_id = %entry_id,
+    )
+}
+
+/// CPU work offloaded onto the catalog/blocking compute pool.
+#[inline]
+pub(crate) fn blocking_compute(label: &'static str) -> Span {
+    tracing::debug_span!("plasm_agent.blocking_compute", label = label)
+}
+
+// --- Plan dry / live / discover / MCP dispatch --------------------------------
+
+#[inline]
+pub(crate) fn plan_dry_run(source_len: usize) -> Span {
+    tracing::info_span!("plasm_agent.plan.dry_run", source_len = source_len)
+}
+
+#[inline]
+pub(crate) fn plan_live_run() -> Span {
+    tracing::info_span!("plasm_agent.plan.live_run")
+}
+
+/// One parallel plan-step materialize arm (parent must be the request/plan span).
+#[inline]
+pub(crate) fn plan_step_materialize(parent: &Span, step_id: &str) -> Span {
+    tracing::debug_span!(
+        parent: parent,
+        "plasm_agent.plan.step_materialize",
+        step_id = %step_id,
+    )
+}
+
+/// One parallel session-binding load arm (parent must be the request/plan span).
+#[inline]
+pub(crate) fn session_load_binding(parent: &Span, entry_id: &str) -> Span {
+    tracing::debug_span!(
+        parent: parent,
+        "plasm_agent.session.load_binding",
+        entry_id = %entry_id,
+    )
+}
+
+#[inline]
+pub(crate) fn execute_run_post() -> Span {
+    tracing::info_span!("plasm_agent.execute.run_post")
+}
+
+#[inline]
+pub(crate) fn mcp_call_tool(tool: &str) -> Span {
+    tracing::info_span!("plasm_agent.mcp.call_tool", tool = %tool)
 }
 
 // --- Billing / audit (trace sink envelope, durable rows) ----------------------

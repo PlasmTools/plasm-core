@@ -3,7 +3,7 @@
 use crate::plasm_plan::PlanValue;
 use crate::program_binding::ContinuationCapability;
 
-pub(crate) const DERIVE_MAP_RELATION_HOP_MSG: &str = "Relation reads use `child = source.r#` (the taught relation symbol from the active TSV), not `source => …`. `=>` is for per-row derive maps `{ … }` or write effects `source => e#.m#(…)`.";
+pub(crate) const DERIVE_MAP_RELATION_HOP_MSG: &str = "Plural relation reads use `child = source => _.r#` (the taught relation symbol from the active TSV), not a bare `r#` applicator. `=>` accepts only derive maps `{ … }`, renders `<<TAG`, per-row effects `Entity.m#(…, _)`, or row relations `_.r#`.";
 
 /// Reject `source => rhs` when `rhs` looks like a relation hop (teaching `r#` or known wire), not derive/write.
 pub(crate) fn reject_relation_arrow_trap(fragment: &str) -> Result<(), String> {
@@ -16,6 +16,9 @@ pub(crate) fn reject_relation_arrow_trap(fragment: &str) -> Result<(), String> {
         return Ok(());
     };
     let rhs = right.trim();
+    if rhs.starts_with("_.") {
+        return Ok(());
+    }
     if rhs_text_looks_like_relation_hop_trap(rhs, &[]) {
         Err(derive_map_invalid_rhs_err(Some(rhs)))
     } else {
@@ -153,15 +156,26 @@ pub(crate) fn content_reference_error(
                 )),
             )
         }
+        (_, ContinuationCapability::RenderContentScalar) => agent_program_error(
+            format!("Don't bind `{label}.content` as a surface expression."),
+            Some(format!(
+                "Pass `param={label}.content` into a capability string slot, or return `{label}` for the generated-text row."
+            )),
+        ),
         _ => agent_program_error(
             format!(
-                "`.content` exists only on row-to-text template bindings — `{label}` is not one."
+                "`.content` exists only on row-to-text template bindings (`label = source => <<TAG`) — `{label}` is not one."
             ),
             Some(format!(
-                "Use `{label}` for row fields, or add a row-to-text template binding (`{label} = source <<TAG …`) before `.content`."
+                "Plain heredoc / string bindings are already strings — pass `param={label}` (not `{label}.content`). Entity field dots use the taught wire name when the binding is a row."
             )),
         ),
     }
+}
+
+/// True when `path` is a `.content` stitch that is lawful only on render bindings.
+pub(crate) fn path_is_render_content_stitch(path: &[impl AsRef<str>]) -> bool {
+    path.first().is_some_and(|s| s.as_ref() == "content")
 }
 
 fn agent_program_error(head: impl AsRef<str>, help: Option<impl AsRef<str>>) -> String {

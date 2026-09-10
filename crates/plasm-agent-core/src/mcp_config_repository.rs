@@ -2,10 +2,11 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::traced_pg::PgPool;
 use chrono::Utc;
 use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
-use sqlx::{PgPool, Postgres, QueryBuilder, Row};
+use sqlx::{Postgres, QueryBuilder, Row};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -76,7 +77,7 @@ pub struct McpConfigRepository {
     pool: PgPool,
 }
 
-async fn project_mcp_configs_table_exists(pool: &PgPool) -> Result<bool, sqlx::Error> {
+async fn project_mcp_configs_table_exists(pool: &sqlx::PgPool) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(
         r#"SELECT EXISTS (
             SELECT 1
@@ -91,7 +92,7 @@ async fn project_mcp_configs_table_exists(pool: &PgPool) -> Result<bool, sqlx::E
     .await
 }
 
-async fn sqlx_migrations_table_exists(pool: &PgPool) -> Result<bool, sqlx::Error> {
+async fn sqlx_migrations_table_exists(pool: &sqlx::PgPool) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(
         r#"SELECT EXISTS (
             SELECT 1
@@ -114,7 +115,10 @@ const LEGACY_SQUASHED_MIGRATION_VERSIONS: &[i64] = &[
     20260512130000,
 ];
 
-async fn delete_migration_ledger_version(pool: &PgPool, version: i64) -> Result<(), sqlx::Error> {
+async fn delete_migration_ledger_version(
+    pool: &sqlx::PgPool,
+    version: i64,
+) -> Result<(), sqlx::Error> {
     sqlx::query("DELETE FROM _sqlx_migrations WHERE version = $1")
         .bind(version)
         .execute(pool)
@@ -123,7 +127,7 @@ async fn delete_migration_ledger_version(pool: &PgPool, version: i64) -> Result<
 }
 
 /// Remove ledger rows for migrations squashed out of the embedded set so `sqlx::migrate` can run.
-async fn prune_squashed_migration_ledger(pool: &PgPool) -> Result<(), sqlx::Error> {
+async fn prune_squashed_migration_ledger(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
     if !sqlx_migrations_table_exists(pool).await? {
         return Ok(());
     }
@@ -133,7 +137,7 @@ async fn prune_squashed_migration_ledger(pool: &PgPool) -> Result<(), sqlx::Erro
     Ok(())
 }
 
-async fn run_mcp_config_migrations(pool: &PgPool) -> Result<(), McpConfigRepositoryError> {
+async fn run_mcp_config_migrations(pool: &sqlx::PgPool) -> Result<(), McpConfigRepositoryError> {
     prune_squashed_migration_ledger(pool).await?;
     let migrator = sqlx::migrate!("./migrations");
     match migrator.run(pool).await {
@@ -160,6 +164,7 @@ impl McpConfigRepository {
         if !project_mcp_configs_table_exists(&pool).await? {
             return Err(McpConfigRepositoryError::PostMigrateSchemaMissing);
         }
+        let pool = crate::traced_pg::wrap(pool);
         Ok(Self { pool })
     }
 
@@ -673,12 +678,12 @@ impl McpConfigRepository {
         .bind(auth_optional_entry_ids)
         .bind(now)
         .bind(now)
-        .execute(&mut *tx)
+        .execute(&mut tx.executor())
         .await?;
 
         sqlx::query("DELETE FROM project_mcp_allowed_graphs WHERE config_id = $1")
             .bind(runtime.id)
-            .execute(&mut *tx)
+            .execute(&mut tx.executor())
             .await?;
 
         for eid in &runtime.allowed_entry_ids {
@@ -692,13 +697,13 @@ impl McpConfigRepository {
             .bind(Uuid::new_v4())
             .bind(runtime.id)
             .bind(eid)
-            .execute(&mut *tx)
+            .execute(&mut tx.executor())
             .await?;
         }
 
         sqlx::query("DELETE FROM project_mcp_allowed_capabilities WHERE config_id = $1")
             .bind(runtime.id)
-            .execute(&mut *tx)
+            .execute(&mut tx.executor())
             .await?;
 
         for (entry_id, names) in &runtime.capabilities_by_entry {
@@ -718,14 +723,14 @@ impl McpConfigRepository {
                 .bind(runtime.id)
                 .bind(entry_id)
                 .bind(cap)
-                .execute(&mut *tx)
+                .execute(&mut tx.executor())
                 .await?;
             }
         }
 
         sqlx::query("DELETE FROM project_mcp_auth_bindings WHERE config_id = $1")
             .bind(runtime.id)
-            .execute(&mut *tx)
+            .execute(&mut tx.executor())
             .await?;
 
         for (entry_id, auth_id) in &runtime.auth_config_by_entry {
@@ -742,13 +747,13 @@ impl McpConfigRepository {
             .bind(auth_id)
             .bind(now)
             .bind(now)
-            .execute(&mut *tx)
+            .execute(&mut tx.executor())
             .await?;
         }
 
         sqlx::query("DELETE FROM project_mcp_credentials WHERE config_id = $1")
             .bind(runtime.id)
-            .execute(&mut *tx)
+            .execute(&mut tx.executor())
             .await?;
 
         for hash in &runtime.credential_secret_hashes {
@@ -762,7 +767,7 @@ impl McpConfigRepository {
             .bind(&hash[..])
             .bind(now)
             .bind(now)
-            .execute(&mut *tx)
+            .execute(&mut tx.executor())
             .await?;
         }
 

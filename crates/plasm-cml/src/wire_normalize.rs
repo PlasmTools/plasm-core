@@ -48,12 +48,9 @@ fn normalize_wire_cml_value(value: Value) -> Value {
             }
             Value::Object(out)
         }
-        Value::Array(items) => Value::Array(
-            items
-                .into_iter()
-                .map(normalize_wire_cml_value)
-                .collect(),
-        ),
+        Value::Array(items) => {
+            Value::Array(items.into_iter().map(normalize_wire_cml_value).collect())
+        }
         other => other,
     }
 }

@@ -5,7 +5,7 @@
 //! ```text
 //! expr       = source pipeline* projection?
 //! source     = Entity "(" id ")"               — GetExpr
-//!            | Entity "(" id_field "=" value ")" — GetExpr (shadow sugar; not not taught in the teaching table)
+//!            | Entity "(" id_field "=" value ")" — GetExpr (shadow/repair sugar; normative, deliberately untaught)
 //!            | Entity "{" pred ("," pred)* "}"  — QueryExpr with filters
 //!            | Entity "~" quoted_or_bare         — Search QueryExpr
 //!            | Entity                            — QueryExpr::all
@@ -52,7 +52,7 @@
 //! # Examples
 //!
 //! ```text
-//! parse("Pet(10)", &cgs)        → Ok(ParsedExpr { expr: Get(Pet,10), projection: None })
+//! parse("Pet(10)", &cgs)        → Ok(ParsedExpr { expr: Get(Pet,10), .. })
 //! parse("Order{quantity>3}", &cgs) → Ok(ParsedExpr { expr: Query(...), .. })
 //! parse("Order(5).petId", &cgs) → Ok(ParsedExpr { expr: Chain(..), .. })
 //! ```
@@ -63,25 +63,31 @@ pub(crate) mod predicate_surface;
 pub(crate) mod program_surface;
 mod value;
 
-pub mod postfix;
+pub mod applicator;
+pub mod collect_meta;
+pub mod iterate_until;
+pub mod pipe;
 pub mod program;
 pub mod value_expr;
 
+pub use applicator::{parse_applicator, split_apply_expr, Applicator, RenderApplicator};
+pub use collect_meta::{normalize_nested_projection_field, peel_collect_meta, CollectMeta};
 pub use heredoc_surface::{
     parse_tagged_heredoc_literal, tagged_heredoc_close_kind, HeredocCloseLineKind,
 };
-pub use postfix::{
-    normalize_nested_projection_field, peel_postfix_suffixes, try_parse_bracket_render,
-    try_parse_render_tail, BracketRender, PlasmPostfixOp, RenderTailParse,
+pub use iterate_until::{iterate_seed_is_label, try_parse_iterate_until, IterateUntilExpr};
+pub use pipe::{parse_pipe_expr, PipeExpr, PipeStage};
+pub use program::{
+    parse_expr_node, parse_program_shape, ExprNode, ParsedProgram, RowExpr, Statement,
 };
-pub use program::{parse_expr_node, parse_program_shape, ExprNode, ParsedProgram, Statement};
 pub use program_surface::{
     collect_program_statement_lines, expand_flattened_program_statements, is_valid_program_label,
-    looks_like_domain_symbol, missing_program_roots_error, program_binding_after_return_error,
-    program_duplicate_return_node_error, program_empty_error, program_invalid_binding_label_error,
-    program_return_keyword_error, scan_physical_line_stmt_state, split_assignment_at_top_level,
-    split_assignment_for_binding, split_flattened_program_line, split_token_top_level,
-    split_top_level, strip_line_comment, validate_program_label, validate_program_statement_order,
+    looks_like_domain_symbol, missing_program_roots_error, pipe_head_has_catalog_surface_syntax,
+    program_binding_after_return_error, program_duplicate_return_node_error, program_empty_error,
+    program_invalid_binding_label_error, program_return_keyword_error,
+    scan_physical_line_stmt_state, split_assignment_at_top_level, split_assignment_for_binding,
+    split_flattened_program_line, split_token_top_level, split_top_level, strip_line_comment,
+    validate_pipe_head_syntax, validate_program_label, validate_program_statement_order,
     FlattenedProgram, FlattenedProgramLine, PhysicalLineStmtState,
 };
 pub use value_expr::{RenderExpr, ValueExpr};
@@ -99,9 +105,8 @@ use crate::{
     catalog_id::CatalogEntryStamp, coerce_value_for_field_type,
     coerce_value_for_field_type_with_policy, ArrayFieldCoercionPolicy, ArrayItemsSchema,
     CapabilityKind, CapabilityName, ChainExpr, CompOp, CreateExpr, DeleteExpr, EntityDef,
-    EntityKey, EntityName, Expr, FieldType, GetExpr, InputType, InvokeExpr, InvokeInputPayload,
-    PageExpr, ParameterRole, Predicate, QueryExpr, Ref, SymbolResolveError, Value, ValueWireFormat,
-    CGS,
+    EntityName, Expr, FieldType, GetExpr, IdentitySlot, InputType, InvokeExpr, InvokeInputPayload,
+    PageExpr, Predicate, QueryExpr, Ref, SymbolResolveError, Value, ValueWireFormat, CGS,
 };
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -219,6 +224,10 @@ pub enum ParseErrorKind {
     AmbiguousEntityCatalog {
         entity: String,
     },
+    /// Exact `id_field` brace could not lower to Get (no Get / ambiguous / unresolved catalog).
+    IdentityBraceGetFailed {
+        message: String,
+    },
     CapabilityMissingInternal {
         name: String,
     },
@@ -228,6 +237,9 @@ pub enum ParseErrorKind {
     },
     UnexpectedTrailingInput {
         tail: String,
+    },
+    InvalidProgramString {
+        message: String,
     },
     InvalidTemporalValue {
         message: String,
@@ -241,6 +253,7 @@ pub enum ParseErrorKind {
 impl fmt::Display for ParseErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            ParseErrorKind::InvalidProgramString { message } => write!(f, "invalid program string: {message}"),
             ParseErrorKind::ExpectedChar { expected, got } => match got {
                 Some(g) => write!(f, "expected '{expected}', got '{g}'"),
                 None => write!(f, "expected '{expected}', got end of input"),
@@ -335,6 +348,7 @@ impl fmt::Display for ParseErrorKind {
                 f,
                 "ambiguous entity `{entity}` across loaded catalogs — use session `e#` (catalog ownership stamp), not bare wire entity name"
             ),
+            ParseErrorKind::IdentityBraceGetFailed { message } => f.write_str(message),
             ParseErrorKind::CapabilityMissingInternal { name } => {
                 write!(f, "internal: capability '{name}' missing")
             }
@@ -358,8 +372,32 @@ impl fmt::Display for ParseErrorKind {
 pub struct ParsedExpr {
     /// The composed expression tree.
     pub expr: Expr,
-    /// Optional field projection (list of field names) appended as `[f,f,...]`.
+    /// Optional **row** projection from explicit `[f,f,…]` (preserves entity/row shape).
     pub projection: Option<Vec<String>>,
+    /// Single-segment `.wire` sugar on a catalog source (PLP-1 scalar extract when the
+    /// source is a proven StaticSingleton Get; never silent `| select`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field_dot_extract: Option<String>,
+}
+
+impl ParsedExpr {
+    /// Expression with neither row projection nor PLP-1 field-dot extract.
+    #[must_use]
+    pub fn from_expr(expr: Expr) -> Self {
+        Self {
+            expr,
+            projection: None,
+            field_dot_extract: None,
+        }
+    }
+
+    /// Attach an explicit `[…]` row projection (clears any field-dot extract).
+    #[must_use]
+    pub fn with_projection(mut self, projection: Option<Vec<String>>) -> Self {
+        self.projection = projection;
+        self.field_dot_extract = None;
+        self
+    }
 }
 
 /// A structured parse error with position information.
@@ -396,6 +434,57 @@ fn is_root_union_ctor_surface_label(name: &str) -> bool {
     !tail.is_empty() && tail.bytes().all(|x| x.is_ascii_digit())
 }
 
+/// End index (exclusive) of a comparison RHS inside `{…}` / row-filter bodies.
+fn scan_top_level_pred_rhs_end(input: &str, start: usize) -> usize {
+    let bytes = input.as_bytes();
+    let mut i = start;
+    let mut depth_paren = 0i32;
+    let mut depth_brace = 0i32;
+    let mut depth_bracket = 0i32;
+    let mut in_single = false;
+    let mut in_double = false;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if in_single {
+            if b == b'\\' && i + 1 < bytes.len() {
+                i += 2;
+                continue;
+            }
+            if b == b'\'' {
+                in_single = false;
+            }
+            i += 1;
+            continue;
+        }
+        if in_double {
+            if b == b'\\' && i + 1 < bytes.len() {
+                i += 2;
+                continue;
+            }
+            if b == b'"' {
+                in_double = false;
+            }
+            i += 1;
+            continue;
+        }
+        match b {
+            b'\'' => in_single = true,
+            b'"' => in_double = true,
+            b'(' => depth_paren += 1,
+            b')' => depth_paren -= 1,
+            b'{' => depth_brace += 1,
+            b'}' if depth_brace == 0 && depth_paren == 0 && depth_bracket == 0 => break,
+            b'}' => depth_brace -= 1,
+            b'[' => depth_bracket += 1,
+            b']' => depth_bracket -= 1,
+            b',' if depth_paren == 0 && depth_brace == 0 && depth_bracket == 0 => break,
+            _ => {}
+        }
+        i += 1;
+    }
+    i
+}
+
 fn normalize_numeric_id_float(f: f64) -> String {
     if f.fract() == 0.0 && f.is_finite() {
         format!("{}", f as i64)
@@ -424,9 +513,19 @@ pub fn parse_with_remainder(
     input: &str,
     cgs: &CGS,
 ) -> Result<(ParsedExpr, ParseRemainder), ParseError> {
+    let span = crate::spans::parse_program(input.len());
+    let _guard = span.enter();
     let mut p = Parser::new(input, cgs);
     let mut parsed = p.parse_expr()?;
-    parsed.expr = crate::expr_sugar::rewrite_id_field_brace_query_to_get(parsed.expr, cgs);
+    parsed.expr =
+        crate::expr_sugar::lower_id_field_brace_to_get(parsed.expr, cgs).map_err(|e| {
+            ParseError {
+                kind: ParseErrorKind::IdentityBraceGetFailed {
+                    message: e.to_string(),
+                },
+                offset: 0,
+            }
+        })?;
     Ok((parsed, p.classify_remainder()))
 }
 
@@ -440,9 +539,19 @@ pub fn parse_with_remainder(
 /// Trailing text (after whitespace) is **ignored** so callers can paste noisy LLM output
 /// without failing the whole line.
 pub fn parse(input: &str, cgs: &CGS) -> Result<ParsedExpr, ParseError> {
+    let span = crate::spans::parse_program(input.len());
+    let _guard = span.enter();
     let mut p = Parser::new(input, cgs);
     let mut parsed = p.parse_expr()?;
-    parsed.expr = crate::expr_sugar::rewrite_id_field_brace_query_to_get(parsed.expr, cgs);
+    parsed.expr =
+        crate::expr_sugar::lower_id_field_brace_to_get(parsed.expr, cgs).map_err(|e| {
+            ParseError {
+                kind: ParseErrorKind::IdentityBraceGetFailed {
+                    message: e.to_string(),
+                },
+                offset: 0,
+            }
+        })?;
     Ok(parsed)
 }
 
@@ -522,6 +631,8 @@ fn parse_with_cgs_layers_program_opts(
     for_each_row_context: bool,
     apply_id_field_get_rewrite: bool,
 ) -> Result<ParsedExpr, ParseError> {
+    let span = crate::spans::parse_program(input.len());
+    let _guard = span.enter();
     if layers.is_empty() {
         return Err(ParseError {
             kind: ParseErrorKind::Other {
@@ -535,8 +646,13 @@ fn parse_with_cgs_layers_program_opts(
     p.for_each_row_context = for_each_row_context;
     let mut parsed = p.parse_expr()?;
     if apply_id_field_get_rewrite {
-        parsed.expr =
-            crate::expr_sugar::rewrite_id_field_brace_query_to_get(parsed.expr, layers[0].cgs());
+        parsed.expr = crate::expr_sugar::lower_id_field_brace_to_get_federated(parsed.expr, layers)
+            .map_err(|e| ParseError {
+                kind: ParseErrorKind::IdentityBraceGetFailed {
+                    message: e.to_string(),
+                },
+                offset: 0,
+            })?;
     }
     let remainder = p.classify_remainder();
     if !remainder.acceptable_for_program_line() {
@@ -596,6 +712,8 @@ pub(super) struct Parser<'a> {
     pub(super) for_each_row_context: bool,
     /// When the surface entity token was an opaque `e#`, owning catalog stamped on built [`Expr`].
     pending_session_catalog_entry_id: Option<String>,
+    /// Deferred field-dot extract candidate (PLP-1 scalar on StaticSingleton; `[…]` remains row projection).
+    pending_field_dot_extract: Option<String>,
 }
 
 impl<'a> Parser<'a> {
@@ -622,6 +740,7 @@ impl<'a> Parser<'a> {
             program_nodes: None,
             for_each_row_context: false,
             pending_session_catalog_entry_id: None,
+            pending_field_dot_extract: None,
         };
         p.skip_ws();
         p
@@ -879,16 +998,7 @@ impl<'a> Parser<'a> {
         if cap.kind != CapabilityKind::Query {
             return false;
         }
-        let Some(is) = cap.input_schema.as_ref() else {
-            return false;
-        };
-        let InputType::Object { fields, .. } = &is.input_type else {
-            return false;
-        };
-        let scope_fields: Vec<_> = fields
-            .iter()
-            .filter(|f| f.required && matches!(f.role, Some(ParameterRole::Scope)))
-            .collect();
+        let scope_fields: Vec<_> = cap.scope_params().iter().filter(|f| f.required).collect();
         if scope_fields.len() != 1 {
             return false;
         }
@@ -896,7 +1006,7 @@ impl<'a> Parser<'a> {
         let Ok(nv) = sf.named_value(cgs) else {
             return false;
         };
-        let FieldType::EntityRef { target } = &nv.field_type else {
+        let FieldType::EntityRef { target, .. } = &nv.field_type else {
             return false;
         };
         target.as_str() == anchor_entity
@@ -909,39 +1019,50 @@ impl<'a> Parser<'a> {
         cap: &crate::CapabilitySchema,
     ) -> Result<Expr, ParseError> {
         let entity = source.primary_entity().to_string();
-        self.validate_entity(&entity)?;
+        self.validate_entity_preferring(
+            &entity,
+            source.session_catalog_entry_id().map(|id| id.as_str()),
+        )?;
         let cap_name = cap.name.clone();
-        if cap.kind == CapabilityKind::Create {
-            return Ok(Expr::Create(CreateExpr::new(
+        let needs_anchor_id = cap
+            .mapping
+            .as_ref()
+            .is_some_and(|m| template_invoke_requires_explicit_anchor_id(&m.template.0));
+
+        let expr = if cap.kind == CapabilityKind::Create {
+            Expr::Create(CreateExpr::new(
                 cap_name,
                 entity,
                 Value::Object(Default::default()),
-            )));
-        }
-        let needs_anchor_id = template_invoke_requires_explicit_anchor_id(&cap.mapping.template.0);
-
-        if cap.kind == CapabilityKind::Delete {
+            ))
+        } else if cap.kind == CapabilityKind::Delete {
             if let Expr::Get(g) = source {
-                return Ok(Expr::Delete(DeleteExpr::with_target_path_vars(
-                    cap_name,
-                    g.reference.clone(),
-                    g.path_vars.clone(),
-                )));
+                Expr::Delete(DeleteExpr::with_target(cap_name, g.reference.clone()))
+            } else if !needs_anchor_id {
+                let g = self.pathless_mutator_anchor_from_receiver(
+                    source,
+                    false,
+                    "delete requires Entity(id) on the left",
+                )?;
+                Expr::Delete(DeleteExpr::with_target(cap_name, g.reference.clone()))
+            } else {
+                return Err(self.err(ParseErrorKind::InvokeRequiresTargetId {
+                    entity: entity.clone(),
+                    label: raw.to_string(),
+                }));
             }
-            if !needs_anchor_id {
-                return Ok(Expr::Delete(DeleteExpr::new(cap_name, entity, "0")));
-            }
-            return Err(self.err(ParseErrorKind::InvokeRequiresTargetId {
-                entity: entity.clone(),
-                label: raw.to_string(),
-            }));
-        }
-        if cap.kind == CapabilityKind::Get {
-            let invoke_id = if !needs_anchor_id {
-                "0".to_string()
+        } else if cap.kind == CapabilityKind::Get {
+            let mut g = if !needs_anchor_id {
+                let mut g = GetExpr::pathless_nullary(entity);
+                g.capability_name = Some(cap_name);
+                g
             } else {
                 match source {
-                    Expr::Get(g) => g.reference.primary_slot_str(),
+                    Expr::Get(src) => {
+                        let mut g = GetExpr::from_ref(src.reference.clone());
+                        g.capability_name = Some(cap_name);
+                        g
+                    }
                     _ => {
                         return Err(self.err(ParseErrorKind::InvokeRequiresTargetId {
                             entity: entity.clone(),
@@ -950,32 +1071,27 @@ impl<'a> Parser<'a> {
                     }
                 }
             };
-            return Ok(Expr::Get(GetExpr::new(entity, invoke_id)));
-        }
-
-        if !needs_anchor_id {
-            if let Expr::Get(g) = source {
-                return Ok(Expr::Invoke(InvokeExpr::with_target_path_vars(
-                    cap_name,
-                    g.reference.clone(),
-                    None,
-                    g.path_vars.clone(),
-                )));
+            if let Some(id) = source.session_catalog_entry_id() {
+                g.catalog_entry_id = CatalogEntryStamp::some(id.clone());
             }
-            return Ok(Expr::Invoke(InvokeExpr::new(cap_name, entity, "0", None)));
-        }
-        let Expr::Get(g) = source else {
-            return Err(self.err(ParseErrorKind::InvokeRequiresTargetId {
-                entity: entity.clone(),
-                label: raw.to_string(),
-            }));
+            Expr::Get(g)
+        } else if !needs_anchor_id {
+            let g = self.pathless_mutator_anchor_from_receiver(
+                source,
+                false,
+                "invoke requires Entity(id) on the left",
+            )?;
+            Expr::Invoke(InvokeExpr::with_target(cap_name, g.reference.clone(), None))
+        } else {
+            let Expr::Get(g) = source else {
+                return Err(self.err(ParseErrorKind::InvokeRequiresTargetId {
+                    entity: entity.clone(),
+                    label: raw.to_string(),
+                }));
+            };
+            Expr::Invoke(InvokeExpr::with_target(cap_name, g.reference.clone(), None))
         };
-        Ok(Expr::Invoke(InvokeExpr::with_target_path_vars(
-            cap_name,
-            g.reference.clone(),
-            None,
-            g.path_vars.clone(),
-        )))
+        Ok(Self::stamp_session_catalog_from_source(source, expr))
     }
 
     fn parse_zero_arity_invoke(&mut self, source: Expr, label: String) -> Result<Expr, ParseError> {
@@ -990,10 +1106,13 @@ impl<'a> Parser<'a> {
             return Ok(expr);
         }
         let entity = source.primary_entity().to_string();
-        self.validate_entity(&entity)?;
+        self.validate_entity_preferring(
+            &entity,
+            source.session_catalog_entry_id().map(|id| id.as_str()),
+        )?;
         let resolved_name = self.resolve_zero_arity_pipeline_cap(&entity, &label)?;
         let cap = self
-            .cgs_for_entity_required(&entity)?
+            .cgs_for_expr_source(&source)?
             .get_capability(&resolved_name)
             .ok_or_else(|| {
                 self.err(ParseErrorKind::CapabilityMissingInternal {
@@ -1024,6 +1143,9 @@ impl<'a> Parser<'a> {
     }
 
     /// Resolve invoke `key=value` map keys at capability materialization (cap-qualified only).
+    ///
+    /// Field names come from [`CapabilitySchema::invocation_object_fields`] (`payload` ∪
+    /// `arguments`) — the same body-object set as object-body InvokeArg coerce.
     fn normalize_invoke_arg_keys_for_cap(
         &self,
         cap: &crate::CapabilitySchema,
@@ -1031,12 +1153,10 @@ impl<'a> Parser<'a> {
         raw_method_label: Option<&str>,
         raw_map: IndexMap<String, Value>,
     ) -> Result<IndexMap<String, Value>, ParseError> {
-        let Some(is) = &cap.input_schema else {
+        if cap.primary_invocation_schema().is_none() {
             return Ok(raw_map);
-        };
-        let InputType::Object { fields, .. } = &is.input_type else {
-            return Ok(raw_map);
-        };
+        }
+        let fields: Vec<_> = cap.invocation_object_fields().cloned().collect();
         self.normalize_invoke_arg_keys_for_fields(
             cap,
             source,
@@ -1065,9 +1185,6 @@ impl<'a> Parser<'a> {
         for (raw_key, val) in raw_map {
             let resolved = if fields.iter().any(|f| f.name == raw_key)
                 || resolve_capability_input_param_field(cap, raw_key.as_str()).is_some()
-                || cap
-                    .object_params()
-                    .is_some_and(|fs| fs.iter().any(|f| f.name.as_str() == raw_key.as_str()))
             {
                 raw_key
             } else if crate::symbol_tuning::SymbolMap::is_opaque_p_sym(&raw_key) {
@@ -1184,9 +1301,16 @@ impl<'a> Parser<'a> {
             variant,
             ctor_fields,
         )?;
+        let mut ctor_fields = normalized;
+        self.coerce_registry_input_fields(
+            cap.domain.as_str(),
+            self.active_catalog_entry_id(Some(source)).as_deref(),
+            variant.fields.iter(),
+            &mut ctor_fields,
+        )?;
         Ok(Value::UnionCtor {
             ctor_label,
-            ctor_fields: normalized,
+            ctor_fields,
         })
     }
 
@@ -1233,13 +1357,9 @@ impl<'a> Parser<'a> {
         raw_method_label: Option<&str>,
         mut map: indexmap::IndexMap<String, Value>,
     ) -> Result<indexmap::IndexMap<String, Value>, ParseError> {
-        let Some(is) = cap.input_schema.as_ref() else {
-            return Ok(map);
-        };
-        let crate::InputType::Object { fields, .. } = &is.input_type else {
-            return Ok(map);
-        };
-        for f in fields {
+        // Same body-object field set as coerce — payload ∪ arguments (not arguments-only).
+        let fields: Vec<_> = cap.invocation_object_fields().cloned().collect();
+        for f in &fields {
             if let Some(v) = map.get_mut(&f.name) {
                 let taken = std::mem::replace(v, Value::Null);
                 *v = self.normalize_invoke_nested_input_value(
@@ -1260,43 +1380,43 @@ impl<'a> Parser<'a> {
     ) -> Option<(&crate::CapabilitySchema, &crate::schema::InputVariantSchema)> {
         for cgs in self.cgs_layers() {
             for cap in cgs.capabilities.values() {
-                let Some(is) = &cap.input_schema else {
-                    continue;
-                };
-                let variants = match &is.input_type {
-                    crate::InputType::Union { variants } => variants,
-                    crate::InputType::Object { fields, .. } => {
-                        let mut found = None;
-                        for f in fields {
-                            let crate::InputFieldWire::Inline(ty) = &f.wire else {
-                                continue;
-                            };
-                            if let crate::InputType::Array { element_type, .. } = ty.as_ref() {
-                                if let crate::InputType::Union { variants } = element_type.as_ref()
-                                {
-                                    if let Some(v) = variants.iter().find(|v| {
-                                        crate::schema::union_variant_constructor_symbol(v)
-                                            == Some(ctor_label)
-                                    }) {
-                                        found = Some(v);
-                                        break;
+                for is in cap.invocation_input_schemas() {
+                    let variants = match &is.input_type {
+                        crate::InputType::Union { variants } => variants,
+                        crate::InputType::Object { fields, .. } => {
+                            let mut found = None;
+                            for f in fields {
+                                let crate::InputFieldWire::Inline(ty) = &f.wire else {
+                                    continue;
+                                };
+                                if let crate::InputType::Array { element_type, .. } = ty.as_ref() {
+                                    if let crate::InputType::Union { variants } =
+                                        element_type.as_ref()
+                                    {
+                                        if let Some(v) = variants.iter().find(|v| {
+                                            crate::schema::union_variant_constructor_symbol(v)
+                                                == Some(ctor_label)
+                                        }) {
+                                            found = Some(v);
+                                            break;
+                                        }
                                     }
                                 }
                             }
-                        }
-                        match found {
-                            Some(v) => {
-                                return Some((cap, v));
+                            match found {
+                                Some(v) => {
+                                    return Some((cap, v));
+                                }
+                                None => continue,
                             }
-                            None => continue,
                         }
+                        _ => continue,
+                    };
+                    if let Some(v) = variants.iter().find(|v| {
+                        crate::schema::union_variant_constructor_symbol(v) == Some(ctor_label)
+                    }) {
+                        return Some((cap, v));
                     }
-                    _ => continue,
-                };
-                if let Some(v) = variants.iter().find(|v| {
-                    crate::schema::union_variant_constructor_symbol(v) == Some(ctor_label)
-                }) {
-                    return Some((cap, v));
                 }
             }
         }
@@ -1514,7 +1634,8 @@ impl<'a> Parser<'a> {
         Ok(parts)
     }
 
-    /// Shadow sugar (not not taught in the teaching table): `Entity(id_field=value)` on simple-id entities ≡ `Entity(value)`.
+    /// Shadow/repair sugar (normative, deliberately untaught): `Entity(id_field=value)` on simple-id
+    /// entities ≡ canonical `Entity(value)`.
     ///
     /// Rejects wrong keys and multi-key maps (compound entities use [`Self::parse_strict_compound_key_value_map`]).
     fn try_parse_simple_id_field_get_sugar(
@@ -1568,12 +1689,10 @@ impl<'a> Parser<'a> {
                 ),
             }));
         }
-        if matches!(id_val, Value::PlasmInputRef(_)) {
-            let path_key = format!("{}_id", entity.to_lowercase());
-            return Ok(Some(Expr::Get(GetExpr::from_ref_with_path_vars(
-                Ref::new(entity, ""),
-                Some(IndexMap::from([(path_key, id_val)])),
-            ))));
+        if let Value::PlasmInputRef(r) = id_val {
+            return Ok(Some(Expr::Get(GetExpr::from_ref(Ref::simple_binding(
+                entity, r,
+            )))));
         }
         let id_str = self.identity_literal_from_value(&id_val)?;
         Ok(Some(Expr::Get(GetExpr::new(entity, id_str))))
@@ -1629,12 +1748,10 @@ impl<'a> Parser<'a> {
             self.pos = save;
             return Ok(None);
         }
-        if matches!(id_val, Value::PlasmInputRef(_)) {
-            let path_key = format!("{}_id", entity.to_lowercase());
-            return Ok(Some(Expr::Get(GetExpr::from_ref_with_path_vars(
-                Ref::new(entity, ""),
-                Some(IndexMap::from([(path_key, id_val)])),
-            ))));
+        if let Value::PlasmInputRef(r) = id_val {
+            return Ok(Some(Expr::Get(GetExpr::from_ref(Ref::simple_binding(
+                entity, r,
+            )))));
         }
         let id_str = self.identity_literal_from_value(&id_val)?;
         Ok(Some(Expr::Get(GetExpr::new(entity, id_str))))
@@ -1823,7 +1940,12 @@ impl<'a> Parser<'a> {
                 .find_capabilities(entity, kind)
             {
                 if matches!(kind, CapabilityKind::Get)
-                    && !path_var_names_from_mapping_json(&cap.mapping.template.0).is_empty()
+                    && !cap
+                        .mapping
+                        .as_ref()
+                        .map(|m| path_var_names_from_mapping_json(&m.template.0))
+                        .unwrap_or_default()
+                        .is_empty()
                 {
                     continue;
                 }
@@ -1891,6 +2013,18 @@ impl<'a> Parser<'a> {
                 None
             }
         })?;
+        for kind in [CapabilityKind::Query, CapabilityKind::Search] {
+            for cap in ec.find_capabilities(entity_name, kind) {
+                if let Some(f) = cap.query_surface_fields().find(|f| f.name == field) {
+                    let nv = f.named_value(ec).ok()?;
+                    return Some((
+                        nv.field_type.clone(),
+                        nv.value_format,
+                        nv.array_items.clone(),
+                    ));
+                }
+            }
+        }
         if let Some(ent) = ec.get_entity(entity_name) {
             if let Some(fs) = ent.fields.get(field) {
                 let nv = fs.named_value(ec).ok()?;
@@ -1899,22 +2033,6 @@ impl<'a> Parser<'a> {
                     nv.value_format,
                     nv.array_items.clone(),
                 ));
-            }
-        }
-        for kind in [CapabilityKind::Query, CapabilityKind::Search] {
-            for cap in ec.find_capabilities(entity_name, kind) {
-                if let Some(is) = cap.input_schema.as_ref() {
-                    if let InputType::Object { fields, .. } = &is.input_type {
-                        if let Some(f) = fields.iter().find(|f| f.name == field) {
-                            let nv = f.named_value(ec).ok()?;
-                            return Some((
-                                nv.field_type.clone(),
-                                nv.value_format,
-                                nv.array_items.clone(),
-                            ));
-                        }
-                    }
-                }
             }
         }
         None
@@ -1985,78 +2103,24 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn inject_path_vars_from_get(
+    /// Shared InvokeArg coerce over a concrete field list (object body lanes or union variant).
+    ///
+    /// Call with [`CapabilitySchema::invocation_object_fields`] for create/invoke object bodies
+    /// (`payload` ∪ `arguments`), or with a union variant's fields for ctor coerce. Scalar /
+    /// array / temporal / money / boolean / stringish PhraseIdent rules match query filters;
+    /// only array scalar-wrap differs by [`ArrayFieldCoercionPolicy::InvokeArg`]. Inline nested
+    /// object wires are skipped (nested coerce is not this boundary).
+    fn coerce_registry_input_fields<'f, I>(
         &self,
-        cap: &crate::CapabilitySchema,
-        source: &Expr,
-        map: &mut IndexMap<String, Value>,
-    ) {
-        let path_vars = path_var_names_from_mapping_json(&cap.mapping.template.0);
-        let Expr::Get(g) = source else {
-            return;
-        };
-        // Explicit `Get.path_vars` from compound/simple ctor holes (`node_input`, row JSON, …).
-        if let Some(explicit) = &g.path_vars {
-            for (k, v) in explicit {
-                if !map.contains_key(k) {
-                    map.insert(k.clone(), v.clone());
-                }
-            }
-        }
-        let src_ent = g.reference.entity_type.as_str();
-        let expected_id_key = format!("{}_id", src_ent.to_lowercase());
-        let Ok(cgs_src) = self.cgs_for_expr_source(source) else {
-            return;
-        };
-        let ent_src = cgs_src.get_entity(src_ent);
-        match &g.reference.key {
-            EntityKey::Compound(parts) => {
-                for pv in path_vars {
-                    if map.contains_key(&pv) {
-                        continue;
-                    }
-                    if let Some(v) = parts.get(&pv) {
-                        let wire = if let Some(ent) = ent_src {
-                            let json = crate::identity_slot_to_json(cgs_src, ent, pv.as_str(), v);
-                            crate::json_value_to_plasm_value(&json)
-                        } else {
-                            Value::String(v.clone())
-                        };
-                        map.insert(pv, wire);
-                    }
-                }
-            }
-            EntityKey::Simple(id) => {
-                for pv in path_vars {
-                    if map.contains_key(&pv) {
-                        continue;
-                    }
-                    if pv == expected_id_key {
-                        map.insert(pv, Value::String(id.to_string()));
-                    } else if pv == "id" {
-                        // REST templates often use `{id}` while the anchor entity uses `{type}_id`
-                        // in the exemplar convention (e.g. IssueComment + path segment `id`).
-                        map.insert("id".to_string(), Value::String(id.to_string()));
-                    }
-                }
-            }
-        }
-    }
-
-    fn coerce_object_input_for_cap(
-        &self,
-        cap: &crate::CapabilitySchema,
-        map: &mut IndexMap<String, Value>,
+        domain: &str,
         catalog_entry_id: Option<&str>,
-    ) -> Result<(), ParseError> {
-        let Some(is) = &cap.input_schema else {
-            return Ok(());
-        };
-        let InputType::Object { fields, .. } = &is.input_type else {
-            return Ok(());
-        };
-        let ec =
-            self.cgs_for_entity_with_preferred_catalog(cap.domain.as_str(), catalog_entry_id)?;
+        fields: I,
+        map: &mut IndexMap<String, Value>,
+    ) -> Result<(), ParseError>
+    where
+        I: IntoIterator<Item = &'f crate::InputFieldSchema>,
+    {
+        let ec = self.cgs_for_entity_with_preferred_catalog(domain, catalog_entry_id)?;
         for f in fields {
             if let Some(v) = map.get_mut(&f.name) {
                 if matches!(&f.wire, crate::InputFieldWire::Inline(_)) {
@@ -2068,6 +2132,24 @@ impl<'a> Parser<'a> {
                         message: format!("internal: unknown value_ref for parameter `{}`", f.name),
                     })
                 })?;
+                // Preserve program binding diagnostics before string coercion erases the
+                // distinction between an unquoted identifier and a quoted literal.
+                if let (Some(labels), Value::PhraseIdent(ident)) = (self.program_nodes, &old) {
+                    if matches!(
+                        nv.field_type,
+                        FieldType::String | FieldType::Blob | FieldType::Uuid | FieldType::Json
+                    ) {
+                        crate::phrase_ident::validate_identifier_phrase(
+                            ident,
+                            labels,
+                            Some(&crate::phrase_ident::PhraseIdentFieldContext {
+                                field_type: &nv.field_type,
+                                allowed_values: nv.allowed_values.as_deref(),
+                            }),
+                        )
+                        .map_err(|message| self.err(ParseErrorKind::Other { message }))?;
+                    }
+                }
                 let array_ref = nv.array_items.as_ref();
                 *v = coerce_value_for_field_type_with_policy(
                     &nv.field_type,
@@ -2217,24 +2299,13 @@ impl<'a> Parser<'a> {
         let Expr::Get(g) = source else {
             return false;
         };
-        let path_vars = path_var_names_from_mapping_json(&cap.mapping.template.0);
-        if path_vars.is_empty() {
+        let Ok(cgs) = self.cgs_for_expr_source(source) else {
             return false;
-        }
-        let src_ent = g.reference.entity_type.as_str();
-        let expected = format!("{}_id", src_ent.to_lowercase());
-        path_vars.iter().all(|pv| {
-            if pv != &expected {
-                return false;
-            }
-            if g.path_vars.as_ref().is_some_and(|m| m.contains_key(pv)) {
-                return true;
-            }
-            match &g.reference.key {
-                EntityKey::Simple(id) => !id.is_empty(),
-                EntityKey::Compound(parts) => parts.contains_key(pv),
-            }
-        })
+        };
+        let Some(anchor) = cgs.get_entity(g.reference.entity_type.as_str()) else {
+            return false;
+        };
+        crate::create_binds_from_anchor_identity(cap, anchor, Some(&g.reference))
     }
 
     /// Build Create / Update / Action / Delete from dotted-call args after `resolve_dotted_call_capability`.
@@ -2254,15 +2325,17 @@ impl<'a> Parser<'a> {
             Some(field_raw.as_str()),
             map,
         )?;
-        self.inject_path_vars_from_get(cap, &source, &mut map);
-        self.coerce_object_input_for_cap(
-            cap,
-            &mut map,
+        self.coerce_registry_input_fields(
+            cap.domain.as_str(),
             self.active_catalog_entry_id(Some(&source)).as_deref(),
+            cap.invocation_object_fields(),
+            &mut map,
         )?;
+        let needs_explicit_anchor = cap.invoke_requires_explicit_anchor_id();
         let input = Value::Object(map);
         self.finish_dotted_call_with_payload_value_inner(
             source,
+            needs_explicit_anchor,
             cap.name.clone(),
             cap.domain.clone(),
             cap.kind,
@@ -2279,9 +2352,9 @@ impl<'a> Parser<'a> {
     ) -> Result<Expr, ParseError> {
         let label = self.normalize_method_symbol_label(&field_raw);
         let cap = self.resolve_dotted_call_capability(&label, Some(field_raw.as_str()), &source)?;
-        let Some(is) = &cap.input_schema else {
+        let Some(is) = &cap.inputs.payload else {
             return Err(self.err(ParseErrorKind::Other {
-                message: "this capability has no input schema — use `key=value` arguments".into(),
+                message: "this capability has no payload schema — use `key=value` arguments".into(),
             }));
         };
         if !matches!(&is.input_type, crate::InputType::Union { .. }) {
@@ -2296,8 +2369,7 @@ impl<'a> Parser<'a> {
             ..
         } = &mut value
         {
-            self.inject_path_vars_from_get(cap, &source, ctor_fields);
-            if let Some(is) = &cap.input_schema {
+            if let Some(is) = &cap.inputs.payload {
                 if let InputType::Union { variants } = &is.input_type {
                     if let Some(variant) = variants.iter().find(|v| {
                         crate::schema::union_variant_constructor_symbol(v)
@@ -2312,6 +2384,12 @@ impl<'a> Parser<'a> {
                             std::mem::take(ctor_fields),
                         )?;
                         *ctor_fields = normalized;
+                        self.coerce_registry_input_fields(
+                            cap.domain.as_str(),
+                            self.active_catalog_entry_id(Some(&source)).as_deref(),
+                            variant.fields.iter(),
+                            ctor_fields,
+                        )?;
                     }
                 }
             }
@@ -2320,8 +2398,10 @@ impl<'a> Parser<'a> {
                 message: "expected `v#{{…}}` union constructor for this invoke".into(),
             }));
         }
+        let needs_explicit_anchor = cap.invoke_requires_explicit_anchor_id();
         self.finish_dotted_call_with_payload_value_inner(
             source,
+            needs_explicit_anchor,
             cap.name.clone(),
             cap.domain.clone(),
             cap.kind,
@@ -2329,9 +2409,53 @@ impl<'a> Parser<'a> {
         )
     }
 
+    /// Pathless mutator/get anchor: explicit `Entity(id)` or, when the CML template has no path
+    /// variables, a synthetic `"0"` Get that **preserves** the receiver's federated catalog stamp.
+    ///
+    /// Bare teaching heads (`e3.m7(…)`) must not re-validate the wire entity name unqualified —
+    /// under homographs that would drop ownership and lie as [`ParseErrorKind::UnknownEntity`].
+    fn pathless_mutator_anchor_from_receiver(
+        &self,
+        source: &Expr,
+        needs_explicit_anchor: bool,
+        requires_entity_id_message: &str,
+    ) -> Result<GetExpr, ParseError> {
+        if let Expr::Get(g) = source {
+            return Ok(g.clone());
+        }
+        if needs_explicit_anchor {
+            return Err(self.err(ParseErrorKind::Other {
+                message: requires_entity_id_message.to_string(),
+            }));
+        }
+        let entity = source.primary_entity().to_string();
+        let stamp = source.session_catalog_entry_id();
+        self.validate_entity_preferring(&entity, stamp.map(|id| id.as_str()))?;
+        let mut g = GetExpr::pathless_nullary(entity);
+        if let Some(id) = stamp {
+            g.catalog_entry_id = CatalogEntryStamp::some(id.clone());
+        }
+        Ok(g)
+    }
+
+    /// Dotted invoke/delete anchor — see [`Self::pathless_mutator_anchor_from_receiver`].
+    fn coerce_dotted_call_get_anchor(
+        &self,
+        source: &Expr,
+        needs_explicit_anchor: bool,
+        requires_entity_id_message: &str,
+    ) -> Result<GetExpr, ParseError> {
+        self.pathless_mutator_anchor_from_receiver(
+            source,
+            needs_explicit_anchor,
+            requires_entity_id_message,
+        )
+    }
+
     fn finish_dotted_call_with_payload_value_inner(
         &mut self,
         source: Expr,
+        needs_explicit_anchor: bool,
         cap_name: CapabilityName,
         cap_domain: EntityName,
         cap_kind: CapabilityKind,
@@ -2349,37 +2473,30 @@ impl<'a> Parser<'a> {
                 }),
             )),
             CapabilityKind::Delete => {
-                let Expr::Get(g) = &source else {
-                    return Err(self.err(ParseErrorKind::Other {
-                        message: "delete with arguments requires Entity(id) on the left".into(),
-                    }));
-                };
-                let path_vars = match input {
-                    Value::Object(map) if !map.is_empty() => Some(map),
-                    _ => g.path_vars.clone(),
-                };
+                let g = self.coerce_dotted_call_get_anchor(
+                    &source,
+                    needs_explicit_anchor,
+                    "delete with arguments requires Entity(id) on the left",
+                )?;
+                let mut delete = DeleteExpr::with_target(cap_name, g.reference.clone());
+                delete.input = Some(input.into());
                 Ok(Self::stamp_session_catalog_from_source(
                     &source,
-                    Expr::Delete(DeleteExpr::with_target_path_vars(
-                        cap_name,
-                        g.reference.clone(),
-                        path_vars,
-                    )),
+                    Expr::Delete(delete),
                 ))
             }
             CapabilityKind::Update | CapabilityKind::Action => {
-                let Expr::Get(g) = &source else {
-                    return Err(self.err(ParseErrorKind::Other {
-                        message: "invoke with arguments requires Entity(id) on the left".into(),
-                    }));
-                };
+                let g = self.coerce_dotted_call_get_anchor(
+                    &source,
+                    needs_explicit_anchor,
+                    "invoke with arguments requires Entity(id) on the left",
+                )?;
                 Ok(Self::stamp_session_catalog_from_source(
                     &source,
-                    Expr::Invoke(InvokeExpr::with_target_path_vars(
+                    Expr::Invoke(InvokeExpr::with_target(
                         cap_name,
                         g.reference.clone(),
                         Some(input),
-                        g.path_vars.clone(),
                     )),
                 ))
             }
@@ -2400,7 +2517,8 @@ impl<'a> Parser<'a> {
         let cap =
             self.resolve_dotted_call_capability(&label_norm, Some(label.as_str()), &source)?;
         let root_union = cap
-            .input_schema
+            .inputs
+            .payload
             .as_ref()
             .is_some_and(|is| matches!(&is.input_type, InputType::Union { .. }));
         let starts_union_ctor = value::peek_starts_v_numeric_union_ctor_arg(self.input, self.pos);
@@ -2475,20 +2593,14 @@ impl<'a> Parser<'a> {
         let is_query_or_search_param = [CapabilityKind::Query, CapabilityKind::Search]
             .into_iter()
             .flat_map(|kind| cgs.find_capabilities(entity_name, kind))
-            .any(|cap| {
-                cap.object_params()
-                    .is_some_and(|fields| fields.iter().any(|f| f.name == pred_wire))
-            });
+            .any(|cap| cap.query_surface_fields().any(|f| f.name == pred_wire));
         if is_query_or_search_param {
             return Ok(());
         }
         let create_only = cgs
             .find_capabilities(entity_name, CapabilityKind::Create)
             .iter()
-            .any(|cap| {
-                cap.object_params()
-                    .is_some_and(|fields| fields.iter().any(|f| f.name == pred_wire))
-            });
+            .any(|cap| cap.input_fields().any(|f| f.name == pred_wire));
         if create_only {
             return Err(ParseError {
                 kind: ParseErrorKind::PredicateFieldNotFound {
@@ -2591,9 +2703,40 @@ impl<'a> Parser<'a> {
         self.skip_ws();
         if matches!(self.peek_char(), Some(',') | Some('}')) {
             Ok(Value::Null)
+        } else if let Some(v) = self.try_rewrite_temporal_predicate_rhs()? {
+            Ok(v)
         } else {
             self.parse_predicate_value_rhs()
         }
+    }
+
+    /// If the upcoming RHS is a Kusto/wire temporal expression, rewrite to a string literal.
+    fn try_rewrite_temporal_predicate_rhs(&mut self) -> Result<Option<Value>, ParseError> {
+        let start = self.pos;
+        let end = scan_top_level_pred_rhs_end(self.input, start);
+        if end <= start {
+            return Ok(None);
+        }
+        let raw = self.input[start..end].trim();
+        if raw.is_empty() {
+            return Ok(None);
+        }
+        let rewritten = crate::temporal::rewrite_temporal_aliases_in_predicate_body(raw);
+        if rewritten.as_ref() == raw {
+            return Ok(None);
+        }
+        self.pos = end;
+        // Rewritten surface is either `now` or a quoted English phrase.
+        let t = rewritten.trim();
+        if t.eq_ignore_ascii_case("now") {
+            return Ok(Some(Value::String("now".into())));
+        }
+        if let Some(inner) = t.strip_prefix('"').and_then(|x| x.strip_suffix('"')) {
+            return Ok(Some(Value::String(
+                inner.replace("\\\"", "\"").replace("\\\\", "\\"),
+            )));
+        }
+        Ok(Some(Value::String(t.to_string())))
     }
 
     /// Parse comma-separated predicates inside `{ }`.
@@ -2723,17 +2866,49 @@ impl<'a> Parser<'a> {
         Ok(Expr::Query(query))
     }
 
+    #[allow(dead_code)] // Unqualified facade; stamped receivers use [`Self::validate_entity_preferring`].
     fn validate_entity(&self, name: &str) -> Result<(), ParseError> {
-        if self.cgs_for_entity(name).is_none() {
-            return Err(ParseError {
+        self.validate_entity_preferring(name, None)
+    }
+
+    /// Entity membership check that distinguishes absent vs federated ambiguous wire names.
+    ///
+    /// When `preferred_entry_id` (or active session catalog) pins a layer, only that catalog is
+    /// consulted. Otherwise: unique hit → ok; multi-hit → [`ParseErrorKind::AmbiguousEntityCatalog`];
+    /// zero hits → [`ParseErrorKind::UnknownEntity`] (never collapse multi-hit into unknown).
+    fn validate_entity_preferring(
+        &self,
+        name: &str,
+        preferred_entry_id: Option<&str>,
+    ) -> Result<(), ParseError> {
+        if let Some(eid) = preferred_entry_id {
+            if self.cgs_for_catalog_entry_id(eid, name).is_some() {
+                return Ok(());
+            }
+        }
+        if let Some(eid) = self.active_catalog_entry_id(None) {
+            if self.cgs_for_catalog_entry_id(eid.as_str(), name).is_some() {
+                return Ok(());
+            }
+        }
+        let match_count = self
+            .layers_stack()
+            .iter()
+            .filter(|layer| layer.cgs().get_entity(name).is_some())
+            .count();
+        match match_count {
+            0 => Err(ParseError {
                 kind: ParseErrorKind::UnknownEntity {
                     name: name.to_string(),
                     span_opt: None,
                 },
                 offset: self.pos,
-            });
+            }),
+            1 => Ok(()),
+            _ => Err(self.err(ParseErrorKind::AmbiguousEntityCatalog {
+                entity: name.to_string(),
+            })),
         }
-        Ok(())
     }
 
     /// `Team(id).members` → `Member` query with `team_id` when CGS has no `members` relation on `Team`.
@@ -2761,11 +2936,7 @@ impl<'a> Parser<'a> {
         let member_has_team = team_cgs
             .find_capabilities("Member", CapabilityKind::Query)
             .iter()
-            .any(|cap| {
-                cap.object_params()
-                    .map(|fields| fields.iter().any(|f| f.name == "team_id"))
-                    .unwrap_or(false)
-            });
+            .any(|cap| cap.scope_params().iter().any(|f| f.name == "team_id"));
         if !member_has_team {
             return Ok(None);
         }
@@ -2820,22 +2991,14 @@ impl<'a> Parser<'a> {
                     if capability_path_method_segment(cap).as_str() != label {
                         continue;
                     }
-                    let Some(is) = cap.input_schema.as_ref() else {
-                        continue;
-                    };
-                    let InputType::Object { fields, .. } = &is.input_type else {
-                        continue;
-                    };
-                    let scope_fields: Vec<_> = fields
-                        .iter()
-                        .filter(|f| f.required && matches!(f.role, Some(ParameterRole::Scope)))
-                        .collect();
+                    let scope_fields: Vec<_> =
+                        cap.scope_params().iter().filter(|f| f.required).collect();
                     if scope_fields.len() != 1 {
                         continue;
                     }
                     let sf = scope_fields[0];
                     if let Ok(nv) = sf.named_value(c) {
-                        if let FieldType::EntityRef { target } = &nv.field_type {
+                        if let FieldType::EntityRef { target, .. } = &nv.field_type {
                             if target.as_str() == anchor_entity {
                                 matches.push(cap);
                             }
@@ -2853,15 +3016,10 @@ impl<'a> Parser<'a> {
             }));
         }
         let cap = matches[0];
-        let Some(is) = cap.input_schema.as_ref() else {
-            return Ok(None);
-        };
-        let InputType::Object { fields, .. } = &is.input_type else {
-            return Ok(None);
-        };
-        let scope_name = fields
+        let scope_name = cap
+            .scope_params()
             .iter()
-            .find(|f| f.required && matches!(f.role, Some(ParameterRole::Scope)))
+            .find(|f| f.required)
             .map(|f| f.name.as_str())
             .ok_or_else(|| {
                 self.err(ParseErrorKind::Other {
@@ -3104,25 +3262,17 @@ impl<'a> Parser<'a> {
                         self.pending_session_catalog_entry_id.clone(),
                     );
                     let map_values = self.parse_strict_compound_key_value_map(&head, &ent)?;
-                    let mut ordered: BTreeMap<String, String> = BTreeMap::new();
-                    let mut ctor_path_vars: IndexMap<String, Value> = IndexMap::new();
+                    let mut slots: BTreeMap<String, IdentitySlot> = BTreeMap::new();
                     for k in &ent.key_vars {
                         let v = map_values.get(k.as_str()).expect("keys validated");
-                        if matches!(v, Value::PlasmInputRef(_)) {
-                            ctor_path_vars.insert(k.to_string(), v.clone());
-                            continue;
-                        }
-                        let s = self.identity_literal_from_value(v)?;
-                        ordered.insert(k.to_string(), s);
-                    }
-                    let get = GetExpr::from_ref_with_path_vars(
-                        Ref::compound(entity, ordered),
-                        if ctor_path_vars.is_empty() {
-                            None
+                        if let Value::PlasmInputRef(r) = v {
+                            slots.insert(k.to_string(), IdentitySlot::binding(r.clone()));
                         } else {
-                            Some(ctor_path_vars)
-                        },
-                    );
+                            let s = self.identity_literal_from_value(v)?;
+                            slots.insert(k.to_string(), IdentitySlot::lit(s));
+                        }
+                    }
+                    let get = GetExpr::from_ref(Ref::compound_slots(entity, slots));
                     Ok(Expr::Get(get))
                 } else {
                     if looks_kv && ent.key_vars.is_empty() {
@@ -3148,12 +3298,8 @@ impl<'a> Parser<'a> {
                         self.parse_value()?
                     };
                     self.expect_char(')')?;
-                    if matches!(id_val, Value::PlasmInputRef(_)) {
-                        let path_key = format!("{}_id", entity.to_lowercase());
-                        Ok(Expr::Get(GetExpr::from_ref_with_path_vars(
-                            Ref::new(entity, ""),
-                            Some(IndexMap::from([(path_key, id_val)])),
-                        )))
+                    if let Value::PlasmInputRef(r) = id_val {
+                        Ok(Expr::Get(GetExpr::from_ref(Ref::simple_binding(entity, r))))
                     } else {
                         let id_str = self.identity_literal_from_value(&id_val)?;
                         Ok(Expr::Get(GetExpr::new(entity, id_str)))
@@ -3195,29 +3341,26 @@ impl<'a> Parser<'a> {
                     Value::Integer(n) => n.to_string(),
                     _ => return Err(self.err(ParseErrorKind::SearchTextMustBeString)),
                 };
-                // Find the search capability to get its primary text param name
-                let q_field = {
+                // The primary Search capability and its free-text selection lane identify the
+                // search-text input (`query`/`q`/`search`, or a sole selection slot).
+                let (cap_name, q_field) = {
                     let c = self.cgs_for_entity_required(&entity)?;
-                    c.find_capabilities(&entity, CapabilityKind::Search)
-                        .first()
-                        .and_then(|cap| cap.object_params())
-                        .and_then(|fields| {
-                            fields
-                                .iter()
-                                .find(|f| {
-                                    matches!(f.role, Some(crate::ParameterRole::Search))
-                                        || f.required
-                                })
-                                .map(|f| f.name.clone())
+                    let cap = c.primary_search_capability(&entity).ok_or_else(|| {
+                        self.err(ParseErrorKind::Other {
+                            message: format!(
+                                "search capability for `{entity}` is structurally ambiguous"
+                            ),
                         })
-                        .unwrap_or_else(|| "q".to_string())
-                };
-
-                let cap_name = {
-                    let c = self.cgs_for_entity_required(&entity)?;
-                    c.find_capabilities(&entity, CapabilityKind::Search)
-                        .first()
-                        .map(|c| c.name.clone())
+                    })?;
+                    let field = cap.search_text_selection_param().ok_or_else(|| {
+                        self.err(ParseErrorKind::Other {
+                            message: format!(
+                                "search capability `{}` must declare a free-text selection parameter (query/q/search)",
+                                cap.name
+                            ),
+                        })
+                    })?;
+                    (Some(cap.name.clone()), field.name.clone())
                 };
 
                 let mut preds = vec![Predicate::eq(q_field, text_str)];
@@ -3256,7 +3399,10 @@ impl<'a> Parser<'a> {
             self.pos += 2;
             let target_raw = self.parse_ident()?;
             let target_entity = self.canonical_entity_name_in_layers(&target_raw);
-            self.validate_entity(&target_entity)?;
+            self.validate_entity_preferring(
+                &target_entity,
+                source.session_catalog_entry_id().map(|id| id.as_str()),
+            )?;
 
             // Extract the source entity ID to build the reverse query predicate
             let source_id = extract_primary_id(&source);
@@ -3446,7 +3592,9 @@ impl<'a> Parser<'a> {
                     return Ok(Expr::Query(query));
                 }
 
-                // Check EntityRef fields (e.g. .petId → ChainExpr)
+                // Check EntityRef fields (e.g. .petId → ChainExpr). Non-ref fields are
+                // field-dot extract candidates: `source.wire` (PLP-1 scalar on StaticSingleton;
+                // explicit `source[wire]` remains row projection).
                 match ent.fields.get(field.as_str()) {
                     Some(f) => {
                         let is_ref = f
@@ -3454,15 +3602,31 @@ impl<'a> Parser<'a> {
                             .ok()
                             .is_some_and(|nv| matches!(nv.field_type, FieldType::EntityRef { .. }));
                         if !is_ref {
-                            return Err(ParseError {
-                                kind: ParseErrorKind::NotNavigable {
-                                    field: field.clone(),
-                                    entity: source_entity.clone(),
-                                    span_start,
-                                    span_end,
-                                },
-                                offset: span_start,
-                            });
+                            self.skip_ws();
+                            if self.remaining().starts_with('.') {
+                                return Err(ParseError {
+                                    kind: ParseErrorKind::NotNavigable {
+                                        field: field.clone(),
+                                        entity: source_entity.clone(),
+                                        span_start,
+                                        span_end,
+                                    },
+                                    offset: span_start,
+                                });
+                            }
+                            if self.pending_field_dot_extract.is_some() {
+                                return Err(ParseError {
+                                    kind: ParseErrorKind::NotNavigable {
+                                        field: field.clone(),
+                                        entity: source_entity.clone(),
+                                        span_start,
+                                        span_end,
+                                    },
+                                    offset: span_start,
+                                });
+                            }
+                            self.pending_field_dot_extract = Some(field);
+                            return Ok(source);
                         }
                     }
                     None => {
@@ -3504,13 +3668,11 @@ impl<'a> Parser<'a> {
         // First: check query capability parameters
         for c in self.cgs_layers() {
             for cap in c.find_capabilities(target_entity, CapabilityKind::Query) {
-                if let Some(fields) = cap.object_params() {
-                    for f in fields {
-                        if let Ok(nv) = f.named_value(c) {
-                            if let FieldType::EntityRef { target } = &nv.field_type {
-                                if target.as_str() == source_entity {
-                                    return Ok(f.name.clone());
-                                }
+                for f in cap.scope_params() {
+                    if let Ok(nv) = f.named_value(c) {
+                        if let FieldType::EntityRef { target, .. } = &nv.field_type {
+                            if target.as_str() == source_entity {
+                                return Ok(f.name.clone());
                             }
                         }
                     }
@@ -3524,7 +3686,7 @@ impl<'a> Parser<'a> {
         {
             for (fname, field) in &ent.fields {
                 if let Ok(nv) = field.named_value(self.cgs_for_entity_required(target_entity)?) {
-                    if let FieldType::EntityRef { target } = &nv.field_type {
+                    if let FieldType::EntityRef { target, .. } = &nv.field_type {
                         if target.as_str() == source_entity {
                             return Ok(fname.as_str().to_string());
                         }
@@ -3579,18 +3741,33 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // Optional projection
+        // Optional projection — explicit `[…]` (row) vs deferred `.field` sugar (scalar-extract candidate).
         self.skip_ws();
-        let projection = if self.peek_char() == Some('[') {
-            Some(self.parse_projection()?)
+        let (projection, field_dot_extract) = if self.peek_char() == Some('[') {
+            if self.pending_field_dot_extract.is_some() {
+                return Err(ParseError {
+                    kind: ParseErrorKind::UnexpectedTrailingInput {
+                        tail: self.remaining().to_string(),
+                    },
+                    offset: self.pos,
+                });
+            }
+            (Some(self.parse_projection()?), None)
+        } else if let Some(wire) = self.pending_field_dot_extract.take() {
+            // PLP-1: `.wire` is scalar extract on StaticSingleton — not `| select` / `[wire]`.
+            (None, Some(wire))
         } else {
-            None
+            (None, None)
         };
 
         // One expression per call; ignore trailing noise (LLM markdown, prose, etc.).
         self.skip_ws();
 
-        Ok(ParsedExpr { expr, projection })
+        Ok(ParsedExpr {
+            expr,
+            projection,
+            field_dot_extract,
+        })
     }
 
     fn classify_remainder(&self) -> ParseRemainder {
@@ -3633,7 +3810,6 @@ mod tests {
         InputVariantSchema, OutputSchema, OutputType, PlasmInputRef, RelationSchema,
         ResourceSchema, WireVariantDiscriminator, CGS,
     };
-    use indexmap::IndexMap;
     use std::collections::BTreeMap;
     use std::collections::BTreeSet;
 
@@ -3645,11 +3821,11 @@ mod tests {
         cgs.values.insert(
             "fx_str".into(),
             NamedValueSchema {
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
                 allowed_values: None,
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -3691,7 +3867,7 @@ mod tests {
 
     /// GraphQL `issue_get` has `variables.id` but no HTTP `path` vars; pipeline must not default id to "0".
     #[test]
-    fn linear_issue_get_pipeline_preserves_uuid() {
+    fn linear_issue_get_preserves_uuid() {
         let dir = std::path::Path::new("../../apis/linear");
         if !dir.exists() {
             return;
@@ -3721,7 +3897,7 @@ mod tests {
         }
     }
 
-    /// Shadow sugar: `Entity(id_field=value)` ≡ `Entity(value)` when `id_field` is the sole identity slot.
+    /// Shadow/repair sugar (deliberately untaught): `Entity(id_field=value)` ≡ canonical `Entity(value)`.
     #[test]
     fn parse_get_simple_id_field_named_sugar() {
         let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
@@ -4134,6 +4310,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -4143,7 +4321,8 @@ mod tests {
             kind: CapabilityKind::Get,
             domain: "Document".into(),
             identity_key: None,
-            mapping: CapabilityMapping {
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
                     "path": [
@@ -4152,8 +4331,9 @@ mod tests {
                     ]
                 })
                 .into(),
-            },
-            input_schema: None,
+            }),
+            derived: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec!["slug".into()],
             scope_aggregate_key_policy: Default::default(),
@@ -4170,7 +4350,8 @@ mod tests {
             kind: CapabilityKind::Action,
             domain: "Document".into(),
             identity_key: None,
-            mapping: CapabilityMapping {
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "POST",
                     "path": [
@@ -4181,36 +4362,39 @@ mod tests {
                     "body": {"type": "var", "name": "input"}
                 })
                 .into(),
-            },
-            input_schema: Some(InputSchema {
-                input_type: InputType::Union {
-                    variants: vec![InputVariantSchema {
-                        name: "insert".into(),
-                        description: None,
-                        constructor_symbol: Some("v111".into()),
-                        fields: vec![InputFieldSchema {
-                            name: "content".into(),
-                            wire: InputFieldWire::Registry(
-                                crate::schema::ValueDomainKey::new("fx_str").unwrap(),
-                            ),
-                            required: true,
-                            description: None,
-                            default: None,
-                            role: None,
-                            wire_json_path: None,
-                            wire_array_element_key: None,
-                            sink_class: None,
-                        }],
-                        wire: WireVariantDiscriminator {
-                            field: "kind".into(),
-                            value: "insert".into(),
-                        },
-                    }],
-                },
-                validation: Default::default(),
-                description: None,
-                examples: vec![],
             }),
+            derived: None,
+            inputs: crate::schema::CapabilityInputs {
+                payload: Some(InputSchema {
+                    input_type: InputType::Union {
+                        variants: vec![InputVariantSchema {
+                            name: "insert".into(),
+                            description: None,
+                            constructor_symbol: Some("v111".into()),
+                            fields: vec![InputFieldSchema {
+                                name: "content".into(),
+                                wire: InputFieldWire::Registry(
+                                    crate::schema::ValueDomainKey::new("fx_str").unwrap(),
+                                ),
+                                required: true,
+                                description: None,
+                                default: None,
+                                wire_json_path: None,
+                                wire_array_element_key: None,
+                                sink_class: None,
+                            }],
+                            wire: WireVariantDiscriminator {
+                                field: "kind".into(),
+                                value: "insert".into(),
+                            },
+                        }],
+                    },
+                    validation: Default::default(),
+                    description: None,
+                    examples: vec![],
+                }),
+                ..Default::default()
+            },
             output_schema: Some(OutputSchema {
                 output_type: OutputType::SideEffect {
                     description: "adds a suggestion".into(),
@@ -4432,6 +4616,45 @@ mod tests {
         assert_eq!(
             r.projection,
             Some(vec!["name".to_string(), "status".to_string()])
+        );
+    }
+
+    #[test]
+    fn parse_field_dot_extract_is_not_bracket_projection() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).expect("language matrix cgs");
+        let bracket = parse(r#"LangItem("i1")[title]"#, &cgs).expect("bracket project");
+        let sugar = parse(r#"LangItem("i1").title"#, &cgs).expect("field-dot scalar extract");
+        assert!(matches!(bracket.expr, Expr::Get(_)));
+        assert!(matches!(sugar.expr, Expr::Get(_)));
+        assert_eq!(bracket.projection, Some(vec!["title".to_string()]));
+        assert_eq!(bracket.field_dot_extract, None);
+        // PLP-1: `.wire` is scalar-extract candidate — never silent `| select` / `[wire]`.
+        assert_eq!(sugar.projection, None);
+        assert_eq!(sugar.field_dot_extract, Some("title".to_string()));
+        // Relation still wins over field when both exist (tags).
+        let rel = parse(r#"LangItem("i1").tags"#, &cgs).expect("relation hop");
+        assert!(matches!(rel.expr, Expr::Chain(_)));
+        assert_eq!(rel.projection, None);
+        assert_eq!(rel.field_dot_extract, None);
+    }
+
+    #[test]
+    fn parse_field_dot_extract_rejects_further_nav() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).expect("language matrix cgs");
+        let err = parse(r#"LangItem("i1").title.tags"#, &cgs).expect_err("no chain after sugar");
+        assert!(
+            matches!(err.kind, ParseErrorKind::NotNavigable { .. }),
+            "expected NotNavigable, got {err:?}"
         );
     }
 
@@ -4901,7 +5124,7 @@ mod tests {
         }
         let cgs = load_schema_dir(dir).unwrap();
         // `List{id=<bigint>}` is referentially `List(<id>)`: the id-field brace sugar
-        // (`expr_sugar::rewrite_id_field_brace_query_to_get`) rewrites it to a Get whose key preserves
+        // (`expr_sugar::lower_id_field_brace_to_get`) rewrites it to a Get whose key preserves
         // the string-typed id verbatim — no integer coercion or precision loss on the 18-digit literal.
         let r = parse("List{id=123456789012345678}", &cgs).unwrap();
         let Expr::Get(g) = &r.expr else {
@@ -5084,6 +5307,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -5093,10 +5318,12 @@ mod tests {
             kind: CapabilityKind::Query,
             domain: "Widget".into(),
             identity_key: None,
-            mapping: CapabilityMapping {
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "widget"}]}).into(),
-            },
-            input_schema: None,
+            }),
+            derived: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
@@ -5138,13 +5365,14 @@ mod tests {
         cgs.values.insert(
             "fx_ref_library".into(),
             NamedValueSchema {
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::EntityRef {
+                    entry_id: Default::default(),
                     target: "Library".into(),
                 },
                 value_format: None,
                 allowed_values: None,
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -5167,6 +5395,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: true,
             primary_read: Some("library_get".into()),
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -5193,6 +5423,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: true,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -5202,12 +5434,14 @@ mod tests {
             kind: CapabilityKind::Query,
             domain: "Book".into(),
             identity_key: None,
-            mapping: CapabilityMapping {
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
                 template:
                     serde_json::json!({"method":"GET","path":[{"type":"literal","value":"books"}]})
                         .into(),
-            },
-            input_schema: None,
+            }),
+            derived: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
@@ -5224,7 +5458,8 @@ mod tests {
             kind: CapabilityKind::Get,
             domain: "Library".into(),
             identity_key: None,
-            mapping: CapabilityMapping {
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method":"GET",
                     "path":[
@@ -5234,8 +5469,9 @@ mod tests {
                     ]
                 })
                 .into(),
-            },
-            input_schema: None,
+            }),
+            derived: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
@@ -5406,6 +5642,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -5415,7 +5653,8 @@ mod tests {
             kind: CapabilityKind::Get,
             domain: "Ticket".into(),
             identity_key: None,
-            mapping: CapabilityMapping {
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
                     "path": [
@@ -5425,8 +5664,9 @@ mod tests {
                     ]
                 })
                 .into(),
-            },
-            input_schema: None,
+            }),
+            derived: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
@@ -5462,13 +5702,13 @@ mod tests {
         let EntityKey::Compound(m) = &g.reference.key else {
             panic!("expected compound key");
         };
-        assert_eq!(m.get("owner").map(String::as_str), Some("o"));
-        assert_eq!(m.get("repo").map(String::as_str), Some("r"));
-        assert_eq!(m.get("n").map(String::as_str), Some("9"));
+        assert_eq!(m.get("owner").and_then(|s| s.as_lit_str()), Some("o"));
+        assert_eq!(m.get("repo").and_then(|s| s.as_lit_str()), Some("r"));
+        assert_eq!(m.get("n").and_then(|s| s.as_lit_str()), Some("9"));
     }
 
     #[test]
-    fn program_parse_compound_get_maps_binding_slot_to_path_vars() {
+    fn program_parse_compound_get_maps_binding_slot_to_identity_slot() {
         let cgs = compound_get_fixture_cgs();
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
         let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
@@ -5486,37 +5726,33 @@ mod tests {
         let Expr::Get(g) = &r.expr else {
             panic!("expected Get");
         };
-        let pv = g.path_vars.as_ref().expect("path_vars for hole slot");
-        assert!(
-            matches!(
-                pv.get("owner"),
-                Some(Value::PlasmInputRef(PlasmInputRef::NodeInput { node, path }))
-                    if node == "zone" && path.is_empty()
-            ),
-            "expected node_input(zone), got {:?}",
-            pv.get("owner")
-        );
         let EntityKey::Compound(m) = &g.reference.key else {
             panic!("expected compound ref");
         };
-        assert!(m.get("owner").is_none());
-        assert_eq!(m.get("repo").map(String::as_str), Some("r"));
-        assert_eq!(m.get("n").map(String::as_str), Some("9"));
+        assert!(
+            matches!(
+                m.get("owner"),
+                Some(crate::IdentitySlot::Binding(PlasmInputRef::NodeInput { node, path }))
+                    if node == "zone" && path.is_empty()
+            ),
+            "expected Binding(zone) on owner slot, got {:?}",
+            m.get("owner")
+        );
+        assert_eq!(m.get("repo").and_then(|s| s.as_lit_str()), Some("r"));
+        assert_eq!(m.get("n").and_then(|s| s.as_lit_str()), Some("9"));
         crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
     }
 
     #[test]
-    fn get_expr_serde_json_roundtrip_with_compound_path_vars() {
+    fn get_expr_serde_json_roundtrip_with_compound_identity_slots() {
         let mut parts = BTreeMap::new();
-        parts.insert("repo".into(), "r".into());
-        parts.insert("n".into(), "9".into());
-        let g = GetExpr::from_ref_with_path_vars(
-            Ref::compound("Ticket", parts),
-            Some(IndexMap::from([(
-                "owner".into(),
-                Value::PlasmInputRef(PlasmInputRef::node_output("zone", vec![])),
-            )])),
+        parts.insert("repo".into(), crate::IdentitySlot::lit("r"));
+        parts.insert("n".into(), crate::IdentitySlot::lit("9"));
+        parts.insert(
+            "owner".into(),
+            crate::IdentitySlot::binding(PlasmInputRef::node_output("zone", vec![])),
         );
+        let g = GetExpr::from_ref(Ref::compound_slots("Ticket", parts));
         let json = serde_json::to_value(&g).unwrap();
         let back: GetExpr = serde_json::from_value(json).unwrap();
         assert_eq!(back, g);
@@ -5543,6 +5779,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: true,
             primary_read: Some("library_get_nested_fixture".into()),
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -5552,7 +5790,8 @@ mod tests {
             kind: CapabilityKind::Get,
             domain: "Library".into(),
             identity_key: None,
-            mapping: CapabilityMapping {
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method":"GET",
                     "path":[
@@ -5562,8 +5801,9 @@ mod tests {
                     ]
                 })
                 .into(),
-            },
-            input_schema: None,
+            }),
+            derived: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
@@ -5586,7 +5826,7 @@ mod tests {
         let EntityKey::Compound(m) = &g.reference.key else {
             panic!("expected compound key");
         };
-        let repo = m.get("repo").expect("repo");
+        let repo = m.get("repo").expect("repo").as_lit_str().expect("lit repo");
         assert!(repo.contains("eu"), "{repo}");
         assert!(repo.contains("main"), "{repo}");
     }
@@ -5623,6 +5863,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -5640,6 +5882,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -5649,15 +5893,17 @@ mod tests {
             kind: CapabilityKind::Get,
             domain: "Parent".into(),
             identity_key: None,
-            mapping: CapabilityMapping {
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({"method":"GET","path":[
                     {"type":"literal","value":"parent"},
                     {"type":"literal","value":"/"},
                     {"type":"var","name":"id"}
                 ]})
                 .into(),
-            },
-            input_schema: None,
+            }),
+            derived: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
@@ -5674,13 +5920,15 @@ mod tests {
             kind: CapabilityKind::Query,
             domain: "Child".into(),
             identity_key: None,
-            mapping: CapabilityMapping {
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({"method":"GET","path":[
                     {"type":"literal","value":"children"}
                 ]})
                 .into(),
-            },
-            input_schema: None,
+            }),
+            derived: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
@@ -5691,7 +5939,9 @@ mod tests {
             deterministic: None,
         })
         .unwrap();
-        cgs.validate().unwrap();
+        // Intentionally skip `validate()` — many-relations without `materialize:` are
+        // load-rejected but the parser still surfaces `ManyRelationUnmaterialized` for
+        // programmatic / legacy CGS built in-memory.
         cgs
     }
 
@@ -5810,11 +6060,8 @@ mod tests {
 
     #[test]
     fn program_parse_unknown_ident_becomes_phrase_ident_in_predicate() {
-        // A bare unquoted word in a predicate that is not a known program binding parses as a
-        // deferred `Value::PhraseIdent` (not a `PlasmInputRef`). Downstream
-        // `lower_program_phrase_idents_in_expr` then either lowers it to `Value::String` or
-        // rejects it ("quote the value if you meant a literal string"). This asserts the
-        // raw-parse shape only.
+        // Bare unquoted words in query `{…}` predicates coerce to string at parse time via
+        // [`coerce_value_for_field_type`] (same path as teaching-table query filters).
         let dir = std::path::Path::new("../../apis/github");
         if !dir.exists() {
             return;
@@ -5826,7 +6073,7 @@ mod tests {
         let mut refs = std::collections::BTreeSet::new();
         refs.insert("not_report".into());
         let r = parse_with_cgs_layers_program(
-            "Issue{state=report}",
+            "Issue{title=report}",
             &stack,
             sym_map,
             Some(&refs),
@@ -5842,7 +6089,7 @@ mod tests {
         let Predicate::Comparison { value, .. } = pred else {
             panic!("expected comparison");
         };
-        assert_eq!(value.to_value(), Value::PhraseIdent("report".into()));
+        assert_eq!(value.to_value(), Value::String("report".into()));
     }
 
     #[test]
@@ -5881,6 +6128,41 @@ mod tests {
     }
 
     #[test]
+    fn search_tilde_text_binds_the_structural_selection_parameter() {
+        let dir = std::path::Path::new("../../fixtures/schemas/auth_bearer_search");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let r = parse(r#"SecuredNote~"trip""#, &cgs).expect("parse search");
+        let Expr::Query(q) = &r.expr else {
+            panic!("expected Query, got {:?}", r.expr);
+        };
+        let pred = q.predicate.as_ref().expect("predicate");
+        fn access_token_eq_trip(p: &Predicate) -> bool {
+            match p {
+                Predicate::Comparison { field, value, .. } if field == "access_token" => {
+                    matches!(value.to_value(), Value::String(s) if s == "trip")
+                }
+                Predicate::And { args } | Predicate::Or { args } => {
+                    args.iter().any(access_token_eq_trip)
+                }
+                Predicate::Not { predicate } => access_token_eq_trip(predicate),
+                _ => false,
+            }
+        }
+        assert!(
+            !access_token_eq_trip(pred),
+            "search text must bind the selection lane, not an authentication input; pred={pred:?}"
+        );
+        let fields = pred.referenced_fields();
+        assert!(
+            fields.iter().any(|f| f == "query"),
+            "expected query field from tilde text; fields={fields:?}"
+        );
+    }
+
+    #[test]
     fn unquoted_string_filter_wire_value_typechecks_at_compile_time() {
         let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
         if !dir.exists() {
@@ -5899,13 +6181,114 @@ mod tests {
             return;
         }
         let cgs = load_schema_dir(dir).unwrap();
-        let r = parse("LangItem{score=notanint}", &cgs)
-            .expect("parse unknown integer token as phrase string");
-        let err = crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap_err();
+        // RA-8: hard coerce rejects non-numeric tokens at parse (not soft-leave-as-string).
+        let err = parse("LangItem{score=notanint}", &cgs).expect_err("non-numeric integer token");
+        let msg = format!("{err:?}");
         assert!(
-            matches!(err, crate::TypeError::IncompatibleValue { .. }),
-            "expected compile-time type rejection, got {err:?}"
+            msg.contains("cannot coerce") && msg.contains("integer"),
+            "expected RA-8 integer coerce reject, got {msg}"
         );
+    }
+
+    /// Program-mode bare tokens on invoke/create body fields must coerce via the **same**
+    /// [`coerce_value_for_field_type_with_policy`] (`InvokeArg`) path as query predicates
+    /// (PhraseIdent ≡ stringish). Covers payload-lane Create — not arguments-only.
+    #[test]
+    fn program_invoke_bare_bool_coerces_like_query_filter() {
+        use crate::InvokeInputPayload;
+        use std::sync::Arc;
+
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
+        let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
+        let stack = test_layer(&cgs);
+
+        // Update (payload body): bare true must become Bool before typecheck.
+        let mut r = parse_with_cgs_layers_program(
+            r#"LangItem("i1").update(active=true, score=3)"#,
+            &stack,
+            Arc::clone(&sym_map),
+            None,
+            false,
+        )
+        .expect("program invoke parse");
+        let Expr::Invoke(inv) = &r.expr else {
+            panic!("expected Invoke, got {:?}", r.expr);
+        };
+        let Some(InvokeInputPayload::Raw(Value::Object(map))) = &inv.input else {
+            panic!("expected raw object input, got {:?}", inv.input);
+        };
+        assert_eq!(
+            map.get("active"),
+            Some(&Value::Bool(true)),
+            "invoke coerce must yield Bool(true), got {:?}",
+            map.get("active")
+        );
+        assert_eq!(map.get("score"), Some(&Value::Integer(3)));
+
+        let labels = std::collections::BTreeSet::new();
+        crate::lower_program_phrase_idents_in_expr(&mut r.expr, &labels, &cgs)
+            .expect("phrase lower");
+        crate::type_checker::type_check_expr(&r.expr, &cgs)
+            .expect("program invoke with bare bool must typecheck");
+    }
+
+    /// Create capabilities author body fields under `inputs.payload`. Parse coerce must walk
+    /// that lane (payload ∪ arguments) — Boolean and temporal PhraseIdent alike.
+    #[test]
+    fn program_create_payload_bare_tokens_coerce_like_invoke_args() {
+        use std::sync::Arc;
+
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
+        let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
+        let stack = test_layer(&cgs);
+
+        let mut r = parse_with_cgs_layers_program(
+            r#"LangItem.create(title="payload-coerce", active=false, recorded_at=now)"#,
+            &stack,
+            sym_map,
+            None,
+            false,
+        )
+        .expect("program create parse");
+        let Expr::Create(create) = &r.expr else {
+            panic!("expected Create, got {:?}", r.expr);
+        };
+        let Value::Object(map) = create.input.to_value() else {
+            panic!("expected object create input, got {:?}", create.input);
+        };
+        assert_eq!(
+            map.get("active"),
+            Some(&Value::Bool(false)),
+            "Create payload coerce must yield Bool(false), got {:?}",
+            map.get("active")
+        );
+        let recorded = map
+            .get("recorded_at")
+            .expect("recorded_at present after coerce");
+        assert!(
+            !matches!(recorded, Value::PhraseIdent(_)),
+            "Create payload temporal must leave PhraseIdent via shared coerce, got {recorded:?}"
+        );
+        assert!(
+            matches!(recorded, Value::String(_)),
+            "expected temporal normalize to String, got {recorded:?}"
+        );
+
+        let labels = std::collections::BTreeSet::new();
+        crate::lower_program_phrase_idents_in_expr(&mut r.expr, &labels, &cgs)
+            .expect("phrase lower");
+        crate::type_checker::type_check_expr(&r.expr, &cgs)
+            .expect("program Create with payload bare bool + temporal must typecheck");
     }
 
     #[test]
@@ -5921,9 +6304,9 @@ mod tests {
             return;
         }
         let mut cgs_github = load_schema_dir(&github_dir).expect("github");
-        cgs_github.entry_id = Some("github".into());
+        cgs_github.bind_registry_entry_id("github");
         let mut cgs_linear = load_schema_dir(&linear_dir).expect("linear");
-        cgs_linear.entry_id = Some("linear".into());
+        cgs_linear.bind_registry_entry_id("linear");
         let layers = [&cgs_github, &cgs_linear];
         let stack = cgs_layer_stack(&["github", "linear"], &layers);
         let mut exp = TeachingExposureSession::new(&cgs_github, "github", &["Issue"]);
@@ -5950,6 +6333,102 @@ mod tests {
             q.catalog_entry_id.as_deref(),
             Some("linear"),
             "e2 must stamp linear catalog ownership"
+        );
+    }
+
+    /// Dual-catalog LangItem: pathless Action on stamped `e2` must keep `catalog_entry_id`.
+    /// Matrix counterpart: `lang_federated_duplicate_entity_pathless_action`.
+    #[test]
+    fn federated_pathless_action_preserves_opaque_entity_catalog_stamp() {
+        use crate::symbol_tuning::TeachingExposureSession;
+        use std::path::Path;
+        use std::sync::Arc;
+
+        let dir = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.is_dir() {
+            return;
+        }
+        let mut cgs_github = load_schema_dir(dir).expect("matrix github");
+        cgs_github.bind_registry_entry_id("github");
+        let mut cgs_linear = load_schema_dir(dir).expect("matrix linear");
+        cgs_linear.bind_registry_entry_id("linear");
+        let layers = [&cgs_github, &cgs_linear];
+        let stack = cgs_layer_stack(&["github", "linear"], &layers);
+        let mut exp = TeachingExposureSession::new(&cgs_github, "github", &["LangItem"]);
+        exp.expose_entities(
+            &layers,
+            Arc::new(cgs_linear.clone()),
+            "linear",
+            &["LangItem"],
+        );
+        let map = exp.symbol_map_arc();
+        assert_eq!(
+            map.entry_id_for_entity_symbol("e2").as_deref(),
+            Some("linear")
+        );
+        let m_sym = map.method_sym_for("linear", "LangItem", "broadcast");
+        let expr = format!(r#"e2.{m_sym}(message="stamp-pathless")"#);
+        let r = parse_with_cgs_layers_program(&expr, &stack, map.clone(), None, false)
+            .expect("parse stamped pathless Action");
+        let Expr::Invoke(inv) = &r.expr else {
+            panic!("expected Invoke, got {:?}", r.expr);
+        };
+        assert_eq!(inv.capability.as_str(), "langitem_broadcast");
+        assert_eq!(
+            inv.catalog_entry_id.as_deref(),
+            Some("linear"),
+            "pathless Action must preserve e2 linear stamp"
+        );
+
+        let zero = format!("e2.{m_sym}()");
+        let r0 = parse_with_cgs_layers_program(&zero, &stack, map, None, false)
+            .expect("parse stamped zero-arity pathless Action");
+        let Expr::Invoke(inv0) = &r0.expr else {
+            panic!("expected Invoke, got {:?}", r0.expr);
+        };
+        assert_eq!(
+            inv0.catalog_entry_id.as_deref(),
+            Some("linear"),
+            "zero-arity pathless Action must preserve e2 linear stamp"
+        );
+    }
+
+    /// Bare wire pathless Action under LangItem homographs must be AmbiguousEntityCatalog,
+    /// not UnknownEntity / session-token lies.
+    #[test]
+    fn federated_pathless_action_bare_wire_is_ambiguous_entity_catalog() {
+        use crate::symbol_tuning::TeachingExposureSession;
+        use std::path::Path;
+        use std::sync::Arc;
+
+        let dir = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.is_dir() {
+            return;
+        }
+        let mut cgs_github = load_schema_dir(dir).expect("matrix github");
+        cgs_github.bind_registry_entry_id("github");
+        let mut cgs_linear = load_schema_dir(dir).expect("matrix linear");
+        cgs_linear.bind_registry_entry_id("linear");
+        let layers = [&cgs_github, &cgs_linear];
+        let stack = cgs_layer_stack(&["github", "linear"], &layers);
+        let mut exp = TeachingExposureSession::new(&cgs_github, "github", &["LangItem"]);
+        exp.expose_entities(
+            &layers,
+            Arc::new(cgs_linear.clone()),
+            "linear",
+            &["LangItem"],
+        );
+        let map = exp.symbol_map_arc();
+        let m_sym = map.method_sym_for("linear", "LangItem", "broadcast");
+        let expr = format!(r#"LangItem.{m_sym}(message="x")"#);
+        let err = parse_with_cgs_layers_program(&expr, &stack, map, None, false)
+            .expect_err("bare LangItem pathless Action must not resolve under homograph");
+        assert!(
+            matches!(
+                err.kind,
+                ParseErrorKind::AmbiguousEntityCatalog { ref entity } if entity == "LangItem"
+            ),
+            "expected AmbiguousEntityCatalog(LangItem), got {err:?}"
         );
     }
 
@@ -6124,6 +6603,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -6133,15 +6614,144 @@ mod tests {
             kind: CapabilityKind::Get,
             domain: "Pet".into(),
             identity_key: None,
-            mapping: CapabilityMapping {
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
                     "path": [{"type": "var", "name": "name"}]
                 })
                 .into(),
-            },
-            input_schema: None,
+            }),
+            derived: None,
+            inputs: Default::default(),
             output_schema: None,
+            provides: vec![],
+            scope_aggregate_key_policy: Default::default(),
+            preflight: None,
+            discovery: None,
+            sanitizes: vec![],
+
+            deterministic: None,
+        })
+        .unwrap();
+        // Pathful Action: identity projects into CML path `name` (Lit|Binding parity).
+        cgs.add_capability(CapabilitySchema {
+            name: "pet_act".into(),
+            description: String::new(),
+            kind: CapabilityKind::Action,
+            domain: "Pet".into(),
+            identity_key: None,
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
+                template: serde_json::json!({
+                    "method": "POST",
+                    "path": [
+                        {"type": "literal", "value": "pets"},
+                        {"type": "var", "name": "name"},
+                        {"type": "literal", "value": "act"}
+                    ],
+                    "body": {
+                        "type": "object",
+                        "fields": [["message", {"type": "var", "name": "message"}]]
+                    }
+                })
+                .into(),
+            }),
+            derived: None,
+            inputs: crate::schema::CapabilityInputs {
+                arguments: Some(InputSchema {
+                    input_type: InputType::Object {
+                        fields: vec![InputFieldSchema {
+                            name: "message".into(),
+                            wire: InputFieldWire::Registry(
+                                crate::schema::ValueDomainKey::new("fx_str").unwrap(),
+                            ),
+                            required: true,
+                            description: None,
+                            default: None,
+                            wire_json_path: None,
+                            wire_array_element_key: None,
+                            sink_class: None,
+                        }],
+                        additional_fields: false,
+                    },
+                    validation: Default::default(),
+                    description: None,
+                    examples: vec![],
+                }),
+                ..Default::default()
+            },
+            output_schema: Some(OutputSchema {
+                output_type: OutputType::SideEffect {
+                    description: "acts on the pet".into(),
+                },
+                decoder: serde_json::json!({}),
+                idempotent: false,
+                reconcile: None,
+            }),
+            provides: vec![],
+            scope_aggregate_key_policy: Default::default(),
+            preflight: None,
+            discovery: None,
+            sanitizes: vec![],
+
+            deterministic: None,
+        })
+        .unwrap();
+        // Pathless Action: no path vars — bare `Pet.broadcast(...)` (teaching + binding typecheck).
+        cgs.add_capability(CapabilitySchema {
+            name: "pet_broadcast".into(),
+            description: String::new(),
+            kind: CapabilityKind::Action,
+            domain: "Pet".into(),
+            identity_key: None,
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
+                template: serde_json::json!({
+                    "method": "POST",
+                    "path": [
+                        {"type": "literal", "value": "pets"},
+                        {"type": "literal", "value": "broadcast"}
+                    ],
+                    "body": {
+                        "type": "object",
+                        "fields": [["message", {"type": "var", "name": "message"}]]
+                    }
+                })
+                .into(),
+            }),
+            derived: None,
+            inputs: crate::schema::CapabilityInputs {
+                arguments: Some(InputSchema {
+                    input_type: InputType::Object {
+                        fields: vec![InputFieldSchema {
+                            name: "message".into(),
+                            wire: InputFieldWire::Registry(
+                                crate::schema::ValueDomainKey::new("fx_str").unwrap(),
+                            ),
+                            required: false,
+                            description: None,
+                            default: None,
+                            wire_json_path: None,
+                            wire_array_element_key: None,
+                            sink_class: None,
+                        }],
+                        additional_fields: false,
+                    },
+                    validation: Default::default(),
+                    description: None,
+                    examples: vec![],
+                }),
+                ..Default::default()
+            },
+            output_schema: Some(OutputSchema {
+                output_type: OutputType::SideEffect {
+                    description: "broadcasts without path identity".into(),
+                },
+                decoder: serde_json::json!({}),
+                idempotent: false,
+                reconcile: None,
+            }),
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
@@ -6210,6 +6820,51 @@ mod tests {
     }
 
     #[test]
+    fn program_parse_identity_brace_with_binding_matches_paren_get() {
+        use std::collections::BTreeSet;
+        use std::sync::Arc;
+
+        let cgs = simple_name_id_get_fixture_cgs();
+        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
+        let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
+        let stack = test_layer(&cgs);
+        let mut labels = BTreeSet::new();
+        labels.insert("sess".into());
+        let paren = parse_with_cgs_layers_program(
+            "Pet(sess.name)",
+            &stack,
+            Arc::clone(&sym_map),
+            Some(&labels),
+            false,
+        )
+        .expect("paren binding get");
+        let braced = parse_with_cgs_layers_program(
+            "Pet{name=sess.name}",
+            &stack,
+            sym_map,
+            Some(&labels),
+            false,
+        )
+        .expect("brace binding get");
+        let (Expr::Get(paren_g), Expr::Get(brace_g)) = (&paren.expr, &braced.expr) else {
+            panic!("expected Gets, got {:?} / {:?}", paren.expr, braced.expr);
+        };
+        assert_eq!(
+            paren_g.reference.key, brace_g.reference.key,
+            "e#{{id_field=path}} must lower to the same Get identity as e#(path)"
+        );
+        assert!(
+            matches!(
+                &brace_g.reference.key,
+                EntityKey::Simple(crate::IdentitySlot::Binding(PlasmInputRef::NodeInput { node, path }))
+                    if node == "sess" && path.as_slice() == ["name"]
+            ),
+            "expected Binding(sess.name), got {:?}",
+            brace_g.reference.key
+        );
+    }
+
+    #[test]
     fn program_parse_positional_get_with_binding_uses_node_input() {
         use std::collections::BTreeSet;
         use std::sync::Arc;
@@ -6226,12 +6881,128 @@ mod tests {
         let Expr::Get(g) = r.expr else {
             panic!("expected Get, got {:?}", r.expr);
         };
-        let pv = g.path_vars.as_ref().expect("path_vars");
+        assert!(
+            matches!(
+                &g.reference.key,
+                EntityKey::Simple(crate::IdentitySlot::Binding(PlasmInputRef::NodeInput {
+                    node,
+                    path
+                })) if node == "pikachu" && path.is_empty()
+            ),
+            "expected Simple(Binding(pikachu)), got {:?}",
+            g.reference.key
+        );
+    }
+
+    /// Pathless Action + Lit|Binding receivers: same invoke body; identity only on Ref slots.
+    #[test]
+    fn binding_and_literal_method_invoke_ir_equivalent() {
+        use std::collections::BTreeSet;
+        use std::sync::Arc;
+
+        let cgs = simple_name_id_get_fixture_cgs();
+        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
+        let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
+        let stack = test_layer(&cgs);
+
+        let lit = parse_with_cgs_layers_program(
+            r#"Pet("pikachu").act(message="hi")"#,
+            &stack,
+            Arc::clone(&sym_map),
+            None,
+            false,
+        )
+        .expect("lit invoke");
+        let mut labels = BTreeSet::new();
+        labels.insert("principal".into());
+        let bind = parse_with_cgs_layers_program(
+            r#"Pet(principal).act(message="hi")"#,
+            &stack,
+            sym_map,
+            Some(&labels),
+            false,
+        )
+        .expect("binding invoke");
+
+        let (Expr::Invoke(lit_inv), Expr::Invoke(bind_inv)) = (&lit.expr, &bind.expr) else {
+            panic!("expected Invokes, got {:?} / {:?}", lit.expr, bind.expr);
+        };
+        assert_eq!(lit_inv.capability, bind_inv.capability);
+        assert_eq!(
+            lit_inv.input.as_ref().map(|i| i.to_value()),
+            bind_inv.input.as_ref().map(|i| i.to_value()),
+            "body args must match — no invented path keys"
+        );
+        if let Some(Value::Object(m)) = lit_inv.input.as_ref().map(|i| i.to_value()) {
+            assert!(
+                !m.contains_key("pet_id") && !m.contains_key("name"),
+                "identity must not be smuggled into body: {m:?}"
+            );
+        }
         assert!(matches!(
-            pv.get("pet_id"),
-            Some(Value::PlasmInputRef(PlasmInputRef::NodeInput { node, path }))
-                if node == "pikachu" && path.is_empty()
+            &lit_inv.target.key,
+            EntityKey::Simple(crate::IdentitySlot::Lit(id)) if id.as_str() == "pikachu"
         ));
+        assert!(matches!(
+            &bind_inv.target.key,
+            EntityKey::Simple(crate::IdentitySlot::Binding(PlasmInputRef::NodeInput { node, path }))
+                if node == "principal" && path.is_empty()
+        ));
+        crate::type_checker::type_check_expr(&lit.expr, &cgs).unwrap();
+        crate::type_checker::type_check_expr(&bind.expr, &cgs).unwrap();
+    }
+
+    #[test]
+    fn pathless_action_bare_receiver_typechecks() {
+        use std::collections::BTreeSet;
+        use std::sync::Arc;
+
+        let cgs = simple_name_id_get_fixture_cgs();
+        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
+        let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
+        let stack = test_layer(&cgs);
+        let r = parse_with_cgs_layers_program(
+            r#"Pet.broadcast(message="hi")"#,
+            &stack,
+            Arc::clone(&sym_map),
+            None,
+            false,
+        )
+        .expect("bare pathless Action");
+        let Expr::Invoke(inv) = &r.expr else {
+            panic!("expected Invoke, got {:?}", r.expr);
+        };
+        assert!(
+            inv.target.is_pathless_nullary()
+                || inv
+                    .target
+                    .simple_id()
+                    .is_some_and(|s| s.as_str().is_empty()),
+            "bare pathless Action should not invent identity, got {:?}",
+            inv.target
+        );
+        crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
+
+        let mut labels = BTreeSet::new();
+        labels.insert("principal".into());
+        let bind = parse_with_cgs_layers_program(
+            r#"Pet(principal).broadcast(message="hi")"#,
+            &stack,
+            sym_map,
+            Some(&labels),
+            false,
+        )
+        .expect("binding pathless Action");
+        let Expr::Invoke(bind_inv) = &bind.expr else {
+            panic!("expected Invoke");
+        };
+        if let Some(Value::Object(m)) = bind_inv.input.as_ref().map(|i| i.to_value()) {
+            assert!(
+                !m.contains_key("pet_id") && !m.contains_key("name"),
+                "pathless+binding must not invent path keys in body: {m:?}"
+            );
+        }
+        crate::type_checker::type_check_expr(&bind.expr, &cgs).unwrap();
     }
 
     #[test]

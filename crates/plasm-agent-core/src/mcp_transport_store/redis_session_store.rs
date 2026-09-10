@@ -173,7 +173,7 @@ mod tests {
     use crate::mcp_server::PlasmMcpHandler;
     use crate::run_artifacts::RunArtifactStore;
     use crate::server_state::CatalogBootstrap;
-    use plasm_core::discovery::InMemoryCgsRegistry;
+    use plasm_core::discovery::CgsRegistry;
     use plasm_core::loader::load_schema_dir;
     use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
     use rust_mcp_sdk::schema::{Implementation, InitializeResult};
@@ -183,7 +183,7 @@ mod tests {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = std::sync::Arc::new(load_schema_dir(&dir).expect("plasm_language_matrix"));
-        let reg = InMemoryCgsRegistry::from_pairs(vec![(
+        let reg = CgsRegistry::from_pairs(vec![(
             "langmatrix".into(),
             "Lang Matrix".into(),
             vec!["matrix".into()],

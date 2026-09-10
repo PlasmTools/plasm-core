@@ -1,0 +1,499 @@
+//! Planning-IR assert arms (auto-split from monolith).
+
+use super::super::ir_helpers::*;
+use super::super::row::MatrixRow;
+use plasm_agent::plasm_plan::{AggregateFunction, ComputeOp, ComputeTemplate};
+use plasm_agent::plasm_plan_run::DryPlasmPlanEvaluation;
+use plasm_core::{CompOp, Expr, Predicate};
+
+pub(crate) fn assert_planning_query_pipe(
+    row: &MatrixRow,
+    surfaces: &[Expr],
+    computes: &[ComputeTemplate],
+    rel: &[Expr],
+    _dry: &DryPlasmPlanEvaluation,
+    comp: &serde_json::Value,
+) -> Result<Option<()>, String> {
+    match row.id {
+        "lang_query_all" => {
+            let q = first_query(surfaces)?;
+            if q.entity != "LangItem" {
+                return Err(format!("expected LangItem query, got {:?}", q.entity));
+            }
+            if q.predicate.is_some() {
+                return Err(format!(
+                    "expected unpredicated query, got {:?}",
+                    q.predicate
+                ));
+            }
+            if q.capability_name.as_deref() != Some("langitem_query") {
+                return Err(format!(
+                    "expected explicit langitem_query capability, got {:?}",
+                    q.capability_name
+                ));
+            }
+            if !computes.is_empty() {
+                return Err(format!(
+                    "expected no compute stages, got {}",
+                    computes.len()
+                ));
+            }
+        }
+        "lang_surface_line_limit" | "lang_bind_first_limit" => {
+            let q = first_query(surfaces)?;
+            if q.entity != "LangItem" || q.predicate.is_some() {
+                return Err(format!("unexpected query IR: {q:?}"));
+            }
+            let want = if row.id == "lang_surface_line_limit" {
+                2usize
+            } else {
+                3usize
+            };
+            let Some(ComputeOp::Limit { count }) = computes
+                .iter()
+                .map(|c| &c.op)
+                .find(|o| matches!(o, ComputeOp::Limit { .. }))
+            else {
+                return Err(format!("expected Limit compute, got {:?}", computes));
+            };
+            if *count != want {
+                return Err(format!("expected limit {want}, got {count}"));
+            }
+        }
+        "lang_search" => {
+            let q = first_query(surfaces)?;
+            if q.entity != "LangItem" {
+                return Err(format!("expected LangItem, got {:?}", q.entity));
+            }
+            let Some(cap) = q.capability_name.as_ref() else {
+                return Err("search query should pin a Search capability".into());
+            };
+            if cap.as_str() != "langitem_search" {
+                return Err(format!("expected langitem_search capability, got {cap}"));
+            }
+            let Some(pred) = q.predicate.as_ref() else {
+                return Err("expected search predicate".into());
+            };
+            let Predicate::Comparison {
+                field,
+                op: CompOp::Eq,
+                value,
+            } = pred
+            else {
+                return Err(format!("expected equality predicate, got {pred:?}"));
+            };
+            if field != "q" {
+                return Err(format!("expected search field q, got {field}"));
+            }
+            if tcv_string(value).as_deref() != Some("Alpha") {
+                return Err(format!(
+                    "expected Alpha search text, got {:?}",
+                    tcv_string(value)
+                ));
+            }
+        }
+        "lang_get_by_id" => {
+            if !surfaces
+                .iter()
+                .any(|e| expr_contains_get_langitem(e, Some("i1")))
+            {
+                return Err(format!(
+                    "expected LangItem(i1) Get IR, got {:?}",
+                    surfaces.first()
+                ));
+            }
+        }
+        "lang_predicate_brace_owner" => {
+            let q = first_query(surfaces)?;
+            // `capability_name` may be inferred later in the pipeline; brace IR stability is the predicate.
+            let Some(pred) = q.predicate.as_ref() else {
+                return Err("expected owner predicate".into());
+            };
+            let Predicate::Comparison {
+                field,
+                op: CompOp::Eq,
+                value,
+            } = pred
+            else {
+                return Err(format!("expected owner eq, got {pred:?}"));
+            };
+            if field != "owner" || tcv_string(value).as_deref() != Some("alice") {
+                return Err(format!("unexpected predicate: {pred:?}"));
+            }
+        }
+        "lang_predicate_brace_score_cmp" => {
+            if !computes
+                .iter()
+                .any(|c| matches!(c.op, ComputeOp::Filter { .. }))
+            {
+                return Err(format!("expected row Filter compute, got {computes:?}"));
+            }
+        }
+        "lang_limit_projection" => {
+            let q = first_query(surfaces)?;
+            if q.entity != "LangItem" {
+                return Err(format!("expected LangItem, got {:?}", q.entity));
+            }
+            let Some(ComputeOp::Limit { count: 1 }) = computes
+                .iter()
+                .map(|c| &c.op)
+                .find(|o| matches!(o, ComputeOp::Limit { .. }))
+            else {
+                return Err(format!("expected Limit(1), got {:?}", computes));
+            };
+        }
+        "lang_sort_limit" => {
+            let Some(ComputeOp::Sort {
+                descending: true, ..
+            }) = computes
+                .iter()
+                .map(|c| &c.op)
+                .find(|o| matches!(o, ComputeOp::Sort { .. }))
+            else {
+                return Err(format!("expected descending Sort, got {:?}", computes));
+            };
+            let Some(ComputeOp::Limit { count: 2 }) = computes
+                .iter()
+                .map(|c| &c.op)
+                .find(|o| matches!(o, ComputeOp::Limit { .. }))
+            else {
+                return Err(format!("expected Limit(2), got {:?}", computes));
+            };
+        }
+        "lang_sort_asc" => {
+            let Some(ComputeOp::Sort {
+                descending: false, ..
+            }) = computes
+                .iter()
+                .map(|c| &c.op)
+                .find(|o| matches!(o, ComputeOp::Sort { .. }))
+            else {
+                return Err(format!("expected ascending Sort, got {:?}", computes));
+            };
+            let Some(ComputeOp::Limit { count: 3 }) = computes
+                .iter()
+                .map(|c| &c.op)
+                .find(|o| matches!(o, ComputeOp::Limit { .. }))
+            else {
+                return Err(format!("expected Limit(3), got {:?}", computes));
+            };
+        }
+        "lang_aggregate" => {
+            let Some(ComputeTemplate {
+                op: ComputeOp::Aggregate { aggregates },
+                ..
+            }) = computes
+                .iter()
+                .find(|c| matches!(c.op, ComputeOp::Aggregate { .. }))
+            else {
+                return Err(format!("expected Aggregate compute, got {:?}", computes));
+            };
+            let Some(spec) = aggregates.iter().find(|a| a.name.as_str() == "n") else {
+                return Err(format!(
+                    "expected aggregate binding n, got {:?}",
+                    aggregates
+                ));
+            };
+            if spec.function != AggregateFunction::Count || spec.field.is_some() {
+                return Err(format!("unexpected aggregate spec: {spec:?}"));
+            }
+        }
+        "lang_aggregate_sugar_count" => {
+            let Some(ComputeTemplate {
+                op: ComputeOp::Aggregate { aggregates },
+                ..
+            }) = computes
+                .iter()
+                .find(|c| matches!(c.op, ComputeOp::Aggregate { .. }))
+            else {
+                return Err(format!("expected Aggregate compute, got {:?}", computes));
+            };
+            let Some(spec) = aggregates.iter().find(|a| a.name.as_str() == "count") else {
+                return Err(format!(
+                    "expected sugar binding count, got {:?}",
+                    aggregates
+                ));
+            };
+            if spec.function != AggregateFunction::Count || spec.field.is_some() {
+                return Err(format!("unexpected aggregate spec: {spec:?}"));
+            }
+        }
+        "lang_aggregate_sum" => {
+            let Some(ComputeTemplate {
+                op: ComputeOp::Aggregate { aggregates },
+                ..
+            }) = computes
+                .iter()
+                .find(|c| matches!(c.op, ComputeOp::Aggregate { .. }))
+            else {
+                return Err(format!("expected Aggregate compute, got {:?}", computes));
+            };
+            let Some(spec) = aggregates.iter().find(|a| a.name.as_str() == "t") else {
+                return Err(format!(
+                    "expected aggregate binding t, got {:?}",
+                    aggregates
+                ));
+            };
+            if spec.function != AggregateFunction::Sum {
+                return Err(format!("expected sum, got {:?}", spec.function));
+            }
+            if spec.field.as_ref().is_none_or(|p| p.dotted() != "score") {
+                return Err(format!("expected sum(score), got {:?}", spec.field));
+            }
+        }
+        "lang_group_by_sugar" => {
+            let Some(ComputeTemplate {
+                op: ComputeOp::GroupBy { keys, aggregates },
+                ..
+            }) = computes
+                .iter()
+                .find(|c| matches!(c.op, ComputeOp::GroupBy { .. }))
+            else {
+                return Err(format!("expected GroupBy compute, got {:?}", computes));
+            };
+            if keys.len() != 1 || keys[0].dotted() != "owner" {
+                return Err(format!("expected key owner, got {:?}", keys));
+            }
+            let Some(spec) = aggregates.iter().find(|a| a.name.as_str() == "count") else {
+                return Err(format!("expected count=count sugar, got {:?}", aggregates));
+            };
+            if spec.function != AggregateFunction::Count {
+                return Err(format!("unexpected aggregate: {spec:?}"));
+            }
+        }
+        "lang_group_by_multi" => {
+            let Some(ComputeTemplate {
+                op: ComputeOp::GroupBy { keys, aggregates },
+                ..
+            }) = computes
+                .iter()
+                .find(|c| matches!(c.op, ComputeOp::GroupBy { .. }))
+            else {
+                return Err(format!("expected GroupBy compute, got {:?}", computes));
+            };
+            if keys.len() != 2 {
+                return Err(format!("expected two group keys, got {:?}", keys));
+            }
+            if keys[0].dotted() != "owner" || keys[1].dotted() != "score" {
+                return Err(format!("expected owner+score keys, got {:?}", keys));
+            }
+            if !aggregates.iter().any(|a| a.name.as_str() == "n") {
+                return Err(format!("expected aggregate n, got {:?}", aggregates));
+            }
+        }
+        "lang_row_filter_brace" | "lang_row_filter_paren" => {
+            if !computes
+                .iter()
+                .any(|c| matches!(c.op, ComputeOp::Filter { .. }))
+            {
+                return Err(format!("expected Filter compute, got {:?}", computes));
+            }
+        }
+        "lang_with_mul" | "lang_with_div" | "lang_with_concat" | "lang_with_when_len" => {
+            if !computes
+                .iter()
+                .any(|c| matches!(c.op, ComputeOp::With { .. }))
+            {
+                return Err(format!("expected With compute, got {:?}", computes));
+            }
+        }
+        "lang_group_by" => {
+            let Some(ComputeTemplate {
+                op: ComputeOp::GroupBy { keys, aggregates },
+                ..
+            }) = computes
+                .iter()
+                .find(|c| matches!(c.op, ComputeOp::GroupBy { .. }))
+            else {
+                return Err(format!("expected GroupBy compute, got {:?}", computes));
+            };
+            if keys.len() != 1 || keys[0].dotted() != "owner" {
+                return Err(format!("expected group key owner, got {:?}", keys));
+            }
+            let Some(spec) = aggregates.iter().find(|a| a.name.as_str() == "n") else {
+                return Err(format!("expected aggregate n, got {:?}", aggregates));
+            };
+            if spec.function != AggregateFunction::Count {
+                return Err(format!("unexpected aggregate: {spec:?}"));
+            }
+        }
+        "lang_group_by_aggregate_chain" => {
+            let Some(ComputeTemplate {
+                op: ComputeOp::GroupBy { keys, aggregates },
+                ..
+            }) = computes
+                .iter()
+                .find(|c| matches!(c.op, ComputeOp::GroupBy { .. }))
+            else {
+                return Err(format!("expected GroupBy compute, got {:?}", computes));
+            };
+            if keys.len() != 2 {
+                return Err(format!("expected two group keys, got {:?}", keys));
+            }
+            if keys[0].dotted() != "owner" || keys[1].dotted() != "score" {
+                return Err(format!("expected owner+score keys, got {:?}", keys));
+            }
+            if !aggregates.iter().any(|a| a.name.as_str() == "n") {
+                return Err(format!("expected aggregate n, got {:?}", aggregates));
+            }
+            if !aggregates.iter().any(|a| a.name.as_str() == "title") {
+                return Err(format!("expected aggregate title, got {:?}", aggregates));
+            }
+        }
+        "lang_search_then_group_by" => {
+            let Some(ComputeTemplate {
+                op: ComputeOp::GroupBy { keys, .. },
+                ..
+            }) = computes
+                .iter()
+                .find(|c| matches!(c.op, ComputeOp::GroupBy { .. }))
+            else {
+                return Err(format!("expected GroupBy after search, got {:?}", computes));
+            };
+            if keys.len() != 1 || keys[0].dotted() != "owner" {
+                return Err(format!(
+                    "expected group key owner on search rows, got {:?}",
+                    keys
+                ));
+            }
+            let q = first_query(surfaces)?;
+            if q.capability_name.as_deref() != Some("langitem_search") {
+                return Err(format!(
+                    "expected langitem_search upstream, got {:?}",
+                    q.capability_name
+                ));
+            }
+        }
+        "lang_search_then_group_by_team_key" => {
+            let Some(ComputeTemplate {
+                op: ComputeOp::GroupBy { keys, .. },
+                ..
+            }) = computes
+                .iter()
+                .find(|c| matches!(c.op, ComputeOp::GroupBy { .. }))
+            else {
+                return Err(format!("expected GroupBy after search, got {:?}", computes));
+            };
+            if keys.len() != 1 || keys[0].dotted() != "team_key" {
+                return Err(format!(
+                    "expected group key team_key on search rows, got {:?}",
+                    keys
+                ));
+            }
+            let q = first_query(surfaces)?;
+            if q.capability_name.as_deref() != Some("langitem_search") {
+                return Err(format!(
+                    "expected langitem_search upstream, got {:?}",
+                    q.capability_name
+                ));
+            }
+        }
+        "lang_relation_lines" => {
+            if !surfaces
+                .iter()
+                .any(|e| expr_contains_get_langitem(e, Some("i1")))
+            {
+                return Err(format!(
+                    "expected LangItem(i1) in surface IR (possibly under Chain), got {:?}",
+                    surfaces
+                ));
+            }
+            let pool: Vec<&Expr> = surfaces.iter().chain(rel.iter()).collect();
+            // `from_parent_get` often lowers through `.lines` chain navigation; LangLine may appear in
+            // the explicit continuation rather than as a bare `Query { entity: LangLine }` root.
+            if !pool
+                .iter()
+                .copied()
+                .any(|e| expr_chain_selects_lines(e) || expr_mentions_langline(e))
+            {
+                return Err(format!(
+                    "expected `.lines` chain and/or LangLine IR, got surfaces={surfaces:?} rel={rel:?}"
+                ));
+            }
+        }
+        "lang_query_singleton" => {
+            let Some(ComputeOp::Limit { count: 5 }) = computes
+                .iter()
+                .map(|c| &c.op)
+                .find(|o| matches!(o, ComputeOp::Limit { .. }))
+            else {
+                return Err(format!("expected Limit(5), got {:?}", computes));
+            };
+            let q = first_query(surfaces)?;
+            if q.entity != "LangItem" || q.predicate.is_some() {
+                return Err(format!(
+                    "expected bare LangItem query before singleton tail, got {q:?}"
+                ));
+            }
+            // `.singleton()` is primarily a runtime cardinality proof + relation constraint; it does not
+            // reliably surface as `result_shape: single` on serialized plan nodes for every lowering.
+        }
+        "lang_relation_tags_scoped" => {
+            let tags_ir = surfaces
+                .iter()
+                .chain(rel.iter())
+                .any(expr_chain_selects_tags);
+            if !tags_ir {
+                return Err(format!(
+                    "expected `.tags` relation chain IR, got surfaces={surfaces:?} rel={rel:?}",
+                ));
+            }
+            let rel_plan = comp_relation_named(comp, "tags")
+                .ok_or_else(|| "expected `.tags` relation on LangItem(i1).tags".to_string())?;
+            if rel_plan
+                .pointer("/materialize/kind")
+                .and_then(|k| k.as_str())
+                != Some("prefer_from_parent_get")
+            {
+                return Err(format!(
+                    "expected prefer_from_parent_get on scoped tags row, got {rel_plan:?}"
+                ));
+            }
+        }
+        "lang_bindings_render" => {
+            let Some(ComputeTemplate {
+                op: ComputeOp::Render { .. },
+                ..
+            }) = computes
+                .iter()
+                .find(|c| matches!(c.op, ComputeOp::Render { .. }))
+            else {
+                return Err(format!("expected Render compute, got {:?}", computes));
+            };
+        }
+        "lang_cross_binding_render" => {
+            let Some(ComputeTemplate {
+                op: ComputeOp::Render {
+                    render_bindings, ..
+                },
+                ..
+            }) = computes
+                .iter()
+                .find(|c| matches!(c.op, ComputeOp::Render { .. }))
+            else {
+                return Err(format!("expected Render compute, got {:?}", computes));
+            };
+            let labels: Vec<_> = render_bindings.iter().map(|l| l.as_str()).collect();
+            if labels != ["a"] {
+                return Err(format!("expected render_bindings [a], got {:?}", labels));
+            }
+        }
+        "lang_render_content_into_create" => {
+            let has_create_node = comp_has_invoke_plan_kind(comp, "create");
+            if !has_create_node {
+                return Err(format!(
+                    "expected a comp invoke `create` step (Create may be staged with `ir_template`, not dry `ir.expr`), got {:?}",
+                    comp.get("steps")
+                ));
+            }
+            if !computes
+                .iter()
+                .any(|c| matches!(c.op, ComputeOp::Render { .. }))
+            {
+                return Err("expected bracket Render compute before create".into());
+            }
+        }
+        _ => return Ok(None),
+    }
+    Ok(Some(()))
+}

@@ -1,367 +1,329 @@
-# Notion API — CML HTTP mappings
-#
-# Base URL: Notion REST (api.notion.com — set HTTPS origin with --backend).
-# All paths start with v1/ as the first segment.
-#
-# Notion-Version: 2026-03-11 (current as of 2026-03; required on every request).
-#
-# Pagination:
-#   GET endpoints (user_query, comment_query) use style: cursor.
-#   POST endpoints (database_query, search) return a single page ≤100 results.
-#   Cursor-in-body pagination for POST is not yet supported by the runtime.
-#
-# Content strategy:
-#   Use page_get_markdown / page_update_markdown instead of the block API.
-#   GET /v1/pages/{id}/markdown returns the full page as Enhanced Markdown in one call.
-
-# ── Pages ─────────────────────────────────────────────────────────────────────
-
 page_get:
   method: GET
   path:
-    - type: literal
-      value: v1
-    - type: literal
-      value: pages
-    - type: var
-      name: id
+  - type: literal
+    value: v1
+  - type: literal
+    value: pages
+  - type: var
+    name: id
   headers:
     type: object
     fields:
-      - - Notion-Version
-        - type: const
-          value: "2026-03-11"
-
+    - - Notion-Version
+      - type: const
+        value: '2026-03-11'
 page_create:
   method: POST
   path:
-    - type: literal
-      value: v1
-    - type: literal
-      value: pages
+  - type: literal
+    value: v1
+  - type: literal
+    value: pages
   body:
     type: var
     name: input
   headers:
     type: object
     fields:
-      - - Notion-Version
-        - type: const
-          value: "2026-03-11"
-
+    - - Notion-Version
+      - type: const
+        value: '2026-03-11'
 page_update:
   method: PATCH
   path:
-    - type: literal
-      value: v1
-    - type: literal
-      value: pages
-    - type: var
-      name: id
+  - type: literal
+    value: v1
+  - type: literal
+    value: pages
+  - type: var
+    name: id
   body:
     type: var
     name: input
   headers:
     type: object
     fields:
-      - - Notion-Version
-        - type: const
-          value: "2026-03-11"
-
+    - - Notion-Version
+      - type: const
+        value: '2026-03-11'
 page_trash:
   method: PATCH
   path:
-    - type: literal
-      value: v1
-    - type: literal
-      value: pages
-    - type: var
-      name: id
+  - type: literal
+    value: v1
+  - type: literal
+    value: pages
+  - type: var
+    name: id
   body:
     type: object
     fields:
-      - - in_trash
-        - type: const
-          value: true
+    - - in_trash
+      - type: const
+        value: true
   headers:
     type: object
     fields:
-      - - Notion-Version
-        - type: const
-          value: "2026-03-11"
-
+    - - Notion-Version
+      - type: const
+        value: '2026-03-11'
 page_get_markdown:
-  # GET /v1/pages/{id}/markdown
-  # Returns a page_markdown object: { object, id, markdown, truncated, unknown_block_ids }
-  # Requires: integration must have read content capabilities.
-  # Optional query param include_transcript=true to include meeting note transcripts.
   method: GET
   path:
-    - type: literal
-      value: v1
-    - type: literal
-      value: pages
-    - type: var
-      name: id
-    - type: literal
-      value: markdown
+  - type: literal
+    value: v1
+  - type: literal
+    value: pages
+  - type: var
+    name: id
+  - type: literal
+    value: markdown
   headers:
     type: object
     fields:
-      - - Notion-Version
-        - type: const
-          value: "2026-03-11"
-
+    - - Notion-Version
+      - type: const
+        value: '2026-03-11'
 page_update_markdown:
-  # PATCH /v1/pages/{id}/markdown
-  # Body is a discriminated union — pass input directly:
-  #   { "type": "update_content", "update_content": { "content_updates": [{"old_str": "...", "new_str": "..."}] } }
-  #   { "type": "replace_content", "replace_content": { "new_str": "# Full new content\n..." } }
-  # Returns a page_markdown object with the updated content.
-  # Requires: integration must have update content capabilities.
   method: PATCH
   path:
-    - type: literal
-      value: v1
-    - type: literal
-      value: pages
-    - type: var
-      name: id
-    - type: literal
-      value: markdown
+  - type: literal
+    value: v1
+  - type: literal
+    value: pages
+  - type: var
+    name: id
+  - type: literal
+    value: markdown
   body:
     type: var
     name: input
   headers:
     type: object
     fields:
-      - - Notion-Version
-        - type: const
-          value: "2026-03-11"
-
-# ── Databases ─────────────────────────────────────────────────────────────────
-
+    - - Notion-Version
+      - type: const
+        value: '2026-03-11'
 database_get:
   method: GET
   path:
-    - type: literal
-      value: v1
-    - type: literal
-      value: databases
-    - type: var
-      name: id
+  - type: literal
+    value: v1
+  - type: literal
+    value: databases
+  - type: var
+    name: id
   headers:
     type: object
     fields:
-      - - Notion-Version
-        - type: const
-          value: "2026-03-11"
-
+    - - Notion-Version
+      - type: const
+        value: '2026-03-11'
 database_query:
-  # POST /v1/databases/{database_id}/query
   method: POST
   path:
-    - type: literal
-      value: v1
-    - type: literal
-      value: databases
-    - type: var
-      name: database_id
-    - type: literal
-      value: query
+  - type: literal
+    value: v1
+  - type: if
+    condition: &id001
+      type: exists
+      var: database_id
+    then_expr:
+      type: format
+      template: databases/{database_id}/query
+      vars:
+        database_id:
+          type: var
+          name: database_id
+    else_expr:
+      type: const
+      value: search
   body:
-    type: object
-    fields:
+    type: if
+    condition: *id001
+    then_expr:
+      type: object
+      fields:
       - - page_size
+        - type: var
+          name: page_size
+          if: { exists: page_size }
+    else_expr:
+      type: object
+      fields:
+      - - query
+        - type: var
+          name: query
+          if: { exists: query }
+      - - filter
+        - type: object
+          fields:
+          - - property
+            - type: const
+              value: object
+          - - value
+            - type: const
+              value: page
+      - - sort
         - type: if
-          condition: { type: exists, var: page_size }
-          then_expr: { type: var, name: page_size }
-          else_expr: { type: const, value: null }
+          condition:
+            type: exists
+            var: sort_direction
+          then_expr:
+            type: object
+            fields:
+            - - timestamp
+              - type: const
+                value: last_edited_time
+            - - direction
+              - type: var
+                name: sort_direction
+          else_expr:
+            type: const
+            value: null
+      - - page_size
+        - type: var
+          name: page_size
+          if: { exists: page_size }
   headers:
     type: object
     fields:
-      - - Notion-Version
-        - type: const
-          value: "2026-03-11"
-
-# ── Users ──────────────────────────────────────────────────────────────────────
-
+    - - Notion-Version
+      - type: const
+        value: '2026-03-11'
 user_get:
   method: GET
   path:
-    - type: literal
-      value: v1
-    - type: literal
-      value: users
-    - type: var
-      name: id
+  - type: literal
+    value: v1
+  - type: literal
+    value: users
+  - type: var
+    name: id
   headers:
     type: object
     fields:
-      - - Notion-Version
-        - type: const
-          value: "2026-03-11"
-
+    - - Notion-Version
+      - type: const
+        value: '2026-03-11'
 user_query:
   method: GET
   path:
-    - type: literal
-      value: v1
-    - type: literal
-      value: users
+  - type: literal
+    value: v1
+  - type: literal
+    value: users
   pagination:
     params:
-      start_cursor: {from_response: next_cursor}
-      page_size: {fixed: 100}
-    stop_when: {field: has_more, eq: false}
+      start_cursor:
+        from_response: next_cursor
+      page_size:
+        fixed: 100
+        role: page_size
+    stop_when:
+      field: has_more
+      eq: false
+    strategy: cursor
   headers:
     type: object
     fields:
-      - - Notion-Version
-        - type: const
-          value: "2026-03-11"
-
-# ── Comments ──────────────────────────────────────────────────────────────────
-
+    - - Notion-Version
+      - type: const
+        value: '2026-03-11'
 comment_query:
-  # GET /v1/comments?block_id={block_id}  (block_id accepts page IDs too)
   method: GET
   path:
-    - type: literal
-      value: v1
-    - type: literal
-      value: comments
+  - type: literal
+    value: v1
+  - type: literal
+    value: comments
   query:
     type: object
     fields:
-      - - block_id
-        - type: var
-          name: block_id
+    - - block_id
+      - type: var
+        name: block_id
   pagination:
     params:
-      start_cursor: {from_response: next_cursor}
-      page_size: {fixed: 100}
-    stop_when: {field: has_more, eq: false}
+      start_cursor:
+        from_response: next_cursor
+      page_size:
+        fixed: 100
+        role: page_size
+    stop_when:
+      field: has_more
+      eq: false
+    strategy: cursor
   headers:
     type: object
     fields:
-      - - Notion-Version
-        - type: const
-          value: "2026-03-11"
-
+    - - Notion-Version
+      - type: const
+        value: '2026-03-11'
 comment_create:
   method: POST
   path:
-    - type: literal
-      value: v1
-    - type: literal
-      value: comments
+  - type: literal
+    value: v1
+  - type: literal
+    value: comments
   body:
     type: var
     name: input
   headers:
     type: object
     fields:
-      - - Notion-Version
-        - type: const
-          value: "2026-03-11"
-
-# ── Search ────────────────────────────────────────────────────────────────────
-
-page_search:
-  method: POST
-  path:
-    - type: literal
-      value: v1
-    - type: literal
-      value: search
-  body:
-    type: object
-    fields:
-      - - query
-        - type: if
-          condition: { type: exists, var: query }
-          then_expr: { type: var, name: query }
-          else_expr: { type: const, value: null }
-      - - filter
-        - type: object
-          fields:
-            - - property
-              - type: const
-                value: object
-            - - value
-              - type: const
-                value: page
-      - - sort
-        - type: if
-          condition: { type: exists, var: sort_direction }
-          then_expr:
-            type: object
-            fields:
-              - - timestamp
-                - type: const
-                  value: last_edited_time
-              - - direction
-                - type: var
-                  name: sort_direction
-          else_expr: { type: const, value: null }
-      - - page_size
-        - type: if
-          condition: { type: exists, var: page_size }
-          then_expr: { type: var, name: page_size }
-          else_expr: { type: const, value: null }
-  headers:
-    type: object
-    fields:
-      - - Notion-Version
-        - type: const
-          value: "2026-03-11"
-
+    - - Notion-Version
+      - type: const
+        value: '2026-03-11'
 database_search:
   method: POST
   path:
-    - type: literal
-      value: v1
-    - type: literal
-      value: search
+  - type: literal
+    value: v1
+  - type: literal
+    value: search
   body:
     type: object
     fields:
-      - - query
-        - type: if
-          condition: { type: exists, var: query }
-          then_expr: { type: var, name: query }
-          else_expr: { type: const, value: null }
-      - - filter
-        - type: object
+    - - query
+      - type: var
+        name: query
+        if: { exists: query }
+    - - filter
+      - type: object
+        fields:
+        - - property
+          - type: const
+            value: object
+        - - value
+          - type: const
+            value: database
+    - - sort
+      - type: if
+        condition:
+          type: exists
+          var: sort_direction
+        then_expr:
+          type: object
           fields:
-            - - property
-              - type: const
-                value: object
-            - - value
-              - type: const
-                value: database
-      - - sort
-        - type: if
-          condition: { type: exists, var: sort_direction }
-          then_expr:
-            type: object
-            fields:
-              - - timestamp
-                - type: const
-                  value: last_edited_time
-              - - direction
-                - type: var
-                  name: sort_direction
-          else_expr: { type: const, value: null }
-      - - page_size
-        - type: if
-          condition: { type: exists, var: page_size }
-          then_expr: { type: var, name: page_size }
-          else_expr: { type: const, value: null }
+          - - timestamp
+            - type: const
+              value: last_edited_time
+          - - direction
+            - type: var
+              name: sort_direction
+        else_expr:
+          type: const
+          value: null
+    - - page_size
+      - type: var
+        name: page_size
+        if: { exists: page_size }
   headers:
     type: object
     fields:
-      - - Notion-Version
-        - type: const
-          value: "2026-03-11"
+    - - Notion-Version
+      - type: const
+        value: '2026-03-11'

@@ -69,7 +69,7 @@ fn plasm_remote_help_ok() {
     assert!(run.status.success());
     let run_help = String::from_utf8_lossy(&run.stdout);
     assert!(
-        run_help.contains("plan") && run_help.contains("plain") && run_help.contains("toon"),
+        run_help.contains("plan") && run_help.contains("plain") && run_help.contains("json"),
         "run should list value_enum choices: {run_help}"
     );
 }

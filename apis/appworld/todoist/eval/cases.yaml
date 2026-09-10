@@ -1,0 +1,23 @@
+- id: login_todoist
+  schema: todoist
+  goal: Login to todoist and get an access token
+  tags: [action, auth]
+  covers: [invoke]
+  expect:
+    entities_any: [AuthSession]
+
+- id: list_projects
+  schema: todoist
+  goal: List all my Todoist projects
+  tags: [query]
+  covers: [query]
+  expect:
+    entities_any: [Project]
+
+- id: create_task
+  schema: todoist
+  goal: Create a task titled Buy milk in a project
+  tags: [create]
+  covers: [create]
+  expect:
+    entities_any: [Task]

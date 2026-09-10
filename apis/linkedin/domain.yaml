@@ -1,4 +1,4 @@
-version: 3
+version: 4
 http_backend: https://api.linkedin.com
 data_classes:
   untrusted:
@@ -93,10 +93,11 @@ entities:
         cardinality: many
         materialize:
           kind: query_scoped
-          capability: ugc_post_query_for_organization
+          capability: ugc_post_query_for_member
           param: organization
   UgcPost:
     id_field: id
+    primary_query: ugc_post_query_for_member
     description: User-generated content post in the LinkedIn feed graph.
     fields:
       id:
@@ -154,57 +155,33 @@ capabilities:
     - localizedLastName
     - localizedHeadline
     - vanityName
-  ugc_post_query:
-    kind: query
-    entity: UgcPost
-    description: Finder query for posts using an explicit Rest.li authors token.
-    provides:
-    - id
-    - authorUrn
-    - lifecycleState
-    parameters:
-    - name: authors
-      value_ref: nv_ugc_post_query_authors
-      required: true
-      role: scope
-    - name: sortBy
-      value_ref: nv_wire_sel_8874eda015d84434
-      required: false
-      role: sort
   ugc_post_query_for_member:
     kind: query
     entity: UgcPost
-    description: Query posts authored by a specific member.
+    description: List UgcPost by shelf (ugc_post | ugc_post_query_for_member | ugc_post_query_for_member).
     provides:
     - id
     - authorUrn
     - lifecycleState
-    parameters:
+    selection:
+    - name: shelf
+      value_ref: nv_ugcpost_query_shelf
+      required: true
+      description: ugc_post | ugc_post_query_for_member | ugc_post_query_for_member
+    - name: sortBy
+      value_ref: nv_wire_sel_8874eda015d84434
+      required: false
+    - name: authors
+      value_ref: nv_ugc_post_query_authors
+      required: false
+    scope:
     - name: member
       value_ref: nv_ugc_post_query_for_member_member
       required: true
-      role: scope
-    - name: sortBy
-      value_ref: nv_wire_sel_8874eda015d84434
-      required: false
-      role: sort
-  ugc_post_query_for_organization:
-    kind: query
-    entity: UgcPost
-    description: Query posts authored by a specific organization.
-    provides:
-    - id
-    - authorUrn
-    - lifecycleState
-    parameters:
     - name: organization
       value_ref: nv_ugc_post_query_for_organization_organization
       required: true
-      role: scope
-    - name: sortBy
-      value_ref: nv_wire_sel_8874eda015d84434
-      required: false
-      role: sort
+    controls: []
   ugc_post_get:
     kind: get
     entity: UgcPost
@@ -216,11 +193,13 @@ capabilities:
     - shareCommentaryText
     - shareMediaCategory
     - visibility
-    parameters:
-    - name: viewContext
-      value_ref: nv_ugc_post_get_view_context
-      required: false
-      role: response_control
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: viewContext
+          value_ref: nv_ugc_post_get_view_context
+          required: false
   ugc_post_create:
     kind: create
     entity: UgcPost
@@ -229,46 +208,52 @@ capabilities:
     - id
     - authorUrn
     - lifecycleState
-    parameters:
-    - name: authorUrn
-      value_ref: nv_wire_str_short
-      required: true
-    - name: shareCommentary
-      value_ref: nv_wire_str_short
-      required: true
-      sink_class: external_publish
-    - name: visibility
-      value_ref: nv_ugc_post_create_visibility
-      required: true
-    - name: shareMediaCategory
-      value_ref: nv_ugc_post_create_share_media_category
-      required: true
-    - name: articleOriginalUrl
-      value_ref: nv_wire_str_short
-      required: false
-    - name: articleTitle
-      value_ref: nv_wire_str_short
-      required: false
-    - name: articleDescription
-      value_ref: nv_wire_str_short
-      required: false
-    - name: imageMediaUrn
-      value_ref: nv_wire_str_short
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: authorUrn
+          value_ref: nv_wire_str_short
+          required: true
+        - name: shareCommentary
+          value_ref: nv_wire_str_short
+          required: true
+          sink_class: external_publish
+        - name: visibility
+          value_ref: nv_ugc_post_create_visibility
+          required: true
+        - name: shareMediaCategory
+          value_ref: nv_ugc_post_create_share_media_category
+          required: true
+        - name: articleOriginalUrl
+          value_ref: nv_wire_str_short
+          required: false
+        - name: articleTitle
+          value_ref: nv_wire_str_short
+          required: false
+        - name: articleDescription
+          value_ref: nv_wire_str_short
+          required: false
+        - name: imageMediaUrn
+          value_ref: nv_wire_str_short
+          required: false
   media_upload_register:
     kind: action
     entity: MediaUploadRegistration
     description: Register an image or video upload and return asset/upload URL.
-    parameters:
-    - name: ownerUrn
-      value_ref: nv_wire_str_short
-      required: true
-    - name: recipe
-      value_ref: nv_media_upload_register_recipe
-      required: true
     provides:
     - asset
     - uploadUrl
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: ownerUrn
+          value_ref: nv_wire_str_short
+          required: true
+        - name: recipe
+          value_ref: nv_media_upload_register_recipe
+          required: true
 oauth:
   provider: linkedin
   scopes:
@@ -316,7 +301,7 @@ oauth:
         any_of:
         - r_liteprofile
         - r_basicprofile
-      ugc_post_query:
+      ugc_post_query_for_member:
         any_of:
         - r_member_social
         - r_organization_social
@@ -325,7 +310,7 @@ oauth:
         any_of:
         - r_member_social
         - w_member_social
-      ugc_post_query_for_organization:
+      ugc_post_query_for_member:
         any_of:
         - r_organization_social
         - w_organization_social
@@ -357,44 +342,40 @@ auth:
   hosted_kv: plasm:outbound:v1:catalog:linkedin
 values:
   nv_media_upload_register_recipe:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - feedshare-image
     - feedshare-video
   nv_member_id:
     type: string
-    string_semantics: short
     description: LinkedIn person ID for this app.
   nv_open_id_profile_email_verified:
     type: boolean
   nv_ugc_post_author_urn:
     type: string
-    string_semantics: short
     description: Author URN (person or organization).
   nv_ugc_post_create_share_media_category:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - NONE
     - ARTICLE
     - IMAGE
     - VIDEO
   nv_ugc_post_create_visibility:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - PUBLIC
     - CONNECTIONS
   nv_ugc_post_get_view_context:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - AUTHOR
     - READER
   nv_ugc_post_id:
     type: string
-    string_semantics: short
     description: ugcPost or share URN identifier.
   nv_ugc_post_query_authors:
     type: string
-    string_semantics: short
     description: Rest.li token such as List(urn%3Ali%3Aperson%3A8675309).
   nv_ugc_post_query_for_member_member:
     type: entity_ref
@@ -405,10 +386,16 @@ values:
     target: Organization
     description: Organization id; mapping composes the Rest.li authors finder token.
   nv_wire_sel_8874eda015d84434:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - CREATED
     - LAST_MODIFIED
   nv_wire_str_short:
     type: string
-    string_semantics: short
+  nv_ugcpost_query_shelf:
+    type: enum
+    enum:
+    - ugc_post
+    - ugc_post_query_for_member
+    - ugc_post_query_for_member
+    description: UgcPost query shelf

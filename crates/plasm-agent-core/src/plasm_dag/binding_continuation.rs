@@ -4,13 +4,13 @@
 
 use super::binding_contract::binding_contract;
 use super::pipeline::compile_surface_node;
-use super::postfix::lower_row_expression;
 use super::prelude::*;
 use super::relation::{
     lookup_relation_chain_meta, relation_binding_proofs_for_lower,
     relation_continuation_expr_from_source_row_hole, relation_materialize_for_lower,
     resolve_relation_segment_for_continuation, resolve_relation_wire_on_entity,
 };
+use super::row_suffix::lower_suffix_stream;
 use super::schema_validate::agent_program_error;
 use super::types::{CompileState, DagNode, DagNodeSource};
 use super::view_embed_proof::resolve_view_embed_proof;
@@ -20,7 +20,7 @@ pub(in crate::plasm_dag) fn plp4_reject(id: &str, label: &str, tail: &str) -> St
     plp::plp4_program(
         id,
         format!(
-            "binding `{label}` cannot extend with `{tail}` — use postfix transforms, `label.<relation>`, or `label.m#(…)` on the bound row"
+            "binding `{label}` cannot extend with `{tail}` — use `{label} | …` for row algebra, `{label} => _.r#` for plural relations, or `{label} => Entity.m#(…, _)` for per-row invokes"
         ),
     )
 }
@@ -113,6 +113,7 @@ fn parse_relation_continuation_expr(
     state: &CompileState<'_>,
     contract: &ProgramBindingContract,
     segment: &str,
+    force_row_hole: bool,
 ) -> Result<plasm_core::expr_parser::ParsedExpr, String> {
     let relation_wire = resolve_relation_segment_for_continuation(
         session,
@@ -121,15 +122,14 @@ fn parse_relation_continuation_expr(
         segment,
         Some(plasm_core::ProgramBindingLabel(contract.label.as_str())),
     )?;
-    if prefer_row_hole_relation_continuation(state, contract, segment, session) {
-        return Ok(plasm_core::expr_parser::ParsedExpr {
-            expr: relation_continuation_expr_from_source_row_hole(
+    if force_row_hole || prefer_row_hole_relation_continuation(state, contract, segment, session) {
+        return Ok(plasm_core::expr_parser::ParsedExpr::from_expr(
+            relation_continuation_expr_from_source_row_hole(
                 session,
                 &contract.row_entity,
                 &relation_wire,
             )?,
-            projection: None,
-        });
+        ));
     }
     let refs = state.program_node_id_set();
     let try_expanded_chain = |expanded: &str| -> Option<plasm_core::expr_parser::ParsedExpr> {
@@ -179,14 +179,13 @@ fn parse_relation_continuation_expr(
             }
         }
     }
-    Ok(plasm_core::expr_parser::ParsedExpr {
-        expr: relation_continuation_expr_from_source_row_hole(
+    Ok(plasm_core::expr_parser::ParsedExpr::from_expr(
+        relation_continuation_expr_from_source_row_hole(
             session,
             &contract.row_entity,
             &relation_wire,
         )?,
-        projection: None,
-    })
+    ))
 }
 
 fn looks_like_method_invoke_continuation_tail(
@@ -247,11 +246,14 @@ fn lower_method_invoke_continuation(
     contract: &ProgramBindingContract,
     tail: &str,
 ) -> Result<DagNode, String> {
-    if matches!(contract.row_cardinality, RowCardinalityProof::StaticPlural) {
+    if !matches!(
+        contract.row_cardinality,
+        RowCardinalityProof::StaticSingleton
+    ) {
         return Err(plp::plp4_program(
             id,
             format!(
-                "side-effect invoke `{label}.{tail}` requires a singleton binding — use `rows => e#.m#(param=_.…)` or `.limit(1)` / `.singleton()` first"
+                "method invoke `{label}.{tail}` requires a statically singleton binding — use `{label} => Entity.m#(…, _)` for per-row application"
             ),
         ));
     }
@@ -280,6 +282,29 @@ pub(in crate::plasm_dag) fn lower_relation_continuation(
     source_label: &str,
     tail: &str,
 ) -> Result<DagNode, String> {
+    lower_relation_continuation_inner(session, state, id, expr, source_label, tail, true)
+}
+
+pub(in crate::plasm_dag) fn lower_relation_application(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    id: &str,
+    expr: &str,
+    source_label: &str,
+    tail: &str,
+) -> Result<DagNode, String> {
+    lower_relation_continuation_inner(session, state, id, expr, source_label, tail, false)
+}
+
+fn lower_relation_continuation_inner(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    id: &str,
+    expr: &str,
+    source_label: &str,
+    tail: &str,
+    require_static_singleton: bool,
+) -> Result<DagNode, String> {
     let segment = tail.split('.').next().unwrap_or(tail).trim();
     if segment.is_empty() || tail.contains('.') {
         return Err(plp::plp4_program(
@@ -295,6 +320,19 @@ pub(in crate::plasm_dag) fn lower_relation_continuation(
             format!("unknown binding `{source_label}` for relation continuation"),
         )
     })?;
+    if require_static_singleton
+        && !matches!(
+            contract.row_cardinality,
+            RowCardinalityProof::StaticSingleton
+        )
+    {
+        return Err(plp::plp4_program(
+            id,
+            format!(
+                "relation continuation `{source_label}.{segment}` requires a statically singleton binding — use `{source_label} => _.r#` for plural relation fanout"
+            ),
+        ));
+    }
     if !contract.anchor.is_present() {
         return Err(plp::plp4_program(
             id,
@@ -303,7 +341,13 @@ pub(in crate::plasm_dag) fn lower_relation_continuation(
             ),
         ));
     }
-    let parsed = parse_relation_continuation_expr(session, state, &contract, segment)?;
+    let parsed = parse_relation_continuation_expr(
+        session,
+        state,
+        &contract,
+        segment,
+        !require_static_singleton,
+    )?;
     let Expr::Chain(ref chain) = parsed.expr else {
         return Err(plp::plp4_program(
             id,
@@ -320,7 +364,7 @@ pub(in crate::plasm_dag) fn lower_relation_continuation(
         return Err(plp::plp4_program(
             id,
             format!(
-                "`{segment}` is not a field or relation on `{source_label}` — use wire field names or `r#` relation hops from the teaching TSV"
+                "`{segment}` is not a field or relation on `{source_label}` — use wire field names or `r#` relation hops from the language card"
             ),
         ));
     };
@@ -342,7 +386,7 @@ pub(in crate::plasm_dag) fn lower_relation_continuation(
     let source_card = contract.relation_source_cardinality();
     let result_shape = relation_result_shape(rel_cardinality, source_card);
     let ir = PlanExprIr {
-        expr: serde_json::to_value(&parsed.expr).map_err(|e| e.to_string())?,
+        expr: parsed.expr.clone(),
         projection: parsed.projection.clone(),
         display_expr: Some(expr.to_string()),
     };
@@ -387,49 +431,70 @@ pub(in crate::plasm_dag) fn lower_relation_continuation(
 }
 
 fn is_known_postfix_method(name: &str) -> bool {
-    matches!(
-        name,
-        "limit"
-            | "page_size"
-            | "sort"
-            | "filter"
-            | "aggregate"
-            | "group_by"
-            | "dedupe"
-            | "distinct"
-            | "singleton"
-    )
+    matches!(name, "page_size" | "singleton")
 }
 
-fn looks_like_surface_postfix_tail(tail: &str) -> bool {
+fn looks_like_collect_meta_tail(tail: &str) -> bool {
     let t = tail.trim();
     if t.is_empty() {
         return false;
     }
-    if t.starts_with('[') {
-        return true;
-    }
-    if !(t.contains('(') || t.contains('{')) {
+    if !t.contains('(') {
         return false;
     }
-    let head = t
-        .split('(')
-        .next()
-        .unwrap_or(t)
-        .split('{')
-        .next()
-        .unwrap_or(t);
+    let head = t.split('(').next().unwrap_or(t);
     let name = head.trim().trim_start_matches('.');
     is_known_postfix_method(name)
+}
+
+fn parse_collect_meta_tail(
+    tail: &str,
+) -> Result<Option<Vec<plasm_core::expr_parser::CollectMeta>>, String> {
+    let mut rest = tail.trim();
+    if rest.is_empty() {
+        return Ok(None);
+    }
+    let mut out = Vec::new();
+    loop {
+        if let Some(stripped) = rest.strip_prefix('.') {
+            rest = stripped.trim_start();
+        }
+        if let Some(stripped) = rest.strip_prefix("singleton()") {
+            out.push(plasm_core::expr_parser::CollectMeta::Singleton);
+            rest = stripped.trim_start();
+        } else if let Some(stripped) = rest.strip_prefix("page_size(") {
+            let close = stripped
+                .find(')')
+                .ok_or_else(|| "page_size(...) requires a closing `)`".to_string())?;
+            let n_raw = stripped[..close].trim();
+            let n = n_raw
+                .parse::<usize>()
+                .map_err(|_| "page_size(...) requires a positive integer".to_string())?;
+            if n == 0 {
+                return Err("page_size(...) requires a positive integer".to_string());
+            }
+            out.push(plasm_core::expr_parser::CollectMeta::PageSize(n));
+            rest = stripped[close + 1..].trim_start();
+        } else {
+            return Ok(None);
+        }
+        if rest.is_empty() {
+            break;
+        }
+        if !rest.starts_with('.') {
+            return Err("collect-meta tails must chain as `.page_size(N).singleton()`".to_string());
+        }
+    }
+    Ok(Some(out))
 }
 
 fn unknown_row_transform_error(id: &str, tail: &str) -> String {
     plp::surface_err(
         PlpId::Continuation,
         agent_program_error(
-            format!("Unknown row transform `{tail}` on `{id}`."),
+            format!("Unknown dotted row transform `{tail}` on `{id}`."),
             Some(
-                "Use postfix on a binding: `.limit(N)`, `.filter{field=…}`, `.sort(field)`, `.group_by(field)`, `[field,…]`, etc.",
+                "Dotted row algebra was removed. Use `label | where … | select … | summarize … | order by … | take N | distinct`.",
             ),
         ),
     )
@@ -438,9 +503,50 @@ fn unknown_row_transform_error(id: &str, tail: &str) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum BindingContinuationRoute {
     MethodInvoke,
-    Postfix { synthetic: String },
+    CollectMetaTail {
+        meta: Vec<plasm_core::expr_parser::CollectMeta>,
+    },
+    FieldExtract {
+        wire: String,
+    },
     RelationSingleHop,
     RelationMultiSegmentReparse,
+}
+
+pub(in crate::plasm_dag) fn lower_pipe_continuation(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    id: &str,
+    expr: &str,
+    pipe: &PipeExpr,
+) -> Result<Vec<DagNode>, String> {
+    let suffixes = pipe.row_suffixes()?;
+    lower_suffix_stream(
+        session,
+        state,
+        id,
+        expr,
+        pipe.head.as_str(),
+        suffixes,
+        Some(id),
+    )
+}
+
+/// Catalog field wire on `contract.row_entity` that is **not** also a declared relation.
+fn field_project_wire_for_continuation(
+    session: &ExecuteSession,
+    contract: &ProgramBindingContract,
+    segment: &str,
+) -> Option<String> {
+    use super::relation::resolve_cgs_for_qualified_entity;
+    let cgs = resolve_cgs_for_qualified_entity(session, &contract.row_entity)?;
+    let ent = cgs.get_entity(contract.row_entity.entity.as_str())?;
+    if ent.relations.contains_key(segment) {
+        return None;
+    }
+    ent.fields
+        .contains_key(segment)
+        .then(|| segment.to_string())
 }
 
 fn classify_binding_continuation_route(
@@ -457,19 +563,34 @@ fn classify_binding_continuation_route(
         return Ok(BindingContinuationRoute::MethodInvoke);
     }
     if !tail_trim.contains('.') {
-        if looks_like_surface_postfix_tail(tail_trim) {
-            let synthetic = format!("{label}.{tail_trim}");
-            match peel_postfix_suffixes(&synthetic) {
-                Ok((_, ops)) if !ops.is_empty() => {
-                    return Ok(BindingContinuationRoute::Postfix { synthetic });
+        if looks_like_collect_meta_tail(tail_trim) {
+            match parse_collect_meta_tail(tail_trim)? {
+                Some(meta) if !meta.is_empty() => {
+                    return Ok(BindingContinuationRoute::CollectMetaTail { meta });
                 }
                 _ => return Err(unknown_row_transform_error(id, tail_trim)),
             }
         }
-        if relation_sourced_continuation_eligible(state, label)
+        let relation_eligible = relation_sourced_continuation_eligible(state, label)
             || matches!(contract.anchor, ContinuationAnchor::BindingLabel)
-            || contract.anchor.allows_text_parse()
-        {
+            || contract.anchor.allows_text_parse();
+        if relation_eligible {
+            // Homograph law: declared relation wins over field-dot project sugar.
+            if resolve_relation_wire_on_entity(
+                session,
+                state.cross_cache,
+                &contract.row_entity,
+                tail_trim,
+                Some(plasm_core::ProgramBindingLabel(contract.label.as_str())),
+            )
+            .is_some()
+            {
+                return Ok(BindingContinuationRoute::RelationSingleHop);
+            }
+            // Field-dot sugar: `ℓ.wire` → same route as explicit `ℓ[wire]` postfix.
+            if let Some(wire) = field_project_wire_for_continuation(session, contract, tail_trim) {
+                return Ok(BindingContinuationRoute::FieldExtract { wire });
+            }
             return Ok(BindingContinuationRoute::RelationSingleHop);
         }
     } else if contract.anchor.allows_text_parse() {
@@ -515,7 +636,7 @@ fn lower_multi_segment_relation_continuation(
         let source_card = contract.relation_source_cardinality();
         let result_shape = relation_result_shape(rel_cardinality, source_card);
         let ir = PlanExprIr {
-            expr: serde_json::to_value(&parsed.expr).map_err(|e| e.to_string())?,
+            expr: parsed.expr.clone(),
             projection: parsed.projection.clone(),
             display_expr: Some(expr.to_string()),
         };
@@ -583,13 +704,27 @@ pub(in crate::plasm_dag) fn dispatch_binding_continuation(
         BindingContinuationRoute::MethodInvoke => {
             lower_method_invoke_continuation(session, state, id, expr, label, contract, tail_trim)
         }
-        BindingContinuationRoute::Postfix { synthetic } => {
-            let mut nodes = lower_row_expression(session, state, id, &synthetic, Some(id))?;
-            nodes.pop().ok_or_else(|| {
-                format!(
-                    "Plasm program `{id}`: postfix continuation `{synthetic}` produced no nodes"
-                )
-            })
+        BindingContinuationRoute::CollectMetaTail { meta } => lower_suffix_stream(
+            session,
+            state,
+            id,
+            expr,
+            label,
+            meta.iter().map(RowSuffix::from).collect(),
+            Some(id),
+        )?
+        .pop()
+        .ok_or_else(|| {
+            format!("Plasm program `{id}`: collect-meta continuation `{expr}` produced no nodes")
+        }),
+        BindingContinuationRoute::FieldExtract { wire } => {
+            super::scalar_extract::lower_binding_scalar_field_dot(
+                id,
+                expr,
+                label,
+                wire,
+                contract.row_cardinality,
+            )
         }
         BindingContinuationRoute::RelationSingleHop => {
             lower_relation_continuation(session, state, id, expr, label, tail_trim)

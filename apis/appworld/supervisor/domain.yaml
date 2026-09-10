@@ -1,0 +1,286 @@
+version: 7
+entry_id: supervisor
+auth:
+  scheme: none
+http_backend: http://127.0.0.1:9000
+entities:
+  Supervisor:
+    id_field: email
+    description: Task principal (fictitious user) for the active AppWorld task.
+    discovery:
+      names:
+      - supervisor
+      - task user
+      - principal
+    fields:
+      first_name:
+        required: true
+        value_ref: nv_str
+      last_name:
+        required: true
+        value_ref: nv_str
+      email:
+        required: true
+        value_ref: nv_email
+      phone_number:
+        required: true
+        value_ref: nv_phone
+      birthday:
+        required: false
+        value_ref: nv_birthday
+      sex:
+        required: false
+        value_ref: nv_sex
+    relations: {}
+  AccountPassword:
+    id_field: account_name
+    primary_read: account_password_get
+    description: Per-app password for the task principal — account_name is the app key, not a login email.
+    discovery:
+      names:
+      - password
+      - account password
+      - credentials
+    fields:
+      account_name:
+        required: true
+        value_ref: nv_account_name
+      password:
+        required: true
+        value_ref: nv_password
+  Address:
+    id_field: name
+    description: Named address belonging to the supervisor.
+    fields:
+      name:
+        required: true
+        value_ref: nv_address_label
+      street_address:
+        required: false
+        value_ref: nv_str
+      city:
+        required: false
+        value_ref: nv_str
+      state:
+        required: false
+        value_ref: nv_str
+      country:
+        required: false
+        value_ref: nv_str
+      zip_code:
+        required: false
+        value_ref: nv_int
+  PaymentCard:
+    id_field: card_number
+    description: Payment card on the supervisor profile.
+    fields:
+      owner_name:
+        required: true
+        value_ref: nv_str
+      card_name:
+        required: false
+        value_ref: nv_card_brand
+      card_number:
+        required: true
+        value_ref: nv_int
+      expiry_year:
+        required: false
+        value_ref: nv_int
+      expiry_month:
+        required: false
+        value_ref: nv_int
+      cvv_number:
+        required: false
+        value_ref: nv_int
+  ActiveTask:
+    id_field: instruction
+    description: Currently active AppWorld task metadata.
+    fields:
+      instruction:
+        required: true
+        value_ref: nv_instruction
+      status:
+        required: false
+        value_ref: nv_str
+      answer:
+        required: false
+        value_ref: nv_answer
+  TaskCompletion:
+    id_field: status
+    description: Result of marking the active task complete.
+    fields:
+      message:
+        required: true
+        value_ref: nv_str
+      status:
+        required: true
+        value_ref: nv_task_status
+capabilities:
+  supervisor_profile_get:
+    description: Show the task principal profile — email is the usual login username for per-app services.
+    kind: get
+    entity: Supervisor
+    provides:
+    - first_name
+    - last_name
+    - email
+    - phone_number
+    - birthday
+    - sex
+    output: {type: entity, entity_type: Supervisor}
+  account_password_query:
+    description: List all per-app passwords for the task principal.
+    kind: query
+    entity: AccountPassword
+    provides:
+    - account_name
+    - password
+  account_password_get:
+    description: Show the password for one app key (account_name).
+    kind: get
+    entity: AccountPassword
+    provides:
+    - account_name
+    - password
+    derive:
+      source: account_password_query
+      match_field: account_name
+      projection:
+        account_name: account_name
+        password: password
+    output: {type: entity, entity_type: AccountPassword}
+  address_query:
+    description: List supervisor addresses.
+    kind: query
+    entity: Address
+    provides:
+    - name
+    - street_address
+    - city
+    - state
+    - country
+    - zip_code
+  payment_card_query:
+    description: List supervisor payment cards.
+    kind: query
+    entity: PaymentCard
+    provides:
+    - owner_name
+    - card_name
+    - card_number
+    - expiry_year
+    - expiry_month
+  active_task_get:
+    description: Show the active task instruction text.
+    kind: get
+    entity: ActiveTask
+    provides:
+    - instruction
+  complete_task:
+    description: Mark the active AppWorld task complete (required termination signal).
+    kind: action
+    entity: TaskCompletion
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: answer
+          value_ref: nv_answer
+          required: false
+          description: Concise answer when the instruction is a question; omit for action-only tasks.
+        - name: status
+          value_ref: nv_task_status
+          required: false
+          description: success or fail (default success).
+    output:
+      type: side_effect
+      description: Marks the current task complete in the AppWorld environment so evaluation can run.
+values:
+  nv_str:
+    type: string
+    description: Free-form AppWorld string field.
+  nv_email:
+    type: email
+    description: Task principal email (usual login id for per-app services).
+  nv_phone:
+    type: e164
+    description: Task principal phone number.
+  nv_birthday:
+    type: iso8601_date
+    description: Task principal birthday (calendar date).
+  nv_sex:
+    type: enum
+    description: Task principal sex.
+    enum:
+    - male
+    - female
+  nv_address_label:
+    type: enum
+    description: Named address slot on the supervisor profile.
+    enum:
+    - Home
+    - Work
+  nv_card_brand:
+    type: enum
+    description: Payment-card network or bank label on the supervisor profile.
+    enum:
+    - Visa
+    - MasterCard
+    - American Express
+    - Discover
+    - HSBC
+    - Wells Fargo
+    - Chase
+  nv_account_name:
+    type: string
+    description: App key in the password list (e.g. simple_note, gmail, venmo) — not a login id.
+  nv_password:
+    type: string
+    description: Password for one app key; pair with the matching account_name after get.
+  nv_int:
+    type: integer
+    description: Integer field.
+  nv_instruction:
+    type: string
+    description: Natural-language AppWorld task instruction.
+  nv_answer:
+    type: string
+    description: Concise task answer (number, yes/no, entity name).
+  nv_task_status:
+    type: enum
+    description: Task completion status.
+    enum:
+    - success
+    - fail
+prerequisites:
+  contracts:
+    appworld.principal:
+      version: 1
+      inputs: {}
+      outputs:
+        email: nv_email
+        phone: nv_phone
+    appworld.password:
+      version: 1
+      inputs:
+        account: nv_account_name
+      outputs:
+        password: nv_password
+  providers:
+    principal:
+      contract: appworld.principal
+      capability: supervisor_profile_get
+      outputs:
+        email: email
+        phone: phone_number
+    password:
+      contract: appworld.password
+      capability: account_password_get
+      inputs:
+        account:
+          lane: selection
+          path:
+          - account_name
+      outputs:
+        password: password
+  requirements: {}

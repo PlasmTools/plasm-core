@@ -32,18 +32,23 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
     let target_entity = relation.relation.target.entity.as_str();
     let source_cgs = crate::catalog_ownership::resolve_cgs_for_entry_entity(
         es,
-        source_mat.entry_id.as_str(),
-        source_mat.entity.as_str(),
+        source_mat.qualified_entity.entry_id.as_str(),
+        source_mat.qualified_entity.entity.as_str(),
     )?;
     let rel_schema = source_cgs
-        .get_entity(source_mat.entity.as_str())
-        .ok_or_else(|| format!("unknown source entity `{}`", source_mat.entity))?
+        .get_entity(source_mat.qualified_entity.entity.as_str())
+        .ok_or_else(|| {
+            format!(
+                "unknown source entity `{}`",
+                source_mat.qualified_entity.entity
+            )
+        })?
         .relations
         .get(rel_name)
         .ok_or_else(|| {
             format!(
                 "entity `{}` has no relation `{rel_name}`",
-                source_mat.entity
+                source_mat.qualified_entity.entity
             )
         })?;
     // Plan-only fast path: wire JSON already contains path payloads (no graph resolution).
@@ -140,8 +145,7 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
             session_id,
             &relation.relation.target,
             MaterializedNode {
-                entry_id: relation.relation.target.entry_id.clone(),
-                entity: relation.relation.target.entity.clone(),
+                qualified_entity: relation.relation.target.clone(),
                 display: format!(
                     "plan.relation({}) prefer_from_parent_get (all embedded)",
                     relation.id.as_str()
@@ -165,6 +169,7 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
     let pe = ParsedExpr {
         expr: relation.relation.ir.expr.clone(),
         projection: relation.relation.ir.projection.clone(),
+        field_dot_extract: None,
     };
     let source_node = &relation.relation.source;
     let base_display = relation
@@ -233,17 +238,20 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
             .get(row_index)
             .and_then(|i| i.as_ref())
             .cloned();
-        let input_rows = materialized_result_use_inputs_with_source_row(
+        let mut input_rows = materialized_result_use_inputs_with_source_row(
             materialized,
             &relation.uses_result,
             source_node,
             source_row,
             row_identity,
         )?;
-        let wire_coercion =
-            wire_coercion_ctx_for_source_entity(scoped_es.cgs.as_ref(), source_mat.entity.as_str());
-        let parsed =
-            instantiate_parsed_expr_plan_inputs_with_rows(pe.clone(), &input_rows, wire_coercion)?;
+        let wire_coercion_by_alias = wire_coercion_by_alias_from_inputs(es, &mut input_rows)?;
+        let parsed = instantiate_parsed_expr_plan_inputs_with_rows(
+            pe.clone(),
+            &scoped_es.cgs,
+            &input_rows,
+            &wire_coercion_by_alias,
+        )?;
         let expr_label = format!("{base_display} [row {row_index}]");
         super::plan_fanout_parallel::push_verified_row_job(
             &mut scoped_jobs,

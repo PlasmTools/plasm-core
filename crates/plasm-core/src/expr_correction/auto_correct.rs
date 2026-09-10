@@ -1,6 +1,6 @@
 use crate::domain_lexicon::{tokens, DomainLexicon};
 use crate::expr_parser::{self, predicate_surface};
-use crate::{CapabilityKind, FieldType, InputType, CGS};
+use crate::{CapabilityKind, FieldType, CGS};
 
 use super::RecoveryHint;
 
@@ -100,7 +100,7 @@ pub fn try_auto_correct(input: &str, lexicon: &DomainLexicon, cgs: &CGS) -> Corr
                 let entry = candidates[0];
                 if let Some(canonical_field) = entry.field_name() {
                     let new_value =
-                        if let Some(FieldType::EntityRef { target }) = entry.field_type() {
+                        if let Some(FieldType::EntityRef { target, .. }) = entry.field_type() {
                             // Extract the id from the original value (may be Entity(id) or bare)
                             let id = extract_id_from_value(&pred.value);
                             format!("{target}({id})")
@@ -121,7 +121,7 @@ pub fn try_auto_correct(input: &str, lexicon: &DomainLexicon, cgs: &CGS) -> Corr
                     .iter()
                     .filter_map(|e| e.field_name())
                     .map(|f| {
-                        if let Some(FieldType::EntityRef { target }) = candidates
+                        if let Some(FieldType::EntityRef { target, .. }) = candidates
                             .iter()
                             .find(|e| e.field_name() == Some(f))
                             .and_then(|e| e.field_type())
@@ -205,23 +205,14 @@ fn collect_all_scopes(cgs: &CGS, entity_name: &str) -> Vec<(String, String)> {
     let mut scopes: Vec<(String, String)> = Vec::new();
 
     for cap in cgs.find_capabilities(entity_name, CapabilityKind::Query) {
-        let Some(is) = &cap.input_schema else {
-            continue;
-        };
-        let InputType::Object { fields, .. } = &is.input_type else {
-            continue;
-        };
-        for f in fields {
+        for f in cap.scope_params() {
             if !f.required {
-                continue;
-            }
-            if !matches!(f.role, Some(crate::ParameterRole::Scope)) {
                 continue;
             }
             let Ok(nv) = f.named_value(cgs) else {
                 continue;
             };
-            if let FieldType::EntityRef { target } = &nv.field_type {
+            if let FieldType::EntityRef { target, .. } = &nv.field_type {
                 let entry = (f.name.clone(), target.to_string());
                 if !scopes.contains(&entry) {
                     scopes.push(entry);
@@ -242,12 +233,8 @@ fn collect_valid_names<'a>(cgs: &'a CGS, entity_name: &str) -> std::collections:
         }
     }
     for cap in cgs.find_capabilities(entity_name, CapabilityKind::Query) {
-        if let Some(is) = &cap.input_schema {
-            if let InputType::Object { fields, .. } = &is.input_type {
-                for f in fields {
-                    names.insert(f.name.as_str());
-                }
-            }
+        for field in cap.selection_params() {
+            names.insert(field.name.as_str());
         }
     }
     names

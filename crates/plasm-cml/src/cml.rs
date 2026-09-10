@@ -11,6 +11,43 @@ pub enum CmlExpr {
     #[serde(rename = "var")]
     Var { name: String },
 
+    /// String whitespace normalization; null stays null, blank becomes null.
+    #[serde(rename = "trim")]
+    Trim { value: Box<CmlExpr> },
+
+    /// Evaluate in order until a non-null value is found. False, zero and empty remain values.
+    #[serde(rename = "first_present")]
+    FirstPresent { values: Vec<CmlExpr> },
+
+    /// Object projection; absent fields and null propagate null, other shapes fail.
+    #[serde(rename = "field")]
+    Field {
+        value: Box<CmlExpr>,
+        path: Vec<String>,
+    },
+
+    /// Lexically scoped immutable expressions, evaluated in declaration order.
+    #[serde(rename = "let")]
+    Let {
+        bindings: Vec<LocalBinding>,
+        value: Box<CmlExpr>,
+    },
+
+    /// Validated URL projection with no network effects.
+    #[serde(rename = "url_project")]
+    UrlProject {
+        value: Box<CmlExpr>,
+        projection: crate::UrlProjection,
+    },
+
+    /// A pure assertion; failure exposes only a catalog-declared static rule code.
+    #[serde(rename = "assert")]
+    Assert {
+        condition: Box<CmlCond>,
+        code: String,
+        value: Box<CmlExpr>,
+    },
+
     /// Constant value (algebraic [`TypedFieldValue`] — serializes like [`Value`] JSON).
     #[serde(rename = "const")]
     Const { value: TypedFieldValue },
@@ -67,21 +104,44 @@ pub enum CmlExpr {
     /// ```
     #[serde(rename = "format")]
     Format {
-        template: String,
+        template: crate::FormatTemplate,
         vars: IndexMap<String, CmlExpr>,
     },
-    /// Gmail `users.messages.send` JSON body: evaluates to `{ raw, threadId? }` from env keys
-    /// `from`, `to`, `subject`, `plainBody` (required) and optional `threadId`, `inReplyTo`, `references`.
-    #[serde(rename = "gmail_rfc5322_send_body")]
-    GmailRfc5322SendBody {},
-    /// Same wire shape as [`CmlExpr::GmailRfc5322SendBody`], but derives defaults from preflight
-    /// keys `parent_*` (see capability `preflight` / `message_reply`). User keys `from`, `plainBody`
-    /// required; optional `to`, `subject` override reply defaults.
-    #[serde(rename = "gmail_rfc5322_reply_send_body")]
-    GmailRfc5322ReplySendBody {},
-    /// STANDARD Base64-encode the evaluated inner string (GitHub blob `content`, etc.).
+    /// Serialize explicitly supplied submission headers and a plain-text MIME body.
+    #[serde(rename = "mail_message")]
+    MailMessage {
+        headers: Box<CmlExpr>,
+        text: Box<CmlExpr>,
+    },
+    /// Derive reply headers from explicitly mapped parent headers and overrides.
+    #[serde(rename = "mail_reply_headers")]
+    MailReplyHeaders {
+        parent: Box<CmlExpr>,
+        overrides: Box<CmlExpr>,
+    },
     #[serde(rename = "base64")]
-    Base64 { value: Box<CmlExpr> },
+    Base64 {
+        value: Box<CmlExpr>,
+        #[serde(default)]
+        alphabet: Base64Alphabet,
+    },
+}
+
+/// A local expression declaration. Wire order is semantic, so this is stored in an array.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalBinding {
+    pub name: String,
+    pub value: CmlExpr,
+}
+
+/// Explicit wire alphabet; standard is the existing base64 default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Base64Alphabet {
+    #[default]
+    Standard,
+    UrlSafeNoPad,
 }
 
 /// CML Condition for if expressions
@@ -188,6 +248,15 @@ pub enum PathSegment {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         suffix: Option<String>,
     },
+    /// Conditional segment: `then_expr` / `else_expr` must evaluate to a string or number.
+    /// The result may contain `/` so one branch can expand to multiple URL path parts
+    /// (e.g. `library/songs` vs `recommendations`).
+    #[serde(rename = "if")]
+    If {
+        condition: Box<CmlCond>,
+        then_expr: Box<CmlExpr>,
+        else_expr: Box<CmlExpr>,
+    },
 }
 
 /// Pagination mapping for a query capability.
@@ -205,6 +274,9 @@ pub enum PathSegment {
 /// absent/null (cursor exhausted) or the items array is shorter than requested.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PaginationConfig {
+    /// Tagged traversal strategy (`page_number`, `offset`, `cursor`, `next_url`, …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy: Option<PaginationStrategyKind>,
     /// Parameters to inject into each request. Keys are the API parameter names.
     #[serde(default)]
     pub params: indexmap::IndexMap<String, PaginationParam>,
@@ -234,6 +306,39 @@ pub struct PaginationConfig {
     pub response_next_url_field: Option<String>,
 }
 
+/// Explicit role for a pagination parameter (full cutover: no wire-name inference).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaginationParamRole {
+    /// Catalog page size / span sent unchanged on every upstream request.
+    PageSize,
+}
+
+/// Strategy tag for a pagination block (required at compile/load validation).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaginationStrategyKind {
+    PageNumber,
+    Offset,
+    Cursor,
+    NextUrl,
+    LinkHeader,
+    BlockRange,
+}
+
+impl std::fmt::Display for PaginationStrategyKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::PageNumber => "page_number",
+            Self::Offset => "offset",
+            Self::Cursor => "cursor",
+            Self::NextUrl => "next_url",
+            Self::LinkHeader => "link_header",
+            Self::BlockRange => "block_range",
+        })
+    }
+}
+
 /// How a single pagination parameter advances across pages.
 ///
 /// Serde-untagged: the YAML variant is inferred from the value shape.
@@ -251,8 +356,13 @@ pub enum PaginationParam {
         max: Option<i64>,
     },
     /// Fixed value: sent unchanged on every page request.
-    /// YAML: `limit: {fixed: 20}` or `page_size: {fixed: 100}`.
-    Fixed { fixed: serde_json::Value },
+    /// YAML: `limit: {fixed: 20, role: page_size}` or `page_size: {fixed: 100, role: page_size}`.
+    Fixed {
+        fixed: serde_json::Value,
+        /// When `page_size`, this Fixed is the authoritative upstream page size.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        role: Option<PaginationParamRole>,
+    },
     /// Extracted from the previous response: absent on the first request; populated
     /// from `response[from_response]` on subsequent pages (or from the object at
     /// [`PaginationConfig::response_prefix`] when set). When the field is absent
@@ -273,18 +383,39 @@ impl PaginationParam {
             PaginationParam::Counter { counter, .. } => Some(serde_json::Value::Number(
                 serde_json::Number::from(*counter),
             )),
-            PaginationParam::Fixed { fixed } => Some(fixed.clone()),
+            PaginationParam::Fixed { fixed, .. } => Some(fixed.clone()),
             PaginationParam::FromResponse { .. } => None,
         }
     }
 
     /// Returns the default page size if this param represents a fixed page size.
     pub fn fixed_as_u32(&self) -> Option<u32> {
-        if let PaginationParam::Fixed { fixed } = self {
+        if let PaginationParam::Fixed { fixed, .. } = self {
             fixed.as_u64().map(|n| n as u32)
         } else {
             None
         }
+    }
+
+    /// True when this Fixed carries the explicit `page_size` role.
+    pub fn is_page_size_role(&self) -> bool {
+        matches!(
+            self,
+            PaginationParam::Fixed {
+                role: Some(PaginationParamRole::PageSize),
+                ..
+            }
+        )
+    }
+}
+
+impl PaginationConfig {
+    /// Authoritative Fixed page-size value (`role: page_size`), if declared.
+    pub fn page_size_fixed_u32(&self) -> Option<u32> {
+        self.params
+            .values()
+            .find(|p| p.is_page_size_role())
+            .and_then(|p| p.fixed_as_u32())
     }
 }
 
@@ -335,6 +466,8 @@ pub enum PaginationStop {
 pub struct AuxiliaryHttpMerge {
     pub method: HttpMethod,
     pub path: Vec<PathSegment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<RequestAuthentication>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub query: Option<CmlExpr>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -509,6 +642,9 @@ pub struct CmlRequest {
     pub multipart: Option<MultipartBodySpec>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<CmlExpr>,
+    /// Explicit authentication from a declared capability input.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<RequestAuthentication>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pagination: Option<PaginationConfig>,
     #[serde(
@@ -517,6 +653,44 @@ pub struct CmlRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub response: Option<HttpResponseDecode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "scheme", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RequestAuthentication {
+    Host,
+    Bearer {
+        token: CmlExpr,
+    },
+    Credential {
+        slot: String,
+        resource: CmlExpr,
+        reference: CmlExpr,
+    },
+    When {
+        condition: CmlCond,
+        then_auth: Box<RequestAuthentication>,
+        else_auth: Box<RequestAuthentication>,
+    },
+}
+
+impl RequestAuthentication {
+    fn select<'a>(&'a self, env: &CmlEnv) -> Result<&'a Self, CmlError> {
+        match self {
+            Self::When {
+                condition,
+                then_auth,
+                else_auth,
+            } => {
+                if eval_cond(condition, env)? {
+                    then_auth.select(env)
+                } else {
+                    else_auth.select(env)
+                }
+            }
+            _ => Ok(self),
+        }
+    }
 }
 
 /// Environment for CML evaluation
@@ -614,15 +788,42 @@ impl PathSegment {
     }
 }
 
-/// Path segment variable names in order (CML `type: var` only).
+fn push_expr_var_names(expr: &CmlExpr, out: &mut Vec<String>) {
+    let mut vars = indexmap::IndexSet::new();
+    crate::transport::collect_expr_vars(expr, &mut vars);
+    out.extend(vars);
+}
+
+fn push_cond_var_names(cond: &CmlCond, out: &mut Vec<String>) {
+    match cond {
+        CmlCond::Exists { var } => out.push(var.clone()),
+        CmlCond::Equals { left, right } => {
+            push_expr_var_names(left, out);
+            push_expr_var_names(right, out);
+        }
+        CmlCond::Bool { expr } => push_expr_var_names(expr, out),
+    }
+}
+
+/// Path segment variable names in order (`type: var` and vars referenced by `type: if`).
 pub fn path_var_names_from_request(req: &CmlRequest) -> Vec<String> {
-    req.path
-        .iter()
-        .filter_map(|seg| match seg {
-            PathSegment::Var { name, .. } => Some(name.clone()),
-            _ => None,
-        })
-        .collect()
+    let mut out = Vec::new();
+    for seg in &req.path {
+        match seg {
+            PathSegment::Var { name, .. } => out.push(name.clone()),
+            PathSegment::If {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
+                push_cond_var_names(condition, &mut out);
+                push_expr_var_names(then_expr, &mut out);
+                push_expr_var_names(else_expr, &mut out);
+            }
+            PathSegment::Literal { .. } => {}
+        }
+    }
+    out
 }
 
 impl CmlRequest {
@@ -636,6 +837,7 @@ impl CmlRequest {
             body_format: HttpBodyFormat::Json,
             multipart: None,
             headers: None,
+            auth: None,
             pagination: None,
             response: None,
         }
@@ -663,6 +865,80 @@ impl CmlRequest {
 /// Evaluate a CML expression in the given environment
 pub fn eval_cml(expr: &CmlExpr, env: &CmlEnv) -> Result<Value, CmlError> {
     match expr {
+        CmlExpr::Trim { value } => match eval_cml(value, env)? {
+            Value::Null => Ok(Value::Null),
+            Value::String(value) => {
+                let value = value.trim();
+                Ok(if value.is_empty() {
+                    Value::Null
+                } else {
+                    Value::String(value.into())
+                })
+            }
+            _ => Err(CmlError::InvalidTemplate {
+                message: "trim requires a string or null".into(),
+            }),
+        },
+        CmlExpr::FirstPresent { values } => {
+            for value in values {
+                let value = eval_cml(value, env)?;
+                if value != Value::Null {
+                    return Ok(value);
+                }
+            }
+            Ok(Value::Null)
+        }
+        CmlExpr::Field { value, path } => {
+            let mut value = eval_cml(value, env)?;
+            for field in path {
+                value = match value {
+                    Value::Null => return Ok(Value::Null),
+                    Value::Object(mut fields) => fields.shift_remove(field).unwrap_or(Value::Null),
+                    _ => {
+                        return Err(CmlError::InvalidTemplate {
+                            message: "field projection requires an object or null".into(),
+                        })
+                    }
+                };
+            }
+            Ok(value)
+        }
+        CmlExpr::Let { bindings, value } => {
+            let mut locals = env.clone();
+            for LocalBinding {
+                name,
+                value: expression,
+            } in bindings
+            {
+                if name.is_empty() || locals.contains_key(name) {
+                    return Err(CmlError::InvalidTemplate {
+                        message: "local expression names must be nonempty and cannot shadow inputs"
+                            .into(),
+                    });
+                }
+                let evaluated = eval_cml(expression, &locals)?;
+                locals.insert(name.clone(), evaluated);
+            }
+            eval_cml(value, &locals)
+        }
+        CmlExpr::UrlProject { value, projection } => projection.evaluate(eval_cml(value, env)?),
+        CmlExpr::Assert {
+            condition,
+            code,
+            value,
+        } => {
+            if code.is_empty() || !code.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_') {
+                return Err(CmlError::InvalidTemplate {
+                    message: "assertion code must be a nonempty identifier".into(),
+                });
+            }
+            if !eval_cond(condition, env)? {
+                return Err(CmlError::TypeError {
+                    message: format!("assertion failed: {code}"),
+                });
+            }
+            eval_cml(value, env)
+        }
         CmlExpr::Var { name } => env
             .get(name)
             .cloned()
@@ -730,50 +1006,42 @@ pub fn eval_cml(expr: &CmlExpr, env: &CmlEnv) -> Result<Value, CmlError> {
             }
         }
         CmlExpr::Format { template, vars } => {
-            let placeholders = extract_placeholders(template)?;
-
-            for key in vars.keys() {
-                if !placeholders.contains(key) {
-                    return Err(CmlError::InvalidTemplate {
-                        message: format!("format var '{key}' is unused in template '{template}'"),
-                    });
-                }
-            }
-
-            let mut rendered = template.clone();
-            for name in placeholders {
-                let expr = vars.get(&name).ok_or_else(|| CmlError::InvalidTemplate {
-                    message: format!("missing format var '{name}' for template '{template}'"),
+            template.validate_vars(vars)?;
+            let rendered = template.render(|name| {
+                let expr = vars.get(name).ok_or_else(|| CmlError::InvalidTemplate {
+                    message: format!("missing format var '{name}'"),
                 })?;
-                let value = eval_cml(expr, env)?;
-                let replacement = value_to_string(&value)?;
-                rendered = rendered.replace(&format!("{{{name}}}"), &replacement);
-            }
+                value_to_string(&eval_cml(expr, env)?)
+            })?;
             Ok(Value::String(rendered))
         }
-        CmlExpr::GmailRfc5322SendBody {} => {
-            crate::gmail_send_body::eval_gmail_rfc5322_send_body(env)
+        CmlExpr::MailMessage { headers, text } => {
+            crate::mail::serialize_message(eval_cml(headers, env)?, eval_cml(text, env)?)
         }
-        CmlExpr::GmailRfc5322ReplySendBody {} => {
-            crate::gmail_send_body::eval_gmail_rfc5322_reply_send_body(env)
+        CmlExpr::MailReplyHeaders { parent, overrides } => {
+            crate::mail::reply_headers(eval_cml(parent, env)?, eval_cml(overrides, env)?)
         }
-        CmlExpr::Base64 { value } => {
+        CmlExpr::Base64 { value, alphabet } => {
             let inner = eval_cml(value, env)?;
             let text = match inner {
                 Value::String(s) => s,
                 other => value_to_string(&other)?,
             };
             use base64::Engine;
-            Ok(Value::String(
-                base64::engine::general_purpose::STANDARD.encode(text.as_bytes()),
-            ))
+            let engine = match alphabet {
+                Base64Alphabet::Standard => &base64::engine::general_purpose::STANDARD,
+                Base64Alphabet::UrlSafeNoPad => &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+            };
+            Ok(Value::String(engine.encode(text.as_bytes())))
         }
     }
 }
 
 fn value_to_string(value: &Value) -> Result<String, CmlError> {
     match value {
-        Value::PlasmInputRef(_) => Ok(format!("{value:?}")),
+        Value::PlasmInputRef(_) | Value::StringTemplate(_) => Err(CmlError::TypeError {
+            message: "unbound program operand reached CML encoding".into(),
+        }),
         Value::String(s) | Value::PhraseIdent(s) => Ok(s.clone()),
         Value::Integer(i) => Ok(i.to_string()),
         Value::Float(f) => Ok(f.to_string()),
@@ -784,37 +1052,6 @@ fn value_to_string(value: &Value) -> Result<String, CmlError> {
             .map_err(|e| CmlError::SerializationError { message: e.into() }),
         Value::Array(_) | Value::Object(_) | Value::UnionCtor { .. } => Ok(format!("{:?}", value)),
     }
-}
-
-fn extract_placeholders(template: &str) -> Result<Vec<String>, CmlError> {
-    let mut placeholders = Vec::new();
-    let chars: Vec<char> = template.chars().collect();
-    let mut i = 0usize;
-    while i < chars.len() {
-        if chars[i] == '{' {
-            let start = i + 1;
-            let mut j = start;
-            while j < chars.len() && chars[j] != '}' {
-                j += 1;
-            }
-            if j == chars.len() {
-                return Err(CmlError::InvalidTemplate {
-                    message: format!("unclosed placeholder in template '{template}'"),
-                });
-            }
-            let name: String = chars[start..j].iter().collect();
-            if name.is_empty() {
-                return Err(CmlError::InvalidTemplate {
-                    message: format!("empty placeholder in template '{template}'"),
-                });
-            }
-            placeholders.push(name);
-            i = j + 1;
-            continue;
-        }
-        i += 1;
-    }
-    Ok(placeholders)
 }
 
 /// Evaluate a CML condition
@@ -841,6 +1078,17 @@ pub fn eval_cond(cond: &CmlCond, env: &CmlEnv) -> Result<bool, CmlError> {
     }
 }
 
+fn path_value_to_string(value: &Value, context: &str) -> Result<String, CmlError> {
+    match value {
+        Value::String(s) => Ok(s.clone()),
+        Value::Integer(i) => Ok(i.to_string()),
+        Value::Float(f) => Ok(f.to_string()),
+        _ => Err(CmlError::TypeError {
+            message: format!("{context} must evaluate to string or number"),
+        }),
+    }
+}
+
 /// Evaluate a path segment
 pub fn eval_path_segment(segment: &PathSegment, env: &CmlEnv) -> Result<String, CmlError> {
     match segment {
@@ -850,20 +1098,23 @@ pub fn eval_path_segment(segment: &PathSegment, env: &CmlEnv) -> Result<String, 
                 .get(name)
                 .ok_or_else(|| CmlError::VariableNotFound { name: name.clone() })?;
 
-            let mut s = match value {
-                Value::String(s) => s.clone(),
-                Value::Integer(i) => i.to_string(),
-                Value::Float(f) => f.to_string(),
-                _ => {
-                    return Err(CmlError::TypeError {
-                        message: format!("Path variable '{}' must be string or number", name),
-                    });
-                }
-            };
+            let mut s = path_value_to_string(value, &format!("Path variable '{name}'"))?;
             if let Some(tail) = suffix {
                 s.push_str(tail);
             }
             Ok(s)
+        }
+        PathSegment::If {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            let chosen = if eval_cond(condition, env)? {
+                eval_cml(then_expr, env)?
+            } else {
+                eval_cml(else_expr, env)?
+            };
+            path_value_to_string(&chosen, "Path `if` branch")
         }
     }
 }
@@ -954,8 +1205,75 @@ pub fn compile_request(request: &CmlRequest, env: &CmlEnv) -> Result<CompiledReq
         None
     };
 
-    let headers = if let Some(headers_expr) = &request.headers {
+    let mut headers = if let Some(headers_expr) = &request.headers {
         Some(eval_cml(headers_expr, env)?)
+    } else {
+        None
+    };
+
+    let auth = request
+        .auth
+        .as_ref()
+        .map(|auth| auth.select(env))
+        .transpose()?;
+    if let Some(RequestAuthentication::Bearer { token }) = auth {
+        let token = eval_cml(token, env)?;
+        let Value::String(token) = token else {
+            return Err(CmlError::TypeError {
+                message: "bearer input must be a nonempty token string".into(),
+            });
+        };
+        // RFC 6750 b64token: never accept whitespace or header control characters.
+        validate_bearer_token(&token)?;
+        let fields = headers.get_or_insert_with(|| Value::Object(IndexMap::new()));
+        let Value::Object(fields) = fields else {
+            return Err(CmlError::TypeError {
+                message: "request headers must be an object".into(),
+            });
+        };
+        if fields
+            .keys()
+            .any(|name| name.eq_ignore_ascii_case("authorization"))
+        {
+            return Err(CmlError::InvalidTemplate {
+                message: "auth and headers cannot both declare Authorization".into(),
+            });
+        }
+        fields.insert(
+            "Authorization".into(),
+            Value::String(format!("Bearer {token}")),
+        );
+    }
+
+    let credential = if let Some(RequestAuthentication::Credential {
+        slot,
+        resource,
+        reference,
+    }) = auth
+    {
+        if let Some(Value::Object(fields)) = &headers {
+            if fields
+                .keys()
+                .any(|name| name.eq_ignore_ascii_case("authorization"))
+            {
+                return Err(CmlError::InvalidTemplate {
+                    message: "credential auth cannot be combined with an Authorization header"
+                        .into(),
+                });
+            }
+        }
+        crate::credential::validate_slot(slot)?;
+        let resource = crate::credential::resource_key(eval_cml(resource, env)?)?;
+        let Value::String(reference) = eval_cml(reference, env)? else {
+            return Err(CmlError::TypeError {
+                message: "credential source requires an opaque reference".into(),
+            });
+        };
+        Some(crate::CompiledCredentialUse {
+            slot: slot.clone(),
+            resource,
+            reference,
+        })
     } else {
         None
     };
@@ -968,6 +1286,7 @@ pub fn compile_request(request: &CmlRequest, env: &CmlEnv) -> Result<CompiledReq
         body_format: request.body_format,
         multipart,
         headers,
+        credential,
     })
 }
 
@@ -984,6 +1303,22 @@ pub struct CompiledRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub multipart: Option<CompiledMultipartBody>,
     pub headers: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential: Option<crate::CompiledCredentialUse>,
+}
+
+pub(crate) fn validate_bearer_token(token: &str) -> Result<(), CmlError> {
+    let content = token.trim_end_matches('=');
+    if content.is_empty()
+        || !content
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-._~+/".contains(&b))
+    {
+        return Err(CmlError::TypeError {
+            message: "bearer input contains invalid token characters".into(),
+        });
+    }
+    Ok(())
 }
 
 impl CompiledRequest {
@@ -1234,12 +1569,16 @@ mod tests {
         let expr = CmlExpr::var("missing");
         let result = eval_cml(&expr, &env);
 
-        assert!(result.is_err());
-        if let Err(CmlError::VariableNotFound { name }) = result {
-            assert_eq!(name, "missing");
-        } else {
-            panic!("Expected VariableNotFound error");
+        let err = result.expect_err("missing var");
+        match &err {
+            CmlError::VariableNotFound { name } => assert_eq!(name, "missing"),
+            other => panic!("Expected VariableNotFound, got {other:?}"),
         }
+        let display = err.to_string();
+        assert!(
+            display.contains("quoted teaching literal"),
+            "unbound ident must teach bind-or-literal recovery: {display}"
+        );
     }
 
     #[test]
@@ -1250,7 +1589,8 @@ mod tests {
             Value::String("8675309".to_string()),
         );
         let expr = CmlExpr::Format {
-            template: "List(urn%3Ali%3Aperson%3A{id})".to_string(),
+            template: crate::FormatTemplate::try_from("List(urn%3Ali%3Aperson%3A{id})".to_string())
+                .unwrap(),
             vars: IndexMap::from([("id".to_string(), CmlExpr::var("member_id"))]),
         };
         let result = eval_cml(&expr, &env).unwrap();
@@ -1266,6 +1606,7 @@ mod tests {
         env.insert("content".to_string(), Value::String("hello".to_string()));
         let expr = CmlExpr::Base64 {
             value: Box::new(CmlExpr::var("content")),
+            alphabet: Base64Alphabet::Standard,
         };
         let result = eval_cml(&expr, &env).unwrap();
         assert_eq!(result, Value::String("aGVsbG8=".to_string()));
@@ -1275,7 +1616,7 @@ mod tests {
     fn test_eval_format_missing_var() {
         let env = CmlEnv::new();
         let expr = CmlExpr::Format {
-            template: "hello-{name}".to_string(),
+            template: crate::FormatTemplate::try_from("hello-{name}".to_string()).unwrap(),
             vars: IndexMap::new(),
         };
         let result = eval_cml(&expr, &env);
@@ -1286,7 +1627,7 @@ mod tests {
     fn test_eval_format_unused_var_rejected() {
         let env = CmlEnv::new();
         let expr = CmlExpr::Format {
-            template: "hello-{name}".to_string(),
+            template: crate::FormatTemplate::try_from("hello-{name}".to_string()).unwrap(),
             vars: IndexMap::from([("extra".to_string(), CmlExpr::const_("x"))]),
         };
         let result = eval_cml(&expr, &env);
@@ -1372,18 +1713,21 @@ mod tests {
     #[test]
     fn pagination_config_deserializes_response_next_url() {
         let cfg: PaginationConfig = serde_json::from_value(serde_json::json!({
+            "strategy": "next_url",
             "location": "response_next_url",
             "response_next_url_field": "@odata.nextLink",
             "params": {
-                "$top": { "fixed": 100 }
+                "$top": { "fixed": 100, "role": "page_size" }
             }
         }))
         .expect("parse pagination block");
         assert_eq!(cfg.location, PaginationLocation::ResponseNextUrl);
+        assert_eq!(cfg.strategy, Some(PaginationStrategyKind::NextUrl));
         assert_eq!(
             cfg.response_next_url_field.as_deref(),
             Some("@odata.nextLink")
         );
         assert_eq!(cfg.params.get("$top").unwrap().fixed_as_u32(), Some(100));
+        assert!(cfg.params.get("$top").unwrap().is_page_size_role());
     }
 }

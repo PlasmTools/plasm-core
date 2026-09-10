@@ -3,7 +3,6 @@
 use super::*;
 use crate::evidence_chain::{active_chain, attach_evidence_meta, persist_evidence_sidecars};
 use crate::http_execute::run_seal_record_for_handle;
-use crate::plasm_comp_lift::ExecutablePlasmComp;
 use crate::plasm_plan_run::step_materialize::{
     apply_step_materialize_outcomes, materialize_executable_plan_step, PlanStepMaterializeCtx,
 };
@@ -12,6 +11,7 @@ use plasm_core::plasm_monad::{PlasmStepPayload, StepId};
 use plasm_core::PlasmReturn;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
+use tracing::Instrument;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run_plasm_comp(
@@ -34,6 +34,7 @@ pub async fn run_plasm_comp(
         let comp_wire = crate::plasm_comp_wire::trace_comp_wire_from_dry(&dry);
         return Ok(PlasmPlanRunResult {
             version: dry.version,
+            agent_outcome: Default::default(),
             node_results: dry.node_results,
             graph_summary: dry.graph_summary,
             comp: Some(comp_wire),
@@ -51,12 +52,12 @@ pub async fn run_plasm_comp(
         st,
         prompt_hash,
         session_id,
-        bundle.executable(),
         dry,
         mcp_tool_hooks,
         execution_scope,
         mcp_result_policy,
     ))
+    .instrument(crate::spans::plan_live_run())
     .await
 }
 
@@ -66,7 +67,6 @@ pub(crate) async fn run_plasm_comp_scoped(
     st: &PlasmHostState,
     prompt_hash: &str,
     session_id: &str,
-    executable: &ExecutablePlasmComp,
     dry: DryPlasmPlanEvaluation,
     mcp_tool_hooks: Option<PlanRunTraceHooks>,
     execution_scope: Option<&crate::operation::ExecutionScope>,
@@ -78,7 +78,6 @@ pub(crate) async fn run_plasm_comp_scoped(
             st,
             prompt_hash,
             session_id,
-            executable,
             dry,
             mcp_tool_hooks,
             execution_scope,
@@ -91,8 +90,7 @@ pub(crate) async fn run_plasm_comp_scoped(
 
 #[derive(Debug, Clone)]
 pub(crate) struct MaterializedNode {
-    pub(crate) entry_id: String,
-    pub(crate) entity: String,
+    pub(crate) qualified_entity: crate::plasm_plan::QualifiedEntityKey,
     pub(crate) result: Arc<ExecutionResult>,
     pub(crate) row_source: MaterializedRowSource,
     /// Parallel canonical identity handles (one per row when known).
@@ -108,16 +106,14 @@ impl MaterializedNode {
     /// artifact. Centralizes the `ExecutionResult` boilerplate that would otherwise be copy-pasted
     /// at every synthetic materialization site.
     pub(crate) fn inline_cache(
-        entry_id: String,
-        entity: String,
+        qualified_entity: crate::plasm_plan::QualifiedEntityKey,
         rows: Vec<serde_json::Value>,
         row_identities: Vec<Option<plasm_core::RowIdentity>>,
         display: String,
         projection: Option<Vec<String>>,
     ) -> Self {
         MaterializedNode {
-            entry_id,
-            entity,
+            qualified_entity,
             result: Arc::new(ExecutionResult {
                 count: rows.len(),
                 entities: Vec::new(),
@@ -147,7 +143,7 @@ impl MaterializedNode {
     ) -> Vec<plasm_runtime::CachedEntity> {
         rehydrator
             .resolve_source_parents_with_identities(
-                self.entity.as_str(),
+                self.qualified_entity.entity.as_str(),
                 self.result.as_ref(),
                 &self.row_identities,
             )
@@ -171,6 +167,10 @@ fn pre_layer_materialized_snapshot(
 
 pub(crate) struct MaterializedInputRow {
     pub(crate) node: PlanNodeId,
+    /// Catalog-qualified row domain of the source node (alias-specific hole coercion).
+    pub(crate) qualified_entity: crate::plasm_plan::QualifiedEntityKey,
+    /// CGS `id_field` for the source entity (e.g. `access_token` on AuthSession); `"id"` when unknown.
+    pub(crate) id_field: String,
     pub(crate) proof: crate::plasm_plan::InputCardinalityProof,
     pub(crate) row: serde_json::Value,
     /// All materialized rows for this alias (column refs aggregate across `rows`).
@@ -185,12 +185,12 @@ pub(crate) async fn run_executable_plan_phased(
     st: &PlasmHostState,
     prompt_hash: &str,
     session_id: &str,
-    executable: &ExecutablePlasmComp,
     mut dry: DryPlasmPlanEvaluation,
     mcp_tool_hooks: Option<PlanRunTraceHooks>,
     execution_scope: Option<&crate::operation::ExecutionScope>,
     mcp_result_policy: Option<crate::mcp_run_markdown::McpResultTransportPolicy>,
 ) -> Result<PlasmPlanRunResult, String> {
+    let executable = dry.executable.clone();
     if let Some(evidence) = active_chain(es, execution_scope) {
         evidence
             .record_comp_committed(&dry.artifact().comp)
@@ -214,10 +214,18 @@ pub(crate) async fn run_executable_plan_phased(
         sink = Some(hooks.sink);
     }
     let step_total = executable.steps_topo.len() as u32;
-    let prepared_budgets =
-        crate::plan_prepare::prepared_surface_budget_lookup(dry.validated_plan());
-    let prepared_relation_budgets =
-        crate::plan_prepare::prepared_relation_budget_lookup(dry.validated_plan());
+    let prepared_nodes: HashMap<StepId, ValidatedPlanNode> = dry
+        .validated_plan()
+        .nodes
+        .iter()
+        .cloned()
+        .map(|node| {
+            (
+                StepId::new(node.id().as_str().to_string()).expect("validated step id"),
+                node,
+            )
+        })
+        .collect();
     let mut evidence_steps = Vec::with_capacity(step_total as usize);
     let step_topo_index: HashMap<StepId, usize> = executable
         .steps_topo
@@ -253,8 +261,6 @@ pub(crate) async fn run_executable_plan_phased(
         st,
         session_id,
         plan_shared: &plan_shared,
-        prepared_budgets: &prepared_budgets,
-        prepared_relation_budgets: &prepared_relation_budgets,
         approval_policy: &approval_policy,
         flow: &flow,
         trace: trace.as_ref(),
@@ -287,40 +293,36 @@ pub(crate) async fn run_executable_plan_phased(
             let st = st.clone();
             let session_id = session_id.to_string();
             let plan_shared = Arc::clone(&plan_shared);
-            let prepared_budgets = prepared_budgets.clone();
-            let prepared_relation_budgets = prepared_relation_budgets.clone();
+            let prepared_nodes = Arc::new(prepared_nodes.clone());
             let approval_policy = approval_policy.clone();
             let trace_ctx = trace.clone();
             let sink = sink.clone();
-            let bind = Arc::new(executable.bind.clone());
             let execution_scope_parallel = execution_scope.cloned();
             let mut joins = Vec::with_capacity(layer.len());
             for step_id in &layer {
                 let step_idx = step_topo_index[step_id];
-                let payload = payload_by_step[step_id].clone();
+                let node = prepared_nodes[step_id].clone();
                 let step_id = step_id.clone();
                 let es = es.clone();
                 let st = st.clone();
                 let session_id = session_id.clone();
                 let materialized_snap = materialized_snap.clone();
                 let plan_shared = Arc::clone(&plan_shared);
-                let prepared_budgets = prepared_budgets.clone();
-                let prepared_relation_budgets = prepared_relation_budgets.clone();
                 let approval_policy = approval_policy.clone();
                 let flow = flow.clone();
                 let trace_ctx = trace_ctx.clone();
                 let sink = sink.clone();
-                let bind = Arc::clone(&bind);
                 let rows_progress_step = rows_progress_parallel.clone();
                 let execution_scope_step = execution_scope_parallel.clone();
+                let parent_span = tracing::Span::current();
                 joins.push(async move {
+                    let step_span =
+                        crate::spans::plan_step_materialize(&parent_span, step_id.as_str());
                     let mat_ctx = PlanStepMaterializeCtx {
                         es: &es,
                         st: &st,
                         session_id: session_id.as_str(),
                         plan_shared: &plan_shared,
-                        prepared_budgets: &prepared_budgets,
-                        prepared_relation_budgets: &prepared_relation_budgets,
                         approval_policy: &approval_policy,
                         flow: &flow,
                         trace: trace_ctx.as_ref(),
@@ -332,10 +334,10 @@ pub(crate) async fn run_executable_plan_phased(
                         &mat_ctx,
                         step_idx,
                         &step_id,
-                        &payload,
-                        bind.as_ref(),
+                        node,
                         &materialized_snap,
                     ))
+                    .instrument(step_span)
                     .await
                 });
             }
@@ -358,15 +360,15 @@ pub(crate) async fn run_executable_plan_phased(
                         Some(step_id.as_str().to_string()),
                     );
                 }
-                let payload = payload_by_step
+                let node = prepared_nodes
                     .get(step_id)
-                    .ok_or_else(|| format!("missing payload for step {step_id}"))?;
+                    .ok_or_else(|| format!("missing prepared node for step {step_id}"))?
+                    .clone();
                 let outcome = Box::pin(materialize_executable_plan_step(
                     &mat_ctx,
                     step_idx,
                     step_id,
-                    payload,
-                    &executable.bind,
+                    node,
                     &materialized,
                 ))
                 .await?;
@@ -415,11 +417,11 @@ pub(crate) async fn run_executable_plan_phased(
         steps.push(PublishedResultStep {
             name: return_names.get(i).cloned().flatten(),
             node_id: Some(node_ref.as_str().to_string()),
-            entry_id: Some(mat.entry_id.clone()),
-            entity: Some(mat.entity.clone()),
+            entry_id: Some(mat.qualified_entity.entry_id.clone()),
+            entity: Some(mat.qualified_entity.entity.clone()),
             cgs: es
                 .contexts_by_entry
-                .get(&mat.entry_id)
+                .get(&mat.qualified_entity.entry_id)
                 .map(|ctx| ctx.cgs.clone()),
             display: mat.display.clone(),
             projection: mat.projection.clone(),
@@ -502,6 +504,7 @@ pub(crate) async fn run_executable_plan_phased(
     };
     Ok(PlasmPlanRunResult {
         version: dry.version,
+        agent_outcome: Default::default(),
         node_results,
         graph_summary: graph_summary_with_approval_receipts(dry.graph_summary, &approval_receipts),
         comp: Some(comp),
@@ -556,8 +559,10 @@ mod tests {
 
     fn test_node(display: &str) -> MaterializedNode {
         MaterializedNode {
-            entry_id: "test".into(),
-            entity: "Item".into(),
+            qualified_entity: crate::plasm_plan::QualifiedEntityKey {
+                entry_id: "test".into(),
+                entity: "Item".into(),
+            },
             result: Arc::new(ExecutionResult {
                 count: 0,
                 entities: Vec::new(),

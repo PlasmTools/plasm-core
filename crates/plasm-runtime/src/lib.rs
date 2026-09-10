@@ -28,10 +28,7 @@
 //!    - Delete/Invoke: `id` + path vars + optional `input`
 //!    - When the host sets [`ExecuteOptions::execute_session`](execution::ExecuteOptions), reserved
 //!      `plasm_execute_prompt_hash` / `plasm_execute_session_id` keys are merged before compile (see
-//!      [`merge_plasm_execute_session_env`](execution::merge_plasm_execute_session_env)), and optional
-//!      session-bound mirrors (`share_token` for `?token=`, Proof `proof_base_token` as `base_token` for `/ops`)
-//!      may be merged earlier so mappings stay token-free (see [`merge_plasm_execute_session_share_token_env`](execution::merge_plasm_execute_session_share_token_env),
-//!      [`merge_plasm_execute_session_proof_base_token_env`](execution::merge_plasm_execute_session_proof_base_token_env)).
+//!      [`merge_plasm_execute_session_env`](execution::merge_plasm_execute_session_env)).
 //! 4. **Compile CML template**: evaluate the capability's mapping template against
 //!    the environment to produce a concrete HTTP request (method, path, query, body)
 //! 5. **Execute**: dispatch based on [`ExecutionMode`]
@@ -105,6 +102,7 @@ pub mod auth_resolution;
 pub mod binding_kv;
 pub mod branch_commit;
 pub mod cache;
+pub mod credentials;
 pub mod error;
 pub mod evm;
 pub mod execution;
@@ -123,15 +121,18 @@ pub mod paginated_collect;
 pub mod preflight;
 pub mod query_index;
 pub mod replay;
+pub mod row_compute;
 pub mod row_predicate;
 pub mod runtime_error_render;
 pub mod session_graph_cache;
 pub mod top_k;
 pub mod workflow_reconcile;
 
+mod value_match;
 mod view_dag_run;
 mod view_execution;
 mod view_matrix_fixture;
+mod view_output;
 mod view_plan;
 mod view_preflight;
 mod view_stub_rows;
@@ -147,8 +148,11 @@ pub use view_preflight::{
 };
 
 mod cancel_signal;
+mod derived_get;
 mod live_run_telemetry;
 mod runtime_metrics;
+#[cfg(test)]
+mod span_graph_tests;
 mod spans;
 
 pub use api_error_detail::{
@@ -180,9 +184,12 @@ pub use hosted_oauth_kv::{
     HOSTED_OAUTH_EXPIRY_SKEW_SECS, OUTBOUND_OAUTH_KV_VERSION,
 };
 pub use http_resilience::{HttpResiliencePolicy, ResilientHttpTransport};
-pub use http_transport::{HttpTransport, ReqwestHttpTransport};
+pub use http_transport::{
+    compiled_template_headers, plasm_value_to_form_urlencoded, HttpTransport, ReqwestHttpTransport,
+};
 pub use live_run_telemetry::{
-    drain_active_live_http_trace_entries, record_live_http_completion, record_live_http_trace,
+    drain_active_live_http_trace_entries, drain_active_live_page_audits,
+    record_live_http_completion, record_live_http_trace, record_live_page_audit,
     with_live_run_telemetry, LiveRunTelemetry,
 };
 pub use materialization::{
@@ -198,6 +205,7 @@ pub use oauth_client::{
 pub use oauth_token_debug::TokenEndpointResponseSummary;
 pub use query_index::{QueryCacheKey, QueryIndex};
 pub use replay::*;
+pub use row_compute::{eval_compute_ops, ComputeEvalOutcome, PolarsAdapter};
 pub use row_predicate::{
     json_matches_predicate, json_predicate_matches, JsonRowPredicate, JsonRowPredicateOp,
 };

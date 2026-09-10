@@ -2,9 +2,9 @@
 
 use super::prelude::*;
 
-/// Plan JSON emission from a lowered DAG node (`node_to_json` match lives here).
+/// Structural plan emission from a resolved DAG node.
 pub(in crate::plasm_dag) trait PlanNodeEmitter {
-    fn emit_plan_json(&self, node: &DagNode) -> Result<serde_json::Value, String>;
+    fn emit_plan_node(&self, node: &DagNode) -> Result<crate::plasm_plan::PlanNode, String>;
 }
 
 /// Γ binding contract derivation from a lowered node (`binding_contract_inner` match lives here).
@@ -65,7 +65,7 @@ pub(in crate::plasm_dag) enum DagNodeSource {
         qualified_entity: QualifiedEntityKey,
         effect_class: EffectClass,
         result_shape: crate::plasm_plan::ResultShape,
-        uses_result: Vec<serde_json::Value>,
+        uses_result: Vec<crate::plasm_plan::PlanResultUse>,
     },
     /// CGS relation traversal compiled from `bound_label.relation…` (substitutes bound anchor Plasm).
     RelationTraversal {
@@ -88,21 +88,41 @@ pub(in crate::plasm_dag) enum DagNodeSource {
     Derive {
         source: String,
         value: PlanValue,
-        inputs: Vec<serde_json::Value>,
+        inputs: Vec<crate::plasm_plan::PlanDataInput>,
+    },
+    /// PLP-1: StaticSingleton field cell extract (`ℓ.wire` / `Get.wire`).
+    /// Lowers to a typed derive node with a binding-field operand.
+    ScalarExtract {
+        source: String,
+        wire: String,
     },
     ForEach {
         source: String,
-        parsed_template: serde_json::Value,
+        parsed_template: crate::plasm_plan::PlanExprTemplate,
         display_expr: String,
         effect_kind: PlanNodeKind,
         qualified_entity: QualifiedEntityKey,
-        uses_result: Vec<serde_json::Value>,
+        uses_result: Vec<crate::plasm_plan::PlanResultUse>,
+    },
+    /// PLP-8 / IT-2: state iterator (`iterate … step … until … take N`).
+    IterateUntil {
+        seed: String,
+        parsed_step_template: crate::plasm_plan::PlanExprTemplate,
+        step_display: String,
+        effect_kind: PlanNodeKind,
+        qualified_entity: QualifiedEntityKey,
+        until_body: String,
+        until_predicates: Vec<crate::plasm_plan::PlanPredicate>,
+        take: u32,
+        uses_result: Vec<crate::plasm_plan::PlanResultUse>,
     },
 }
 
 pub(in crate::plasm_dag) struct CompileState<'a> {
-    pub(in crate::plasm_dag) nodes: Vec<DagNode>,
-    pub(in crate::plasm_dag) labels: BTreeMap<String, usize>,
+    /// Shared node bodies — scratch overlays Arc-clone this vec instead of deep-copying DAG payloads.
+    pub(in crate::plasm_dag) nodes: Vec<Arc<DagNode>>,
+    /// Copy-on-write label index (Arc::make_mut on insert / scratch extend).
+    pub(in crate::plasm_dag) labels: Arc<BTreeMap<String, usize>>,
     pub(in crate::plasm_dag) pipeline: &'a PromptPipelineConfig,
     pub(in crate::plasm_dag) cross_cache: Option<&'a SymbolMapCrossRequestCache>,
     pub(in crate::plasm_dag) sym_map: RefCell<Option<Arc<dyn plasm_core::SymbolSession>>>,
@@ -115,7 +135,7 @@ impl<'a> CompileState<'a> {
     ) -> Self {
         Self {
             nodes: Vec::new(),
-            labels: BTreeMap::new(),
+            labels: Arc::new(BTreeMap::new()),
             pipeline,
             cross_cache,
             sym_map: RefCell::new(None),
@@ -135,7 +155,8 @@ impl<'a> CompileState<'a> {
     }
 
     pub(in crate::plasm_dag) fn insert(&mut self, node: DagNode) -> Result<(), String> {
-        if self.labels.contains_key(&node.id) {
+        let labels = Arc::make_mut(&mut self.labels);
+        if labels.contains_key(&node.id) {
             if node.id.starts_with("return_") {
                 return Err(program_duplicate_return_node_error());
             }
@@ -144,13 +165,15 @@ impl<'a> CompileState<'a> {
                 label = node.id
             ));
         }
-        self.labels.insert(node.id.clone(), self.nodes.len());
-        self.nodes.push(node);
+        labels.insert(node.id.clone(), self.nodes.len());
+        self.nodes.push(Arc::new(node));
         Ok(())
     }
 
     pub(in crate::plasm_dag) fn get(&self, id: &str) -> Option<&DagNode> {
-        self.labels.get(id).and_then(|i| self.nodes.get(*i))
+        self.labels
+            .get(id)
+            .and_then(|i| self.nodes.get(*i).map(|n| n.as_ref()))
     }
 
     pub(in crate::plasm_dag) fn contains(&self, id: &str) -> bool {

@@ -1,7 +1,7 @@
 use indexmap::IndexMap;
+use plasm_core::value_domain::ValueDomain;
 use plasm_core::{
-    FieldSchema, FieldType, FieldValueKind, NamedValueSchema, ResourceSchema, StringSemantics,
-    ValueDomainKey, CGS,
+    FieldSchema, FieldType, FieldValueKind, NamedValueSchema, ResourceSchema, ValueDomainKey, CGS,
 };
 use plasm_mock::{start_server, MockResource, MockStore};
 
@@ -15,55 +15,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     cgs.values = IndexMap::from_iter([
         (
             "demo_id".into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: Some(StringSemantics::Short),
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                None,
+            ),
         ),
         (
             "demo_name".into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: Some(StringSemantics::Short),
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                None,
+            ),
         ),
         (
             "demo_revenue".into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Number,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::Number, None, None, None, None),
+                None,
+            ),
         ),
         (
             "demo_region".into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Select,
-                value_format: None,
-                allowed_values: Some(vec![
-                    "EMEA".to_string(),
-                    "APAC".to_string(),
-                    "AMER".to_string(),
-                ]),
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(
+                    &FieldType::Select,
+                    None,
+                    None,
+                    Some(vec![
+                        "EMEA".to_string(),
+                        "APAC".to_string(),
+                        "AMER".to_string(),
+                    ])
+                    .clone(),
+                    None,
+                ),
+                None,
+            ),
         ),
     ]);
 
@@ -134,6 +125,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         abstract_entity: false,
         domain_projection_examples: false,
         primary_read: None,
+        primary_query: None,
+        primary_search: None,
         discovery: None,
     };
     cgs.add_resource(account)?;

@@ -18,13 +18,13 @@ evm = [
 
 [dependencies]
 base64 = { workspace = true }
-chrono = { workspace = true, default-features = false, features = ["clock"] }
 plasm-core = { path = "../plasm-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 indexmap = { workspace = true }
 tracing = { workspace = true }
+url = { workspace = true }
 alloy-chains = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, optional = true }
 alloy-json-abi = { workspace = true, optional = true }

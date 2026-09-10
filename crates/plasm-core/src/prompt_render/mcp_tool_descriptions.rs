@@ -30,21 +30,20 @@ pub const PLASM_RUN_TOOL_DESCRIPTION: &str = concat!(
 /// Canonical `plasm_context` tool description.
 pub const PLASM_CONTEXT_TOOL_DESCRIPTION: &str = include_str!("assets/plasm_context_tool.txt");
 
-/// Canonical `discover_capabilities` tool description.
-pub const DISCOVER_TOOL_DESCRIPTION: &str = include_str!("assets/discover_tool.txt");
-
 /// JSON-schema description for the MCP `plasm` tool `program` parameter.
 ///
-/// Field-attached surface: hosts often clip the long [`PLASM_TOOL_DESCRIPTION`] but keep
-/// per-parameter schema text, so this must be a self-sufficient minimum program-authoring
-/// contract (not a pointer-only stub). Budget: [`PLASM_PROGRAM_PARAM_MAX_BYTES`].
+/// Truncation-survival stub only: hosts sometimes clip [`PLASM_TOOL_DESCRIPTION`] but keep
+/// per-parameter schema text. **Canonical grammar and worked examples live in
+/// [`PLASM_TOOL_DESCRIPTION`] / `plasm_tool.txt`** — do not duplicate them here.
+/// Budget: [`PLASM_PROGRAM_PARAM_MAX_BYTES`].
 pub const PLASM_PROGRAM_PARAM_DESCRIPTION: &str = include_str!("assets/program_param.txt");
 
 /// Max bytes for [`PLASM_PROGRAM_PARAM_DESCRIPTION`] (truncation-resistant field surface).
 pub const PLASM_PROGRAM_PARAM_MAX_BYTES: usize = 1600;
 
 /// Max bytes for [`PLASM_TOOL_DESCRIPTION`].
-pub const PLASM_TOOL_DESCRIPTION_MAX_BYTES: usize = 4200;
+/// Raised for entity-head cardinality + Meaning-arrow legend (entity-semantics A+B).
+pub const PLASM_TOOL_DESCRIPTION_MAX_BYTES: usize = 5200;
 
 /// Host-truncation prefixes that must still carry program-authoring mandates.
 pub const PLASM_TOOL_DESCRIPTION_PREFIX_BYTES: usize = 2048;
@@ -56,19 +55,15 @@ pub const MCP_INITIALIZE_WORKFLOW: &str = include_str!("assets/initialize_workfl
 /// Marker for tests; compact executable-syntax guard in [`PLASM_TOOL_DESCRIPTION`].
 pub const MCP_TOOL_SYNTAX_CONTRACT_MARKER: &str = "`program` is Plasm source text, not JSON data.";
 
-/// Marker for tests; tool-order line in MCP tool descriptions.
-pub const MCP_TOOL_SEQUENCING_MARKER: &str =
-    "`plasm_context` (intent-only) → `plasm` (reads execute when clean; writes return `run_ref`) → `plasm_run` for reviewed writes/paging; `discover_capabilities` only on hard_miss/clarify.";
-
 /// Marker for tests; grammar contract opener in [`PLASM_TOOL_DESCRIPTION`].
 pub const TEACHING_VALID_EXPR_MARKER: &str =
-    "Grammar below; symbols from `plasm_context` TSV. Reply with one valid plasm_program:";
+    "Grammar below; symbols from the language card. Reply with one valid plasm_program:";
 
 /// Substrings that must appear in [`PLASM_PROGRAM_PARAM_DESCRIPTION`].
 const PROGRAM_PARAM_CONTRACT_MARKERS: &[&str] = &[
     "not JSON data",
     "plasm_context",
-    "teaching TSV",
+    "language card",
     "final return line",
     "<<TAG",
     "session_mode: \"extend\"",

@@ -1,5 +1,6 @@
 //! Surface parse helpers (aggregates, sort, plan-value literals).
 
+use super::super::binding_contract::reject_illegal_content_stitch;
 use super::super::prelude::*;
 use super::super::types::CompileState;
 use super::template_uses::dedupe_inputs;
@@ -165,7 +166,7 @@ pub(in crate::plasm_dag) fn parse_plan_value_expr(
     raw: &str,
     state: &CompileState<'_>,
     row_binding: Option<&str>,
-) -> Result<(PlanValue, Vec<serde_json::Value>), String> {
+) -> Result<(PlanValue, Vec<crate::plasm_plan::PlanDataInput>), String> {
     let raw = raw.trim();
     if raw.starts_with('{') && raw.ends_with('}') {
         let mut inputs = Vec::new();
@@ -201,17 +202,23 @@ pub(in crate::plasm_dag) fn parse_plan_value_expr(
     }
     if let Some((node, path)) = raw.split_once('.') {
         if let Some(dep) = state.get(node) {
+            let path_segs: Vec<String> = path.split('.').map(str::to_string).collect();
+            reject_illegal_content_stitch(state, node, &path_segs)?;
             return Ok((
                 PlanValue::NodeSymbol {
                     node: node.to_string(),
                     alias: node.to_string(),
-                    path: path.split('.').map(str::to_string).collect(),
+                    path: path_segs,
                 },
-                vec![json!({
-                    "node": node,
-                    "alias": node,
-                    "cardinality": if dep.singleton { "auto" } else { "singleton" }
-                })],
+                vec![crate::plasm_plan::PlanDataInput {
+                    node: node.to_owned(),
+                    alias: node.to_owned(),
+                    cardinality: if dep.singleton {
+                        crate::plasm_plan::InputCardinality::Auto
+                    } else {
+                        crate::plasm_plan::InputCardinality::Singleton
+                    },
+                }],
             ));
         }
     }
@@ -227,11 +234,11 @@ pub(in crate::plasm_dag) fn parse_plan_value_expr(
                 alias: raw.to_string(),
                 path,
             },
-            vec![serde_json::json!({
-                "node": raw,
-                "alias": raw,
-                "cardinality": "singleton"
-            })],
+            vec![crate::plasm_plan::PlanDataInput {
+                node: raw.to_owned(),
+                alias: raw.to_owned(),
+                cardinality: crate::plasm_plan::InputCardinality::Singleton,
+            }],
         ));
     }
     if raw.starts_with("<<") {

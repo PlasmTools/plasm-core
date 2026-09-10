@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
-use plasm_core::discovery::InMemoryCgsRegistry;
+use plasm_core::discovery::CgsRegistry;
 use plasm_core::schema::CGS;
 use plasm_core::{PromptPipelineConfig, PromptRenderMode};
 use plasm_runtime::{
@@ -87,7 +87,7 @@ pub struct CatalogLoadOutcome {
     pub schema_path: String,
     pub cgs: CGS,
     /// When `--catalog-dir` was used, the registry snapshot (shared Arc — no second disk load).
-    pub prebuilt_registry: Option<Arc<InMemoryCgsRegistry>>,
+    pub prebuilt_registry: Option<Arc<CgsRegistry>>,
 }
 
 /// Load CGS + optional preloaded multi-entry registry from `pre_matches` (same rules as `plasm-mcp`).
@@ -131,7 +131,6 @@ pub fn load_catalog_for_mcp_server_with_progress<P: FnMut(&str)>(
                         progress,
                     )
                     .map_err(AgentError::Schema)?;
-                    let reg = Arc::new(reg);
                     let arc_cgs = reg.first_cgs().ok_or_else(|| {
                         AgentError::Schema("catalog-dir catalog has no entries".into())
                     })?;
@@ -176,16 +175,16 @@ pub fn validate_catalog_templates_with_progress<P: FnMut(&str)>(
 pub fn build_registry_arc(
     matches: &ArgMatches,
     outcome: &CatalogLoadOutcome,
-) -> Result<Arc<InMemoryCgsRegistry>, AgentError> {
+) -> Result<Arc<CgsRegistry>, AgentError> {
     if let Some(reg) = &outcome.prebuilt_registry {
         return Ok(Arc::clone(reg));
     }
     if let Some(cd) = matches.get_one::<String>("catalog_dir") {
         let reg = crate::catalog_data::load_registry_from_catalog_dir(Path::new(cd))
             .map_err(AgentError::Schema)?;
-        return Ok(Arc::new(reg));
+        return Ok(reg);
     }
-    Ok(Arc::new(InMemoryCgsRegistry::from_pairs(vec![(
+    Ok(Arc::new(CgsRegistry::from_pairs(vec![(
         "default".into(),
         "default".into(),
         vec![],
@@ -266,7 +265,7 @@ pub fn incoming_verifier_from_env() -> Result<Arc<IncomingAuthVerifier>, std::io
 pub struct BuildInitialHostStateArgs {
     pub engine: ExecutionEngine,
     pub mode: ExecutionMode,
-    pub registry: Arc<InMemoryCgsRegistry>,
+    pub registry: Arc<CgsRegistry>,
     pub catalog_bootstrap: CatalogBootstrap,
     pub incoming_auth: Option<Arc<IncomingAuthVerifier>>,
     pub run_artifacts_policy: RunArtifactInitPolicy,
@@ -290,7 +289,7 @@ pub async fn build_initial_host_state(
     let session_graph_persistence = crate::session_graph_persistence::init_from_env()
         .map_err(|e| std::io::Error::other(format!("session graph persistence: {e}")))?;
 
-    Ok(crate::http::build_plasm_host_state(PlasmHostBootstrap {
+    let state = crate::http::build_plasm_host_state(PlasmHostBootstrap {
         engine,
         mode,
         registry,
@@ -299,7 +298,15 @@ pub async fn build_initial_host_state(
         run_artifacts,
         session_graph_persistence,
         oss_local_filesystem_defaults,
-    }))
+    });
+    if state.catalog.catalog_dir_path().is_some() {
+        state
+            .catalog
+            .activate_discovery()
+            .await
+            .map_err(|e| std::io::Error::other(format!("discovery activation: {e}")))?;
+    }
+    Ok(state)
 }
 
 fn outbound_oauth_enabled_from_env() -> bool {

@@ -45,7 +45,13 @@ pub async fn dispatch<E: ExprExecutor>(
         .get_entity(&original_entity_name)
         .ok_or_else(|| AgentError::EntityNotFound(original_entity_name.to_string()))?;
 
-    let (expr, consume) = build_expr(entity_matches, &original_entity_name, entity, cgs)?;
+    let (expr, consume, cli_capability_params) =
+        build_expr(entity_matches, &original_entity_name, entity, cgs)?;
+    if !cli_capability_params.is_empty() {
+        if let Some(reference) = expr_primary_ref(&expr) {
+            cache.stamp_capability_params(reference, cli_capability_params);
+        }
+    }
 
     let cli_span = crate::spans::execute_cli_expression(&original_entity_name);
     cli_span.in_scope(|| {
@@ -61,7 +67,7 @@ pub async fn dispatch<E: ExprExecutor>(
             cache,
             Some(mode),
             consume,
-            ExecuteOptions::default(),
+            ExecuteOptions::for_catalog(cgs)?,
         )
         .instrument(cli_span)
         .await?;
@@ -74,12 +80,22 @@ pub async fn dispatch<E: ExprExecutor>(
     Ok(())
 }
 
+fn expr_primary_ref(expr: &Expr) -> Option<&Ref> {
+    match expr {
+        Expr::Get(g) => Some(&g.reference),
+        Expr::Delete(d) => Some(&d.target),
+        Expr::Invoke(i) => Some(&i.target),
+        Expr::Chain(ch) => expr_primary_ref(&ch.source),
+        _ => None,
+    }
+}
+
 fn build_expr(
     entity_matches: &ArgMatches,
     entity_name: &str,
     entity: &EntityDef,
     cgs: &CGS,
-) -> Result<(Expr, StreamConsumeOpts), AgentError> {
+) -> Result<(Expr, StreamConsumeOpts, IndexMap<String, Value>), AgentError> {
     // Check for subcommand first
     if let Some((sub_name, sub_matches)) = entity_matches.subcommand() {
         if sub_name == "query" {
@@ -102,7 +118,7 @@ fn build_expr(
                 {
                     query.hydrate = Some(false);
                 }
-                return Ok((Expr::Query(query), consume));
+                return Ok((Expr::Query(query), consume, IndexMap::new()));
             }
             // No primary query cap — fall through to named-capability lookup.
         }
@@ -116,7 +132,7 @@ fn build_expr(
                 };
                 query.capability_name = Some(search_cap.name.clone());
                 let consume = attach_query_pagination_if_present(&mut query, sub_matches, cgs);
-                return Ok((Expr::Query(query), consume));
+                return Ok((Expr::Query(query), consume, IndexMap::new()));
             }
             // No primary search cap — fall through.
         }
@@ -133,7 +149,7 @@ fn build_expr(
                 };
                 query.capability_name = Some(cap.name.clone());
                 let consume = attach_query_pagination_if_present(&mut query, sub_matches, cgs);
-                return Ok((Expr::Query(query), consume));
+                return Ok((Expr::Query(query), consume, IndexMap::new()));
             }
 
             if cap.kind == CapabilityKind::Create {
@@ -141,6 +157,7 @@ fn build_expr(
                 return Ok((
                     Expr::Create(CreateExpr::new(&cap.name, entity_name, input)),
                     StreamConsumeOpts::default(),
+                    IndexMap::new(),
                 ));
             }
         }
@@ -164,17 +181,13 @@ fn build_expr(
 
         // EntityRef field navigation (FK auto-resolve via ChainExpr)
         if let Some(field_key) = resolve_entity_ref_field(entity, sub_name, cgs) {
-            let mut get = GetExpr::from_ref(node_ref.clone());
-            if let Some(get_cap) = cgs.find_capability(entity_name, CapabilityKind::Get) {
-                get.path_vars = path_vars_for_cml(
-                    &get_cap.mapping.template,
-                    id.as_str(),
-                    entity_matches,
-                    None,
-                )?;
-            }
+            let get = GetExpr::from_ref(node_ref.clone());
             let chain = ChainExpr::auto_get(Expr::Get(get), field_key);
-            return Ok((Expr::Chain(chain), StreamConsumeOpts::default()));
+            return Ok((
+                Expr::Chain(chain),
+                StreamConsumeOpts::default(),
+                IndexMap::new(),
+            ));
         }
 
         // Reverse traversal: `pet 10 orders` → query(Order, petId=10)
@@ -201,7 +214,7 @@ fn build_expr(
             {
                 query.hydrate = Some(false);
             }
-            return Ok((Expr::Query(query), consume));
+            return Ok((Expr::Query(query), consume, IndexMap::new()));
         }
 
         // Find the matching capability
@@ -214,29 +227,32 @@ fn build_expr(
                 return Ok((
                     Expr::Create(CreateExpr::new(&cap.name, entity_name, input)),
                     StreamConsumeOpts::default(),
+                    IndexMap::new(),
                 ));
             }
             CapabilityKind::Delete => {
-                let mut del = DeleteExpr::with_target(&cap.name, node_ref.clone());
-                del.path_vars = path_vars_for_cml(
-                    &cap.mapping.template,
+                let del = DeleteExpr::with_target(&cap.name, node_ref.clone());
+                let stamp = cli_capability_params_for_cap(
+                    cap,
                     id.as_str(),
                     entity_matches,
                     Some(sub_matches),
+                    entity,
                 )?;
-                return Ok((Expr::Delete(del), StreamConsumeOpts::default()));
+                return Ok((Expr::Delete(del), StreamConsumeOpts::default(), stamp));
             }
             _ => {
                 // Update, Action, or anything else -> Invoke
                 let input = args_to_input(sub_matches, cap, cgs);
-                let mut inv = InvokeExpr::with_target(&cap.name, node_ref.clone(), input);
-                inv.path_vars = path_vars_for_cml(
-                    &cap.mapping.template,
+                let inv = InvokeExpr::with_target(&cap.name, node_ref.clone(), input);
+                let stamp = cli_capability_params_for_cap(
+                    cap,
                     id.as_str(),
                     entity_matches,
                     Some(sub_matches),
+                    entity,
                 )?;
-                return Ok((Expr::Invoke(inv), StreamConsumeOpts::default()));
+                return Ok((Expr::Invoke(inv), StreamConsumeOpts::default(), stamp));
             }
         }
     }
@@ -258,10 +274,9 @@ fn build_expr(
             kind: "get".into(),
         })?;
     let node_ref = cli_entity_node_ref(entity_name, entity, entity_matches, id.as_str(), cgs)?;
-    let mut get = GetExpr::from_ref(node_ref);
-    get.path_vars =
-        path_vars_for_cml(&get_cap.mapping.template, id.as_str(), entity_matches, None)?;
-    Ok((Expr::Get(get), StreamConsumeOpts::default()))
+    let get = GetExpr::from_ref(node_ref);
+    let stamp = cli_capability_params_for_cap(get_cap, id.as_str(), entity_matches, None, entity)?;
+    Ok((Expr::Get(get), StreamConsumeOpts::default(), stamp))
 }
 
 fn build_relation_expr(
@@ -271,7 +286,7 @@ fn build_relation_expr(
     entity: &EntityDef,
     source_ref: &Ref,
     cgs: &CGS,
-) -> Result<(Expr, StreamConsumeOpts), AgentError> {
+) -> Result<(Expr, StreamConsumeOpts, IndexMap<String, Value>), AgentError> {
     let relation_schema = cgs
         .get_entity(entity_name)
         .and_then(|e| e.relations.get(relation_name))
@@ -309,7 +324,7 @@ fn build_relation_expr(
             {
                 query.hydrate = Some(false);
             }
-            return Ok((Expr::Query(query), consume));
+            return Ok((Expr::Query(query), consume, IndexMap::new()));
         }
         RelationMaterialization::QueryScopedBindings {
             capability,
@@ -348,7 +363,7 @@ fn build_relation_expr(
             {
                 query.hydrate = Some(false);
             }
-            return Ok((Expr::Query(query), consume));
+            return Ok((Expr::Query(query), consume, IndexMap::new()));
         }
         RelationMaterialization::GetScopedBindings {
             capability,
@@ -372,7 +387,11 @@ fn build_relation_expr(
             })?;
             let reference = ref_from_get_materialize_bindings(target_ent, &bound)?;
             let get = GetExpr::from_ref(reference);
-            return Ok((Expr::Get(get), StreamConsumeOpts::default()));
+            return Ok((
+                Expr::Get(get),
+                StreamConsumeOpts::default(),
+                IndexMap::new(),
+            ));
         }
         _ => {}
     }
@@ -395,7 +414,7 @@ fn build_relation_expr(
         query.hydrate = Some(false);
     }
 
-    Ok((Expr::Query(query), consume))
+    Ok((Expr::Query(query), consume, IndexMap::new()))
 }
 
 /// Populate [`QueryExpr::pagination`] from built-in CLI flags when the query mapping declares CML pagination.
@@ -414,7 +433,10 @@ fn attach_query_pagination_if_present(
     let Some(cap) = cap_opt else {
         return StreamConsumeOpts::default();
     };
-    let Ok(template) = parse_capability_template(&cap.mapping.template) else {
+    let Some(mapping) = cap.mapping.as_ref() else {
+        return StreamConsumeOpts::default();
+    };
+    let Ok(template) = parse_capability_template(&mapping.template) else {
         return StreamConsumeOpts::default();
     };
     let Some(pconf) = template_pagination(&template) else {
@@ -576,6 +598,7 @@ fn collect_template_string_bindings(
             path_var_names_from_request(cml)
         }
         CapabilityTemplate::View(_)
+        | CapabilityTemplate::CredentialBind(_)
         | CapabilityTemplate::EvmCall(_)
         | CapabilityTemplate::EvmLogs(_) => Vec::new(),
     };
@@ -634,6 +657,38 @@ fn path_vars_for_cml(
     }
 }
 
+/// Non-identity CML template bindings from CLI flags — stamped onto session materialization
+/// (never onto Get/Invoke/Delete AST).
+fn cli_capability_params_for_cap(
+    cap: &plasm_core::CapabilitySchema,
+    positional_id: &str,
+    entity_matches: &ArgMatches,
+    cap_matches: Option<&ArgMatches>,
+    entity: &EntityDef,
+) -> Result<IndexMap<String, Value>, AgentError> {
+    let Some(mapping) = cap.mapping.as_ref() else {
+        return Ok(IndexMap::new());
+    };
+    let Some(all) = path_vars_for_cml(
+        &mapping.template,
+        positional_id,
+        entity_matches,
+        cap_matches,
+    )?
+    else {
+        return Ok(IndexMap::new());
+    };
+    let mut identity = std::collections::HashSet::from(["id".to_string()]);
+    identity.insert(entity.id_field.to_string());
+    for kv in &entity.key_vars {
+        identity.insert(kv.to_string());
+    }
+    Ok(all
+        .into_iter()
+        .filter(|(k, _)| !identity.contains(k))
+        .collect())
+}
+
 /// Build [`Ref`] for a CLI node: simple id, or compound map from GET path + `key_vars`.
 fn cli_entity_node_ref(
     entity_name: &str,
@@ -651,12 +706,14 @@ fn cli_entity_node_ref(
             entity.key_vars
         ))
     })?;
-    let mut bindings = collect_template_string_bindings(
-        &get_cap.mapping.template,
-        positional_id,
-        entity_matches,
-        None,
-    )?;
+    let mapping = get_cap.mapping.as_ref().ok_or_else(|| {
+        AgentError::Argument(format!(
+            "Entity `{entity_name}` uses compound key {:?}; derived Gets have no CML path template for CLI key binding.",
+            entity.key_vars
+        ))
+    })?;
+    let mut bindings =
+        collect_template_string_bindings(&mapping.template, positional_id, entity_matches, None)?;
 
     for kv in &entity.key_vars {
         if !bindings.contains_key(kv.as_str()) {
@@ -684,7 +741,7 @@ fn relation_scope_string(entity: &EntityDef, source_ref: &Ref) -> String {
     match &source_ref.key {
         EntityKey::Compound(parts) => parts
             .get(entity.id_field.as_str())
-            .cloned()
+            .map(|s| s.display_str())
             .unwrap_or_else(|| source_ref.primary_slot_str()),
         EntityKey::Simple(_) => source_ref
             .simple_id()
@@ -731,7 +788,7 @@ fn relation_binding_field_value(
 ) -> String {
     let pf = parent_field.as_str();
     match &source_ref.key {
-        EntityKey::Compound(parts) => parts.get(pf).cloned().unwrap_or_else(|| {
+        EntityKey::Compound(parts) => parts.get(pf).map(|s| s.display_str()).unwrap_or_else(|| {
             if pf == entity.id_field.as_str() {
                 relation_scope_string(entity, source_ref)
             } else {
@@ -781,29 +838,22 @@ fn find_capability<'a>(
 mod tests {
     use super::*;
     use crate::cli_builder::build_app;
+    use plasm_core::value_domain::ValueDomain;
     use plasm_core::{
         CapabilityKind, CapabilityMapping, CapabilitySchema, EntityKey, Expr, FieldSchema,
-        FieldType, FieldValueKind, NamedValueSchema, ResourceSchema, StringSemantics,
-        ValueDomainKey,
+        FieldType, FieldValueKind, NamedValueSchema, ResourceSchema, ValueDomainKey,
     };
 
     fn evm_get_cgs() -> CGS {
         let mut cgs = CGS::new();
-        for (k, sem) in [
-            ("dp_evm_account", Some(StringSemantics::Short)),
-            ("dp_evm_balance", Some(StringSemantics::Short)),
-        ] {
+        for k in ["dp_evm_account", "dp_evm_balance"] {
             cgs.values.insert(
                 k.into(),
-                NamedValueSchema {
-                    description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
-                    string_semantics: sem,
-                    array_items: None,
-                    currency: None,
-                },
+                NamedValueSchema::from_domain(
+                    String::new(),
+                    ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                    None,
+                ),
             );
         }
         cgs.add_resource(ResourceSchema {
@@ -851,6 +901,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -860,7 +912,8 @@ mod tests {
             kind: CapabilityKind::Get,
             domain: "Balance".into(),
             identity_key: None,
-            mapping: CapabilityMapping {
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "transport": "evm_call",
                     "chain": 1,
@@ -870,8 +923,9 @@ mod tests {
                     "block": { "type": "var", "name": "block" }
                 })
                 .into(),
-            },
-            input_schema: None,
+            }),
+            derived: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             sanitizes: vec![],
@@ -894,9 +948,14 @@ mod tests {
         let (_, entity_matches) = matches.subcommand().unwrap();
         let cap = cgs.find_capability("Balance", CapabilityKind::Get).unwrap();
 
-        let vars = path_vars_for_cml(&cap.mapping.template, "0xabc", entity_matches, None)
-            .unwrap()
-            .unwrap();
+        let vars = path_vars_for_cml(
+            &cap.require_mapping().expect("cml mapping").template,
+            "0xabc",
+            entity_matches,
+            None,
+        )
+        .unwrap()
+        .unwrap();
 
         assert_eq!(
             vars.get("block"),
@@ -913,15 +972,11 @@ mod tests {
         let mut cgs = CGS::new();
         cgs.values.insert(
             "dp_transfer_event_id".into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: Some(StringSemantics::Short),
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                None,
+            ),
         );
         cgs.add_resource(ResourceSchema {
             name: "Transfer".into(),
@@ -951,6 +1006,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -960,7 +1017,8 @@ mod tests {
             kind: CapabilityKind::Query,
             domain: "Transfer".into(),
             identity_key: None,
-            mapping: CapabilityMapping {
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "transport": "evm_logs",
                     "chain": 1,
@@ -974,8 +1032,9 @@ mod tests {
                     }
                 })
                 .into(),
-            },
-            input_schema: None,
+            }),
+            derived: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             sanitizes: vec![],
@@ -1016,28 +1075,20 @@ mod tests {
         for k in ["dp_issue_owner", "dp_issue_repo"] {
             cgs.values.insert(
                 k.into(),
-                NamedValueSchema {
-                    description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
-                    string_semantics: Some(StringSemantics::Short),
-                    array_items: None,
-                    currency: None,
-                },
+                NamedValueSchema::from_domain(
+                    String::new(),
+                    ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                    None,
+                ),
             );
         }
         cgs.values.insert(
             "dp_issue_number".into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Integer,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::Integer, None, None, None, None),
+                None,
+            ),
         );
         let mk = |n: &str, vk: &str| FieldSchema {
             name: n.into(),
@@ -1083,6 +1134,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -1092,7 +1145,8 @@ mod tests {
             kind: CapabilityKind::Get,
             domain: "Issue".into(),
             identity_key: None,
-            mapping: CapabilityMapping {
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
                     "path": [
@@ -1104,8 +1158,9 @@ mod tests {
                     ]
                 })
                 .into(),
-            },
-            input_schema: None,
+            }),
+            derived: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             sanitizes: vec![],
@@ -1128,15 +1183,15 @@ mod tests {
             .unwrap();
         let (_, em) = m.subcommand().unwrap();
         let entity = cgs.get_entity("Issue").unwrap();
-        let (expr, _) = build_expr(em, "Issue", entity, &cgs).unwrap();
+        let (expr, _, _) = build_expr(em, "Issue", entity, &cgs).unwrap();
         let Expr::Get(g) = expr else {
             panic!("expected Get, got {expr:?}");
         };
         let EntityKey::Compound(parts) = &g.reference.key else {
             panic!("expected compound ref");
         };
-        assert_eq!(parts.get("owner").map(String::as_str), Some("o"));
-        assert_eq!(parts.get("repo").map(String::as_str), Some("r"));
-        assert_eq!(parts.get("number").map(String::as_str), Some("42"));
+        assert_eq!(parts.get("owner").and_then(|s| s.as_lit_str()), Some("o"));
+        assert_eq!(parts.get("repo").and_then(|s| s.as_lit_str()), Some("r"));
+        assert_eq!(parts.get("number").and_then(|s| s.as_lit_str()), Some("42"));
     }
 }

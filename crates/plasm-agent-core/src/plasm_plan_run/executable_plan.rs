@@ -1,29 +1,13 @@
-//! Plan Executability Closure (PEC): the typed executable schedule DERIVED from a validated plan.
+//! Typed plan-node classification and the shared pure transformation kernel.
 //!
-//! # Invariant
-//!
-//! Every planned Plasm program must execute; the **only** admissible difference between the dry
-//! preflight and live execute is I/O. This module makes that invariant structural rather than
-//! aspirational: a [`ValidatedPlanNode`] is lowered — *totally, by construction* — into exactly one
-//! [`ExecStep`]:
-//!
-//! * [`ExecStep::Pure`] — a [`PureStep`] whose rows are a deterministic function of already
-//!   materialized inputs. There is a **single** kernel ([`PureStep::materialize`]) and both the dry
-//!   walk and the live per-step materializer call it. No second pure interpreter exists, so a
-//!   planned pure node cannot be silently dropped or diverge from its live counterpart.
-//! * [`ExecStep::Io`] — an [`IoStep`] executed through the [`IoPort`] trait. This is the *only*
-//!   place dry and live differ: [`DryIoPort`](super::compute_eval::DryIoPort) yields typed stub rows,
-//!   [`LiveIoPort`](super::step_materialize::LiveIoPort) performs the real network effect.
-//!
-//! [`ExecStep::classify`] is a total match with **no wildcard** — adding a `ValidatedPlanNode`
-//! variant is a compile error until it is classified as pure or I/O. Execution is therefore a typed
-//! artefact derived from a validated plan: no free functions, no guesses.
+//! Classification is exhaustive. External effects cross the runtime's compiled-request
+//! transport boundary; plan nodes are never exposed through an adapter trait.
 
 use super::*;
 use crate::plasm_plan::{
     ValidatedComputeNode, ValidatedDataNode, ValidatedDeriveNode, ValidatedForEachNode,
-    ValidatedPlanDataInput, ValidatedPlanNode, ValidatedRelationTraversalNode,
-    ValidatedSurfaceNode,
+    ValidatedIterateUntilNode, ValidatedPlanDataInput, ValidatedPlanNode,
+    ValidatedRelationTraversalNode, ValidatedSurfaceNode,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -37,12 +21,12 @@ pub(crate) enum PureStep {
     Compute(Box<ValidatedComputeNode>),
 }
 
-/// The I/O fragment of the plan: steps that reach a backend (read or effect). Executed through the
-/// [`IoPort`] seam so that dry (stub) and live (real) diverge in exactly one typed place.
+/// Runtime-orchestrated steps: backend reads/effects and their closed control-flow forms.
 pub(crate) enum IoStep {
     Surface(Box<ValidatedSurfaceNode>),
     Relation(Box<ValidatedRelationTraversalNode>),
     ForEach(Box<ValidatedForEachNode>),
+    IterateUntil(Box<ValidatedIterateUntilNode>),
 }
 
 /// Total classification of a validated plan node into the PEC execution taxonomy.
@@ -83,6 +67,7 @@ impl ExecStep {
             ValidatedPlanNode::Surface(n) => ExecStep::Io(IoStep::Surface(Box::new(n))),
             ValidatedPlanNode::RelationTraversal(n) => ExecStep::Io(IoStep::Relation(Box::new(n))),
             ValidatedPlanNode::ForEach(n) => ExecStep::Io(IoStep::ForEach(Box::new(n))),
+            ValidatedPlanNode::IterateUntil(n) => ExecStep::Io(IoStep::IterateUntil(Box::new(n))),
         }
     }
 
@@ -204,6 +189,7 @@ impl IoStep {
             IoStep::Surface(_) => "surface",
             IoStep::Relation(_) => "relation",
             IoStep::ForEach(_) => "foreach",
+            IoStep::IterateUntil(_) => "iterate_until",
         }
     }
 
@@ -212,25 +198,9 @@ impl IoStep {
             IoStep::Surface(n) => &n.id,
             IoStep::Relation(n) => &n.id,
             IoStep::ForEach(n) => &n.id,
+            IoStep::IterateUntil(n) => &n.id,
         }
     }
-}
-
-/// The single typed seam across which dry and live execution diverge. Implemented by
-/// [`LiveIoPort`](super::step_materialize::LiveIoPort) (real backend effects) and
-/// [`DryIoPort`](super::compute_eval::DryIoPort) (typed stub rows).
-#[async_trait::async_trait]
-pub(crate) trait IoPort {
-    /// Produce the materialized node for an I/O step. Returns `None` only when the step has nothing
-    /// to materialize in this mode — e.g. a dry stub over an entity-optional surface or a
-    /// foreign-catalog effect target that is not loaded in the session. Live execute always
-    /// materializes (`Some`); it fails loudly rather than skipping.
-    async fn materialize_io(
-        &self,
-        step: &IoStep,
-        step_idx: usize,
-        materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
-    ) -> Result<Option<MaterializedNode>, String>;
 }
 
 /// Content digest of an executable schedule: the ordered `(kind, node id)` of every [`ExecStep`].

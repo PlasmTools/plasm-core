@@ -16,7 +16,7 @@ Clients (local tooling, hosted Tool Explorer, MCP configuration UIs) consume:
 - `entry` — `entry_id`, `label`, `tags` (same as registry list rows).
 - `focus` — `mode` and `resolved_entities` (entity names included in this slice).
 - `overview` — `entity_count`, `relation_edge_count`, `verb_count`.
-- `execute` — static LLM execute continuation notes (pagination, async plan runs, review gate). Same semantics as the teaching TSV preamble and MCP `program_contract`; not derived from per-entity CGS.
+- `execute` — static LLM execute continuation notes (pagination, async plan runs, review gate). Same semantics as the language-card preamble and MCP `program_contract`; not derived from per-entity CGS.
 - `auth` — scheme, OAuth metadata, `connect_profile` (outbound OAuth eligibility when a control plane is present).
 - `entities` — per-entity CLI-shaped `verbs`, declared `relations`, derived `reverse_traversals`, `entity_ref_links`, and `domain_lines` (parallel to teaching table).
 - `domain.model` — full `DomainPromptModel` (structured teaching table metadata: kinds, cross-entity hints, relation materialization summaries).
@@ -32,7 +32,7 @@ Every tool-model response includes an `execute` object describing **host-only** 
 | `long_operations` | MCP `plasm_run` awaits server-side and returns one terminal response; progress may arrive via `notifications/plasm/op`. HTTP-only execute can use `wait=false` and poll `wait(oM)` every few seconds; optional `GET …/operations/{handle}/stream` SSE. |
 | `review_gate` | MCP live execute requires **`run_ref`** (`pcN`) from `plasm`. HTTP live execute accepts query/body **`plan_commit_ref=pcN`** or `force=true`. Commit ids hash the semantic plan DAG (`version`, `steps`, `bind`, `return`) only. |
 
-Full workflow: [plasm-long-operations.md](plasm-long-operations.md). Surface grammar: [plasm-language-definition.md](plasm-language-definition.md#host-continuations-page-wait-cancel). Teaching TSV preamble (first wave): [incremental-teaching-prompts.md](incremental-teaching-prompts.md).
+Full workflow: [plasm-long-operations.md](plasm-long-operations.md). Surface grammar: [plasm-language-definition.md](plasm-language-definition.md#host-continuations-page-wait-cancel). Language-card preamble (first wave): [incremental-teaching-prompts.md](incremental-teaching-prompts.md).
 
 Paginated query verbs in `entities[].verbs` append the pagination note to `about` when the capability declares HTTP pagination — same copy as `execute.pagination`.
 

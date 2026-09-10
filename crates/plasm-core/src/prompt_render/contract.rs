@@ -5,7 +5,7 @@ use super::*;
 /// Numeric threshold used in row-compute teaching exemplars (filter/sort/limit worked examples).
 pub const ROW_COMPUTE_EXEMPLAR_THRESHOLD: i64 = 300;
 
-/// Which portion of a fenced teaching TSV block to expose on the wire.
+/// Which portion of a fenced language card block to expose on the wire.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TeachingFenceSlice {
     /// `plasm_expr` / `Meaning` table only (execute waves, MCP `plasm_context`, terminal).
@@ -27,6 +27,16 @@ pub fn split_tsv_teaching_contract_and_table(teaching_tsv: &str) -> (Option<Stri
     (None, teaching_tsv.to_string())
 }
 
+/// Registry `entry_id` used as markdown fence info for language-card blocks (` ```venmo ` not ` ```tsv `).
+pub fn catalog_teaching_fence_info(entry_id: &str) -> &str {
+    let trimmed = entry_id.trim();
+    if trimmed.is_empty() {
+        "tsv"
+    } else {
+        trimmed
+    }
+}
+
 /// Strip a leading markdown fenced block ` ```{fence_info}\\n … \\n``` ` and return inner body.
 pub fn markdown_fence_body_inner<'a>(markdown: &'a str, fence_info: &str) -> Option<&'a str> {
     let open = format!("```{fence_info}\n");
@@ -35,7 +45,31 @@ pub fn markdown_fence_body_inner<'a>(markdown: &'a str, fence_info: &str) -> Opt
     Some(&rest[..end])
 }
 
-/// Extract a teaching TSV slice from a markdown-fenced session prompt.
+/// Extract the first fenced language-card block regardless of fence label (`venmo`, legacy `tsv`, …).
+pub fn teaching_tsv_table_from_wrapped_prompt_any(prompt: &str) -> Option<String> {
+    let mut cursor = prompt;
+    while let Some(open_idx) = cursor.find("```") {
+        let after_ticks = &cursor[open_idx + 3..];
+        let Some(nl) = after_ticks.find('\n') else {
+            break;
+        };
+        let body_start = open_idx + 3 + nl + 1;
+        let Some(body_region) = cursor.get(body_start..) else {
+            break;
+        };
+        let Some(close_rel) = body_region.find("\n```") else {
+            break;
+        };
+        let inner = &body_region[..close_rel];
+        if inner.contains(TSV_TEACHING_TABLE_HEADER) {
+            return Some(split_tsv_teaching_contract_and_table(inner).1);
+        }
+        cursor = &body_region[close_rel + 1..];
+    }
+    None
+}
+
+/// Extract a language card slice from a markdown-fenced session prompt.
 pub fn teaching_tsv_from_wrapped_prompt(
     prompt: &str,
     fence_info: &str,
@@ -48,7 +82,7 @@ pub fn teaching_tsv_from_wrapped_prompt(
     })
 }
 
-/// teaching TSV table fragment (from [`TSV_TEACHING_TABLE_HEADER`] onward), dropping optional `#` contract lines inside the fence body.
+/// language card table fragment (from [`TSV_TEACHING_TABLE_HEADER`] onward), dropping optional `#` contract lines inside the fence body.
 pub fn teaching_tsv_table_from_wrapped_prompt(prompt: &str, fence_info: &str) -> Option<String> {
     teaching_tsv_from_wrapped_prompt(prompt, fence_info, TeachingFenceSlice::TableOnly)
 }
@@ -70,7 +104,7 @@ pub(crate) fn validate_teaching_tsv_teaching_table(body_from_header: &str) -> Re
     let mut lines = body_from_header.lines();
     let header = lines
         .next()
-        .ok_or_else(|| "empty teaching TSV table".to_string())?;
+        .ok_or_else(|| "empty language card table".to_string())?;
     let header = header.strip_suffix('\r').unwrap_or(header);
     if header != "plasm_expr\tMeaning" {
         return Err(format!(
@@ -128,8 +162,8 @@ pub(crate) fn enforce_teaching_tsv_teaching_invariant(prompt: &str) {
         tracing::error!(
             target: "plasm_core::prompt_render",
             error = %msg,
-            "teaching TSV teaching table invariant violated"
+            "language card invariant violated"
         );
-        debug_assert!(false, "teaching TSV: {msg}");
+        debug_assert!(false, "language card: {msg}");
     }
 }

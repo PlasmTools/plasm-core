@@ -1,7 +1,47 @@
+_document_auth_1: &document_auth_1
+  scheme: when
+  condition:
+    type: exists
+    var: access
+  then_auth:
+    scheme: credential
+    slot: document_access
+    resource:
+      type: object
+      fields:
+      - - document
+        - type: var
+          name: slug
+    reference:
+      type: var
+      name: access
+  else_auth:
+    scheme: host
+
+_document_auth_2: &document_auth_2
+  scheme: when
+  condition:
+    type: exists
+    var: access
+  then_auth:
+    scheme: credential
+    slot: document_access
+    resource:
+      type: object
+      fields:
+      - - document
+        - type: var
+          name: document_id
+    reference:
+      type: var
+      name: access
+  else_auth:
+    scheme: host
+
 # Proof — HTTP mappings for hosted `www.proofeditor.ai`.
 # Slug-scoped agent routes use `/api/agent/:slug/…` (plain `/documents/:slug/…` returns 404 HTML on hosted).
 # Share negotiation stays `GET /d/:slug`; new docs use `POST /share/markdown`. See apis/proof/README.md.
-# Auth: domain `auth.env` bearer (PROOF_API_TOKEN); optional share `?token=` maps to `share_token`.
+# Auth: explicit scoped `access` reference, or the declared host bearer source when omitted.
 
 annotation_comment_add:
   method: POST
@@ -14,20 +54,6 @@ annotation_comment_add:
     name: slug
   - type: literal
     value: ops
-  query:
-    type: object
-    fields:
-    - - token
-      - type: if
-        condition:
-          type: exists
-          var: share_token
-        then_expr:
-          type: var
-          name: share_token
-        else_expr:
-          type: const
-          value: null
   headers:
     type: object
     fields:
@@ -50,18 +76,11 @@ annotation_comment_add:
       - type: var
         name: text
     - - baseToken
-      - type: if
-        condition:
-          type: exists
-          var: base_token
-        then_expr:
-          type: var
-          name: base_token
-        else_expr:
-          type: const
-          value: null
+      - type: var
+        name: base_token
   response:
     single: true
+  auth: *document_auth_1
 annotation_comment_batch_apply:
   method: POST
   path:
@@ -73,20 +92,6 @@ annotation_comment_batch_apply:
     name: slug
   - type: literal
     value: ops
-  query:
-    type: object
-    fields:
-    - - token
-      - type: if
-        condition:
-          type: exists
-          var: share_token
-        then_expr:
-          type: var
-          name: share_token
-        else_expr:
-          type: const
-          value: null
   headers:
     type: object
     fields:
@@ -103,21 +108,14 @@ annotation_comment_batch_apply:
       - type: var
         name: by
     - - baseToken
-      - type: if
-        condition:
-          type: exists
-          var: base_token
-        then_expr:
-          type: var
-          name: base_token
-        else_expr:
-          type: const
-          value: null
+      - type: var
+        name: base_token
     - - operations
       - type: var
         name: operations
   response:
     single: true
+  auth: *document_auth_1
 annotation_comment_reply:
   method: POST
   path:
@@ -129,20 +127,6 @@ annotation_comment_reply:
     name: slug
   - type: literal
     value: ops
-  query:
-    type: object
-    fields:
-    - - token
-      - type: if
-        condition:
-          type: exists
-          var: share_token
-        then_expr:
-          type: var
-          name: share_token
-        else_expr:
-          type: const
-          value: null
   headers:
     type: object
     fields:
@@ -165,29 +149,16 @@ annotation_comment_reply:
       - type: var
         name: text
     - - resolve
-      - type: if
-        condition:
-          type: exists
-          var: resolve
-        then_expr:
-          type: var
-          name: resolve
-        else_expr:
-          type: const
-          value: null
+      - type: var
+        name: resolve
+        if:
+          exists: resolve
     - - baseToken
-      - type: if
-        condition:
-          type: exists
-          var: base_token
-        then_expr:
-          type: var
-          name: base_token
-        else_expr:
-          type: const
-          value: null
+      - type: var
+        name: base_token
   response:
     single: true
+  auth: *document_auth_1
 annotation_comment_resolve:
   method: POST
   path:
@@ -199,20 +170,6 @@ annotation_comment_resolve:
     name: slug
   - type: literal
     value: ops
-  query:
-    type: object
-    fields:
-    - - token
-      - type: if
-        condition:
-          type: exists
-          var: share_token
-        then_expr:
-          type: var
-          name: share_token
-        else_expr:
-          type: const
-          value: null
   headers:
     type: object
     fields:
@@ -232,18 +189,11 @@ annotation_comment_resolve:
       - type: var
         name: mark_id
     - - baseToken
-      - type: if
-        condition:
-          type: exists
-          var: base_token
-        then_expr:
-          type: var
-          name: base_token
-        else_expr:
-          type: const
-          value: null
+      - type: var
+        name: base_token
   response:
     single: true
+  auth: *document_auth_1
 annotation_comment_unresolve:
   method: POST
   path:
@@ -255,20 +205,6 @@ annotation_comment_unresolve:
     name: slug
   - type: literal
     value: ops
-  query:
-    type: object
-    fields:
-    - - token
-      - type: if
-        condition:
-          type: exists
-          var: share_token
-        then_expr:
-          type: var
-          name: share_token
-        else_expr:
-          type: const
-          value: null
   headers:
     type: object
     fields:
@@ -285,21 +221,14 @@ annotation_comment_unresolve:
       - type: var
         name: by
     - - baseToken
-      - type: if
-        condition:
-          type: exists
-          var: base_token
-        then_expr:
-          type: var
-          name: base_token
-        else_expr:
-          type: const
-          value: null
+      - type: var
+        name: base_token
     - - markId
       - type: var
         name: mark_id
   response:
     single: true
+  auth: *document_auth_1
 annotation_suggestion_accept:
   method: POST
   path:
@@ -311,20 +240,6 @@ annotation_suggestion_accept:
     name: slug
   - type: literal
     value: ops
-  query:
-    type: object
-    fields:
-    - - token
-      - type: if
-        condition:
-          type: exists
-          var: share_token
-        then_expr:
-          type: var
-          name: share_token
-        else_expr:
-          type: const
-          value: null
   headers:
     type: object
     fields:
@@ -373,21 +288,14 @@ annotation_suggestion_accept:
       - type: var
         name: by
     - - baseToken
-      - type: if
-        condition:
-          type: exists
-          var: base_token
-        then_expr:
-          type: var
-          name: base_token
-        else_expr:
-          type: const
-          value: null
+      - type: var
+        name: base_token
     - - markId
       - type: var
         name: mark_id
   response:
     single: true
+  auth: *document_auth_1
 annotation_suggestion_insert:
   method: POST
   path:
@@ -399,20 +307,6 @@ annotation_suggestion_insert:
     name: slug
   - type: literal
     value: ops
-  query:
-    type: object
-    fields:
-    - - token
-      - type: if
-        condition:
-          type: exists
-          var: share_token
-        then_expr:
-          type: var
-          name: share_token
-        else_expr:
-          type: const
-          value: null
   headers:
     type: object
     fields:
@@ -470,29 +364,16 @@ annotation_suggestion_insert:
       - type: var
         name: content
     - - baseToken
-      - type: if
-        condition:
-          type: exists
-          var: base_token
-        then_expr:
-          type: var
-          name: base_token
-        else_expr:
-          type: const
-          value: null
+      - type: var
+        name: base_token
     - - status
-      - type: if
-        condition:
-          type: exists
-          var: status
-        then_expr:
-          type: var
-          name: status
-        else_expr:
-          type: const
-          value: null
+      - type: var
+        name: status
+        if:
+          exists: status
   response:
     single: true
+  auth: *document_auth_1
 annotation_suggestion_delete:
   method: POST
   path:
@@ -504,20 +385,6 @@ annotation_suggestion_delete:
     name: slug
   - type: literal
     value: ops
-  query:
-    type: object
-    fields:
-    - - token
-      - type: if
-        condition:
-          type: exists
-          var: share_token
-        then_expr:
-          type: var
-          name: share_token
-        else_expr:
-          type: const
-          value: null
   headers:
     type: object
     fields:
@@ -572,29 +439,16 @@ annotation_suggestion_delete:
       - type: var
         name: quote
     - - baseToken
-      - type: if
-        condition:
-          type: exists
-          var: base_token
-        then_expr:
-          type: var
-          name: base_token
-        else_expr:
-          type: const
-          value: null
+      - type: var
+        name: base_token
     - - status
-      - type: if
-        condition:
-          type: exists
-          var: status
-        then_expr:
-          type: var
-          name: status
-        else_expr:
-          type: const
-          value: null
+      - type: var
+        name: status
+        if:
+          exists: status
   response:
     single: true
+  auth: *document_auth_1
 annotation_suggestion_replace:
   method: POST
   path:
@@ -606,20 +460,6 @@ annotation_suggestion_replace:
     name: slug
   - type: literal
     value: ops
-  query:
-    type: object
-    fields:
-    - - token
-      - type: if
-        condition:
-          type: exists
-          var: share_token
-        then_expr:
-          type: var
-          name: share_token
-        else_expr:
-          type: const
-          value: null
   headers:
     type: object
     fields:
@@ -677,29 +517,16 @@ annotation_suggestion_replace:
       - type: var
         name: content
     - - baseToken
-      - type: if
-        condition:
-          type: exists
-          var: base_token
-        then_expr:
-          type: var
-          name: base_token
-        else_expr:
-          type: const
-          value: null
+      - type: var
+        name: base_token
     - - status
-      - type: if
-        condition:
-          type: exists
-          var: status
-        then_expr:
-          type: var
-          name: status
-        else_expr:
-          type: const
-          value: null
+      - type: var
+        name: status
+        if:
+          exists: status
   response:
     single: true
+  auth: *document_auth_1
 annotation_suggestion_reject:
   method: POST
   path:
@@ -711,20 +538,6 @@ annotation_suggestion_reject:
     name: slug
   - type: literal
     value: ops
-  query:
-    type: object
-    fields:
-    - - token
-      - type: if
-        condition:
-          type: exists
-          var: share_token
-        then_expr:
-          type: var
-          name: share_token
-        else_expr:
-          type: const
-          value: null
   headers:
     type: object
     fields:
@@ -773,21 +586,14 @@ annotation_suggestion_reject:
       - type: var
         name: by
     - - baseToken
-      - type: if
-        condition:
-          type: exists
-          var: base_token
-        then_expr:
-          type: var
-          name: base_token
-        else_expr:
-          type: const
-          value: null
+      - type: var
+        name: base_token
     - - markId
       - type: var
         name: mark_id
   response:
     single: true
+  auth: *document_auth_1
 block_query:
   method: GET
   path:
@@ -799,20 +605,6 @@ block_query:
     name: document_id
   - type: literal
     value: snapshot
-  query:
-    type: object
-    fields:
-    - - token
-      - type: if
-        condition:
-          type: exists
-          var: share_token
-        then_expr:
-          type: var
-          name: share_token
-        else_expr:
-          type: const
-          value: null
   headers:
     type: object
     fields:
@@ -822,6 +614,7 @@ block_query:
   response:
     items_path:
     - blocks
+  auth: *document_auth_2
 bug_report_submit:
   method: POST
   path:
@@ -858,20 +651,6 @@ collaboration_event_ack:
     value: events
   - type: literal
     value: ack
-  query:
-    type: object
-    fields:
-    - - token
-      - type: if
-        condition:
-          type: exists
-          var: share_token
-        then_expr:
-          type: var
-          name: share_token
-        else_expr:
-          type: const
-          value: null
   headers:
     type: object
     fields:
@@ -892,6 +671,7 @@ collaboration_event_ack:
         name: by
   response:
     single: true
+  auth: *document_auth_1
 collaboration_event_query:
   method: GET
   path:
@@ -909,38 +689,15 @@ collaboration_event_query:
     type: object
     fields:
     - - after
-      - type: if
-        condition:
-          type: exists
-          var: after
-        then_expr:
-          type: var
-          name: after
-        else_expr:
-          type: const
-          value: null
+      - type: var
+        name: after
+        if:
+          exists: after
     - - limit
-      - type: if
-        condition:
-          type: exists
-          var: limit
-        then_expr:
-          type: var
-          name: limit
-        else_expr:
-          type: const
-          value: null
-    - - token
-      - type: if
-        condition:
-          type: exists
-          var: share_token
-        then_expr:
-          type: var
-          name: share_token
-        else_expr:
-          type: const
-          value: null
+      - type: var
+        name: limit
+        if:
+          exists: limit
   headers:
     type: object
     fields:
@@ -950,6 +707,7 @@ collaboration_event_query:
   response:
     items_path:
     - events
+  auth: *document_auth_2
 document_bug_report_submit:
   method: POST
   path:
@@ -965,20 +723,6 @@ document_bug_report_submit:
     - - Accept
       - type: const
         value: application/json
-  query:
-    type: object
-    fields:
-    - - token
-      - type: if
-        condition:
-          type: exists
-          var: share_token
-        then_expr:
-          type: var
-          name: share_token
-        else_expr:
-          type: const
-          value: null
   body:
     type: object
     fields:
@@ -990,6 +734,7 @@ document_bug_report_submit:
         name: report
   response:
     single: true
+  auth: *document_auth_1
 document_edit_v2:
   method: POST
   path:
@@ -1003,20 +748,6 @@ document_edit_v2:
     value: edit
   - type: literal
     value: v2
-  query:
-    type: object
-    fields:
-    - - token
-      - type: if
-        condition:
-          type: exists
-          var: share_token
-        then_expr:
-          type: var
-          name: share_token
-        else_expr:
-          type: const
-          value: null
   headers:
     type: object
     fields:
@@ -1069,6 +800,7 @@ document_edit_v2:
         name: operations
   response:
     single: true
+  auth: *document_auth_1
 document_get:
   method: GET
   path:
@@ -1076,20 +808,6 @@ document_get:
     value: d
   - type: var
     name: slug
-  query:
-    type: object
-    fields:
-    - - token
-      - type: if
-        condition:
-          type: exists
-          var: share_token
-        then_expr:
-          type: var
-          name: share_token
-        else_expr:
-          type: const
-          value: null
   headers:
     type: object
     fields:
@@ -1098,6 +816,7 @@ document_get:
         value: application/json
   response:
     single: true
+  auth: *document_auth_1
 document_get_markdown:
   method: GET
   path:
@@ -1105,20 +824,6 @@ document_get_markdown:
     value: d
   - type: var
     name: slug
-  query:
-    type: object
-    fields:
-    - - token
-      - type: if
-        condition:
-          type: exists
-          var: share_token
-        then_expr:
-          type: var
-          name: share_token
-        else_expr:
-          type: const
-          value: null
   headers:
     type: object
     fields:
@@ -1127,74 +832,58 @@ document_get_markdown:
         value: application/json
   response:
     single: true
+  auth: *document_auth_1
 document_share_bind:
-  method: GET
-  path:
-  - type: literal
-    value: d
-  - type: var
-    name: slug
-  query:
-    type: object
-    fields:
-    - - token
-      - type: if
-        condition:
-          type: exists
-          var: share_token
-        then_expr:
+  transport: credential_bind
+  lifetime_seconds: 86400
+  slot: document_access
+  origin: https://www.proofeditor.ai
+  resource:
+    type: let
+    bindings:
+    - name: document_url
+      value:
+        type: url_project
+        value:
+          type: format
+          template: https://www.proofeditor.ai/d/{document}
+          vars:
+            document:
+              type: var
+              name: document
+        projection:
+          origins:
+          - https://www.proofeditor.ai
+          - https://proofeditor.ai
+          path:
+          - kind: literal
+            value: d
+          - kind: capture
+            name: document
+          query: {}
+    value:
+      type: assert
+      condition:
+        type: equals
+        left:
+          type: field
+          value:
+            type: var
+            name: document_url
+          path:
+          - document
+        right:
           type: var
-          name: share_token
-        else_expr:
-          type: const
-          value: null
-  headers:
-    type: object
-    fields:
-    - - Accept
-      - type: const
-        value: application/json
-  response:
-    single: true
-document_title_update:
-  method: PUT
-  path:
-  - type: literal
-    value: api
-  - type: literal
-    value: agent
-  - type: var
-    name: slug
-  - type: literal
-    value: title
-  query:
-    type: object
-    fields:
-    - - token
-      - type: if
-        condition:
-          type: exists
-          var: share_token
-        then_expr:
-          type: var
-          name: share_token
-        else_expr:
-          type: const
-          value: null
-  headers:
-    type: object
-    fields:
-    - - Accept
-      - type: const
-        value: application/json
-  body:
-    type: object
-    fields:
-    - - title
-      - type: var
-        name: title
-  response:
-    single: true
+          name: document
+      code: invalid_document_identity
+      value:
+        type: object
+        fields:
+        - - document
+          - type: var
+            name: document
+  source:
+    scheme: host
 editor_state_get:
   method: GET
   path:
@@ -1210,27 +899,10 @@ editor_state_get:
     type: object
     fields:
     - - kinds
-      - type: if
-        condition:
-          type: exists
-          var: kinds
-        then_expr:
-          type: var
-          name: kinds
-        else_expr:
-          type: const
-          value: null
-    - - token
-      - type: if
-        condition:
-          type: exists
-          var: share_token
-        then_expr:
-          type: var
-          name: share_token
-        else_expr:
-          type: const
-          value: null
+      - type: var
+        name: kinds
+        if:
+          exists: kinds
   headers:
     type: object
     fields:
@@ -1250,20 +922,6 @@ editor_state_get:
         name: slug
       - type: literal
         value: snapshot
-      query:
-        type: object
-        fields:
-        - - token
-          - type: if
-            condition:
-              type: exists
-              var: share_token
-            then_expr:
-              type: var
-              name: share_token
-            else_expr:
-              type: const
-              value: null
       headers:
         type: object
         fields:
@@ -1273,6 +931,8 @@ editor_state_get:
       from_path:
       - blocks
       into_key: blocks
+      auth: *document_auth_1
+  auth: *document_auth_1
 presence_update:
   method: POST
   path:
@@ -1284,20 +944,6 @@ presence_update:
     name: slug
   - type: literal
     value: presence
-  query:
-    type: object
-    fields:
-    - - token
-      - type: if
-        condition:
-          type: exists
-          var: share_token
-        then_expr:
-          type: var
-          name: share_token
-        else_expr:
-          type: const
-          value: null
   headers:
     type: object
     fields:
@@ -1323,6 +969,7 @@ presence_update:
           value: online
   response:
     single: true
+  auth: *document_auth_1
 share_link_create:
   method: POST
   path:

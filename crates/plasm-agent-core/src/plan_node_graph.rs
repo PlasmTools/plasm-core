@@ -37,6 +37,9 @@ pub fn node_dependencies(node: &ValidatedPlanNode) -> Vec<String> {
         ValidatedPlanNode::ForEach(n) => {
             push_unique(&mut out, std::iter::once(n.source.as_str().to_string()));
         }
+        ValidatedPlanNode::IterateUntil(n) => {
+            push_unique(&mut out, std::iter::once(n.source.as_str().to_string()));
+        }
         ValidatedPlanNode::RelationTraversal(n) => {
             push_unique(
                 &mut out,
@@ -93,6 +96,7 @@ pub(crate) fn unused_binding_hints(plan: &Plan<ValidatedPlanState>) -> Vec<Strin
                 | ValidatedPlanNode::Compute(_)
                 | ValidatedPlanNode::Derive(_)
                 | ValidatedPlanNode::ForEach(_)
+                | ValidatedPlanNode::IterateUntil(_)
                 | ValidatedPlanNode::RelationTraversal(_)
         ) {
             continue;

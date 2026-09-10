@@ -141,7 +141,7 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
             }
 
             // 2b. Query without required params (should fail at type-check, not CML)
-            if cap.input_schema.as_ref().is_some_and(has_required_fields) {
+            if cap.has_any_required_param() {
                 let bare_result = engine
                     .execute(
                         &Expr::Query(QueryExpr::all(entity_name)),
@@ -149,7 +149,7 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
                         &mut SessionMaterialization::new(),
                         Some(ExecutionMode::Live),
                         StreamConsumeOpts::default(),
-                        ExecuteOptions::default(),
+                        ExecuteOptions::for_catalog(&cgs).expect("validated catalog must compile"),
                     )
                     .await;
                 results.push(match bare_result {
@@ -388,7 +388,7 @@ async fn check_execution(
             mat,
             Some(ExecutionMode::Live),
             consume,
-            ExecuteOptions::default(),
+            ExecuteOptions::for_catalog(cgs).expect("validated catalog must compile"),
         )
         .await
     {
@@ -573,13 +573,8 @@ fn build_required_predicate(
     _entity: &plasm_core::EntityDef,
     cgs: &plasm_core::CGS,
 ) -> Option<Predicate> {
-    let input_schema = cap.input_schema.as_ref()?;
-    let InputType::Object { fields, .. } = &input_schema.input_type else {
-        return None;
-    };
-
-    let comparisons: Vec<Predicate> = fields
-        .iter()
+    let comparisons: Vec<Predicate> = cap
+        .query_surface_fields()
         .filter(|f| f.required)
         .filter_map(|f| {
             let val = fake_value_for_input_field(f, cgs)?;
@@ -595,15 +590,8 @@ fn build_required_predicate(
 }
 
 fn build_fake_input(cap: &plasm_core::CapabilitySchema, cgs: &plasm_core::CGS) -> Value {
-    let Some(input_schema) = &cap.input_schema else {
-        return Value::Null;
-    };
-    let InputType::Object { fields, .. } = &input_schema.input_type else {
-        return Value::Null;
-    };
-
     let mut obj = IndexMap::new();
-    for f in fields.iter().filter(|f| f.required) {
+    for f in cap.invocation_object_fields().filter(|f| f.required) {
         if let Some(v) = fake_value_for_input_field(f, cgs) {
             obj.insert(f.name.clone(), v);
         }
@@ -642,16 +630,12 @@ fn fake_value_for_type(
     }
 }
 
-fn has_required_fields(schema: &plasm_core::InputSchema) -> bool {
-    if let InputType::Object { fields, .. } = &schema.input_type {
-        return fields.iter().any(|f| f.required);
-    }
-    false
-}
-
 /// True when the query capability's CML template declares a `pagination` block.
 fn query_mapping_has_pagination(cap: &plasm_core::CapabilitySchema) -> bool {
-    serde_json::from_value::<CmlRequest>(cap.mapping.template.0.clone())
+    let Ok(mapping) = cap.require_mapping() else {
+        return false;
+    };
+    serde_json::from_value::<CmlRequest>(mapping.template.0.clone())
         .ok()
         .is_some_and(|r| r.pagination.is_some())
 }

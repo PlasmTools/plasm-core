@@ -56,6 +56,7 @@ fn empty_plan_run_with_markdown(
 ) -> PlasmPlanRunResult {
     PlasmPlanRunResult {
         version: serde_json::json!({}),
+        agent_outcome: Default::default(),
         node_results: Vec::new(),
         graph_summary: serde_json::json!({}),
         comp: None,
@@ -242,6 +243,7 @@ async fn hydrate_plan_run_from_artifact(
         )?;
     Ok(PlasmPlanRunResult {
         version: serde_json::json!({}),
+        agent_outcome: Default::default(),
         node_results,
         graph_summary: serde_json::json!({}),
         comp: None,

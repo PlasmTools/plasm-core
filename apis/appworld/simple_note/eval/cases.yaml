@@ -1,0 +1,23 @@
+- id: login_notes
+  schema: simple_note
+  goal: Login to simple_note with username and password to get an access token
+  tags: [action, auth]
+  covers: [invoke]
+  expect:
+    entities_any: [AuthSession]
+
+- id: search_notes
+  schema: simple_note
+  goal: Search my notes for grocery after logging in
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Note]
+
+- id: create_note
+  schema: simple_note
+  goal: Create a pinned note titled Shopping with content milk and eggs
+  tags: [create]
+  covers: [create]
+  expect:
+    entities_any: [Note]

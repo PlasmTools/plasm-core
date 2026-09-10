@@ -394,7 +394,7 @@ pub async fn incoming_auth_http_middleware(
         .unwrap_or("");
     let span = crate::spans::security_incoming_http(principal.0.is_some(), tenant_id);
     req.extensions_mut().insert(principal);
-    Ok(async move { next.run(req).await }.instrument(span).await)
+    Ok(next.run(req).instrument(span).await)
 }
 
 #[cfg(test)]

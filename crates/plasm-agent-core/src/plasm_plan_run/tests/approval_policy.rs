@@ -125,7 +125,7 @@ fn mutating_for_each_infers_approval_without_agent_label() {
                 "effect_template": {
                     "kind": "action",
                     "qualified_entity": { "entry_id": "acme", "entity": "Product" },
-                    "expr_template": "Product(${product.id}).label(label=\"stale\")",
+                    "expr_template": "Product({{ product.id }}).label(label=\"stale\")",
                     "ir_template": {
                         "expr": {
                             "op": "invoke",
@@ -244,6 +244,11 @@ fn for_each_plan_eval_env_interpolates_row_and_cross_binding_strings() {
         InputAlias::new("report".to_string()).expect("alias"),
         MaterializedInputRow {
             node: PlanNodeId::new("report").expect("node"),
+            qualified_entity: crate::plasm_plan::QualifiedEntityKey {
+                entry_id: "acme".into(),
+                entity: "Report".into(),
+            },
+            id_field: "id".into(),
             proof: crate::plasm_plan::InputCardinalityProof::StaticSingleton,
             row: serde_json::json!({"content": "STATS"}),
             rows: vec![serde_json::json!({"content": "STATS"})],
@@ -257,13 +262,16 @@ fn for_each_plan_eval_env_interpolates_row_and_cross_binding_strings() {
         binding: &binding,
     };
     let inputs = InputEnv { rows: &input_rows };
+    let empty_coercion = BTreeMap::new();
     let env = PlanEvalEnv {
         scope,
         inputs,
-        wire_coercion: None,
+        wire_coercion_by_alias: &empty_coercion,
     };
-    let out =
-        instantiate_expr_template_value(&serde_json::json!("${_.title} / ${report.content}"), &env)
-            .expect("interpolate");
-    assert_eq!(out, serde_json::json!("Bolt / STATS"));
+    let out = plasm_core::render_program_string(
+        "{{ _.title }} / {{ report.content }}",
+        &plan_binding_scope_owned(&env),
+    )
+    .expect("interpolate");
+    assert_eq!(out, "Bolt / STATS");
 }

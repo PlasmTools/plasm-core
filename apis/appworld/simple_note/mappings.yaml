@@ -1,0 +1,183 @@
+# Simple Note — AppWorld simulated notes. Auth: login → access_token → Bearer header.
+
+_request_auth: &request_auth
+  scheme: bearer
+  token: { type: var, name: access_token }
+
+# AppWorld OpenAPI list endpoints use page_index (0-based) + page_limit (default 5, max 20).
+_appworld_page_index_limit: &appworld_page_index_limit
+  params:
+    page_index:
+      counter: 0
+    page_limit:
+      fixed: 20
+      role: page_size
+  strategy: page_number
+
+login:
+  method: POST
+  path:
+  - type: literal
+    value: simple_note
+  - type: literal
+    value: auth
+  - type: literal
+    value: token
+  body_format: form_urlencoded
+  body:
+    type: object
+    fields:
+    - [username, { type: var, name: username }]
+    - [password, { type: var, name: password }]
+
+logout:
+  method: POST
+  path:
+  - type: literal
+    value: simple_note
+  - type: literal
+    value: auth
+  - type: literal
+    value: logout
+  auth: *request_auth
+
+note_query:
+  method: GET
+  path:
+  - type: literal
+    value: simple_note
+  - type: literal
+    value: notes
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+    - - tags
+      - type: if
+        condition: { type: exists, var: tags }
+        then_expr: { type: var, name: tags }
+        else_expr: { type: const, value: null }
+    - - pinned
+      - type: if
+        condition: { type: exists, var: pinned }
+        then_expr: { type: var, name: pinned }
+        else_expr: { type: const, value: null }
+    - - sort_by
+      - type: if
+        condition: { type: exists, var: sort_by }
+        then_expr: { type: var, name: sort_by }
+        else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
+note_get:
+  method: GET
+  path:
+  - type: literal
+    value: simple_note
+  - type: literal
+    value: notes
+  - type: var
+    name: id
+  auth: *request_auth
+
+note_create:
+  method: POST
+  path:
+  - type: literal
+    value: simple_note
+  - type: literal
+    value: notes
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [title, { type: var, name: title }]
+    - [content, { type: var, name: content }]
+    - - tags
+      - type: if
+        condition: { type: exists, var: tags }
+        then_expr: { type: var, name: tags }
+        else_expr: { type: const, value: null }
+    - - pinned
+      - type: if
+        condition: { type: exists, var: pinned }
+        then_expr: { type: var, name: pinned }
+        else_expr: { type: const, value: null }
+
+note_update:
+  method: PATCH
+  path:
+  - type: literal
+    value: simple_note
+  - type: literal
+    value: notes
+  - type: var
+    name: id
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - title
+      - type: if
+        condition: { type: exists, var: title }
+        then_expr: { type: var, name: title }
+        else_expr: { type: const, value: null }
+    - - content
+      - type: if
+        condition: { type: exists, var: content }
+        then_expr: { type: var, name: content }
+        else_expr: { type: const, value: null }
+    - - tags
+      - type: if
+        condition: { type: exists, var: tags }
+        then_expr: { type: var, name: tags }
+        else_expr: { type: const, value: null }
+    - - pinned
+      - type: if
+        condition: { type: exists, var: pinned }
+        then_expr: { type: var, name: pinned }
+        else_expr: { type: const, value: null }
+
+note_append_content:
+  method: PATCH
+  path:
+  - type: literal
+    value: simple_note
+  - type: literal
+    value: notes
+  - type: var
+    name: id
+  - type: var
+    name: append_or_prepend
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [content, { type: var, name: content }]
+
+note_delete:
+  method: DELETE
+  path:
+  - type: literal
+    value: simple_note
+  - type: literal
+    value: notes
+  - type: var
+    name: id
+  auth: *request_auth
+
+profile_get:
+  method: GET
+  path:
+  - type: literal
+    value: simple_note
+  - type: literal
+    value: profile
+  query:
+    type: object
+    fields:
+    - [email, { type: var, name: email }]

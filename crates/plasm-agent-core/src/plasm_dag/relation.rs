@@ -91,7 +91,10 @@ pub(in crate::plasm_dag) fn resolve_relation_segment_for_continuation(
         }
         plasm_core::RelationSegmentOutcome::NotFound => Err(plasm_core::plp::plp4_program(
             "",
-            format!("entity `{}` has no relation `{segment}`", row_qe.entity),
+            format!(
+                "entity `{}` has neither relation nor field `{segment}`",
+                row_qe.entity
+            ),
         )),
     }
 }
@@ -141,32 +144,23 @@ pub(in crate::plasm_dag) fn relation_continuation_expr_from_source_row_hole(
     let source_get = {
         let mut get = if ent.key_vars.is_empty() {
             let path_key = ent.id_field.as_str().to_string();
-            let hole = Value::PlasmInputRef(PlasmInputRef::NodeInput {
+            let hole = PlasmInputRef::NodeInput {
                 node: "source".into(),
-                path: vec![path_key.clone()],
-            });
-            GetExpr::from_ref_with_path_vars(
-                Ref::new(row_qe.entity.as_str(), ""),
-                Some(indexmap::IndexMap::from([(path_key, hole)])),
-            )
+                path: vec![path_key],
+            };
+            GetExpr::from_ref(Ref::simple_binding(row_qe.entity.as_str(), hole))
         } else {
-            let mut path_vars = indexmap::IndexMap::new();
+            let mut slots = BTreeMap::new();
             for key in &ent.key_vars {
-                path_vars.insert(
+                slots.insert(
                     key.as_str().to_string(),
-                    Value::PlasmInputRef(PlasmInputRef::NodeInput {
+                    plasm_core::IdentitySlot::binding(PlasmInputRef::NodeInput {
                         node: "source".into(),
                         path: vec![key.as_str().to_string()],
                     }),
                 );
             }
-            GetExpr::from_ref_with_path_vars(
-                Ref {
-                    entity_type: row_qe.entity.as_str().into(),
-                    key: EntityKey::Compound(BTreeMap::new()),
-                },
-                Some(path_vars),
-            )
+            GetExpr::from_ref(Ref::compound_slots(row_qe.entity.as_str(), slots))
         };
         get.catalog_entry_id = plasm_core::CatalogEntryStamp::some(
             plasm_core::RegistryEntryId::from(row_qe.entry_id.as_str()),
@@ -350,7 +344,7 @@ pub(in crate::plasm_dag) fn lookup_relation_chain_meta(
             })
             .unwrap_or_default();
         format!(
-            "entity `{source_entity}` has no relation `{}` — use a declared catalog relation wire name or `.r#` from the teaching TSV for `{source_entity}`.{sym_note}",
+            "entity `{source_entity}` has no relation `{}` — use a declared catalog relation wire name or `.r#` from the language card for `{source_entity}`.{sym_note}",
             chain.selector
         )
     })?;

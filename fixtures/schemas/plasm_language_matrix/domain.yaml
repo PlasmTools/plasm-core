@@ -1,4 +1,4 @@
-version: 2
+version: 3
 auth:
   scheme: none
 http_backend: http://127.0.0.1:9
@@ -46,6 +46,9 @@ entities:
       label:
         required: true
         value_ref: nv_lang_tag_label
+      seq:
+        required: false
+        value_ref: nv_langtag_by_score_query_seq
     relations: {}
   CompoundBranch:
     id_field: name
@@ -104,6 +107,44 @@ entities:
         required: true
         value_ref: nv_lang_line_note
     relations: {}
+  LangAuthSession:
+    id_field: access_token
+    description: Login session whose primary key is access_token (AppWorld AuthSession-shaped; federated
+      provides + hole fill).
+    fields:
+      access_token:
+        required: true
+        value_ref: nv_lang_auth_access_token
+      token_type:
+        required: false
+        value_ref: nv_lang_auth_token_type
+    relations: {}
+  LangSecuredNote:
+    id_field: note_id
+    description: Note list requiring Bearer access_token from LangAuthSession (federated hole-fill witness).
+    fields:
+      note_id:
+        required: true
+        value_ref: nv_lang_secured_note_id
+      title:
+        required: true
+        value_ref: nv_lang_secured_note_title
+      body:
+        required: true
+        value_ref: nv_lang_secured_note_body
+    relations: {}
+  LangSecuredGroup:
+    id_field: group_id
+    description: Group list requiring Bearer access_token from a second LangAuthSession (CUGA dual-login
+      hole-fill witness).
+    fields:
+      group_id:
+        required: true
+        value_ref: nv_lang_secured_group_id
+      name:
+        required: true
+        value_ref: nv_lang_secured_group_name
+    relations: {}
   LangItem:
     id_field: id
     description: Primary matrix entity — list, search, CRUD, relations, actions.
@@ -120,6 +161,27 @@ entities:
       owner:
         required: false
         value_ref: nv_lang_item_owner
+      active:
+        required: false
+        value_ref: nv_lang_item_active
+      contact_email:
+        required: false
+        value_ref: nv_lang_item_contact_email
+      trace_id:
+        required: false
+        value_ref: nv_lang_item_trace_id
+      status:
+        required: false
+        value_ref: nv_lang_item_status
+      tag_labels:
+        required: false
+        value_ref: nv_lang_item_tag_labels
+      recorded_at:
+        required: false
+        value_ref: nv_lang_item_recorded_at
+      code:
+        required: false
+        value_ref: nv_lang_item_code
       team_key:
         required: false
         value_ref: nv_langitem_search_team_key
@@ -142,7 +204,8 @@ entities:
           - key: lines
           - wildcard: true
       tags:
-        description: Tags embedded on LangItem GET when present; scoped query per item when embed is absent or incomplete
+        description: Tags embedded on LangItem GET when present; scoped query per item when embed is absent
+          or incomplete
         target: LangTag
         cardinality: many
         materialize:
@@ -161,7 +224,7 @@ entities:
         cardinality: many
         materialize:
           kind: query_scoped_bindings
-          capability: langtag_by_score_query
+          capability: langtag_query
           bindings:
             seq: score
       compound_branches:
@@ -201,30 +264,50 @@ entities:
         required: true
         value_ref: nv_lang_offer_currency
     relations: {}
+  QueryOnlyRequest:
+    id_field: request_id
+    primary_query: queryonly_request_received_query
+    description: 'Matrix query-only entity — money someone asked you to pay (received requests). Query
+      anchor must precede void action mutators in the teaching table.
+
+      '
+    fields:
+      request_id:
+        required: true
+        value_ref: nv_queryonly_request_id
+      amount:
+        required: true
+        value_ref: nv_lang_offer_price
+      status:
+        required: false
+        value_ref: nv_lang_item_status
+    relations: {}
+  LangCursor:
+    id_field: id
+    description: Neutral state cursor for PLP-8 iterate-until (phase advances only via tick).
+    fields:
+      id:
+        required: true
+        value_ref: nv_lang_cursor_id
+      phase:
+        required: true
+        value_ref: nv_lang_cursor_phase
+      ticks:
+        required: false
+        value_ref: nv_lang_cursor_ticks
+    relations: {}
 capabilities:
   langitem_query:
-    description: List LangItem rows (optional tags filter homographs tags relation wire)
+    description: List LangItem rows (optional tags filter; optional owner filter uses owner-scoped path)
     kind: query
     entity: LangItem
-    parameters:
+    selection:
     - name: tags
       value_ref: nv_langitem_query_tags
       required: false
-      role: filter
-    provides:
-    - id
-    - title
-    - score
-    - owner
-  langitem_query_owner:
-    description: List LangItem rows filtered by owner (required query param)
-    kind: query
-    entity: LangItem
-    parameters:
     - name: owner
       value_ref: nv_langitem_query_owner_owner
-      required: true
-      role: filter
+      required: false
     provides:
     - id
     - title
@@ -234,15 +317,13 @@ capabilities:
     description: Search LangItem rows
     kind: search
     entity: LangItem
-    parameters:
+    selection:
     - name: q
       value_ref: nv_langitem_search_q
       required: true
-      role: search
     - name: team_key
       value_ref: nv_langitem_search_team_key
       required: false
-      role: filter
     provides:
     - id
     - title
@@ -262,46 +343,64 @@ capabilities:
     description: Create LangItem
     kind: create
     entity: LangItem
-    parameters:
-    - name: title
-      value_ref: nv_langitem_create_title
-      required: true
-    - name: score
-      value_ref: nv_langitem_create_score
-      required: false
-    - name: owner
-      value_ref: nv_langitem_create_owner
-      required: false
-    - name: tags
-      value_ref: nv_langitem_create_tags
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: title
+          value_ref: nv_langitem_create_title
+          required: true
+        - name: score
+          value_ref: nv_langitem_create_score
+          required: false
+        - name: owner
+          value_ref: nv_langitem_create_owner
+          required: false
+        - name: active
+          value_ref: nv_langitem_create_active
+          required: false
+        - name: recorded_at
+          value_ref: nv_langitem_create_recorded_at
+          required: false
+        - name: tags
+          value_ref: nv_langitem_create_tags
+          required: false
     provides:
     - id
     - title
     - score
     - owner
+    - active
+    - recorded_at
   langitem_update:
     description: Patch LangItem
     kind: update
     entity: LangItem
-    parameters:
-    - name: title
-      value_ref: nv_langitem_update_title
-      required: false
-    - name: score
-      value_ref: nv_langitem_update_score
-      required: false
-    - name: owner
-      value_ref: nv_langitem_update_owner
-      required: false
-    - name: tags
-      value_ref: nv_langitem_create_tags
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: title
+          value_ref: nv_langitem_update_title
+          required: false
+        - name: score
+          value_ref: nv_langitem_update_score
+          required: false
+        - name: owner
+          value_ref: nv_langitem_update_owner
+          required: false
+        - name: active
+          value_ref: nv_langitem_update_active
+          required: false
+        - name: tags
+          value_ref: nv_langitem_create_tags
+          required: false
     provides:
     - id
     - title
     - score
     - owner
+    - active
   langitem_delete:
     description: Delete LangItem
     kind: delete
@@ -313,6 +412,110 @@ capabilities:
     output:
       type: side_effect
       description: Records a ping against the item (matrix conformance).
+  langitem_secured_touch:
+    description: Secured side-effect touch on LangItem; Bearer access_token required (for_each auth fanout witness).
+    kind: action
+    entity: LangItem
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_lang_auth_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Records a secured touch against the item when Authorization is present.
+  langitem_broadcast:
+    description: Pathless side-effect broadcast on LangItem (federated stamp regression; no path id).
+    kind: action
+    entity: LangItem
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: message
+          value_ref: nv_langitem_broadcast_message
+          required: false
+    output:
+      type: side_effect
+      description: Broadcasts an optional message for the catalog (no entity id in path).
+  langauthsession_login:
+    description: Pathless login returning LangAuthSession (provides access_token; MutationResult under
+      federation).
+    kind: action
+    entity: LangAuthSession
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: username
+          value_ref: nv_lang_auth_username
+          required: false
+        - name: password
+          value_ref: nv_lang_auth_password
+          required: false
+    provides:
+    - access_token
+    - token_type
+    output:
+      type: side_effect
+      description: Creates an authenticated session; use access_token on subsequent calls.
+  langsecurednote_search:
+    description: Search secured notes; Bearer access_token required ahead of optional search text.
+    kind: search
+    entity: LangSecuredNote
+    selection:
+    - name: access_token
+      value_ref: nv_lang_auth_access_token
+      required: true
+    - name: query
+      value_ref: nv_lang_secured_note_query
+      required: true
+    provides:
+    - note_id
+    - title
+  langsecurednote_get:
+    description: Get a secured note including body; Bearer access_token required (summary-hydrate witness).
+    kind: get
+    entity: LangSecuredNote
+    provides:
+    - note_id
+    - title
+    - body
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_lang_auth_access_token
+          required: true
+  langsecuredgroup_query:
+    description: List secured groups; Bearer access_token required (second federated auth consumer).
+    kind: query
+    entity: LangSecuredGroup
+    selection:
+    - name: access_token
+      value_ref: nv_lang_auth_access_token
+      required: true
+    provides:
+    - group_id
+    - name
+  langsecuredgroup_get:
+    description: Get a secured group by id; Bearer access_token required (anchors LangSecuredGroup under
+      context).
+    kind: get
+    entity: LangSecuredGroup
+    provides:
+    - group_id
+    - name
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_lang_auth_access_token
+          required: true
   langoffer_query:
     description: List LangOffer rows
     kind: query
@@ -325,17 +528,77 @@ capabilities:
     description: Create LangOffer
     kind: create
     entity: LangOffer
-    parameters:
-    - name: price
-      value_ref: nv_lang_offer_price
-      required: true
-    - name: quote_currency
-      value_ref: nv_lang_offer_currency
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: price
+          value_ref: nv_lang_offer_price
+          required: true
+        - name: quote_currency
+          value_ref: nv_lang_offer_currency
+          required: true
     provides:
     - id
     - price
     - quote_currency
+  queryonly_request_received_query:
+    description: List payment requests other people sent to you (query anchor witness).
+    kind: query
+    entity: QueryOnlyRequest
+    selection:
+    - name: access_token
+      value_ref: nv_lang_auth_access_token
+      required: true
+    - name: status
+      value_ref: nv_lang_item_status
+      required: false
+    provides:
+    - request_id
+    - amount
+    - status
+  queryonly_request_approve:
+    description: Approve and pay a received payment request
+    kind: action
+    entity: QueryOnlyRequest
+    output:
+      type: side_effect
+      description: Approves the request and transfers money.
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_lang_auth_access_token
+          required: true
+  queryonly_request_deny:
+    description: Deny a received payment request
+    kind: action
+    entity: QueryOnlyRequest
+    output:
+      type: side_effect
+      description: Marks the request as denied.
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_lang_auth_access_token
+          required: true
+  queryonly_request_remind:
+    description: Send a reminder about a pending payment request
+    kind: action
+    entity: QueryOnlyRequest
+    output:
+      type: side_effect
+      description: Notifies the recipient about the outstanding request.
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_lang_auth_access_token
+          required: true
   langtag_get:
     description: Get LangTag by id (batch relation resolution for prefer_from_parent_get)
     kind: get
@@ -368,27 +631,16 @@ capabilities:
     - id
     - caption
   langtag_query:
-    description: List tags scoped to one LangItem
+    description: List tags scoped to one LangItem (item_id) or by parent score (seq)
     kind: query
     entity: LangTag
-    parameters:
+    scope:
     - name: item_id
       value_ref: nv_langtag_query_item_id
-      required: true
-      role: scope
-    provides:
-    - id
-    - item_id
-    - label
-  langtag_by_score_query:
-    description: List tags filtered by parent LangItem score (integer scope param)
-    kind: query
-    entity: LangTag
-    parameters:
+      required: false
     - name: seq
       value_ref: nv_langtag_by_score_query_seq
-      required: true
-      role: scope
+      required: false
     provides:
     - id
     - item_id
@@ -419,84 +671,141 @@ capabilities:
     description: List lines scoped to one LangItem (optional list path; also on item GET)
     kind: query
     entity: LangLine
-    parameters:
+    scope:
     - name: item_id
       value_ref: nv_langline_query_item_id
       required: true
-      role: scope
     provides:
     - id
     - item_id
     - note
-# Host continuations (language matrix parse smoke; not CGS capabilities):
-#   page(sN_pgM) — paginated query batch (see teaching TSV preamble)
-#   wait(sN_oM)  — poll async plan run (see docs/plasm-long-operations.md)
-#   cancel(sN_oM) — cooperative cancel of that operation
+  langcursor_get:
+    description: Get LangCursor by id (observe phase for iterate-until re-read).
+    kind: get
+    entity: LangCursor
+    provides:
+    - id
+    - phase
+    - ticks
+  langcursor_tick:
+    description: Advance LangCursor phase one step (open → mid → done).
+    kind: action
+    entity: LangCursor
+    # Type-wide eviction so iterate…until re-Get cannot hit a Completeness::Complete seed row.
+    invalidates_entities:
+    - LangCursor
+    output:
+      type: side_effect
+      description: Advances the cursor phase toward done; re-observe via get after each tick.
 values:
+  nv_lang_cursor_id:
+    type: string
+  nv_lang_cursor_phase:
+    type: enum
+    enum:
+    - open
+    - mid
+    - done
+  nv_lang_cursor_ticks:
+    type: integer
   nv_lang_detail_id:
     type: string
-    string_semantics: short
   nv_lang_detail_body:
     type: string
-    string_semantics: short
   nv_lang_summary_id:
     type: string
-    string_semantics: short
   nv_lang_summary_headline:
     type: string
-    string_semantics: short
   nv_lang_tag_id:
     type: string
-    string_semantics: short
   nv_lang_tag_item_id:
     type: entity_ref
     target: LangItem
   nv_lang_tag_label:
     type: string
-    string_semantics: short
   nv_lang_line_id:
     type: string
-    string_semantics: short
   nv_lang_line_item_id:
     type: entity_ref
     target: LangItem
   nv_lang_line_note:
     type: string
-    string_semantics: short
   nv_lang_item_id:
     type: string
-    string_semantics: short
   nv_lang_item_title:
     type: string
-    string_semantics: short
+  nv_langitem_broadcast_message:
+    type: string
+    description: Optional broadcast body for pathless LangItem action (federation stamp matrix).
+  nv_lang_auth_access_token:
+    type: string
+    description: Bearer token primary key for LangAuthSession.
+  nv_lang_auth_token_type:
+    type: string
+  nv_lang_auth_username:
+    type: string
+  nv_lang_auth_password:
+    type: string
+  nv_lang_secured_note_id:
+    type: integer
+  nv_lang_secured_note_title:
+    type: string
+  nv_lang_secured_note_body:
+    type: string
+  nv_lang_secured_note_query:
+    type: string
+  nv_lang_secured_group_id:
+    type: integer
+  nv_lang_secured_group_name:
+    type: string
   nv_lang_item_score:
     type: integer
   nv_lang_item_owner:
     type: string
-    string_semantics: short
+  nv_lang_item_active:
+    type: boolean
+  nv_lang_item_contact_email:
+    type: email
+  nv_lang_item_trace_id:
+    type: uuid
+  nv_lang_item_status:
+    type: enum
+    enum:
+    - draft
+    - published
+    - archived
+  nv_lang_item_tag_labels:
+    type: multi_enum
+    enum:
+    - alpha
+    - beta
+    - gamma
+  nv_lang_item_recorded_at:
+    type: rfc3339
+  nv_lang_item_code:
+    type: string
+    min_length: 3
+    pattern: ^[A-Z]{3}$
   nv_langitem_query_owner_owner:
     type: string
-    string_semantics: short
   nv_langitem_query_tags:
     type: string
-    string_semantics: short
   nv_langitem_search_q:
     type: string
-    string_semantics: short
   nv_langitem_search_team_key:
     type: string
-    string_semantics: short
   nv_langitem_create_title:
     type: string
-    string_semantics: short
   nv_langitem_create_score:
     type: integer
   nv_langitem_create_owner:
     type: string
-    string_semantics: short
+  nv_langitem_create_active:
+    type: boolean
+  nv_langitem_create_recorded_at:
+    type: rfc3339
   nv_langitem_create_tags_item:
     type: string
-    string_semantics: short
   nv_langitem_create_tags:
     type: array
     items:
@@ -504,15 +813,14 @@ values:
     description: Tag names to apply when creating a LangItem (array invoke param homograph regression).
   nv_langitem_update_title:
     type: string
-    string_semantics: short
   nv_langitem_update_score:
     type: integer
   nv_langitem_update_owner:
     type: string
-    string_semantics: short
+  nv_langitem_update_active:
+    type: boolean
   nv_homograph_shared_short:
     type: string
-    string_semantics: short
   nv_langtag_query_item_id:
     type: entity_ref
     target: LangItem
@@ -520,23 +828,18 @@ values:
     type: integer
   nv_compound_branch_owner:
     type: string
-    string_semantics: short
   nv_compound_branch_name:
     type: string
-    string_semantics: short
   nv_compound_branch_color:
     type: string
-    string_semantics: short
   nv_langline_query_item_id:
     type: entity_ref
     target: LangItem
+  nv_queryonly_request_id:
+    type: string
   nv_lang_offer_id:
     type: string
-    string_semantics: short
   nv_lang_offer_price:
     type: money
-    value_format:
-      money: decimal_string
   nv_lang_offer_currency:
     type: string
-    string_semantics: short

@@ -1,91 +1,164 @@
-# Open Brewery DB v1 (set API origin with --backend).
-# All list endpoints return bare JSON arrays.
-
 brewery_query:
   method: GET
-  path: [{ type: literal, value: breweries }]
+  path:
+  - type: literal
+    value: breweries
   pagination:
     params:
-      page: {counter: 1}
-      per_page: {fixed: 20}
+      page:
+        counter: 1
+      per_page:
+        fixed: 20
+        role: page_size
+    strategy: page_number
   query:
     type: object
     fields:
-      - - by_city
-        - type: if
-          condition: { type: exists, var: by_city }
-          then_expr: { type: var, name: by_city }
-          else_expr: { type: const, value: null }
-      - - by_state
-        - type: if
-          condition: { type: exists, var: by_state }
-          then_expr: { type: var, name: by_state }
-          else_expr: { type: const, value: null }
-      - - by_postal
-        - type: if
-          condition: { type: exists, var: by_postal }
-          then_expr: { type: var, name: by_postal }
-          else_expr: { type: const, value: null }
-      - - by_country
-        - type: if
-          condition: { type: exists, var: by_country }
-          then_expr: { type: var, name: by_country }
-          else_expr: { type: const, value: null }
-      - - by_type
-        - type: if
-          condition: { type: exists, var: by_type }
-          then_expr: { type: var, name: by_type }
-          else_expr: { type: const, value: null }
-      - - by_name
-        - type: if
-          condition: { type: exists, var: by_name }
-          then_expr: { type: var, name: by_name }
-          else_expr: { type: const, value: null }
-      - - by_ids
-        - type: if
-          condition: { type: exists, var: by_ids }
-          then_expr: { type: var, name: by_ids }
-          else_expr: { type: const, value: null }
-      - - sort
-        - type: if
-          condition: { type: exists, var: sort }
-          then_expr: { type: var, name: sort }
-          else_expr: { type: const, value: null }
-
+    - - by_city
+      - type: if
+        condition:
+          type: exists
+          var: by_city
+        then_expr:
+          type: var
+          name: by_city
+        else_expr:
+          type: const
+          value: null
+    - - by_state
+      - type: if
+        condition:
+          type: exists
+          var: by_state
+        then_expr:
+          type: var
+          name: by_state
+        else_expr:
+          type: const
+          value: null
+    - - by_postal
+      - type: if
+        condition:
+          type: exists
+          var: by_postal
+        then_expr:
+          type: var
+          name: by_postal
+        else_expr:
+          type: const
+          value: null
+    - - by_country
+      - type: if
+        condition:
+          type: exists
+          var: by_country
+        then_expr:
+          type: var
+          name: by_country
+        else_expr:
+          type: const
+          value: null
+    - - by_type
+      - type: if
+        condition:
+          type: exists
+          var: by_type
+        then_expr:
+          type: var
+          name: by_type
+        else_expr:
+          type: const
+          value: null
+    - - by_name
+      - type: if
+        condition:
+          type: exists
+          var: by_name
+        then_expr:
+          type: var
+          name: by_name
+        else_expr:
+          type: const
+          value: null
+    - - by_ids
+      - type: if
+        condition:
+          type: exists
+          var: by_ids
+        then_expr:
+          type: var
+          name: by_ids
+        else_expr:
+          type: const
+          value: null
+    - - sort
+      - type: if
+        condition:
+          type: exists
+          var: sort
+        then_expr:
+          type: var
+          name: sort
+        else_expr:
+          type: const
+          value: null
 brewery_search:
   method: GET
-  path: [{ type: literal, value: breweries }, { type: literal, value: search }]
+  path:
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: autocomplete
+    then_expr:
+      type: const
+      value: breweries/autocomplete
+    else_expr:
+      type: const
+      value: breweries/search
   pagination:
     params:
-      page: {counter: 1}
-      per_page: {fixed: 20}
+      page:
+        counter: 1
+      per_page:
+        fixed: 20
+        role: page_size
+    strategy: page_number
   query:
     type: object
     fields:
-      - [query, { type: var, name: query }]
-
+    - - query
+      - type: var
+        name: query
 brewery_get:
   method: GET
-  path: [{ type: literal, value: breweries }, { type: var, name: id }]
-
-# Returns name+id only — much faster than full search, good for typeahead
-brewery_autocomplete:
-  method: GET
-  path: [{ type: literal, value: breweries }, { type: literal, value: autocomplete }]
-  query:
-    type: object
-    fields:
-      - [query, { type: var, name: query }]
-
-# Returns N random breweries (no ID — use action kind)
+  path:
+  - type: literal
+    value: breweries
+  - type: var
+    name: id
 brewery_random:
   method: GET
-  path: [{ type: literal, value: breweries }, { type: literal, value: random }]
+  path:
+  - type: literal
+    value: breweries
+  - type: literal
+    value: random
   query:
     type: object
     fields:
-      - - size
-        - type: if
-          condition: { type: exists, var: size }
-          then_expr: { type: var, name: size }
-          else_expr: { type: const, value: null }
+    - - size
+      - type: if
+        condition:
+          type: exists
+          var: size
+        then_expr:
+          type: var
+          name: size
+        else_expr:
+          type: const
+          value: null

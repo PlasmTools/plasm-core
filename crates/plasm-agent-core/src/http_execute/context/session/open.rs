@@ -4,10 +4,8 @@ use super::super::super::*;
 
 use super::super::backend::tenant_outbound_hosted_kv_for_entries;
 use super::super::seeds::{
-    apply_ranked_capabilities_session_update, build_capability_exposure_plan,
-    dedup_preserve_arrival_order, normalize_ranked_capabilities_for_gate,
-    process_order_for_expand_group, relation_endpoint_keys_for_wave, seeds_fully_exposed,
-    sorted_entity_set_for_reuse_key, wrap_teaching_markdown_literal_block, RankedCapabilitiesArg,
+    build_capability_exposure_plan, dedup_preserve_arrival_order, process_order_for_expand_group,
+    seeds_fully_exposed, sorted_entity_set_for_reuse_key, wrap_teaching_markdown_literal_block,
     STALE_EXECUTE_BINDING_NOTICE,
 };
 #[allow(clippy::too_many_arguments)]
@@ -70,17 +68,12 @@ pub(crate) async fn execute_session_create_response_inner(
     let domain_filter_intent =
         normalize_context_intent_for_domain_filter(body.context_intent.as_deref());
 
-    let ranked_for_domain = domain_filter_intent
-        .as_ref()
-        .and_then(|_| normalize_ranked_capabilities_for_gate(body.ranked_capabilities.clone()));
-
     let reuse_key = SessionReuseKey {
         tenant_scope: scope.clone(),
         entry_id: body.entry_id.clone(),
         catalog_cgs_hash: catalog_cgs_hash.clone(),
         entities: reuse_key_entities.clone(),
         context_intent: domain_filter_intent.clone(),
-        ranked_capabilities: ranked_for_domain.clone(),
         principal: principal_stored.clone(),
         logical_session_id: body.logical_session_id.map(|u| u.hyphenated().to_string()),
     };
@@ -88,8 +81,9 @@ pub(crate) async fn execute_session_create_response_inner(
     if allow_reuse {
         if let Some((session_id_str, sess)) = st.sessions.try_reuse_session(&reuse_key).await {
             if let Some(reused) = st
-                .get_execute_session(sess.prompt_hash.as_str(), session_id_str.as_str())
+                .try_get_execute_session(sess.prompt_hash.as_str(), session_id_str.as_str())
                 .await
+                .map_err(|error| error.to_string())?
             {
                 let _reuse = crate::spans::execute_session_reuse(
                     reuse_key.entry_id.as_str(),
@@ -138,34 +132,13 @@ pub(crate) async fn execute_session_create_response_inner(
                 }
             }
             let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
-            let built = match &domain_filter_intent {
-                Some(intent_s) => {
-                    let relation_keys =
-                        plasm_core::relation_endpoint_keys(body.entry_id.as_str(), &names);
-                    let delta = plasm_core::discovery::derive_intent_exposure_surface_batch(
-                        cgs.as_ref(),
-                        body.entry_id.as_str(),
-                        intent_s.as_str(),
-                        &relation_keys,
-                        &names,
-                        ranked_for_domain.as_deref(),
-                        plasm_core::discovery::ExposureSurfaceOptions {
-                            mutator_admit: body.mutator_admit,
-                        },
-                    );
-                    plasm_core::TeachingExposureSession::new_with_intent_delta(
-                        cgs.as_ref(),
-                        body.entry_id.as_str(),
-                        &refs,
-                        delta,
-                    )
-                }
-                None => plasm_core::TeachingExposureSession::new(
-                    cgs.as_ref(),
-                    body.entry_id.as_str(),
-                    &refs,
-                ),
-            };
+            let delta = st.capability_surface_for_wave(cgs.as_ref(), &body.entry_id, &names)?;
+            let built = plasm_core::TeachingExposureSession::new_with_intent_delta(
+                cgs.as_ref(),
+                &body.entry_id,
+                &refs,
+                delta,
+            );
             (names.clone(), built)
         };
     let sym_cross = st.sessions.symbol_map_cross_cache();
@@ -173,10 +146,7 @@ pub(crate) async fn execute_session_create_response_inner(
         .engine
         .prompt_pipeline()
         .render_teaching_first_wave_for_session(cgs.as_ref(), &teaching_exposure, Some(sym_cross));
-    let mut prompt = wrap_teaching_markdown_literal_block(
-        &teaching_prompt,
-        st.engine.prompt_pipeline().render_mode,
-    );
+    let mut prompt = wrap_teaching_markdown_literal_block(&teaching_prompt, body.entry_id.as_str());
     if symbol_space_reset {
         prompt = format!(
             "{}{}",
@@ -203,6 +173,14 @@ pub(crate) async fn execute_session_create_response_inner(
             bindings_map.insert(body.entry_id.clone(), b.clone());
         }
     }
+    let compiled_catalogs_by_entry = contexts_by_entry
+        .keys()
+        .map(|entry_id| {
+            st.catalog
+                .compiled_catalog(entry_id)
+                .map(|compiled| (entry_id.clone(), compiled))
+        })
+        .collect::<Result<indexmap::IndexMap<_, _>, _>>()?;
 
     let mut session = ExecuteSession::new_with_bindings(
         prompt_hash_str.clone(),
@@ -218,8 +196,8 @@ pub(crate) async fn execute_session_create_response_inner(
         principal_stored.clone(),
         catalog_cgs_hash,
         domain_filter_intent,
-        ranked_for_domain,
         bindings_map,
+        compiled_catalogs_by_entry,
     );
     if let Some(principal) = principal {
         session.flow_policy = if let Some((tenant_id, ws, ps)) = flow_policy_scope {
@@ -233,6 +211,14 @@ pub(crate) async fn execute_session_create_response_inner(
             .await
         };
     }
+    session.discovery_pin =
+        st.discovery_route
+            .as_ref()
+            .map(|route| crate::discovery_store::DiscoverySessionPin {
+                generation: route.retrieval.generation.clone(),
+                pin_id: route.pin_id.clone(),
+                authorization: route.authorization.clone(),
+            });
     session.registry_catalog_hashes_by_entry = registry_catalog_hashes;
     if let Some(kv) = hosted_kv_key {
         session

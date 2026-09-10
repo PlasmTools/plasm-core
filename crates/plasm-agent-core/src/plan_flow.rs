@@ -255,7 +255,7 @@ struct MutationFlowCtx<'a> {
     kind: PlanNodeKind,
     effect_class: EffectClass,
     capability_name: &'a str,
-    template_expr: Option<&'a serde_json::Value>,
+    template_expr: Option<&'a plasm_core::Expr>,
     expr_template: Option<&'a str>,
     uses_result: &'a [PlanResultUse],
     author_label: Option<&'a str>,
@@ -349,6 +349,27 @@ impl<'a, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, P> {
                 self.sink_proofs.insert(id, SinkProof::StaticClean);
             }
             ValidatedPlanNode::ForEach(n) => {
+                let source_facts = self
+                    .facts
+                    .get(n.source.as_str())
+                    .cloned()
+                    .unwrap_or_default();
+                self.facts.insert(id.clone(), source_facts);
+                let cap_name = capability_name_from_expr(&n.effect_template.ir_template.expr)
+                    .unwrap_or_else(|| operation_name_for_kind(n.effect_template.kind).to_string());
+                self.transfer_mutation_template(MutationFlowCtx {
+                    node_id: id.clone(),
+                    qualified: &n.effect_template.qualified_entity,
+                    kind: n.effect_template.kind,
+                    effect_class: n.effect_template.effect_class,
+                    capability_name: cap_name.as_str(),
+                    template_expr: Some(&n.effect_template.ir_template.expr),
+                    expr_template: Some(n.effect_template.expr_template.as_str()),
+                    uses_result: &n.uses_result,
+                    author_label: n.approval.as_deref(),
+                });
+            }
+            ValidatedPlanNode::IterateUntil(n) => {
                 let source_facts = self
                     .facts
                     .get(n.source.as_str())
@@ -584,7 +605,7 @@ impl<'a, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, P> {
 
     fn incoming_facts_from_template(
         &self,
-        expr: &serde_json::Value,
+        expr: &plasm_core::Expr,
         uses_result: &[PlanResultUse],
     ) -> FlowFacts {
         let holes = NodeInputHoleIndex::from_template_expr(expr);
@@ -624,7 +645,8 @@ impl<'a, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, P> {
             ComputeOp::Filter { .. }
             | ComputeOp::Sort { .. }
             | ComputeOp::Limit { .. }
-            | ComputeOp::DedupeBy { .. } => {
+            | ComputeOp::DedupeBy { .. }
+            | ComputeOp::With { .. } => {
                 out = source_facts.clone();
             }
             ComputeOp::GroupBy { aggregates, .. } | ComputeOp::Aggregate { aggregates, .. } => {
@@ -690,6 +712,20 @@ fn policy_disposition_for_node<P: FlowPolicyEvaluator + ?Sized>(
             );
             policy.disposition_for_event(&event, n.approval.as_deref())
         }
+        ValidatedPlanNode::IterateUntil(n)
+            if is_remote_mutation(n.effect_template.kind, n.effect_template.effect_class) =>
+        {
+            let cap_name = capability_name_from_expr(&n.effect_template.ir_template.expr)
+                .unwrap_or_else(|| operation_name_for_kind(n.effect_template.kind).to_string());
+            let event = EffectEvent::from_mutation(
+                &n.effect_template.qualified_entity,
+                n.effect_template.kind,
+                n.effect_template.effect_class,
+                cap_name.as_str(),
+                Some(n.effect_template.expr_template.as_str()),
+            );
+            policy.disposition_for_event(&event, n.approval.as_deref())
+        }
         _ => NodeDisposition::Allow,
     }
 }
@@ -717,12 +753,18 @@ pub(crate) fn validated_plan_has_remote_mutation(
     plan: &crate::plasm_plan::Plan<ValidatedPlanState>,
 ) -> bool {
     plan.nodes.iter().any(|node| {
-        is_remote_mutation(node.kind(), node.effect_class())
-            || matches!(
-                node,
-                ValidatedPlanNode::ForEach(n)
-                    if is_remote_mutation(n.effect_template.kind, n.effect_template.effect_class)
-            )
+        if is_remote_mutation(node.kind(), node.effect_class()) {
+            return true;
+        }
+        match node {
+            ValidatedPlanNode::ForEach(n) => {
+                is_remote_mutation(n.effect_template.kind, n.effect_template.effect_class)
+            }
+            ValidatedPlanNode::IterateUntil(n) => {
+                is_remote_mutation(n.effect_template.kind, n.effect_template.effect_class)
+            }
+            _ => false,
+        }
     })
 }
 

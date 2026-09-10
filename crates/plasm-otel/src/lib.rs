@@ -3,6 +3,9 @@
 mod trace_context;
 mod tui_capture;
 
+#[cfg(any(feature = "testing", test))]
+pub mod span_capture;
+
 pub use trace_context::{install_w3c_trace_context_propagator, tower_http_trace_parent_span};
 pub use tui_capture::{layer as tui_capture_layer, TuiCaptureLayer, TuiLogCallback, TuiLogRecord};
 
@@ -362,3 +365,6 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod span_graph_tests;

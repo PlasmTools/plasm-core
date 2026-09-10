@@ -7,8 +7,8 @@ use plasm_trace::RunArtifactArchiveRef;
 use crate::run_artifacts::ArtifactPayload;
 use crate::server_state::PlasmHostState;
 
-use super::discover::mcp_artifact_payload_chars;
-use super::discover::mcp_truncate_resource_uri_display;
+use super::resource_helpers::mcp_artifact_payload_chars;
+use super::resource_helpers::mcp_truncate_resource_uri_display;
 
 pub(crate) struct McpResourceReadTrace<'a> {
     pub logical_session_trace_key: Option<&'a str>,

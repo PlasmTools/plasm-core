@@ -1,5 +1,6 @@
 //! Bounded large-stack worker pool for live `run_plasm_comp` (avoids tokio 2 MiB worker overflow).
 
+use std::any::Any;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
@@ -33,6 +34,17 @@ pub fn live_plan_run_stack_bytes() -> usize {
         .and_then(|s| s.parse().ok())
         .filter(|n| *n >= 512 * 1024)
         .unwrap_or_else(default_live_plan_run_stack_bytes)
+}
+
+#[must_use]
+fn format_live_plan_run_panic(payload: Box<dyn Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        return format!("live plan run panicked: {s}");
+    }
+    if let Some(s) = payload.downcast_ref::<String>() {
+        return format!("live plan run panicked: {s}");
+    }
+    "live plan run panicked".to_string()
 }
 
 /// Bounded worker pool sized to [`max_running_ops_per_session`].
@@ -73,6 +85,27 @@ impl LivePlanRunPool {
         Fut: Future<Output = Result<T, String>> + Send,
         T: Send + 'static,
     {
+        self.run_impl(f).await
+    }
+
+    /// Like [`Self::run`], but the future may be `!Send` (created and polled only on the worker).
+    ///
+    /// Use for MCP tool handlers whose error type is `Box<dyn Error>` (`CallToolError`).
+    pub async fn run_local<F, Fut, T>(&self, f: F) -> Result<T, String>
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = Result<T, String>>,
+        T: Send + 'static,
+    {
+        self.run_impl(f).await
+    }
+
+    async fn run_impl<F, Fut, T>(&self, f: F) -> Result<T, String>
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = Result<T, String>>,
+        T: Send + 'static,
+    {
         let permit = self
             .permits
             .clone()
@@ -90,7 +123,7 @@ impl LivePlanRunPool {
                 let msg = match out {
                     Ok(Ok(v)) => Ok(v),
                     Ok(Err(e)) => Err(e),
-                    Err(_) => Err("live plan run panicked".to_string()),
+                    Err(payload) => Err(format_live_plan_run_panic(payload)),
                 };
                 let _ = done_tx.send(msg);
             })
@@ -128,5 +161,14 @@ mod tests {
                 DEFAULT_LIVE_PLAN_RUN_STACK_BYTES_RELEASE
             );
         }
+    }
+
+    #[test]
+    fn format_live_plan_run_panic_includes_str_payload() {
+        let msg = format_live_plan_run_panic(Box::new("teaching block empty"));
+        assert!(
+            msg.contains("teaching block empty"),
+            "expected panic payload in error; got {msg}"
+        );
     }
 }

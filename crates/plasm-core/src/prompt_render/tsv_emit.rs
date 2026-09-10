@@ -10,8 +10,9 @@ use super::gloss_dedup::{
     FieldGlossMeaningAtom, GlossDescription, GlossTsvDedupe,
 };
 use super::{
-    EntityTeachingExprRow, ReturnArrow, TeachingExprLine, TeachingFieldGloss, TeachingHeading,
-    TeachingPromptBundle, TEACHING_OPTIONAL_LEGEND_MARK, TSV_TEACHING_TABLE_HEADER,
+    DomainLineKind, EntityTeachingExprRow, ReturnArrow, TeachingExprLine, TeachingFieldGloss,
+    TeachingHeading, TeachingPromptBundle, TEACHING_OPTIONAL_LEGEND_MARK,
+    TSV_TEACHING_TABLE_HEADER,
 };
 
 fn tsv_expr_has_symbolic_method_call(expr: &str) -> bool {
@@ -37,7 +38,9 @@ fn tsv_identity_expr_is_entity_get(expr: &str) -> bool {
     !t[..open].contains('.')
 }
 
-fn compute_tsv_identity_row_index(teaching_expr_rows: &[&TeachingExprLine]) -> Option<usize> {
+pub(crate) fn compute_tsv_identity_row_index(
+    teaching_expr_rows: &[&TeachingExprLine],
+) -> Option<usize> {
     teaching_expr_rows
         .iter()
         .position(|row| {
@@ -51,6 +54,7 @@ fn compute_tsv_identity_row_index(teaching_expr_rows: &[&TeachingExprLine]) -> O
             teaching_expr_rows.iter().position(|row| {
                 !row.is_projection_teaching
                     && row.expression.contains('(')
+                    && !tsv_expr_has_symbolic_method_call(row.expression.trim())
                     && !row.expression.contains('{')
                     && !row.expression.contains('~')
                     && !row.result_type.starts_with('[')
@@ -62,12 +66,33 @@ fn compute_tsv_identity_row_index(teaching_expr_rows: &[&TeachingExprLine]) -> O
         })
 }
 
-/// Scalar projection bracket `[p#,…]` from a synthesized projection-teaching row (`TeachingExprLine`).
+/// Entity banner attaches only on a Get identity row — never Query/Search (list heads
+/// must not carry the noun-card) and never mutators. Query-only entities emit a
+/// separate non-executable entity-name gloss row instead.
+pub(crate) fn compute_entity_desc_attach_idx(
+    teaching_rows: &[EntityTeachingExprRow],
+    teaching_expr_rows: &[&TeachingExprLine],
+    union_ctor_row_set: &HashSet<usize>,
+) -> Option<usize> {
+    if let Some(i) = compute_tsv_identity_row_index(teaching_expr_rows) {
+        if teaching_rows
+            .get(i)
+            .is_some_and(|r| r.meta.kind == DomainLineKind::Get)
+        {
+            return Some(i);
+        }
+    }
+    teaching_rows.iter().enumerate().find_map(|(i, row)| {
+        if union_ctor_row_set.contains(&i) {
+            return None;
+        }
+        (row.meta.kind == DomainLineKind::Get).then_some(i)
+    })
+}
+
+/// Scalar projection bracket `[wires…]` from a teaching row with a trailing bracket.
 pub(crate) fn projection_bracket_from_teaching_rows(rows: &[&TeachingExprLine]) -> Option<String> {
     for row in rows {
-        if !row.is_projection_teaching {
-            continue;
-        }
         if let Some(b) = parse_trailing_projection_bracket(row.expression.trim()) {
             return Some(b);
         }
@@ -162,7 +187,7 @@ pub(crate) fn render_prompt_tsv_from_bundle(bundle: &TeachingPromptBundle) -> St
     let mut out = String::new();
     out.push_str(TSV_TEACHING_TABLE_HEADER);
     let mut tsv_dedupe = GlossTsvDedupe::default();
-    for block in &bundle.teaching_blocks {
+    for (block_i, block) in bundle.teaching_blocks.iter().enumerate() {
         let heading = &block.heading;
         let field_gloss_rows = &block.field_gloss_rows;
         let teaching_expr_rows: Vec<&TeachingExprLine> = block
@@ -178,14 +203,12 @@ pub(crate) fn render_prompt_tsv_from_bundle(bundle: &TeachingPromptBundle) -> St
             .collect();
         let union_ctor_row_set: HashSet<usize> = union_ctor_row_idxs.iter().copied().collect();
         let identity_idx = compute_tsv_identity_row_index(&teaching_expr_rows);
-        let projection_first_idx = teaching_expr_rows
-            .iter()
-            .position(|r| r.is_projection_teaching);
-        let entity_desc_attach_idx = projection_first_idx.or(identity_idx);
-        // Do not read projection from the entity heading: legends may contain unrelated `[…]`
-        // fragments (e.g. `[e1]` in result gloss). Teach projection only via a validated witness row
-        // and/or
-        // a trailing `[p#,…]` on the identity get line.
+        let entity_desc_attach_idx = compute_entity_desc_attach_idx(
+            &block.teaching_rows,
+            &teaching_expr_rows,
+            &union_ctor_row_set,
+        );
+        // Projection symbols for field-gloss ordering: trailing brackets on get/query rows.
         let mut proj =
             projection_bracket_from_teaching_rows(&teaching_expr_rows).unwrap_or_default();
         if proj.is_empty() {
@@ -251,6 +274,26 @@ pub(crate) fn render_prompt_tsv_from_bundle(bundle: &TeachingPromptBundle) -> St
         // Phase B.5: `r#` gloss — stable numeric order (alias → wire name on the Meaning cell).
         write_sorted_symbol_prefix_gloss_rows(&mut out, field_gloss_rows, 'r');
 
+        if entity_desc_attach_idx.is_none() {
+            let d = heading.description.trim();
+            if !d.is_empty() {
+                let name = bundle
+                    .model
+                    .entities
+                    .get(block_i)
+                    .map(|e| e.entity.as_str())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("entity");
+                write_teaching_tsv_row(
+                    &mut out,
+                    DomainTsvRow::EntityBanner {
+                        name,
+                        description: d,
+                    },
+                );
+            }
+        }
+
         // Phase C: union constructor exemplars (`v101{p#=…}`) — before deferred union summary gloss.
         for &row_idx in &union_ctor_row_idxs {
             let row = teaching_expr_rows[row_idx];
@@ -273,13 +316,8 @@ pub(crate) fn render_prompt_tsv_from_bundle(bundle: &TeachingPromptBundle) -> St
             }
         }
 
-        // Phase E: remaining teaching expr rows (projection witnesses first so the canonical
-        // `[p#,…]` is taught before bare query/search lines that omit the same bracket).
-        let mut emit_order: Vec<usize> = (0..teaching_expr_rows.len()).collect();
-        emit_order.sort_by_key(|&i| {
-            let is_proj = teaching_expr_rows[i].is_projection_teaching;
-            (!is_proj, i)
-        });
+        // Phase E: remaining teaching expr rows in synthesis order.
+        let emit_order: Vec<usize> = (0..teaching_expr_rows.len()).collect();
         for row_idx in emit_order {
             if union_ctor_row_set.contains(&row_idx) {
                 continue;
@@ -310,11 +348,16 @@ pub(crate) enum DomainTsvRow<'a> {
         line: &'a TeachingExprLine,
         /// [`compute_tsv_identity_row_index`] — affects relation vs `returns …` gloss shaping.
         identity_returns_row: bool,
-        /// Entity banner description at most once: first projection witness, else identity fallback.
+        /// Noun-card attach: entity banner on a Get identity row only.
         attach_entity_heading: bool,
         heading: &'a TeachingHeading,
     },
     FieldGloss(&'a TeachingFieldGloss),
+    /// Query-only noun-card: catalog entity name, not an executable `e#` head.
+    EntityBanner {
+        name: &'a str,
+        description: &'a str,
+    },
 }
 
 /// Replace raw tabs inside a cell and trim edges (never used as column delimiter).
@@ -335,15 +378,11 @@ enum TeachingMeaningAtom {
     RelationNav {
         line: String,
     },
-    /// Terminal write (`↠ e#`) reconstruction hint: re-read the entity by id to keep chaining.
-    TerminalChainHint {
-        entity: String,
-    },
-    EntityHeadingDescription(String),
+    /// Capability prose (e.g. Get description) or entity banner joined into Meaning.
+    CapabilityGloss(String),
     LegendScope(String),
     LegendOptionalParams(Vec<String>),
     LegendCompactArgs(String),
-    LegendDescription(String),
 }
 
 /// True when an emitted teaching row already demonstrates **relation navigation** on `rel_sym`
@@ -366,22 +405,18 @@ impl TeachingMeaningAtom {
         let raw = match self {
             TeachingMeaningAtom::Returns { arrow, gloss } => format!("{} {gloss}", arrow.glyph()),
             TeachingMeaningAtom::RelationNav { line } => line.clone(),
-            TeachingMeaningAtom::TerminalChainHint { entity } => {
-                format!("chain: {entity}(id=…).m#")
-            }
-            TeachingMeaningAtom::EntityHeadingDescription(s) => s.clone(),
+            TeachingMeaningAtom::CapabilityGloss(s) => s.clone(),
             TeachingMeaningAtom::LegendScope(s) => s.clone(),
             TeachingMeaningAtom::LegendOptionalParams(wires) => {
                 format!("{TEACHING_OPTIONAL_LEGEND_MARK}: {}", wires.join(","))
             }
             TeachingMeaningAtom::LegendCompactArgs(s) => format!("args: {s}"),
-            TeachingMeaningAtom::LegendDescription(s) => s.clone(),
         };
         sanitize_tsv_cell(&raw)
     }
 }
 
-/// Sanitized `plasm_expr` column for teaching table teaching TSV (no literal tabs; trimmed).
+/// Sanitized `plasm_expr` column for the language card (no literal tabs; trimmed).
 #[derive(Clone, Debug)]
 struct DomainTsvExprCell(String);
 
@@ -395,7 +430,7 @@ impl DomainTsvExprCell {
     }
 }
 
-/// Sanitized `Meaning` column for teaching table teaching TSV (no literal tabs; trimmed).
+/// Sanitized `Meaning` column for the language card (no literal tabs; trimmed).
 #[derive(Clone, Debug)]
 struct DomainTsvMeaningCell(String);
 
@@ -425,7 +460,7 @@ impl DomainTsvMeaningCell {
     }
 }
 
-/// One encoded teaching table teaching row: sanitized expr, **exactly one** U+0009, sanitized meaning, newline.
+/// One encoded language-card row: sanitized expr, **exactly one** U+0009, sanitized meaning, newline.
 struct DomainTsvEncodedLine {
     expr: DomainTsvExprCell,
     meaning: DomainTsvMeaningCell,
@@ -458,10 +493,11 @@ fn teaching_expr_meaning_atoms(
 ) -> Vec<TeachingMeaningAtom> {
     let mut atoms = Vec::new();
     push_teaching_meaning_result_atom(&mut atoms, row, identity_returns_row);
-    if attach_entity_heading && !heading.description.is_empty() {
-        atoms.push(TeachingMeaningAtom::EntityHeadingDescription(
-            heading.description.clone(),
-        ));
+    if attach_entity_heading {
+        let d = heading.description.trim();
+        if !d.is_empty() {
+            atoms.push(TeachingMeaningAtom::CapabilityGloss(d.to_string()));
+        }
     }
     append_teaching_meaning_legend_tail_atoms(&mut atoms, row);
     atoms
@@ -488,11 +524,6 @@ fn append_teaching_meaning_legend_tail_atoms(
             row.legend.compact_args.clone(),
         ));
     }
-    if !row.legend.description.is_empty() {
-        atoms.push(TeachingMeaningAtom::LegendDescription(
-            row.legend.description.clone(),
-        ));
-    }
 }
 
 /// When `identity_row`, always prefix with `returns …` (including relation-nav identity picks).
@@ -515,14 +546,13 @@ fn push_teaching_meaning_result_atom(
         arrow: row.arrow,
         gloss: row.result_type.clone(),
     });
-    // Terminal write that yields an entity slice (`↠ e#`, not `()` / list): teach the
-    // entity-reconstruction form so an agent knows how to keep chaining after a mutation.
-    if !identity_row && row.arrow == ReturnArrow::Terminal {
-        let gloss = row.result_type.trim();
-        if gloss != "()" && !gloss.starts_with('[') {
-            atoms.push(TeachingMeaningAtom::TerminalChainHint {
-                entity: gloss.to_string(),
-            });
+    let desc = row.legend.description.trim();
+    if !desc.is_empty() {
+        if row.is_singleton_row_fetch {
+            // `→ e · {capability gloss}` — arrow already means one entity row; no redundant mark.
+            atoms.push(TeachingMeaningAtom::CapabilityGloss(desc.to_string()));
+        } else if row.arrow == ReturnArrow::Terminal || row.arrow == ReturnArrow::List {
+            atoms.push(TeachingMeaningAtom::CapabilityGloss(desc.to_string()));
         }
     }
 }
@@ -550,6 +580,15 @@ pub(crate) fn write_teaching_tsv_row(out: &mut String, row: DomainTsvRow<'_>) {
             DomainTsvEncodedLine {
                 expr: DomainTsvExprCell::from_plasm_expr(&g.symbol),
                 meaning: DomainTsvMeaningCell::from_field_gloss_atoms(field_gloss_meaning_atoms(g)),
+            }
+            .write_line(out);
+        }
+        DomainTsvRow::EntityBanner { name, description } => {
+            DomainTsvEncodedLine {
+                expr: DomainTsvExprCell::from_plasm_expr(name),
+                meaning: DomainTsvMeaningCell::from_teaching_atoms(vec![
+                    TeachingMeaningAtom::CapabilityGloss(description.to_string()),
+                ]),
             }
             .write_line(out);
         }

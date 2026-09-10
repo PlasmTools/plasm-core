@@ -3,46 +3,31 @@ import { z } from "zod";
 
 import type { AgentRuntime } from "../runtime/agent-runtime.js";
 import {
-  DISCOVER_TOOL_DESCRIPTION,
   PLASM_CONTEXT_TOOL_DESCRIPTION,
+  PLASM_READ_RUN_ARTIFACT_TOOL_DESCRIPTION,
   PLASM_RUN_TOOL_DESCRIPTION,
   PLASM_TOOL_DESCRIPTION,
 } from "./descriptions.js";
 import { toolInput } from "./tool-input.js";
-
-const seedSchema = z.object({
-  api: z.string().describe("Registry entry_id / catalog api"),
-  entity: z.string().describe("CGS entity name from discovery or prior knowledge"),
-});
-
-const discoverInputSchema = z.object({
-  intent: z
-    .string()
-    .min(1)
-    .describe(
-      "One plain-language task description for the whole user goal. Returns catalog api/entity picks — not program symbols.",
-    ),
-});
 
 const plasmContextInputSchema = z.object({
   intent: z
     .string()
     .min(1)
     .describe(
-      "Stable string for one user goal (same value every turn for that goal — do not rotate per message).",
+      "The current business need. Session continuity uses logical_session_ref.",
     ),
-  seeds: z
-    .array(seedSchema)
-    .min(1)
-    .describe("Non-empty array of {api, entity} capability picks"),
-  ranked_capabilities: z
-    .array(z.string())
-    .nullable()
+  session_mode: z
+    .enum(["new", "extend"])
     .optional()
     .describe(
-      "Optional capability wire names from discover_capabilities. Omit on expand; null or [] clears.",
+      'Use "new" once per workflow; "extend" on later turns with the same logical_session_ref. Defaults to new when omitted.',
     ),
-});
+  logical_session_ref: z
+    .string()
+    .optional()
+    .describe("Required continuity handle on session_mode extend (from plasm_context)."),
+}).strict();
 
 const plasmInputSchema = z.object({
   logical_session_ref: z
@@ -71,43 +56,80 @@ const plasmRunInputSchema = z.object({
     .describe("Optional short note explaining the intent of this call"),
 });
 
+const plasmReadRunArtifactInputSchema = z.object({
+  logical_session_ref: z
+    .string()
+    .describe("Same logical_session_ref returned by plasm_context"),
+  run_id: z
+    .string()
+    .min(1)
+    .describe("Run snapshot id (pr… hex) from plasm_run markdown / archive"),
+  reasoning: z
+    .string()
+    .optional()
+    .describe("Optional short note explaining the intent of this call"),
+});
+
 export function createPlasmTools(runtime: AgentRuntime): ToolSet {
-  return {
-    discover_capabilities: tool({
-      description: DISCOVER_TOOL_DESCRIPTION,
-      inputSchema: toolInput(discoverInputSchema),
-      execute: async ({ intent }) => runtime.discoverCapabilities({ intent }),
-    }),
+  const tools: ToolSet = {};
 
-    plasm_context: tool({
-      description: PLASM_CONTEXT_TOOL_DESCRIPTION,
-      inputSchema: toolInput(plasmContextInputSchema),
-      execute: async ({ intent, seeds, ranked_capabilities }) =>
-        runtime.plasmContext({
-          intent,
-          seeds: seeds as Array<{ api: string; entity: string }>,
-          rankedCapabilities: ranked_capabilities,
-        }),
-    }),
+  tools.plasm_context = tool({
+    description: PLASM_CONTEXT_TOOL_DESCRIPTION,
+    inputSchema: toolInput(plasmContextInputSchema),
+    execute: async (args) =>
+      runtime.plasmContext({
+        intent: args.intent,
+        sessionMode: args.session_mode ?? "new",
+        logicalSessionRef: args.logical_session_ref,
+      }),
+  });
 
-    plasm: tool({
-      description: PLASM_TOOL_DESCRIPTION,
-      inputSchema: toolInput(plasmInputSchema),
-      execute: async ({ logical_session_ref, program, reasoning }) =>
-        runtime.plasm({ logicalSessionRef: logical_session_ref, program, reasoning }),
-    }),
+  tools.plasm = tool({
+    description: PLASM_TOOL_DESCRIPTION,
+    inputSchema: toolInput(plasmInputSchema),
+    execute: async ({ logical_session_ref, program, reasoning }) => {
+      try {
+        return await runtime.plasm({
+          logicalSessionRef: logical_session_ref,
+          program,
+          reasoning,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return `**plasm** error — revise \`program\` on the same logical_session_ref:\n\n${msg}`;
+      }
+    },
+  });
 
-    plasm_run: tool({
-      description: PLASM_RUN_TOOL_DESCRIPTION,
-      inputSchema: toolInput(plasmRunInputSchema),
-      execute: async ({ logical_session_ref, run_ref, reasoning }) =>
-        runtime.plasmRun({
+  tools.plasm_run = tool({
+    description: PLASM_RUN_TOOL_DESCRIPTION,
+    inputSchema: toolInput(plasmRunInputSchema),
+    execute: async ({ logical_session_ref, run_ref, reasoning }) => {
+      try {
+        return await runtime.plasmRun({
           logicalSessionRef: logical_session_ref,
           runRef: run_ref,
           reasoning,
-        }),
-    }),
-  };
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return `**plasm_run** error:\n\n${msg}`;
+      }
+    },
+  });
+
+  tools.plasm_read_run_artifact = tool({
+    description: PLASM_READ_RUN_ARTIFACT_TOOL_DESCRIPTION,
+    inputSchema: toolInput(plasmReadRunArtifactInputSchema),
+    execute: async ({ logical_session_ref, run_id, reasoning }) =>
+      runtime.readRunArtifact({
+        logicalSessionRef: logical_session_ref,
+        runId: run_id,
+        reasoning,
+      }),
+  });
+
+  return tools;
 }
 
 export type PlasmTools = ReturnType<typeof createPlasmTools>;

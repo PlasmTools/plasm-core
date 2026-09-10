@@ -5,15 +5,12 @@ use crate::plan_flow::QualifiedCapabilityKey;
 use crate::plasm_plan::{PlanNodeKind, PlanResultUse, ValidatedSurfaceNode};
 use plasm_core::Expr;
 
-pub fn capability_name_from_expr(expr: &serde_json::Value) -> Option<String> {
-    expr.get("capability")
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
-        .or_else(|| expr.get("op").and_then(|v| v.as_str()).map(str::to_string))
+pub fn capability_name_from_expr(expr: &Expr) -> Option<String> {
+    capability_from_plasm_expr(expr)
 }
 
 pub fn resolved_mutation_capability_name(
-    template_expr: Option<&serde_json::Value>,
+    template_expr: Option<&Expr>,
     kind: PlanNodeKind,
 ) -> String {
     template_expr

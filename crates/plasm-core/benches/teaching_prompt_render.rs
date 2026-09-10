@@ -1,4 +1,4 @@
-//! teaching table / teaching TSV synthesis benchmarks (CGS materialization + prompt render).
+//! teaching table / language card synthesis benchmarks (CGS materialization + prompt render).
 //!
 //! Run (from `plasm-oss/`): `cargo bench -p plasm-core --bench teaching_prompt_render`
 //!
@@ -7,15 +7,13 @@
 //! Override cap: `PLASM_PROMPT_MATRIX_SYNTH_MAX_MS=<ms>`.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use plasm_core::discovery::{
-    derive_intent_exposure_surface_batch, ExposureSurfaceOptions, MutatorAdmit,
-};
+
 use plasm_core::loader::load_schema_dir;
 use plasm_core::prompt_render::{
     render_prompt_tsv_with_config, render_teaching_prompt_bundle_for_exposure, RenderConfig,
 };
 use plasm_core::symbol_tuning::TeachingExposureSession;
-use plasm_core::{relation_endpoint_keys, CGS};
+use plasm_core::CGS;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -80,25 +78,19 @@ fn teaching_prompt_benchmarks(c: &mut Criterion) {
     if let Some(path) = apis_schema("github") {
         let cgs = load_cgs(&path);
         let entity = "Repository";
-        let intent = "list filter aggregate repositories by owner";
         group.bench_with_input(
             BenchmarkId::new("execute_first_wave_bundle", "github_repository"),
             &cgs,
             |b, cgs: &Arc<CGS>| {
                 b.iter(|| {
                     let entry = cgs.entry_id.as_deref().unwrap_or("github");
-                    let relation_keys = relation_endpoint_keys(entry, &[entity.to_string()]);
-                    let delta = derive_intent_exposure_surface_batch(
-                        cgs.as_ref(),
-                        entry,
-                        intent,
-                        &relation_keys,
-                        &[entity.to_string()],
-                        None,
-                        ExposureSurfaceOptions {
-                            mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-                        },
-                    );
+                    let delta =
+                        plasm_core::capability_exposure::explicit_entity_capability_surface(
+                            cgs.as_ref(),
+                            entry,
+                            &[entity.to_string()],
+                        )
+                        .expect("explicit fixture capability exposure");
                     let exposure = TeachingExposureSession::new_with_intent_delta(
                         cgs.as_ref(),
                         entry,

@@ -133,5 +133,34 @@ pub fn step_error_from_runtime(err: &RuntimeError, cgs: &CGS) -> StepError {
             "operation cancelled".to_string(),
             None,
         ),
+        RuntimeError::HydrationGet {
+            cap_name,
+            entity_type,
+            source,
+        } => {
+            let inner = step_error_from_runtime(source, cgs);
+            StepError::new(
+                inner.category,
+                format!(
+                    "synthesized GET `{cap_name}` during {entity_type} hydration\n\n{}",
+                    inner.correction
+                ),
+                inner.span_offset,
+            )
+        }
+        RuntimeError::DerivedGetNotFound { .. }
+        | RuntimeError::DerivedGetNonUnique { .. }
+        | RuntimeError::DerivedGetSourceFieldMissing { .. }
+        | RuntimeError::DerivedGetIncompleteSource { .. } => StepError::new(
+            StepErrorCategory::Runtime,
+            append_correction_lines(
+                err.to_string(),
+                vec![
+                    "Derived Get runs a source Query then unique-matches the identity; check the key and that the list materializes fully."
+                        .into(),
+                ],
+            ),
+            None,
+        ),
     }
 }

@@ -25,4 +25,3 @@ capabilities:
 values:
   nv_widget_id:
     type: string
-    string_semantics: short

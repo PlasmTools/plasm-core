@@ -14,7 +14,10 @@ pub fn build_invoke_args(cap: &CapabilitySchema, cgs: &CGS) -> Vec<clap::Arg> {
 
 /// Extract matched invoke arguments into a `Value::Object` for `InvokeExpr::input`.
 pub fn args_to_input(matches: &ArgMatches, cap: &CapabilitySchema, cgs: &CGS) -> Option<Value> {
-    let fields = cap.object_params()?;
+    let fields: Vec<_> = cap.invocation_object_fields().collect();
+    if fields.is_empty() {
+        return None;
+    }
 
     let mut obj = IndexMap::new();
 
@@ -35,49 +38,43 @@ pub fn args_to_input(matches: &ArgMatches, cap: &CapabilitySchema, cgs: &CGS) ->
 mod tests {
     use super::*;
     use clap::{Arg, Command};
+    use plasm_core::value_domain::ValueDomain;
     use plasm_core::{
         CapabilityKind, CapabilityMapping, FieldType, InputFieldSchema, InputFieldWire,
-        InputSchema, InputType, InputValidation, NamedValueSchema, StringSemantics, ValueDomainKey,
-        CGS,
+        InputSchema, InputType, InputValidation, NamedValueSchema, ValueDomainKey, CGS,
     };
 
     fn invoke_test_cgs() -> CGS {
         let mut cgs = CGS::new();
         cgs.values.insert(
             "invoke_upd_name".into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: Some(StringSemantics::Short),
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                None,
+            ),
         );
         cgs.values.insert(
             "invoke_upd_revenue".into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Number,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::Number, None, None, None, None),
+                None,
+            ),
         );
         cgs.values.insert(
             "invoke_upd_priority".into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Select,
-                value_format: None,
-                allowed_values: Some(vec!["low".into(), "medium".into(), "high".into()]),
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(
+                    &FieldType::Select,
+                    None,
+                    None,
+                    Some(vec!["low".into(), "medium".into(), "high".into()]).clone(),
+                    None,
+                ),
+                None,
+            ),
         );
         cgs
     }
@@ -89,62 +86,63 @@ mod tests {
             kind: CapabilityKind::Update,
             domain: "Account".into(),
             identity_key: None,
-            mapping: CapabilityMapping {
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({}).into(),
-            },
-            input_schema: Some(InputSchema {
-                input_type: InputType::Object {
-                    fields: vec![
-                        InputFieldSchema {
-                            name: "name".into(),
-                            wire: InputFieldWire::Registry(
-                                ValueDomainKey::new("invoke_upd_name").expect("key"),
-                            ),
-                            required: false,
-                            description: Some("Account name".into()),
-                            default: None,
-                            role: None,
-                            sink_class: None,
-                            wire_json_path: None,
-                            wire_array_element_key: None,
-                        },
-                        InputFieldSchema {
-                            name: "revenue".into(),
-                            wire: InputFieldWire::Registry(
-                                ValueDomainKey::new("invoke_upd_revenue").expect("key"),
-                            ),
-                            required: false,
-                            description: Some("Annual revenue".into()),
-                            default: None,
-                            role: None,
-                            sink_class: None,
-                            wire_json_path: None,
-                            wire_array_element_key: None,
-                        },
-                        InputFieldSchema {
-                            name: "priority".into(),
-                            wire: InputFieldWire::Registry(
-                                ValueDomainKey::new("invoke_upd_priority").expect("key"),
-                            ),
-                            required: false,
-                            description: Some("Priority level".into()),
-                            default: None,
-                            role: None,
-                            sink_class: None,
-                            wire_json_path: None,
-                            wire_array_element_key: None,
-                        },
-                    ],
-                    additional_fields: false,
-                },
-                validation: InputValidation {
-                    predicates: vec![],
-                    allow_null: false,
-                    cross_field_rules: vec![],
-                },
-                description: None,
-                examples: vec![],
             }),
+            derived: None,
+            inputs: plasm_core::CapabilityInputs {
+                payload: Some(InputSchema {
+                    input_type: InputType::Object {
+                        fields: vec![
+                            InputFieldSchema {
+                                name: "name".into(),
+                                wire: InputFieldWire::Registry(
+                                    ValueDomainKey::new("invoke_upd_name").expect("key"),
+                                ),
+                                required: false,
+                                description: Some("Account name".into()),
+                                default: None,
+                                sink_class: None,
+                                wire_json_path: None,
+                                wire_array_element_key: None,
+                            },
+                            InputFieldSchema {
+                                name: "revenue".into(),
+                                wire: InputFieldWire::Registry(
+                                    ValueDomainKey::new("invoke_upd_revenue").expect("key"),
+                                ),
+                                required: false,
+                                description: Some("Annual revenue".into()),
+                                default: None,
+                                sink_class: None,
+                                wire_json_path: None,
+                                wire_array_element_key: None,
+                            },
+                            InputFieldSchema {
+                                name: "priority".into(),
+                                wire: InputFieldWire::Registry(
+                                    ValueDomainKey::new("invoke_upd_priority").expect("key"),
+                                ),
+                                required: false,
+                                description: Some("Priority level".into()),
+                                default: None,
+                                sink_class: None,
+                                wire_json_path: None,
+                                wire_array_element_key: None,
+                            },
+                        ],
+                        additional_fields: false,
+                    },
+                    validation: InputValidation {
+                        allow_null: false,
+                        cross_field_rules: vec![],
+                    },
+                    description: None,
+                    examples: vec![],
+                }),
+                ..Default::default()
+            },
             output_schema: None,
             provides: vec![],
             sanitizes: vec![],

@@ -12,14 +12,13 @@ use rust_mcp_sdk::McpServer;
 use serde_json::json;
 use tracing::Instrument;
 
-use crate::http_execute::{
-    apply_capability_seeds, normalize_capability_seeds, CapabilitySeed, RankedCapabilitiesArg,
-};
+use crate::http_execute::{apply_capability_seeds, normalize_capability_seeds, CapabilitySeed};
 use crate::incoming_auth::tenant_scope;
 use crate::mcp_logical_ref::format_logical_session_wire_ref;
 use crate::mcp_server::{
     parse_logical_session_ref_arg, parse_optional_principal, PlasmExecBinding, PlasmMcpHandler,
 };
+use crate::session_identity::LogicalSessionId;
 use crate::workflow_manifest::WorkflowManifest;
 use crate::workflow_readiness::assess_workflow_readiness;
 use crate::workflow_view_model::{
@@ -253,7 +252,6 @@ impl PlasmMcpHandler {
             tcfg.clone(),
             Some(logical_uuid),
             intent,
-            RankedCapabilitiesArg::Unspecified,
         )
         .instrument(context_span)
         .await
@@ -314,6 +312,7 @@ impl PlasmMcpHandler {
         v: &serde_json::Value,
     ) -> Result<CallToolResult, CallToolError> {
         let tname = "dry_workflow";
+        let principal_incoming = self.ensure_mcp_principal(key, runtime).await?;
         let id = v
             .get("id")
             .and_then(|x| x.as_str())
@@ -324,6 +323,17 @@ impl PlasmMcpHandler {
             })?;
         let session_ref = parse_logical_session_ref_arg(tname, v)?;
         let logical_uuid = self.resolve_logical_session_ref_to_uuid(tname, &session_ref)?;
+        let scope = tenant_scope(principal_incoming.as_ref());
+        if !self
+            .plasm
+            .logical_sessions
+            .verify_tenant(LogicalSessionId(logical_uuid), &scope)
+            .await
+        {
+            return Ok(CallToolResult::with_error(CallToolError::from_message(
+                "logical_session_ref is unknown or does not belong to this tenant scope",
+            )));
+        }
         let Some(manifest) = self.plasm.workflows().get(id) else {
             return Err(CallToolError::from_message(format!(
                 "unknown workflow `{id}`"

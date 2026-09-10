@@ -144,7 +144,6 @@ mod tests {
             None,
             primary.catalog_cgs_hash_hex(),
             None,
-            None,
         )
     }
 

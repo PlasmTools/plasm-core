@@ -9,6 +9,21 @@ use crate::RuntimeError;
 
 const VIEW_TEMPLATE_MAX_CHARS: usize = 32_768;
 
+/// Locked banking_knowledge scenario date (matches tau2-bench `get_today()`).
+fn banking_domain_today() -> chrono::NaiveDate {
+    chrono::NaiveDate::from_ymd_opt(2025, 11, 14).expect("valid banking domain today")
+}
+
+fn parse_wire_date(s: &str) -> Option<chrono::NaiveDate> {
+    let t = s.trim();
+    if t.is_empty() || t.eq_ignore_ascii_case("null") {
+        return None;
+    }
+    chrono::NaiveDate::parse_from_str(t, "%m/%d/%Y")
+        .ok()
+        .or_else(|| chrono::NaiveDate::parse_from_str(t, "%Y-%m-%d").ok())
+}
+
 fn plasm_value_to_json(v: &Value) -> serde_json::Value {
     match v {
         Value::Null => serde_json::Value::Null,
@@ -26,18 +41,46 @@ fn plasm_value_to_json(v: &Value) -> serde_json::Value {
             }
             serde_json::Value::Object(map)
         }
+        Value::StringTemplate(value) => {
+            serde_json::json!({"__plasm_string_template": value.source()})
+        }
         Value::PlasmInputRef(_) | Value::UnionCtor { .. } => serde_json::Value::Null,
         Value::Money(m) => serde_json::Value::String(m.display()),
     }
 }
 
+fn parse_wire_num_value(v: minijinja::Value) -> Result<f64, String> {
+    match v.kind() {
+        ValueKind::Number => {
+            if let Some(i) = v.as_i64() {
+                return Ok(i as f64);
+            }
+            v.to_string()
+                .parse::<f64>()
+                .map_err(|e| format!("wire_num: {e}"))
+        }
+        ValueKind::String => {
+            let mut s = v.as_str().unwrap_or_default().trim().to_string();
+            s = s.replace(['$', ','], "");
+            for suffix in [" points", " point", " pts", " pt"] {
+                if s.to_ascii_lowercase().ends_with(suffix) {
+                    s.truncate(s.len() - suffix.len());
+                    s = s.trim().to_string();
+                    break;
+                }
+            }
+            if s.is_empty() {
+                return Ok(0.0);
+            }
+            s.parse::<f64>().map_err(|e| format!("wire_num: {e}"))
+        }
+        ValueKind::None | ValueKind::Undefined => Ok(0.0),
+        _ => Err(format!("wire_num: unsupported value kind {:?}", v.kind())),
+    }
+}
+
 fn register_view_template_filters(env: &mut Environment<'_>) {
-    env.add_filter(
-        "urlencode",
-        |s: String| -> Result<String, minijinja::Error> {
-            Ok(url::form_urlencoded::byte_serialize(s.as_bytes()).collect())
-        },
-    );
+    plasm_core::register_shared_minijinja_filters(env);
     env.add_filter(
         "wire_query_suffix",
         |json_text: String| -> Result<String, minijinja::Error> {
@@ -82,9 +125,6 @@ fn register_view_template_filters(env: &mut Environment<'_>) {
             }
         },
     );
-    env.add_filter("strip_trailing_slash", |s: String| -> String {
-        s.trim_end_matches('/').to_string()
-    });
     env.add_filter(
         "json_encode",
         |v: minijinja::Value| -> Result<String, minijinja::Error> {
@@ -96,28 +136,24 @@ fn register_view_template_filters(env: &mut Environment<'_>) {
         },
     );
     env.add_filter(
-        "split",
-        |s: String, sep: String| -> Result<Vec<String>, minijinja::Error> {
-            if sep.is_empty() {
-                return Err(minijinja::Error::new(
-                    minijinja::ErrorKind::InvalidOperation,
-                    "split: separator must be non-empty",
-                ));
-            }
-            Ok(s.split(&sep).map(str::to_string).collect())
+        "wire_num",
+        |v: minijinja::Value| -> Result<f64, minijinja::Error> {
+            parse_wire_num_value(v)
+                .map_err(|e| minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, e))
         },
     );
     env.add_filter(
-        "split_part",
-        |s: String, sep: String, index: i64| -> Result<String, minijinja::Error> {
-            if sep.is_empty() {
-                return Err(minijinja::Error::new(
-                    minijinja::ErrorKind::InvalidOperation,
-                    "split_part: separator must be non-empty",
-                ));
-            }
-            let idx = usize::try_from(index.max(0)).unwrap_or(0);
-            Ok(s.split(&sep).nth(idx).unwrap_or("").to_string())
+        "wire_days_since",
+        |v: minijinja::Value| -> Result<f64, minijinja::Error> {
+            let Some(s) = v.as_str() else {
+                return Ok(f64::MAX);
+            };
+            let Some(d) = parse_wire_date(s) else {
+                return Ok(f64::MAX);
+            };
+            let today = banking_domain_today();
+            let days = (today - d).num_days();
+            Ok(if days < 0 { 0.0 } else { days as f64 })
         },
     );
     env.add_filter(
@@ -137,7 +173,12 @@ fn register_view_template_filters(env: &mut Environment<'_>) {
                 Value::Array(_) | Value::Object(_) => {
                     serde_json::to_string(&plasm_value_to_json(&out)).unwrap_or_default()
                 }
-                Value::PlasmInputRef(_) | Value::UnionCtor { .. } => String::new(),
+                Value::StringTemplate(_) | Value::PlasmInputRef(_) | Value::UnionCtor { .. } => {
+                    return Err(minijinja::Error::new(
+                        minijinja::ErrorKind::InvalidOperation,
+                        "unbound operand reached wire_time",
+                    ))
+                }
                 Value::Money(m) => m.display(),
             })
         },
@@ -275,6 +316,17 @@ fn render_view_template_with_nodes(
     fields_plain: &IndexMap<String, Value>,
     node_fields: &IndexMap<String, IndexMap<String, Value>>,
 ) -> Result<Value, RuntimeError> {
+    for value in scope
+        .values()
+        .chain(fields_plain.values())
+        .chain(node_fields.values().flat_map(|fields| fields.values()))
+    {
+        plasm_core::operand_binding::ResolvedValue::new(value.clone()).map_err(|message| {
+            RuntimeError::ConfigurationError {
+                message: message.into(),
+            }
+        })?;
+    }
     let trimmed = desugar_view_computed_template(template.trim());
     let trimmed = trimmed.trim();
     if trimmed.is_empty() {
@@ -326,12 +378,45 @@ fn render_view_template_with_nodes(
             message: format!("computed view template render error: {e}"),
         })?;
 
-    Ok(Value::String(rendered))
+    // `{{ bool_expr }}` stringifies via Display (`True`/`False`). Boolean entity fields and
+    // `until field = true` need real Bools — coerce the two Minijinja bool spellings only.
+    Ok(match rendered.trim() {
+        "true" | "True" => Value::Bool(true),
+        "false" | "False" => Value::Bool(false),
+        _ => Value::String(rendered),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn wire_days_since_uses_banking_domain_today() {
+        let mut fields = IndexMap::new();
+        fields.insert("submitted".to_string(), Value::String("2025-09-15".into()));
+        let out = render_view_computed_template(
+            "{{ submitted | wire_days_since | int }}",
+            &IndexMap::new(),
+            &fields,
+        )
+        .unwrap();
+        assert_eq!(out, Value::String("60".into()));
+    }
+
+    #[test]
+    fn wire_num_parses_money_strings() {
+        let mut fields = IndexMap::new();
+        fields.insert("balance".to_string(), Value::String("$3,000.00".into()));
+        fields.insert("limit".to_string(), Value::Float(4000.0));
+        let out = render_view_computed_template(
+            "{%- if limit | wire_num > 0 -%}{{ ((balance | wire_num / limit | wire_num) * 100) | round(1) }}{%- else -%}0{%- endif -%}",
+            &IndexMap::new(),
+            &fields,
+        )
+        .unwrap();
+        assert_eq!(out, Value::String("75.0".into()));
+    }
+
     #[test]
     fn wire_time_filter_in_template() {
         let mut scope = IndexMap::new();
@@ -415,5 +500,31 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, Value::String("http://x/d/foo".into()));
+    }
+
+    #[test]
+    fn is_liked_membership_in_histogram_object() {
+        use plasm_core::json_value_to_plasm_value;
+        let mut fields = IndexMap::new();
+        fields.insert("song_id".into(), Value::Integer(33));
+        fields.insert(
+            "liked_by_song_id".into(),
+            json_value_to_plasm_value(&serde_json::json!({"33": 1, "299": 1})),
+        );
+        let out = render_view_computed_template(
+            "{{ (song_id ~ '') in liked_by_song_id }}",
+            &IndexMap::new(),
+            &fields,
+        )
+        .unwrap();
+        assert_eq!(out, Value::Bool(true), "got {out:?}");
+        fields.insert("song_id".into(), Value::Integer(93));
+        let out = render_view_computed_template(
+            "{{ (song_id ~ '') in liked_by_song_id }}",
+            &IndexMap::new(),
+            &fields,
+        )
+        .unwrap();
+        assert_eq!(out, Value::Bool(false), "got {out:?}");
     }
 }

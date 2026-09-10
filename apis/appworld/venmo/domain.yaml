@@ -1,0 +1,1542 @@
+version: 17
+entry_id: venmo
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  pii_payment:
+    description: Payment card digits or owner identity.
+    severity: sensitive
+  external_pay:
+    description: Outbound payment or payment request leaving the account boundary.
+    severity: critical
+values:
+  nv_access_token:
+    type: string
+    description: Bearer access token returned by login.
+  nv_token_type:
+    type: enum
+    description: OAuth token type from login.
+    enum:
+    - bearer
+  nv_email:
+    type: email
+    description: Venmo user email (directory profile or payment counterparty) — not the account-holder login username.
+  nv_login_username:
+    type: email
+    description: Account-holder login username (task-principal email from Supervisor) — not a payment counterparty.
+  nv_password:
+    type: string
+    description: Account-holder password for this service.
+  nv_person_name:
+    type: string
+    description: Display name of a Venmo user.
+  nv_search_query:
+    type: string
+    description: Free-text search query.
+  nv_description:
+    type: markdown
+    description: Payment or request note text.
+  nv_payment_request_polarity:
+    type: enum
+    enum:
+    - received
+    - sent
+    description: >-
+      List shelf for payment requests: received = inbound asks for you to pay;
+      sent = asks you created for someone else to pay you. Not transaction
+      direction and not a synonym for outgoing.
+  nv_transaction_shelf:
+    type: enum
+    enum:
+    - mine
+    - social_feed
+    description: Personal transactions vs friends social feed.
+  nv_status:
+    type: enum
+    description: Payment-request status filter.
+    enum:
+    - pending
+    - approved
+    - denied
+  nv_direction:
+    type: enum
+    description: Transaction direction filter.
+    enum:
+    - sent
+    - received
+  nv_transfer_type:
+    type: enum
+    description: Bank transfer direction between linked card and Venmo balance.
+    enum:
+    - card_to_venmo
+    - venmo_to_card
+  nv_sort_field:
+    type: string
+    description: Sort attribute with optional +/- prefix (created_at
+    like_count: null
+    amount).: null
+  nv_card_name:
+    type: string
+    description: Payment card display name.
+  nv_card_digits:
+    type: string
+    description: Card last-four or digit string.
+  nv_transaction_id:
+    type: integer
+    description: Transaction primary key.
+  nv_bank_transfer_id:
+    type: integer
+    description: Bank transfer primary key.
+  nv_payment_request_id:
+    type: integer
+    description: Payment request primary key.
+  nv_payment_card_id:
+    type: integer
+    description: Payment card primary key.
+  nv_comment_id:
+    type: integer
+    description: Transaction comment primary key.
+  nv_notification_id:
+    type: integer
+    description: Notification primary key.
+  nv_card_number:
+    type: integer
+    description: Card number digits as integer.
+  nv_cvv:
+    type: integer
+    description: Card CVV digits as integer.
+  nv_month:
+    type: integer
+    description: Card expiry month.
+  nv_year:
+    type: integer
+    description: Card expiry year.
+  nv_amount:
+    type: number
+    description: Money amount as JSON number.
+  nv_count:
+    type: integer
+    description: Count or limit.
+  nv_private:
+    type: boolean
+    description: Whether the payment/request is private.
+  nv_read:
+    type: boolean
+    description: Whether a notification has been read.
+  nv_comment:
+    type: string
+    description: Text body of a transaction comment.
+  nv_notification_type:
+    type: enum
+    description: Venmo notification kind.
+    enum:
+    - payment_request_approved
+    - payment_request_denied
+    - payment_request_received
+    - payment_request_reminded
+    - received_money
+  nv_notification_title:
+    type: string
+    description: Notification title.
+  nv_notification_message:
+    type: string
+    description: Notification message body.
+  nv_timestamp:
+    type: rfc3339
+    description: Instant on the wire (created_at / updated_at / …).
+  nv_filter_date:
+    type: iso8601_date
+    description: Calendar date filter for min/max created_at (YYYY-MM-DD).
+  prerequisite_principal_email:
+    type: email
+    description: Account holder email.
+  prerequisite_principal_phone:
+    type: e164
+    description: Account holder phone number.
+  prerequisite_account_name:
+    type: string
+    description: Service account identifier.
+entities:
+  AuthSession:
+    id_field: access_token
+    description: Establish or end authenticated access to Venmo.
+    discovery:
+      names:
+      - login
+      - logout
+      - authentication
+      - access token
+    fields:
+      access_token:
+        value_ref: nv_access_token
+        required: true
+      token_type:
+        value_ref: nv_token_type
+  User:
+    id_field: email
+    description: Venmo person directory entry for payees and requesters — not friendship management.
+    discovery:
+      names:
+      - user
+      - person
+      - directory
+      - recipient profile
+    fields:
+      email:
+        value_ref: nv_email
+        required: true
+      first_name:
+        value_ref: nv_person_name
+      last_name:
+        value_ref: nv_person_name
+      registered_at:
+        value_ref: nv_timestamp
+      friends_since:
+        value_ref: nv_timestamp
+    relations:
+      friends:
+        target: Friend
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: friend_query
+          param: user_email
+  Friend:
+    id_field: email
+    description: >-
+      Venmo friendship — peer identity for payees and payment-request counterparties
+      (email is the counterparty key used as `user_email` on send/request creates).
+    discovery:
+      names:
+      - friend
+      - friends
+      - friendship
+      - befriend
+      - unfriend
+      - contact
+      - my friend
+      - from my friend
+      - named friend
+      - friend named
+      - counterparty
+      - who to pay
+      - who to request from
+    fields:
+      email:
+        value_ref: nv_email
+        required: true
+        description: Friend peer email — the counterparty identity bound as `user_email` on pay/request creates.
+      first_name:
+        value_ref: nv_person_name
+      last_name:
+        value_ref: nv_person_name
+      registered_at:
+        value_ref: nv_timestamp
+      friends_since:
+        value_ref: nv_timestamp
+  Balance:
+    id_field: venmo_balance
+    description: Inspect Venmo cash on hand, or move it to/from a linked payment card (deposit or withdraw).
+    discovery:
+      names:
+      - balance
+      - wallet
+      - funds
+      - withdraw
+      - deposit
+      - cash out
+    fields:
+      venmo_balance:
+        value_ref: nv_amount
+        required: true
+  BankTransfer:
+    id_field: bank_transfer_id
+    primary_query: bank_transfer_query
+    description: History of money moved between a linked payment card and Venmo balance (deposits and cash-outs) — not peer-to-peer payments.
+    discovery:
+      names:
+      - bank transfer
+      - card transfer
+      - deposit history
+      - cash out history
+      - card to venmo
+      - venmo to card
+    fields:
+      bank_transfer_id:
+        value_ref: nv_bank_transfer_id
+        required: true
+      transfer_type:
+        value_ref: nv_transfer_type
+        required: true
+      amount:
+        value_ref: nv_amount
+        required: true
+      payment_card_digits:
+        value_ref: nv_card_digits
+        required: true
+        data_class: pii_payment
+      created_at:
+        value_ref: nv_timestamp
+        required: true
+  Transaction:
+    id_field: transaction_id
+    primary_query: transaction_query
+    description: Review completed transfers or send money you already owe — not for asking someone to pay you.
+    discovery:
+      names:
+      - transaction
+      - completed transfer
+      - peer transfer
+      - send money
+      - pay someone
+    fields:
+      transaction_id:
+        value_ref: nv_transaction_id
+        required: true
+      amount:
+        value_ref: nv_amount
+        required: true
+      description:
+        value_ref: nv_description
+        data_class: untrusted
+      created_at:
+        value_ref: nv_timestamp
+      updated_at:
+        value_ref: nv_timestamp
+      private:
+        value_ref: nv_private
+      like_count:
+        value_ref: nv_count
+      payment_card_digits:
+        value_ref: nv_card_digits
+        data_class: pii_payment
+      comment_count:
+        value_ref: nv_count
+      sender_email:
+        value_ref: nv_email
+        required: false
+        path:
+        - sender
+        - email
+      sender_name:
+        value_ref: nv_person_name
+        required: false
+        path:
+        - sender
+        - name
+      receiver_email:
+        value_ref: nv_email
+        required: false
+        path:
+        - receiver
+        - email
+      receiver_name:
+        value_ref: nv_person_name
+        required: false
+        path:
+        - receiver
+        - name
+  PaymentRequest:
+    id_field: payment_request_id
+    primary_query: payment_request_query
+    description: >-
+      An ask that one Venmo user pay another, not a completed transfer.
+    discovery:
+      names:
+      - payment request
+      - money request
+      - charge request
+      - requested money
+      - been requested
+      - request money
+      - ask to pay
+      - charge someone
+      - approve request
+      - pending request
+    fields:
+      payment_request_id:
+        value_ref: nv_payment_request_id
+        required: true
+      amount:
+        value_ref: nv_amount
+        required: true
+      description:
+        value_ref: nv_description
+        data_class: untrusted
+      created_at:
+        value_ref: nv_timestamp
+      updated_at:
+        value_ref: nv_timestamp
+      approved_at:
+        value_ref: nv_timestamp
+      denied_at:
+        value_ref: nv_timestamp
+      private:
+        value_ref: nv_private
+      sender_email:
+        value_ref: nv_email
+        required: false
+        path:
+        - sender
+        - email
+      sender_name:
+        value_ref: nv_person_name
+        required: false
+        path:
+        - sender
+        - name
+      receiver_email:
+        value_ref: nv_email
+        required: false
+        path:
+        - receiver
+        - email
+      receiver_name:
+        value_ref: nv_person_name
+        required: false
+        path:
+        - receiver
+        - name
+  PaymentCard:
+    id_field: payment_card_id
+    description: A linked payment card used to fund balance moves and approve payment requests.
+    discovery:
+      names:
+      - payment card
+      - card
+      - funding source
+      - card ending
+      - last four
+    fields:
+      payment_card_id:
+        value_ref: nv_payment_card_id
+        required: true
+      card_name:
+        value_ref: nv_card_name
+      owner_name:
+        value_ref: nv_person_name
+      card_number:
+        value_ref: nv_card_number
+        data_class: pii_payment
+      expiry_year:
+        value_ref: nv_year
+      expiry_month:
+        value_ref: nv_month
+      cvv_number:
+        value_ref: nv_cvv
+        data_class: pii_payment
+  TransactionComment:
+    id_field: comment_id
+    description: Read or write comments on a Venmo transaction.
+    discovery:
+      names:
+      - transaction comment
+      - comment
+    fields:
+      comment_id:
+        value_ref: nv_comment_id
+        required: true
+      transaction_id:
+        value_ref: nv_transaction_id
+        required: true
+      comment:
+        value_ref: nv_comment
+        data_class: untrusted
+      created_at:
+        value_ref: nv_timestamp
+      like_count:
+        value_ref: nv_count
+  Notification:
+    id_field: notification_id
+    description: Venmo inbox notification.
+    discovery:
+      names:
+      - notification
+      - alert
+      - inbox
+    fields:
+      notification_id:
+        value_ref: nv_notification_id
+        required: true
+      type:
+        value_ref: nv_notification_type
+      title:
+        value_ref: nv_notification_title
+      message:
+        value_ref: nv_notification_message
+        data_class: untrusted
+      read:
+        value_ref: nv_read
+      created_at:
+        value_ref: nv_timestamp
+capabilities:
+  login:
+    description: Authenticate as this Venmo account holder (login id + password) — not a payment recipient.
+    kind: action
+    entity: AuthSession
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: username
+          value_ref: nv_login_username
+          required: true
+        - name: password
+          value_ref: nv_password
+          required: true
+    provides:
+    - access_token
+    - token_type
+    output:
+      type: entity
+      entity_type: AuthSession
+  logout:
+    description: Invalidate an authenticated Venmo session.
+    kind: action
+    entity: AuthSession
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Ends the Venmo session represented by the access token.
+  user_search:
+    description: Search Venmo users by name or email. Results are fuzzy — before treating someone as on Venmo, confirm an exact email match on a returned candidate.
+    kind: search
+    entity: User
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_search_query
+      required: true
+    provides:
+    - email
+    - first_name
+    - last_name
+    - registered_at
+    - friends_since
+  user_get:
+    description: Show a user's public Venmo profile and friendship status.
+    kind: get
+    entity: User
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - email
+    - first_name
+    - last_name
+    - registered_at
+    - friends_since
+  friend_query:
+    description: >-
+      Search or list Venmo friends (fuzzy `query` may return several peers).
+      Each row's `email` is the counterparty identity for pay/request `user_email`.
+    kind: query
+    entity: Friend
+    discovery:
+      operation_terms:
+      - search
+      - find
+      - look up
+      - resolve
+      target_terms:
+      - friend
+      - friends
+      - named friend
+    scope:
+    - name: user_email
+      value_ref: nv_email
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_search_query
+    provides:
+    - email
+    - first_name
+    - last_name
+    - registered_at
+    - friends_since
+  friend_add:
+    description: Add a Venmo user as a friend (befriend).
+    kind: action
+    entity: Friend
+    discovery:
+      operation_terms:
+      - add
+      - befriend
+      - friend
+      target_terms:
+      - friend
+      - friendship
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: user_email
+          value_ref: nv_email
+          required: true
+    output:
+      type: side_effect
+      description: Creates a friendship with the specified Venmo user.
+  friend_remove:
+    description: Remove an existing Venmo friendship (unfriend).
+    kind: delete
+    entity: Friend
+    discovery:
+      operation_terms:
+      - remove
+      - unfriend
+      - delete
+      target_terms:
+      - friend
+      - friendship
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+  balance_get:
+    description: Show the authenticated user's current Venmo balance.
+    kind: get
+    entity: Balance
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - venmo_balance
+  balance_add:
+    description: Add money to the Venmo balance from a linked payment card.
+    kind: action
+    entity: Balance
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: amount
+          value_ref: nv_amount
+          required: true
+        - name: payment_card_id
+          value_ref: nv_payment_card_id
+          required: true
+    output:
+      type: side_effect
+      description: Increases the authenticated user's Venmo balance.
+  balance_withdraw:
+    description: Withdraw (cash out) Venmo balance to a linked payment card.
+    kind: action
+    entity: Balance
+    discovery:
+      operation_terms:
+      - withdraw
+      - cash out
+      - transfer out
+      target_terms:
+      - balance
+      - payment card
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: amount
+          value_ref: nv_amount
+          required: true
+        - name: payment_card_id
+          value_ref: nv_payment_card_id
+          required: true
+    output:
+      type: side_effect
+      description: Moves balance from Venmo onto the chosen payment card.
+  bank_transfer_query:
+    description: List history of money transfers between linked payment cards and Venmo balance.
+    kind: query
+    entity: BankTransfer
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: transfer_type
+      value_ref: nv_transfer_type
+    provides:
+    - bank_transfer_id
+    - transfer_type
+    - amount
+    - payment_card_digits
+    - created_at
+  transaction_query:
+    description: 'List transactions by shelf — your sent/received history (optional filters) or friends social feed.
+
+      '
+    kind: query
+    entity: Transaction
+    discovery:
+      operation_terms:
+      - list
+      - show
+      - browse
+      target_terms:
+      - transaction
+      - transactions
+      - social feed
+      - friends feed
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: shelf
+      value_ref: nv_transaction_shelf
+      required: true
+      description: mine | social_feed
+    - name: query
+      value_ref: nv_search_query
+    - name: user_email
+      value_ref: nv_email
+    - name: min_created_at
+      value_ref: nv_filter_date
+    - name: max_created_at
+      value_ref: nv_filter_date
+    - name: min_like_count
+      value_ref: nv_count
+    - name: max_like_count
+      value_ref: nv_count
+    - name: min_amount
+      value_ref: nv_amount
+    - name: max_amount
+      value_ref: nv_amount
+    - name: private
+      value_ref: nv_private
+    - name: direction
+      value_ref: nv_direction
+    controls:
+    - name: sort_by
+      value_ref: nv_sort_field
+    provides: &id001
+    - transaction_id
+    - amount
+    - description
+  transaction_get:
+    description: Show the details of one Venmo transaction.
+    kind: get
+    entity: Transaction
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides: *id001
+  transaction_create:
+    description: Send your money to another Venmo user (you pay them).
+    kind: create
+    entity: Transaction
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: receiver_email
+          value_ref: nv_email
+          required: true
+        - name: amount
+          value_ref: nv_amount
+          required: true
+        - name: description
+          value_ref: nv_description
+          sink_class: external_pay
+        - name: payment_card_id
+          value_ref: nv_payment_card_id
+        - name: private
+          value_ref: nv_private
+    provides:
+    - transaction_id
+  payment_request_query:
+    description: >-
+      List existing payment-request rows (inbound asks versus asks you created).
+      Optional status filter.
+    kind: query
+    entity: PaymentRequest
+    discovery:
+      operation_terms:
+      - list
+      - show
+      - received
+      - sent
+      - pending
+      target_terms:
+      - payment request
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: polarity
+      value_ref: nv_payment_request_polarity
+      required: true
+      description: >-
+        received = inbound (others asked you to pay); sent = outbound asks you created.
+        Wire members are exactly received and sent, not outgoing or incoming.
+    - name: status
+      value_ref: nv_status
+    provides:
+    - payment_request_id
+    - amount
+    - description
+    - created_at
+    - updated_at
+    - approved_at
+    - denied_at
+    - private
+    - sender_email
+    - sender_name
+    - receiver_email
+    - receiver_name
+  payment_request_create:
+    description: Ask another Venmo user to pay you (create a sent payment request).
+    kind: create
+    entity: PaymentRequest
+    discovery:
+      operation_terms:
+      - request
+      - create
+      - ask
+      - charge
+      target_terms:
+      - payment request
+      - money
+      - friend
+      - user
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: user_email
+          value_ref: nv_email
+          required: true
+          description: >-
+            Counterparty Venmo email — who you ask to pay you (friend/directory peer,
+            never the account-holder login username).
+        - name: amount
+          value_ref: nv_amount
+          required: true
+        - name: description
+          value_ref: nv_description
+          sink_class: external_pay
+        - name: private
+          value_ref: nv_private
+    provides:
+    - payment_request_id
+  payment_request_approve:
+    description: Approve and pay a received payment request (you pay them).
+    kind: action
+    entity: PaymentRequest
+    discovery:
+      operation_terms:
+      - approve
+      - accept
+      - pay
+      target_terms:
+      - payment request
+      - received request
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: payment_card_id
+          value_ref: nv_payment_card_id
+    output:
+      type: side_effect
+      description: Approves the payment request and transfers the requested money.
+  payment_request_deny:
+    description: Deny a received payment request.
+    kind: action
+    entity: PaymentRequest
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Marks the payment request as denied.
+  payment_request_update:
+    description: Update a pending payment request you sent.
+    kind: update
+    entity: PaymentRequest
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: amount
+          value_ref: nv_amount
+        - name: description
+          value_ref: nv_description
+          sink_class: external_pay
+        - name: private
+          value_ref: nv_private
+  payment_request_remind:
+    description: Send a reminder notification about a pending payment request you sent.
+    kind: action
+    entity: PaymentRequest
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Notifies the recipient about the outstanding payment request.
+  payment_request_delete:
+    description: Delete a pending payment request you sent.
+    kind: delete
+    entity: PaymentRequest
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+  transaction_update:
+    description: Update a transaction you sent.
+    kind: update
+    entity: Transaction
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: description
+          value_ref: nv_description
+        - name: private
+          value_ref: nv_private
+  transaction_like:
+    description: Like a transaction.
+    kind: action
+    entity: Transaction
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Records a like on the transaction.
+  transaction_unlike:
+    description: Unlike a transaction.
+    kind: action
+    entity: Transaction
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Removes the authenticated user's like from the transaction.
+  transaction_comment_create:
+    description: Add a comment on a Venmo transaction.
+    kind: create
+    entity: TransactionComment
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: transaction_id
+          value_ref: nv_transaction_id
+          required: true
+        - name: comment
+          value_ref: nv_comment
+          required: true
+    provides:
+    - comment_id
+  transaction_comment_update:
+    description: Edit the text of a transaction comment you wrote.
+    kind: update
+    entity: TransactionComment
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: comment
+          value_ref: nv_comment
+          required: true
+  transaction_comment_delete:
+    description: Delete a transaction comment you wrote.
+    kind: delete
+    entity: TransactionComment
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+  payment_card_query:
+    description: List payment cards linked to the authenticated user's account.
+    kind: query
+    entity: PaymentCard
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - payment_card_id
+    - card_name
+    - owner_name
+    - card_number
+    - expiry_year
+    - expiry_month
+    - cvv_number
+  payment_card_create:
+    description: Add a payment card to the authenticated user's Venmo account.
+    kind: create
+    entity: PaymentCard
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: card_name
+          value_ref: nv_card_name
+          required: true
+        - name: owner_name
+          value_ref: nv_person_name
+          required: true
+        - name: card_number
+          value_ref: nv_card_number
+          required: true
+        - name: expiry_year
+          value_ref: nv_year
+          required: true
+        - name: expiry_month
+          value_ref: nv_month
+          required: true
+        - name: cvv_number
+          value_ref: nv_cvv
+          required: true
+    provides:
+    - payment_card_id
+  payment_card_update:
+    description: Rename a linked payment card.
+    kind: update
+    entity: PaymentCard
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: card_name
+          value_ref: nv_card_name
+          required: true
+  payment_card_delete:
+    description: Delete a linked payment card.
+    kind: delete
+    entity: PaymentCard
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+  notification_query:
+    description: List Venmo inbox notifications.
+    kind: query
+    entity: Notification
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: read
+      value_ref: nv_read
+      required: false
+    provides:
+    - notification_id
+    - type
+    - title
+    - message
+    - read
+    - created_at
+  notification_delete:
+    description: Delete one Venmo notification.
+    kind: delete
+    entity: Notification
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+  notification_mark:
+    description: Mark one notification as read or unread.
+    kind: action
+    entity: Notification
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: read
+          value_ref: nv_read
+          required: true
+    output:
+      type: side_effect
+      description: Updates the read status of one notification.
+  notification_delete_all:
+    description: Delete all Venmo notifications for the authenticated user.
+    kind: action
+    entity: Notification
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Clears the entire notification inbox.
+  notification_mark_all:
+    description: Mark all notifications as read or unread.
+    kind: action
+    entity: Notification
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: read
+          value_ref: nv_read
+          required: true
+    output:
+      type: side_effect
+      description: Updates the read status of every notification.
+auth:
+  scheme: none
+http_backend: http://127.0.0.1:9000
+prerequisites:
+  contracts:
+    appworld.principal:
+      version: 1
+      inputs: {}
+      outputs:
+        email: prerequisite_principal_email
+        phone: prerequisite_principal_phone
+    appworld.password:
+      version: 1
+      inputs:
+        account: prerequisite_account_name
+      outputs:
+        password: nv_password
+    appworld.session:
+      version: 1
+      inputs: {}
+      outputs:
+        token: nv_access_token
+  providers:
+    session:
+      contract: appworld.session
+      capability: login
+      outputs:
+        token: access_token
+  requirements:
+    login:
+    - id: principal
+      contract: appworld.principal
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - username
+        output: email
+    - id: password
+      contract: appworld.password
+      arguments:
+        account:
+          kind: constant
+          value: venmo
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - password
+        output: password
+    logout:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    user_search:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    user_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    friend_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    friend_add:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    friend_remove:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    balance_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    balance_add:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    balance_withdraw:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    bank_transfer_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    transaction_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    transaction_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    transaction_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_request_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    payment_request_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_request_approve:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_request_deny:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_request_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_request_remind:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_request_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    transaction_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    transaction_like:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    transaction_unlike:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    transaction_comment_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    transaction_comment_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    transaction_comment_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_card_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    payment_card_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_card_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_card_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    notification_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    notification_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    notification_mark:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    notification_delete_all:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    notification_mark_all:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token

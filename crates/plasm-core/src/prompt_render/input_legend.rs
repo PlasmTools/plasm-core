@@ -6,9 +6,11 @@ use serde::{Deserialize, Serialize};
 ///
 /// The glyph is chosen at the arrow so an agent can read *chainability* directly from the arrow:
 /// - [`ReturnArrow::Single`] `→` — one record; a chainable anchor (`.r#` / `.m#` / get-head reuse).
-/// - [`ReturnArrow::List`] `↣` — a list of rows; chainable via postfix (`.filter{…}` / `.sort` / `[field,…]`).
-/// - [`ReturnArrow::Terminal`] `↠` — a terminal write result (or unit `()`); **not** an expression
-///   anchor. To keep operating, reconstruct the entity with a get (`e#(id=…)`) then chain `.m#`.
+/// - [`ReturnArrow::List`] `↣` — a list of rows; transformable via `| where` / `| select` /
+///   `| summarize` / `| order by` / `| take` / `| distinct`.
+/// - [`ReturnArrow::Terminal`] `↠` — a write / side-effect result. MutationResult writers
+///   (`provides` nonempty) are still `↠` but Γ is StaticSingleton + RelationDot — field-dot
+///   (`sess.access_token`) is lawful; void `()` remains non-chainable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ReturnArrow {
@@ -37,6 +39,8 @@ impl ReturnArrow {
         match kind {
             K::Method => ReturnArrow::Terminal,
             K::Query | K::Search => ReturnArrow::List,
+            // Noun card is shape pedagogy — no retrieved-object arrow class.
+            K::Projection => ReturnArrow::Single,
             _ if gloss.trim_start().starts_with('[') => ReturnArrow::List,
             _ => ReturnArrow::Single,
         }
@@ -89,6 +93,9 @@ pub struct TeachingExprLine {
     #[serde(flatten)]
     pub legend: CapabilityInputLegend,
     pub is_projection_teaching: bool,
+    /// Nullary singleton Get (bare `e#` / `e#.m#()`): one entity row (`→ e`).
+    #[serde(default)]
+    pub is_singleton_row_fetch: bool,
     #[serde(default)]
     pub row_contract: RowContractLegend,
     /// Return-shape glyph for the result atom (`→` / `↣` / `↠`). Set from the validated
@@ -104,6 +111,7 @@ impl TeachingExprLine {
             result_type: String::new(),
             legend: CapabilityInputLegend::default(),
             is_projection_teaching: false,
+            is_singleton_row_fetch: false,
             row_contract: RowContractLegend::default(),
             arrow: ReturnArrow::Single,
         }

@@ -29,7 +29,6 @@ pub(super) fn test_session() -> ExecuteSession {
         None,
         cgs.catalog_cgs_hash_hex(),
         None,
-        None,
     )
 }
 
@@ -39,12 +38,12 @@ pub(super) fn duplicate_product_create_session() -> ExecuteSession {
         .expect("load scoped_create_tiny");
     let cgs_acme = Arc::new({
         let mut c = cgs_base.clone();
-        c.entry_id = Some("acme".into());
+        c.bind_registry_entry_id("acme");
         c
     });
     let cgs_other = Arc::new({
         let mut c = cgs_base;
-        c.entry_id = Some("other".into());
+        c.bind_registry_entry_id("other");
         c
     });
     let mut ctxs = indexmap::IndexMap::new();
@@ -76,7 +75,6 @@ pub(super) fn duplicate_product_create_session() -> ExecuteSession {
         Some(exp),
         None,
         cgs_acme.catalog_cgs_hash_hex(),
-        None,
         None,
     )
 }
@@ -116,7 +114,6 @@ pub(super) fn federated_github_linear_issue_session() -> Option<ExecuteSession> 
         None,
         cgs_github.catalog_cgs_hash_hex(),
         None,
-        None,
     ))
 }
 
@@ -155,7 +152,6 @@ pub(super) fn federated_pokeapi_linear_write_session() -> Option<ExecuteSession>
         Some(exp),
         None,
         cgs_pokeapi.catalog_cgs_hash_hex(),
-        None,
         None,
     ))
 }
@@ -198,7 +194,6 @@ pub(super) fn language_matrix_session() -> ExecuteSession {
         None,
         cgs.catalog_cgs_hash_hex(),
         None,
-        None,
     )
 }
 
@@ -235,7 +230,6 @@ pub(super) fn matrix_views_session() -> ExecuteSession {
         Some(exp),
         None,
         cgs.catalog_cgs_hash_hex(),
-        None,
         None,
     )
 }

@@ -1,16 +1,14 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { FilesystemCatalogLoader } from "../catalog/loader.js";
+import { CatalogManifestSchema, FilesystemCatalogLoader } from "../catalog/loader.js";
 import type { LoadedCatalog } from "../catalog/loader.js";
 import { isNativeEngineAvailable } from "../engine/napi-binding.js";
 import { AgentRuntime } from "../runtime/agent-runtime.js";
 import { createAgentStateStore } from "../state/define-state.js";
 import {
-  parseDomainYaml,
   stubFreshness,
 } from "../stubs/generator.js";
-import { resolveCatalogLiveHash } from "../stubs/catalog-hash.js";
 
 import type {
   OperatorCatalogsResponse,
@@ -51,15 +49,6 @@ interface BootstrappedCatalog {
   capabilityCount: number;
 }
 
-async function resolveLiveHash(catalog: LoadedCatalog, runtime?: AgentRuntime): Promise<string> {
-  if (catalog.manifest.cgsHash) return catalog.manifest.cgsHash;
-  if (runtime) {
-    const loaded = runtime.listCatalogs().find((c) => c.manifest.entryId === catalog.manifest.entryId);
-    if (loaded?.manifest.cgsHash) return loaded.manifest.cgsHash;
-  }
-  return resolveCatalogLiveHash(catalog.rootDir);
-}
-
 async function bootstrapCatalogs(ctx: OperatorRouteContext): Promise<BootstrappedCatalog[]> {
   let runtime = ctx.runtime;
   if (!runtime) {
@@ -79,18 +68,18 @@ async function bootstrapCatalogs(ctx: OperatorRouteContext): Promise<Bootstrappe
 
   const bootstrapped: BootstrappedCatalog[] = [];
   for (const catalog of byEntry.values()) {
-    const domainYaml = await readFile(path.join(catalog.rootDir, "domain.yaml"), "utf8");
-    const parsed = parseDomainYaml(domainYaml, path.basename(catalog.rootDir));
-    const catalogCgsHash = await resolveLiveHash(catalog, runtime);
+    const manifest = CatalogManifestSchema.parse(JSON.parse(await readFile(catalog.manifestPath, "utf8")));
+    const parsed = JSON.parse(await readFile(path.join(catalog.rootDir, manifest.cgs_json), "utf8")) as { auth?: { scheme?: string }; entities: Record<string, unknown>; capabilities: Record<string, unknown> };
+    const catalogCgsHash = manifest.cgs_hash;
     bootstrapped.push({
       catalog: {
         ...catalog,
         manifest: { ...catalog.manifest, cgsHash: catalogCgsHash },
       },
       catalogCgsHash,
-      authScheme: parsed.authScheme,
-      entityCount: parsed.entities.length,
-      capabilityCount: parsed.capabilities.length,
+      authScheme: parsed.auth?.scheme,
+      entityCount: Object.keys(parsed.entities).length,
+      capabilityCount: Object.keys(parsed.capabilities).length,
     });
   }
 

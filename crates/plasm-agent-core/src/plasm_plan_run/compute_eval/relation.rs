@@ -6,7 +6,7 @@ use super::super::*;
 use super::compute_ops::compute_fingerprint;
 use super::eval::{
     instantiate_parsed_expr_plan_inputs, instantiate_parsed_expr_plan_inputs_with_rows,
-    json_to_plasm_value, wire_coercion_ctx_for_source_entity,
+    json_to_plasm_value, wire_coercion_by_alias_from_inputs,
 };
 use super::materialized_result_use_inputs_with_source_row;
 
@@ -36,15 +36,21 @@ pub(crate) async fn materialize_relation_singleton_chain(
     let pe = ParsedExpr {
         expr: relation.relation.ir.expr.clone(),
         projection: relation.relation.ir.projection.clone(),
+        field_dot_extract: None,
     };
-    let parsed = instantiate_parsed_expr_plan_inputs(pe, &relation.uses_result, materialized)?;
+    let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
+    let parsed = instantiate_parsed_expr_plan_inputs(
+        pe,
+        &scoped_es.cgs,
+        &relation.uses_result,
+        materialized,
+    )?;
     let expr_label = relation
         .relation
         .ir
         .display_expr
         .as_deref()
         .unwrap_or("<ir>");
-    let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
     let (parsed, result, artifact) = execute_plasm_parsed_expr(
         st,
         &scoped_es,
@@ -69,8 +75,7 @@ pub(crate) async fn materialize_relation_singleton_chain(
         session_id,
         &relation.relation.target,
         MaterializedNode {
-            entry_id: relation.relation.target.entry_id.clone(),
-            entity: relation.relation.target.entity.clone(),
+            qualified_entity: relation.relation.target.clone(),
             display: crate::expr_display::expr_display(&parsed.expr),
             projection: parsed.projection,
             row_source: inline_row_source(&[]),
@@ -109,11 +114,11 @@ fn relation_parent_row_missing(
     }
     let cgs = crate::catalog_ownership::resolve_cgs_for_entry_entity(
         es,
-        source_mat.entry_id.as_str(),
-        source_mat.entity.as_str(),
+        source_mat.qualified_entity.entry_id.as_str(),
+        source_mat.qualified_entity.entity.as_str(),
     )
     .map_err(|e| format!("relation parent row check: {e}"))?;
-    let Some(ent) = cgs.get_entity(source_mat.entity.as_str()) else {
+    let Some(ent) = cgs.get_entity(source_mat.qualified_entity.entity.as_str()) else {
         return Ok(false);
     };
     let id_field = ent.id_field.as_str();
@@ -146,8 +151,7 @@ pub(crate) async fn finalize_empty_relation_materialized_node(
         session_id,
         &relation.relation.target,
         MaterializedNode {
-            entry_id: relation.relation.target.entry_id.clone(),
-            entity: relation.relation.target.entity.clone(),
+            qualified_entity: relation.relation.target.clone(),
             display,
             projection: relation.relation.ir.projection.clone(),
             row_source: inline_row_source(&[]),
@@ -258,8 +262,8 @@ pub(crate) async fn try_materialize_from_cached_relation_refs(
     let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
     let source_cgs = crate::catalog_ownership::resolve_cgs_for_entry_entity(
         es,
-        source_mat.entry_id.as_str(),
-        source_mat.entity.as_str(),
+        source_mat.qualified_entity.entry_id.as_str(),
+        source_mat.qualified_entity.entity.as_str(),
     )
     .map_err(|e| format!("relation cached embed source catalog: {e}"))?;
     let rehydrator =
@@ -277,7 +281,7 @@ pub(crate) async fn try_materialize_from_cached_relation_refs(
     let wire_extracted = parent_get_wire_rows(
         &source_rows,
         relation,
-        source_mat.entity.as_str(),
+        source_mat.qualified_entity.entity.as_str(),
         source_cgs,
         target_entity,
     )
@@ -353,6 +357,7 @@ pub(crate) async fn materialize_relation_scoped_fanout(
     let pe = ParsedExpr {
         expr: relation.relation.ir.expr.clone(),
         projection: relation.relation.ir.projection.clone(),
+        field_dot_extract: None,
     };
     let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
     let source_node = &relation.relation.source;
@@ -372,17 +377,20 @@ pub(crate) async fn materialize_relation_scoped_fanout(
             .get(row_index)
             .and_then(|i| i.as_ref())
             .cloned();
-        let input_rows = materialized_result_use_inputs_with_source_row(
+        let mut input_rows = materialized_result_use_inputs_with_source_row(
             materialized,
             &relation.uses_result,
             source_node,
             source_row,
             row_identity,
         )?;
-        let wire_coercion =
-            wire_coercion_ctx_for_source_entity(scoped_es.cgs.as_ref(), source_mat.entity.as_str());
-        let parsed =
-            instantiate_parsed_expr_plan_inputs_with_rows(pe.clone(), &input_rows, wire_coercion)?;
+        let wire_coercion_by_alias = wire_coercion_by_alias_from_inputs(es, &mut input_rows)?;
+        let parsed = instantiate_parsed_expr_plan_inputs_with_rows(
+            pe.clone(),
+            &scoped_es.cgs,
+            &input_rows,
+            &wire_coercion_by_alias,
+        )?;
         let expr_label = format!("{base_display} [row {row_index}]");
         super::super::plan_fanout_parallel::push_verified_row_job(
             &mut jobs, &scoped_es, node_index, row_index, expr_label, parsed,
@@ -629,8 +637,7 @@ pub(crate) async fn finalize_embed_relation_materialized_node(
         session_id,
         &relation.relation.target,
         MaterializedNode {
-            entry_id: relation.relation.target.entry_id.clone(),
-            entity: relation.relation.target.entity.clone(),
+            qualified_entity: relation.relation.target.clone(),
             display,
             projection: relation.relation.ir.projection.clone(),
             row_source: inline_row_source_owned(wire_rows),

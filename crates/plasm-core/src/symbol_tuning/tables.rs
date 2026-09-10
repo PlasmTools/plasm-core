@@ -6,13 +6,14 @@ use std::sync::{Arc, RwLock};
 
 use crate::identity::{CapabilityName, EntityName};
 use crate::schema::CGS;
+use crate::CapabilityKind;
 
 use super::keys::{
     MethodKey, MethodSegmentKey, OpaqueESym, OpaqueMSym, OpaqueRSym, OpaqueVSym,
     QualifiedEntityKey, RelationKey,
 };
 use super::session_bindings::{EntityBinding, MethodBinding, RelationBinding};
-use super::{IdentMetadata, IdentRole, SymbolMap};
+use super::{slot_symbol_allocation_fingerprint, IdentMetadata, IdentRole, SymbolMap};
 
 /// Parse-time reverse tables + teaching forward tables (cloned into [`SymbolMap`] snapshots).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -91,6 +92,8 @@ pub struct SymbolValueLayer {
     pub wire_to_value_sym: HashMap<String, OpaqueVSym>,
     /// `(entry_id|entity|wire_leaf)` → cap-param quad for gloss context.
     pub wire_cap_param_quads: HashMap<String, (String, EntityName, CapabilityName, String)>,
+    /// Same key as [`Self::wire_cap_param_quads`] → capability kind (query vs mutator).
+    pub wire_cap_param_kinds: HashMap<String, CapabilityKind>,
     pub value_sym_gloss: IndexMap<OpaqueVSym, String>,
 }
 
@@ -103,18 +106,25 @@ impl SymbolValueLayer {
     ) -> Self {
         let mut wire_to_value_sym = HashMap::new();
         let mut wire_cap_param_quads = HashMap::new();
+        let mut wire_cap_param_kinds = HashMap::new();
         for meta in ledger.slot_occurrence_meta.values() {
             let key = wire_occurrence_value_key(
                 meta.catalog_entry_id(),
                 meta.entity().as_str(),
                 meta.wire_name(),
             );
-            if let Some(vfp) = meta.value_domain_allocation_fp() {
-                if let Some(v_sym) = ledger.value_domain_fp_to_sym.get(&vfp) {
+            if meta.value_domain_allocation_fp().is_some() {
+                let value_alloc_key = slot_symbol_allocation_fingerprint(meta);
+                if let Some(v_sym) = ledger.value_domain_fp_to_sym.get(&value_alloc_key) {
                     wire_to_value_sym.entry(key.clone()).or_insert(*v_sym);
                 }
             }
             if let IdentRole::CapabilityParam { capability } = meta.allocation_ident_role() {
+                if let Some(cgs) = catalog_cgs.get(meta.catalog_entry_id()) {
+                    if let Some(cap) = cgs.capabilities.get(capability.as_str()) {
+                        wire_cap_param_kinds.insert(key.clone(), cap.kind);
+                    }
+                }
                 wire_cap_param_quads.insert(
                     key,
                     (
@@ -152,6 +162,7 @@ impl SymbolValueLayer {
             value_sym_to_fp,
             wire_to_value_sym,
             wire_cap_param_quads,
+            wire_cap_param_kinds,
             value_sym_gloss,
         }
     }

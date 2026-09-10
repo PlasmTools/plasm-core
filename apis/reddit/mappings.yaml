@@ -79,9 +79,14 @@ post_feed_query:
     item_inner_key: data
   pagination:
     params:
-      limit: { fixed: 25 }
-      after: { from_response: after }
-    response_prefix: [data]
+      limit:
+        fixed: 25
+        role: page_size
+      after:
+        from_response: after
+    response_prefix:
+    - data
+    strategy: cursor
   query:
     type: object
     fields:
@@ -131,9 +136,14 @@ post_search_query:
     item_inner_key: data
   pagination:
     params:
-      limit: { fixed: 25 }
-      after: { from_response: after }
-    response_prefix: [data]
+      limit:
+        fixed: 25
+        role: page_size
+      after:
+        from_response: after
+    response_prefix:
+    - data
+    strategy: cursor
   query:
     type: object
     fields:
@@ -182,10 +192,14 @@ subreddit_popular_query:
     item_inner_key: data
   pagination:
     params:
-      limit: { fixed: 25 }
-      after: { from_response: after }
-    response_prefix: [data]
-
+      limit:
+        fixed: 25
+        role: page_size
+      after:
+        from_response: after
+    response_prefix:
+    - data
+    strategy: cursor
 subreddit_search_query:
   method: GET
   path:
@@ -204,9 +218,14 @@ subreddit_search_query:
     item_inner_key: data
   pagination:
     params:
-      limit: { fixed: 25 }
-      after: { from_response: after }
-    response_prefix: [data]
+      limit:
+        fixed: 25
+        role: page_size
+      after:
+        from_response: after
+    response_prefix:
+    - data
+    strategy: cursor
   query:
     type: object
     fields:
@@ -238,9 +257,15 @@ comment_thread_query:
     item_inner_key: data
   pagination:
     params:
-      limit: { fixed: 25 }
-      after: { from_response: after }
-    response_prefix: ["1", "data"]
+      limit:
+        fixed: 25
+        role: page_size
+      after:
+        from_response: after
+    response_prefix:
+    - '1'
+    - data
+    strategy: cursor
   query:
     type: object
     fields:

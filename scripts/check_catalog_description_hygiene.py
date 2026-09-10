@@ -73,6 +73,16 @@ RULES: dict[str, tuple[Severity, str, re.Pattern[str]]] = {
             re.I,
         ),
     ),
+    "H_sibling_list_polarity": (
+        "error",
+        "Entity banner conflates sibling list polarities (received/sent, inbox/outbox, …)",
+        re.compile(
+            r"received\b.*\bsent\b|\bsent\b.*\breceived\b|"
+            r"inbox\s*/\s*outbox|inbox/outbox|"
+            r"incoming\b.*\boutgoing\b|\boutgoing\b.*\bincoming\b",
+            re.I,
+        ),
+    ),
 }
 
 G_TABULAR_JARGON_ALLOW = re.compile(
@@ -97,6 +107,23 @@ class Finding:
 
 def repo_apis_root(script_path: Path) -> Path:
     return script_path.resolve().parent.parent / "apis"
+
+
+def discover_catalogs(apis_root: Path) -> list[str]:
+    """Top-level apis/<name> plus nested family catalogs (e.g. appworld/<name>)."""
+    catalogs: list[str] = []
+    for p in sorted(apis_root.iterdir()):
+        if not p.is_dir() or p.name.startswith("."):
+            continue
+        if (p / "domain.yaml").is_file():
+            catalogs.append(p.name)
+            continue
+        # Family root (no domain.yaml): include children that have domain.yaml.
+        for child in sorted(p.iterdir()):
+            if child.is_dir() and (child / "domain.yaml").is_file():
+                catalogs.append(f"{p.name}/{child.name}")
+    return catalogs
+
 
 
 def classify_description_context(
@@ -208,6 +235,10 @@ def scan_domain_yaml(path: Path, catalog: str) -> list[Finding]:
                 continue
             if rule_id == "G_tabular_jargon" and G_TABULAR_JARGON_ALLOW.search(line):
                 continue
+            # Sibling-list polarity mash-ups are entity-banner heresy; capability
+            # glosses may correctly name both poles when one op filters by direction.
+            if rule_id == "H_sibling_list_polarity" and context != "entity":
+                continue
             sev = effective_severity(rule_id, base_sev, context)
             findings.append(
                 Finding(
@@ -232,7 +263,7 @@ def main() -> int:
         action="append",
         dest="catalogs",
         metavar="NAME",
-        help="Only scan apis/NAME (default: all catalogs)",
+        help="Only scan apis/NAME or nested apis/appworld/NAME as appworld/NAME (default: all)",
     )
     parser.add_argument(
         "--fail-on",
@@ -254,11 +285,7 @@ def main() -> int:
         print(f"check_catalog_description_hygiene: missing {apis_root}", file=sys.stderr)
         return 2
 
-    catalogs = sorted(
-        p.name
-        for p in apis_root.iterdir()
-        if p.is_dir() and (p / "domain.yaml").is_file()
-    )
+    catalogs = discover_catalogs(apis_root)
     if args.catalogs:
         wanted = set(args.catalogs)
         catalogs = [c for c in catalogs if c in wanted]
@@ -268,7 +295,7 @@ def main() -> int:
 
     all_findings: list[Finding] = []
     for catalog in catalogs:
-        domain = apis_root / catalog / "domain.yaml"
+        domain = apis_root.joinpath(*catalog.split("/")) / "domain.yaml"
         all_findings.extend(scan_domain_yaml(domain, catalog))
 
     severity_rank = {"error": 2, "warn": 1}

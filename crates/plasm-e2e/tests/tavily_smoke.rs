@@ -24,7 +24,9 @@ fn research_create_compiled_body_is_json_object_with_input_key() {
     let cap = cgs
         .get_capability("research_create")
         .expect("research_create capability");
-    let template = parse_capability_template(&cap.mapping.template.0).expect("parse template");
+    let template =
+        parse_capability_template(&cap.require_mapping().expect("cml mapping").template.0)
+            .expect("parse template");
 
     let aggregate = Value::Object(
         [

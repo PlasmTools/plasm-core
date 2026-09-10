@@ -1,0 +1,39 @@
+- id: login_splitwise
+  schema: splitwise
+  goal: Login to splitwise with username and password to get an access token
+  tags: [action, auth]
+  covers: [invoke]
+  expect:
+    entities_any: [AuthSession]
+
+- id: list_groups
+  schema: splitwise
+  goal: List my Splitwise groups
+  tags: [query]
+  covers: [query]
+  expect:
+    entities_any: [Group]
+
+- id: create_expense
+  schema: splitwise
+  goal: Create an expense for dinner split among friends
+  tags: [create]
+  covers: [create]
+  expect:
+    entities_any: [Expense]
+
+- id: list_group_payments
+  schema: splitwise
+  goal: List the settlement payments recorded in my trip group
+  tags: [query, relation]
+  covers: [query_filtered, chain]
+  expect:
+    entities_any: [Group, Payment]
+
+- id: settle_group_balance
+  schema: splitwise
+  goal: Show what I owe in a group and settle up with the person I owe
+  tags: [query, action]
+  covers: [query_filtered, invoke, multi_step]
+  expect:
+    entities_any: [Balance]

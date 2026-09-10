@@ -1,424 +1,463 @@
-# Outlook / Microsoft Graph v1.0 — CML mappings. Semantic model lives in domain.yaml.
-#
-# Base origin: https://graph.microsoft.com
-# Auth: bearer token via MICROSOFT_GRAPH_ACCESS_TOKEN
-#
-# Graph collections paginate with @odata.nextLink absolute URLs in the JSON body.
-# List capabilities declare `pagination.location: response_next_url` so the runtime
-# replays those URLs on `page(pg#)` continuations.
-
-mail_folder_query:
-  method: GET
-  path:
-    - { type: literal, value: "v1.0" }
-    - { type: literal, value: me }
-    - { type: literal, value: mailFolders }
-  response:
-    items: value
-  query:
-    type: object
-    fields:
-      - - includeHiddenFolders
-        - type: if
-          condition: { type: exists, var: includeHiddenFolders }
-          then_expr: { type: var, name: includeHiddenFolders }
-          else_expr: { type: const, value: null }
-  pagination:
-    location: response_next_url
-    response_next_url_field: "@odata.nextLink"
-    params:
-      $top: { fixed: 100 }
-
 mail_folder_child_query:
   method: GET
   path:
-    - { type: literal, value: "v1.0" }
-    - { type: literal, value: me }
-    - { type: literal, value: mailFolders }
-    - { type: var, name: mailFolderId }
-    - { type: literal, value: childFolders }
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: mail_folder_child
+    then_expr:
+      type: format
+      template: v1.0/me/mailFolders/{mailFolderId}/childFolders
+      vars:
+        mailFolderId:
+          type: var
+          name: mailFolderId
+    else_expr:
+      type: const
+      value: v1.0/me/mailFolders
   response:
     items: value
   query:
     type: object
     fields:
-      - - includeHiddenFolders
-        - type: if
-          condition: { type: exists, var: includeHiddenFolders }
-          then_expr: { type: var, name: includeHiddenFolders }
-          else_expr: { type: const, value: null }
+    - - includeHiddenFolders
+      - type: var
+        name: includeHiddenFolders
+        if: { exists: includeHiddenFolders }
   pagination:
     location: response_next_url
-    response_next_url_field: "@odata.nextLink"
+    response_next_url_field: '@odata.nextLink'
     params:
-      $top: { fixed: 100 }
-
+      $top:
+        fixed: 100
+        role: page_size
+    strategy: next_url
 mail_folder_get:
   method: GET
   path:
-    - { type: literal, value: "v1.0" }
-    - { type: literal, value: me }
-    - { type: literal, value: mailFolders }
-    - { type: var, name: id }
+  - type: literal
+    value: v1.0
+  - type: literal
+    value: me
+  - type: literal
+    value: mailFolders
+  - type: var
+    name: id
   response: single
-
-message_query:
-  method: GET
-  path:
-    - { type: literal, value: "v1.0" }
-    - { type: literal, value: me }
-    - { type: literal, value: messages }
-  response:
-    items: value
-  query:
-    type: object
-    fields:
-      - - $select
-        - { type: const, value: "id,subject,bodyPreview,parentFolderId,from,receivedDateTime,sentDateTime,hasAttachments,isDraft,isRead,importance,categories,webLink" }
-      - - $filter
-        - type: if
-          condition: { type: exists, var: filter }
-          then_expr: { type: var, name: filter }
-          else_expr: { type: const, value: null }
-      - - $orderby
-        - type: if
-          condition: { type: exists, var: orderBy }
-          then_expr: { type: var, name: orderBy }
-          else_expr: { type: const, value: null }
-  pagination:
-    location: response_next_url
-    response_next_url_field: "@odata.nextLink"
-    params:
-      $top: { fixed: 100 }
-
 message_folder_query:
   method: GET
   path:
-    - { type: literal, value: "v1.0" }
-    - { type: literal, value: me }
-    - { type: literal, value: mailFolders }
-    - { type: var, name: mailFolderId }
-    - { type: literal, value: messages }
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: message_folder
+    then_expr:
+      type: format
+      template: v1.0/me/mailFolders/{mailFolderId}/messages
+      vars:
+        mailFolderId:
+          type: var
+          name: mailFolderId
+    else_expr:
+      type: const
+      value: v1.0/me/messages
   response:
     items: value
   query:
     type: object
     fields:
-      - - $select
-        - { type: const, value: "id,subject,bodyPreview,parentFolderId,from,receivedDateTime,sentDateTime,hasAttachments,isDraft,isRead,importance,categories,webLink" }
-      - - $filter
-        - type: if
-          condition: { type: exists, var: filter }
-          then_expr: { type: var, name: filter }
-          else_expr: { type: const, value: null }
-      - - $orderby
-        - type: if
-          condition: { type: exists, var: orderBy }
-          then_expr: { type: var, name: orderBy }
-          else_expr: { type: const, value: null }
+    - - $filter
+      - type: var
+        name: filter
+        if: { exists: filter }
+    - - $orderby
+      - type: var
+        name: orderBy
+        if: { exists: orderBy }
   pagination:
     location: response_next_url
-    response_next_url_field: "@odata.nextLink"
+    response_next_url_field: '@odata.nextLink'
     params:
-      $top: { fixed: 100 }
-
+      $top:
+        fixed: 100
+        role: page_size
+    strategy: next_url
 message_get:
   method: GET
   path:
-    - { type: literal, value: "v1.0" }
-    - { type: literal, value: me }
-    - { type: literal, value: messages }
-    - { type: var, name: id }
+  - type: literal
+    value: v1.0
+  - type: literal
+    value: me
+  - type: literal
+    value: messages
+  - type: var
+    name: id
   response: single
   query:
     type: object
     fields:
-      - - $select
-        - { type: const, value: "id,subject,bodyPreview,body,internetMessageId,conversationId,parentFolderId,from,receivedDateTime,sentDateTime,hasAttachments,isDraft,isRead,importance,categories,webLink" }
-
+    - - $select
+      - type: const
+        value: id,subject,bodyPreview,body,internetMessageId,conversationId,parentFolderId,from,receivedDateTime,sentDateTime,hasAttachments,isDraft,isRead,importance,categories,webLink
 message_create:
   method: POST
   path:
-    - { type: literal, value: "v1.0" }
-    - { type: literal, value: me }
-    - { type: literal, value: messages }
+  - type: literal
+    value: v1.0
+  - type: literal
+    value: me
+  - type: literal
+    value: messages
   response: single
   body:
     type: object
     fields:
-      - - subject
-        - { type: var, name: subject }
-      - - body
+    - - subject
+      - type: var
+        name: subject
+    - - body
+      - type: object
+        fields:
+        - - contentType
+          - type: if
+            condition:
+              type: exists
+              var: bodyContentType
+            then_expr:
+              type: var
+              name: bodyContentType
+            else_expr:
+              type: const
+              value: html
+        - - content
+          - type: var
+            name: bodyContent
+    - - toRecipients
+      - type: array
+        elements:
         - type: object
           fields:
-            - - contentType
-              - type: if
-                condition: { type: exists, var: bodyContentType }
-                then_expr: { type: var, name: bodyContentType }
-                else_expr: { type: const, value: html }
-            - - content
-              - { type: var, name: bodyContent }
-      - - toRecipients
-        - type: array
-          elements:
+          - - emailAddress
             - type: object
               fields:
-                - - emailAddress
-                  - type: object
-                    fields:
-                      - - address
-                        - { type: var, name: toAddress }
-
+              - - address
+                - type: var
+                  name: toAddress
 message_update:
   method: PATCH
   path:
-    - { type: literal, value: "v1.0" }
-    - { type: literal, value: me }
-    - { type: literal, value: messages }
-    - { type: var, name: id }
+  - type: literal
+    value: v1.0
+  - type: literal
+    value: me
+  - type: literal
+    value: messages
+  - type: var
+    name: id
   response: single
   body:
     type: object
     fields:
-      - - isRead
-        - type: if
-          condition: { type: exists, var: isRead }
-          then_expr: { type: var, name: isRead }
-          else_expr: { type: const, value: null }
-      - - importance
-        - type: if
-          condition: { type: exists, var: importance }
-          then_expr: { type: var, name: importance }
-          else_expr: { type: const, value: null }
-      - - categories
-        - type: if
-          condition: { type: exists, var: categories }
-          then_expr: { type: var, name: categories }
-          else_expr: { type: const, value: null }
-
+    - - isRead
+      - type: var
+        name: isRead
+        if: { exists: isRead }
+    - - importance
+      - type: var
+        name: importance
+        if: { exists: importance }
+    - - categories
+      - type: var
+        name: categories
+        if: { exists: categories }
 message_move:
   method: POST
   path:
-    - { type: literal, value: "v1.0" }
-    - { type: literal, value: me }
-    - { type: literal, value: messages }
-    - { type: var, name: id }
-    - { type: literal, value: move }
+  - type: literal
+    value: v1.0
+  - type: literal
+    value: me
+  - type: literal
+    value: messages
+  - type: var
+    name: id
+  - type: literal
+    value: move
   body:
     type: object
     fields:
-      - - destinationId
-        - { type: var, name: destinationFolderId }
-
+    - - destinationId
+      - type: var
+        name: destinationFolderId
 message_send:
   method: POST
   path:
-    - { type: literal, value: "v1.0" }
-    - { type: literal, value: me }
-    - { type: literal, value: messages }
-    - { type: var, name: id }
-    - { type: literal, value: send }
-
+  - type: literal
+    value: v1.0
+  - type: literal
+    value: me
+  - type: literal
+    value: messages
+  - type: var
+    name: id
+  - type: literal
+    value: send
 message_delete:
   method: DELETE
   path:
-    - { type: literal, value: "v1.0" }
-    - { type: literal, value: me }
-    - { type: literal, value: messages }
-    - { type: var, name: id }
-
+  - type: literal
+    value: v1.0
+  - type: literal
+    value: me
+  - type: literal
+    value: messages
+  - type: var
+    name: id
 attachment_query:
   method: GET
   path:
-    - { type: literal, value: "v1.0" }
-    - { type: literal, value: me }
-    - { type: literal, value: messages }
-    - { type: var, name: messageId }
-    - { type: literal, value: attachments }
+  - type: literal
+    value: v1.0
+  - type: literal
+    value: me
+  - type: literal
+    value: messages
+  - type: var
+    name: messageId
+  - type: literal
+    value: attachments
   response:
     items: value
   pagination:
     location: response_next_url
-    response_next_url_field: "@odata.nextLink"
+    response_next_url_field: '@odata.nextLink'
     params:
-      $top: { fixed: 100 }
-
+      $top:
+        fixed: 100
+        role: page_size
+    strategy: next_url
 attachment_get:
   method: GET
   path:
-    - { type: literal, value: "v1.0" }
-    - { type: literal, value: me }
-    - { type: literal, value: messages }
-    - { type: var, name: messageId }
-    - { type: literal, value: attachments }
-    - { type: var, name: id }
+  - type: literal
+    value: v1.0
+  - type: literal
+    value: me
+  - type: literal
+    value: messages
+  - type: var
+    name: messageId
+  - type: literal
+    value: attachments
+  - type: var
+    name: id
   response: single
-
 mailbox_triage_query:
   transport: view
   view: mailbox_triage
-
 mailbox_triage_get:
   transport: view
   view: mailbox_triage
-
 calendar_query:
   method: GET
   path:
-    - { type: literal, value: "v1.0" }
-    - { type: literal, value: me }
-    - { type: literal, value: calendars }
+  - type: literal
+    value: v1.0
+  - type: literal
+    value: me
+  - type: literal
+    value: calendars
   response:
     items: value
   pagination:
     location: response_next_url
-    response_next_url_field: "@odata.nextLink"
+    response_next_url_field: '@odata.nextLink'
     params:
-      $top: { fixed: 100 }
-
+      $top:
+        fixed: 100
+        role: page_size
+    strategy: next_url
 calendar_get:
   method: GET
   path:
-    - { type: literal, value: "v1.0" }
-    - { type: literal, value: me }
-    - { type: literal, value: calendars }
-    - { type: var, name: id }
+  - type: literal
+    value: v1.0
+  - type: literal
+    value: me
+  - type: literal
+    value: calendars
+  - type: var
+    name: id
   response: single
-
-event_query:
-  method: GET
-  path:
-    - { type: literal, value: "v1.0" }
-    - { type: literal, value: me }
-    - { type: literal, value: events }
-  response:
-    items: value
-  query:
-    type: object
-    fields:
-      - - $select
-        - { type: const, value: "id,subject,bodyPreview,start,end,location,isAllDay,isCancelled,organizer,webLink" }
-      - - $filter
-        - type: if
-          condition: { type: exists, var: filter }
-          then_expr: { type: var, name: filter }
-          else_expr: { type: const, value: null }
-      - - $orderby
-        - type: if
-          condition: { type: exists, var: orderBy }
-          then_expr: { type: var, name: orderBy }
-          else_expr: { type: const, value: null }
-  pagination:
-    location: response_next_url
-    response_next_url_field: "@odata.nextLink"
-    params:
-      $top: { fixed: 100 }
-
 event_calendar_query:
   method: GET
   path:
-    - { type: literal, value: "v1.0" }
-    - { type: literal, value: me }
-    - { type: literal, value: calendars }
-    - { type: var, name: calendarId }
-    - { type: literal, value: events }
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: event_calendar
+    then_expr:
+      type: format
+      template: v1.0/me/calendars/{calendarId}/events
+      vars:
+        calendarId:
+          type: var
+          name: calendarId
+    else_expr:
+      type: const
+      value: v1.0/me/events
   response:
     items: value
   query:
     type: object
     fields:
-      - - $select
-        - { type: const, value: "id,subject,bodyPreview,start,end,location,isAllDay,isCancelled,organizer,webLink" }
-      - - $filter
-        - type: if
-          condition: { type: exists, var: filter }
-          then_expr: { type: var, name: filter }
-          else_expr: { type: const, value: null }
-      - - $orderby
-        - type: if
-          condition: { type: exists, var: orderBy }
-          then_expr: { type: var, name: orderBy }
-          else_expr: { type: const, value: null }
+    - - $filter
+      - type: var
+        name: filter
+        if: { exists: filter }
+    - - $orderby
+      - type: var
+        name: orderBy
+        if: { exists: orderBy }
   pagination:
     location: response_next_url
-    response_next_url_field: "@odata.nextLink"
+    response_next_url_field: '@odata.nextLink'
     params:
-      $top: { fixed: 100 }
-
+      $top:
+        fixed: 100
+        role: page_size
+    strategy: next_url
 event_get:
   method: GET
   path:
-    - { type: literal, value: "v1.0" }
-    - { type: literal, value: me }
-    - { type: literal, value: events }
-    - { type: var, name: id }
+  - type: literal
+    value: v1.0
+  - type: literal
+    value: me
+  - type: literal
+    value: events
+  - type: var
+    name: id
   response: single
   query:
     type: object
     fields:
-      - - $select
-        - { type: const, value: "id,subject,bodyPreview,start,end,location,isAllDay,isCancelled,organizer,webLink" }
-
+    - - $select
+      - type: const
+        value: id,subject,bodyPreview,start,end,location,isAllDay,isCancelled,organizer,webLink
 event_create:
   method: POST
   path:
-    - { type: literal, value: "v1.0" }
-    - { type: literal, value: me }
-    - { type: literal, value: events }
+  - type: literal
+    value: v1.0
+  - type: literal
+    value: me
+  - type: literal
+    value: events
   response: single
   body:
     type: object
     fields:
-      - - subject
-        - { type: var, name: subject }
-      - - start
-        - type: object
+    - - subject
+      - type: var
+        name: subject
+    - - start
+      - type: object
+        fields:
+        - - dateTime
+          - type: var
+            name: startDateTime
+        - - timeZone
+          - type: if
+            condition:
+              type: exists
+              var: timeZone
+            then_expr:
+              type: var
+              name: timeZone
+            else_expr:
+              type: const
+              value: UTC
+    - - end
+      - type: object
+        fields:
+        - - dateTime
+          - type: var
+            name: endDateTime
+        - - timeZone
+          - type: if
+            condition:
+              type: exists
+              var: timeZone
+            then_expr:
+              type: var
+              name: timeZone
+            else_expr:
+              type: const
+              value: UTC
+    - - body
+      - type: if
+        condition:
+          type: exists
+          var: bodyContent
+        then_expr:
+          type: object
           fields:
-            - - dateTime
-              - { type: var, name: startDateTime }
-            - - timeZone
-              - type: if
-                condition: { type: exists, var: timeZone }
-                then_expr: { type: var, name: timeZone }
-                else_expr: { type: const, value: UTC }
-      - - end
-        - type: object
+          - - contentType
+            - type: if
+              condition:
+                type: exists
+                var: bodyContentType
+              then_expr:
+                type: var
+                name: bodyContentType
+              else_expr:
+                type: const
+                value: html
+          - - content
+            - type: var
+              name: bodyContent
+        else_expr:
+          type: const
+          value: null
+    - - location
+      - type: if
+        condition:
+          type: exists
+          var: locationDisplayName
+        then_expr:
+          type: object
           fields:
-            - - dateTime
-              - { type: var, name: endDateTime }
-            - - timeZone
-              - type: if
-                condition: { type: exists, var: timeZone }
-                then_expr: { type: var, name: timeZone }
-                else_expr: { type: const, value: UTC }
-      - - body
-        - type: if
-          condition: { type: exists, var: bodyContent }
-          then_expr:
-            type: object
-            fields:
-              - - contentType
-                - type: if
-                  condition: { type: exists, var: bodyContentType }
-                  then_expr: { type: var, name: bodyContentType }
-                  else_expr: { type: const, value: html }
-              - - content
-                - { type: var, name: bodyContent }
-          else_expr: { type: const, value: null }
-      - - location
-        - type: if
-          condition: { type: exists, var: locationDisplayName }
-          then_expr:
-            type: object
-            fields:
-              - - displayName
-                - { type: var, name: locationDisplayName }
-          else_expr: { type: const, value: null }
-
+          - - displayName
+            - type: var
+              name: locationDisplayName
+        else_expr:
+          type: const
+          value: null
 event_delete:
   method: DELETE
   path:
-    - { type: literal, value: "v1.0" }
-    - { type: literal, value: me }
-    - { type: literal, value: events }
-    - { type: var, name: id }
+  - type: literal
+    value: v1.0
+  - type: literal
+    value: me
+  - type: literal
+    value: events
+  - type: var
+    name: id

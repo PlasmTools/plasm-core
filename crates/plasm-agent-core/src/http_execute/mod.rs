@@ -2,7 +2,7 @@
 //! clients open a session with `entry_id` + entity seeds, then run one Plasm program.
 //!
 //! HTTP: `POST /execute` → `GET /execute/:prompt_hash/:session` → `POST` that path (default `Accept`:
-//! **text/toon**, entity rows only); optional `GET .../artifacts/:run_id` for run snapshots. MCP uses
+//! **application/json**); optional `GET .../artifacts/:run_id` for run snapshots. MCP uses
 //! [`publish_plasm_result_steps`] for live run Markdown + `_meta` / resource links.
 
 mod operations;
@@ -23,7 +23,7 @@ use axum::http::StatusCode;
 use axum::response::Response;
 use http_problem::prelude::{StatusCode as ProblemStatus, Uri};
 use http_problem::Problem;
-use plasm_core::{MutatorAdmit, PagingHandle, PromptRenderMode, CGS};
+use plasm_core::{PagingHandle, CGS};
 use plasm_runtime::ExecutionResult;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -123,6 +123,7 @@ pub struct PublishedResultStep {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CreateExecuteSessionBody {
     pub entry_id: String,
     pub entities: Vec<String>,
@@ -132,10 +133,6 @@ pub struct CreateExecuteSessionBody {
     pub logical_session_id: Option<Uuid>,
     #[serde(default)]
     pub context_intent: Option<String>,
-    #[serde(default)]
-    pub ranked_capabilities: Option<Vec<String>>,
-    #[serde(default)]
-    pub mutator_admit: MutatorAdmit,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -229,9 +226,6 @@ pub(crate) use context::{
 };
 mod ingress;
 mod mcp_publish;
-mod proof_bind;
-#[cfg(test)]
-pub(crate) use proof_bind::try_proof_document_share_bind;
 mod response;
 mod routes;
 mod run_line;
@@ -245,23 +239,23 @@ pub(crate) use context::replay_teaching_exposure_waves;
 pub use context::{
     apply_capability_seeds, execute_session_create_response, expand_execute_teaching_session,
     federate_execute_session, normalize_capability_seeds, resolve_capability_seeds,
-    ExpandTeachingWaveResult, RankedCapabilitiesArg,
+    ExpandTeachingWaveResult,
 };
 pub(crate) use context::{
     apply_federate_exposure_wave, build_initial_exposure_wave, ExposureCatalogWave,
 };
 pub(crate) use context::{
-    build_capability_exposure_plan, build_plasm_context_agent_markdown,
-    build_plasm_context_tool_meta, cgs_entity_names_sample, format_session_churn_advisory,
-    normalize_context_intent_for_domain_filter, PlasmContextToolMetaParams, SessionChurnAdvisory,
+    build_plasm_context_agent_markdown, build_plasm_context_tool_meta, cgs_entity_names_sample,
+    format_session_churn_advisory, normalize_context_intent_for_domain_filter,
+    PlasmContextToolMetaParams, SessionChurnAdvisory,
 };
 pub(crate) use ingress::parse_execute_program_body;
 pub(crate) use mcp_publish::{
     publish_plasm_result_steps, publish_with_shared_meta_index, tool_meta_from_handles,
 };
 pub(crate) use response::{
-    negotiate_accept, respond_execute_result, respond_plan_payload,
-    respond_staged_lines_execute_result, run_mode_is_plan, AcceptNegotiationError,
+    negotiate_accept_or_406, respond_execute_result, respond_plan_payload,
+    respond_staged_lines_execute_result, run_mode_is_plan, unsupported_accept_response,
     ExecResponseKind,
 };
 pub(crate) use response::{ExecuteRunQuery, RunArtifactQuery};
@@ -275,3 +269,5 @@ pub use trace::{
     archive_plasm_result_snapshot, execute_plasm_parsed_expr, execute_plasm_plasm_line,
     run_seal_record_for_handle, trace_record_plasm_line,
 };
+
+pub(crate) use routes::session_lookup_unavailable;

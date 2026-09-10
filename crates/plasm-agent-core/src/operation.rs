@@ -695,14 +695,7 @@ pub fn async_live_run_accept_parts(
     if auto_async {
         plasm.insert("auto_async".into(), json!(true));
     }
-    plasm.insert(
-        "dry_verdict".into(),
-        json!(match verdict {
-            PlanDryVerdict::Ok => "ok",
-            PlanDryVerdict::Review => "review",
-            PlanDryVerdict::Deny => "deny",
-        }),
-    );
+    plasm.insert("dry_verdict".into(), json!(verdict.as_wire()));
     meta.insert("plasm".into(), serde_json::Value::Object(plasm));
     (markdown, meta)
 }

@@ -21,7 +21,7 @@ movie_search:
   query:
     type: object
     fields:
-      - [s, { type: var, name: s }]
+      - [s, { type: var, name: query }]
       - - y
         - type: if
           condition: { type: exists, var: y }

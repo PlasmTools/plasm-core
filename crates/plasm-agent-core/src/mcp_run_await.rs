@@ -204,6 +204,7 @@ mod tests {
         );
         let poll = PlasmPlanRunResult {
             version: serde_json::json!({}),
+            agent_outcome: Default::default(),
             node_results: Vec::new(),
             graph_summary: serde_json::json!({}),
             comp: None,
@@ -233,7 +234,6 @@ mod tests {
             None,
             "hash".into(),
             None,
-            None,
         ));
         let handle = es.mint_operation_handle_plain();
         es.try_begin_async_operation(
@@ -251,6 +251,7 @@ mod tests {
                 &handle_bg,
                 PlasmPlanRunResult {
                     version: serde_json::json!({}),
+                    agent_outcome: Default::default(),
                     node_results: vec![serde_json::json!({"id": "x"})],
                     graph_summary: serde_json::json!({}),
                     comp: None,
@@ -295,7 +296,6 @@ mod tests {
             None,
             "hash".into(),
             None,
-            None,
         ));
         let handle = es.mint_operation_handle_plain();
         es.try_begin_async_operation(
@@ -335,7 +335,6 @@ mod tests {
             None,
             "hash".into(),
             None,
-            None,
         ));
         let handle = es.mint_operation_handle_plain();
         es.try_begin_async_operation(
@@ -353,6 +352,7 @@ mod tests {
                 &handle_bg,
                 PlasmPlanRunResult {
                     version: serde_json::json!({}),
+                    agent_outcome: Default::default(),
                     node_results: vec![serde_json::json!({"id": "x"})],
                     graph_summary: serde_json::json!({}),
                     comp: None,

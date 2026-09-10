@@ -1,9 +1,10 @@
 //! sqlx-backed persistence for project-scoped plan flow policies.
 
+use crate::traced_pg::PgPool;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::postgres::PgPoolOptions;
-use sqlx::{PgPool, Row};
+use sqlx::Row;
 use thiserror::Error;
 
 use crate::plan_flow_policy::{FlowPolicy, FlowPolicySnapshot, PolicyRevision};
@@ -65,6 +66,7 @@ impl FlowPolicyRepository {
             .connect(database_url)
             .await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
+        let pool = crate::traced_pg::wrap(pool);
         Ok(Self { pool })
     }
 

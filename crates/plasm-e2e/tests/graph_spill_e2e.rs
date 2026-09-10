@@ -24,7 +24,7 @@ use plasm_agent::{
     server_state::CatalogBootstrap,
     session_graph_persistence::SessionGraphPersistence,
 };
-use plasm_core::discovery::InMemoryCgsRegistry;
+use plasm_core::discovery::CgsRegistry;
 use plasm_core::{CgsContext, Expr, PromptPipelineConfig, QueryExpr, QueryPagination, CGS};
 use plasm_runtime::{
     ExecuteOptions, ExecutionConfig, ExecutionEngine, ExecutionMode, StreamConsumeOpts,
@@ -106,7 +106,6 @@ fn pokeapi_execute_session(cgs: Arc<CGS>) -> ExecuteSession {
         None,
         cgs.catalog_cgs_hash_hex(),
         None,
-        None,
     )
 }
 
@@ -115,7 +114,7 @@ fn pokeapi_host_state(
     cgs: Arc<CGS>,
     persistence: Arc<SessionGraphPersistence>,
 ) -> plasm_agent::server_state::PlasmHostState {
-    let registry = Arc::new(InMemoryCgsRegistry::from_pairs(vec![(
+    let registry = Arc::new(CgsRegistry::from_pairs(vec![(
         ENTRY_ID.into(),
         "PokeAPI Mini".into(),
         vec!["test".into()],
@@ -192,6 +191,9 @@ async fn graph_spill_bounded_hot_and_plan_filter_rehydrate_async() {
                 ..Default::default()
             },
             ExecuteOptions {
+                compiled_catalog: Some(Arc::new(
+                    plasm_compile::compile_cgs_capability_templates(&cgs).unwrap(),
+                )),
                 graph_page_spill: Some(spill),
                 ..Default::default()
             },

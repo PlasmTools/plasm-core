@@ -107,13 +107,13 @@ export RPC=https://mainnet.infura.io/v3/<PROJECT_ID>
 cargo run -p plasm-repl --features evm -- --schema apis/evm-erc20 --backend "$RPC"
 ```
 
-Illustrative programs (substitute session symbols from teaching TSV):
+Illustrative programs (substitute session symbols from language card):
 
 ```text
 # Balance of an address
 e1(address="0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
 
-# Transfer logs over a block range (wire filter keys from teaching TSV)
+# Transfer logs over a block range (wire filter keys from language card)
 e2{from_block=21500000, to_block=21500000}
 ```
 

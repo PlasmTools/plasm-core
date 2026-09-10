@@ -8,10 +8,41 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// Current compiled-catalog wire format version (manifest + JSON body).
-pub const PLASM_CATALOG_FORMAT_VERSION: u32 = 2;
+pub const PLASM_CATALOG_FORMAT_VERSION: u32 = 3;
 
 /// Filename suffix for compiled catalog body artifacts.
 pub const CATALOG_IL_BODY_SUFFIX: &str = ".cgs.json";
+
+/// Atomic publication boundary for the complete packed catalog set.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CatalogSetManifest {
+    pub format_version: u32,
+    pub manifests: Vec<String>,
+}
+
+pub fn read_catalog_set(dir: &Path) -> Result<Vec<std::path::PathBuf>, String> {
+    let bytes = std::fs::read(dir.join("catalog-set.json"))
+        .map_err(|e| format!("read complete catalog set: {e}"))?;
+    let set: CatalogSetManifest = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+    if set.format_version != PLASM_CATALOG_FORMAT_VERSION || set.manifests.is_empty() {
+        return Err("catalog set must be nonempty format 3; repack authoring inputs".into());
+    }
+    let mut names = std::collections::BTreeSet::new();
+    for name in &set.manifests {
+        if Path::new(name).file_name().and_then(|s| s.to_str()) != Some(name)
+            || !name.ends_with(".manifest.json")
+            || !names.insert(name)
+        {
+            return Err("catalog set contains invalid or duplicate manifest name".into());
+        }
+    }
+    Ok(set
+        .manifests
+        .into_iter()
+        .map(|name| dir.join(name))
+        .collect())
+}
 
 /// Sidecar manifest for a compiled catalog artifact (JSON on disk).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -27,10 +58,18 @@ pub struct CatalogManifest {
     pub tags: Vec<String>,
     /// Basename of the JSON artifact in the same directory (e.g. `github.v3.a1b2c3d4e5f6.cgs.json`).
     pub cgs_json: String,
+    /// Basename of the compiled CML request-recipe artifact.
+    pub recipes_json: String,
+    /// SHA-256 of `recipes_json` bytes.
+    pub recipes_hash: String,
+    pub discovery_json: String,
+    pub discovery_hash: String,
+    pub embedding_profile: crate::catalog_discovery::EmbeddingProfile,
 }
 
 impl CatalogManifest {
     pub fn validate_format(&self) -> Result<(), String> {
+        self.embedding_profile.validate()?;
         if self.format_version != PLASM_CATALOG_FORMAT_VERSION {
             return Err(format!(
                 "unsupported catalog format_version {} (expected {PLASM_CATALOG_FORMAT_VERSION})",
@@ -58,6 +97,22 @@ impl CatalogManifest {
                 self.entry_id
             ));
         }
+        for name in [&self.cgs_json, &self.recipes_json, &self.discovery_json] {
+            if name.is_empty() || Path::new(name).file_name().and_then(|n| n.to_str()) != Some(name)
+            {
+                return Err("catalog artifact names must be basenames".into());
+            }
+        }
+        if self.recipes_hash.len() != 64
+            || !self.recipes_hash.bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            return Err("recipes_hash must be a SHA-256 hex digest".into());
+        }
+        if self.discovery_hash.len() != 64
+            || !self.discovery_hash.bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            return Err("discovery_hash must be a SHA-256 hex digest".into());
+        }
         Ok(())
     }
 }
@@ -69,11 +124,34 @@ pub fn cgs_to_catalog_il_bytes(cgs: &CGS) -> Result<Vec<u8>, String> {
 
 /// Decode compiled JSON IL bytes into a CGS and run full validation.
 pub fn load_catalog_il_bytes(bytes: &[u8]) -> Result<CGS, String> {
-    let cgs: CGS =
+    let span = crate::spans::catalog_load_il(bytes.len());
+    let _guard = span.enter();
+    let mut cgs: CGS =
         serde_json::from_slice(bytes).map_err(|e| format!("CGS JSON decode failed: {e}"))?;
+    cgs.stamp_entity_ref_catalogs();
     cgs.validate()
         .map_err(|e| format!("CGS validation failed after JSON decode: {e}"))?;
     Ok(cgs)
+}
+
+/// Verify discovery bytes and every embedded capability before use by a host.
+pub fn load_discovery_artifact(
+    dir: &Path,
+    manifest: &CatalogManifest,
+    cgs: &CGS,
+) -> Result<crate::catalog_discovery::CatalogDiscoveryArtifact, String> {
+    manifest.validate_format()?;
+    let bytes = std::fs::read(dir.join(&manifest.discovery_json)).map_err(|e| e.to_string())?;
+    if crate::catalog_discovery::content_hash(&bytes) != manifest.discovery_hash {
+        return Err("discovery artifact digest mismatch".into());
+    }
+    let artifact: crate::catalog_discovery::CatalogDiscoveryArtifact =
+        serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+    if artifact.profile != manifest.embedding_profile {
+        return Err("manifest and discovery embedding profiles disagree".into());
+    }
+    artifact.validate(cgs)?;
+    Ok(artifact)
 }
 
 /// Decode JSON IL and verify digest matches the manifest `cgs_hash`.
@@ -143,6 +221,7 @@ pub fn load_catalog_artifact(dir: &Path, manifest: &CatalogManifest) -> Result<C
             manifest.entry_id, cgs.entry_id
         ));
     }
+    load_discovery_artifact(dir, manifest, &cgs)?;
     Ok(cgs)
 }
 
@@ -197,6 +276,11 @@ mod tests {
             label: String::new(),
             tags: vec![],
             cgs_json: "x.cgs.json".into(),
+            recipes_json: "x.recipes.json".into(),
+            recipes_hash: "c".repeat(64),
+            discovery_json: "x.discovery.json".into(),
+            discovery_hash: "b".repeat(64),
+            embedding_profile: Default::default(),
         };
         assert!(m.validate_format().is_err());
     }

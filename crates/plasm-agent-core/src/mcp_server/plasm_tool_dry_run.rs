@@ -13,10 +13,12 @@ use crate::plasm_comp_wire::trace_comp_wire_from_dry;
 use crate::plasm_plan_run::{
     evaluate_plasm_comp_dry, render_plasm_plan_dry_text_for_session, PlasmPlanRunResult,
 };
+use crate::program_diagnostic::{plan_run_from_stage, ProgramDiagnostic, ProgramStageError};
 use crate::server_state::PlasmHostState;
 use crate::trace_hub::PlanRunTraceHooks;
 use crate::trace_sink_emit::PlasmTraceContext;
 
+use super::host_fault::HostFault;
 use super::plasm_tool_dry_meta;
 use super::trace::CodePlanTraceInput;
 use super::transport::PlasmExecBinding;
@@ -37,29 +39,89 @@ pub(crate) struct PlasmDryRunContext<'a> {
 pub(crate) async fn execute_plasm_tool_dry_run(
     ctx: PlasmDryRunContext<'_>,
     program: &str,
-) -> Result<PlasmPlanRunResult, String> {
+) -> Result<PlasmPlanRunResult, HostFault> {
+    use tracing::Instrument;
+    execute_plasm_tool_dry_run_inner(ctx, program)
+        .instrument(crate::spans::plan_dry_run(program.len()))
+        .await
+}
+
+fn plan_result_from_stage(
+    ctx: &PlasmDryRunContext<'_>,
+    program: &str,
+    stage: ProgramStageError,
+) -> PlasmPlanRunResult {
+    let pipeline = ctx.host.engine.prompt_pipeline();
+    let cross = ctx.host.sessions.symbol_map_cross_cache();
+    plan_run_from_stage(
+        pipeline,
+        Some(cross),
+        ctx.es.as_ref(),
+        program,
+        ctx.session_ref,
+        stage,
+    )
+}
+
+fn flow_denied_with_dry(
+    ctx: &PlasmDryRunContext<'_>,
+    dry: &crate::plasm_plan_run::DryPlasmPlanEvaluation,
+    comp: plasm_trace::TraceCompWire,
+    message: String,
+) -> PlasmPlanRunResult {
+    ProgramDiagnostic::flow_denied(message).into_plan_run_result_with_dry(
+        ctx.session_ref,
+        ctx.es.domain_revision,
+        dry,
+        comp,
+    )
+}
+
+async fn execute_plasm_tool_dry_run_inner(
+    ctx: PlasmDryRunContext<'_>,
+    program: &str,
+) -> Result<PlasmPlanRunResult, HostFault> {
     let total_started = Instant::now();
     let plan_name = format!("plasm_dag_call_{}", ctx.call_index);
     let pipeline = ctx.host.engine.prompt_pipeline();
     let cross = ctx.host.sessions.symbol_map_cross_cache();
 
     let mut phase = Instant::now();
-    let bundle = crate::compile_plasm_expression(
+    let bundle = match crate::compile_plasm_expression(
         pipeline,
         Some(cross),
         ctx.es.as_ref(),
         &plan_name,
         program,
-    )?;
+    ) {
+        Ok(b) => b,
+        Err(stage) => {
+            record_mcp_plasm_dry_run_phase("compile", phase.elapsed());
+            record_mcp_plasm_dry_run_phase("total", total_started.elapsed());
+            return Ok(plan_result_from_stage(&ctx, program, stage));
+        }
+    };
     record_mcp_plasm_dry_run_phase("compile", phase.elapsed());
 
     phase = Instant::now();
     let program_for_trace = program.to_string();
-    let dry = evaluate_plasm_comp_dry(ctx.es.as_ref(), &bundle)?;
+    let dry = match evaluate_plasm_comp_dry(ctx.es.as_ref(), &bundle) {
+        Ok(d) => d,
+        Err(stage) => {
+            record_mcp_plasm_dry_run_phase("dry_eval", phase.elapsed());
+            record_mcp_plasm_dry_run_phase("total", total_started.elapsed());
+            return Ok(plan_result_from_stage(&ctx, program, stage));
+        }
+    };
     record_mcp_plasm_dry_run_phase("dry_eval", phase.elapsed());
 
     if !dry.probe_preflight_passed() {
-        return Err("plan dry-run preflight failed — fix errors before run_ref".into());
+        record_mcp_plasm_dry_run_phase("total", total_started.elapsed());
+        return Ok(plan_result_from_stage(
+            &ctx,
+            program,
+            ProgramStageError::plan("plan dry-run preflight failed — fix errors before run_ref"),
+        ));
     }
 
     phase = Instant::now();
@@ -82,10 +144,18 @@ pub(crate) async fn execute_plasm_tool_dry_run(
         },
     );
     if let crate::PlanGateDecision::Denied(denial) = &gate_decision {
-        return Err(format!(
+        record_mcp_plasm_dry_run_phase("prepare", phase.elapsed());
+        record_mcp_plasm_dry_run_phase("total", total_started.elapsed());
+        let msg = format!(
             "plan denied by flow policy ({:?}): {} violation(s)",
             denial.verdict,
             denial.violations.len()
+        );
+        return Ok(flow_denied_with_dry(
+            &ctx,
+            &dry,
+            comp_wire.as_ref().clone(),
+            msg,
         ));
     }
     let ux_ctx = crate::plan_ux_reflection::PlanUxBuildContext {
@@ -99,14 +169,9 @@ pub(crate) async fn execute_plasm_tool_dry_run(
         .is_some_and(|comp| inline_ui_payload_fits(comp, &plan_ux_reflection));
     record_mcp_plasm_dry_run_phase("prepare", phase.elapsed());
 
-    let auto_execute = matches!(gate_decision, crate::PlanGateDecision::Proceed(_))
-        && matches!(dry.flow.verdict, crate::plan_flow::FlowVerdict::Clean)
-        && !crate::plan_flow::validated_plan_has_remote_mutation(dry.validated_plan());
+    let auto_execute = dry.fuse_clean_read();
     if auto_execute {
         phase = Instant::now();
-        // Trace evaluate for durable/live hub; do **not** attach Plan Review UI —
-        // fused clean-reads return rows immediately (Run Explorer). Plan Review is
-        // only for dry-run `run_ref` responses below.
         let _plan_refs = CodePlanTraceInput {
             hub: &ctx.host.trace_hub,
             store: Arc::clone(&ctx.host.run_artifacts),
@@ -153,11 +218,12 @@ pub(crate) async fn execute_plasm_tool_dry_run(
                 wait_live: true,
             },
         )
-        .await;
+        .await
+        .map_err(HostFault);
     }
 
     let commit_ref = ctx.es.mint_plan_commit_ref();
-    let commit_record = PlanCommitRecord::from_dry_review(
+    let commit_record = match PlanCommitRecord::from_dry_review(
         commit_ref.clone(),
         compute_plan_commit_id_from_dry(&dry),
         ctx.es.domain_revision,
@@ -165,14 +231,22 @@ pub(crate) async fn execute_plasm_tool_dry_run(
         program_for_trace.clone(),
         compact.verdict,
         std::time::Instant::now() + PLAN_COMMIT_TTL,
-    )
-    .map_err(|denial| {
-        format!(
-            "plan commit blocked by flow policy ({:?}): {} violation(s)",
-            denial.verdict,
-            denial.violations.len()
-        )
-    })?;
+    ) {
+        Ok(r) => r,
+        Err(denial) => {
+            record_mcp_plasm_dry_run_phase("total", total_started.elapsed());
+            return Ok(flow_denied_with_dry(
+                &ctx,
+                &dry,
+                comp_wire.as_ref().clone(),
+                format!(
+                    "plan commit blocked by flow policy ({:?}): {} violation(s)",
+                    denial.verdict,
+                    denial.violations.len()
+                ),
+            ));
+        }
+    };
 
     phase = Instant::now();
     crate::plan_commit_store::register_plan_commit_with_persist(
@@ -183,7 +257,7 @@ pub(crate) async fn execute_plasm_tool_dry_run(
         !inline_fits,
     )
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| HostFault(e.to_string()))?;
     record_mcp_plasm_dry_run_phase("commit_register", phase.elapsed());
 
     phase = Instant::now();
@@ -229,6 +303,8 @@ pub(crate) async fn execute_plasm_tool_dry_run(
             dry_verdict,
             logical_session_ref: ctx.session_ref,
             plan_uri: Some(plan_refs.canonical_plan_uri.as_str()),
+            program_score: None,
+            error_category: None,
         },
         &dry_text,
     )
@@ -244,6 +320,7 @@ pub(crate) async fn execute_plasm_tool_dry_run(
 
     Ok(PlasmPlanRunResult {
         version: dry.version,
+        agent_outcome: Default::default(),
         node_results: dry.node_results,
         graph_summary: dry.graph_summary,
         comp: Some(comp_wire.as_ref().clone()),

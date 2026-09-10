@@ -26,7 +26,10 @@ pub fn args_to_query_predicate(
     cap: &CapabilitySchema,
     cgs: &CGS,
 ) -> Option<Predicate> {
-    let fields = cap.object_params()?;
+    let fields: Vec<_> = cap.query_surface_fields().collect();
+    if fields.is_empty() {
+        return None;
+    }
 
     let mut comparisons = Vec::new();
 
@@ -51,10 +54,10 @@ pub fn args_to_query_predicate(
 mod tests {
     use super::*;
     use clap::Command;
+    use plasm_core::value_domain::ValueDomain;
     use plasm_core::{
         CapabilityKind, CapabilityMapping, CompOp, FieldType, InputFieldSchema, InputFieldWire,
-        InputSchema, InputType, InputValidation, NamedValueSchema, StringSemantics, Value,
-        ValueDomainKey, CGS,
+        NamedValueSchema, Value, ValueDomainKey, CGS,
     };
 
     fn query_test_cgs() -> CGS {
@@ -64,111 +67,105 @@ mod tests {
         };
         add(
             "qa_status_req",
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Select,
-                value_format: None,
-                allowed_values: Some(vec!["available".into(), "pending".into(), "sold".into()]),
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(
+                    &FieldType::Select,
+                    None,
+                    None,
+                    Some(vec!["available".into(), "pending".into(), "sold".into()]).clone(),
+                    None,
+                ),
+                None,
+            ),
         );
         add(
             "qa_status_rej",
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Select,
-                value_format: None,
-                allowed_values: Some(vec!["available".into()]),
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(
+                    &FieldType::Select,
+                    None,
+                    None,
+                    Some(vec!["available".into()]).clone(),
+                    None,
+                ),
+                None,
+            ),
         );
         add(
             "qa_team_id",
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: Some(StringSemantics::Short),
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                None,
+            ),
         );
         add(
             "qa_team_id_multi",
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: Some(StringSemantics::Short),
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                None,
+            ),
         );
         add(
             "qa_archived",
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Boolean,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::Boolean, None, None, None, None),
+                None,
+            ),
         );
         add(
             "qa_status_none",
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Select,
-                value_format: None,
-                allowed_values: Some(vec!["available".into()]),
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(
+                    &FieldType::Select,
+                    None,
+                    None,
+                    Some(vec!["available".into()]).clone(),
+                    None,
+                ),
+                None,
+            ),
         );
         add(
             "qa_region_gen",
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Select,
-                value_format: None,
-                allowed_values: Some(vec!["EMEA".into(), "APAC".into(), "AMER".into()]),
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(
+                    &FieldType::Select,
+                    None,
+                    None,
+                    Some(vec!["EMEA".into(), "APAC".into(), "AMER".into()]).clone(),
+                    None,
+                ),
+                None,
+            ),
         );
         add(
             "qa_revenue",
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Number,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::Number, None, None, None, None),
+                None,
+            ),
         );
         add(
             "qa_region_nf",
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Select,
-                value_format: None,
-                allowed_values: Some(vec!["EMEA".into()]),
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(
+                    &FieldType::Select,
+                    None,
+                    None,
+                    Some(vec!["EMEA".into()]).clone(),
+                    None,
+                ),
+                None,
+            ),
         );
         cgs
     }
@@ -180,18 +177,15 @@ mod tests {
             kind: CapabilityKind::Query,
             domain: "Thing".into(),
             identity_key: None,
-            mapping: CapabilityMapping {
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({}).into(),
-            },
-            input_schema: Some(InputSchema {
-                input_type: InputType::Object {
-                    fields: params,
-                    additional_fields: false,
-                },
-                validation: InputValidation::default(),
-                description: None,
-                examples: vec![],
             }),
+            derived: None,
+            inputs: plasm_core::CapabilityInputs {
+                selection: plasm_core::BackendSelectionSchema(params),
+                ..Default::default()
+            },
             output_schema: None,
             provides: vec![],
             sanitizes: vec![],
@@ -209,10 +203,12 @@ mod tests {
             kind: CapabilityKind::Query,
             domain: "Thing".into(),
             identity_key: None,
-            mapping: CapabilityMapping {
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({}).into(),
-            },
-            input_schema: None,
+            }),
+            derived: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             sanitizes: vec![],
@@ -258,7 +254,6 @@ mod tests {
             required: true,
             description: None,
             default: None,
-            role: None,
             sink_class: None,
             wire_json_path: None,
             wire_array_element_key: None,
@@ -287,7 +282,6 @@ mod tests {
             required: false,
             description: None,
             default: None,
-            role: None,
             sink_class: None,
             wire_json_path: None,
             wire_array_element_key: None,
@@ -310,7 +304,6 @@ mod tests {
             required: true,
             description: None,
             default: None,
-            role: None,
             sink_class: None,
             wire_json_path: None,
             wire_array_element_key: None,
@@ -332,7 +325,6 @@ mod tests {
                 required: false,
                 description: None,
                 default: None,
-                role: None,
                 sink_class: None,
                 wire_json_path: None,
                 wire_array_element_key: None,
@@ -345,7 +337,6 @@ mod tests {
                 required: false,
                 description: None,
                 default: None,
-                role: None,
                 sink_class: None,
                 wire_json_path: None,
                 wire_array_element_key: None,
@@ -365,7 +356,6 @@ mod tests {
             required: false,
             description: None,
             default: None,
-            role: None,
             sink_class: None,
             wire_json_path: None,
             wire_array_element_key: None,
@@ -383,7 +373,6 @@ mod tests {
             required: false,
             description: None,
             default: None,
-            role: None,
             sink_class: None,
             wire_json_path: None,
             wire_array_element_key: None,
@@ -408,7 +397,6 @@ mod tests {
             required: false,
             description: None,
             default: None,
-            role: None,
             sink_class: None,
             wire_json_path: None,
             wire_array_element_key: None,
@@ -433,7 +421,6 @@ mod tests {
             required: false,
             description: None,
             default: None,
-            role: None,
             sink_class: None,
             wire_json_path: None,
             wire_array_element_key: None,

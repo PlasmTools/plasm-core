@@ -8,7 +8,7 @@ use plasm_agent_core::operation::OpAcceptContext;
 use plasm_agent_core::run_artifacts::RunArtifactStore;
 use plasm_agent_core::server_state::{CatalogBootstrap, PlasmHostState};
 use plasm_agent_core::test_support::session_fixtures::ExecuteSessionFixture;
-use plasm_core::discovery::InMemoryCgsRegistry;
+use plasm_core::discovery::CgsRegistry;
 use plasm_core::OperationHandle;
 use plasm_runtime::{CancelSignal, ExecutionConfig, ExecutionEngine, ExecutionMode};
 
@@ -17,7 +17,7 @@ pub fn minimal_host() -> Arc<PlasmHostState> {
     Arc::new(build_plasm_host_state(PlasmHostBootstrap {
         engine,
         mode: ExecutionMode::Live,
-        registry: Arc::new(InMemoryCgsRegistry::from_pairs(Vec::new())),
+        registry: Arc::new(CgsRegistry::from_pairs(Vec::new())),
         catalog_bootstrap: CatalogBootstrap::Fixed,
         incoming_auth: None,
         run_artifacts: Arc::new(RunArtifactStore::memory()),

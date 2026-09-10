@@ -81,8 +81,8 @@ pub fn json_predicate_matches(
     rhs: &serde_json::Value,
 ) -> bool {
     match op {
-        JsonRowPredicateOp::Eq => lhs == rhs,
-        JsonRowPredicateOp::Ne => lhs != rhs,
+        JsonRowPredicateOp::Eq => json_values_eq_loose(lhs, rhs),
+        JsonRowPredicateOp::Ne => !json_values_eq_loose(lhs, rhs),
         JsonRowPredicateOp::Exists => !lhs.is_null(),
         JsonRowPredicateOp::Contains => lhs
             .as_str()
@@ -90,17 +90,76 @@ pub fn json_predicate_matches(
             .is_some_and(|(l, r)| l.contains(r)),
         JsonRowPredicateOp::In => rhs
             .as_array()
-            .is_some_and(|items| items.iter().any(|item| item == lhs)),
-        JsonRowPredicateOp::Lt => json_number(lhs) < json_number(rhs),
-        JsonRowPredicateOp::Lte => json_number(lhs) <= json_number(rhs),
-        JsonRowPredicateOp::Gt => json_number(lhs) > json_number(rhs),
-        JsonRowPredicateOp::Gte => json_number(lhs) >= json_number(rhs),
+            .is_some_and(|items| items.iter().any(|item| json_values_eq_loose(item, lhs))),
+        JsonRowPredicateOp::Lt => compare_ordered(lhs, rhs, |l, r| l < r),
+        JsonRowPredicateOp::Lte => compare_ordered(lhs, rhs, |l, r| l <= r),
+        JsonRowPredicateOp::Gt => compare_ordered(lhs, rhs, |l, r| l > r),
+        JsonRowPredicateOp::Gte => compare_ordered(lhs, rhs, |l, r| l >= r),
     }
 }
 
-fn json_number(v: &serde_json::Value) -> f64 {
-    v.as_f64()
-        .or_else(|| v.as_i64().map(|i| i as f64))
-        .or_else(|| v.as_u64().map(|u| u as f64))
-        .unwrap_or(f64::NAN)
+/// Strict JSON equality plus bool ↔ boolish-string (`true`/`True`/`false`/`False`).
+fn json_values_eq_loose(lhs: &serde_json::Value, rhs: &serde_json::Value) -> bool {
+    if lhs == rhs {
+        return true;
+    }
+    match (json_as_boolish(lhs), json_as_boolish(rhs)) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
+}
+
+fn json_as_boolish(v: &serde_json::Value) -> Option<bool> {
+    match v {
+        serde_json::Value::Bool(b) => Some(*b),
+        serde_json::Value::String(s) if s.eq_ignore_ascii_case("true") => Some(true),
+        serde_json::Value::String(s) if s.eq_ignore_ascii_case("false") => Some(false),
+        _ => None,
+    }
+}
+
+fn compare_ordered(
+    lhs: &serde_json::Value,
+    rhs: &serde_json::Value,
+    op: impl Fn(f64, f64) -> bool,
+) -> bool {
+    plasm_core::compare_unify_json_ordered_numbers(lhs, rhs).is_some_and(|(l, r)| op(l, r))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ordered_compare_unifies_numeric_string_lhs() {
+        assert!(json_predicate_matches(
+            &serde_json::json!("5"),
+            JsonRowPredicateOp::Gt,
+            &serde_json::json!(0),
+        ));
+        assert!(!json_predicate_matches(
+            &serde_json::json!("nope"),
+            JsonRowPredicateOp::Gt,
+            &serde_json::json!(0),
+        ));
+    }
+
+    #[test]
+    fn eq_unifies_bool_and_boolish_strings() {
+        assert!(json_predicate_matches(
+            &serde_json::json!(true),
+            JsonRowPredicateOp::Eq,
+            &serde_json::json!("true"),
+        ));
+        assert!(json_predicate_matches(
+            &serde_json::json!("True"),
+            JsonRowPredicateOp::Eq,
+            &serde_json::json!(true),
+        ));
+        assert!(!json_predicate_matches(
+            &serde_json::json!("True"),
+            JsonRowPredicateOp::Eq,
+            &serde_json::json!(false),
+        ));
+    }
 }

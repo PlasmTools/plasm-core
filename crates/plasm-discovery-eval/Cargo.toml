@@ -3,29 +3,11 @@ name = "plasm-discovery-eval"
 version.workspace = true
 edition.workspace = true
 license = "MIT OR Apache-2.0"
-description = "YAML-backed eval for MCP lexicon discovery (baseline + optional LLM rerank)"
-readme = "README.md"
-
-[[bin]]
-name = "plasm-discovery-eval"
-path = "src/main.rs"
-
-[features]
-default = []
-llm-rerank = [
-    "dep:baml",
-    "dep:plasm-semantic-seed",
-    "plasm-semantic-seed/baml",
-]
+description = "Offline scoring of frozen compiled-discovery receipts"
 
 [dependencies]
 plasm-core = { path = "../plasm-core" }
-plasm-eval-common = { path = "../plasm-eval-common" }
 serde = { workspace = true }
 serde_json = { workspace = true }
-serde_yaml = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
-indexmap = { workspace = true }
-plasm-semantic-seed = { path = "../plasm-semantic-seed", optional = true }
-baml = { workspace = true, optional = true }

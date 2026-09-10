@@ -72,7 +72,7 @@ export async function copyNativeEnginePackages(
   }
 
   const funcPackagePath = path.join(funcDir, "package.json");
-  let funcPackage: { dependencies?: Record<string, string> } = {};
+  let funcPackage: { type?: string; private?: boolean; dependencies?: Record<string, string> } = {};
   try {
     funcPackage = JSON.parse(await readFile(funcPackagePath, "utf8")) as {
       dependencies?: Record<string, string>;

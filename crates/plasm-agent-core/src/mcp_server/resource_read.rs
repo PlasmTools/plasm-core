@@ -14,7 +14,7 @@ use crate::run_artifacts::{
 };
 
 use super::artifact_resolve;
-use super::discover::read_resource_result_for_payload;
+use super::resource_helpers::read_resource_result_for_payload;
 use super::resource_read_trace;
 use super::transport::PlasmExecBinding;
 use super::PlasmMcpHandler;

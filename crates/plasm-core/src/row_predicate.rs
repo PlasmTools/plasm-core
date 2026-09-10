@@ -9,10 +9,11 @@ use crate::schema::{EntityDef, CGS};
 use crate::symbol_tuning::SymbolSession;
 use crate::type_checker::type_check_predicate;
 use crate::{CompOp, Expr, TypeError, TypedComparisonValue};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// One row-local comparison clause.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RowComparison {
     pub field: String,
     pub op: CompOp,
@@ -20,7 +21,7 @@ pub struct RowComparison {
 }
 
 /// Flat AND of comparisons applied to materialized row JSON (v1).
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct RowPredicate(pub Vec<RowComparison>);
 
 /// Type-check context for row filters against a catalog entity schema.
@@ -37,7 +38,10 @@ pub fn parse_row_predicate_list(
     layers: &[CgsLayer<'_>],
     sym_map: Arc<dyn SymbolSession>,
 ) -> Result<RowPredicate, String> {
-    let input = format!("{entity}{{{}}}", body.trim());
+    // Deterministic rewrite of Kusto / wire-shaped temporal RHS before parse
+    // (`now() - 7d` → `7d ago`, etc.). Wire slots still pass `now-7d` unchanged.
+    let rewritten = crate::temporal::rewrite_temporal_aliases_in_predicate_body(body);
+    let input = format!("{entity}{{{}}}", rewritten.trim());
     let parsed = crate::expr_parser::parse_row_filter_body(&input, layers, sym_map)
         .map_err(|e| format!("row filter parse: {e}"))?;
     row_predicate_from_expr(&parsed.expr)

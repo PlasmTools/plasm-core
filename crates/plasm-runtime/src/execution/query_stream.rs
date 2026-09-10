@@ -48,7 +48,7 @@ impl ExecutionEngine {
                 Value::Array(proj.iter().map(|s| Value::String(s.clone())).collect()),
             );
         }
-        let capability_template = parse_capability_template(&capability.mapping.template)?;
+        let capability_template = compiled_capability_template(capability)?;
         if let CapabilityTemplate::View(vt) = &capability_template {
             let view_name = vt.view.clone();
             let query = query.clone();
@@ -178,7 +178,7 @@ impl ExecutionEngine {
                         Some(&cml_env_to_identity_strings(&env)),
                     ),
                 )),
-                CapabilityTemplate::View(_) => Err(RuntimeError::ConfigurationError {
+                CapabilityTemplate::View(_) | CapabilityTemplate::CredentialBind(_) => Err(RuntimeError::ConfigurationError {
                     message: "internal: view query must use composed-read stream".into(),
                 }),
                 CapabilityTemplate::EvmCall(_) | CapabilityTemplate::EvmLogs(_) => {
@@ -218,8 +218,19 @@ impl ExecutionEngine {
             res.stats.merge_telemetry(&consult);
             res.stats.record_rows_materialized(res.count);
             ExecutionCacheConsult::index_query_result(mat, &query, cap_name, &res.entities);
+            let inherit =
+                CapabilityParamEnv::for_entity_get(cgs, query.entity.as_str(), &env);
+            stamp_entities_and_mat(&res.entities, mat, &inherit);
             let (entities, extra_net) = self
-                .hydrate_query_summaries(&query.entity, &res.entities, cgs, mat, mode, hydrate_run)
+                .hydrate_query_summaries(
+                    &query.entity,
+                    &res.entities,
+                    cgs,
+                    mat,
+                    mode,
+                    hydrate_run,
+                    &env,
+                )
                 .await?;
             res.entities = entities;
             res.stats.network_requests += extra_net;
@@ -267,6 +278,20 @@ impl ExecutionEngine {
         const MAX_PAGES: usize = 10_000;
 
         let user = query.pagination.clone().unwrap_or_default();
+        let mut driver = match resume_state {
+            Some(s) => {
+                let contract = pconf
+                    .validate()
+                    .map_err(|e| RuntimeError::ConfigurationError {
+                        message: e.to_string(),
+                    })?;
+                super::pagination_driver::PaginationDriver::from_resume(contract, s)
+            }
+            None => {
+                super::pagination_driver::PaginationDriver::try_from_config(pconf, &user, &consume)?
+            }
+        };
+        let pconf = driver.config().clone();
         let single_http_roundtrip = !consume.fetch_all
             && !matches!(
                 pconf.location,
@@ -286,7 +311,8 @@ impl ExecutionEngine {
                 ),
                 response_bare_array_wrap_key(req),
             ),
-            plasm_compile::CapabilityTemplate::View(_) => {
+            plasm_compile::CapabilityTemplate::View(_)
+            | plasm_compile::CapabilityTemplate::CredentialBind(_) => {
                 return Err(RuntimeError::ConfigurationError {
                     message: "composed views do not support CML pagination".into(),
                 });
@@ -309,10 +335,6 @@ impl ExecutionEngine {
             ),
         };
         let base_compiled = compile_operation_dispatch(&capability_template, &env)?;
-        let mut state = match resume_state {
-            Some(s) => s,
-            None => PaginationLoopState::new(&pconf, &user, &consume)?,
-        };
         let capability = capability.clone();
         let graph_backed = consume.graph_backed_result;
 
@@ -333,7 +355,10 @@ impl ExecutionEngine {
                 }
 
                 let (response, link_next, http_live) =
-                    if let Some(url) = state.next_absolute_url.take() {
+                    if let Some(url) = driver.take_next_absolute_url() {
+                        if matches!(&base_compiled, CompiledOperation::Http(request) if request.credential.is_some()) {
+                            Err(crate::credentials::credential_error("scoped credential pagination requires declared request parameters, not an absolute continuation URL"))?;
+                        }
                         if mode != ExecutionMode::Live {
                             Err(RuntimeError::ConfigurationError {
                                 message: "absolute-URL pagination beyond the first page requires Live execution mode (replay/hybrid do not store Link headers or body next URLs)".to_string(),
@@ -347,15 +372,7 @@ impl ExecutionEngine {
                         (j, link, true)
                     } else {
                         let mut compiled = base_compiled.clone();
-                        state.apply_request_params(
-                            &mut compiled,
-                            &pconf,
-                            &user,
-                            &consume,
-                            single_http_roundtrip,
-                            pages == 0,
-                            accumulated_total,
-                        )?;
+                        driver.apply_request_params(&mut compiled)?;
                         let (j, link, src) = with_dispatch_entity(
                             Some(query.entity.as_str()),
                             self.execute_with_replay_full(&compiled, mode, Some(mat)),
@@ -393,6 +410,19 @@ impl ExecutionEngine {
                         )
                     })
                     .collect();
+                let page_ids: Vec<String> = page_cached
+                    .iter()
+                    .map(|e| e.reference.primary_slot_str())
+                    .collect();
+                let audit = driver.record_page(
+                    pages as u32,
+                    &page_ids,
+                    full_page_len as u32,
+                    page_cached.len() as u32,
+                    None,
+                    None,
+                )?;
+                crate::record_live_page_audit(audit);
                 accumulated_total += page_cached.len();
 
                 if !collector.skips_pre_page_merge() {
@@ -400,6 +430,9 @@ impl ExecutionEngine {
                 }
 
                 let hydrate_run = query.hydrate.unwrap_or(self.config.hydrate);
+                let inherit =
+                    CapabilityParamEnv::for_entity_get(cgs, query.entity.as_str(), &env);
+                stamp_entities_and_mat(&page_cached, mat, &inherit);
                 let (hydrated, extra_net) = self
                     .hydrate_query_summaries(
                         &query.entity,
@@ -408,6 +441,7 @@ impl ExecutionEngine {
                         mat,
                         mode,
                         hydrate_run,
+                        &env,
                     )
                     .await?;
 
@@ -448,11 +482,9 @@ impl ExecutionEngine {
                 };
 
                 if single_http_roundtrip {
-                    let continue_pages = state.advance_after_page(
-                        &pconf,
+                    let continue_pages = driver.advance_after_page(
                         &normalized,
                         full_page_len,
-                        state.last_requested_limit,
                         link_next.as_deref(),
                         last_id.as_deref(),
                     )?;
@@ -463,7 +495,7 @@ impl ExecutionEngine {
                             env: env.clone(),
                             template: capability_template.clone(),
                             config: pconf.clone(),
-                            state: (&state).into(),
+                            state: driver.snapshot(),
                         })
                     } else {
                         None
@@ -551,11 +583,9 @@ impl ExecutionEngine {
                     break;
                 }
 
-                let continue_pages = state.advance_after_page(
-                    &pconf,
+                let continue_pages = driver.advance_after_page(
                     &normalized,
                     full_page_len,
-                    state.last_requested_limit,
                     link_next.as_deref(),
                     last_id.as_deref(),
                 )?;

@@ -62,12 +62,12 @@ Notion requires `Notion-Version` on **every** request. All capabilities in `mapp
 | `user_query` | Cursor (`start_cursor`, `page_size`, `has_more`, `next_cursor`) | `GET /v1/users` |
 | `comment_query` | Same | `GET /v1/comments?block_id=…` |
 | `database_query` | Single POST body page | `page_size` in body; **no** cursor walk in CML yet for this POST |
-| `page_search` / `database_search` | POST `/v1/search` | Hardcoded `filter` to `object: page` vs `object: database`; up to **100** results per request; **no** multi-page cursor in this mapping |
+| `database_query` (without scope) / `database_search` | POST `/v1/search` | Hardcoded `filter` to `object: page` vs `object: database`; up to **100** results per request; **no** multi-page cursor in this mapping |
 
 ### Search vs query
 
-- **`page_search`** / **`database_search`** — global search by title (optional `query`), sort by `last_edited_time`, optional `page_size`.
-- **`database_query`** — filter/sort **inside** one database (scope `database_id`); returns **pages** as rows.
+- **`database_query`** — list pages shared with the integration, optionally filtered by `query` and sorted by `sort_direction`. Supply `database_id` to list rows inside one database; title query and workspace sort apply only when that scope is absent. Both paths accept `page_size`.
+- **`database_search`** — list accessible databases, optionally filtered by title and sorted by `last_edited_time`.
 
 ---
 
@@ -93,13 +93,12 @@ Notion requires `Notion-Version` on **every** request. All capabilities in `mapp
 | `page_get_markdown` | action | Page | Load Enhanced Markdown → `markdown`, `truncated` |
 | `page_update_markdown` | action | Page | `update_content` / `replace_content` bodies per Notion API |
 | `database_get` | get | Database | Schema + metadata |
-| `database_query` | query | Page | Rows for one database (`database_id` scope) |
+| `database_query` | query | Page | Workspace pages, or rows for one database (`database_id` scope) |
 | `user_get` | get | User | By id |
 | `user_query` | query | User | List workspace users (cursor pagination) |
 | `comment_query` | query | Comment | By `block_id` (cursor pagination) |
 | `comment_create` | create | Comment | New thread / reply |
-| `page_search` | search | Page | Global page search |
-| `database_search` | search | Database | Global database search |
+| `database_search` | query | Database | Accessible databases with optional title filter |
 
 ---
 

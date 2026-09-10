@@ -1,0 +1,700 @@
+version: 10
+entry_id: file_system
+auth:
+  scheme: none
+http_backend: http://127.0.0.1:9000
+data_classes:
+  untrusted:
+    description: User-authored file content.
+    severity: untrusted
+entities:
+  AuthSession:
+    id_field: access_token
+    description: Login session for File System (Bearer token).
+    discovery:
+      names:
+      - login
+      - auth
+      - access token
+    fields:
+      access_token:
+        required: true
+        value_ref: nv_access_token
+      token_type:
+        required: false
+        value_ref: nv_str
+  File:
+    id_field: path
+    description: A file stored in the AppWorld file system.
+    discovery:
+      names:
+      - file
+      - files
+      - document
+      - markdown
+      - note file
+      - csv
+      - spreadsheet
+    fields:
+      file_id:
+        required: false
+        value_ref: nv_file_id
+      path:
+        required: true
+        value_ref: nv_path
+      content:
+        required: false
+        value_ref: nv_content
+        data_class: untrusted
+      created_at:
+        required: false
+        value_ref: nv_datetime
+      updated_at:
+        required: false
+        value_ref: nv_datetime
+      compressed_file_path:
+        required: false
+        value_ref: nv_path
+  DirectoryEntry:
+    id_field: path
+    description: A path entry returned when listing a directory.
+    discovery:
+      names:
+      - directory
+      - folder
+      - listing
+      - list directory
+      - list folder
+      - directory listing
+    fields:
+      path:
+        required: true
+        value_ref: nv_path
+      decompressed_directory_path:
+        required: false
+        value_ref: nv_path
+  PathExists:
+    id_field: path
+    description: Whether a file or directory path exists.
+    fields:
+      path:
+        required: true
+        value_ref: nv_path
+      exists:
+        required: true
+        value_ref: nv_bool
+  Profile:
+    id_field: email
+    description: File System user public profile.
+    discovery:
+      names:
+      - profile
+      - user
+    fields:
+      first_name:
+        required: false
+        value_ref: nv_str
+      last_name:
+        required: false
+        value_ref: nv_str
+      email:
+        required: true
+        value_ref: nv_email
+      registered_at:
+        required: false
+        value_ref: nv_datetime
+capabilities:
+  login:
+    description: Login to File System; returns access_token for Bearer auth.
+    kind: action
+    entity: AuthSession
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: username
+          value_ref: nv_login_username
+          required: true
+        - name: password
+          value_ref: nv_password
+          required: true
+    provides:
+    - access_token
+    - token_type
+    output:
+      type: entity
+      entity_type: AuthSession
+  logout:
+    description: Logout and invalidate the access token.
+    kind: action
+    entity: AuthSession
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Ends the File System session for this token.
+  directory_query:
+    description: List paths under a directory.
+    kind: query
+    entity: DirectoryEntry
+    discovery:
+      operation_terms:
+      - list
+      - show
+      - ls
+      - browse
+      target_terms:
+      - directory
+      - folder
+      - files
+      - paths
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: directory_path
+      value_ref: nv_path
+      required: false
+    - name: substring
+      value_ref: nv_str
+      required: false
+    - name: entry_type
+      value_ref: nv_entry_type
+      required: false
+    - name: recursive
+      value_ref: nv_bool
+      required: false
+    provides:
+    - path
+  directory_create:
+    description: Create a directory.
+    kind: action
+    entity: DirectoryEntry
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: directory_path
+          value_ref: nv_path
+          required: true
+        - name: recursive
+          value_ref: nv_bool
+          required: false
+    output:
+      type: side_effect
+      description: Creates a directory at directory_path.
+  directory_delete:
+    description: Delete a directory.
+    kind: action
+    entity: DirectoryEntry
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: directory_path
+          value_ref: nv_path
+          required: true
+    output:
+      type: side_effect
+      description: Deletes the directory at directory_path.
+  directory_exists:
+    description: Check whether a directory path exists.
+    kind: action
+    entity: PathExists
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: directory_path
+          value_ref: nv_path
+          required: true
+    provides:
+    - exists
+    output:
+      type: side_effect
+      description: Reports whether directory_path exists.
+  directory_copy:
+    description: Copy a directory to a destination path.
+    kind: action
+    entity: DirectoryEntry
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: source_directory_path
+          value_ref: nv_path
+          required: true
+        - name: destination_directory_path
+          value_ref: nv_path
+          required: true
+    output:
+      type: side_effect
+      description: Copies a directory tree to the destination.
+  directory_move:
+    description: Move a directory to a destination path.
+    kind: action
+    entity: DirectoryEntry
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: source_directory_path
+          value_ref: nv_path
+          required: true
+        - name: destination_directory_path
+          value_ref: nv_path
+          required: true
+    output:
+      type: side_effect
+      description: Moves a directory to the destination.
+  directory_compress:
+    description: Compress a directory into an archive file.
+    kind: action
+    entity: File
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: directory_path
+          value_ref: nv_path
+          required: true
+        - name: compressed_file_path
+          value_ref: nv_path
+          required: false
+        - name: delete_directory
+          value_ref: nv_bool
+          required: false
+        - name: overwrite
+          value_ref: nv_bool
+          required: false
+    provides:
+    - compressed_file_path
+    output:
+      type: side_effect
+      description: Writes a compressed archive and returns its path.
+  file_get:
+    description: Show file content by path (entity id is the path).
+    kind: get
+    entity: File
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - file_id
+    - path
+    - content
+    - created_at
+    - updated_at
+  file_create:
+    description: Create a file with content.
+    kind: create
+    entity: File
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: file_path
+          value_ref: nv_path
+          required: true
+        - name: content
+          value_ref: nv_content
+          required: true
+        - name: overwrite
+          value_ref: nv_bool
+          required: false
+    provides:
+    - file_id
+    - path
+  file_update:
+    description: Update file content at the entity path (id).
+    kind: update
+    entity: File
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: content
+          value_ref: nv_content
+          required: true
+  file_delete:
+    description: Delete a file by path (entity id).
+    kind: delete
+    entity: File
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+  file_exists:
+    description: Check whether a file path exists.
+    kind: action
+    entity: PathExists
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: file_path
+          value_ref: nv_path
+          required: true
+    provides:
+    - exists
+    output:
+      type: side_effect
+      description: Reports whether file_path exists.
+  file_copy:
+    description: Copy a file to a destination path.
+    kind: action
+    entity: File
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: source_file_path
+          value_ref: nv_path
+          required: true
+        - name: destination_file_path
+          value_ref: nv_path
+          required: true
+    output:
+      type: side_effect
+      description: Copies a file to the destination path.
+  file_move:
+    description: Move a file to a destination path.
+    kind: action
+    entity: File
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: source_file_path
+          value_ref: nv_path
+          required: true
+        - name: destination_file_path
+          value_ref: nv_path
+          required: true
+    output:
+      type: side_effect
+      description: Moves a file to the destination path.
+  file_decompress:
+    description: Decompress an archive file into a directory.
+    kind: action
+    entity: DirectoryEntry
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: compressed_file_path
+          value_ref: nv_path
+          required: true
+        - name: decompressed_directory_path
+          value_ref: nv_path
+          required: false
+        - name: retain_dates
+          value_ref: nv_bool
+          required: false
+        - name: delete_compressed_file
+          value_ref: nv_bool
+          required: false
+    provides:
+    - decompressed_directory_path
+    output:
+      type: side_effect
+      description: Expands the archive and returns the destination directory path.
+  profile_get:
+    description: Show a File System user's public profile (omit email for the default profile).
+    kind: query
+    entity: Profile
+    selection:
+    - name: email
+      value_ref: nv_email
+      required: false
+    provides:
+    - first_name
+    - last_name
+    - email
+    - registered_at
+values:
+  nv_str:
+    type: string
+    description: Free-form string.
+  nv_email:
+    type: email
+    description: Email address of a user or counterparty.
+  nv_login_username:
+    type: email
+    description: Task-principal email from Supervisor — the login username for this service (not a counterparty).
+  nv_password:
+    type: string
+    description: Account-holder password for this service.
+  nv_access_token:
+    type: string
+    description: Bearer access token from login.
+  nv_path:
+    type: string
+    description: Filesystem path — absolute (/home/…) or home-relative with a subpath (~/documents/…). Bare ~ alone is invalid (resolves to /~/).
+  nv_content:
+    type: document
+    description: File body text.
+  nv_file_id:
+    type: integer
+    description: File primary key.
+  nv_entry_type:
+    type: enum
+    description: Directory listing filter — files, directories, or both.
+    enum:
+    - all
+    - files
+    - directories
+  nv_bool:
+    type: boolean
+    description: Boolean flag.
+  nv_datetime:
+    type: rfc3339
+    description: ISO datetime string.
+  prerequisite_principal_email:
+    type: email
+    description: Account holder email.
+  prerequisite_principal_phone:
+    type: e164
+    description: Account holder phone number.
+  prerequisite_account_name:
+    type: string
+    description: Service account identifier.
+prerequisites:
+  contracts:
+    appworld.principal:
+      version: 1
+      inputs: {}
+      outputs:
+        email: prerequisite_principal_email
+        phone: prerequisite_principal_phone
+    appworld.password:
+      version: 1
+      inputs:
+        account: prerequisite_account_name
+      outputs:
+        password: nv_password
+    appworld.session:
+      version: 1
+      inputs: {}
+      outputs:
+        token: nv_access_token
+  providers:
+    session:
+      contract: appworld.session
+      capability: login
+      outputs:
+        token: access_token
+  requirements:
+    login:
+    - id: principal
+      contract: appworld.principal
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - username
+        output: email
+    - id: password
+      contract: appworld.password
+      arguments:
+        account:
+          kind: constant
+          value: file_system
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - password
+        output: password
+    logout:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    directory_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    directory_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    directory_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    directory_exists:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    directory_copy:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    directory_move:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    directory_compress:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    file_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    file_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    file_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    file_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    file_exists:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    file_copy:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    file_move:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    file_decompress:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token

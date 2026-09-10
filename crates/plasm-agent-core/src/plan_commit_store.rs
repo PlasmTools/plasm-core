@@ -297,7 +297,7 @@ pub fn dry_for_committed_plasm_run(
         )
         .map_err(map_dry)
     } else {
-        evaluate_plasm_comp_dry(es, bundle).map_err(map_dry)
+        evaluate_plasm_comp_dry(es, bundle).map_err(|e| map_dry(e.into()))
     }
 }
 
@@ -438,7 +438,6 @@ mod tests {
             None,
             None,
             "hash".into(),
-            None,
             None,
         )
     }

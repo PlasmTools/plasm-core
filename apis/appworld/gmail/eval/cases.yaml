@@ -1,0 +1,119 @@
+- id: login_gmail
+  schema: gmail
+  goal: Login to gmail with username and password to get an access token
+  tags: [action, auth]
+  covers: [invoke]
+  expect:
+    entities_any: [AuthSession]
+
+- id: search_inbox
+  schema: gmail
+  goal: Search my gmail inbox for messages about meeting
+  tags: [search]
+  covers: [search_text, query_filtered, projection]
+  expect:
+    entities_any: [EmailThread]
+
+- id: search_outbox
+  schema: gmail
+  goal: Search my gmail outbox for threads I sent last week
+  tags: [search]
+  covers: [search_text]
+  expect:
+    entities_any: [EmailThread]
+
+- id: search_archived
+  schema: gmail
+  goal: Search my archived gmail threads about taxes
+  tags: [search]
+  covers: [search_text]
+  expect:
+    entities_any: [EmailThread]
+
+- id: get_thread
+  schema: gmail
+  goal: Show one email thread including its messages
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [EmailThread, Email]
+
+- id: send_email
+  schema: gmail
+  goal: Send an email with subject Hello and body Hi there to a friend
+  tags: [action]
+  covers: [invoke]
+  expect:
+    entities_any: [Email]
+
+- id: archive_read_threads
+  schema: gmail
+  goal: Archive read threads from my inbox that are not starred
+  tags: [action, multi_step]
+  covers: [invoke, multi_step]
+  expect:
+    entities_any: [EmailThread]
+
+- id: list_drafts
+  schema: gmail
+  goal: List my draft emails
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Draft]
+
+- id: create_draft
+  schema: gmail
+  goal: Create a draft email with subject Follow up
+  tags: [create]
+  covers: [create]
+  expect:
+    entities_any: [Draft]
+
+- id: update_draft
+  schema: gmail
+  goal: Update a draft subject to Revised follow up
+  tags: [update]
+  covers: [update]
+  expect:
+    entities_any: [Draft]
+
+- id: delete_draft
+  schema: gmail
+  goal: Delete a draft I no longer need
+  tags: [delete]
+  covers: [delete]
+  expect:
+    entities_any: [Draft]
+
+- id: show_profile
+  schema: gmail
+  goal: Show my gmail profile
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Profile]
+
+- id: search_spam
+  schema: gmail
+  goal: Search my gmail spam folder for phishing threads
+  tags: [search]
+  covers: [search_text]
+  expect:
+    entities_any: [EmailThread]
+
+- id: forward_thread
+  schema: gmail
+  goal: Forward an email thread to a colleague
+  tags: [action]
+  covers: [invoke]
+  expect:
+    entities_any: [EmailThread]
+
+- id: download_attachment
+  schema: gmail
+  goal: Download an email attachment to my file system
+  tags: [action]
+  covers: [invoke]
+  expect:
+    entities_any: [Attachment]

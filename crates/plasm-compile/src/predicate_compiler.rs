@@ -89,18 +89,13 @@ fn compile_comparison(
     cap_params: &[InputFieldSchema],
 ) -> Result<BackendFilter, CompileError> {
     let wire = value.to_value();
-    // Entity field: compile to a BackendFilter field comparison.
-    if entity.fields.contains_key(field) {
-        let backend_op = BackendOp::from(op);
-        return Ok(BackendFilter::field(field, backend_op, wire));
-    }
-
-    // Capability parameter: NOT compiled to BackendFilter.
-    // These are HTTP-layer inputs (role: search, sort, response_control, etc.)
-    // that go directly into the CML env via extract_predicate_vars.
-    // Return BackendFilter::True (no-op) so the overall filter stays correct.
+    // Declared query inputs belong to the source request even when a returned row
+    // has the same field name. Row predicates call this with no capability inputs.
     if cap_params.iter().any(|p| p.name == field) {
         return Ok(BackendFilter::True);
+    }
+    if entity.fields.contains_key(field) {
+        return Ok(BackendFilter::field(field, BackendOp::from(op), wire));
     }
 
     Err(CompileError::CompilationFailed {
@@ -179,7 +174,7 @@ pub fn compile_query(
             resolve_query_capability(query, cgs).map_err(|e| CompileError::CompilationFailed {
                 message: e.to_string(),
             })?;
-        cap.object_params().map(|f| f.to_vec()).unwrap_or_default()
+        cap.query_surface_fields().cloned().collect()
     };
 
     if let Some(predicate) = &query.predicate {
@@ -193,9 +188,10 @@ pub fn compile_query(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use plasm_core::value_domain::ValueDomain;
     use plasm_core::{
         Cardinality, FieldSchema, FieldType, FieldValueKind, NamedValueSchema, Predicate,
-        QueryExpr, RelationSchema, ResourceSchema, StringSemantics, Value, ValueDomainKey,
+        QueryExpr, RelationSchema, ResourceSchema, Value, ValueDomainKey,
     };
 
     fn registry_field(wire_name: &str, values_key: &str, required: bool) -> FieldSchema {
@@ -221,91 +217,76 @@ mod tests {
 
         cgs.values.insert(
             "nv_pred_account_id".to_string(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: Some(StringSemantics::Short),
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                None,
+            ),
         );
         cgs.values.insert(
             "nv_pred_account_name".to_string(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: Some(StringSemantics::Short),
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                None,
+            ),
         );
         cgs.values.insert(
             "nv_pred_account_revenue".to_string(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Number,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::Number, None, None, None, None),
+                None,
+            ),
         );
         cgs.values.insert(
             "nv_pred_account_region".to_string(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Select,
-                value_format: None,
-                allowed_values: Some(vec![
-                    "EMEA".to_string(),
-                    "APAC".to_string(),
-                    "AMER".to_string(),
-                ]),
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(
+                    &FieldType::Select,
+                    None,
+                    None,
+                    Some(vec![
+                        "EMEA".to_string(),
+                        "APAC".to_string(),
+                        "AMER".to_string(),
+                    ])
+                    .clone(),
+                    None,
+                ),
+                None,
+            ),
         );
         cgs.values.insert(
             "nv_pred_contact_id".to_string(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: Some(StringSemantics::Short),
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                None,
+            ),
         );
         cgs.values.insert(
             "nv_pred_contact_name".to_string(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: Some(StringSemantics::Short),
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                None,
+            ),
         );
         cgs.values.insert(
             "nv_pred_contact_role".to_string(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Select,
-                value_format: None,
-                allowed_values: Some(vec!["Manager".to_string(), "Employee".to_string()]),
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(
+                    &FieldType::Select,
+                    None,
+                    None,
+                    Some(vec!["Manager".to_string(), "Employee".to_string()]).clone(),
+                    None,
+                ),
+                None,
+            ),
         );
 
         // Account entity
@@ -335,6 +316,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         };
 
@@ -357,6 +340,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         };
 
@@ -429,6 +414,36 @@ mod tests {
         } else {
             panic!("Expected Relation filter");
         }
+    }
+
+    #[test]
+    fn required_scope_input_is_transport_data_not_a_row_filter() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/scoped_query_matrix");
+        let cgs = plasm_core::loader::load_schema_dir(&path).unwrap();
+        crate::validate_cgs_capability_templates(&cgs).unwrap();
+        for entity in ["Child", "ChildWithParent"] {
+            let mut parsed = plasm_core::expr_parser::parse(
+                &format!("{entity}{{parent_id=Parent(\"parent-one\")}}"),
+                &cgs,
+            )
+            .unwrap();
+            plasm_core::normalize_expr_query_capabilities(&mut parsed.expr, &cgs).unwrap();
+            let plasm_core::Expr::Query(query) = parsed.expr else {
+                panic!("expected a scoped query");
+            };
+            assert!(matches!(
+                compile_query(&query, &cgs).unwrap(),
+                Some(BackendFilter::True)
+            ));
+        }
+        let row_filter = compile_predicate(
+            &Predicate::eq("parent_id", "parent-one"),
+            cgs.get_entity("ChildWithParent").unwrap(),
+            &cgs,
+        )
+        .unwrap();
+        assert!(matches!(row_filter, BackendFilter::Field { .. }));
     }
 
     #[test]

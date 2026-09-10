@@ -11,9 +11,16 @@ ability_query:
     value: ''
   pagination: &pag_default
     params:
-      offset: {counter: 0}
-      limit: {fixed: 20}
-    stop_when: {field: next, absent: true}
+      offset:
+        counter: 0
+        step: 20
+      limit:
+        fixed: 20
+        role: page_size
+    stop_when:
+      field: next
+      absent: true
+    strategy: offset
 ability_get:
   method: GET
   path:

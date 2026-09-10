@@ -20,8 +20,10 @@ pub(in crate::plasm_dag) fn resolve_surface_dag_node<'a>(
             }
             DagNodeSource::Compute { source, .. } => node_id = source.clone(),
             DagNodeSource::Derive { .. }
+            | DagNodeSource::ScalarExtract { .. }
             | DagNodeSource::Data(_)
-            | DagNodeSource::ForEach { .. } => return None,
+            | DagNodeSource::ForEach { .. }
+            | DagNodeSource::IterateUntil { .. } => return None,
         }
     }
     None
@@ -109,8 +111,10 @@ pub(in crate::plasm_dag) fn resolve_qualified_entity_for_dag_source(
             }
             DagNodeSource::Compute { source, .. } => node_id = source.clone(),
             DagNodeSource::Derive { .. }
+            | DagNodeSource::ScalarExtract { .. }
             | DagNodeSource::Data(_)
-            | DagNodeSource::ForEach { .. } => return None,
+            | DagNodeSource::ForEach { .. }
+            | DagNodeSource::IterateUntil { .. } => return None,
         }
     }
     None

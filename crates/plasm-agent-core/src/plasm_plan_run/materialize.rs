@@ -83,8 +83,10 @@ pub(crate) async fn materialize_synthetic_node(
         (full_result.entities.clone(), false, None)
     };
     Ok(MaterializedNode {
-        entry_id: entry_id.to_string(),
-        entity: entity.clone(),
+        qualified_entity: crate::plasm_plan::QualifiedEntityKey {
+            entry_id: entry_id.to_string(),
+            entity: entity.clone(),
+        },
         display: synthetic_node_display(node),
         projection: synthetic_projection(node),
         row_source: inline_row_source_owned(rows),
@@ -137,8 +139,8 @@ pub(crate) async fn materialize_validated_relation_traversal(
     let read_cap = crate::plan_read_bounds::effective_relation_read_cap(relation);
     let source_cgs = crate::catalog_ownership::resolve_cgs_for_entry_entity(
         es,
-        source_mat.entry_id.as_str(),
-        source_mat.entity.as_str(),
+        source_mat.qualified_entity.entry_id.as_str(),
+        source_mat.qualified_entity.entity.as_str(),
     )
     .map_err(|e| format!("relation source catalog: {e}"))?;
     let source_rows =
@@ -178,7 +180,7 @@ pub(crate) async fn materialize_validated_relation_traversal(
             format!(
                 "relation `{}` could not resolve parent rows on `{}` — ensure the source binding returned at least one row before navigating `.{}`",
                 relation.relation.relation,
-                source_mat.entity,
+                source_mat.qualified_entity.entity,
                 relation.relation.relation
             )
         }),
@@ -309,7 +311,9 @@ pub(crate) async fn materialize_validated_relation_traversal(
                 || {
                     format!(
                         "relation `{}` on `{}` requires view-produced parent rows (view_embed); execute the view root before navigating `.{}`",
-                        relation.relation.relation, source_mat.entity, relation.relation.relation
+                        relation.relation.relation,
+                        source_mat.qualified_entity.entity,
+                        relation.relation.relation
                     )
                 },
             )
@@ -355,7 +359,7 @@ pub(crate) async fn materialize_validated_relation_traversal(
             } else {
                 Err(format!(
                     "relation `{}` on `{}` has no materialize strategy (Unavailable)",
-                    relation.relation.relation, source_mat.entity
+                    relation.relation.relation, source_mat.qualified_entity.entity
                 ))
             }
         }
@@ -375,8 +379,8 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
 ) -> Result<Option<MaterializedNode>, String> {
     let cgs = crate::catalog_ownership::resolve_cgs_for_entry_entity(
         es,
-        source_mat.entry_id.as_str(),
-        source_mat.entity.as_str(),
+        source_mat.qualified_entity.entry_id.as_str(),
+        source_mat.qualified_entity.entity.as_str(),
     )
     .map_err(|e| {
         format!(
@@ -385,15 +389,20 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
         )
     })?;
     let ent = cgs
-        .get_entity(source_mat.entity.as_str())
-        .ok_or_else(|| format!("unknown source entity `{}`", source_mat.entity))?;
+        .get_entity(source_mat.qualified_entity.entity.as_str())
+        .ok_or_else(|| {
+            format!(
+                "unknown source entity `{}`",
+                source_mat.qualified_entity.entity
+            )
+        })?;
     if !ent
         .relations
         .contains_key(relation.relation.relation.as_str())
     {
         return Err(format!(
             "entity `{}` has no relation `{}`",
-            source_mat.entity, relation.relation.relation
+            source_mat.qualified_entity.entity, relation.relation.relation
         ));
     }
     let path = match &relation.relation.materialize {
@@ -404,7 +413,7 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
     if path.is_empty() {
         return Err(format!(
             "relation `{}` on `{}` declares from_parent_get with an empty path",
-            relation.relation.relation, source_mat.entity
+            relation.relation.relation, source_mat.qualified_entity.entity
         ));
     }
     if let Some(mat) = try_materialize_from_cached_relation_refs(
@@ -424,7 +433,7 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
     let wire_fallback = super::compute_eval::parent_get_wire_rows(
         source_rows,
         relation,
-        source_mat.entity.as_str(),
+        source_mat.qualified_entity.entity.as_str(),
         cgs,
         target,
     )
@@ -485,16 +494,6 @@ pub(crate) async fn materialized_rows(
         .await
 }
 
-pub(crate) fn compute_needs_full_materialize(op: &ComputeOp) -> bool {
-    matches!(
-        op,
-        ComputeOp::Sort { .. }
-            | ComputeOp::GroupBy { .. }
-            | ComputeOp::Aggregate { .. }
-            | ComputeOp::DedupeBy { .. }
-    )
-}
-
 #[must_use]
 pub(crate) fn execution_result_from_fanout_fold(
     fold: super::plan_fanout_parallel::PlanLineExecutionFold,
@@ -544,8 +543,7 @@ fn relation_materialized_node_from_result(
         .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
         .collect();
     MaterializedNode {
-        entry_id: relation.relation.target.entry_id.clone(),
-        entity: relation.relation.target.entity.clone(),
+        qualified_entity: relation.relation.target.clone(),
         display,
         projection: relation.relation.ir.projection.clone(),
         row_source: inline_row_source_owned(rows),
@@ -748,8 +746,7 @@ pub(crate) async fn archive_materialize_for_each_fanout(
         .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
         .collect();
     Ok(MaterializedNode {
-        entry_id: for_each.effect_template.qualified_entity.entry_id.clone(),
-        entity: for_each.effect_template.qualified_entity.entity.clone(),
+        qualified_entity: for_each.effect_template.qualified_entity.clone(),
         row_source: inline_row_source_owned(rows),
         row_identities: row_identities_from_entities(
             scoped_es,

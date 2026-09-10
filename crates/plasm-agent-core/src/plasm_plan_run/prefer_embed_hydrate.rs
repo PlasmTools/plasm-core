@@ -102,10 +102,7 @@ pub(crate) fn push_prefer_hydrate_get_jobs(
         get_expr.catalog_entry_id = plasm_core::CatalogEntryStamp::some(
             plasm_core::RegistryEntryId::from(target.entry_id.as_str()),
         );
-        let parsed = ParsedExpr {
-            expr: Expr::Get(get_expr),
-            projection: None,
-        };
+        let parsed = ParsedExpr::from_expr(Expr::Get(get_expr));
         let expr_label = format!("{base_display} [row {row_index} hydrate {sub_index}]");
         push_verified_row_job(
             scoped_jobs,

@@ -32,7 +32,6 @@ use crate::trace_sink_emit::TraceIngestClient;
 use auth_framework::storage::AuthStorage;
 use auth_framework::AuthFramework;
 use dashmap::DashMap;
-use plasm_discovery::CatalogIndexCache;
 use plasm_runtime::{EnvSecretProvider, ExecutionEngine, ExecutionMode, SecretProvider};
 use std::ops::Deref;
 use std::sync::Arc;
@@ -50,6 +49,8 @@ pub struct PlasmOssHostState {
     pub mode: ExecutionMode,
     /// Swappable catalog snapshot, bootstrap mode, and reload generation — see [`CatalogRuntime`](crate::catalog_runtime::CatalogRuntime).
     pub catalog: CatalogRuntime,
+    /// Request-local, validated routing context; never mutated on the shared host.
+    pub(crate) discovery_route: Option<Arc<crate::discovery_service::RoutingReceipt>>,
     pub sessions: Arc<ExecuteSessionStore>,
     /// Logical session minting for MCP `plasm_context` (Redis-backed when transport store is wired).
     pub logical_sessions: Arc<LogicalSessionRegistry>,
@@ -90,8 +91,6 @@ pub struct PlasmOssHostState {
     pub oauth_link_catalog: Option<Arc<OauthLinkCatalog>>,
     /// Hosted KV + catalog outbound resolver for `hosted_kv` in CGS.
     pub outbound_secret_provider: Option<Arc<dyn SecretProvider>>,
-    /// Memoized [`CatalogIndex`](plasm_discovery::index::CatalogIndex) per `(entry_id, catalog_cgs_hash)`.
-    pub discovery_index_cache: Arc<CatalogIndexCache>,
     /// Tenant workflow manifests for MCP Apps (`GET /v1/workflows/:id/view-model`).
     pub workflows: Arc<crate::workflow_registry::WorkflowRegistry>,
     /// Shared Redis backend for MCP transport + execute session externalization (when configured).
@@ -105,8 +104,6 @@ pub struct PlasmOssHostState {
     pub session_coordination: Arc<SessionCoordination>,
     /// HTTP `User-Agent` per MCP transport session id (`mcp-session-id` header).
     pub mcp_http_user_agents: Arc<DashMap<String, String>>,
-    /// Semantic auto-seed clarify receipts (`routing_ref` → alternatives) for deterministic continuation.
-    pub pending_clarify: Arc<crate::pending_clarify::PendingClarifyRegistry>,
 }
 
 /// Hosted / control-plane state: same process as [`PlasmOssHostState`], but injected after OSS bootstrap.
@@ -149,6 +146,52 @@ enum DurableSessionWriteKind {
 }
 
 impl PlasmHostState {
+    pub(crate) async fn with_discovery_route(
+        &self,
+        receipt: crate::discovery_service::RoutingReceipt,
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            receipt.closure.is_some(),
+            "routing requires a declared capability closure to create an execution view"
+        );
+        let mut view = self.clone();
+        view.oss.catalog = self
+            .catalog
+            .pinned_view(&receipt.retrieval.generation)
+            .await?;
+        view.oss.discovery_route = Some(Arc::new(receipt));
+        Ok(view)
+    }
+
+    /// Exact selected IDs for routed requests; explicit execution names its entities directly.
+    pub(crate) fn capability_surface_for_wave(
+        &self,
+        cgs: &plasm_core::CGS,
+        entry: &str,
+        entities: &[String],
+    ) -> Result<plasm_core::symbol_tuning::ExposureSurfaceDelta, String> {
+        let capabilities = match self
+            .discovery_route
+            .as_ref()
+            .and_then(|r| r.closure.as_ref())
+        {
+            Some(closure) => closure
+                .business
+                .iter()
+                .chain(&closure.prerequisites)
+                .filter(|c| c.catalog == entry)
+                .map(|c| c.capability.clone())
+                .collect::<Vec<_>>(),
+            None => cgs
+                .capabilities
+                .values()
+                .filter(|c| entities.iter().any(|e| e == c.domain.as_str()))
+                .map(|c| c.name.to_string())
+                .collect(),
+        };
+        plasm_core::capability_exposure::selected_capability_surface(cgs, entry, &capabilities)
+    }
+
     // --- SaaS / control-plane (None when `self.saas` is unset) ---
 
     pub fn mcp_config_repository(&self) -> Option<&Arc<McpConfigRepository>> {
@@ -189,10 +232,6 @@ impl PlasmHostState {
     /// Hosted KV + catalog outbound resolver; absent when not wired.
     pub fn outbound_secret_provider(&self) -> Option<&Arc<dyn SecretProvider>> {
         self.oss.outbound_secret_provider.as_ref()
-    }
-
-    pub fn discovery_index_cache(&self) -> &CatalogIndexCache {
-        &self.oss.discovery_index_cache
     }
 
     pub fn workflows(&self) -> &crate::workflow_registry::WorkflowRegistry {
@@ -250,26 +289,50 @@ impl PlasmHostState {
             .await
     }
 
-    /// Local execute row, then Redis-backed rehydrate when configured.
+    /// Best-effort lookup for internal optional session consumers. HTTP uses the fallible lookup.
     pub async fn get_execute_session(
         &self,
         prompt_hash: &str,
         session_id: &str,
     ) -> Option<Arc<ExecuteSession>> {
+        match self.try_get_execute_session(prompt_hash, session_id).await {
+            Ok(session) => session,
+            Err(error) => {
+                tracing::warn!(%error, "execute session lookup unavailable");
+                None
+            }
+        }
+    }
+
+    /// Local execute row, then Redis-backed rehydrate when configured.
+    pub async fn try_get_execute_session(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+    ) -> anyhow::Result<Option<Arc<ExecuteSession>>> {
         if let Some(sess) = self.sessions.get_by_strs(prompt_hash, session_id).await {
             let reg = self.catalog.snapshot();
             let pins =
                 crate::execute_session_rehydrate::RegistryCatalogPins::from_execute_session(&sess);
-            if crate::execute_session_rehydrate::registry_pins_match_live(reg.as_ref(), &pins)
-                .is_ok()
-            {
+            let valid = if let Some(pin) = &sess.discovery_pin {
+                self.catalog
+                    .discovery_store()
+                    .await?
+                    .refresh_session_pin(pin)
+                    .await?;
+                true
+            } else {
+                crate::execute_session_rehydrate::registry_pins_match_live(reg.as_ref(), &pins)
+                    .is_ok()
+            };
+            if valid {
                 use crate::mcp_transport_store::execute_session_registry::MergeLiveOutcome;
                 match self
                     .execute_session_registry
                     .merge_into_live_session(&sess, prompt_hash, session_id)
                     .await
                 {
-                    MergeLiveOutcome::Merged => return Some(sess),
+                    MergeLiveOutcome::Merged => return Ok(Some(sess)),
                     MergeLiveOutcome::NeedsRehydrate => {
                         tracing::info!(
                             target: "plasm_agent::execute_session",
@@ -289,9 +352,12 @@ impl PlasmHostState {
                     session_id = %session_id,
                     "in-memory execute session stale (catalog rotation); discarding"
                 );
-                self.discard_persisted_execute_row(prompt_hash, session_id)
-                    .await;
-                return None;
+                // A database outage must not destroy pinned session state.
+                if sess.discovery_pin.is_none() {
+                    self.discard_persisted_execute_row(prompt_hash, session_id)
+                        .await;
+                }
+                return Ok(None);
             }
         }
         self.rehydrate_execute_session_from_durable(prompt_hash, session_id)
@@ -302,12 +368,24 @@ impl PlasmHostState {
         &self,
         prompt_hash: &str,
         session_id: &str,
-    ) -> Option<Arc<ExecuteSession>> {
-        let desc = self
+    ) -> anyhow::Result<Option<Arc<ExecuteSession>>> {
+        let Some(desc) = self
             .execute_session_registry
             .load(prompt_hash, session_id)
-            .await?;
-        match crate::execute_session_rehydrate::rehydrate_execute_session(self, &desc).await {
+            .await
+        else {
+            return Ok(None);
+        };
+        let mut view = self.clone();
+        if let Some(pin) = &desc.discovery_pin {
+            self.catalog
+                .discovery_store()
+                .await?
+                .refresh_session_pin(pin)
+                .await?;
+            view.oss.catalog = self.catalog.pinned_view(&pin.generation).await?;
+        }
+        match crate::execute_session_rehydrate::rehydrate_execute_session(&view, &desc).await {
             Ok(session) => {
                 crate::metrics::record_execute_rehydrate("ok", "");
                 session.bind_operation_wire(session_id);
@@ -320,7 +398,7 @@ impl PlasmHostState {
                         session,
                     )
                     .await;
-                self.sessions.get_by_strs(prompt_hash, session_id).await
+                Ok(self.sessions.get_by_strs(prompt_hash, session_id).await)
             }
             Err(err) => {
                 crate::metrics::record_execute_rehydrate("error", rehydrate_error_kind(&err));
@@ -337,7 +415,7 @@ impl PlasmHostState {
                     error = %err,
                     "execute session rehydrate failed"
                 );
-                None
+                Ok(None)
             }
         }
     }
@@ -492,24 +570,6 @@ impl PlasmHostState {
         .await?;
         Ok(())
     }
-
-    /// Persist share-link / proof precondition tokens after session credential mutation.
-    pub async fn persist_session_bind_credentials(
-        &self,
-        session: &ExecuteSession,
-        session_id: &str,
-    ) -> Result<
-        crate::mcp_transport_store::execute_session_registry::ExecuteSessionPersistOutcome,
-        crate::mcp_transport_store::execute_session_registry::ExecuteSessionPersistError,
-    > {
-        let reuse_key = self
-            .sessions
-            .reuse_key_for_execute_pair(session.prompt_hash.as_str(), session_id)
-            .await;
-        self.execute_session_registry
-            .patch_bind_credentials(self, session, session_id, reuse_key.as_ref())
-            .await
-    }
 }
 
 /// Errors from [`PlasmHostState::build_tool_model_for_entry`].
@@ -554,6 +614,7 @@ fn rehydrate_error_kind(err: &crate::execute_session_rehydrate::RehydrateError) 
         RehydrateError::SymbolLedgerNotFound => "symbol_ledger_not_found",
         RehydrateError::SymbolSpaceResetRequired => "symbol_space_reset_required",
         RehydrateError::SymbolLedgerDecode(_) => "symbol_ledger_decode",
+        RehydrateError::CatalogRecipes(_) => "catalog_recipes",
         RehydrateError::Discovery(_) => "discovery",
     }
 }
@@ -563,7 +624,7 @@ mod tests {
     use std::path::Path;
     use std::sync::Arc;
 
-    use plasm_core::discovery::{CgsCatalog, InMemoryCgsRegistry, MutatorAdmit};
+    use plasm_core::discovery::{CgsCatalog, CgsRegistry};
     use plasm_core::loader::load_schema_dir;
     use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 
@@ -575,7 +636,7 @@ mod tests {
     use crate::run_artifacts::RunArtifactStore;
     use plasm_core::AuthScheme;
 
-    fn test_host_state_from_registry(reg: InMemoryCgsRegistry) -> PlasmHostState {
+    fn test_host_state_from_registry(reg: CgsRegistry) -> PlasmHostState {
         let engine = ExecutionEngine::new(ExecutionConfig::default()).expect("engine");
         build_plasm_host_state(PlasmHostBootstrap {
             engine,
@@ -593,7 +654,7 @@ mod tests {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
         let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
-        let reg = InMemoryCgsRegistry::from_pairs(vec![(
+        let reg = CgsRegistry::from_pairs(vec![(
             "overshow".into(),
             "Overshow".into(),
             vec!["demo".into()],
@@ -603,7 +664,7 @@ mod tests {
     }
 
     fn test_host_state_with_shared(
-        registry: Arc<InMemoryCgsRegistry>,
+        registry: Arc<CgsRegistry>,
         execute_session_registry: ExecuteSessionRegistry,
     ) -> PlasmHostState {
         let engine = ExecutionEngine::new(ExecutionConfig::default()).expect("engine");
@@ -621,12 +682,12 @@ mod tests {
         st
     }
 
-    fn fibery_shaped_registry() -> InMemoryCgsRegistry {
+    fn fibery_shaped_registry() -> CgsRegistry {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
         let mut cgs = load_schema_dir(&dir).expect("overshow_tools");
         cgs.http_backend = "https://YOUR_ACCOUNT.fibery.io".to_string();
-        InMemoryCgsRegistry::from_pairs(vec![(
+        CgsRegistry::from_pairs(vec![(
             "fibery".into(),
             "Fibery".into(),
             vec!["Profile".into()],
@@ -634,18 +695,148 @@ mod tests {
         )])
     }
 
-    fn rotated_overshow_registry() -> InMemoryCgsRegistry {
+    fn rotated_overshow_registry() -> CgsRegistry {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
         let mut cgs = load_schema_dir(&dir).expect("overshow_tools");
         cgs.http_backend.push_str("/catalog-reload-test");
         let cgs = cgs.fresh_catalog_digest();
-        InMemoryCgsRegistry::from_pairs(vec![(
+        CgsRegistry::from_pairs(vec![(
             "overshow".into(),
             "Overshow".into(),
             vec!["demo".into()],
             Arc::new(cgs),
         )])
+    }
+
+    #[tokio::test]
+    async fn routed_pin_failure_is_operational_and_preserves_hot_session() {
+        let st = test_host_state();
+        let created = execute_session_create_response_inner(
+            &st,
+            None,
+            CreateExecuteSessionBody {
+                entry_id: "overshow".into(),
+                entities: vec!["Profile".into()],
+                principal: None,
+                logical_session_id: None,
+                context_intent: None,
+            },
+            true,
+            None,
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+        let session = st
+            .sessions
+            .get_by_strs(&created.prompt_hash, &created.session)
+            .await
+            .unwrap();
+        let mut pinned = session.as_ref().clone();
+        pinned.discovery_pin = Some(crate::discovery_store::DiscoverySessionPin {
+            generation: "retained".into(),
+            pin_id: "pin".into(),
+            authorization: crate::discovery_store::DiscoveryAuthorization::catalogs(
+                ["overshow".into()].into(),
+            ),
+        });
+        st.sessions
+            .replace_session(
+                &created.prompt_hash.parse().unwrap(),
+                &created.session.parse().unwrap(),
+                pinned,
+            )
+            .await;
+        let error = st
+            .try_get_execute_session(&created.prompt_hash, &created.session)
+            .await
+            .err()
+            .expect("unconfigured store must fail");
+        assert_eq!(
+            crate::http_execute::session_lookup_unavailable(error).status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert!(st
+            .sessions
+            .get_by_strs(&created.prompt_hash, &created.session)
+            .await
+            .is_some());
+        use tower::util::ServiceExt;
+        let router = crate::http_execute::execute_routes()
+            .layer(axum::Extension(st.clone()))
+            .layer(axum::Extension(crate::incoming_auth::IncomingPrincipal(
+                None,
+            )));
+        for suffix in ["", "/status", "/symbols", "/runs"] {
+            let response = router
+                .clone()
+                .oneshot(
+                    axum::http::Request::builder()
+                        .uri(format!(
+                            "/execute/{}/{}{suffix}",
+                            created.prompt_hash, created.session
+                        ))
+                        .body(axum::body::Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                axum::http::StatusCode::SERVICE_UNAVAILABLE
+            );
+        }
+        for (suffix, content_type, body) in [
+            ("/context", "application/json", r#"{"intent":"read"}"#),
+            ("", "text/plain", "e1{}"),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    axum::http::Request::builder()
+                        .method("POST")
+                        .uri(format!(
+                            "/execute/{}/{}{suffix}",
+                            created.prompt_hash, created.session
+                        ))
+                        .header("content-type", content_type)
+                        .body(axum::body::Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                axum::http::StatusCode::SERVICE_UNAVAILABLE
+            );
+        }
+        let applied = crate::http_execute::apply_capability_seeds(
+            &st,
+            None,
+            Some((&created.prompt_hash, &created.session)),
+            vec![crate::http_execute::CapabilitySeed {
+                entry_id: "overshow".into(),
+                entity: "Profile".into(),
+            }],
+            None,
+            None,
+            None,
+            "read",
+        )
+        .await;
+        assert!(
+            applied.is_err(),
+            "late binding lookup failure must not reopen execution"
+        );
+        assert!(st
+            .try_get_execute_session("absent", "absent")
+            .await
+            .unwrap()
+            .is_none());
     }
 
     #[tokio::test]
@@ -660,8 +851,6 @@ mod tests {
                 principal: None,
                 logical_session_id: None,
                 context_intent: None,
-                ranked_capabilities: None,
-                mutator_admit: MutatorAdmit::IntentOnly,
             },
             true,
             None,
@@ -706,8 +895,6 @@ mod tests {
                 principal: None,
                 logical_session_id: None,
                 context_intent: None,
-                ranked_capabilities: None,
-                mutator_admit: MutatorAdmit::IntentOnly,
             },
             false,
             Some(&hosted),
@@ -775,8 +962,6 @@ mod tests {
                 principal: None,
                 logical_session_id: None,
                 context_intent: None,
-                ranked_capabilities: None,
-                mutator_admit: MutatorAdmit::IntentOnly,
             },
             false,
             None,
@@ -828,8 +1013,6 @@ mod tests {
                 principal: None,
                 logical_session_id: None,
                 context_intent: None,
-                ranked_capabilities: None,
-                mutator_admit: MutatorAdmit::IntentOnly,
             },
             false,
             Some(&hosted),
@@ -854,7 +1037,7 @@ mod tests {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
         let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
-        let registry = Arc::new(InMemoryCgsRegistry::from_pairs(vec![(
+        let registry = Arc::new(CgsRegistry::from_pairs(vec![(
             "overshow".into(),
             "Overshow".into(),
             vec!["demo".into()],
@@ -874,8 +1057,6 @@ mod tests {
                 principal: None,
                 logical_session_id: None,
                 context_intent: None,
-                ranked_capabilities: None,
-                mutator_admit: MutatorAdmit::IntentOnly,
             },
             false,
             Some(&hosted),

@@ -217,7 +217,7 @@ cargo run -p plasm-repl -- --schema apis/slack --backend https://slack.com/api
 Illustrative programs (slot numbers shift with catalog version):
 
 ```text
-# List public channels (wire filters from teaching TSV)
+# List public channels (wire filters from language card)
 e1{types="public_channel"}
 
 # Get a channel, then fan out messages via relation

@@ -1,0 +1,58 @@
+version: 1
+auth:
+  scheme: none
+http_backend: http://127.0.0.1
+entities:
+  Item:
+    id_field: id
+    description: Deterministic paginated list entity
+    primary_query: item_query
+    fields:
+      id:
+        required: true
+        value_ref: nv_item_id
+      n:
+        required: true
+        value_ref: nv_item_n
+  ItemOffset:
+    id_field: id
+    description: Offset-strategy pagination entity
+    primary_query: item_offset_query
+    fields:
+      id:
+        required: true
+        value_ref: nv_item_id
+      n:
+        required: true
+        value_ref: nv_item_n
+  ItemCursor:
+    id_field: id
+    description: Cursor-strategy pagination entity
+    primary_query: item_cursor_query
+    fields:
+      id:
+        required: true
+        value_ref: nv_item_id
+      n:
+        required: true
+        value_ref: nv_item_n
+capabilities:
+  item_query:
+    description: List items with page_index + page_limit (AppWorld-shaped)
+    kind: query
+    entity: Item
+  item_offset_query:
+    description: List items with offset + limit
+    kind: query
+    entity: ItemOffset
+  item_cursor_query:
+    description: List items with cursor continuation
+    kind: query
+    entity: ItemCursor
+values:
+  nv_item_id:
+    type: string
+    description: Stable identity
+  nv_item_n:
+    type: integer
+    description: Numeric payload for aggregates

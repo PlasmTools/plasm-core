@@ -247,7 +247,7 @@ pub async fn execute_plasm_parsed_expr(
     plan_shared: Option<&crate::plan_execute_shared::PlanLineExecuteShared>,
 ) -> Result<(ParsedExpr, ExecutionResult, Option<RunArtifactHandle>), String> {
     crate::execute_pipeline::PlasmPreflight::preflight_parsed_line(sess, source_label, &parsed)
-        .map_err(|e| run_line_error_string(RunLineError::Parse(e)))?;
+        .map_err(|e| run_line_error_string(RunLineError::Parse(e.into())))?;
     run_parsed_plasm_line(
         source_label,
         sess,

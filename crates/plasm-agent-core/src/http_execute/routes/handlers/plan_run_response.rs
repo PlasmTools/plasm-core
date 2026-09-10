@@ -28,7 +28,7 @@ pub(crate) fn respond_plan_run_live_result(
                 )
                     .into_response();
             }
-            if matches!(kind, ExecResponseKind::Toon | ExecResponseKind::Ndjson) {
+            if matches!(kind, ExecResponseKind::Ndjson) {
                 return respond_plan_payload(kind, payload);
             }
             return (

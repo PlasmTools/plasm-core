@@ -173,7 +173,6 @@ pub fn expr_simulation_bindings(expr: &Expr) -> serde_json::Value {
             json!({
                 "op": "get",
                 "ref": { "entity": g.reference.entity_type, "key": g.reference.key },
-                "path_vars": g.path_vars
             })
         }
         Expr::Query(q) => {
@@ -200,7 +199,6 @@ pub fn expr_simulation_bindings(expr: &Expr) -> serde_json::Value {
                 "op": "delete",
                 "capability": d.capability,
                 "target": { "entity": d.target.entity_type, "key": d.target.key },
-                "path_vars": d.path_vars
             })
         }
         Expr::Invoke(i) => {
@@ -209,7 +207,6 @@ pub fn expr_simulation_bindings(expr: &Expr) -> serde_json::Value {
                 "capability": i.capability,
                 "target": { "entity": i.target.entity_type, "key": i.target.key },
                 "input": i.input,
-                "path_vars": i.path_vars
             })
         }
         Expr::Page(p) => {
@@ -430,6 +427,7 @@ fn value_short(v: &Value) -> String {
         Value::Null => "null".to_string(),
         Value::Array(a) => format!("[{} items]", a.len()),
         Value::Object(o) => format!("{{{} keys}}", o.len()),
+        Value::StringTemplate(value) => value.source().to_owned(),
         Value::Money(m) => m.display(),
     }
 }

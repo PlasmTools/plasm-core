@@ -33,10 +33,12 @@ export interface EveToolLoopModelOptions {
   topK?: number;
 }
 
+export type EveToolsForStep = ToolSet | ((ctx: { stepIndex: number }) => ToolSet);
+
 export interface EveToolLoopOptions {
   model: LanguageModel;
   system: string;
-  tools: ToolSet;
+  tools: EveToolsForStep;
   messages: ModelMessage[];
   maxSteps: number;
   agentName: string;
@@ -49,12 +51,37 @@ export interface EveToolLoopOptions {
   onStepStart?: () => void | Promise<void>;
   onStepFinish?: (step: AgentStepEvent) => void | Promise<void>;
   modelOptions?: EveToolLoopModelOptions;
+  /**
+   * Optional tool choice for the first model step only.
+   */
+  toolChoice?: "auto" | "required" | "none" | { type: "tool"; toolName: string };
 }
 
 export interface EveToolLoopResult {
   text: string;
   steps: unknown[];
   usage: LanguageModelUsage;
+  messages: ModelMessage[];
+  stopReason: "completed" | "budget_exhausted" | "error";
+}
+
+function addUsage(a: LanguageModelUsage, b: LanguageModelUsage): LanguageModelUsage {
+  const sum = (x: number | undefined, y: number | undefined) =>
+    x === undefined || y === undefined ? undefined : x + y;
+  return {
+    inputTokens: sum(a.inputTokens, b.inputTokens),
+    outputTokens: sum(a.outputTokens, b.outputTokens),
+    totalTokens: sum(a.totalTokens, b.totalTokens),
+    inputTokenDetails: {
+      noCacheTokens: sum(a.inputTokenDetails.noCacheTokens, b.inputTokenDetails.noCacheTokens),
+      cacheReadTokens: sum(a.inputTokenDetails.cacheReadTokens, b.inputTokenDetails.cacheReadTokens),
+      cacheWriteTokens: sum(a.inputTokenDetails.cacheWriteTokens, b.inputTokenDetails.cacheWriteTokens),
+    },
+    outputTokenDetails: {
+      textTokens: sum(a.outputTokenDetails.textTokens, b.outputTokenDetails.textTokens),
+      reasoningTokens: sum(a.outputTokenDetails.reasoningTokens, b.outputTokenDetails.reasoningTokens),
+    },
+  };
 }
 
 /**
@@ -62,6 +89,9 @@ export interface EveToolLoopResult {
  * child spans via AI SDK OTEL (`OpenTelemetry` + runtime context).
  */
 export async function runEveToolLoop(options: EveToolLoopOptions): Promise<EveToolLoopResult> {
+  if (!Number.isSafeInteger(options.maxSteps) || options.maxSteps < 1) {
+    throw new Error("maxSteps must be a positive integer");
+  }
   ensureOtelIntegration();
 
   const sessionId = options.sessionId ?? createEveSessionId();
@@ -69,10 +99,11 @@ export async function runEveToolLoop(options: EveToolLoopOptions): Promise<EveTo
   const turnId = options.turnId ?? createEveTurnId(turnSequence);
   const channelKind = options.channelKind ?? "unknown";
 
-  let messages = options.messages;
+  let messages = [...options.messages];
   let stepIndex = 0;
   let finalText = "";
   let lastUsage: LanguageModelUsage | undefined;
+  let stopReason: EveToolLoopResult["stopReason"] = "budget_exhausted";
   const aggregatedSteps: unknown[] = [];
 
   while (stepIndex < options.maxSteps) {
@@ -100,14 +131,22 @@ export async function runEveToolLoop(options: EveToolLoopOptions): Promise<EveTo
         functionId: options.agentName,
       },
       async () => {
+        const stepTools =
+          typeof options.tools === "function"
+            ? options.tools({ stepIndex })
+            : options.tools;
         const streamResult = streamText({
           model: options.model,
           system: options.system,
-          tools: options.tools,
+          tools: stepTools,
           messages,
           stopWhen: stepCountIs(1),
           runtimeContext: runtimeContext as Context,
           experimental_telemetry: telemetry,
+          // Force tools only on the first step — later steps must be free to emit DONE.
+          ...(stepIndex === 0 && options.toolChoice !== undefined
+            ? { toolChoice: options.toolChoice }
+            : {}),
           ...(options.modelOptions?.temperature !== undefined
             ? { temperature: options.modelOptions.temperature }
             : {}),
@@ -117,7 +156,6 @@ export async function runEveToolLoop(options: EveToolLoopOptions): Promise<EveTo
           ...(options.modelOptions?.topP !== undefined ? { topP: options.modelOptions.topP } : {}),
           ...(options.modelOptions?.topK !== undefined ? { topK: options.modelOptions.topK } : {}),
         });
-
         const [text, finishReason, steps, usage, response] = await Promise.all([
           streamResult.text,
           streamResult.finishReason,
@@ -144,12 +182,14 @@ export async function runEveToolLoop(options: EveToolLoopOptions): Promise<EveTo
     });
 
     finalText = stepResult.text;
-    lastUsage = stepResult.usage;
+    lastUsage = lastUsage ? addUsage(lastUsage, stepResult.usage) : stepResult.usage;
     aggregatedSteps.push(...stepResult.steps);
-    messages = stepResult.response.messages as ModelMessage[];
+    messages = [...messages, ...stepResult.response.messages];
 
     stepIndex += 1;
     if (stepResult.finishReason !== "tool-calls") {
+      stopReason = stepResult.finishReason === "stop" ? "completed"
+        : stepResult.finishReason === "length" ? "budget_exhausted" : "error";
       break;
     }
   }
@@ -162,5 +202,7 @@ export async function runEveToolLoop(options: EveToolLoopOptions): Promise<EveTo
     text: finalText,
     steps: aggregatedSteps,
     usage: lastUsage,
+    messages,
+    stopReason,
   };
 }

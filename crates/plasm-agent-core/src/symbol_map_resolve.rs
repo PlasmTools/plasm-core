@@ -1,6 +1,6 @@
 //! Single compile-time symbol-map resolution boundary for execute sessions.
 //!
-//! **Contract:** every `e#` printed in `plasm_context` teaching TSV for this execute row must
+//! **Contract:** every `e#` printed in `plasm_context` language card for this execute row must
 //! resolve on the next `plasm` / HTTP execute ingress call against the same
 //! `(prompt_hash, session_id)` binding. [`TeachingExposureSession::symbol_map_arc_cross`] memoizes
 //! per exposure fingerprint (session-local + optional cross-request LRU) so extend/federate waves

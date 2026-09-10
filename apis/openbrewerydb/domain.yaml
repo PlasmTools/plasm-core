@@ -1,10 +1,11 @@
-version: 2
+version: 3
 auth:
   scheme: none
 http_backend: https://api.openbrewerydb.org
 entities:
   Brewery:
     id_field: id
+    primary_search: brewery_search
     description: A beer brewing establishment.
     fields:
       id:
@@ -48,48 +49,44 @@ capabilities:
     description: List breweries with optional field filters and sort.
     kind: query
     entity: Brewery
-    parameters:
+    selection:
     - name: by_city
       value_ref: nv_wire_str_short
       required: false
-      role: filter
     - name: by_state
       value_ref: nv_wire_str_short
       required: false
-      role: filter
     - name: by_postal
       value_ref: nv_wire_str_short
       required: false
-      role: filter
     - name: by_country
       value_ref: nv_wire_str_short
       required: false
-      role: filter
     - name: by_type
       value_ref: nv_brewery_query_by_type
       required: false
-      role: filter
     - name: by_name
       value_ref: nv_wire_str_short
       required: false
-      role: filter
     - name: by_ids
       value_ref: nv_wire_str_short
       required: false
-      role: filter
+    controls:
     - name: sort
       value_ref: nv_wire_str_short
       required: false
-      role: sort
   brewery_search:
-    description: Free-text search across brewery name and location fields.
+    description: Search breweries by shelf — full search or autocomplete.
     kind: search
     entity: Brewery
-    parameters:
+    selection:
+    - name: shelf
+      value_ref: nv_brewery_search_shelf
+      required: true
+      description: search | autocomplete
     - name: query
       value_ref: nv_wire_str_short
       required: true
-      role: search
   brewery_get:
     description: Retrieve a single brewery by its UUID.
     kind: get
@@ -107,35 +104,27 @@ capabilities:
     - latitude
     - phone
     - website_url
-  brewery_autocomplete:
-    description: Fast typeahead name lookup returning only id and name.
-    kind: search
-    entity: Brewery
-    parameters:
-    - name: query
-      value_ref: nv_wire_str_short
-      required: true
-      role: search
   brewery_random:
     description: Return N random breweries; size controls count.
     kind: action
     entity: Brewery
-    parameters:
-    - name: size
-      value_ref: nv_brewery_random_size
-      required: false
-      role: response_control
     output:
       type: side_effect
       description: Return N random breweries; size controls count.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: size
+          value_ref: nv_brewery_random_size
+          required: false
 values:
   nv_brewery_address_1:
     type: string
-    string_semantics: short
     description: Street address.
   nv_brewery_brewery_type:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - micro
     - nano
     - regional
@@ -149,39 +138,31 @@ values:
     description: Classification (micro, nano, regional, brewpub, large, etc.).
   nv_brewery_city:
     type: string
-    string_semantics: short
     description: City name.
   nv_brewery_country:
     type: string
-    string_semantics: short
     description: Country name.
   nv_brewery_id:
     type: string
-    string_semantics: short
     description: Unique UUID string identifier.
   nv_brewery_latitude:
     type: string
-    string_semantics: short
     description: Geographic latitude coordinate as string.
   nv_brewery_longitude:
     type: string
-    string_semantics: short
     description: Geographic longitude coordinate as string.
   nv_brewery_name:
     type: string
-    string_semantics: short
     description: Brewery name.
   nv_brewery_phone:
     type: string
-    string_semantics: short
     description: Contact phone number.
   nv_brewery_postal_code:
     type: string
-    string_semantics: short
     description: ZIP or postal code.
   nv_brewery_query_by_type:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - micro
     - nano
     - regional
@@ -196,12 +177,15 @@ values:
     type: integer
   nv_brewery_state:
     type: string
-    string_semantics: short
     description: US state or international equivalent.
   nv_brewery_website_url:
     type: string
-    string_semantics: short
     description: Official website URL.
   nv_wire_str_short:
     type: string
-    string_semantics: short
+  nv_brewery_search_shelf:
+    type: enum
+    enum:
+    - search
+    - autocomplete
+    description: Search breweries by shelf — full search or autocomplete.

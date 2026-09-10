@@ -6,17 +6,18 @@ use indexmap::IndexMap;
 use plasm_compile::DecodedRelation;
 use plasm_core::expr::EntityKey;
 use plasm_core::schema::{
-    EntityDef, ViewDefinition, ViewNodeSpec, ViewOutputBinding, ViewParamBinding,
-    ViewRelationBinding, ViewScopeInject,
+    EntityDef, ViewDefinition, ViewNodeSpec, ViewParamBinding, ViewRelationBinding, ViewScopeInject,
 };
 use plasm_core::{
     json_value_to_plasm_value as json_to_plasm_value, CapabilityKind, CapabilitySchema,
     Cardinality, CreateExpr, GetExpr, Predicate, QueryExpr, Ref, TypedFieldValue, Value,
-    ViewNodeCondition, ViewNodeWhen, WriteOutcome, CGS,
+    ViewNodeCondition, ViewNodeWhen, CGS,
 };
 
 use crate::cache::CachedEntity;
 use crate::execution::{ExecutionResult, ExecutionSource, ExecutionStats};
+use crate::value_match::values_semantically_equal;
+pub use crate::view_output::resolve_output_binding;
 
 use crate::RuntimeError;
 
@@ -26,10 +27,12 @@ use crate::RuntimeError;
 /// (live execute, from pinned [`crate::execution::ExecuteSessionMaterial`]), the agent host's
 /// `ExecuteSession::view_ambient` (dry preflight), or [`ViewAmbientContext::default`] in unit
 /// tests. No task-local lookup.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ViewAmbientContext {
     pub transport_origin: Option<String>,
     pub ui_origin: Option<String>,
+    /// Non-identity capability params for concurrent GETs (session stamps; not AST path_vars).
+    pub capability_params: IndexMap<String, Value>,
 }
 
 impl ViewAmbientContext {
@@ -46,7 +49,14 @@ impl ViewAmbientContext {
         Self {
             transport_origin: Some(base.to_string()),
             ui_origin: Some(base.to_string()),
+            capability_params: IndexMap::new(),
         }
+    }
+
+    #[must_use]
+    pub fn with_capability_params(mut self, params: IndexMap<String, Value>) -> Self {
+        self.capability_params = params;
+        self
     }
 }
 
@@ -56,6 +66,7 @@ impl From<&crate::execution::ExecuteSessionMaterial> for ViewAmbientContext {
         Self {
             ui_origin: material.ui_origin.clone().or_else(|| transport.clone()),
             transport_origin: transport,
+            capability_params: IndexMap::new(),
         }
     }
 }
@@ -229,15 +240,15 @@ pub fn scope_from_get_reference(
 ) -> Result<IndexMap<String, Value>, RuntimeError> {
     let mut scope = IndexMap::new();
     match &get.reference.key {
-        EntityKey::Simple(id) => {
+        EntityKey::Simple(slot) => {
             scope.insert(
                 view_ent.id_field.to_string(),
-                Value::String(id.as_str().to_string()),
+                Value::String(slot.display_str()),
             );
         }
         EntityKey::Compound(parts) => {
             for (k, v) in parts {
-                scope.insert(k.clone(), Value::String(v.clone()));
+                scope.insert(k.clone(), Value::String(v.display_str()));
             }
         }
     }
@@ -352,125 +363,13 @@ pub fn binds_to_predicate(
         let v = resolve_binding(b, scope, node_fields)?;
         args.push(Predicate::eq(param.clone(), v));
     }
-    Ok(if args.len() == 1 {
+    Ok(if args.is_empty() {
+        Predicate::True
+    } else if args.len() == 1 {
         args.pop().expect("one arg")
     } else {
         Predicate::And { args }
     })
-}
-
-fn values_semantically_equal(row_val: &Value, expected_json: &serde_json::Value) -> bool {
-    let expected = json_to_plasm_value(expected_json);
-    row_val == &expected
-}
-
-pub fn resolve_output_binding(
-    binding: &ViewOutputBinding,
-    scope: &IndexMap<String, Value>,
-    node_results: &IndexMap<String, ExecutionResult>,
-    write_outcomes: &IndexMap<String, WriteOutcome>,
-) -> Result<Value, RuntimeError> {
-    match binding {
-        ViewOutputBinding::Scope { param } => Ok(scope.get(param).cloned().unwrap_or(Value::Null)),
-        ViewOutputBinding::NodeRowCount { node } => {
-            let r = node_results
-                .get(node)
-                .ok_or_else(|| RuntimeError::ConfigurationError {
-                    message: format!("view output references unknown node `{node}`"),
-                })?;
-            Ok(Value::Integer(r.count as i64))
-        }
-        ViewOutputBinding::NodeField { node, field } => {
-            let r = node_results
-                .get(node)
-                .ok_or_else(|| RuntimeError::ConfigurationError {
-                    message: format!("view output references unknown node `{node}`"),
-                })?;
-            let Some(row) = r.entities.first() else {
-                return Ok(Value::Null);
-            };
-            Ok(row
-                .fields
-                .get(field)
-                .map(TypedFieldValue::to_value)
-                .unwrap_or(Value::Null))
-        }
-        ViewOutputBinding::NodeFieldHistogramJson { node, field } => {
-            let r = node_results
-                .get(node)
-                .ok_or_else(|| RuntimeError::ConfigurationError {
-                    message: format!("view output references unknown node `{node}`"),
-                })?;
-            Ok(field_histogram_json(&r.entities, field.as_str()))
-        }
-        ViewOutputBinding::NodeAnyRowFieldEquals {
-            node,
-            field,
-            equals,
-        } => {
-            let r = node_results
-                .get(node)
-                .ok_or_else(|| RuntimeError::ConfigurationError {
-                    message: format!("view output references unknown node `{node}`"),
-                })?;
-            let hit = r.entities.iter().any(|row| {
-                let v = row
-                    .fields
-                    .get(field)
-                    .map(TypedFieldValue::to_value)
-                    .unwrap_or(Value::Null);
-                values_semantically_equal(&v, equals)
-            });
-            Ok(Value::Bool(hit))
-        }
-        ViewOutputBinding::NodeRowCountPositive { node } => {
-            let r = node_results
-                .get(node)
-                .ok_or_else(|| RuntimeError::ConfigurationError {
-                    message: format!("view output references unknown node `{node}`"),
-                })?;
-            Ok(Value::Bool(r.count > 0))
-        }
-        ViewOutputBinding::WriteCreated { node } => Ok(Value::Bool(matches!(
-            write_outcomes.get(node),
-            Some(WriteOutcome::Created)
-        ))),
-        ViewOutputBinding::WriteReused { node } => Ok(Value::Bool(matches!(
-            write_outcomes.get(node),
-            Some(WriteOutcome::Reused)
-        ))),
-        ViewOutputBinding::WriteSkipped { node } => Ok(Value::Bool(matches!(
-            write_outcomes.get(node),
-            Some(WriteOutcome::Skipped)
-        ))),
-        ViewOutputBinding::Computed { .. } => Err(RuntimeError::ConfigurationError {
-            message: "computed output bindings are resolved in a separate phase".into(),
-        }),
-    }
-}
-
-fn field_histogram_json(rows: &[CachedEntity], field: &str) -> Value {
-    let mut counts: IndexMap<String, i64> = IndexMap::new();
-    for row in rows {
-        let k = row
-            .fields
-            .get(field)
-            .map(TypedFieldValue::to_value)
-            .map(|v| match v {
-                Value::String(s) => s,
-                Value::Integer(i) => i.to_string(),
-                Value::Bool(b) => b.to_string(),
-                Value::Float(f) => f.to_string(),
-                _ => "<non_scalar>".into(),
-            })
-            .unwrap_or_else(|| "<missing>".into());
-        *counts.entry(k).or_insert(0) += 1;
-    }
-    let obj: serde_json::Map<String, serde_json::Value> = counts
-        .into_iter()
-        .map(|(k, v)| (k, serde_json::Value::from(v)))
-        .collect();
-    json_to_plasm_value(&serde_json::Value::Object(obj))
 }
 
 pub fn scalar_string_from_value(v: &Value) -> Result<String, RuntimeError> {
@@ -524,8 +423,9 @@ fn bound_scalar_for_get_param(
     if let Some(v) = bound_param_to_string.get(param) {
         return Some(v.clone());
     }
-    if let Some(fields) = cap.object_params() {
-        let required: Vec<_> = fields.iter().filter(|f| f.required).collect();
+    let fields: Vec<_> = cap.input_fields().collect();
+    if !fields.is_empty() {
+        let required: Vec<_> = fields.iter().copied().filter(|f| f.required).collect();
         if required.len() == 1 && required[0].name == param && bound_param_to_string.len() == 1 {
             return bound_param_to_string.values().next().cloned();
         }
@@ -575,10 +475,7 @@ pub fn ref_from_view_get_node(
     bound_param_to_string: &BTreeMap<String, String>,
 ) -> Result<Ref, RuntimeError> {
     if bound_param_to_string.is_empty() {
-        let required = cap
-            .object_params()
-            .map(|fields| fields.iter().any(|f| f.required))
-            .unwrap_or(false);
+        let required = cap.input_fields().any(|f| f.required);
         if !required {
             return Ok(Ref::new(target_ent.name.clone(), String::new()));
         }

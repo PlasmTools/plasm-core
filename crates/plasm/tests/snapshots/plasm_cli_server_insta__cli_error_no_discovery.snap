@@ -1,9 +1,0 @@
----
-source: plasm-oss/crates/plasm/tests/plasm_cli_server_insta.rs
-expression: h.norm(&combined_output(&ctx_no_disc))
----
-status: exit status: 1
-stdout:
-
-stderr:
-Error: context: no local discovery cache — run `plasm search "…"` first

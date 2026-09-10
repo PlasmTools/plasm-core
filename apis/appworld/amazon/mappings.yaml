@@ -1,0 +1,716 @@
+# Amazon — AppWorld. Auth: login → access_token → Bearer header.
+
+_request_auth: &request_auth
+  scheme: bearer
+  token: { type: var, name: access_token }
+
+# AppWorld OpenAPI list endpoints use page_index (0-based) + page_limit (default 5, max 20).
+_appworld_page_index_limit: &appworld_page_index_limit
+  params:
+    page_index:
+      counter: 0
+    page_limit:
+      fixed: 20
+      role: page_size
+  strategy: page_number
+login:
+  method: POST
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: auth }
+  - { type: literal, value: token }
+  body_format: form_urlencoded
+  body:
+    type: object
+    fields:
+    - [username, { type: var, name: username }]
+    - [password, { type: var, name: password }]
+
+logout:
+  method: POST
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: auth }
+  - { type: literal, value: logout }
+  auth: *request_auth
+
+profile_get:
+  method: GET
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: profile }
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - email
+      - type: if
+        condition: { type: exists, var: email }
+        then_expr: { type: var, name: email }
+        else_expr: { type: const, value: null }
+  response: single
+
+product_query:
+  method: GET
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: products }
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+    - - product_type
+      - type: if
+        condition: { type: exists, var: product_type }
+        then_expr: { type: var, name: product_type }
+        else_expr: { type: const, value: null }
+    - - color
+      - type: if
+        condition: { type: exists, var: color }
+        then_expr: { type: var, name: color }
+        else_expr: { type: const, value: null }
+    - - relative_size
+      - type: if
+        condition: { type: exists, var: relative_size }
+        then_expr: { type: var, name: relative_size }
+        else_expr: { type: const, value: null }
+    - - min_price
+      - type: if
+        condition: { type: exists, var: min_price }
+        then_expr: { type: var, name: min_price }
+        else_expr: { type: const, value: null }
+    - - max_price
+      - type: if
+        condition: { type: exists, var: max_price }
+        then_expr: { type: var, name: max_price }
+        else_expr: { type: const, value: null }
+    - - seller_id
+      - type: if
+        condition: { type: exists, var: seller_id }
+        then_expr: { type: var, name: seller_id }
+        else_expr: { type: const, value: null }
+    - - sort_by
+      - type: if
+        condition: { type: exists, var: sort_by }
+        then_expr: { type: var, name: sort_by }
+        else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
+
+product_get:
+  method: GET
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: products }
+  - { type: var, name: id }
+  auth: *request_auth
+
+seller_query:
+  method: GET
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: sellers }
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
+
+seller_get:
+  method: GET
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: sellers }
+  - { type: var, name: id }
+  auth: *request_auth
+
+product_type_query:
+  method: GET
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: product_types }
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
+  response: bare_list
+
+product_feature_choices_query:
+  method: GET
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: product_feature_choices }
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - product_type
+      - type: if
+        condition: { type: exists, var: product_type }
+        then_expr: { type: var, name: product_type }
+        else_expr: { type: const, value: null }
+  response: single
+
+cart_get:
+  method: GET
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: cart }
+  auth: *request_auth
+  response: single
+
+cart_item_query:
+  method: GET
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: cart }
+  auth: *request_auth
+  response:
+    items_path: [cart_items]
+
+wish_list_query:
+  method: GET
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: wish_list }
+  auth: *request_auth
+  response: bare_list
+
+wish_list_add:
+  method: POST
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: wish_list }
+  - { type: var, name: id }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - quantity
+      - type: if
+        condition: { type: exists, var: quantity }
+        then_expr: { type: var, name: quantity }
+        else_expr: { type: const, value: null }
+    - - clear_wish_list_first
+      - type: if
+        condition: { type: exists, var: clear_wish_list_first }
+        then_expr: { type: var, name: clear_wish_list_first }
+        else_expr: { type: const, value: null }
+
+wish_list_update_quantity:
+  method: PATCH
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: wish_lists }
+  - { type: var, name: id }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [quantity, { type: var, name: quantity }]
+
+wish_list_remove:
+  method: DELETE
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: wish_list }
+  - { type: var, name: id }
+  auth: *request_auth
+
+wish_list_clear:
+  method: DELETE
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: wish_list }
+  auth: *request_auth
+
+cart_move_to_wish_list:
+  method: POST
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: cart_to_wish_list }
+  - { type: var, name: id }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - quantity
+      - type: if
+        condition: { type: exists, var: quantity }
+        then_expr: { type: var, name: quantity }
+        else_expr: { type: const, value: null }
+
+wish_list_move_to_cart:
+  method: POST
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: wish_list_to_cart }
+  - { type: var, name: id }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - quantity
+      - type: if
+        condition: { type: exists, var: quantity }
+        then_expr: { type: var, name: quantity }
+        else_expr: { type: const, value: null }
+
+cart_add_product:
+  method: POST
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: cart }
+  - { type: var, name: id }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - quantity
+      - type: if
+        condition: { type: exists, var: quantity }
+        then_expr: { type: var, name: quantity }
+        else_expr: { type: const, value: null }
+    - - clear_cart_first
+      - type: if
+        condition: { type: exists, var: clear_cart_first }
+        then_expr: { type: var, name: clear_cart_first }
+        else_expr: { type: const, value: null }
+
+cart_update_quantity:
+  method: PATCH
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: cart }
+  - { type: var, name: id }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [quantity, { type: var, name: quantity }]
+
+cart_remove_product:
+  method: DELETE
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: cart }
+  - { type: var, name: id }
+  auth: *request_auth
+
+cart_clear:
+  method: DELETE
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: cart }
+  auth: *request_auth
+
+cart_apply_promo:
+  method: POST
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: cart_promos }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [promo_code, { type: var, name: promo_code }]
+
+cart_remove_promo:
+  method: DELETE
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: cart_promos }
+  auth: *request_auth
+
+order_query:
+  method: GET
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: orders }
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+    - - sort_by
+      - type: if
+        condition: { type: exists, var: sort_by }
+        then_expr: { type: var, name: sort_by }
+        else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
+
+order_get:
+  method: GET
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: order }
+  - { type: var, name: id }
+  auth: *request_auth
+
+order_place:
+  method: POST
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: orders }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [payment_card_id, { type: var, name: payment_card_id }]
+    - [address_id, { type: var, name: address_id }]
+
+order_receipt_download:
+  method: GET
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: order_receipt }
+  - { type: var, name: id }
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - download_to_file_path
+      - type: if
+        condition: { type: exists, var: download_to_file_path }
+        then_expr: { type: var, name: download_to_file_path }
+        else_expr: { type: const, value: null }
+    - - overwrite
+      - type: if
+        condition: { type: exists, var: overwrite }
+        then_expr: { type: var, name: overwrite }
+        else_expr: { type: const, value: null }
+    - - file_system_access_token
+      - type: if
+        condition: { type: exists, var: file_system_access_token }
+        then_expr: { type: var, name: file_system_access_token }
+        else_expr: { type: const, value: null }
+
+address_query:
+  method: GET
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: addresses }
+  auth: *request_auth
+
+address_create:
+  method: POST
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: addresses }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [name, { type: var, name: name }]
+    - [street_address, { type: var, name: street_address }]
+    - [city, { type: var, name: city }]
+    - [state, { type: var, name: state }]
+    - [country, { type: var, name: country }]
+    - [zip_code, { type: var, name: zip_code }]
+
+address_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: addresses }
+  - { type: var, name: id }
+  auth: *request_auth
+
+address_update:
+  method: PATCH
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: addresses }
+  - { type: var, name: id }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - name
+      - type: if
+        condition: { type: exists, var: name }
+        then_expr: { type: var, name: name }
+        else_expr: { type: const, value: null }
+    - - street_address
+      - type: if
+        condition: { type: exists, var: street_address }
+        then_expr: { type: var, name: street_address }
+        else_expr: { type: const, value: null }
+    - - city
+      - type: if
+        condition: { type: exists, var: city }
+        then_expr: { type: var, name: city }
+        else_expr: { type: const, value: null }
+    - - state
+      - type: if
+        condition: { type: exists, var: state }
+        then_expr: { type: var, name: state }
+        else_expr: { type: const, value: null }
+    - - country
+      - type: if
+        condition: { type: exists, var: country }
+        then_expr: { type: var, name: country }
+        else_expr: { type: const, value: null }
+    - - zip_code
+      - type: if
+        condition: { type: exists, var: zip_code }
+        then_expr: { type: var, name: zip_code }
+        else_expr: { type: const, value: null }
+
+payment_card_query:
+  method: GET
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: payment_cards }
+  auth: *request_auth
+
+payment_card_create:
+  method: POST
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: payment_cards }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [card_name, { type: var, name: card_name }]
+    - [owner_name, { type: var, name: owner_name }]
+    - [card_number, { type: var, name: card_number }]
+    - [expiry_year, { type: var, name: expiry_year }]
+    - [expiry_month, { type: var, name: expiry_month }]
+    - [cvv_number, { type: var, name: cvv_number }]
+
+payment_card_update:
+  method: PATCH
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: payment_cards }
+  - { type: var, name: id }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [card_name, { type: var, name: card_name }]
+
+payment_card_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: payment_cards }
+  - { type: var, name: id }
+  auth: *request_auth
+
+product_review_query:
+  method: GET
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: products }
+  - { type: var, name: product_id }
+  - { type: literal, value: reviews }
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+    - - user_email
+      - type: if
+        condition: { type: exists, var: user_email }
+        then_expr: { type: var, name: user_email }
+        else_expr: { type: const, value: null }
+    - - min_rating
+      - type: if
+        condition: { type: exists, var: min_rating }
+        then_expr: { type: var, name: min_rating }
+        else_expr: { type: const, value: null }
+    - - max_rating
+      - type: if
+        condition: { type: exists, var: max_rating }
+        then_expr: { type: var, name: max_rating }
+        else_expr: { type: const, value: null }
+    - - is_verified
+      - type: if
+        condition: { type: exists, var: is_verified }
+        then_expr: { type: var, name: is_verified }
+        else_expr: { type: const, value: null }
+    - - sort_by
+      - type: if
+        condition: { type: exists, var: sort_by }
+        then_expr: { type: var, name: sort_by }
+        else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
+
+product_review_create:
+  method: POST
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: products }
+  - { type: var, name: product_id }
+  - { type: literal, value: reviews }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [rating, { type: var, name: rating }]
+    - - title
+      - type: if
+        condition: { type: exists, var: title }
+        then_expr: { type: var, name: title }
+        else_expr: { type: const, value: null }
+    - - text
+      - type: if
+        condition: { type: exists, var: text }
+        then_expr: { type: var, name: text }
+        else_expr: { type: const, value: null }
+
+product_review_update:
+  method: PATCH
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: reviews }
+  - { type: var, name: id }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - rating
+      - type: if
+        condition: { type: exists, var: rating }
+        then_expr: { type: var, name: rating }
+        else_expr: { type: const, value: null }
+    - - title
+      - type: if
+        condition: { type: exists, var: title }
+        then_expr: { type: var, name: title }
+        else_expr: { type: const, value: null }
+    - - text
+      - type: if
+        condition: { type: exists, var: text }
+        then_expr: { type: var, name: text }
+        else_expr: { type: const, value: null }
+
+product_review_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: reviews }
+  - { type: var, name: id }
+  auth: *request_auth
+
+product_return_create:
+  method: POST
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: returns }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [order_id, { type: var, name: order_id }]
+    - [product_id, { type: var, name: product_id }]
+    - [deliverer_id, { type: var, name: deliverer_id }]
+    - [quantity, { type: var, name: quantity }]
+
+return_deliverer_query:
+  method: GET
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: return_deliverers }
+  auth: *request_auth
+  response: bare_list
+
+prime_subscribe:
+  method: POST
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: prime }
+  - { type: literal, value: subscriptions }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [payment_card_id, { type: var, name: payment_card_id }]
+    - [duration, { type: var, name: duration }]
+
+product_question_create:
+  method: POST
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: products }
+  - { type: var, name: product_id }
+  - { type: literal, value: questions }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [question, { type: var, name: question }]
+
+product_question_update:
+  method: PATCH
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: questions }
+  - { type: var, name: id }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - question
+      - type: if
+        condition: { type: exists, var: question }
+        then_expr: { type: var, name: question }
+        else_expr: { type: const, value: null }
+
+product_question_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: questions }
+  - { type: var, name: id }
+  auth: *request_auth
+
+product_question_answer_update:
+  method: PATCH
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: question_answers }
+  - { type: var, name: id }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - answer
+      - type: if
+        condition: { type: exists, var: answer }
+        then_expr: { type: var, name: answer }
+        else_expr: { type: const, value: null }
+
+product_question_answer_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: question_answers }
+  - { type: var, name: id }
+  auth: *request_auth

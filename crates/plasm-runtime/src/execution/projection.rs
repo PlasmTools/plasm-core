@@ -32,6 +32,7 @@ impl ExecutionEngine {
         let fp_sink = opts.request_fingerprint_sink.clone();
         let federation = opts.federation.clone();
         let execute_session = opts.execute_session.clone();
+        let compiled_catalog = opts.required_compiled_catalog()?;
         let cancel = opts.cancel.clone();
         let rows_progress = opts.rows_progress.clone();
         Self::run_in_execute_task_scopes(
@@ -40,6 +41,7 @@ impl ExecutionEngine {
             fp_sink,
             federation,
             execute_session,
+            compiled_catalog,
             cancel,
             rows_progress,
             async {
@@ -101,20 +103,43 @@ impl ExecutionEngine {
                         // Build one expression per entity ID
                         let exprs: Vec<(String, Expr)> = unique_ids
                             .into_iter()
-                            .map(|id| {
+                            .filter_map(|id| {
                                 let expr = match cap.kind {
                                     plasm_core::CapabilityKind::Get => {
-                                        let get = GetExpr::new(entity_type, &id);
+                                        let inherit = entities
+                                            .iter()
+                                            .find(|e| e.reference.primary_slot_str() == id)
+                                            .map(|e| {
+                                                CapabilityParamEnv::from_bindings(
+                                                    &mat.capability_params_for(&e.reference),
+                                                    cap,
+                                                )
+                                            })
+                                            .unwrap_or_default();
+                                        let identity = identity_keys_for_entity(cgs, entity_type);
+                                        let missing = inherit.missing_required(cap, &identity);
+                                        if !missing.is_empty() {
+                                            tracing::debug!(
+                                                entity = %entity_type,
+                                                capability = %cap.name,
+                                                missing = ?missing,
+                                                event = "projection_get_skipped_missing_params"
+                                            );
+                                            return None;
+                                        }
+                                        let get = synthesized_get(
+                                            plasm_core::Ref::new(entity_type, &id),
+                                            &inherit,
+                                        );
                                         Expr::Get(get)
                                     }
                                     _ => {
-                                        // action / update / etc. — invoke with no input
                                         let inv =
                                             InvokeExpr::new(&cap_name, entity_type, &id, None);
                                         Expr::Invoke(inv)
                                     }
                                 };
-                                (id, expr)
+                                Some((id, expr))
                             })
                             .collect();
 
@@ -124,6 +149,10 @@ impl ExecutionEngine {
                                 graph: snap.into_graph(),
                                 responses: mat.responses.clone(),
                                 query_index: mat.query_index.clone(),
+                                inherited_capability_params: mat
+                                    .inherited_capability_params
+                                    .clone(),
+                                ..SessionMaterialization::default()
                             }
                         };
 

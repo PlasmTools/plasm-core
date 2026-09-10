@@ -15,7 +15,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::{CapabilityKind, FieldType, InputType, ParameterRole, CGS};
+use crate::{CapabilityKind, FieldType, CGS};
 
 /// API brand/product names that should not be indexed as domain terms.
 /// Prevents matching on "GitHub", "ClickUp", etc.
@@ -157,18 +157,15 @@ impl DomainLexicon {
             if !matches!(cap.kind, CapabilityKind::Query | CapabilityKind::Search) {
                 continue;
             }
-            let Some(is) = &cap.input_schema else {
-                continue;
-            };
-            let InputType::Object { fields, .. } = &is.input_type else {
-                continue;
-            };
-
-            for f in fields {
+            for (f, is_scope) in cap
+                .scope_params()
+                .iter()
+                .map(|field| (field, true))
+                .chain(cap.selection_params().iter().map(|field| (field, false)))
+            {
                 let Ok(nv) = f.named_value(cgs) else {
                     continue;
                 };
-                let is_scope = matches!(f.role, Some(ParameterRole::Scope));
                 let field_type = nv.field_type.clone();
                 let entry = LexEntry::CapParam {
                     entity: cap.domain.to_string(),

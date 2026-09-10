@@ -177,7 +177,7 @@ fn resolve_slot_metadata<'a>(
     let en = EntityName::from(ctx.entity.to_string());
     let cid = ctx.catalog_entry_id.to_string();
     ctx.map
-        .capability_param_quad_for_p_sym(sym)
+        .capability_param_quad_for_p_sym_on_entity(sym, ctx.catalog_entry_id, ctx.entity)
         .and_then(|(eid, dom, cap, path)| {
             if !eid.is_empty() && eid.as_str() != ctx.catalog_entry_id {
                 return None;
@@ -211,8 +211,13 @@ fn try_emit_value_domain_gloss(
     vg: &str,
     meta: &IdentMetadata,
 ) -> bool {
+    let Some(key) = ValueDomainStructuralKey::from_registry_meta(meta) else {
+        return false;
+    };
+    // Deduplicate by allocation identity (type+wire), not by gloss prose — federated
+    // catalogs can share type labels while still needing distinct Meaning rows.
     let Some(v_canon) = meaning_canonical_sym_for_emit(
-        vg,
+        key.as_str(),
         vs,
         &mut ctx.state.registry_value_gloss_canonical_v,
         &mut ctx.state.registry_v_sym_alias,
@@ -222,22 +227,21 @@ fn try_emit_value_domain_gloss(
     if !ctx.state.defined_value_domains.insert(v_canon.clone()) {
         return false;
     }
-    if let Some(key) = ValueDomainStructuralKey::from_registry_meta(meta) {
-        ctx.state.structural_value_domains.insert(key);
-    }
-    push_teaching_field_gloss_row(
+    ctx.state.structural_value_domains.insert(key.clone());
+    // Commit `ValueDomain` directly — do not route through `push_teaching_field_gloss_row`'s
+    // opaque-`v#` branch (it wrongly keys `ident_meta` by the `v#` token as a field name).
+    commit_teaching_field_gloss_row(
         ctx.out,
         v_canon,
-        vg,
+        FieldGlossMeaning::ValueDomain(key),
+        Some(vg),
         ctx.entity,
         ctx.catalog_entry_id,
         Some(ctx.map),
-        Some(ctx.ident_meta),
         Some(ctx.cgs),
         false,
         ctx.state,
-    );
-    true
+    )
 }
 
 fn attach_wire_projection_gloss_alias(ctx: &mut GlossEmitCtx<'_>, wire_sym: &str, slot_sym: &str) {
@@ -473,7 +477,7 @@ pub(crate) fn emit_field_def_lines_before_example(
         catalog_entry_id,
         entity,
     );
-    let projection_witness_row = result_gloss.is_some_and(|g| g.contains("· projection"));
+    let projection_witness_row = false;
     let union_ctor_row = is_union_ctor_teaching_surface_line(expr);
     for sym in crate::symbol_tuning::teaching_slot_keys_for_teaching_row(
         expr,
@@ -545,19 +549,10 @@ pub(crate) fn push_teaching_field_gloss_row(
     }
 
     if is_opaque_v {
-        let field_name = symbol.clone();
-        let meta = ident_meta.and_then(|im| {
-            im.get(&(
-                catalog_entry_id.to_string(),
-                EntityName::from(canonical_entity.to_string()),
-                field_name,
-            ))
-        });
-        let meaning = meta
-            .as_ref()
-            .and_then(|m| {
-                ValueDomainStructuralKey::from_registry_meta(m).map(FieldGlossMeaning::ValueDomain)
-            })
+        let meaning = symbol_map
+            .and_then(|m| m.value_domain_fp_for_v_sym(symbol.as_str()))
+            .map(ValueDomainStructuralKey::from_allocation_fp)
+            .map(FieldGlossMeaning::ValueDomain)
             .unwrap_or_else(|| FieldGlossMeaning::OpaqueLegend {
                 description: legend.to_string(),
             });

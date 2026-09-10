@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use indexmap::IndexMap;
-use plasm_core::discovery::InMemoryCgsRegistry;
+use plasm_core::discovery::CgsRegistry;
 use plasm_core::loader::load_schema_dir;
 use plasm_core::CgsContext;
 use plasm_runtime::{CancelSignal, ExecutionConfig, ExecutionEngine, ExecutionMode};
@@ -21,7 +21,7 @@ fn host_state() -> Arc<crate::server_state::PlasmHostState> {
     let dir =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix");
     let cgs = Arc::new(load_schema_dir(&dir).expect("plasm_language_matrix"));
-    let reg = InMemoryCgsRegistry::from_pairs(vec![(
+    let reg = CgsRegistry::from_pairs(vec![(
         "langmatrix".into(),
         "Lang Matrix".into(),
         vec!["matrix".into()],
@@ -62,7 +62,6 @@ fn execute_session() -> Arc<ExecuteSession> {
         None,
         None,
         "hash".into(),
-        None,
         None,
     ))
 }
@@ -222,6 +221,7 @@ async fn coalesce_at_most_two_running_emits_per_two_second_window() {
         &handle,
         crate::plasm_plan_run::PlasmPlanRunResult {
             version: serde_json::json!({}),
+            agent_outcome: Default::default(),
             node_results: Vec::new(),
             graph_summary: serde_json::json!({}),
             comp: None,

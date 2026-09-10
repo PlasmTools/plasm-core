@@ -1,8 +1,6 @@
 //! Session sub-resource Axum handlers (`/context`, `/symbols`, `/status`, `/runs`, `/plan`).
 
-use super::super::response::{
-    negotiate_accept, respond_plan_payload, AcceptNegotiationError, ExecResponseKind,
-};
+use super::super::response::{respond_plan_payload, ExecResponseKind};
 use super::super::*;
 
 pub(crate) async fn post_execute_session_context(
@@ -12,12 +10,15 @@ pub(crate) async fn post_execute_session_context(
         prompt_hash,
         session_id,
     }: ExecutePath,
-    Json(body): Json<ExecuteSessionContextBody>,
+    Json(body): Json<super::super::response::HttpContextExtension>,
 ) -> Response {
-    let Some(sess) = st
-        .get_execute_session(prompt_hash.as_str(), session_id.as_str())
+    let Some(sess) = (match st
+        .try_get_execute_session(prompt_hash.as_str(), session_id.as_str())
         .await
-    else {
+    {
+        Ok(session) => session,
+        Err(error) => return crate::http_execute::session_lookup_unavailable(error),
+    }) else {
         return problem_response(
             Problem::custom(
                 ProblemStatus::NOT_FOUND,
@@ -35,6 +36,24 @@ pub(crate) async fn post_execute_session_context(
             true,
         );
     }
+    let body = match body {
+        super::super::response::HttpContextExtension::Routed(body) => {
+            return crate::http_discovery::routed_http_context(
+                &st,
+                principal.as_ref(),
+                &body,
+                Some(&sess),
+                Some((prompt_hash.as_str(), session_id.as_str())),
+            )
+            .await;
+        }
+        super::super::response::HttpContextExtension::Explicit(body) => {
+            if sess.discovery_pin.is_some() {
+                return (StatusCode::BAD_REQUEST, "routed sessions require intent-only extension; explicit seeds would bypass selection").into_response();
+            }
+            body
+        }
+    };
     let principal_stored = sess.principal.clone();
     let intent_owned = body.intent.unwrap_or_default();
     let intent_ref = intent_owned.trim();
@@ -47,7 +66,6 @@ pub(crate) async fn post_execute_session_context(
         None,
         None,
         intent_ref,
-        RankedCapabilitiesArg::Unspecified,
     )
     .await
     {
@@ -71,10 +89,13 @@ pub(crate) async fn get_execute_session_symbols(
         session_id,
     }: ExecutePath,
 ) -> Response {
-    let Some(sess) = st
-        .get_execute_session(prompt_hash.as_str(), session_id.as_str())
+    let Some(sess) = (match st
+        .try_get_execute_session(prompt_hash.as_str(), session_id.as_str())
         .await
-    else {
+    {
+        Ok(session) => session,
+        Err(error) => return crate::http_execute::session_lookup_unavailable(error),
+    }) else {
         return problem_response(
             Problem::custom(
                 ProblemStatus::NOT_FOUND,
@@ -119,10 +140,13 @@ pub(crate) async fn get_execute_session_status(
         session_id,
     }: ExecutePath,
 ) -> Response {
-    let Some(sess) = st
-        .get_execute_session(prompt_hash.as_str(), session_id.as_str())
+    let Some(sess) = (match st
+        .try_get_execute_session(prompt_hash.as_str(), session_id.as_str())
         .await
-    else {
+    {
+        Ok(session) => session,
+        Err(error) => return crate::http_execute::session_lookup_unavailable(error),
+    }) else {
         return Json(ExecuteSessionStatusResponse {
             alive: false,
             prompt_hash: prompt_hash.to_string(),
@@ -167,10 +191,13 @@ pub(crate) async fn get_execute_session_runs(
         session_id,
     }: ExecutePath,
 ) -> Response {
-    let Some(sess) = st
-        .get_execute_session(prompt_hash.as_str(), session_id.as_str())
+    let Some(sess) = (match st
+        .try_get_execute_session(prompt_hash.as_str(), session_id.as_str())
         .await
-    else {
+    {
+        Ok(session) => session,
+        Err(error) => return crate::http_execute::session_lookup_unavailable(error),
+    }) else {
         return problem_response(
             Problem::custom(
                 ProblemStatus::NOT_FOUND,
@@ -207,10 +234,13 @@ pub(crate) async fn post_execute_session_plan(
     headers: HeaderMap,
     Json(body): Json<crate::resolved_plan_http::ResolvedPlanRequest>,
 ) -> Response {
-    let Some(sess) = st
-        .get_execute_session(prompt_hash.as_str(), session_id.as_str())
+    let Some(sess) = (match st
+        .try_get_execute_session(prompt_hash.as_str(), session_id.as_str())
         .await
-    else {
+    {
+        Ok(session) => session,
+        Err(error) => return crate::http_execute::session_lookup_unavailable(error),
+    }) else {
         return problem_response(
             Problem::custom(
                 ProblemStatus::NOT_FOUND,
@@ -290,9 +320,8 @@ pub(crate) async fn post_execute_session_plan(
     match outcome {
         Ok(result) => {
             let accept = headers.get(ACCEPT).and_then(|v| v.to_str().ok());
-            let kind = match negotiate_accept(accept) {
-                Ok(k) => k,
-                Err(AcceptNegotiationError::NoSupportedMediaType) => ExecResponseKind::Json,
+            let Some(kind) = negotiate_accept_or_406(accept) else {
+                return unsupported_accept_response();
             };
             let payload = crate::resolved_plan_http::ResolvedPlanResponse {
                 plan: true,
@@ -308,7 +337,7 @@ pub(crate) async fn post_execute_session_plan(
                 meta: result.run_plasm_meta.map(serde_json::Value::Object),
             };
             if run_live {
-                if let ExecResponseKind::Toon | ExecResponseKind::Ndjson = kind {
+                if let ExecResponseKind::Ndjson = kind {
                     return respond_plan_payload(
                         kind,
                         serde_json::to_value(&payload).unwrap_or_default(),

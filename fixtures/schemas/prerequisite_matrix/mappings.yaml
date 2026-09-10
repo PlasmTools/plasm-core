@@ -1,0 +1,14 @@
+acquire:
+  method: POST
+  path: [{type: literal, value: acquire}]
+  body:
+    type: object
+    fields:
+      - [account, {type: var, name: account}]
+read:
+  method: GET
+  path: [{type: literal, value: records}]
+  query:
+    type: object
+    fields:
+      - [credential, {type: var, name: credential}]

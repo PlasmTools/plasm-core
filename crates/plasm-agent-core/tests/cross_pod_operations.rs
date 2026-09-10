@@ -17,19 +17,18 @@ use plasm_agent_core::operation::OpAcceptContext;
 use plasm_agent_core::operation_error::OperationError;
 use plasm_agent_core::run_artifacts::{RunArtifactDocument, RunArtifactId, RunArtifactStore};
 use plasm_agent_core::server_state::{CatalogBootstrap, PlasmHostState};
-use plasm_core::discovery::InMemoryCgsRegistry;
+use plasm_core::discovery::CgsRegistry;
 use plasm_core::expr_parser::ParsedExpr;
 use plasm_core::loader::load_schema_dir;
-use plasm_core::MutatorAdmit;
 use plasm_core::{Expr, QueryExpr};
 use plasm_runtime::{
     CancelSignal, ExecutionConfig, ExecutionEngine, ExecutionMode, ExecutionSource, ExecutionStats,
 };
 
-fn overshow_registry() -> Arc<InMemoryCgsRegistry> {
+fn overshow_registry() -> Arc<CgsRegistry> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
     let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
-    Arc::new(InMemoryCgsRegistry::from_pairs(vec![(
+    Arc::new(CgsRegistry::from_pairs(vec![(
         "overshow".into(),
         "Overshow".into(),
         vec!["demo".into()],
@@ -38,7 +37,7 @@ fn overshow_registry() -> Arc<InMemoryCgsRegistry> {
 }
 
 fn host_with_shared_registry(
-    registry: Arc<InMemoryCgsRegistry>,
+    registry: Arc<CgsRegistry>,
     execute_session_registry: ExecuteSessionRegistry,
     run_artifacts: Arc<RunArtifactStore>,
 ) -> PlasmHostState {
@@ -83,6 +82,7 @@ fn run_artifact_doc(
                 ),
             }),
             projection: None,
+            field_dot_extract: None,
         },
         display_lines: vec![],
         request_fingerprints: vec![],
@@ -102,8 +102,6 @@ async fn open_overshow_session(host: &PlasmHostState) -> (String, String, Arc<Ex
             principal: None,
             logical_session_id: None,
             context_intent: None,
-            ranked_capabilities: None,
-            mutator_admit: MutatorAdmit::IntentOnly,
         },
     )
     .await
@@ -161,6 +159,7 @@ async fn cross_pod_wait_terminal_hydrates_run_artifact() {
         &handle,
         plasm_agent_core::plasm_plan_run::PlasmPlanRunResult {
             version: serde_json::json!({}),
+            agent_outcome: Default::default(),
             node_results: vec![serde_json::json!({"id": "cross-pod", "display_name": "cross-pod"})],
             graph_summary: serde_json::json!({}),
             comp: None,

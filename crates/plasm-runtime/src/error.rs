@@ -68,6 +68,31 @@ pub enum RuntimeError {
     #[error("Replay store error: {message}")]
     ReplayStoreError { message: String },
 
+    #[error("Derived get `{capability}`: no row where {match_field} == {identity:?}")]
+    DerivedGetNotFound {
+        capability: String,
+        match_field: String,
+        identity: String,
+    },
+
+    #[error(
+        "Derived get `{capability}`: {matches} rows match {match_field} == {identity:?} (ambiguous)"
+    )]
+    DerivedGetNonUnique {
+        capability: String,
+        match_field: String,
+        identity: String,
+        matches: usize,
+    },
+
+    #[error("Derived get `{capability}`: source field `{field}` missing on matched row")]
+    DerivedGetSourceFieldMissing { capability: String, field: String },
+
+    #[error(
+        "Derived get `{capability}`: source query did not fully materialize (has_more=true); cannot claim not-found"
+    )]
+    DerivedGetIncompleteSource { capability: String },
+
     #[error("Runtime configuration error: {message}")]
     ConfigurationError { message: String },
 
@@ -79,6 +104,14 @@ pub enum RuntimeError {
 
     #[error("Execution cancelled")]
     Cancelled,
+
+    #[error("synthesized GET `{cap_name}` during {entity_type} hydration: {source}")]
+    HydrationGet {
+        cap_name: String,
+        entity_type: String,
+        #[source]
+        source: Box<RuntimeError>,
+    },
 }
 
 impl RuntimeError {
@@ -87,6 +120,7 @@ impl RuntimeError {
             RuntimeError::RequestError { attempts: a, .. }
             | RuntimeError::WorkflowConflict { attempts: a, .. }
             | RuntimeError::RateLimited { attempts: a, .. } => *a = attempts,
+            RuntimeError::HydrationGet { source, .. } => source.set_attempts(attempts),
             _ => {}
         }
     }

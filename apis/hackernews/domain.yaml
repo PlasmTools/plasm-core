@@ -1,4 +1,4 @@
-version: 4
+version: 5
 auth:
   scheme: none
 http_backend: https://hacker-news.firebaseio.com
@@ -9,6 +9,7 @@ data_classes:
 entities:
   Item:
     id_field: id
+    primary_search: item_search
     description: A Hacker News story or comment — trending tech discussion, front-page stories, and comment threads.
     discovery:
       names:
@@ -16,7 +17,6 @@ entities:
       - front page
       - hacker news story
       - story
-      seed_class: primary
     fields:
       id:
         required: true
@@ -154,49 +154,24 @@ capabilities:
     - id
     - title
     - url
-    parameters:
+    selection:
+    - name: shelf
+      value_ref: nv_item_search_shelf
+      required: true
+      description: relevance | by_date
     - name: query
       value_ref: nv_wire_str_short
       required: true
-      role: search
     - name: tags
       value_ref: nv_wire_str_short
       required: false
-      role: filter
+    controls:
     - name: page
       value_ref: nv_wire_int
       required: false
-      role: response_control
     - name: per_page
       value_ref: nv_wire_int
       required: false
-      role: response_control
-  item_search_by_date:
-    description: Same as item_search but sorted by time (search_by_date). Use for recency; combine with item_get for full.
-      items.
-    kind: search
-    entity: Item
-    provides:
-    - id
-    - title
-    - url
-    parameters:
-    - name: query
-      value_ref: nv_wire_str_short
-      required: true
-      role: search
-    - name: tags
-      value_ref: nv_wire_str_short
-      required: false
-      role: filter
-    - name: page
-      value_ref: nv_wire_int
-      required: false
-      role: response_control
-    - name: per_page
-      value_ref: nv_wire_int
-      required: false
-      role: response_control
   item_feed_query:
     description: Browse Hacker News front-page feeds — top, new, best, ask, or show stories for trending discussion.
     kind: query
@@ -213,11 +188,10 @@ capabilities:
       - rising
     provides:
     - id
-    parameters:
+    selection:
     - name: feed
       value_ref: nv_item_feed_query_feed
       required: true
-      role: filter
   max_item_id_query:
     description: Current largest item id (maxitem.json).
     kind: query
@@ -272,7 +246,6 @@ capabilities:
 values:
   nv_item_by:
     type: string
-    string_semantics: short
     description: Username of the author when present.
   nv_item_dead:
     type: boolean
@@ -284,8 +257,8 @@ values:
     type: integer
     description: Comment count for stories when known.
   nv_item_feed_query_feed:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - top
     - new
     - best
@@ -305,23 +278,19 @@ values:
     type: integer
     description: Net votes for stories and jobs when present.
   nv_item_text:
-    type: string
-    string_semantics: markdown
+    type: markdown
     description: Comment or story text payload when present.
   nv_item_time:
     type: integer
     description: Unix time the item was created.
   nv_item_title:
     type: string
-    string_semantics: short
     description: Story or job title when applicable.
   nv_item_type:
     type: string
-    string_semantics: short
     description: Wire kind such as story, comment, job, poll, or pollopt.
   nv_item_url:
     type: string
-    string_semantics: short
     description: Outbound link for link posts when present.
   nv_max_item_id_id:
     type: integer
@@ -331,11 +300,9 @@ values:
     description: Item id from the live updates snapshot.
   nv_recent_updated_user_id:
     type: string
-    string_semantics: short
     description: Username from the live updates snapshot.
   nv_user_about:
-    type: string
-    string_semantics: markdown
+    type: markdown
     description: Self-description text when set.
   nv_user_created:
     type: integer
@@ -345,7 +312,6 @@ values:
     description: Account delay setting when present.
   nv_user_id:
     type: string
-    string_semantics: short
     description: Unique username.
   nv_user_karma:
     type: integer
@@ -354,9 +320,14 @@ values:
     type: integer
   nv_wire_str_short:
     type: string
-    string_semantics: short
   nv_item_parts:
     type: array
     items:
       value_ref: nv_wire_int
     description: Poll option item ids when type is poll (empty or absent otherwise).
+  nv_item_search_shelf:
+    type: enum
+    enum:
+    - relevance
+    - by_date
+    description: Search HN items by shelf — relevance or by_date.

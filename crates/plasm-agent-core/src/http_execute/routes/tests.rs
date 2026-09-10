@@ -1,3 +1,4 @@
+use super::super::response::negotiate_accept;
 use super::super::*;
 use crate::http;
 use crate::http_execute::context::{
@@ -12,9 +13,8 @@ use axum::body::Body;
 use axum::extract::Extension;
 use axum::http::Request;
 use axum::Router;
-use plasm_core::discovery::InMemoryCgsRegistry;
+use plasm_core::discovery::CgsRegistry;
 use plasm_core::loader::load_schema_dir;
-use plasm_core::MutatorAdmit;
 use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 use std::path::Path;
 use tower::util::ServiceExt;
@@ -183,7 +183,7 @@ fn live_run_tool_meta_finalizes_run_explorer_ui() {
         .is_some_and(|a| !a.is_empty()));
 }
 
-fn test_host_state_from_registry(reg: InMemoryCgsRegistry) -> PlasmHostState {
+fn test_host_state_from_registry(reg: CgsRegistry) -> PlasmHostState {
     let engine = ExecutionEngine::new(ExecutionConfig::default()).expect("engine");
     http::build_plasm_host_state(http::PlasmHostBootstrap {
         engine,
@@ -200,7 +200,7 @@ fn test_host_state_from_registry(reg: InMemoryCgsRegistry) -> PlasmHostState {
 fn test_state_with_registry() -> PlasmHostState {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
     let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
-    test_host_state_from_registry(InMemoryCgsRegistry::from_pairs(vec![(
+    test_host_state_from_registry(CgsRegistry::from_pairs(vec![(
         "overshow".into(),
         "Overshow".into(),
         vec!["demo".into()],
@@ -214,14 +214,9 @@ fn test_state_with_linear_registry() -> Option<PlasmHostState> {
         return None;
     }
     let cgs = Arc::new(load_schema_dir(&dir).expect("linear"));
-    Some(test_host_state_from_registry(
-        InMemoryCgsRegistry::from_pairs(vec![(
-            "linear".into(),
-            "Linear".into(),
-            vec!["linear".into()],
-            cgs,
-        )]),
-    ))
+    Some(test_host_state_from_registry(CgsRegistry::from_pairs(
+        vec![("linear".into(), "Linear".into(), vec!["linear".into()], cgs)],
+    )))
 }
 
 fn test_state_with_matrix_federated_registry() -> Option<PlasmHostState> {
@@ -231,8 +226,8 @@ fn test_state_with_matrix_federated_registry() -> Option<PlasmHostState> {
         return None;
     }
     let cgs = Arc::new(load_schema_dir(&dir).expect("plasm_language_matrix"));
-    Some(test_host_state_from_registry(
-        InMemoryCgsRegistry::from_pairs(vec![
+    Some(test_host_state_from_registry(CgsRegistry::from_pairs(
+        vec![
             (
                 "github".into(),
                 "Github".into(),
@@ -240,8 +235,8 @@ fn test_state_with_matrix_federated_registry() -> Option<PlasmHostState> {
                 cgs.clone(),
             ),
             ("linear".into(), "Linear".into(), vec!["demo".into()], cgs),
-        ]),
-    ))
+        ],
+    )))
 }
 
 fn test_app_execute(st: PlasmHostState) -> Router<()> {
@@ -443,9 +438,9 @@ async fn staged_table_response_joins_sections() {
 }
 
 #[tokio::test]
-async fn staged_toon_response_is_outer_array() {
+async fn staged_json_response_is_outer_array() {
     let res = respond_staged_lines_execute_result(
-        ExecResponseKind::Toon,
+        ExecResponseKind::Json,
         vec![serde_json::json!(["a"]), serde_json::json!([])],
         None,
         None,
@@ -458,9 +453,14 @@ async fn staged_toon_response_is_outer_array() {
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
     assert!(
-        ct.starts_with("text/toon"),
-        "expected text/toon, got {ct:?}"
+        ct.starts_with("application/json"),
+        "expected application/json, got {ct:?}"
     );
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(value.is_array(), "expected outer JSON array, got {value:?}");
 }
 
 #[tokio::test]
@@ -501,6 +501,59 @@ async fn program_parse_error_is_bad_request() {
     assert!(
         detail.contains("Fix spelling"),
         "expected parse detail: {detail:?}"
+    );
+}
+
+#[tokio::test]
+async fn program_parse_error_plan_mode_is_needs_fix_ok() {
+    let st = test_state_with_registry();
+    let app = test_app_execute(st.clone());
+    let create = Request::builder()
+        .method("POST")
+        .uri("/execute")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::json!({ "entry_id": "overshow", "entities": ["Profile"] }).to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(create).await.unwrap();
+    let loc = res
+        .headers()
+        .get(LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let created = get_execute_session_json(&app, loc.as_str()).await;
+    let run_uri = format!(
+        "/execute/{}/{}?mode=plan",
+        created.prompt_hash, created.session
+    );
+    let run = Request::builder()
+        .method("POST")
+        .uri(&run_uri)
+        .header("accept", "application/json")
+        .body(Body::from("@@@not-plasm"))
+        .unwrap();
+    let res2 = app.oneshot(run).await.unwrap();
+    assert_eq!(res2.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res2.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let doc: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        doc.get("dry_verdict").and_then(|v| v.as_str()),
+        Some("needs_fix")
+    );
+    assert_eq!(
+        doc.get("error_category").and_then(|v| v.as_str()),
+        Some("parse")
+    );
+    assert!(doc.get("program_score").is_some());
+    let correction = doc.get("correction").and_then(|d| d.as_str()).unwrap_or("");
+    assert!(
+        correction.contains("Fix spelling") || !correction.is_empty(),
+        "expected didactic correction: {correction:?}"
     );
 }
 
@@ -673,8 +726,6 @@ async fn execute_session_create_marks_reused_on_second_open() {
         principal: None,
         logical_session_id: None,
         context_intent: None,
-        ranked_capabilities: None,
-        mutator_admit: MutatorAdmit::IntentOnly,
     };
     let first = execute_session_create_response(&st, None, body.clone())
         .await
@@ -700,8 +751,6 @@ async fn expand_domain_session_updates_session_entities() {
             principal: None,
             logical_session_id: None,
             context_intent: None,
-            ranked_capabilities: None,
-            mutator_admit: MutatorAdmit::IntentOnly,
         },
     )
     .await
@@ -722,7 +771,7 @@ async fn expand_domain_session_updates_session_entities() {
     .expect("expand");
     assert!(
         first_wave.markdown.contains("```tsv"),
-        "expected fenced teaching TSV (default TSV render): {}",
+        "expected fenced language card (default TSV render): {}",
         first_wave.markdown
     );
     assert!(
@@ -775,6 +824,17 @@ async fn expand_domain_session_updates_session_entities() {
 }
 
 #[test]
+fn execute_session_open_rejects_removed_caller_rankings() {
+    let body = serde_json::json!({
+        "entry_id": "matrix",
+        "entities": ["LangItem"],
+        "ranked_capabilities": ["langitem_create"]
+    });
+    let err = serde_json::from_value::<CreateExecuteSessionBody>(body).unwrap_err();
+    assert!(err.to_string().contains("unknown field"));
+}
+
+#[test]
 fn parse_execute_program_body_rejects_lines_array() {
     let err = parse_execute_program_body(Some("application/json"), br#"{"lines":["a","b"]}"#)
         .expect_err("lines");
@@ -815,8 +875,6 @@ async fn unknown_entity_parse_error_includes_session_bounds() {
             principal: None,
             logical_session_id: None,
             context_intent: None,
-            ranked_capabilities: None,
-            mutator_admit: MutatorAdmit::IntentOnly,
         },
     )
     .await
@@ -833,7 +891,8 @@ async fn unknown_entity_parse_error_includes_session_bounds() {
     let cross = st.sessions.symbol_map_cross_cache();
     let err =
         crate::plasm_compile::compile_plasm_expression(pipeline, Some(cross), &sess, "t", "e9()")
-            .expect_err("out-of-range e#");
+            .expect_err("out-of-range e#")
+            .to_string();
     assert!(
         err.contains("is not in this session"),
         "expected unknown entity in {err:?}"
@@ -842,11 +901,11 @@ async fn unknown_entity_parse_error_includes_session_bounds() {
 
 #[test]
 fn negotiate_accept_variants() {
-    assert_eq!(negotiate_accept(None).unwrap(), ExecResponseKind::Toon);
-    assert_eq!(negotiate_accept(Some("")).unwrap(), ExecResponseKind::Toon);
+    assert_eq!(negotiate_accept(None).unwrap(), ExecResponseKind::Json);
+    assert_eq!(negotiate_accept(Some("")).unwrap(), ExecResponseKind::Json);
     assert_eq!(
         negotiate_accept(Some("*/*")).unwrap(),
-        ExecResponseKind::Toon
+        ExecResponseKind::Json
     );
     assert_eq!(
         negotiate_accept(Some("application/json")).unwrap(),
@@ -856,13 +915,73 @@ fn negotiate_accept_variants() {
         negotiate_accept(Some("text/plain")).unwrap(),
         ExecResponseKind::Table
     );
-    assert_eq!(
-        negotiate_accept(Some("text/toon")).unwrap(),
-        ExecResponseKind::Toon
-    );
+    assert!(negotiate_accept(Some("text/toon")).is_err());
+    assert!(negotiate_accept(Some("application/x-toon")).is_err());
     assert_eq!(
         negotiate_accept(Some("application/x-ndjson")).unwrap(),
         ExecResponseKind::Ndjson
     );
     assert!(negotiate_accept(Some("application/soap+xml")).is_err());
+}
+
+#[test]
+fn http_request_parents_execute_run_post_on_handler() {
+    use crate::execute_path_ids::{ExecuteSessionId, PromptHashHex};
+    use crate::http_execute::response::ExecuteRunQuery;
+    use axum::body::Bytes;
+    use axum::http::HeaderMap;
+    use plasm_otel::span_capture::{find_span, is_child_of, with_captured_spans};
+    use plasm_otel::tower_http_trace_parent_span;
+    use tracing::Instrument;
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/execute/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+        .body(())
+        .unwrap();
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let ((), spans) = with_captured_spans(|| {
+        let http = tower_http_trace_parent_span(&req);
+        // Create `execute_run_post` only after `http.request` is entered — tracing records
+        // parent at span construction time (mirrors TraceLayer then handler `.instrument`).
+        rt.block_on(
+            async {
+                async {
+                    let st = test_state_with_registry();
+                    let prompt_hash: PromptHashHex =
+                        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                            .parse()
+                            .expect("prompt hash");
+                    let session_id: ExecuteSessionId = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                        .parse()
+                        .expect("session id");
+                    let _ = super::handlers::post_run_execute_session_inner(
+                        st,
+                        None,
+                        prompt_hash,
+                        session_id,
+                        ExecuteRunQuery::default(),
+                        HeaderMap::new(),
+                        Bytes::new(),
+                    )
+                    .await;
+                }
+                .instrument(crate::spans::execute_run_post())
+                .await;
+            }
+            .instrument(http),
+        );
+    });
+
+    let parent = find_span(&spans, "plasm_agent.http.request").expect("http.request");
+    let child = find_span(&spans, "plasm_agent.execute.run_post").expect("execute.run_post");
+    assert!(
+        is_child_of(child, parent),
+        "execute.run_post must be child of http.request; spans={:?}",
+        spans.iter().map(|s| s.name.as_ref()).collect::<Vec<_>>()
+    );
 }

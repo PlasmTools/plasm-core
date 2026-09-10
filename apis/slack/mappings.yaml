@@ -1,1036 +1,1112 @@
-# Slack Web API — CML (Capability Mapping Language). Semantic model is in domain.yaml.
-#
-# Base URL: Slack Web API (slack.com/api — set HTTPS origin with --backend).
-# All methods: POST or GET to /family.method
-#
-# Auth: Bearer token injected as Authorization header by the runtime.
-#
-# Pagination: cursor-based on all list endpoints.
-# - Request: cursor=<token> (passed as query param)
-# - Response: {"...", "response_metadata": {"next_cursor": "dGVhbTpD..."}}
-# - Stop: implicit when response_metadata.next_cursor is absent or empty string.
-#   Uses dot-path notation in from_response (plasm dot-path feature).
-#
-# Response envelopes: Slack wraps entities in named keys at the response root.
-# - List responses: {"channels": [...], "response_metadata": {...}}
-# - Single responses: {"channel": {...}}, {"user": {...}}, etc.
-# - The `items:` config field directs the decoder to the correct key.
-
-# ── Channel (conversations) ───────────────────────────────────────────────
-
 channel_list:
   response:
     items: channels
     next_cursor: response_metadata.next_cursor
   method: GET
   path:
-    - type: literal
-      value: conversations.list
+  - type: literal
+    value: conversations.list
   query:
     type: object
     fields:
-      - - exclude_archived
-        - type: if
-          condition: { type: exists, var: exclude_archived }
-          then_expr: { type: var, name: exclude_archived }
-          else_expr: { type: const, value: null }
-      - - types
-        - type: if
-          condition: { type: exists, var: types }
-          then_expr: { type: var, name: types }
-          else_expr: { type: const, value: null }
+    - - exclude_archived
+      - type: if
+        condition:
+          type: exists
+          var: exclude_archived
+        then_expr:
+          type: var
+          name: exclude_archived
+        else_expr:
+          type: const
+          value: null
+    - - types
+      - type: if
+        condition:
+          type: exists
+          var: types
+        then_expr:
+          type: var
+          name: types
+        else_expr:
+          type: const
+          value: null
   pagination:
     params:
-      cursor: { from_response: response_metadata.next_cursor }
-      limit: { fixed: 200 }
+      cursor:
+        from_response: response_metadata.next_cursor
+      limit:
+        fixed: 200
+        role: page_size
     location: query
-
+    strategy: cursor
 channel_info:
   response:
     items: channel
   method: GET
   path:
-    - type: literal
-      value: conversations.info
+  - type: literal
+    value: conversations.info
   query:
     type: object
     fields:
-      - - channel
-        - type: var
-          name: id
-      - - include_num_members
-        - type: const
-          value: "true"
-
+    - - channel
+      - type: var
+        name: id
+    - - include_num_members
+      - type: const
+        value: 'true'
 channel_history:
   response:
     items: messages
   method: GET
   path:
-    - type: literal
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: channel_replies
+    then_expr:
+      type: const
+      value: conversations.replies
+    else_expr:
+      type: const
       value: conversations.history
   query:
     type: object
     fields:
-      - - channel
-        - type: var
-          name: channel
-      - - oldest
-        - type: if
-          condition: { type: exists, var: oldest }
-          then_expr: { type: var, name: oldest }
-          else_expr: { type: const, value: null }
-      - - latest
-        - type: if
-          condition: { type: exists, var: latest }
-          then_expr: { type: var, name: latest }
-          else_expr: { type: const, value: null }
-      - - inclusive
-        - type: if
-          condition: { type: exists, var: inclusive }
-          then_expr: { type: var, name: inclusive }
-          else_expr: { type: const, value: null }
+    - - channel
+      - type: var
+        name: channel
+    - - oldest
+      - type: if
+        condition:
+          type: exists
+          var: oldest
+        then_expr:
+          type: var
+          name: oldest
+        else_expr:
+          type: const
+          value: null
+    - - latest
+      - type: if
+        condition:
+          type: exists
+          var: latest
+        then_expr:
+          type: var
+          name: latest
+        else_expr:
+          type: const
+          value: null
+    - - inclusive
+      - type: if
+        condition:
+          type: exists
+          var: inclusive
+        then_expr:
+          type: var
+          name: inclusive
+        else_expr:
+          type: const
+          value: null
   pagination:
     params:
-      cursor: { from_response: response_metadata.next_cursor }
-      limit: { fixed: 100 }
+      cursor:
+        from_response: response_metadata.next_cursor
+      limit:
+        fixed: 100
+        role: page_size
     location: query
-    stop_when: { field: has_more, eq: false }
-
-channel_replies:
-  response:
-    items: messages
-  method: GET
-  path:
-    - type: literal
-      value: conversations.replies
-  query:
-    type: object
-    fields:
-      - - channel
-        - type: var
-          name: channel
-      - - ts
-        - type: var
-          name: ts
-  pagination:
-    params:
-      cursor: { from_response: response_metadata.next_cursor }
-      limit: { fixed: 100 }
-    location: query
-    stop_when: { field: has_more, eq: false }
-
+    stop_when:
+      field: has_more
+      eq: false
+    strategy: cursor
 channel_members:
   response:
     items: members
   method: GET
   path:
-    - type: literal
-      value: conversations.members
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: user
+    then_expr:
+      type: const
+      value: users.list
+    else_expr:
+      type: if
+      condition:
+        type: equals
+        left:
+          type: var
+          name: shelf
+        right:
+          type: const
+          value: usergroup_member
+      then_expr:
+        type: const
+        value: usergroups.users.list
+      else_expr:
+        type: const
+        value: conversations.members
   query:
     type: object
     fields:
-      - - channel
-        - type: var
-          name: channel
+    - - channel
+      - type: var
+        name: channel
   pagination:
     params:
-      cursor: { from_response: response_metadata.next_cursor }
-      limit: { fixed: 200 }
+      cursor:
+        from_response: response_metadata.next_cursor
+      limit:
+        fixed: 200
+        role: page_size
     location: query
-
+    strategy: cursor
 channel_create:
   response: single
   method: POST
   path:
-    - type: literal
-      value: conversations.create
+  - type: literal
+    value: conversations.create
   body:
     type: var
     name: input
-
 channel_archive:
   response: single
   method: POST
   path:
-    - type: literal
-      value: conversations.archive
+  - type: literal
+    value: conversations.archive
   body:
     type: object
     fields:
-      - - channel
-        - type: var
-          name: id
-
+    - - channel
+      - type: var
+        name: id
 channel_unarchive:
   response: single
   method: POST
   path:
-    - type: literal
-      value: conversations.unarchive
+  - type: literal
+    value: conversations.unarchive
   body:
     type: object
     fields:
-      - - channel
-        - type: var
-          name: id
-
+    - - channel
+      - type: var
+        name: id
 channel_join:
   response: single
   method: POST
   path:
-    - type: literal
-      value: conversations.join
+  - type: literal
+    value: conversations.join
   body:
     type: object
     fields:
-      - - channel
-        - type: var
-          name: id
-
+    - - channel
+      - type: var
+        name: id
 channel_leave:
   response: single
   method: POST
   path:
-    - type: literal
-      value: conversations.leave
+  - type: literal
+    value: conversations.leave
   body:
     type: object
     fields:
-      - - channel
-        - type: var
-          name: id
-
+    - - channel
+      - type: var
+        name: id
 channel_rename:
   response: single
   method: POST
   path:
-    - type: literal
-      value: conversations.rename
+  - type: literal
+    value: conversations.rename
   body:
     type: object
     fields:
-      - - channel
-        - type: var
-          name: id
-      - - name
-        - type: var
-          name: name
-
+    - - channel
+      - type: var
+        name: id
+    - - name
+      - type: var
+        name: name
 channel_set_topic:
   response: single
   method: POST
   path:
-    - type: literal
-      value: conversations.setTopic
+  - type: literal
+    value: conversations.setTopic
   body:
     type: object
     fields:
-      - - channel
-        - type: var
-          name: id
-      - - topic
-        - type: var
-          name: topic
-
+    - - channel
+      - type: var
+        name: id
+    - - topic
+      - type: var
+        name: topic
 channel_set_purpose:
   response: single
   method: POST
   path:
-    - type: literal
-      value: conversations.setPurpose
+  - type: literal
+    value: conversations.setPurpose
   body:
     type: object
     fields:
-      - - channel
-        - type: var
-          name: id
-      - - purpose
-        - type: var
-          name: purpose
-
+    - - channel
+      - type: var
+        name: id
+    - - purpose
+      - type: var
+        name: purpose
 channel_invite:
   response: single
   method: POST
   path:
-    - type: literal
-      value: conversations.invite
+  - type: literal
+    value: conversations.invite
   body:
     type: object
     fields:
-      - - channel
-        - type: var
-          name: id
-      - - users
-        - type: var
-          name: users
-
+    - - channel
+      - type: var
+        name: id
+    - - users
+      - type: var
+        name: users
 channel_kick:
   response: single
   method: POST
   path:
-    - type: literal
-      value: conversations.kick
+  - type: literal
+    value: conversations.kick
   body:
     type: object
     fields:
-      - - channel
-        - type: var
-          name: id
-      - - user
-        - type: var
-          name: user
-
+    - - channel
+      - type: var
+        name: id
+    - - user
+      - type: var
+        name: user
 channel_mark:
   response: single
   method: POST
   path:
-    - type: literal
-      value: conversations.mark
+  - type: literal
+    value: conversations.mark
   body:
     type: object
     fields:
-      - - channel
-        - type: var
-          name: id
-      - - ts
-        - type: var
-          name: ts
-
-# ── Message (chat / search) ────────────────────────────────────────────────
-
+    - - channel
+      - type: var
+        name: id
+    - - ts
+      - type: var
+        name: ts
 message_search:
-  # Slack returns: {"messages": {"matches": [...], "total": N, "pagination": {...}}}
-  # The items are at messages.matches — dot-path for items is not supported in
-  # ResponseConfig.items, so we map to the outer "messages" key and note this
-  # as a known limitation (see README). Use the pagination below.
   response:
     items: messages
   method: GET
   path:
-    - type: literal
-      value: search.messages
+  - type: literal
+    value: search.messages
   query:
     type: object
     fields:
-      - - query
-        - type: var
-          name: query
-      - - sort
-        - type: if
-          condition: { type: exists, var: sort }
-          then_expr: { type: var, name: sort }
-          else_expr: { type: const, value: null }
-      - - sort_dir
-        - type: if
-          condition: { type: exists, var: sort_dir }
-          then_expr: { type: var, name: sort_dir }
-          else_expr: { type: const, value: null }
-      - - highlight
-        - type: if
-          condition: { type: exists, var: highlight }
-          then_expr: { type: var, name: highlight }
-          else_expr: { type: const, value: null }
+    - - query
+      - type: var
+        name: query
+    - - sort
+      - type: if
+        condition:
+          type: exists
+          var: sort
+        then_expr:
+          type: var
+          name: sort
+        else_expr:
+          type: const
+          value: null
+    - - sort_dir
+      - type: if
+        condition:
+          type: exists
+          var: sort_dir
+        then_expr:
+          type: var
+          name: sort_dir
+        else_expr:
+          type: const
+          value: null
+    - - highlight
+      - type: if
+        condition:
+          type: exists
+          var: highlight
+        then_expr:
+          type: var
+          name: highlight
+        else_expr:
+          type: const
+          value: null
   pagination:
     params:
-      page: { counter: 1 }
-      count: { fixed: 100 }
+      page:
+        counter: 1
+      count:
+        fixed: 100
+        role: page_size
     location: query
-
+    strategy: page_number
 message_post:
   response: single
   method: POST
   path:
-    - type: literal
-      value: chat.postMessage
+  - type: literal
+    value: chat.postMessage
   body:
     type: var
     name: input
-
 message_update:
   response: single
   method: POST
   path:
-    - type: literal
-      value: chat.update
+  - type: literal
+    value: chat.update
   body:
     type: object
     fields:
-      - - channel
-        - type: var
-          name: channel
-      - - ts
-        - type: var
-          name: id
-      - - text
-        - type: if
-          condition: { type: exists, var: text }
-          then_expr: { type: var, name: text }
-          else_expr: { type: const, value: null }
-      - - blocks
-        - type: if
-          condition: { type: exists, var: blocks }
-          then_expr: { type: var, name: blocks }
-          else_expr: { type: const, value: null }
-      - - attachments
-        - type: if
-          condition: { type: exists, var: attachments }
-          then_expr: { type: var, name: attachments }
-          else_expr: { type: const, value: null }
-
+    - - channel
+      - type: var
+        name: channel
+    - - ts
+      - type: var
+        name: id
+    - - text
+      - type: if
+        condition:
+          type: exists
+          var: text
+        then_expr:
+          type: var
+          name: text
+        else_expr:
+          type: const
+          value: null
+    - - blocks
+      - type: if
+        condition:
+          type: exists
+          var: blocks
+        then_expr:
+          type: var
+          name: blocks
+        else_expr:
+          type: const
+          value: null
+    - - attachments
+      - type: if
+        condition:
+          type: exists
+          var: attachments
+        then_expr:
+          type: var
+          name: attachments
+        else_expr:
+          type: const
+          value: null
 message_delete:
   response: single
   method: POST
   path:
-    - type: literal
-      value: chat.delete
+  - type: literal
+    value: chat.delete
   body:
     type: object
     fields:
-      - - channel
-        - type: var
-          name: channel
-      - - ts
-        - type: var
-          name: id
-
+    - - channel
+      - type: var
+        name: channel
+    - - ts
+      - type: var
+        name: id
 message_permalink:
   response: single
   method: GET
   path:
-    - type: literal
-      value: chat.getPermalink
+  - type: literal
+    value: chat.getPermalink
   query:
     type: object
     fields:
-      - - channel
-        - type: var
-          name: channel
-      - - message_ts
-        - type: var
-          name: id
-
+    - - channel
+      - type: var
+        name: channel
+    - - message_ts
+      - type: var
+        name: id
 message_react_add:
   response: single
   method: POST
   path:
-    - type: literal
-      value: reactions.add
+  - type: literal
+    value: reactions.add
   body:
     type: object
     fields:
-      - - channel
-        - type: var
-          name: channel
-      - - timestamp
-        - type: var
-          name: id
-      - - name
-        - type: var
-          name: name
-
+    - - channel
+      - type: var
+        name: channel
+    - - timestamp
+      - type: var
+        name: id
+    - - name
+      - type: var
+        name: name
 message_react_remove:
   response: single
   method: POST
   path:
-    - type: literal
-      value: reactions.remove
+  - type: literal
+    value: reactions.remove
   body:
     type: object
     fields:
-      - - channel
-        - type: var
-          name: channel
-      - - timestamp
-        - type: var
-          name: id
-      - - name
-        - type: var
-          name: name
-
-# ── User ──────────────────────────────────────────────────────────────────
-
-user_list:
-  response:
-    items: members
-  method: GET
-  path:
-    - type: literal
-      value: users.list
-  query:
-    type: object
-    fields:
-      - - include_locale
-        - type: if
-          condition: { type: exists, var: include_locale }
-          then_expr: { type: var, name: include_locale }
-          else_expr: { type: const, value: null }
-  pagination:
-    params:
-      cursor: { from_response: response_metadata.next_cursor }
-      limit: { fixed: 200 }
-    location: query
-
+    - - channel
+      - type: var
+        name: channel
+    - - timestamp
+      - type: var
+        name: id
+    - - name
+      - type: var
+        name: name
 user_info:
-  # GET users.info — returns {"ok": true, "user": {...}}
   response:
     items: user
   method: GET
   path:
-    - type: literal
-      value: users.info
+  - type: literal
+    value: users.info
   query:
     type: object
     fields:
-      - - user
-        - type: var
-          name: id
-
+    - - user
+      - type: var
+        name: id
 user_lookup_by_email:
   response:
     items: user
   method: GET
   path:
-    - type: literal
-      value: users.lookupByEmail
+  - type: literal
+    value: users.lookupByEmail
   query:
     type: object
     fields:
-      - - email
-        - type: var
-          name: email
-
+    - - email
+      - type: var
+        name: email
 user_get_presence:
   response: single
   method: GET
   path:
-    - type: literal
-      value: users.getPresence
+  - type: literal
+    value: users.getPresence
   query:
     type: object
     fields:
-      - - user
-        - type: var
-          name: id
-
+    - - user
+      - type: var
+        name: id
 user_identity:
-  # GET users.identity — returns {"ok": true, "user": {...}, "team": {...}}
   response:
     items: user
   method: GET
   path:
-    - type: literal
-      value: users.identity
-
-# ── File ──────────────────────────────────────────────────────────────────
-
+  - type: literal
+    value: users.identity
 file_list:
-  # files.list uses page/count pagination (not cursor-based).
-  # Response: {"files": [...], "paging": {"total": N, "page": P, "pages": X}}
   response:
     items: files
   method: GET
   path:
-    - type: literal
-      value: files.list
+  - type: literal
+    value: files.list
   query:
     type: object
     fields:
-      - - user
-        - type: if
-          condition: { type: exists, var: user }
-          then_expr: { type: var, name: user }
-          else_expr: { type: const, value: null }
-      - - channel
-        - type: if
-          condition: { type: exists, var: channel }
-          then_expr: { type: var, name: channel }
-          else_expr: { type: const, value: null }
-      - - types
-        - type: if
-          condition: { type: exists, var: types }
-          then_expr: { type: var, name: types }
-          else_expr: { type: const, value: null }
-      - - ts_from
-        - type: if
-          condition: { type: exists, var: ts_from }
-          then_expr: { type: var, name: ts_from }
-          else_expr: { type: const, value: null }
-      - - ts_to
-        - type: if
-          condition: { type: exists, var: ts_to }
-          then_expr: { type: var, name: ts_to }
-          else_expr: { type: const, value: null }
+    - - user
+      - type: if
+        condition:
+          type: exists
+          var: user
+        then_expr:
+          type: var
+          name: user
+        else_expr:
+          type: const
+          value: null
+    - - channel
+      - type: if
+        condition:
+          type: exists
+          var: channel
+        then_expr:
+          type: var
+          name: channel
+        else_expr:
+          type: const
+          value: null
+    - - types
+      - type: if
+        condition:
+          type: exists
+          var: types
+        then_expr:
+          type: var
+          name: types
+        else_expr:
+          type: const
+          value: null
+    - - ts_from
+      - type: if
+        condition:
+          type: exists
+          var: ts_from
+        then_expr:
+          type: var
+          name: ts_from
+        else_expr:
+          type: const
+          value: null
+    - - ts_to
+      - type: if
+        condition:
+          type: exists
+          var: ts_to
+        then_expr:
+          type: var
+          name: ts_to
+        else_expr:
+          type: const
+          value: null
   pagination:
     params:
-      page: { counter: 1 }
-      count: { fixed: 100 }
+      page:
+        counter: 1
+      count:
+        fixed: 100
+        role: page_size
     location: query
-
+    strategy: page_number
 file_info:
-  # GET files.info — returns {"ok": true, "file": {...}}
   response:
     items: file
   method: GET
   path:
-    - type: literal
-      value: files.info
+  - type: literal
+    value: files.info
   query:
     type: object
     fields:
-      - - file
-        - type: var
-          name: id
-
+    - - file
+      - type: var
+        name: id
 file_upload:
   response: single
   method: POST
   path:
-    - type: literal
-      value: files.upload
+  - type: literal
+    value: files.upload
   body:
     type: var
     name: input
-
 file_delete:
   response: single
   method: POST
   path:
-    - type: literal
-      value: files.delete
+  - type: literal
+    value: files.delete
   body:
     type: object
     fields:
-      - - file
-        - type: var
-          name: id
-
+    - - file
+      - type: var
+        name: id
 file_revoke_public_url:
   response: single
   method: POST
   path:
-    - type: literal
-      value: files.revokePublicURL
+  - type: literal
+    value: files.revokePublicURL
   body:
     type: object
     fields:
-      - - file
-        - type: var
-          name: id
-
-# ── UserGroup ─────────────────────────────────────────────────────────────
-
+    - - file
+      - type: var
+        name: id
 usergroup_list:
   response:
     items: usergroups
   method: GET
   path:
-    - type: literal
-      value: usergroups.list
+  - type: literal
+    value: usergroups.list
   query:
     type: object
     fields:
-      - - include_users
-        - type: if
-          condition: { type: exists, var: include_users }
-          then_expr: { type: var, name: include_users }
-          else_expr: { type: const, value: null }
-      - - include_count
-        - type: if
-          condition: { type: exists, var: include_count }
-          then_expr: { type: var, name: include_count }
-          else_expr: { type: const, value: null }
-      - - include_disabled
-        - type: if
-          condition: { type: exists, var: include_disabled }
-          then_expr: { type: var, name: include_disabled }
-          else_expr: { type: const, value: null }
-
+    - - include_users
+      - type: if
+        condition:
+          type: exists
+          var: include_users
+        then_expr:
+          type: var
+          name: include_users
+        else_expr:
+          type: const
+          value: null
+    - - include_count
+      - type: if
+        condition:
+          type: exists
+          var: include_count
+        then_expr:
+          type: var
+          name: include_count
+        else_expr:
+          type: const
+          value: null
+    - - include_disabled
+      - type: if
+        condition:
+          type: exists
+          var: include_disabled
+        then_expr:
+          type: var
+          name: include_disabled
+        else_expr:
+          type: const
+          value: null
 usergroup_create:
   response: single
   method: POST
   path:
-    - type: literal
-      value: usergroups.create
+  - type: literal
+    value: usergroups.create
   body:
     type: var
     name: input
-
 usergroup_update:
   response: single
   method: POST
   path:
-    - type: literal
-      value: usergroups.update
+  - type: literal
+    value: usergroups.update
   body:
     type: object
     fields:
-      - - usergroup
-        - type: var
-          name: id
-      - - name
-        - type: if
-          condition: { type: exists, var: name }
-          then_expr: { type: var, name: name }
-          else_expr: { type: const, value: null }
-      - - handle
-        - type: if
-          condition: { type: exists, var: handle }
-          then_expr: { type: var, name: handle }
-          else_expr: { type: const, value: null }
-      - - description
-        - type: if
-          condition: { type: exists, var: description }
-          then_expr: { type: var, name: description }
-          else_expr: { type: const, value: null }
-
+    - - usergroup
+      - type: var
+        name: id
+    - - name
+      - type: if
+        condition:
+          type: exists
+          var: name
+        then_expr:
+          type: var
+          name: name
+        else_expr:
+          type: const
+          value: null
+    - - handle
+      - type: if
+        condition:
+          type: exists
+          var: handle
+        then_expr:
+          type: var
+          name: handle
+        else_expr:
+          type: const
+          value: null
+    - - description
+      - type: if
+        condition:
+          type: exists
+          var: description
+        then_expr:
+          type: var
+          name: description
+        else_expr:
+          type: const
+          value: null
 usergroup_enable:
   response: single
   method: POST
   path:
-    - type: literal
-      value: usergroups.enable
+  - type: literal
+    value: usergroups.enable
   body:
     type: object
     fields:
-      - - usergroup
-        - type: var
-          name: id
-
+    - - usergroup
+      - type: var
+        name: id
 usergroup_disable:
   response: single
   method: POST
   path:
-    - type: literal
-      value: usergroups.disable
+  - type: literal
+    value: usergroups.disable
   body:
     type: object
     fields:
-      - - usergroup
-        - type: var
-          name: id
-
-usergroup_member_list:
-  # Returns {"ok": true, "users": ["U012A3B", "U012A3C", ...]}
-  # users is a bare array of user IDs, not full User objects.
-  # Mapping as items: users. The decoder will produce User entities with only an id.
-  response:
-    items: users
-  method: GET
-  path:
-    - type: literal
-      value: usergroups.users.list
-  query:
-    type: object
-    fields:
-      - - usergroup
-        - type: var
-          name: usergroup
-      - - include_disabled
-        - type: if
-          condition: { type: exists, var: include_disabled }
-          then_expr: { type: var, name: include_disabled }
-          else_expr: { type: const, value: null }
-
-# ── Team ──────────────────────────────────────────────────────────────────
-
+    - - usergroup
+      - type: var
+        name: id
 team_info:
-  # GET team.info — returns {"ok": true, "team": {...}}
   response:
     items: team
   method: GET
   path:
-    - type: literal
-      value: team.info
-
-# ── Reminder ──────────────────────────────────────────────────────────────
-
+  - type: literal
+    value: team.info
 reminder_list:
   response:
     items: reminders
   method: GET
   path:
-    - type: literal
-      value: reminders.list
-
+  - type: literal
+    value: reminders.list
 reminder_info:
   response:
     items: reminder
   method: GET
   path:
-    - type: literal
-      value: reminders.info
+  - type: literal
+    value: reminders.info
   query:
     type: object
     fields:
-      - - reminder
-        - type: var
-          name: id
-
+    - - reminder
+      - type: var
+        name: id
 reminder_add:
   response: single
   method: POST
   path:
-    - type: literal
-      value: reminders.add
+  - type: literal
+    value: reminders.add
   body:
     type: var
     name: input
-
 reminder_complete:
   response: single
   method: POST
   path:
-    - type: literal
-      value: reminders.complete
+  - type: literal
+    value: reminders.complete
   body:
     type: object
     fields:
-      - - reminder
-        - type: var
-          name: id
-
+    - - reminder
+      - type: var
+        name: id
 reminder_delete:
   response: single
   method: POST
   path:
-    - type: literal
-      value: reminders.delete
+  - type: literal
+    value: reminders.delete
   body:
     type: object
     fields:
-      - - reminder
-        - type: var
-          name: id
-
-# ── Pin ───────────────────────────────────────────────────────────────────
-
+    - - reminder
+      - type: var
+        name: id
 pin_list:
-  # GET pins.list — returns {"ok": true, "items": [...]}
   response: items_list
   method: GET
   path:
-    - type: literal
-      value: pins.list
+  - type: literal
+    value: pins.list
   query:
     type: object
     fields:
-      - - channel
-        - type: var
-          name: channel
-
+    - - channel
+      - type: var
+        name: channel
 pin_add:
   response: single
   method: POST
   path:
-    - type: literal
-      value: pins.add
+  - type: literal
+    value: pins.add
   body:
     type: object
     fields:
-      - - channel
-        - type: var
-          name: channel
-      - - timestamp
-        - type: if
-          condition: { type: exists, var: timestamp }
-          then_expr: { type: var, name: timestamp }
-          else_expr: { type: const, value: null }
-
+    - - channel
+      - type: var
+        name: channel
+    - - timestamp
+      - type: if
+        condition:
+          type: exists
+          var: timestamp
+        then_expr:
+          type: var
+          name: timestamp
+        else_expr:
+          type: const
+          value: null
 pin_remove:
   response: single
   method: POST
   path:
-    - type: literal
-      value: pins.remove
+  - type: literal
+    value: pins.remove
   body:
     type: object
     fields:
-      - - channel
-        - type: var
-          name: channel
-      - - timestamp
-        - type: if
-          condition: { type: exists, var: timestamp }
-          then_expr: { type: var, name: timestamp }
-          else_expr: { type: const, value: null }
-
-# ── Scheduled messages (chat.scheduleMessage) ─────────────────────────────
-
+    - - channel
+      - type: var
+        name: channel
+    - - timestamp
+      - type: if
+        condition:
+          type: exists
+          var: timestamp
+        then_expr:
+          type: var
+          name: timestamp
+        else_expr:
+          type: const
+          value: null
 scheduledmessage_list:
   response:
     items: scheduled_messages
     next_cursor: response_metadata.next_cursor
   method: POST
   path:
-    - type: literal
-      value: chat.scheduledMessages.list
+  - type: literal
+    value: chat.scheduledMessages.list
   body:
     type: object
     fields:
-      - - channel
-        - type: var
-          name: channel
-      - - oldest
-        - type: if
-          condition: { type: exists, var: oldest }
-          then_expr: { type: var, name: oldest }
-          else_expr: { type: const, value: null }
-      - - latest
-        - type: if
-          condition: { type: exists, var: latest }
-          then_expr: { type: var, name: latest }
-          else_expr: { type: const, value: null }
+    - - channel
+      - type: var
+        name: channel
+    - - oldest
+      - type: if
+        condition:
+          type: exists
+          var: oldest
+        then_expr:
+          type: var
+          name: oldest
+        else_expr:
+          type: const
+          value: null
+    - - latest
+      - type: if
+        condition:
+          type: exists
+          var: latest
+        then_expr:
+          type: var
+          name: latest
+        else_expr:
+          type: const
+          value: null
   pagination:
     params:
-      cursor: { from_response: response_metadata.next_cursor }
-      limit: { fixed: 100 }
+      cursor:
+        from_response: response_metadata.next_cursor
+      limit:
+        fixed: 100
+        role: page_size
     location: body
-
+    strategy: cursor
 scheduledmessage_create:
   response: single
   method: POST
   path:
-    - type: literal
-      value: chat.scheduleMessage
+  - type: literal
+    value: chat.scheduleMessage
   body:
     type: var
     name: input
-
 scheduledmessage_delete:
   response: single
   method: POST
   path:
-    - type: literal
-      value: chat.deleteScheduledMessage
+  - type: literal
+    value: chat.deleteScheduledMessage
   body:
     type: object
     fields:
-      - - channel
-        - type: var
-          name: channel
-      - - scheduled_message_id
-        - type: var
-          name: id
-
-# ── Bookmarks ─────────────────────────────────────────────────────────────
-
+    - - channel
+      - type: var
+        name: channel
+    - - scheduled_message_id
+      - type: var
+        name: id
 bookmark_list:
   response:
     items: bookmarks
   method: POST
   path:
-    - type: literal
-      value: bookmarks.list
+  - type: literal
+    value: bookmarks.list
   body:
     type: object
     fields:
-      - - channel_id
-        - type: var
-          name: channel
-
+    - - channel_id
+      - type: var
+        name: channel
 bookmark_add:
   response:
     items: bookmark
   method: POST
   path:
-    - type: literal
-      value: bookmarks.add
+  - type: literal
+    value: bookmarks.add
   body:
     type: object
     fields:
-      - - channel_id
-        - type: var
-          name: channel
-      - - title
-        - type: var
-          name: title
-      - - type
-        - type: var
-          name: type
-      - - link
-        - type: if
-          condition: { type: exists, var: link }
-          then_expr: { type: var, name: link }
-          else_expr: { type: const, value: null }
-      - - emoji
-        - type: if
-          condition: { type: exists, var: emoji }
-          then_expr: { type: var, name: emoji }
-          else_expr: { type: const, value: null }
-
+    - - channel_id
+      - type: var
+        name: channel
+    - - title
+      - type: var
+        name: title
+    - - type
+      - type: var
+        name: type
+    - - link
+      - type: if
+        condition:
+          type: exists
+          var: link
+        then_expr:
+          type: var
+          name: link
+        else_expr:
+          type: const
+          value: null
+    - - emoji
+      - type: if
+        condition:
+          type: exists
+          var: emoji
+        then_expr:
+          type: var
+          name: emoji
+        else_expr:
+          type: const
+          value: null
 bookmark_edit:
   response:
     items: bookmark
   method: POST
   path:
-    - type: literal
-      value: bookmarks.edit
+  - type: literal
+    value: bookmarks.edit
   body:
     type: object
     fields:
-      - - bookmark_id
-        - type: var
-          name: id
-      - - channel_id
-        - type: var
-          name: channel
-      - - title
-        - type: if
-          condition: { type: exists, var: title }
-          then_expr: { type: var, name: title }
-          else_expr: { type: const, value: null }
-      - - link
-        - type: if
-          condition: { type: exists, var: link }
-          then_expr: { type: var, name: link }
-          else_expr: { type: const, value: null }
-      - - emoji
-        - type: if
-          condition: { type: exists, var: emoji }
-          then_expr: { type: var, name: emoji }
-          else_expr: { type: const, value: null }
-
+    - - bookmark_id
+      - type: var
+        name: id
+    - - channel_id
+      - type: var
+        name: channel
+    - - title
+      - type: if
+        condition:
+          type: exists
+          var: title
+        then_expr:
+          type: var
+          name: title
+        else_expr:
+          type: const
+          value: null
+    - - link
+      - type: if
+        condition:
+          type: exists
+          var: link
+        then_expr:
+          type: var
+          name: link
+        else_expr:
+          type: const
+          value: null
+    - - emoji
+      - type: if
+        condition:
+          type: exists
+          var: emoji
+        then_expr:
+          type: var
+          name: emoji
+        else_expr:
+          type: const
+          value: null
 bookmark_remove:
   response: single
   method: POST
   path:
-    - type: literal
-      value: bookmarks.remove
+  - type: literal
+    value: bookmarks.remove
   body:
     type: object
     fields:
-      - - bookmark_id
-        - type: var
-          name: id
-      - - channel_id
-        - type: var
-          name: channel
-
-# ── Bot ───────────────────────────────────────────────────────────────────
-
+    - - bookmark_id
+      - type: var
+        name: id
+    - - channel_id
+      - type: var
+        name: channel
 bot_info:
   response:
     items: bot
   method: GET
   path:
-    - type: literal
-      value: bots.info
+  - type: literal
+    value: bots.info
   query:
     type: object
     fields:
-      - - bot
-        - type: var
-          name: id
-
-# ── Auth ──────────────────────────────────────────────────────────────────
-
+    - - bot
+      - type: var
+        name: id
 auth_test:
-  # POST auth.test — returns {"ok": true, "user": "...", "user_id": "...", "team": "...", ...}
-  # We use items: user_id to get the caller's user ID, but the full object is actually at root.
-  # Decode from root as a User entity (user_id maps to id via decoder).
   response: single
   method: POST
   path:
-    - type: literal
-      value: auth.test
+  - type: literal
+    value: auth.test

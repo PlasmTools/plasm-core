@@ -5,9 +5,15 @@ game_query:
       value: games
   pagination:
     params:
-      page: {counter: 1}
-      page_size: {fixed: 20}
-    stop_when: {field: next, absent: true}
+      page:
+        counter: 1
+      page_size:
+        fixed: 20
+        role: page_size
+    stop_when:
+      field: next
+      absent: true
+    strategy: page_number
   query:
     type: object
     fields:

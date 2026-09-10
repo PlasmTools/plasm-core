@@ -86,7 +86,9 @@ fn find_view_producer_node(
                 }
                 cur = source_label.clone();
             }
-            DagNodeSource::Compute { source, .. } | DagNodeSource::Derive { source, .. } => {
+            DagNodeSource::Compute { source, .. }
+            | DagNodeSource::Derive { source, .. }
+            | DagNodeSource::ScalarExtract { source, .. } => {
                 cur = source.clone();
             }
             DagNodeSource::Data(_) => {
@@ -94,7 +96,8 @@ fn find_view_producer_node(
                     "synthetic binding `{cur}` cannot produce view_embed parent rows for `{expected_view}`"
                 ));
             }
-            DagNodeSource::ForEach { source, .. } => cur = source.clone(),
+            DagNodeSource::ForEach { source, .. }
+            | DagNodeSource::IterateUntil { seed: source, .. } => cur = source.clone(),
         }
     }
     Err(format!(
@@ -212,20 +215,10 @@ fn view_capability_matches(
     }
     cgs.capabilities.get(cap.as_str()).is_some_and(|schema| {
         schema.domain.as_str() == view.entity.as_str()
-            && schema
-                .mapping
-                .template
-                .0
-                .get("transport")
-                .and_then(|t| t.as_str())
-                == Some("view")
-            && schema
-                .mapping
-                .template
-                .0
-                .get("view")
-                .and_then(|v| v.as_str())
-                == Some(view_key)
+            && schema.mapping.as_ref().is_some_and(|m| {
+                m.template.0.get("transport").and_then(|t| t.as_str()) == Some("view")
+                    && m.template.0.get("view").and_then(|v| v.as_str()) == Some(view_key)
+            })
     })
 }
 

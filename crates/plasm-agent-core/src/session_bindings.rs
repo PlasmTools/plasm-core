@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use tracing::Instrument;
 
 use auth_framework::storage::AuthStorage;
 
@@ -46,16 +47,24 @@ pub async fn tenant_bindings_for_entries(
         let scope = BindingScope::new(cfg.tenant_id.clone(), cfg.id, eid.clone());
         let storage = Arc::clone(&storage);
         let eid = eid.clone();
-        futs.push(async move {
-            let values = binding_store::load_binding_values_scoped(&storage, repo, &scope).await?;
-            match values {
-                Some(vals) if crate::binding_slots::bindings_complete_for_entry(&eid, &vals) => {
-                    Ok(Some((eid, SessionBindingMap::from_values(scope, vals))))
+        let parent_span = tracing::Span::current();
+        let bind_span = crate::spans::session_load_binding(&parent_span, eid.as_str());
+        futs.push(
+            async move {
+                let values =
+                    binding_store::load_binding_values_scoped(&storage, repo, &scope).await?;
+                match values {
+                    Some(vals)
+                        if crate::binding_slots::bindings_complete_for_entry(&eid, &vals) =>
+                    {
+                        Ok(Some((eid, SessionBindingMap::from_values(scope, vals))))
+                    }
+                    Some(_) => Err(BindingLoadError::Incomplete(eid)),
+                    None => Err(BindingLoadError::NotConfigured(eid)),
                 }
-                Some(_) => Err(BindingLoadError::Incomplete(eid)),
-                None => Err(BindingLoadError::NotConfigured(eid)),
             }
-        });
+            .instrument(bind_span),
+        );
     }
     let results = futures_util::future::join_all(futs).await;
     let mut out = HashMap::new();

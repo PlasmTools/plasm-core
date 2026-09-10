@@ -15,7 +15,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Loaded schema with account_update capability");
     if let Some(cap) = cgs.get_capability("account_update") {
         println!("✓ Capability found: {} ({})", cap.name, cap.domain);
-        if cap.input_schema.is_some() {
+        if cap.primary_invocation_schema().is_some() {
             println!("✓ Input schema defined for validation");
         }
     }
@@ -114,7 +114,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n🏆 Input validation system fully operational!");
     println!("   ✓ Type checking works");
-    println!("   ✓ Validation predicates work");
+    println!("   ✓ Value domain constraints work");
     println!("   ✓ Enum constraints work");
     println!("   ✓ Cross-field rules work");
 

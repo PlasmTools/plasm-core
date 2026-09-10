@@ -1,0 +1,949 @@
+version: 11
+entry_id: phone
+auth:
+  scheme: none
+http_backend: http://127.0.0.1:9000
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  external_sms:
+    description: Outbound SMS or voice message delivered to a phone number.
+    severity: critical
+entities:
+  AuthSession:
+    id_field: access_token
+    description: Login session for Phone (Bearer token). Username is the task principal's e164 phone number from Supervisor — not an email.
+    discovery:
+      names:
+      - login
+      - auth
+      - access token
+    fields:
+      access_token:
+        required: true
+        value_ref: nv_access_token
+      token_type:
+        required: false
+        value_ref: nv_str
+  Contact:
+    id_field: contact_id
+    description: Phone address-book contact.
+    discovery:
+      names:
+      - contact
+      - contacts
+      - address book
+    fields:
+      contact_id:
+        required: true
+        value_ref: nv_contact_id
+      first_name:
+        required: true
+        value_ref: nv_str
+      last_name:
+        required: false
+        value_ref: nv_str
+      email:
+        required: false
+        value_ref: nv_email
+      phone_number:
+        required: true
+        value_ref: nv_phone
+      relationships:
+        required: false
+        value_ref: nv_contact_relationship_list
+      birthday:
+        required: false
+        value_ref: nv_str
+      home_address:
+        required: false
+        value_ref: nv_str
+      work_address:
+        required: false
+        value_ref: nv_str
+      created_at:
+        required: false
+        value_ref: nv_datetime
+  Alarm:
+    id_field: alarm_id
+    description: Device alarm.
+    discovery:
+      names:
+      - alarm
+      - alarms
+    fields:
+      alarm_id:
+        required: true
+        value_ref: nv_alarm_id
+      time:
+        required: true
+        value_ref: nv_str
+      repeat_days:
+        required: false
+        value_ref: nv_weekday_list
+      label:
+        required: false
+        value_ref: nv_str
+      enabled:
+        required: false
+        value_ref: nv_bool
+      snooze_minutes:
+        required: false
+        value_ref: nv_int
+      vibration:
+        required: false
+        value_ref: nv_bool
+      created_at:
+        required: false
+        value_ref: nv_datetime
+  TextMessage:
+    id_field: text_message_id
+    primary_query: text_message_query
+    description: SMS / text message between phone numbers.
+    discovery:
+      names:
+      - text
+      - sms
+      - message
+    fields:
+      text_message_id:
+        required: true
+        value_ref: nv_text_id
+      message:
+        required: true
+        value_ref: nv_message
+        data_class: untrusted
+      sent_at:
+        required: false
+        value_ref: nv_datetime
+  VoiceMessage:
+    id_field: voice_message_id
+    primary_query: voice_message_query
+    description: Voice message between phone numbers.
+    fields:
+      voice_message_id:
+        required: true
+        value_ref: nv_voice_id
+      message:
+        required: true
+        value_ref: nv_message
+        data_class: untrusted
+      sent_at:
+        required: false
+        value_ref: nv_datetime
+  Profile:
+    id_field: phone_number
+    description: Public phone profile lookup.
+    fields:
+      first_name:
+        required: false
+        value_ref: nv_str
+      last_name:
+        required: false
+        value_ref: nv_str
+      phone_number:
+        required: true
+        value_ref: nv_phone
+      registered_at:
+        required: false
+        value_ref: nv_datetime
+  ContactRelationship:
+    id_field: label
+    description: Contact relationship label available in the address book.
+    discovery:
+      names:
+      - contact relationship
+      - relationship
+      - relationships
+    fields:
+      label:
+        required: true
+        value_ref: nv_contact_relationship
+  DateTime:
+    id_field: date
+    description: Current device date and time.
+    fields:
+      date:
+        required: true
+        value_ref: nv_str
+      time:
+        required: true
+        value_ref: nv_str
+capabilities:
+  login:
+    description: Login to Phone with username=e164 phone (Supervisor me.phone_number) and account password; returns access_token for Bearer auth. Do not use email.
+    kind: action
+    entity: AuthSession
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: username
+          value_ref: nv_login_username
+          required: true
+        - name: password
+          value_ref: nv_password
+          required: true
+    provides:
+    - access_token
+    - token_type
+    output:
+      type: entity
+      entity_type: AuthSession
+  logout:
+    description: Logout and invalidate the access token.
+    kind: action
+    entity: AuthSession
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Ends the Phone session for this token.
+  contact_query:
+    description: Search contacts by name/relationship.
+    kind: query
+    entity: Contact
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+    - name: relationship
+      value_ref: nv_contact_relationship
+      required: false
+    provides:
+    - contact_id
+    - first_name
+    - last_name
+    - email
+    - phone_number
+    - relationships
+    - birthday
+    - home_address
+    - work_address
+    - created_at
+  contact_create:
+    description: Add a contact.
+    kind: create
+    entity: Contact
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: first_name
+          value_ref: nv_str
+          required: true
+        - name: last_name
+          value_ref: nv_str
+          required: false
+        - name: phone_number
+          value_ref: nv_phone
+          required: true
+        - name: email
+          value_ref: nv_email
+          required: false
+        - name: relationships
+          value_ref: nv_contact_relationship_list
+          required: false
+        - name: birthday
+          value_ref: nv_str
+          required: false
+        - name: home_address
+          value_ref: nv_str
+          required: false
+        - name: work_address
+          value_ref: nv_str
+          required: false
+    provides:
+    - contact_id
+  contact_update:
+    description: Update a contact.
+    kind: update
+    entity: Contact
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: first_name
+          value_ref: nv_str
+          required: false
+        - name: last_name
+          value_ref: nv_str
+          required: false
+        - name: phone_number
+          value_ref: nv_phone
+          required: false
+        - name: email
+          value_ref: nv_email
+          required: false
+        - name: relationships
+          value_ref: nv_contact_relationship_list
+          required: false
+        - name: birthday
+          value_ref: nv_str
+          required: false
+        - name: home_address
+          value_ref: nv_str
+          required: false
+        - name: work_address
+          value_ref: nv_str
+          required: false
+  contact_delete:
+    description: Delete a contact.
+    kind: delete
+    entity: Contact
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+  alarm_query:
+    description: List alarms.
+    kind: query
+    entity: Alarm
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - alarm_id
+    - time
+    - repeat_days
+    - label
+    - enabled
+    - snooze_minutes
+    - vibration
+    - created_at
+  alarm_get:
+    description: Show one alarm.
+    kind: get
+    entity: Alarm
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - alarm_id
+    - time
+    - repeat_days
+    - label
+    - enabled
+    - snooze_minutes
+    - vibration
+    - created_at
+  alarm_create:
+    description: Create an alarm.
+    kind: create
+    entity: Alarm
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: time
+          value_ref: nv_str
+          required: true
+        - name: repeat_days
+          value_ref: nv_weekday_list
+          required: false
+        - name: label
+          value_ref: nv_str
+          required: false
+        - name: enabled
+          value_ref: nv_bool
+          required: false
+        - name: snooze_minutes
+          value_ref: nv_int
+          required: false
+        - name: vibration
+          value_ref: nv_bool
+          required: false
+    provides:
+    - alarm_id
+  alarm_update:
+    description: Update an alarm.
+    kind: update
+    entity: Alarm
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: time
+          value_ref: nv_str
+          required: false
+        - name: repeat_days
+          value_ref: nv_weekday_list
+          required: false
+        - name: label
+          value_ref: nv_str
+          required: false
+        - name: enabled
+          value_ref: nv_bool
+          required: false
+        - name: snooze_minutes
+          value_ref: nv_int
+          required: false
+        - name: vibration
+          value_ref: nv_bool
+          required: false
+  alarm_delete:
+    description: Delete an alarm.
+    kind: delete
+    entity: Alarm
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+  text_message_query:
+    description: List text messages by shelf — browse/search (optional filters) or datetime window with a contact.
+    kind: query
+    entity: TextMessage
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: shelf
+      value_ref: nv_message_shelf
+      required: true
+      description: list | window
+    - name: query
+      value_ref: nv_str
+      required: false
+    - name: phone_number
+      value_ref: nv_phone
+      required: false
+    - name: only_latest_per_contact
+      value_ref: nv_bool
+      required: false
+    - name: min_datetime
+      value_ref: nv_datetime
+      required: false
+    - name: max_datetime
+      value_ref: nv_datetime
+      required: false
+    controls:
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+    - name: pagination_order
+      value_ref: nv_pagination_order
+      required: false
+    provides:
+    - text_message_id
+    - message
+    - sent_at
+  text_message_get:
+    description: Show one text message.
+    kind: get
+    entity: TextMessage
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - text_message_id
+    - message
+    - sent_at
+  text_message_send:
+    description: Send a text message to a phone number.
+    kind: action
+    entity: TextMessage
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: phone_number
+          value_ref: nv_phone
+          required: true
+        - name: message
+          value_ref: nv_message
+          required: true
+          sink_class: external_sms
+    output:
+      type: side_effect
+      description: Sends an SMS to the given phone number.
+  text_message_delete:
+    description: Delete a text message.
+    kind: delete
+    entity: TextMessage
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+  voice_message_query:
+    description: List voice messages by shelf — browse/search (optional filters) or datetime window with a contact.
+    kind: query
+    entity: VoiceMessage
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: shelf
+      value_ref: nv_message_shelf
+      required: true
+      description: list | window
+    - name: query
+      value_ref: nv_str
+      required: false
+    - name: phone_number
+      value_ref: nv_phone
+      required: false
+    - name: only_latest_per_contact
+      value_ref: nv_bool
+      required: false
+    - name: min_datetime
+      value_ref: nv_datetime
+      required: false
+    - name: max_datetime
+      value_ref: nv_datetime
+      required: false
+    controls:
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+    - name: pagination_order
+      value_ref: nv_pagination_order
+      required: false
+    provides:
+    - voice_message_id
+    - message
+    - sent_at
+  voice_message_send:
+    description: Send a voice message to a phone number.
+    kind: action
+    entity: VoiceMessage
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: phone_number
+          value_ref: nv_phone
+          required: true
+        - name: message
+          value_ref: nv_message
+          required: true
+          sink_class: external_sms
+    output:
+      type: side_effect
+      description: Sends a voice message to the given phone number.
+  voice_message_delete:
+    description: Delete a voice message.
+    kind: delete
+    entity: VoiceMessage
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+  profile_get:
+    description: Show phone profile by phone number.
+    kind: get
+    entity: Profile
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: phone_number
+          value_ref: nv_phone
+          required: true
+    provides:
+    - first_name
+    - last_name
+    - phone_number
+    - registered_at
+  date_time_get:
+    description: Get current device date and time.
+    kind: get
+    entity: DateTime
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - date
+    - time
+  contact_relationship_query:
+    description: List all contact relationship labels in the address book.
+    kind: query
+    entity: ContactRelationship
+    discovery:
+      operation_terms:
+      - list
+      - show
+      target_terms:
+      - contact relationship
+      - relationships
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - label
+values:
+  nv_str:
+    type: string
+    description: Free-form string.
+  nv_email:
+    type: email
+    description: Email address of a user or counterparty.
+  nv_login_username:
+    type: e164
+    description: Task-principal phone number from Supervisor (me.phone_number) — the Phone login username in e164 form. Never email; email login returns 401.
+  nv_password:
+    type: string
+    description: Account-holder password for this service.
+  nv_access_token:
+    type: string
+    description: Bearer access token from login.
+  nv_phone:
+    type: e164
+    description: Phone number.
+  nv_message:
+    type: document
+    description: Message body text.
+  nv_contact_id:
+    type: integer
+    description: Contact primary key.
+  nv_alarm_id:
+    type: integer
+    description: Alarm primary key.
+  nv_text_id:
+    type: integer
+    description: Text message primary key.
+  nv_voice_id:
+    type: integer
+    description: Voice message primary key.
+  nv_weekday:
+    type: enum
+    description: Calendar weekday for alarm repeat.
+    enum:
+    - monday
+    - tuesday
+    - wednesday
+    - thursday
+    - friday
+    - saturday
+    - sunday
+  nv_pagination_order:
+    type: enum
+    description: Page traversal order for message windows (within each page, messages stay oldest to newest).
+    enum:
+    - ascending
+    - descending
+  nv_message_shelf:
+    type: enum
+    enum:
+    - list
+    - window
+    description: Message list shelf — browse/search vs datetime window with a contact.
+  nv_weekday_list:
+    type: array
+    items:
+      value_ref: nv_weekday
+    description: Days an alarm repeats.
+  nv_contact_relationship:
+    type: enum
+    description: Relationship label for a phone contact.
+    enum:
+    - brother
+    - child
+    - coworker
+    - daughter
+    - father
+    - friend
+    - husband
+    - manager
+    - mother
+    - parent
+    - partner
+    - roommate
+    - sibling
+    - sister
+    - son
+    - subordinate
+    - wife
+  nv_contact_relationship_list:
+    type: array
+    items:
+      value_ref: nv_contact_relationship
+    description: Relationship labels for a contact.
+  nv_bool:
+    type: boolean
+    description: Boolean flag.
+  nv_int:
+    type: integer
+    description: Integer.
+  nv_datetime:
+    type: rfc3339
+    description: ISO datetime string.
+  prerequisite_principal_email:
+    type: email
+    description: Account holder email.
+  prerequisite_principal_phone:
+    type: e164
+    description: Account holder phone number.
+  prerequisite_account_name:
+    type: string
+    description: Service account identifier.
+prerequisites:
+  contracts:
+    appworld.principal:
+      version: 1
+      inputs: {}
+      outputs:
+        email: prerequisite_principal_email
+        phone: prerequisite_principal_phone
+    appworld.password:
+      version: 1
+      inputs:
+        account: prerequisite_account_name
+      outputs:
+        password: nv_password
+    appworld.session:
+      version: 1
+      inputs: {}
+      outputs:
+        token: nv_access_token
+  providers:
+    session:
+      contract: appworld.session
+      capability: login
+      outputs:
+        token: access_token
+  requirements:
+    login:
+    - id: principal
+      contract: appworld.principal
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - username
+        output: phone
+    - id: password
+      contract: appworld.password
+      arguments:
+        account:
+          kind: constant
+          value: phone
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - password
+        output: password
+    logout:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    contact_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    contact_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    contact_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    contact_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    alarm_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    alarm_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    alarm_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    alarm_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    alarm_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    text_message_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    text_message_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    text_message_send:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    text_message_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    voice_message_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    voice_message_send:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    voice_message_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    date_time_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    contact_relationship_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token

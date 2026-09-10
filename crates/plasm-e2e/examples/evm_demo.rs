@@ -29,7 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &mut mat,
             Some(ExecutionMode::Live),
             StreamConsumeOpts::default(),
-            ExecuteOptions::default(),
+            ExecuteOptions::for_catalog(&cgs).unwrap(),
         )
         .await?;
     assert_eq!(balance.count, 1, "expected one balance entity");
@@ -59,7 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 graph_backed_result: false,
                 ..Default::default()
             },
-            ExecuteOptions::default(),
+            ExecuteOptions::for_catalog(&cgs).unwrap(),
         )
         .await?;
     assert_eq!(transfers.count, 2, "expected two transfer logs");

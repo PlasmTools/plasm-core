@@ -10,7 +10,7 @@ use tracing::Span;
 pub(crate) fn http_compiled_request(method: &'static str, url_len: usize) -> Span {
     tracing::debug_span!(
         "plasm_runtime.http.compiled_request",
-        http_method = method,
+        http.method = method,
         url_len = url_len,
     )
 }
@@ -19,6 +19,30 @@ pub(crate) fn http_compiled_request(method: &'static str, url_len: usize) -> Spa
 #[inline]
 pub(crate) fn http_absolute_get(url_len: usize) -> Span {
     tracing::debug_span!("plasm_runtime.http.absolute_get", url_len = url_len)
+}
+
+/// Resilient retry loop around outbound HTTP (record `attempt` as the loop advances).
+#[inline]
+pub(crate) fn http_retry() -> Span {
+    tracing::debug_span!("plasm_runtime.http.retry", attempt = tracing::field::Empty,)
+}
+
+/// Execute a query expression (materialize stream).
+#[inline]
+pub(crate) fn execute_query() -> Span {
+    tracing::debug_span!("plasm_runtime.execute.query")
+}
+
+/// Execute a get expression.
+#[inline]
+pub(crate) fn execute_get() -> Span {
+    tracing::debug_span!("plasm_runtime.execute.get")
+}
+
+/// Execute a compiled operation (HTTP / GraphQL / EVM).
+#[inline]
+pub(crate) fn execute_operation() -> Span {
+    tracing::debug_span!("plasm_runtime.execute.operation")
 }
 
 /// Hydration pass that invokes provider capabilities to fill projected fields.

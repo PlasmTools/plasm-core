@@ -1,18 +1,17 @@
 //! Matrix invoke IO: staged mutator with taught `p#` args executes through Hermit and materializes POST body.
 
 #[path = "common/hermit_lang_matrix.rs"]
+#[allow(dead_code)]
 mod hermit_lang_matrix;
 
 #[path = "common/language_matrix.rs"]
+#[allow(dead_code)]
 mod language_matrix;
 
 use plasm_agent::plasm_compile::compile_plasm_program;
 use plasm_agent::plasm_plan_run::{evaluate_plasm_comp_dry, run_plasm_comp, PlasmPlanRunResult};
 use plasm_compile::{compile_operation, parse_capability_template, CmlEnv};
-use plasm_core::discovery::{
-    derive_intent_exposure_surface_batch, ExposureSurfaceOptions, MutatorAdmit,
-};
-use plasm_core::symbol_tuning::ExposureEntityKey;
+
 use plasm_core::value::Value;
 use plasm_core::{Expr, TeachingExposureSession};
 use plasm_runtime::{ExecutionConfig, ExecutionEngine};
@@ -21,21 +20,12 @@ use std::sync::Arc;
 fn matrix_create_session() -> plasm_agent::execute_session::ExecuteSession {
     let cgs = language_matrix::load_language_matrix_cgs();
     let wave = ["LangItem"];
-    let endpoints = [ExposureEntityKey {
-        entry_id: language_matrix::MATRIX_ENTRY_ID.into(),
-        entity: plasm_core::EntityName::from("LangItem"),
-    }];
-    let delta = derive_intent_exposure_surface_batch(
+    let delta = plasm_core::capability_exposure::explicit_entity_capability_surface(
         cgs.as_ref(),
         language_matrix::MATRIX_ENTRY_ID,
-        "create a lang item with title score and owner",
-        &endpoints,
         &wave.iter().map(|s| (*s).to_string()).collect::<Vec<_>>(),
-        Some(&["langitem_create".to_string()]),
-        ExposureSurfaceOptions {
-            mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-        },
-    );
+    )
+    .expect("explicit fixture capability exposure");
     let exp = TeachingExposureSession::new_with_intent_delta(
         cgs.as_ref(),
         language_matrix::MATRIX_ENTRY_ID,
@@ -63,7 +53,6 @@ fn matrix_create_session() -> plasm_agent::execute_session::ExecuteSession {
         Some(exp),
         None,
         cgs.catalog_cgs_hash_hex(),
-        None,
         None,
     )
 }
@@ -167,7 +156,9 @@ async fn langitem_create_p_symbols_execute_and_materialize_post_body() {
         input.contains_key("title") && input.contains_key("score") && input.contains_key("owner")
     );
 
-    let template = parse_capability_template(&cap.mapping.template.0).expect("template");
+    let template =
+        parse_capability_template(&cap.require_mapping().expect("cml mapping").template.0)
+            .expect("template");
     let mut env = CmlEnv::new();
     for (k, v) in input {
         env.insert(k, v);

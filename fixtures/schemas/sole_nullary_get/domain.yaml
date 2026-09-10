@@ -1,0 +1,39 @@
+version: 1
+http_backend: http://127.0.0.1:9
+entities:
+  Profile:
+    id_field: phone_number
+    description: Public phone profile lookup.
+    fields:
+      phone_number:
+        required: true
+        value_ref: nv_phone
+      first_name:
+        required: false
+        value_ref: nv_str
+      last_name:
+        required: false
+        value_ref: nv_str
+capabilities:
+  profile_get:
+    description: Show phone profile by phone number.
+    kind: get
+    entity: Profile
+    provides:
+    - first_name
+    - last_name
+    - phone_number
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: phone_number
+          value_ref: nv_phone
+          required: false
+values:
+  nv_str:
+    type: string
+    description: Free-form string.
+  nv_phone:
+    type: e164
+    description: Phone number.

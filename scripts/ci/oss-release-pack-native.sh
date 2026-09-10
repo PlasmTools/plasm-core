@@ -3,6 +3,7 @@
 # Usage: oss-release-pack-native.sh <rust-triple> <output-dir>
 #
 # Optional env:
+#   PLASM_EMBEDDING_CACHE_DIR — persistent vector cache (default: XDG cache root/plasm/embeddings)
 #   PLASM_RELEASE_WORKSPACE_ROOT — monorepo root (default: auto-detect plasm-core vs parent monorepo)
 #
 # Writes (version is the Git release tag, not in filenames):
@@ -79,6 +80,7 @@ pack_catalogs() {
     --workspace "${workspace_root}" \
     --apis-root "${apis_root}" \
     --output-dir "${catalogs_dir}" \
+    --embedding-cache-dir "${PLASM_EMBEDDING_CACHE_DIR:-${XDG_CACHE_HOME:-${HOME}/.cache}/plasm/embeddings}" \
     --package-list "${package_list}"
 }
 

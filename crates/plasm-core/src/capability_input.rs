@@ -2,12 +2,14 @@
 
 use crate::array_field_policy::ArrayFieldCoercionPolicy;
 use crate::entity_ref_value::normalize_entity_ref_value_for_target;
+use crate::schema::CapabilitySchema;
 use crate::{ArrayItemsSchema, FieldType, TypeError, Value, CGS};
+use indexmap::IndexMap;
 
 /// Human-facing “what to write instead of `$`” for LLM corrections.
 fn expected_type_phrase_for_placeholder(field_type: &FieldType) -> String {
     match field_type {
-        FieldType::EntityRef { target } => format!(
+        FieldType::EntityRef { target, .. } => format!(
             "a real id or reference for `{target}` (`$` in examples is only a stand-in, not a wire value)"
         ),
         FieldType::Uuid => {
@@ -32,15 +34,16 @@ fn expected_type_phrase_for_placeholder(field_type: &FieldType) -> String {
     }
 }
 
-/// Like [`Value::is_compatible_with_field_type`], plus target-aware normalization for
-/// [`FieldType::EntityRef`] (row narrowing, `full_name` split, compound-key completeness).
+/// Like [`crate::wire_coercion::value_compatible_with_field_type`], plus target-aware
+/// normalization for [`FieldType::EntityRef`] (row narrowing, `full_name` split, compound-key
+/// completeness).
 pub(crate) fn value_fits_field_type_entity_ref_aware(
     value: &Value,
     field_type: &FieldType,
     cgs: &CGS,
 ) -> bool {
-    let FieldType::EntityRef { target } = field_type else {
-        return value.is_compatible_with_field_type(field_type);
+    let FieldType::EntityRef { target, .. } = field_type else {
+        return crate::wire_coercion::value_compatible_with_field_type(value, field_type);
     };
     let Some(ent) = cgs.get_entity(target) else {
         return false;
@@ -183,15 +186,380 @@ pub(crate) fn validate_multiselect_value(
     }
     Ok(())
 }
+
+/// Validate a concrete value against a resolved [`NamedValueSchema`] (invoke params + predicates).
+///
+/// RA-8 cutover: coerce toward the catalog type first, then domain / entity-ref checks — so
+/// compatible and coerce cannot disagree (e.g. string `"42"` on an integer field).
+pub(crate) fn validate_concrete_named_value(
+    value: &Value,
+    nv: &crate::NamedValueSchema,
+    field_path: &str,
+    cgs: &CGS,
+) -> Result<(), TypeError> {
+    match &nv.field_type {
+        FieldType::Array => {
+            let spec = nv
+                .array_items
+                .as_ref()
+                .ok_or_else(|| TypeError::IncompatibleValue {
+                    field: field_path.to_string(),
+                    value_type: value.type_name().to_string(),
+                    field_type: "array (missing items schema)".to_string(),
+                })?;
+            let coerced = crate::coerce_value_for_field_type(
+                &nv.field_type,
+                nv.value_format,
+                nv.array_items.as_ref(),
+                value.clone(),
+            )
+            .map_err(|message| TypeError::IncompatibleValue {
+                field: field_path.to_string(),
+                value_type: format!("{} ({message})", value.type_name()),
+                field_type: "array".to_string(),
+            })?;
+            validate_typed_array_value(&coerced, spec, field_path, cgs)
+        }
+        FieldType::MultiSelect => {
+            let allowed = nv.allowed_values.as_deref().unwrap_or(&[]);
+            let coerced = crate::coerce_value_for_field_type(
+                &nv.field_type,
+                nv.value_format,
+                nv.array_items.as_ref(),
+                value.clone(),
+            )
+            .map_err(|message| TypeError::IncompatibleValue {
+                field: field_path.to_string(),
+                value_type: format!("{} ({message})", value.type_name()),
+                field_type: "multi_select".to_string(),
+            })?;
+            validate_multiselect_value(&coerced, allowed, field_path)
+        }
+        _ => {
+            let coerced = match crate::coerce_value_for_field_type(
+                &nv.field_type,
+                nv.value_format,
+                nv.array_items.as_ref(),
+                value.clone(),
+            ) {
+                Ok(v) => v,
+                Err(message) => {
+                    return Err(match &nv.field_type {
+                        FieldType::EntityRef { target, .. } => {
+                            entity_ref_incompatible_value(field_path, target.as_str(), value, cgs)
+                        }
+                        _ => TypeError::IncompatibleValue {
+                            field: field_path.to_string(),
+                            value_type: format!("{} ({message})", value.type_name()),
+                            field_type: format!("{:?}", nv.field_type),
+                        },
+                    });
+                }
+            };
+            if !value_fits_field_type_entity_ref_aware(&coerced, &nv.field_type, cgs) {
+                return Err(match &nv.field_type {
+                    FieldType::EntityRef { target, .. } => {
+                        entity_ref_incompatible_value(field_path, target.as_str(), &coerced, cgs)
+                    }
+                    _ => TypeError::IncompatibleValue {
+                        field: field_path.to_string(),
+                        value_type: coerced.type_name().to_string(),
+                        field_type: format!("{:?}", nv.field_type),
+                    },
+                });
+            }
+            if matches!(nv.field_type, FieldType::Money) {
+                validate_money_named_value(field_path, &coerced, nv)?;
+            }
+            validate_named_value_domain(&coerced, nv, field_path)
+        }
+    }
+}
+
+fn validate_money_named_value(
+    field_path: &str,
+    value: &Value,
+    nv: &crate::NamedValueSchema,
+) -> Result<(), TypeError> {
+    let fmt = crate::money::MoneyWireFormat::DecimalString;
+    let coerced =
+        crate::money::normalize(value.clone(), fmt, nv.currency.as_deref()).map_err(|message| {
+            TypeError::IncompatibleValue {
+                field: field_path.to_string(),
+                value_type: format!("{} ({message})", value.type_name()),
+                field_type: "money".to_string(),
+            }
+        })?;
+    let Value::Money(m) = coerced else {
+        return Ok(());
+    };
+    crate::money::currency_conflict(nv.currency.as_deref(), m.currency()).map_err(TypeError::from)
+}
+
 /// Validate input against capability input schema
+#[allow(dead_code)]
 pub(crate) fn validate_capability_input(
     input: &Value,
     input_schema: &crate::InputSchema,
     cgs: &CGS,
 ) -> Result<(), TypeError> {
+    validate_capability_input_with_satisfied(
+        input,
+        input_schema,
+        cgs,
+        &std::collections::HashSet::new(),
+    )
+}
+
+fn validate_capability_input_with_satisfied(
+    input: &Value,
+    input_schema: &crate::InputSchema,
+    cgs: &CGS,
+    satisfied_fields: &std::collections::HashSet<String>,
+) -> Result<(), TypeError> {
+    if !satisfied_fields.is_empty() {
+        if let crate::InputType::Object {
+            fields,
+            additional_fields,
+        } = &input_schema.input_type
+        {
+            let Some(object) = input.as_object() else {
+                return Err(TypeError::IncompatibleValue {
+                    field: String::new(),
+                    value_type: input.type_name().to_string(),
+                    field_type: "object".to_string(),
+                });
+            };
+            for field_schema in fields {
+                if satisfied_fields.contains(field_schema.name.as_str()) {
+                    continue;
+                }
+                let field_path = field_schema.name.as_str();
+                match object.get(&field_schema.name) {
+                    Some(field_value) => {
+                        if !field_value.is_domain_example_placeholder() {
+                            match &field_schema.wire {
+                                crate::InputFieldWire::Inline(ty) => {
+                                    validate_input_type(field_value, ty.as_ref(), field_path, cgs)?;
+                                }
+                                crate::InputFieldWire::Registry(_) => {
+                                    let fnv = field_schema.named_value(cgs).map_err(|_| {
+                                        TypeError::FieldNotFound {
+                                            field: field_path.to_string(),
+                                            entity: "input object".to_string(),
+                                        }
+                                    })?;
+                                    validate_concrete_named_value(
+                                        field_value,
+                                        fnv,
+                                        field_path,
+                                        cgs,
+                                    )?;
+                                }
+                            }
+                        }
+                    }
+                    None if field_schema.required => {
+                        return Err(TypeError::FieldNotFound {
+                            field: field_path.to_string(),
+                            entity: "input object".to_string(),
+                        });
+                    }
+                    None => {}
+                }
+            }
+            if !additional_fields {
+                let defined: std::collections::HashSet<_> =
+                    fields.iter().map(|f| f.name.as_str()).collect();
+                for object_field in object.keys() {
+                    if !defined.contains(object_field.as_str()) {
+                        return Err(TypeError::FieldNotFound {
+                            field: object_field.clone(),
+                            entity: "additional fields not allowed".to_string(),
+                        });
+                    }
+                }
+            }
+            validate_input_constraints(input, &input_schema.validation)?;
+            return Ok(());
+        }
+    }
     validate_input_type(input, &input_schema.input_type, "", cgs)?;
     validate_input_constraints(input, &input_schema.validation)?;
     Ok(())
+}
+
+/// Validate a create/invoke body against the capability's invocation lanes.
+///
+/// - [`Value::UnionCtor`] → `inputs.payload` (union root).
+/// - Object body with a single object lane → that schema (payload or arguments).
+/// - Object body with **both** payload and arguments object lanes → partition keys by
+///   disjoint field ownership and validate each partition (same field set as parse
+///   [`CapabilitySchema::invocation_object_fields`] coerce). Unknown keys are rejected.
+pub fn validate_capability_invocation_input(
+    capability: &CapabilitySchema,
+    input: &Value,
+    cgs: &CGS,
+) -> Result<(), TypeError> {
+    validate_capability_invocation_input_inner(
+        capability,
+        input,
+        cgs,
+        &std::collections::HashSet::new(),
+    )
+}
+
+/// Create/invoke typecheck after CML path-var injection into the same object as body fields.
+///
+/// 1. Type-check mapping path vars that are **declared** on an invocation lane (still present on
+///    `effective`).
+/// 2. Strip those path keys ([`crate::body_value_without_mapping_path_vars`]).
+/// 3. Validate the remaining body, treating path-template fields as already satisfied so they are
+///    neither "additional" nor spuriously missing-required.
+pub fn validate_capability_invocation_input_with_path_vars(
+    capability: &CapabilitySchema,
+    effective: Value,
+    cgs: &CGS,
+) -> Result<(), TypeError> {
+    use crate::schema::{body_value_without_mapping_path_vars, path_var_names_from_mapping_json};
+    use std::collections::HashSet;
+
+    let path_vars: HashSet<String> = capability
+        .mapping
+        .as_ref()
+        .map(|m| path_var_names_from_mapping_json(&m.template.0))
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+
+    if !path_vars.is_empty() {
+        if let Some(object) = effective.as_object() {
+            for field in capability.invocation_object_fields() {
+                if !path_vars.contains(field.name.as_str()) {
+                    continue;
+                }
+                match object.get(&field.name) {
+                    Some(field_value) => {
+                        if !field_value.is_domain_example_placeholder() {
+                            validate_invocation_object_field(field, field_value, cgs)?;
+                        }
+                    }
+                    None if field.required => {
+                        return Err(TypeError::FieldNotFound {
+                            field: field.name.clone(),
+                            entity: "input object".to_string(),
+                        });
+                    }
+                    None => {}
+                }
+            }
+        }
+    }
+
+    let body = body_value_without_mapping_path_vars(capability, effective);
+    validate_capability_invocation_input_inner(capability, &body, cgs, &path_vars)
+}
+
+fn validate_invocation_object_field(
+    field: &crate::InputFieldSchema,
+    field_value: &Value,
+    cgs: &CGS,
+) -> Result<(), TypeError> {
+    match &field.wire {
+        crate::InputFieldWire::Inline(ty) => {
+            validate_input_type(field_value, ty.as_ref(), field.name.as_str(), cgs)
+        }
+        crate::InputFieldWire::Registry(_) => {
+            let fnv = field
+                .named_value(cgs)
+                .map_err(|_| TypeError::FieldNotFound {
+                    field: field.name.clone(),
+                    entity: "input object".to_string(),
+                })?;
+            validate_concrete_named_value(field_value, fnv, field.name.as_str(), cgs)
+        }
+    }
+}
+
+fn validate_capability_invocation_input_inner(
+    capability: &CapabilitySchema,
+    input: &Value,
+    cgs: &CGS,
+    satisfied_fields: &std::collections::HashSet<String>,
+) -> Result<(), TypeError> {
+    if matches!(input, Value::UnionCtor { .. }) {
+        let Some(schema) = capability.inputs.payload.as_ref() else {
+            return Err(TypeError::IncompatibleValue {
+                field: String::new(),
+                value_type: input.type_name().to_string(),
+                field_type: "union constructor requires inputs.payload".to_string(),
+            });
+        };
+        return validate_capability_input_with_satisfied(input, schema, cgs, satisfied_fields);
+    }
+
+    let object_schemas: Vec<&crate::InputSchema> = capability.invocation_object_schemas().collect();
+
+    match object_schemas.as_slice() {
+        [] => {
+            if let Some(schema) = capability.primary_invocation_schema() {
+                validate_capability_input_with_satisfied(input, schema, cgs, satisfied_fields)?;
+            }
+            Ok(())
+        }
+        [schema] => validate_capability_input_with_satisfied(input, schema, cgs, satisfied_fields),
+        schemas => {
+            let Some(object) = input.as_object() else {
+                return Err(TypeError::IncompatibleValue {
+                    field: String::new(),
+                    value_type: input.type_name().to_string(),
+                    field_type: "object".to_string(),
+                });
+            };
+
+            let mut owner: IndexMap<&str, usize> = IndexMap::new();
+            for (i, schema) in schemas.iter().enumerate() {
+                let crate::InputType::Object { fields, .. } = &schema.input_type else {
+                    // `invocation_object_schemas` already filters Object; skip defensively.
+                    continue;
+                };
+                for f in fields {
+                    let replaced = owner.insert(f.name.as_str(), i);
+                    debug_assert!(
+                        replaced.is_none(),
+                        "duplicate field `{}` across invocation object lanes (CGS must keep lanes disjoint)",
+                        f.name
+                    );
+                }
+            }
+
+            let mut partitions: Vec<IndexMap<String, Value>> =
+                (0..schemas.len()).map(|_| IndexMap::new()).collect();
+            for (key, value) in object {
+                match owner.get(key.as_str()) {
+                    Some(&i) => {
+                        partitions[i].insert(key.clone(), value.clone());
+                    }
+                    None => {
+                        return Err(TypeError::FieldNotFound {
+                            field: key.clone(),
+                            entity: "additional fields not allowed".to_string(),
+                        });
+                    }
+                }
+            }
+
+            for (schema, part) in schemas.iter().zip(partitions) {
+                validate_capability_input_with_satisfied(
+                    &Value::Object(part),
+                    schema,
+                    cgs,
+                    satisfied_fields,
+                )?;
+            }
+            Ok(())
+        }
+    }
 }
 
 /// Validate a value against an input type specification
@@ -246,7 +614,7 @@ pub(crate) fn validate_input_type(
             if !value_fits_field_type_entity_ref_aware(value, field_type, cgs) {
                 let lbl = path_label();
                 return Err(match field_type {
-                    FieldType::EntityRef { target } => {
+                    FieldType::EntityRef { target, .. } => {
                         entity_ref_incompatible_value(lbl.as_str(), target.as_str(), value, cgs)
                     }
                     _ => TypeError::IncompatibleValue {
@@ -315,77 +683,12 @@ pub(crate) fn validate_input_type(
                                             entity: "input object".to_string(),
                                         }
                                     })?;
-                                    match &fnv.field_type {
-                                        FieldType::Array => {
-                                            let spec = fnv.array_items.as_ref();
-                                            let Some(spec) = spec else {
-                                                return Err(TypeError::IncompatibleValue {
-                                                    field: field_path.clone(),
-                                                    value_type: field_value.type_name().to_string(),
-                                                    field_type: "array (missing items schema)"
-                                                        .to_string(),
-                                                });
-                                            };
-                                            validate_typed_array_value(
-                                                field_value,
-                                                spec,
-                                                &field_path,
-                                                cgs,
-                                            )?;
-                                        }
-                                        FieldType::MultiSelect => {
-                                            let allowed =
-                                                fnv.allowed_values.as_deref().unwrap_or(&[]);
-                                            validate_multiselect_value(
-                                                field_value,
-                                                allowed,
-                                                &field_path,
-                                            )?;
-                                        }
-                                        _ => {
-                                            if !value_fits_field_type_entity_ref_aware(
-                                                field_value,
-                                                &fnv.field_type,
-                                                cgs,
-                                            ) {
-                                                return Err(match &fnv.field_type {
-                                                    FieldType::EntityRef { target } => {
-                                                        entity_ref_incompatible_value(
-                                                            &field_path,
-                                                            target.as_str(),
-                                                            field_value,
-                                                            cgs,
-                                                        )
-                                                    }
-                                                    _ => TypeError::IncompatibleValue {
-                                                        field: field_path.clone(),
-                                                        value_type: field_value
-                                                            .type_name()
-                                                            .to_string(),
-                                                        field_type: format!("{:?}", fnv.field_type),
-                                                    },
-                                                });
-                                            }
-
-                                            if let (Some(allowed), Some(str_val)) =
-                                                (&fnv.allowed_values, field_value.as_str())
-                                            {
-                                                if !allowed.contains(&str_val.to_string()) {
-                                                    return Err(TypeError::IncompatibleValue {
-                                                        field: field_path,
-                                                        value_type: format!(
-                                                            "'{}' (not in allowed values)",
-                                                            str_val
-                                                        ),
-                                                        field_type: format!(
-                                                            "select with values: {:?}",
-                                                            allowed
-                                                        ),
-                                                    });
-                                                }
-                                            }
-                                        }
-                                    }
+                                    validate_concrete_named_value(
+                                        field_value,
+                                        fnv,
+                                        &field_path,
+                                        cgs,
+                                    )?;
                                 }
                             }
                         }
@@ -538,6 +841,45 @@ pub(crate) fn validate_input_type(
     Ok(())
 }
 
+/// Validate profile + constraints on a concrete scalar value (shared by compile and decode).
+pub(crate) fn validate_named_value_domain_value(
+    value: &Value,
+    nv: &crate::NamedValueSchema,
+) -> Result<(), String> {
+    if value.is_domain_example_placeholder() {
+        return Ok(());
+    }
+    if let Some(s) = value.as_str() {
+        nv.domain.validate_string_value(s)
+    } else if let Some(n) = value.as_number() {
+        nv.domain.validate_number_value(n)
+    } else {
+        Ok(())
+    }
+}
+
+/// Validate profile + constraints on a concrete invoke/compile value.
+pub(crate) fn validate_named_value_domain(
+    value: &Value,
+    nv: &crate::NamedValueSchema,
+    field_path: &str,
+) -> Result<(), TypeError> {
+    validate_named_value_domain_value(value, nv).map_err(|msg| {
+        let value_type = if let Some(s) = value.as_str() {
+            format!("'{s}'")
+        } else if let Some(n) = value.as_number() {
+            n.to_string()
+        } else {
+            value.type_name().to_string()
+        };
+        TypeError::IncompatibleValue {
+            field: field_path.to_string(),
+            value_type,
+            field_type: msg,
+        }
+    })
+}
+
 /// Validate input constraints
 fn validate_input_constraints(
     input: &Value,
@@ -552,11 +894,6 @@ fn validate_input_constraints(
         });
     }
 
-    // Apply validation predicates
-    for predicate in &validation.predicates {
-        validate_input_predicate(input, predicate)?;
-    }
-
     // Apply cross-field rules for object inputs
     if let Value::Object(obj) = input {
         for rule in &validation.cross_field_rules {
@@ -567,110 +904,13 @@ fn validate_input_constraints(
     Ok(())
 }
 
-/// Validate a specific input predicate
-fn validate_input_predicate(
-    input: &Value,
-    predicate: &crate::ValidationPredicate,
-) -> Result<(), TypeError> {
-    // A predicate on a field that was not supplied is vacuously satisfied — a constraint cannot bind
-    // a value that is absent (real omitted optional fields, and every field the teaching surface
-    // simply did not list). The concrete value, if any, is validated at real execute time.
-    let Some(value) = lookup_field_by_path(input, &predicate.field_path) else {
-        return Ok(());
-    };
-    // Teaching-surface `$` fill-ins are prompt placeholders, not real API values (see
-    // `Value::is_domain_example_placeholder`); enforce constraints against them only at execute time.
-    if value.is_domain_example_placeholder() {
-        return Ok(());
-    }
-    let value = value.clone();
-
-    let valid = match predicate.operator {
-        crate::ValidationOp::MinLength => {
-            let min = predicate.value.as_number().unwrap_or(0.0) as usize;
-            match &value {
-                Value::String(s) => s.len() >= min,
-                Value::Array(a) => a.len() >= min,
-                _ => false,
-            }
-        }
-
-        crate::ValidationOp::MaxLength => {
-            let max = predicate.value.as_number().unwrap_or(f64::MAX) as usize;
-            match &value {
-                Value::String(s) => s.len() <= max,
-                Value::Array(a) => a.len() <= max,
-                _ => false,
-            }
-        }
-
-        crate::ValidationOp::MinValue => {
-            if let (Some(n), Some(min)) = (value.as_number(), predicate.value.as_number()) {
-                n >= min
-            } else {
-                false
-            }
-        }
-
-        crate::ValidationOp::MaxValue => {
-            if let (Some(n), Some(max)) = (value.as_number(), predicate.value.as_number()) {
-                n <= max
-            } else {
-                false
-            }
-        }
-
-        crate::ValidationOp::Pattern => {
-            // Simplified pattern matching - would use regex in full implementation
-            match (&value, &predicate.value) {
-                (Value::String(s), Value::String(pattern)) => s.contains(pattern),
-                _ => false,
-            }
-        }
-
-        crate::ValidationOp::CustomFunction => {
-            // Custom functions would be implemented in full system
-            true // Always pass for POC
-        }
-
-        crate::ValidationOp::DependsOn => {
-            // Dependency validation would check related fields
-            true // Always pass for POC
-        }
-    };
-
-    if !valid {
-        return Err(TypeError::IncompatibleValue {
-            field: predicate.field_path.clone(),
-            value_type: value.type_name().to_string(),
-            field_type: predicate.error_message.clone(),
-        });
-    }
-
-    Ok(())
-}
-
-/// Resolve a dot-notation field path, returning `None` when any segment is missing (or a non-object
-/// is traversed). Absence is a *skip* signal for [`validate_input_predicate`], not a hard error: a
-/// constraint on an omitted field is vacuously satisfied.
-fn lookup_field_by_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
-    let mut current = value;
-    for part in path.split('.') {
-        match current {
-            Value::Object(obj) => current = obj.get(part)?,
-            _ => return None,
-        }
-    }
-    Some(current)
-}
-
 /// Validate cross-field rules
 fn validate_cross_field_rule(
     object: &indexmap::IndexMap<String, Value>,
     rule: &crate::CrossFieldRule,
 ) -> Result<(), TypeError> {
-    // Teaching-surface `$` placeholders count as absent (same spirit as predicates). When every
-    // listed field is absent or still a placeholder, defer the rule to execute time.
+    // Teaching-surface `$` placeholders count as absent (same spirit as value-domain constraints).
+    // When every listed field is absent or still a placeholder, defer the rule to execute time.
     let concretely_present: Vec<_> = rule
         .fields
         .iter()
@@ -723,16 +963,26 @@ fn validate_cross_field_rule(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ValidationOp, ValidationPredicate, Value};
+    use crate::value_domain::{Constraints, KernelKind, ValueDomain};
+    use crate::Value;
     use indexmap::IndexMap;
 
-    fn min_value_revenue() -> ValidationPredicate {
-        ValidationPredicate {
-            field_path: "revenue".to_string(),
-            operator: ValidationOp::MinValue,
-            value: Value::Integer(0),
-            error_message: "Revenue must be non-negative".to_string(),
-        }
+    fn revenue_nv_min_zero() -> crate::NamedValueSchema {
+        crate::NamedValueSchema::from_domain(
+            String::new(),
+            ValueDomain::new(
+                KernelKind::Number,
+                None,
+                Constraints {
+                    min: Some(0.0),
+                    ..Default::default()
+                },
+                None,
+                None,
+            )
+            .expect("number domain"),
+            None,
+        )
     }
 
     fn obj(entries: &[(&str, Value)]) -> Value {
@@ -743,30 +993,21 @@ mod tests {
         Value::Object(m)
     }
 
-    /// WS-R3′: a predicate on an **omitted** field is vacuously satisfied (constraint cannot bind an
-    /// absent value); its real value, if supplied, is validated at execute time.
-    #[test]
-    fn predicate_on_absent_field_is_vacuously_satisfied() {
-        let input = obj(&[("name", Value::String("Ada".to_string()))]);
-        validate_input_predicate(&input, &min_value_revenue())
-            .expect("absent optional field must skip the predicate");
-    }
-
-    /// WS-R3′: the teaching-surface `$` fill-in is not a real API value; predicate enforcement is
+    /// WS-R3′: the teaching-surface `$` fill-in is not a real API value; value-domain enforcement is
     /// deferred to execute time rather than rejecting the teaching line.
     #[test]
-    fn predicate_on_domain_placeholder_is_deferred() {
-        let input = obj(&[("revenue", Value::String("$".to_string()))]);
-        validate_input_predicate(&input, &min_value_revenue())
-            .expect("`$` placeholder must skip the predicate");
+    fn value_domain_on_domain_placeholder_is_deferred() {
+        let nv = revenue_nv_min_zero();
+        validate_named_value_domain(&Value::String("$".to_string()), &nv, "revenue")
+            .expect("`$` placeholder must skip value-domain constraints");
     }
 
-    /// A concrete violating value is still rejected (the fix must not blanket-disable predicates).
+    /// A concrete violating value is still rejected via `values:` constraints.
     #[test]
-    fn predicate_on_concrete_violation_still_fails() {
-        let input = obj(&[("revenue", Value::Integer(-5))]);
-        validate_input_predicate(&input, &min_value_revenue())
-            .expect_err("a real negative revenue must still fail min_value");
+    fn value_domain_on_concrete_violation_still_fails() {
+        let nv = revenue_nv_min_zero();
+        validate_named_value_domain(&Value::Integer(-5), &nv, "revenue")
+            .expect_err("a real negative revenue must still fail min constraint");
     }
 
     /// GitHub FO: `pr_create` ExactlyOne(title, issue) — title+issue must fail at plan/typecheck.
@@ -775,7 +1016,7 @@ mod tests {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/github");
         let cgs = crate::loader::load_schema_dir(&dir).expect("github catalog");
         let cap = cgs.capabilities.get("pr_create").expect("pr_create");
-        let schema = cap.input_schema.as_ref().expect("pr_create input_schema");
+        let schema = cap.inputs.payload.as_ref().expect("pr_create payload");
         assert!(
             schema
                 .validation
@@ -833,5 +1074,142 @@ mod tests {
         ]);
         validate_capability_input(&both_placeholders, schema, &cgs)
             .expect("all-$ fields must vacate exactly_one until execute");
+    }
+
+    fn nv(ft: FieldType) -> crate::NamedValueSchema {
+        crate::NamedValueSchema {
+            domain: Default::default(),
+            description: String::new(),
+            field_type: ft,
+            value_format: None,
+            allowed_values: None,
+            array_items: None,
+            currency: None,
+        }
+    }
+
+    fn reg_field(name: &str, key: &str, required: bool) -> crate::InputFieldSchema {
+        crate::InputFieldSchema {
+            name: name.to_string(),
+            wire: crate::InputFieldWire::Registry(crate::ValueDomainKey::new(key).expect("key")),
+            required,
+            description: None,
+            default: None,
+            wire_json_path: None,
+            wire_array_element_key: None,
+            sink_class: None,
+        }
+    }
+
+    fn dual_lane_cap(cgs: &mut CGS) -> crate::CapabilitySchema {
+        use crate::CapabilitySchema;
+        cgs.values.insert("dl_bool".into(), nv(FieldType::Boolean));
+        cgs.values.insert("dl_int".into(), nv(FieldType::Integer));
+        let mut cap = CapabilitySchema::minimal_test();
+        cap.name = "dual_lane_update".into();
+        cap.kind = crate::CapabilityKind::Update;
+        cap.domain = "Item".into();
+        cap.mapping = None;
+        cap.inputs = crate::CapabilityInputs {
+            scope: Default::default(),
+            selection: Default::default(),
+            controls: Default::default(),
+            arguments: Some(crate::InputSchema {
+                input_type: crate::InputType::Object {
+                    fields: vec![reg_field("limit", "dl_int", true)],
+                    additional_fields: false,
+                },
+                validation: Default::default(),
+                description: None,
+                examples: vec![],
+            }),
+            payload: Some(crate::InputSchema {
+                input_type: crate::InputType::Object {
+                    fields: vec![reg_field("active", "dl_bool", true)],
+                    additional_fields: false,
+                },
+                validation: Default::default(),
+                description: None,
+                examples: vec![],
+            }),
+        };
+        cap
+    }
+
+    /// Dual object lanes: typecheck must validate **arguments** fields even when primary is payload.
+    #[test]
+    fn dual_lane_invocation_validates_both_object_schemas() {
+        let mut cgs = CGS::new();
+        let cap = dual_lane_cap(&mut cgs);
+        assert_eq!(cap.invocation_object_schemas().count(), 2);
+        assert!(
+            cap.primary_invocation_schema()
+                .is_some_and(|s| matches!(&s.input_type, crate::InputType::Object { fields, .. } if fields.iter().any(|f| f.name == "active"))),
+            "primary must prefer payload"
+        );
+
+        validate_capability_invocation_input(
+            &cap,
+            &obj(&[("active", Value::Bool(false)), ("limit", Value::Integer(3))]),
+            &cgs,
+        )
+        .expect("both lanes ok");
+
+        let err = validate_capability_invocation_input(
+            &cap,
+            &obj(&[
+                ("active", Value::Bool(true)),
+                ("limit", Value::String("nope".into())),
+            ]),
+            &cgs,
+        )
+        .expect_err("arguments lane integer must reject string");
+        assert!(
+            matches!(err, TypeError::IncompatibleValue { ref field, .. } if field == "limit"),
+            "expected limit IncompatibleValue, got {err:?}"
+        );
+
+        let err = validate_capability_invocation_input(
+            &cap,
+            &obj(&[("active", Value::Bool(true))]),
+            &cgs,
+        )
+        .expect_err("required arguments field missing");
+        assert!(
+            matches!(err, TypeError::FieldNotFound { ref field, .. } if field == "limit"),
+            "expected missing limit, got {err:?}"
+        );
+
+        let err = validate_capability_invocation_input(
+            &cap,
+            &obj(&[
+                ("active", Value::Bool(true)),
+                ("limit", Value::Integer(1)),
+                ("extra", Value::Integer(0)),
+            ]),
+            &cgs,
+        )
+        .expect_err("unknown key");
+        assert!(
+            matches!(err, TypeError::FieldNotFound { ref field, .. } if field == "extra"),
+            "expected extra rejected, got {err:?}"
+        );
+    }
+    #[test]
+    fn path_var_required_on_payload_survives_create_strip() {
+        use crate::loader::load_schema_dir_unvalidated;
+        use crate::type_check_expr;
+        use std::path::Path;
+        let root = Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../apis/appworld/amazon"
+        ));
+        let cgs = load_schema_dir_unvalidated(root).expect("amazon");
+        let line = r#"ProductReview.product-review-create(product_id=Product($), access_token="$", rating="$")"#;
+        let mut parsed = crate::expr_parser::parse(line, &cgs).expect("parse");
+        crate::normalize_expr_query_capabilities(&mut parsed.expr, &cgs).unwrap();
+        type_check_expr(&parsed.expr, &cgs).unwrap_or_else(|e| panic!("typecheck: {e}"));
+        cgs.validate()
+            .unwrap_or_else(|e| panic!("amazon expression surface: {e}"));
     }
 }

@@ -7,7 +7,7 @@ use clap::Subcommand;
 use plasm_agent_core::error::AgentError;
 use plasm_agent_core::mcp_config_admin::McpConfigAdminService;
 use plasm_agent_core::mcp_host_bootstrap;
-use plasm_core::discovery::InMemoryCgsRegistry;
+use plasm_core::discovery::CgsRegistry;
 use uuid::Uuid;
 
 use crate::appliance_mcp_admin::{appliance_mcp_scope, appliance_preferred_config_id};
@@ -143,7 +143,7 @@ pub async fn run_mcp(cli: McpCliRoot) -> Result<(), Box<dyn std::error::Error + 
                 McpConfigAdminService::catalog_rows(reg, &runtime, &optional)
             } else {
                 // Labels/default markers without CGS metadata (entry ids still accurate).
-                let empty = InMemoryCgsRegistry::from_pairs(vec![]);
+                let empty = CgsRegistry::from_pairs(vec![]);
                 McpConfigAdminService::catalog_rows(&empty, &runtime, &optional)
             };
             let mut optv: Vec<String> = optional.iter().cloned().collect();
@@ -201,8 +201,8 @@ pub async fn run_mcp(cli: McpCliRoot) -> Result<(), Box<dyn std::error::Error + 
                         .await?
                         .ok_or_else(|| format!("runtime snapshot missing for config {id}"))?;
                     let optional = svc.load_auth_optional_set(id).await?;
-                    let empty_reg = InMemoryCgsRegistry::from_pairs(vec![]);
-                    let reg_ref: &InMemoryCgsRegistry = match registry.as_ref() {
+                    let empty_reg = CgsRegistry::from_pairs(vec![]);
+                    let reg_ref: &CgsRegistry = match registry.as_ref() {
                         Some(a) => a.as_ref(),
                         None => &empty_reg,
                     };
@@ -300,7 +300,7 @@ fn scope_json(scope: &plasm_agent_core::mcp_config_admin::McpConfigScope) -> ser
 
 async fn load_optional_registry(
     cli: &McpCliRoot,
-) -> Result<Option<Arc<InMemoryCgsRegistry>>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Option<Arc<CgsRegistry>>, Box<dyn std::error::Error + Send + Sync>> {
     match (&cli.schema, &cli.catalog_dir) {
         (None, None) => Ok(None),
         (Some(_), Some(_)) => {

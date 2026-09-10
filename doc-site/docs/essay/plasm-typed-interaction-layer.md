@@ -279,7 +279,7 @@ I am especially interested in:
 
 - whether typed API catalogs feel like the right abstraction
 - whether the row-set/effect model is legible in a launch post
-- whether the teaching TSV / symbol-tuning example makes the compact grammar feel concrete
+- whether the language card / symbol-tuning example makes the compact grammar feel concrete
 - whether federation should be the main headline, or whether it sounds too architectural for a launch post
 - where the authoring model is too heavy
 - what kinds of API domains would make good early catalogs

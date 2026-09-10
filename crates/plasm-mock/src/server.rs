@@ -87,9 +87,10 @@ pub async fn start_server_with_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use plasm_core::value_domain::ValueDomain;
     use plasm_core::{
-        FieldSchema, FieldType, FieldValueKind, NamedValueSchema, ResourceSchema, StringSemantics,
-        ValueDomainKey, CGS,
+        FieldSchema, FieldType, FieldValueKind, NamedValueSchema, ResourceSchema, ValueDomainKey,
+        CGS,
     };
 
     fn create_test_store() -> MockStore {
@@ -97,15 +98,11 @@ mod tests {
         for k in ["mock_srv_str_id", "mock_srv_str_name"] {
             schema.values.insert(
                 k.into(),
-                NamedValueSchema {
-                    description: String::new(),
-                    field_type: FieldType::String,
-                    value_format: None,
-                    allowed_values: None,
-                    string_semantics: Some(StringSemantics::Short),
-                    array_items: None,
-                    currency: None,
-                },
+                NamedValueSchema::from_domain(
+                    String::new(),
+                    ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                    None,
+                ),
             );
         }
         let account = ResourceSchema {
@@ -153,6 +150,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         };
         schema.add_resource(account).unwrap();

@@ -1,0 +1,1256 @@
+version: 9
+entry_id: gmail
+auth:
+  scheme: none
+http_backend: http://127.0.0.1:9000
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  pii_email:
+    description: Email address treated as personally identifiable.
+    severity: sensitive
+  external_send:
+    description: Outbound email body delivered outside the mailbox.
+    severity: critical
+entities:
+  AuthSession:
+    id_field: access_token
+    description: Login session for Gmail (Bearer token).
+    discovery:
+      names:
+      - login
+      - auth
+      - access token
+    fields:
+      access_token:
+        required: true
+        value_ref: nv_access_token
+      token_type:
+        required: false
+        value_ref: nv_str
+  EmailThread:
+    id_field: email_thread_id
+    primary_query: email_thread_query
+    description: Inbox conversation thread.
+    discovery:
+      names:
+      - thread
+      - inbox
+      - email thread
+      - snoozed
+    fields:
+      email_thread_id:
+        required: true
+        value_ref: nv_thread_id
+      subject:
+        required: false
+        value_ref: nv_str
+      label:
+        required: false
+        value_ref: nv_str
+      read:
+        required: false
+        value_ref: nv_bool
+      starred:
+        required: false
+        value_ref: nv_bool
+      archived:
+        required: false
+        value_ref: nv_bool
+      spam:
+        required: false
+        value_ref: nv_bool
+      incoming:
+        required: false
+        value_ref: nv_bool
+      outgoing:
+        required: false
+        value_ref: nv_bool
+      created_at:
+        required: false
+        value_ref: nv_datetime
+      updated_at:
+        required: false
+        value_ref: nv_datetime
+  Email:
+    id_field: email_id
+    description: A single email message.
+    discovery:
+      names:
+      - email
+      - message
+      - mail
+    fields:
+      email_id:
+        required: true
+        value_ref: nv_email_id
+      subject:
+        required: false
+        value_ref: nv_str
+      body:
+        required: false
+        value_ref: nv_body
+        data_class: untrusted
+      response_to_email_id:
+        required: false
+        value_ref: nv_email_id
+      created_at:
+        required: false
+        value_ref: nv_datetime
+  Draft:
+    id_field: draft_id
+    description: Unsent draft email.
+    discovery:
+      names:
+      - draft
+      - drafts
+    fields:
+      draft_id:
+        required: true
+        value_ref: nv_draft_id
+      subject:
+        required: false
+        value_ref: nv_str
+      body:
+        required: false
+        value_ref: nv_body
+        data_class: untrusted
+      scheduled_send_at:
+        required: false
+        value_ref: nv_datetime
+      created_at:
+        required: false
+        value_ref: nv_datetime
+  Profile:
+    id_field: email
+    description: Gmail user profile.
+    fields:
+      first_name:
+        required: false
+        value_ref: nv_str
+      last_name:
+        required: false
+        value_ref: nv_str
+      email:
+        required: true
+        value_ref: nv_email
+      registered_at:
+        required: false
+        value_ref: nv_datetime
+  User:
+    id_field: email
+    description: Gmail directory person for addressing mail.
+    discovery:
+      names:
+      - user
+      - contact
+      - recipient
+    fields:
+      email:
+        required: true
+        value_ref: nv_email
+      first_name:
+        required: false
+        value_ref: nv_str
+      last_name:
+        required: false
+        value_ref: nv_str
+      registered_at:
+        required: false
+        value_ref: nv_datetime
+  CategorySizes:
+    id_field: inbox
+    description: Mailbox category size snapshot.
+    discovery:
+      names:
+      - category sizes
+      - mailbox counts
+      - inbox count
+      - thread counts
+    fields:
+      inbox:
+        required: true
+        value_ref: nv_int
+      outbox:
+        required: true
+        value_ref: nv_int
+      archived:
+        required: true
+        value_ref: nv_int
+      spam:
+        required: true
+        value_ref: nv_int
+      unscheduled_drafts:
+        required: true
+        value_ref: nv_int
+      scheduled_drafts:
+        required: true
+        value_ref: nv_int
+  Attachment:
+    id_field: attachment_id
+    description: File attachment on an email message.
+    discovery:
+      names:
+      - attachment
+      - attachments
+    fields:
+      attachment_id:
+        required: true
+        value_ref: nv_attachment_id
+capabilities:
+  login:
+    description: Login to Gmail; returns access_token for Bearer auth.
+    kind: action
+    entity: AuthSession
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: username
+          value_ref: nv_login_username
+          required: true
+        - name: password
+          value_ref: nv_password
+          required: true
+    provides:
+    - access_token
+    - token_type
+    output:
+      type: entity
+      entity_type: AuthSession
+  logout:
+    description: Logout and invalidate the access token.
+    kind: action
+    entity: AuthSession
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Ends the Gmail session for this token.
+  email_thread_query:
+    description: 'List email threads by mailbox (inbox/outbox/archived/spam/snoozed) with optional query/label filters.
+
+      '
+    kind: query
+    entity: EmailThread
+    discovery:
+      operation_terms:
+      - list
+      - show
+      - search
+      target_terms:
+      - email thread
+      - inbox
+      - outbox
+      - archived
+      - spam
+      - snoozed
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: mailbox
+      value_ref: nv_email_thread_mailbox
+      required: true
+      description: inbox | outbox | archived | spam | snoozed
+    - name: query
+      value_ref: nv_str
+      required: false
+    - name: label
+      value_ref: nv_str
+      required: false
+    provides:
+    - email_thread_id
+    - subject
+    - snippet
+    - category
+    - is_read
+    - is_starred
+  email_thread_get:
+    description: Show one email thread including messages.
+    kind: get
+    entity: EmailThread
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - email_thread_id
+    - subject
+    - label
+    - read
+    - starred
+    - archived
+    - spam
+    - incoming
+    - outgoing
+    - created_at
+    - updated_at
+  email_thread_delete:
+    description: Delete an email thread.
+    kind: delete
+    entity: EmailThread
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+  email_thread_mark_read:
+    description: Mark a thread as read.
+    kind: action
+    entity: EmailThread
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Marks the thread read.
+  email_thread_mark_unread:
+    description: Mark a thread as unread.
+    kind: action
+    entity: EmailThread
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Marks the thread unread.
+  email_thread_star:
+    description: Star a thread.
+    kind: action
+    entity: EmailThread
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Stars the thread.
+  email_thread_unstar:
+    description: Unstar a thread.
+    kind: action
+    entity: EmailThread
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Removes the star from the thread.
+  email_thread_archive:
+    description: Archive a thread.
+    kind: action
+    entity: EmailThread
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Archives the thread.
+  email_thread_unarchive:
+    description: Unarchive a thread.
+    kind: action
+    entity: EmailThread
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Moves the thread out of archive.
+  email_thread_snooze:
+    description: Snooze a thread until a future datetime.
+    kind: action
+    entity: EmailThread
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: snooze_until
+          value_ref: nv_snooze_until
+          required: true
+    output:
+      type: side_effect
+      description: Hides the thread until snooze_until, then returns it unread.
+  email_thread_unsnooze:
+    description: Cancel snooze on a thread.
+    kind: action
+    entity: EmailThread
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Clears snooze so the thread is visible again.
+  email_get:
+    description: Show one email including body.
+    kind: get
+    entity: Email
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - email_id
+    - subject
+    - body
+    - response_to_email_id
+    - created_at
+  email_send:
+    description: Send a new email to one or more addresses.
+    kind: action
+    entity: Email
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: email_addresses
+          value_ref: nv_email_list
+          required: true
+        - name: subject
+          value_ref: nv_str
+          required: true
+        - name: body
+          value_ref: nv_body
+          required: true
+          sink_class: external_send
+    output:
+      type: side_effect
+      description: Sends an email to the given addresses.
+  email_reply:
+    description: Reply to this email (entity id) within its thread.
+    kind: action
+    entity: Email
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: email_thread_id
+          value_ref: nv_thread_id
+          required: true
+        - name: body
+          value_ref: nv_body
+          required: true
+          sink_class: external_send
+        - name: email_addresses
+          value_ref: nv_email_list
+          required: false
+    output:
+      type: side_effect
+      description: Posts a reply on the thread.
+  email_delete_in_thread:
+    description: Delete one email from its thread.
+    kind: delete
+    entity: Email
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: email_thread_id
+          value_ref: nv_thread_id
+          required: true
+  draft_query:
+    description: List drafts.
+    kind: query
+    entity: Draft
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - draft_id
+    - subject
+    - body
+    - scheduled_send_at
+    - created_at
+  draft_get:
+    description: Show one draft.
+    kind: get
+    entity: Draft
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - draft_id
+    - subject
+    - body
+    - scheduled_send_at
+    - created_at
+  draft_create:
+    description: Create a draft.
+    kind: create
+    entity: Draft
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: recipient_email_addresses
+          value_ref: nv_email_list
+          required: false
+        - name: subject
+          value_ref: nv_str
+          required: false
+        - name: body
+          value_ref: nv_body
+          required: false
+        - name: belongs_to_email_thread_id
+          value_ref: nv_thread_id
+          required: false
+        - name: response_to_email_id
+          value_ref: nv_email_id
+          required: false
+        - name: scheduled_send_at
+          value_ref: nv_datetime
+          required: false
+    provides:
+    - draft_id
+  draft_update:
+    description: Update a draft.
+    kind: update
+    entity: Draft
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: email_addresses
+          value_ref: nv_email_list
+          required: false
+        - name: subject
+          value_ref: nv_str
+          required: false
+        - name: body
+          value_ref: nv_body
+          required: false
+        - name: scheduled_send_at
+          value_ref: nv_datetime
+          required: false
+  draft_delete:
+    description: Delete a draft.
+    kind: delete
+    entity: Draft
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+  draft_send:
+    description: Send an existing draft.
+    kind: action
+    entity: Draft
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Sends the draft as an email.
+  profile_get:
+    description: Show Gmail profile for an email.
+    kind: get
+    entity: Profile
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: email
+          value_ref: nv_email
+          required: true
+    provides:
+    - first_name
+    - last_name
+    - email
+    - registered_at
+  user_query:
+    description: List or filter Gmail directory users before composing.
+    kind: query
+    entity: User
+    selection:
+    - name: query
+      value_ref: nv_str
+      required: false
+    provides:
+    - first_name
+    - last_name
+    - email
+    - registered_at
+    discovery:
+      operation_terms:
+      - list
+      - find
+      - search
+      target_terms:
+      - user
+      - recipient
+      - contact
+  category_sizes_get:
+    description: Show mailbox category size counts for the authenticated user.
+    kind: get
+    entity: CategorySizes
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - inbox
+    - outbox
+    - archived
+    - spam
+    - unscheduled_drafts
+    - scheduled_drafts
+  email_thread_label:
+    description: Assign a label to a thread.
+    kind: action
+    entity: EmailThread
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: label
+          value_ref: nv_str
+          required: true
+    output:
+      type: side_effect
+      description: Applies the label to the thread.
+  email_thread_unlabel:
+    description: Remove the label from a thread.
+    kind: action
+    entity: EmailThread
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Removes the label from the thread.
+  email_thread_mark_spam:
+    description: Mark a thread as spam.
+    kind: action
+    entity: EmailThread
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Moves the thread to spam.
+  email_thread_mark_not_spam:
+    description: Mark a thread as not spam.
+    kind: action
+    entity: EmailThread
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Removes the thread from spam.
+  email_forward:
+    description: Forward this email to one or more addresses.
+    kind: action
+    entity: Email
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: email_thread_id
+          value_ref: nv_thread_id
+          required: true
+        - name: email_addresses
+          value_ref: nv_email_list
+          required: true
+          sink_class: external_send
+        - name: draft_not_send
+          value_ref: nv_bool
+          required: false
+    output:
+      type: side_effect
+      description: Forwards the email to the given addresses.
+  email_thread_forward:
+    description: Forward an entire thread to one or more addresses.
+    kind: action
+    entity: EmailThread
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: email_addresses
+          value_ref: nv_email_list
+          required: true
+          sink_class: external_send
+        - name: draft_not_send
+          value_ref: nv_bool
+          required: false
+    output:
+      type: side_effect
+      description: Forwards the thread to the given addresses.
+  attachment_download:
+    description: Download an attachment to a file-system path.
+    kind: action
+    entity: Attachment
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: download_to_file_path
+          value_ref: nv_file_path
+          required: false
+        - name: overwrite
+          value_ref: nv_bool
+          required: false
+        - name: file_system_access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Writes the attachment bytes to the given file path.
+  draft_attachment_upload:
+    description: Upload file-system paths as attachments on a draft.
+    kind: action
+    entity: Attachment
+    scope:
+    - name: draft_id
+      value_ref: nv_draft_id
+      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: attachment_file_paths
+          value_ref: nv_file_path_list
+          required: true
+        - name: overwrite
+          value_ref: nv_bool
+          required: false
+        - name: file_system_access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Attaches the given file-system paths onto the draft.
+  draft_attachment_remove:
+    description: Remove an attachment from a draft.
+    kind: delete
+    entity: Attachment
+    scope:
+    - name: draft_id
+      value_ref: nv_draft_id
+      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+values:
+  nv_email_thread_mailbox:
+    type: enum
+    enum:
+    - inbox
+    - outbox
+    - archived
+    - spam
+    - snoozed
+    description: Mailbox shelf for listing email threads.
+  nv_str:
+    type: string
+    description: Free-form string.
+  nv_email:
+    type: email
+    description: Email address of a user or counterparty.
+  nv_login_username:
+    type: email
+    description: Task-principal email from Supervisor — the login username for this service (not a counterparty).
+  nv_password:
+    type: string
+    description: Account-holder password for this service.
+  nv_access_token:
+    type: string
+    description: Bearer access token from login.
+  nv_body:
+    type: markdown
+    description: Email body text.
+  nv_thread_id:
+    type: integer
+    description: Email thread primary key.
+  nv_email_id:
+    type: integer
+    description: Email primary key.
+  nv_draft_id:
+    type: integer
+    description: Draft primary key.
+  nv_email_list:
+    type: array
+    items:
+      value_ref: nv_email
+    description: List of email addresses.
+  nv_bool:
+    type: boolean
+    description: Boolean flag.
+  nv_int:
+    type: integer
+    description: Integer.
+  nv_datetime:
+    type: rfc3339
+    description: ISO datetime string.
+  nv_snooze_until:
+    type: string
+    description: Future datetime to unsnooze a thread, as YYYY-MM-DD|HH:MM:SS.
+  nv_attachment_id:
+    type: integer
+    description: Attachment primary key.
+  nv_file_path:
+    type: string
+    description: File-system path for download or save.
+  nv_file_path_list:
+    type: array
+    items:
+      value_ref: nv_file_path
+    description: Absolute file-system paths to attach from the file_system app.
+  prerequisite_principal_email:
+    type: email
+    description: Account holder email.
+  prerequisite_principal_phone:
+    type: e164
+    description: Account holder phone number.
+  prerequisite_account_name:
+    type: string
+    description: Service account identifier.
+prerequisites:
+  contracts:
+    appworld.principal:
+      version: 1
+      inputs: {}
+      outputs:
+        email: prerequisite_principal_email
+        phone: prerequisite_principal_phone
+    appworld.password:
+      version: 1
+      inputs:
+        account: prerequisite_account_name
+      outputs:
+        password: nv_password
+    appworld.session:
+      version: 1
+      inputs: {}
+      outputs:
+        token: nv_access_token
+  providers:
+    session:
+      contract: appworld.session
+      capability: login
+      outputs:
+        token: access_token
+  requirements:
+    login:
+    - id: principal
+      contract: appworld.principal
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - username
+        output: email
+    - id: password
+      contract: appworld.password
+      arguments:
+        account:
+          kind: constant
+          value: gmail
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - password
+        output: password
+    logout:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    email_thread_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    email_thread_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    email_thread_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    email_thread_mark_read:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    email_thread_mark_unread:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    email_thread_star:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    email_thread_unstar:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    email_thread_archive:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    email_thread_unarchive:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    email_thread_snooze:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    email_thread_unsnooze:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    email_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    email_send:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    email_reply:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    email_delete_in_thread:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    draft_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    draft_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    draft_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    draft_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    draft_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    draft_send:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    category_sizes_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    email_thread_label:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    email_thread_unlabel:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    email_thread_mark_spam:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    email_thread_mark_not_spam:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    email_forward:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    email_thread_forward:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    attachment_download:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+      - input:
+          lane: payload
+          path:
+          - file_system_access_token
+        output: token
+    draft_attachment_upload:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+      - input:
+          lane: payload
+          path:
+          - file_system_access_token
+        output: token
+    draft_attachment_remove:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token

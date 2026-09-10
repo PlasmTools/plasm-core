@@ -1,0 +1,74 @@
+# AppWorld supervisor — no auth; task principal helpers.
+
+supervisor_profile_get:
+  method: GET
+  path:
+  - type: literal
+    value: supervisor
+  - type: literal
+    value: profile
+
+account_password_query:
+  method: GET
+  path:
+  - type: literal
+    value: supervisor
+  - type: literal
+    value: account_passwords
+
+address_query:
+  method: GET
+  path:
+  - type: literal
+    value: supervisor
+  - type: literal
+    value: addresses
+
+payment_card_query:
+  method: GET
+  path:
+  - type: literal
+    value: supervisor
+  - type: literal
+    value: payment_cards
+
+active_task_get:
+  method: GET
+  path:
+  - type: literal
+    value: supervisor
+  - type: literal
+    value: active_task
+
+complete_task:
+  method: POST
+  path:
+  - type: literal
+    value: supervisor
+  - type: literal
+    value: message
+  body:
+    type: object
+    fields:
+    - - answer
+      - type: if
+        condition:
+          type: exists
+          var: answer
+        then_expr:
+          type: var
+          name: answer
+        else_expr:
+          type: const
+          value: null
+    - - status
+      - type: if
+        condition:
+          type: exists
+          var: status
+        then_expr:
+          type: var
+          name: status
+        else_expr:
+          type: const
+          value: success

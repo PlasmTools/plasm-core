@@ -1,0 +1,59 @@
+version: 1
+http_backend: http://127.0.0.1:9
+entry_id: prerequisite_matrix
+auth: {scheme: none}
+values:
+  text: {type: string, description: A textual value}
+entities:
+  ProviderResult:
+    id_field: value
+    description: A value acquired for another operation
+    fields:
+      value: {value_ref: text, required: true}
+  BusinessRecord:
+    id_field: id
+    description: A business record
+    fields:
+      id: {value_ref: text, required: true}
+capabilities:
+  acquire:
+    entity: ProviderResult
+    kind: action
+    description: Acquire a scoped value
+    arguments:
+      input_type:
+        type: object
+        fields:
+          - {name: account, value_ref: text, required: true}
+    provides: [value]
+    output: {type: entity, entity_type: ProviderResult}
+  read:
+    entity: BusinessRecord
+    kind: query
+    description: Read business records
+    selection:
+      - {name: credential, value_ref: text, required: true}
+    provides: [id]
+    output: {type: collection, entity_type: BusinessRecord}
+prerequisites:
+  contracts:
+    scoped_value:
+      version: 1
+      inputs: {account: text}
+      outputs: {value: text}
+  providers:
+    value_source:
+      contract: scoped_value
+      capability: acquire
+      inputs:
+        account: {lane: arguments, path: [account]}
+      outputs: {value: value}
+  requirements:
+    read:
+      - id: scoped_access
+        contract: scoped_value
+        arguments:
+          account: {kind: constant, value: account-a}
+        bindings:
+          - input: {lane: selection, path: [credential]}
+            output: value

@@ -37,14 +37,19 @@ region_query:
     items: regions
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 plan_query:
   method: GET
   path:
@@ -67,14 +72,19 @@ plan_query:
           else_expr: { type: const, value: null }
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 bare_metal_plan_query:
   method: GET
   path:
@@ -84,14 +94,19 @@ bare_metal_plan_query:
     items: plans_metal
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 os_query:
   method: GET
   path:
@@ -101,14 +116,19 @@ os_query:
     items: os
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 application_query:
   method: GET
   path:
@@ -126,15 +146,19 @@ application_query:
           else_expr: { type: const, value: null }
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
-# ── Billing ──────────────────────────────────────────────────────────────────
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 billingline_query:
   method: GET
   path:
@@ -145,14 +169,19 @@ billingline_query:
     items: billing_history
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 invoice_query:
   method: GET
   path:
@@ -163,14 +192,19 @@ invoice_query:
     items: billing_invoices
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 invoice_get:
   method: GET
   path:
@@ -230,14 +264,19 @@ user_query:
     items: users
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 user_get:
   method: GET
   path:
@@ -317,14 +356,19 @@ sshkey_query:
     items: ssh_keys
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 sshkey_get:
   method: GET
   path:
@@ -387,14 +431,19 @@ iampolicy_query:
     items: policies
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 iampolicy_get:
   method: GET
   path:
@@ -414,14 +463,19 @@ iamrole_query:
     items: roles
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 iamrole_get:
   method: GET
   path:
@@ -441,14 +495,19 @@ iamgroup_query:
     items: groups
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 iamgroup_get:
   method: GET
   path:
@@ -469,14 +528,19 @@ vpc_query:
     items: vpcs
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 vpc_get:
   method: GET
   path:
@@ -528,14 +592,19 @@ firewallgroup_query:
     items: firewall_groups
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 firewallgroup_get:
   method: GET
   path:
@@ -627,14 +696,19 @@ instance_query:
           else_expr: { type: const, value: null }
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 instance_get:
   method: GET
   path:
@@ -727,14 +801,19 @@ reservedip_query:
     items: reserved_ips
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 reservedip_get:
   method: GET
   path:
@@ -790,14 +869,19 @@ loadbalancer_query:
     items: load_balancers
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 loadbalancer_get:
   method: GET
   path:
@@ -853,14 +937,19 @@ firewallrule_query:
     items: firewall_rules
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 firewallrule_get:
   method: GET
   path:
@@ -930,14 +1019,19 @@ snapshot_query:
     items: snapshots
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 snapshot_get:
   method: GET
   path:
@@ -1009,14 +1103,19 @@ backup_query:
     items: backups
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 backup_get:
   method: GET
   path:
@@ -1037,14 +1136,19 @@ block_query:
     items: blocks
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 block_get:
   method: GET
   path:
@@ -1144,14 +1248,19 @@ iso_query:
     items: isos
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 iso_get:
   method: GET
   path:
@@ -1193,14 +1302,19 @@ startupscript_query:
     items: startup_scripts
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 startupscript_get:
   method: GET
   path:
@@ -1264,14 +1378,19 @@ dnsdomain_query:
     items: domains
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 dnsdomain_get:
   method: GET
   path:
@@ -1313,14 +1432,19 @@ dnsrecord_query:
     items: records
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 dnsrecord_get:
   method: GET
   path:
@@ -1413,14 +1537,19 @@ objectstorage_query:
     items: object_storages
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 objectstorage_get:
   method: GET
   path:
@@ -1473,14 +1602,19 @@ manageddatabase_query:
     items: databases
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 manageddatabase_get:
   method: GET
   path:
@@ -1550,14 +1684,19 @@ kubernetescluster_query:
     items: vke_clusters
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 kubernetescluster_get:
   method: GET
   path:
@@ -1673,14 +1812,19 @@ baremetal_query:
     items: bare_metals
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 baremetal_get:
   method: GET
   path:
@@ -1817,14 +1961,19 @@ baremetalipv4_query:
     items: ipv4s
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 baremetalipv6_query:
   method: GET
   path:
@@ -1836,14 +1985,19 @@ baremetalipv6_query:
     items: ipv6s
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 baremetal_set_ipv4_reverse:
   method: POST
   path:
@@ -2006,14 +2160,19 @@ cdnpullzone_query:
     items: pull_zones
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 cdnpullzone_get:
   method: GET
   path:
@@ -2081,14 +2240,19 @@ cdnpushzone_query:
     items: push_zones
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 cdnpushzone_get:
   method: GET
   path:
@@ -2158,14 +2322,19 @@ kubernetesnodepool_query:
     items: node_pools
   pagination:
     location: query
-    response_prefix: [meta, links]
+    response_prefix:
+    - meta
+    - links
     stop_when:
       field: next
-      eq: ""
+      eq: ''
     params:
-      per_page: { fixed: 100 }
-      cursor: { from_response: next }
-
+      per_page:
+        fixed: 100
+        role: page_size
+      cursor:
+        from_response: next
+    strategy: cursor
 kubernetesnodepool_get:
   method: GET
   path:

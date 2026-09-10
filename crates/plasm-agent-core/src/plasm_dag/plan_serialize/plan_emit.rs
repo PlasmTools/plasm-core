@@ -1,232 +1,250 @@
-//! Lowered DAG node → plan JSON.
+//! Structural lowering from resolved DAG nodes to plan nodes.
 
 use super::super::prelude::*;
 use super::super::types::{DagNode, DagNodeSource, PlanNodeEmitter};
-use super::template_uses::relation_plan_uses_result;
+use super::template_uses::{relation_plan_uses_result, result_use};
+use crate::plasm_plan::{
+    ComputeTemplate, DeriveKind, DeriveTemplate, EffectTemplate, PlanExprTemplate,
+    PlanInputBinding, PlanNode, PlanResultUse, ResultShape,
+};
 
-pub(in crate::plasm_dag) fn node_to_json(node: &DagNode) -> Result<serde_json::Value, String> {
-    node.source.emit_plan_json(node)
+pub(in crate::plasm_dag) fn lower_plan_node(node: &DagNode) -> Result<PlanNode, String> {
+    node.source.emit_plan_node(node)
 }
 
 impl PlanNodeEmitter for DagNodeSource {
-    fn emit_plan_json(&self, node: &DagNode) -> Result<serde_json::Value, String> {
-        emit_plan_json_for_source(self, node)
+    fn emit_plan_node(&self, node: &DagNode) -> Result<PlanNode, String> {
+        // This is an untrusted structural plan node. Admission owns checked construction.
+        let mut out = PlanNode {
+            id: node.id.clone(),
+            kind: PlanNodeKind::Data,
+            qualified_entity: None,
+            expr: None,
+            ir: None,
+            ir_template: None,
+            effect_class: EffectClass::ArtifactRead,
+            result_shape: ResultShape::Artifact,
+            projection: vec![],
+            predicates: vec![],
+            source: None,
+            item_binding: None,
+            effect_template: None,
+            approval: None,
+            data: None,
+            derive_template: None,
+            compute: None,
+            relation: None,
+            depends_on: vec![],
+            uses_result: vec![],
+            page_size: None,
+            take: None,
+            until: None,
+        };
+        match self {
+            Self::Surface {
+                parsed,
+                kind,
+                qualified_entity,
+                effect_class,
+                result_shape,
+                uses_result,
+            } => {
+                out.kind = *kind;
+                out.qualified_entity =
+                    (*result_shape != ResultShape::Page).then(|| qualified_entity.clone());
+                out.expr = Some(node.expr.clone());
+                out.effect_class = *effect_class;
+                out.result_shape = *result_shape;
+                out.projection = parsed.projection.clone().unwrap_or_default();
+                out.uses_result = uses_result.clone();
+                out.page_size = node.page_size;
+                if uses_result.is_empty() {
+                    out.ir = Some(PlanExprIr {
+                        expr: parsed.expr.clone(),
+                        projection: parsed.projection.clone(),
+                        display_expr: None,
+                    });
+                } else {
+                    out.ir_template = Some(expression_template(parsed, uses_result));
+                }
+            }
+            Self::RelationTraversal {
+                source_label,
+                parsed,
+                plan_relation,
+                qualified_entity,
+                effect_class,
+                result_shape,
+                ..
+            } => {
+                out.kind = PlanNodeKind::Relation;
+                out.qualified_entity = Some(qualified_entity.clone());
+                out.effect_class = *effect_class;
+                out.result_shape = *result_shape;
+                out.projection = parsed.projection.clone().unwrap_or_default();
+                out.relation = Some(plan_relation.clone());
+                out.uses_result = relation_plan_uses_result(source_label, parsed);
+                out.page_size = node.page_size;
+            }
+            Self::Data(value) => out.data = Some(value.clone()),
+            Self::Compute {
+                source,
+                op,
+                schema,
+                collection_alias,
+            } => {
+                out.kind = PlanNodeKind::Compute;
+                out.result_shape = if matches!(op, ComputeOp::Render { .. }) {
+                    ResultShape::Single
+                } else {
+                    ResultShape::List
+                };
+                out.compute = Some(ComputeTemplate {
+                    source: source.clone(),
+                    op: op.clone(),
+                    schema: schema.clone(),
+                    page_size: node.page_size,
+                    collection_alias: collection_alias.clone(),
+                });
+                out.uses_result = match op {
+                    ComputeOp::Render {
+                        render_bindings, ..
+                    } => render_plan_graph_edges(source, render_bindings).1,
+                    _ => vec![result_use(source, "source")],
+                };
+            }
+            Self::Derive {
+                source,
+                value,
+                inputs,
+            } => {
+                out.kind = PlanNodeKind::Derive;
+                out.uses_result = std::iter::once(result_use(source, "_"))
+                    .chain(
+                        inputs
+                            .iter()
+                            .map(|input| result_use(&input.node, &input.alias)),
+                    )
+                    .collect();
+                out.derive_template = Some(DeriveTemplate {
+                    kind: DeriveKind::Map,
+                    source: Some(source.clone()),
+                    item_binding: Some("_".into()),
+                    inputs: inputs.clone(),
+                    value: value.clone(),
+                });
+            }
+            Self::ScalarExtract { source, wire } => {
+                out.kind = PlanNodeKind::Derive;
+                out.result_shape = ResultShape::Single;
+                out.uses_result = vec![result_use(source, "_")];
+                out.derive_template = Some(DeriveTemplate {
+                    kind: DeriveKind::Map,
+                    source: Some(source.clone()),
+                    item_binding: Some("_".into()),
+                    inputs: vec![],
+                    value: PlanValue::BindingSymbol {
+                        binding: "_".into(),
+                        path: vec![wire.clone()],
+                    },
+                });
+            }
+            Self::ForEach {
+                source,
+                parsed_template,
+                display_expr,
+                effect_kind,
+                qualified_entity,
+                uses_result,
+            } => {
+                out.kind = PlanNodeKind::ForEach;
+                out.effect_class = EffectClass::SideEffect;
+                out.result_shape = ResultShape::SideEffectAck;
+                out.source = Some(source.clone());
+                out.item_binding = Some("_".into());
+                out.uses_result = std::iter::once(result_use(source, "_"))
+                    .chain(uses_result.iter().cloned())
+                    .collect();
+                out.effect_template = Some(effect_template(
+                    *effect_kind,
+                    qualified_entity,
+                    display_expr,
+                    parsed_template,
+                ));
+            }
+            Self::IterateUntil {
+                seed,
+                parsed_step_template,
+                step_display,
+                effect_kind,
+                qualified_entity,
+                until_body,
+                until_predicates,
+                take,
+                uses_result,
+            } => {
+                out.kind = PlanNodeKind::IterateUntil;
+                out.effect_class = EffectClass::SideEffect;
+                out.result_shape = ResultShape::Single;
+                out.source = Some(seed.clone());
+                out.item_binding = Some("_".into());
+                out.take = Some(*take);
+                out.until = Some(until_body.clone());
+                out.predicates = until_predicates.clone();
+                out.uses_result = std::iter::once(result_use(seed, "_"))
+                    .chain(uses_result.iter().cloned())
+                    .collect();
+                out.effect_template = Some(effect_template(
+                    *effect_kind,
+                    qualified_entity,
+                    step_display,
+                    parsed_step_template,
+                ));
+            }
+        }
+        out.depends_on = out
+            .uses_result
+            .iter()
+            .map(|input| input.node.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        Ok(out)
     }
 }
-pub(in crate::plasm_dag) fn emit_plan_json_for_source(
-    source: &DagNodeSource,
-    node: &DagNode,
-) -> Result<serde_json::Value, String> {
-    match source {
-        DagNodeSource::Surface {
-            parsed,
-            kind,
-            qualified_entity,
-            effect_class,
-            result_shape,
-            uses_result,
-        } => {
-            let ir = if uses_result.is_empty() {
-                json!({
-                    "expr": parsed.expr,
-                    "projection": parsed.projection,
-                })
-            } else {
-                expr_template_json(parsed, uses_result)?
-            };
-            let mut obj = json!({
-                "id": node.id,
-                "kind": kind,
-                "expr": node.expr,
-                "effect_class": effect_class,
-                "result_shape": result_shape,
-                "projection": parsed.projection.clone().unwrap_or_default(),
-                "predicates": [],
-                "depends_on": uses_result.iter().filter_map(|u| u.get("node").and_then(|v| v.as_str()).map(str::to_string)).collect::<BTreeSet<_>>().into_iter().collect::<Vec<_>>(),
-                "uses_result": uses_result,
-            });
-            if matches!(result_shape, crate::plasm_plan::ResultShape::Page) {
-                obj["qualified_entity"] = serde_json::Value::Null;
-            } else {
-                obj["qualified_entity"] = json!(qualified_entity);
-            }
-            if uses_result.is_empty() {
-                obj["ir"] = ir;
-            } else {
-                obj["ir_template"] = ir;
-            }
-            if let Some(n) = node.page_size {
-                obj["page_size"] = json!(n);
-            }
-            Ok(obj)
-        }
-        DagNodeSource::RelationTraversal {
-            source_label,
-            parsed,
-            plan_relation,
-            qualified_entity,
-            effect_class,
-            result_shape,
-            ..
-        } => {
-            let mut obj = json!({
-                "id": node.id,
-                "kind": PlanNodeKind::Relation,
-                "qualified_entity": qualified_entity,
-                "effect_class": effect_class,
-                "result_shape": result_shape,
-                "projection": parsed.projection.clone().unwrap_or_default(),
-                "predicates": [],
-                "relation": plan_relation,
-                "depends_on": [source_label],
-                "uses_result": relation_plan_uses_result(source_label, parsed),
-            });
-            if let Some(n) = node.page_size {
-                obj["page_size"] = json!(n);
-            }
-            Ok(obj)
-        }
-        DagNodeSource::Data(value) => Ok(json!({
-            "id": node.id,
-            "kind": "data",
-            "effect_class": "artifact_read",
-            "result_shape": "artifact",
-            "data": value,
-            "depends_on": [],
-            "uses_result": [],
-        })),
-        DagNodeSource::Compute {
-            source,
-            op,
-            schema,
-            collection_alias,
-        } => {
-            let mut compute = json!({
-                "source": source,
-                "op": op,
-                "schema": schema,
-                "page_size": node.page_size,
-            });
-            if let Some(alias) = collection_alias {
-                compute["collection_alias"] = json!(alias);
-            }
-            let (depends_on, uses_result) = match op {
-                ComputeOp::Render {
-                    render_bindings, ..
-                } => render_plan_graph_edges(source, render_bindings),
-                _ => (
-                    vec![source.clone()],
-                    vec![json!({ "node": source, "as": "source" })],
-                ),
-            };
-            Ok(json!({
-                "id": node.id,
-                "kind": "compute",
-                "effect_class": "artifact_read",
-                "result_shape": if matches!(op, ComputeOp::Render { .. }) { "single" } else { "list" },
-                "compute": compute,
-                "depends_on": depends_on,
-                "uses_result": uses_result,
-            }))
-        }
-        DagNodeSource::Derive {
-            source,
-            value,
-            inputs,
-        } => {
-            let mut depends = vec![source.clone()];
-            for input in inputs {
-                if let Some(n) = input.get("node").and_then(|v| v.as_str()) {
-                    if !depends.iter().any(|d| d == n) {
-                        depends.push(n.to_string());
-                    }
-                }
-            }
-            Ok(json!({
-                "id": node.id,
-                "kind": "derive",
-                "effect_class": "artifact_read",
-                "result_shape": "artifact",
-                "depends_on": depends,
-                "uses_result": std::iter::once(json!({ "node": source, "as": "_" })).chain(inputs.iter().map(|input| {
-                    json!({
-                        "node": input.get("node").and_then(|v| v.as_str()).unwrap_or_default(),
-                        "as": input.get("alias").and_then(|v| v.as_str()).unwrap_or_default(),
-                    })
-                })).collect::<Vec<_>>(),
-                "derive_template": {
-                    "kind": "map",
-                    "source": source,
-                    "item_binding": "_",
-                    "inputs": inputs,
-                    "value": value,
-                }
-            }))
-        }
-        DagNodeSource::ForEach {
-            source,
-            parsed_template,
-            display_expr,
-            effect_kind,
-            qualified_entity,
-            uses_result,
-        } => {
-            let mut depends = vec![source.clone()];
-            for input in uses_result {
-                if let Some(n) = input.get("node").and_then(|v| v.as_str()) {
-                    if !depends.iter().any(|d| d == n) {
-                        depends.push(n.to_string());
-                    }
-                }
-            }
-            Ok(json!({
-                "id": node.id,
-                "kind": "for_each",
-                "effect_class": "side_effect",
-                "result_shape": "side_effect_ack",
-                "source": source,
-                "item_binding": "_",
-                "depends_on": depends,
-                "uses_result": std::iter::once(json!({ "node": source, "as": "_" })).chain(uses_result.iter().cloned()).collect::<Vec<_>>(),
-                "effect_template": {
-                    "kind": effect_kind,
-                    "qualified_entity": qualified_entity,
-                    "expr_template": display_expr,
-                    "ir_template": parsed_template,
-                    "effect_class": "side_effect",
-                    "result_shape": "side_effect_ack",
-                    "projection": [],
-                    "input_bindings": [],
-                }
-            }))
-        }
+
+fn effect_template(
+    kind: PlanNodeKind,
+    qualified_entity: &QualifiedEntityKey,
+    display: &str,
+    template: &PlanExprTemplate,
+) -> EffectTemplate {
+    EffectTemplate {
+        kind,
+        qualified_entity: qualified_entity.clone(),
+        expr_template: display.to_owned(),
+        ir_template: template.clone(),
+        effect_class: EffectClass::SideEffect,
+        result_shape: ResultShape::SideEffectAck,
+        projection: vec![],
+        input_bindings: vec![],
     }
 }
-pub(in crate::plasm_dag) fn expr_template_json(
+
+pub(in crate::plasm_dag) fn expression_template(
     parsed: &plasm_core::expr_parser::ParsedExpr,
-    uses: &[serde_json::Value],
-) -> Result<serde_json::Value, String> {
-    let value = serde_json::to_value(&parsed.expr).map_err(|e| e.to_string())?;
-    let mut obj = serde_json::Map::new();
-    obj.insert("expr".to_string(), value);
-    if let Some(proj) = parsed.projection.clone() {
-        obj.insert(
-            "projection".to_string(),
-            serde_json::to_value(proj).map_err(|e| e.to_string())?,
-        );
+    uses: &[PlanResultUse],
+) -> PlanExprTemplate {
+    PlanExprTemplate {
+        expr: parsed.expr.clone(),
+        projection: parsed.projection.clone(),
+        display_expr: None,
+        input_bindings: uses
+            .iter()
+            .map(|input| PlanInputBinding {
+                from: input.r#as.clone(),
+                to: input.r#as.clone(),
+            })
+            .collect(),
     }
-    obj.insert(
-        "input_bindings".to_string(),
-        serde_json::Value::Array(
-            uses.iter()
-                .map(|u| {
-                    json!({
-                        "from": u.get("as").and_then(|v| v.as_str()).unwrap_or_default(),
-                        "to": u.get("as").and_then(|v| v.as_str()).unwrap_or_default(),
-                    })
-                })
-                .collect(),
-        ),
-    );
-    Ok(serde_json::Value::Object(obj))
 }

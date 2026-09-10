@@ -19,20 +19,20 @@ capabilities:
     description: Create a note (POST, body JSON).
     kind: create
     entity: Note
-    parameters:
-    - name: title
-      value_ref: nv_note_create_title
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: title
+          value_ref: nv_note_create_title
+          required: true
     provides:
     - id
     - title
 values:
   nv_note_id:
     type: string
-    string_semantics: short
   nv_note_title:
     type: string
-    string_semantics: short
   nv_note_create_title:
     type: string
-    string_semantics: short

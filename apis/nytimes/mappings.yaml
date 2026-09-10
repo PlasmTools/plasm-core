@@ -11,7 +11,9 @@ article_search:
     items_path: [response, docs]
   pagination:
     params:
-      page: {counter: 0}
+      page:
+        counter: 0
+    strategy: page_number
   query:
     type: object
     fields:

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use crate::cross_entity::{choose_strategy, extract_cross_entity_predicates};
-use crate::schema::{RelationMaterialization, RelationSchema};
+use crate::schema::{CapabilityKind, RelationMaterialization, RelationSchema};
 use crate::symbol_tuning::SymbolMap;
 use crate::{CapabilityName, Expr, CGS};
 
@@ -13,7 +13,8 @@ use super::line_validate::{
     domain_line_validate_cached, DomainLineValidCacheKey, DomainLineValidEntry,
 };
 use super::teaching_legend::{
-    teaching_expr_demonstrates_optional_params, teaching_expr_line_from_layers,
+    teaching_expr_demonstrates_optional_params, teaching_expr_is_nullary_method_call,
+    teaching_expr_line_from_layers, teaching_result_is_singleton_entity_gloss,
 };
 use super::{
     CrossEntityPlanMeta, CrossEntityStrategyKind, DomainLineKind, EntityTeachingExprRow,
@@ -138,6 +139,26 @@ pub(crate) fn try_push_teaching_example(
         cap_leg.as_deref(),
         row_contract.unwrap_or_default(),
     );
+    if let (Some(map), Some(cap_name)) = (map_arc.as_ref(), source_capability) {
+        if let Some(cap) = cgs.get_capability(cap_name.as_str()) {
+            let entry_id = cgs.entry_id.as_deref().unwrap_or("");
+            let mut wires: Vec<String> =
+                crate::symbol_tuning::capability_optional_legend_param_pairs(
+                    map.as_ref(),
+                    entry_id,
+                    cap.domain.as_str(),
+                    cap,
+                )
+                .into_iter()
+                .map(|(wire, _)| wire)
+                .collect();
+            wires.sort();
+            wires.dedup();
+            if !wires.is_empty() {
+                teaching_line.legend.optional_params = wires;
+            }
+        }
+    }
     if teaching_line.legend.optional_params_present()
         && !teaching_expr_demonstrates_optional_params(expr, &optional_syms)
     {
@@ -171,10 +192,26 @@ pub(crate) fn try_push_teaching_example(
             relation_materialization: None,
         }
     };
-    // Classify the return-shape glyph from the validated domain-line kind (Method → terminal `↠`,
-    // query/search → list `↣`, else gloss shape). Relation-nav rows render their own `relation … →`
-    // atom verbatim, so the arrow only surfaces on plain `Returns` atoms.
+    // Sparse exception: nullary method calls that yield a singleton entity row use `→ e`
+    // (not terminal write / chain hint) — override Method→Terminal.
     teaching_line.arrow = super::ReturnArrow::classify(meta.kind, &teaching_line.result_type);
+    let cap_is_mutating = meta
+        .source_capability
+        .as_ref()
+        .and_then(|n| cgs.capabilities.get(n.as_str()))
+        .is_some_and(|cap| {
+            matches!(
+                cap.kind,
+                CapabilityKind::Create | CapabilityKind::Update | CapabilityKind::Delete
+            )
+        });
+    if !cap_is_mutating
+        && teaching_expr_is_nullary_method_call(&teaching_line.expression)
+        && teaching_result_is_singleton_entity_gloss(&teaching_line.result_type)
+    {
+        teaching_line.is_singleton_row_fetch = true;
+        teaching_line.arrow = super::ReturnArrow::Single;
+    }
     teaching_rows.push(EntityTeachingExprRow {
         teaching_expr: teaching_line,
         meta,

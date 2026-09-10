@@ -12,7 +12,7 @@ use plasm_agent_core::binding_store::entry_secret_present_for_upsert;
 use plasm_agent_core::mcp_config_readiness::catalog_entry_readiness_gaps;
 use plasm_agent_core::mcp_config_repository::McpConfigRepository;
 use plasm_agent_core::mcp_runtime_config::McpRuntimeConfig;
-use sqlx::PgPool;
+use plasm_agent_core::traced_pg::PgPool;
 use support::postgres::{integration_postgres_url, INTEGRATION_POSTGRES_URL_ENV};
 use uuid::Uuid;
 

@@ -1,0 +1,501 @@
+_request_auth: &request_auth
+  scheme: bearer
+  token: { type: var, name: access_token }
+
+# AppWorld OpenAPI list endpoints use page_index (0-based) + page_limit (default 5, max 20).
+# Composable pagination enables default fetch-all for summarize / aggregate programs.
+_appworld_page_index_limit: &appworld_page_index_limit
+  params:
+    page_index:
+      counter: 0
+    page_limit:
+      fixed: 20
+      role: page_size
+  strategy: page_number
+login:
+  method: POST
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: auth }
+  - { type: literal, value: token }
+  body_format: form_urlencoded
+  body:
+    type: object
+    fields:
+    - [username, { type: var, name: username }]
+    - [password, { type: var, name: password }]
+logout:
+  method: POST
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: auth }
+  - { type: literal, value: logout }
+  auth: *request_auth
+user_search:
+  method: GET
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: users }
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - [query, { type: var, name: query }]
+  pagination: *appworld_page_index_limit
+user_get:
+  method: GET
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: profile }
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - [email, { type: var, name: id }]
+friend_query:
+  method: GET
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: friends }
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+    - - user_email
+      - type: if
+        condition: { type: exists, var: user_email }
+        then_expr: { type: var, name: user_email }
+        else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
+friend_add:
+  method: POST
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: friends }
+  - { type: var, name: user_email }
+  auth: *request_auth
+friend_remove:
+  method: DELETE
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: friends }
+  - { type: var, name: id }
+  auth: *request_auth
+balance_get:
+  method: GET
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: balance }
+  auth: *request_auth
+balance_add:
+  method: POST
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: balance }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [amount, { type: var, name: amount }]
+    - [payment_card_id, { type: var, name: payment_card_id }]
+balance_withdraw:
+  method: DELETE
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: balance }
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - [amount, { type: var, name: amount }]
+    - [payment_card_id, { type: var, name: payment_card_id }]
+bank_transfer_query:
+  method: GET
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: bank_transfers }
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - transfer_type
+      - type: if
+        condition: { type: exists, var: transfer_type }
+        then_expr: { type: var, name: transfer_type }
+        else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
+transaction_query:
+  method: GET
+  path:
+  - { type: literal, value: venmo }
+  - type: if
+    condition:
+      type: equals
+      left: { type: var, name: shelf }
+      right: { type: const, value: social_feed }
+    then_expr: { type: const, value: social_feed }
+    else_expr: { type: const, value: transactions }
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+    - - user_email
+      - type: if
+        condition: { type: exists, var: user_email }
+        then_expr: { type: var, name: user_email }
+        else_expr: { type: const, value: null }
+    - - min_created_at
+      - type: if
+        condition: { type: exists, var: min_created_at }
+        then_expr: { type: var, name: min_created_at }
+        else_expr: { type: const, value: null }
+    - - max_created_at
+      - type: if
+        condition: { type: exists, var: max_created_at }
+        then_expr: { type: var, name: max_created_at }
+        else_expr: { type: const, value: null }
+    - - min_like_count
+      - type: if
+        condition: { type: exists, var: min_like_count }
+        then_expr: { type: var, name: min_like_count }
+        else_expr: { type: const, value: null }
+    - - max_like_count
+      - type: if
+        condition: { type: exists, var: max_like_count }
+        then_expr: { type: var, name: max_like_count }
+        else_expr: { type: const, value: null }
+    - - min_amount
+      - type: if
+        condition: { type: exists, var: min_amount }
+        then_expr: { type: var, name: min_amount }
+        else_expr: { type: const, value: null }
+    - - max_amount
+      - type: if
+        condition: { type: exists, var: max_amount }
+        then_expr: { type: var, name: max_amount }
+        else_expr: { type: const, value: null }
+    - - private
+      - type: if
+        condition: { type: exists, var: private }
+        then_expr: { type: var, name: private }
+        else_expr: { type: const, value: null }
+    - - direction
+      - type: if
+        condition: { type: exists, var: direction }
+        then_expr: { type: var, name: direction }
+        else_expr: { type: const, value: null }
+    - - sort_by
+      - type: if
+        condition: { type: exists, var: sort_by }
+        then_expr: { type: var, name: sort_by }
+        else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
+transaction_get:
+  method: GET
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: transactions }
+  - { type: var, name: id }
+  auth: *request_auth
+transaction_create:
+  method: POST
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: transactions }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [receiver_email, { type: var, name: receiver_email }]
+    - [amount, { type: var, name: amount }]
+    - - description
+      - type: if
+        condition: { type: exists, var: description }
+        then_expr: { type: var, name: description }
+        else_expr: { type: const, value: null }
+    - - payment_card_id
+      - type: if
+        condition: { type: exists, var: payment_card_id }
+        then_expr: { type: var, name: payment_card_id }
+        else_expr: { type: const, value: null }
+    - - private
+      - type: if
+        condition: { type: exists, var: private }
+        then_expr: { type: var, name: private }
+        else_expr: { type: const, value: null }
+payment_request_query:
+  method: GET
+  path:
+  - { type: literal, value: venmo }
+  - type: if
+    condition:
+      type: equals
+      left: { type: var, name: polarity }
+      right: { type: const, value: sent }
+    then_expr: { type: const, value: sent_payment_requests }
+    else_expr: { type: const, value: received_payment_requests }
+  auth: *request_auth
+  query: &status_query
+    type: object
+    fields:
+    - - status
+      - type: if
+        condition: { type: exists, var: status }
+        then_expr: { type: var, name: status }
+        else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
+payment_request_create:
+  method: POST
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: payment_requests }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [user_email, { type: var, name: user_email }]
+    - [amount, { type: var, name: amount }]
+    - - description
+      - type: if
+        condition: { type: exists, var: description }
+        then_expr: { type: var, name: description }
+        else_expr: { type: const, value: null }
+    - - private
+      - type: if
+        condition: { type: exists, var: private }
+        then_expr: { type: var, name: private }
+        else_expr: { type: const, value: null }
+payment_request_approve:
+  method: POST
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: payment_requests }
+  - { type: var, name: id }
+  - { type: literal, value: approve }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - payment_card_id
+      - type: if
+        condition: { type: exists, var: payment_card_id }
+        then_expr: { type: var, name: payment_card_id }
+        else_expr: { type: const, value: null }
+payment_request_deny:
+  method: POST
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: payment_requests }
+  - { type: var, name: id }
+  - { type: literal, value: deny }
+  auth: *request_auth
+payment_card_query:
+  method: GET
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: payment_cards }
+  auth: *request_auth
+payment_request_update:
+  method: PATCH
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: payment_requests }
+  - { type: var, name: id }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - amount
+      - type: if
+        condition: { type: exists, var: amount }
+        then_expr: { type: var, name: amount }
+        else_expr: { type: const, value: null }
+    - - description
+      - type: if
+        condition: { type: exists, var: description }
+        then_expr: { type: var, name: description }
+        else_expr: { type: const, value: null }
+    - - private
+      - type: if
+        condition: { type: exists, var: private }
+        then_expr: { type: var, name: private }
+        else_expr: { type: const, value: null }
+payment_request_remind:
+  method: POST
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: payment_requests }
+  - { type: var, name: id }
+  - { type: literal, value: remind }
+  auth: *request_auth
+payment_request_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: payment_requests }
+  - { type: var, name: id }
+  auth: *request_auth
+transaction_update:
+  method: PATCH
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: transactions }
+  - { type: var, name: id }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - description
+      - type: if
+        condition: { type: exists, var: description }
+        then_expr: { type: var, name: description }
+        else_expr: { type: const, value: null }
+    - - private
+      - type: if
+        condition: { type: exists, var: private }
+        then_expr: { type: var, name: private }
+        else_expr: { type: const, value: null }
+transaction_like:
+  method: POST
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: transactions }
+  - { type: var, name: id }
+  - { type: literal, value: likes }
+  auth: *request_auth
+transaction_unlike:
+  method: DELETE
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: transactions }
+  - { type: var, name: id }
+  - { type: literal, value: likes }
+  auth: *request_auth
+transaction_comment_create:
+  method: POST
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: transactions }
+  - { type: var, name: transaction_id }
+  - { type: literal, value: comments }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [comment, { type: var, name: comment }]
+transaction_comment_update:
+  method: PATCH
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: comments }
+  - { type: var, name: id }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [comment, { type: var, name: comment }]
+transaction_comment_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: comments }
+  - { type: var, name: id }
+  auth: *request_auth
+payment_card_create:
+  method: POST
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: payment_cards }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [card_name, { type: var, name: card_name }]
+    - [owner_name, { type: var, name: owner_name }]
+    - [card_number, { type: var, name: card_number }]
+    - [expiry_year, { type: var, name: expiry_year }]
+    - [expiry_month, { type: var, name: expiry_month }]
+    - [cvv_number, { type: var, name: cvv_number }]
+payment_card_update:
+  method: PATCH
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: payment_cards }
+  - { type: var, name: id }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [card_name, { type: var, name: card_name }]
+payment_card_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: payment_cards }
+  - { type: var, name: id }
+  auth: *request_auth
+notification_query:
+  method: GET
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: notifications }
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - read
+      - type: if
+        condition: { type: exists, var: read }
+        then_expr: { type: var, name: read }
+        else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
+notification_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: notifications }
+  - { type: var, name: id }
+  auth: *request_auth
+notification_mark:
+  method: PATCH
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: notifications }
+  - { type: var, name: id }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [read, { type: var, name: read }]
+notification_delete_all:
+  method: DELETE
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: notifications }
+  auth: *request_auth
+notification_mark_all:
+  method: PATCH
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: notifications }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [read, { type: var, name: read }]
+  method: GET
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: social_feed }
+  auth: *request_auth
+  pagination: *appworld_page_index_limit

@@ -2,7 +2,7 @@ use super::*;
 use crate::load_schema;
 use crate::loader::load_schema_dir;
 use crate::symbol_tuning::TeachingExposureSession;
-use crate::MutatorAdmit;
+
 use std::path::PathBuf;
 
 #[test]
@@ -92,10 +92,6 @@ fn resolve_entity_field_rejects_cross_entity_homograph() {
 
 #[test]
 fn resolve_cap_param_rejects_query_scope_p_on_mutator_invoke() {
-    use crate::discovery;
-    use crate::EntityName;
-    use crate::ExposureEntityKey;
-
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/schemas/plasm_language_matrix");
     let Ok(cgs) = load_schema_dir(&dir) else {
@@ -105,20 +101,12 @@ fn resolve_cap_param_rejects_query_scope_p_on_mutator_invoke() {
         &cgs,
         "langmatrix",
         &["LangItem"],
-        discovery::derive_intent_exposure_surface_batch(
+        crate::capability_exposure::explicit_entity_capability_surface(
             &cgs,
             "langmatrix",
-            "query and patch lang item tags",
-            &[ExposureEntityKey {
-                entry_id: "langmatrix".into(),
-                entity: EntityName::from("LangItem"),
-            }],
             &["LangItem".to_string()],
-            Some(&["langitem_query".to_string(), "langitem_update".to_string()]),
-            discovery::ExposureSurfaceOptions {
-                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-            },
-        ),
+        )
+        .expect("explicit fixture capability exposure"),
     );
     let map = exp.symbol_map_arc();
     let update_cap = cgs
@@ -253,10 +241,6 @@ fn resolve_entity_field_federated_wire_name_by_receiver_after_extend() {
 
 #[test]
 fn resolve_cap_param_shared_scope_p_on_issue_create_when_only_issue_query_committed() {
-    use crate::discovery;
-    use crate::EntityName;
-    use crate::ExposureEntityKey;
-
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/github");
     if !dir.is_dir() {
         return;
@@ -268,20 +252,12 @@ fn resolve_cap_param_shared_scope_p_on_issue_create_when_only_issue_query_commit
         &cgs,
         "github",
         &["Issue"],
-        discovery::derive_intent_exposure_surface_batch(
+        crate::capability_exposure::explicit_entity_capability_surface(
             &cgs,
             "github",
-            "query issues in repository",
-            &[ExposureEntityKey {
-                entry_id: "github".into(),
-                entity: EntityName::from("Issue"),
-            }],
             &["Issue".to_string()],
-            Some(&["issue_query".to_string()]),
-            discovery::ExposureSurfaceOptions {
-                mutator_admit: MutatorAdmit::IntentOnly,
-            },
-        ),
+        )
+        .expect("explicit fixture capability exposure"),
     );
     let map = exp.symbol_map_arc();
     let create_cap = cgs.get_capability("issue_create").expect("issue_create");
@@ -302,11 +278,90 @@ fn agent_program_error_includes_query_filter_hint() {
     let err = SymbolResolveError::UnknownQueryFilterPSym {
         entity: "Label".into(),
         token: "p99".into(),
+        method_invoke_form: None,
     };
     let msg = err.to_agent_program_error();
     assert!(msg.contains("query filter symbol"));
     assert!(msg.contains("help:"));
     assert!(msg.contains("query/search filters"));
+}
+
+#[test]
+fn mutator_param_misused_as_row_or_filter_hints_invoke_form() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/plasm_language_matrix");
+    let Ok(cgs) = load_schema_dir(&dir) else {
+        return;
+    };
+    let entry = "langmatrix";
+    let exp = TeachingExposureSession::new(&cgs, entry, &["LangAuthSession"]);
+    let map = exp.symbol_map_arc();
+    let ent = cgs.get_entity("LangAuthSession").expect("LangAuthSession");
+    // `password` is login payload only — not a row field or query filter.
+    let row_err = map
+        .resolve_entity_field(
+            CatalogScope::qualified(entry),
+            "LangAuthSession",
+            ent,
+            "password",
+        )
+        .expect_err("password must not resolve as row field");
+    let row_msg = row_err.to_string();
+    assert!(
+        row_msg.contains("method parameter") && row_msg.contains("password="),
+        "expected mutator-param redirect on row field, got: {row_msg}"
+    );
+    let filter_err = map
+        .resolve_query_filter_field(
+            CatalogScope::qualified(entry),
+            "LangAuthSession",
+            ent,
+            &cgs,
+            "password",
+        )
+        .expect_err("password must not resolve as query filter");
+    let filter_msg = filter_err.to_string();
+    assert!(
+        filter_msg.contains("method parameter") && filter_msg.contains("password="),
+        "expected mutator-param redirect on filter, got: {filter_msg}"
+    );
+    assert!(
+        filter_err
+            .to_agent_program_error()
+            .contains("method/create parameter"),
+        "expected agent hint toward method form"
+    );
+}
+
+#[test]
+fn query_selection_param_misused_as_row_field_hints_brace_not_method() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/plasm_language_matrix");
+    let Ok(cgs) = load_schema_dir(&dir) else {
+        return;
+    };
+    let entry = "langmatrix";
+    let exp = TeachingExposureSession::new(&cgs, entry, &["LangItem"]);
+    let map = exp.symbol_map_arc();
+    let ent = cgs.get_entity("LangItem").expect("LangItem");
+    let row_err = map
+        .resolve_entity_field(CatalogScope::qualified(entry), "LangItem", ent, "q")
+        .expect_err("q is search selection, not a row field");
+    let row_msg = row_err.to_string();
+    assert!(
+        row_msg.contains("query selection") && row_msg.contains("{q=...}"),
+        "expected query-brace redirect, got: {row_msg}"
+    );
+    assert!(
+        !row_msg.contains(".m") && !row_msg.contains("<method>"),
+        "query selection must not be advertised as e#.m#: {row_msg}"
+    );
+    assert!(
+        row_err
+            .to_agent_program_error()
+            .contains("query/search selection slot"),
+        "expected agent hint toward query braces"
+    );
 }
 
 #[test]
@@ -417,9 +472,9 @@ fn compound_key_accepts_wire_names() {
     let crate::EntityKey::Compound(m) = &g.reference.key else {
         panic!("expected compound key");
     };
-    assert_eq!(m.get("owner").map(String::as_str), Some("acme"));
-    assert_eq!(m.get("item_id").map(String::as_str), Some("i1"));
-    assert_eq!(m.get("name").map(String::as_str), Some("main"));
+    assert_eq!(m.get("owner").and_then(|s| s.as_lit_str()), Some("acme"));
+    assert_eq!(m.get("item_id").and_then(|s| s.as_lit_str()), Some("i1"));
+    assert_eq!(m.get("name").and_then(|s| s.as_lit_str()), Some("main"));
 }
 
 /// Regression: deleted qualified reverse-map fields must not reappear on opaque resolution paths.

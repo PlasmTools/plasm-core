@@ -237,6 +237,7 @@ pub(crate) fn render_markdown(
         inline.sections.clone()
     };
     let handles_meta = snapshot_handles_for_meta(plan, preview_needed);
+    // Publish Markdown is Plasm's own surface — do not append didactic observe footers.
     mcp_prepend_artifact_followup_markdown(markdown, use_mcp_meta, &handles_meta, omitted)
 }
 

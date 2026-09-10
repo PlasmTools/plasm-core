@@ -1,21 +1,15 @@
 //! JSON discovery API (`/v1/*`): catalog, capability search, and operator [`tool-model`](crate::tool_model).
-//! `POST /v1/terminal/discover` returns the **same Markdown** as MCP `discover_capabilities` (non-typed): fenced TSV + ambiguity notes — use discovery results to build `POST /execute`
-//! (`entry_id` + deduped `entity` values from [`RankedCandidate`](plasm_core::discovery::RankedCandidate)).
+//! Intent routing and context creation share the PostgreSQL generation and prerequisite graph.
 
-use axum::body::Body;
 use axum::extract::{Extension, Path, Query};
-use axum::http::header::CONTENT_TYPE;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use http_problem::prelude::{StatusCode as ProblemStatus, Uri};
 use http_problem::Problem;
-use plasm_core::discovery::{
-    CapabilityQuery, CatalogEntryMeta, CgsCatalog, CgsDiscovery, DiscoveryError, DiscoveryResult,
-};
+use plasm_core::discovery::{CatalogEntryMeta, CgsCatalog, DiscoveryError};
 use plasm_core::schema::CGS;
-use plasm_discovery::DiscoveryQuery;
 use serde::{Deserialize, Serialize};
 
 use crate::http_problem_util::problem_response;
@@ -24,7 +18,6 @@ use crate::release_version::RELEASE_VERSION;
 use crate::server_state::{PlasmHostState, ToolModelHostError};
 use crate::tool_model::ToolModelQuery;
 use crate::tool_model_service::ToolModelServiceError;
-use crate::typed_discovery_host::run_typed_catalog_discovery;
 
 #[derive(Debug, Deserialize)]
 pub struct IncludeCgsQuery {
@@ -89,30 +82,6 @@ pub async fn get_auth_status(
         storage: crate::auth_framework_host::auth_storage_backend_label(),
         open_source: st.saas.is_none().then_some(true),
     }))
-}
-
-fn typed_discovery_problem(e: plasm_discovery::DiscoveryError) -> Problem {
-    match e {
-        plasm_discovery::DiscoveryError::EmptyUtterance
-        | plasm_discovery::DiscoveryError::InvalidClarificationAnswer => Problem::custom(
-            ProblemStatus::BAD_REQUEST,
-            Uri::from_static(problem_types::DISCOVERY_TYPED_BAD_REQUEST),
-        )
-        .with_title("Bad Request")
-        .with_detail(e.to_string()),
-        plasm_discovery::DiscoveryError::UnknownEntry(_) => Problem::custom(
-            ProblemStatus::NOT_FOUND,
-            Uri::from_static(problem_types::DISCOVERY_UNKNOWN_ENTRY),
-        )
-        .with_title("Not Found")
-        .with_detail(e.to_string()),
-        _ => Problem::custom(
-            ProblemStatus::INTERNAL_SERVER_ERROR,
-            Uri::from_static(problem_types::DISCOVERY_TYPED_ERROR),
-        )
-        .with_title("Discovery Error")
-        .with_detail(e.to_string()),
-    }
 }
 
 fn discovery_problem(e: DiscoveryError) -> Problem {
@@ -207,126 +176,263 @@ async fn get_tool_model(
     }
 }
 
-fn log_discovery_response(out: &DiscoveryResult) {
-    tracing::debug!(
-        candidates = out.candidates.len(),
-        contexts = out.contexts.len(),
-        ambiguities = out.ambiguities.len(),
-        schema_neighborhoods = out.schema_neighborhoods.len(),
-        entity_summaries = out.entity_summaries.len(),
-        top_scores = ?out
-            .candidates
-            .iter()
-            .take(5)
-            .map(|c| (c.capability_name.as_str(), c.score))
-            .collect::<Vec<_>>(),
-        "plasm discovery response"
-    );
-}
-
-/// Legacy typed browse (`plasm-discovery` / `AgentDiscovery`). Prefer intent-only
-/// `plasm_context` or lexicon `POST /v1/discover`. Not exposed on MCP.
-async fn post_discover_typed(
-    Extension(st): Extension<PlasmHostState>,
-    Json(query): Json<DiscoveryQuery>,
-) -> Response {
-    tracing::debug!(
-        utterance_len = query.utterance.len(),
-        allowed = query.allowed_entry_ids.len(),
-        max_options = query.max_options,
-        "plasm typed discovery request"
-    );
-    let reg = st.catalog.snapshot();
-    match run_typed_catalog_discovery(&reg, query, Some(st.discovery_index_cache())).await {
-        Ok(out) => Json(out).into_response(),
-        Err(e) => {
-            tracing::debug!(error = %e, "typed discovery failed");
-            problem_response(typed_discovery_problem(e))
-        }
-    }
-}
-
 #[derive(Debug, Deserialize, Serialize)]
-pub struct TerminalDiscoverBody {
+#[serde(deny_unknown_fields)]
+pub struct IntentDiscoveryRequest {
+    #[serde(default)]
+    pub principal: Option<String>,
     pub intent: String,
     #[serde(default)]
-    pub limit: Option<usize>,
-    #[serde(default)]
-    pub allowed_entry_ids: Vec<String>,
+    pub allowed_entry_ids: Option<Vec<String>>,
 }
 
-async fn post_terminal_discover(
-    Extension(st): Extension<PlasmHostState>,
-    Json(body): Json<TerminalDiscoverBody>,
-) -> Response {
-    let intent = body.intent.trim();
-    if intent.is_empty() {
-        return problem_response(discovery_problem(DiscoveryError::EmptyQuery));
-    }
-    let cq = CapabilityQuery {
-        tokens: intent.split_whitespace().map(|s| s.to_string()).collect(),
-        phrases: vec![intent.to_string()],
-        entry_ids: if body.allowed_entry_ids.is_empty() {
-            None
-        } else {
-            Some(body.allowed_entry_ids.clone())
-        },
-        ..Default::default()
+async fn route_http_intent(
+    st: &PlasmHostState,
+    body: &IntentDiscoveryRequest,
+    _scope: &str,
+    session: Option<&crate::execute_session::ExecuteSession>,
+) -> anyhow::Result<crate::discovery_service::RoutingReceipt> {
+    use crate::discovery_service::{DiscoveryService, RouteTurn};
+    let generation = match session.and_then(|session| session.discovery_pin.as_ref()) {
+        Some(pin) => pin.generation.clone(),
+        None => st.catalog.discovery_generation()?.as_ref().clone(),
     };
-    let reg = st.catalog.snapshot();
-    let structured = match reg.discover(&cq) {
-        Ok(o) => o,
-        Err(e) => {
-            tracing::debug!(error = %e, "terminal structured discovery failed");
-            return problem_response(discovery_problem(e));
-        }
-    };
-    let limit = body.limit.unwrap_or(32).clamp(1, 128);
-
-    let mut r_out = structured.clone();
-    r_out.candidates = structured.candidates.iter().take(limit).cloned().collect();
-    let text = crate::discovery_human_format::format_discovery_markdown(&r_out);
-    match Response::builder()
-        .status(StatusCode::OK)
-        .header(CONTENT_TYPE, "text/plain; charset=utf-8")
-        .body(Body::from(text))
-    {
-        Ok(resp) => resp,
-        Err(e) => {
-            tracing::error!(error = %e, "terminal discover response build failed");
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
+    let registry = st.catalog.pinned_view(&generation).await?.snapshot();
+    let mut allowed = registry
+        .list_entries()
+        .into_iter()
+        .map(|entry| entry.entry_id)
+        .collect::<std::collections::BTreeSet<_>>();
+    if let Some(restriction) = &body.allowed_entry_ids {
+        allowed.retain(|id| restriction.contains(id));
     }
+    let allowed = crate::discovery_store::DiscoveryAuthorization::catalogs(allowed);
+    let allowed = session
+        .and_then(|session| session.discovery_pin.as_ref())
+        .map(|pin| pin.authorization.intersection(&allowed))
+        .unwrap_or(allowed);
+    let logical_session = session
+        .and_then(|session| session.discovery_pin.as_ref())
+        .map(|pin| pin.pin_id.as_str());
+    let exposed = session
+        .and_then(|session| session.teaching_exposure.as_ref())
+        .map(|exposure| {
+            exposure
+                .surface
+                .capabilities
+                .iter()
+                .map(|cap| plasm_core::prerequisites::CapabilityRef {
+                    catalog: cap.entry_id.clone(),
+                    capability: cap.capability.to_string(),
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let service = DiscoveryService::from_env(st.catalog.discovery_store().await?.clone())?;
+    service
+        .route_turn(RouteTurn {
+            new_generation: &generation,
+            intent: &body.intent,
+            logical_session,
+            allowed: &allowed,
+            exposed: &exposed,
+            expires_at: std::time::SystemTime::now() + std::time::Duration::from_secs(24 * 3600),
+        })
+        .await
 }
 
 async fn post_discover(
     Extension(st): Extension<PlasmHostState>,
-    Json(query): Json<CapabilityQuery>,
+    Extension(crate::incoming_auth::IncomingPrincipal(principal)): Extension<
+        crate::incoming_auth::IncomingPrincipal,
+    >,
+    Json(body): Json<IntentDiscoveryRequest>,
 ) -> Response {
-    tracing::debug!(
-        tokens = query.tokens.len(),
-        phrases = query.phrases.len(),
-        entity_hints = query.entity_hints.len(),
-        kinds = query.kinds.len(),
-        capability_names_len = query.capability_names.as_ref().map(Vec::len),
-        entry_ids_len = query.entry_ids.as_ref().map(Vec::len),
-        pick_entry = query.pick_entry.as_deref(),
-        pick_capabilities_len = query.pick_capabilities.as_ref().map(Vec::len),
-        exclude_capabilities_len = query.exclude_capabilities.as_ref().map(Vec::len),
-        expand_entities_len = query.expand_entities.as_ref().map(Vec::len),
-        "plasm discovery request"
-    );
-    let reg = st.catalog.snapshot();
-    match reg.discover(&query) {
-        Ok(out) => {
-            log_discovery_response(&out);
-            Json(out).into_response()
-        }
-        Err(e) => {
-            tracing::debug!(error = %e, "plasm discovery failed");
-            problem_response(discovery_problem(e))
-        }
+    let scope = crate::incoming_auth::tenant_scope(principal.as_ref());
+    match route_http_intent(&st, &body, &scope, None).await {
+        Ok(receipt) => Json(receipt).into_response(),
+        Err(error) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error":"routing_error","detail":error.to_string()})),
+        )
+            .into_response(),
     }
+}
+
+async fn post_terminal_discover(
+    Extension(st): Extension<PlasmHostState>,
+    Extension(crate::incoming_auth::IncomingPrincipal(principal)): Extension<
+        crate::incoming_auth::IncomingPrincipal,
+    >,
+    Json(body): Json<IntentDiscoveryRequest>,
+) -> Response {
+    let scope = crate::incoming_auth::tenant_scope(principal.as_ref());
+    let receipt = match route_http_intent(&st, &body, &scope, None).await {
+        Ok(receipt) => receipt,
+        Err(error) => return (StatusCode::SERVICE_UNAVAILABLE, error.to_string()).into_response(),
+    };
+    let mut text = format!("Discovery: {:?}\n\n", receipt.selection.status);
+    text.push_str(&receipt.selection.explanation_lines().join("\n\n"));
+    text.push_str("\n\n");
+    if let Some(closure) = &receipt.closure {
+        let registry = match st.catalog.pinned_view(&receipt.retrieval.generation).await {
+            Ok(view) => view.snapshot(),
+            Err(error) => {
+                return (StatusCode::SERVICE_UNAVAILABLE, error.to_string()).into_response()
+            }
+        };
+        text.push_str("```tsv\napi\tentity\tdescription\trole\n");
+        for (references, role) in [
+            (&closure.business, "business"),
+            (&closure.prerequisites, "prerequisite"),
+        ] {
+            for reference in references {
+                let ctx = match registry.load_context(&reference.catalog) {
+                    Ok(ctx) => ctx,
+                    Err(error) => {
+                        return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
+                            .into_response()
+                    }
+                };
+                let Some(cap) = ctx.cgs.capabilities.get(reference.capability.as_str()) else {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "selected capability missing",
+                    )
+                        .into_response();
+                };
+                text.push_str(&format!(
+                    "{}\t{}\t{}\t{}\n",
+                    reference.catalog, cap.domain, reference.capability, role
+                ));
+            }
+        }
+        text.push_str("```\n\n");
+    }
+    // Keep the full binding graph and continuation contract in the terminal artifact.
+    match serde_json::to_string_pretty(&receipt) {
+        Ok(json) => {
+            text.push_str("```json\n");
+            text.push_str(&json);
+            text.push_str("\n```\n");
+            text.into_response()
+        }
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
+    }
+}
+
+/// Create an intent-routed execute context. Clarification returns a receipt without opening execution.
+async fn post_context(
+    Extension(st): Extension<PlasmHostState>,
+    Extension(crate::incoming_auth::IncomingPrincipal(principal)): Extension<
+        crate::incoming_auth::IncomingPrincipal,
+    >,
+    Json(body): Json<IntentDiscoveryRequest>,
+) -> Response {
+    routed_http_context(&st, principal.as_ref(), &body, None, None).await
+}
+
+pub(crate) async fn routed_http_context(
+    st: &PlasmHostState,
+    principal: Option<&crate::incoming_auth::TenantPrincipal>,
+    body: &IntentDiscoveryRequest,
+    session: Option<&crate::execute_session::ExecuteSession>,
+    binding: Option<(&str, &str)>,
+) -> Response {
+    match apply_routed_http_context(st, principal, body, session, binding).await {
+        Ok(result) => Json(result).into_response(),
+        Err(error) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": "routing_error", "detail": error.to_string()
+            })),
+        )
+            .into_response(),
+    }
+}
+
+async fn apply_routed_http_context(
+    st: &PlasmHostState,
+    principal: Option<&crate::incoming_auth::TenantPrincipal>,
+    body: &IntentDiscoveryRequest,
+    session: Option<&crate::execute_session::ExecuteSession>,
+    binding: Option<(&str, &str)>,
+) -> anyhow::Result<serde_json::Value> {
+    if session.is_some_and(|session| session.discovery_pin.is_none()) {
+        anyhow::bail!("intent extension requires a routed context; open one with POST /v1/context");
+    }
+    let scope = crate::incoming_auth::tenant_scope(principal);
+    let receipt = route_http_intent(st, body, &scope, session).await?;
+    if receipt.closure.is_none() {
+        return Ok(serde_json::json!({"routing": receipt}));
+    }
+    if let Some(pin) = session.and_then(|session| session.discovery_pin.as_ref()) {
+        anyhow::ensure!(
+            pin.pin_id == receipt.pin_id && pin.generation == receipt.retrieval.generation,
+            "routing attempted to change the pinned session generation"
+        );
+    }
+    let routed = st.with_discovery_route(receipt).await?;
+    let receipt = routed
+        .discovery_route
+        .as_ref()
+        .expect("validated capability route");
+    let closure = receipt
+        .closure
+        .as_ref()
+        .expect("validated capability closure");
+    let registry = routed.catalog.snapshot();
+    let mut seeds = Vec::new();
+    for reference in closure.business.iter().chain(&closure.prerequisites) {
+        let context = registry.load_context(&reference.catalog)?;
+        let capability = context
+            .cgs
+            .capabilities
+            .get(reference.capability.as_str())
+            .ok_or_else(|| anyhow::anyhow!("selected capability absent from pinned catalog"))?;
+        seeds.push(crate::http_execute::CapabilitySeed {
+            entry_id: reference.catalog.clone(),
+            entity: capability.domain.to_string(),
+        });
+    }
+    let intent = session
+        .and_then(|session| session.context_intent.as_deref())
+        .map(|previous| format!("{previous}\n{}", receipt.intent))
+        .unwrap_or_else(|| receipt.intent.clone());
+    let out = crate::http_execute::apply_capability_seeds(
+        &routed,
+        principal,
+        binding,
+        seeds,
+        session
+            .and_then(|session| session.principal.clone())
+            .or_else(|| body.principal.clone()),
+        None,
+        Some(uuid::Uuid::parse_str(&receipt.pin_id)?),
+        &intent,
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let execute = routed
+        .try_get_execute_session(&out.prompt_hash, &out.session_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("routed execute session missing after exposure"))?;
+    let exposure = execute
+        .teaching_exposure
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("routed execute session missing teaching exposure"))?;
+    let catalogs = execute
+        .contexts_by_entry
+        .iter()
+        .map(|(id, context)| (id.clone(), context.cgs.as_ref()))
+        .collect();
+    let guidance = plasm_core::prompt_render::render_prerequisite_bindings(
+        closure,
+        &catalogs,
+        exposure.to_symbol_map().as_ref(),
+    )
+    .map_err(anyhow::Error::msg)?;
+    Ok(serde_json::json!({"routing": receipt, "context": out, "prerequisite_guidance": guidance}))
 }
 
 async fn get_connect_requirements(
@@ -361,6 +467,27 @@ pub fn discovery_routes_protected() -> Router {
         )
         .route("/v1/registry/{entry_id}/tool-model", get(get_tool_model))
         .route("/v1/discover", post(post_discover))
-        .route("/v1/discover-typed", post(post_discover_typed))
+        .route("/v1/context", post(post_context))
         .route("/v1/terminal/discover", post(post_terminal_discover))
+}
+
+#[cfg(test)]
+mod requirement_outcome_protocol_tests {
+    use super::IntentDiscoveryRequest;
+    use serde_json::json;
+
+    #[test]
+    fn intent_round_trips_and_conversational_inputs_are_rejected() {
+        let request: IntentDiscoveryRequest =
+            serde_json::from_value(json!({"intent":"inspect records"})).unwrap();
+        assert_eq!(request.intent, "inspect records");
+        for invalid in [
+            json!({"intent":"inspect records","routing_ref":"receipt","clarify_choice":1}),
+            json!({"intent":"inspect records","routing_ref":"receipt","clarify_choices":1}),
+            json!({"intent":"inspect records","routing_ref":"receipt","clarify_choices":[1.5]}),
+            json!({"intent":"inspect records","routing_ref":"receipt","clarify_choices":[-1]}),
+        ] {
+            assert!(serde_json::from_value::<IntentDiscoveryRequest>(invalid).is_err());
+        }
+    }
 }

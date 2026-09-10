@@ -58,11 +58,13 @@ message_list:
           else_expr: { type: const, value: null }
   pagination:
     params:
-      pageToken: { from_response: nextPageToken }
-      maxResults: { fixed: 100 }
+      pageToken:
+        from_response: nextPageToken
+      maxResults:
+        fixed: 100
+        role: page_size
     location: query
-
-# Same HTTP as message_list — enables Message~"…" / `message search` (kind: search).
+    strategy: cursor
 message_search:
   response:
     items: messages
@@ -98,10 +100,13 @@ message_search:
           else_expr: { type: const, value: null }
   pagination:
     params:
-      pageToken: { from_response: nextPageToken }
-      maxResults: { fixed: 100 }
+      pageToken:
+        from_response: nextPageToken
+      maxResults:
+        fixed: 100
+        role: page_size
     location: query
-
+    strategy: cursor
 message_get:
   response: single
   method: GET
@@ -165,7 +170,40 @@ message_send_simple:
     - type: literal
       value: send
   body:
-    type: gmail_rfc5322_send_body
+    type: object
+    fields:
+    - - raw
+      - type: base64
+        alphabet: url_safe_no_pad
+        value:
+          type: mail_message
+          headers:
+            type: object
+            fields:
+            - - From
+              - type: var
+                name: from
+            - - To
+              - type: var
+                name: to
+            - - Subject
+              - type: var
+                name: subject
+            - - In-Reply-To
+              - type: var
+                name: inReplyTo
+                if: { exists: inReplyTo }
+            - - References
+              - type: var
+                name: references
+                if: { exists: references }
+          text:
+            type: var
+            name: plainBody
+    - - threadId
+      - type: var
+        name: threadId
+        if: { exists: threadId }
 
 # Same POST — reply defaults from preflight `parent_*` (hydrate_invoke_target + message_get).
 message_reply:
@@ -185,7 +223,58 @@ message_reply:
     - type: literal
       value: send
   body:
-    type: gmail_rfc5322_reply_send_body
+    type: object
+    fields:
+    - - raw
+      - type: base64
+        alphabet: url_safe_no_pad
+        value:
+          type: mail_message
+          headers:
+            type: mail_reply_headers
+            parent:
+              type: object
+              fields:
+              - - From
+                - type: var
+                  name: parent_headerFrom
+                  if: { exists: parent_headerFrom }
+              - - Reply-To
+                - type: var
+                  name: parent_headerReplyTo
+                  if: { exists: parent_headerReplyTo }
+              - - Subject
+                - type: var
+                  name: parent_headerSubject
+                  if: { exists: parent_headerSubject }
+              - - Message-ID
+                - type: var
+                  name: parent_headerMessageId
+              - - References
+                - type: var
+                  name: parent_headerReferences
+                  if: { exists: parent_headerReferences }
+            overrides:
+              type: object
+              fields:
+              - - From
+                - type: var
+                  name: from
+              - - To
+                - type: var
+                  name: to
+                  if: { exists: to }
+              - - Subject
+                - type: var
+                  name: subject
+                  if: { exists: subject }
+          text:
+            type: var
+            name: plainBody
+    - - threadId
+      - type: var
+        name: parent_threadId
+        if: { exists: parent_threadId }
 
 message_trash:
   response: single
@@ -301,11 +390,13 @@ thread_list:
           else_expr: { type: const, value: null }
   pagination:
     params:
-      pageToken: { from_response: nextPageToken }
-      maxResults: { fixed: 100 }
+      pageToken:
+        from_response: nextPageToken
+      maxResults:
+        fixed: 100
+        role: page_size
     location: query
-
-# Same HTTP as thread_list — enables Thread~"…" / `thread search` (kind: search).
+    strategy: cursor
 thread_search:
   response:
     items: threads
@@ -341,10 +432,13 @@ thread_search:
           else_expr: { type: const, value: null }
   pagination:
     params:
-      pageToken: { from_response: nextPageToken }
-      maxResults: { fixed: 100 }
+      pageToken:
+        from_response: nextPageToken
+      maxResults:
+        fixed: 100
+        role: page_size
     location: query
-
+    strategy: cursor
 thread_get:
   response: single
   method: GET
@@ -557,10 +651,13 @@ draft_list:
       value: drafts
   pagination:
     params:
-      pageToken: { from_response: nextPageToken }
-      maxResults: { fixed: 100 }
+      pageToken:
+        from_response: nextPageToken
+      maxResults:
+        fixed: 100
+        role: page_size
     location: query
-
+    strategy: cursor
 draft_get:
   response: single
   method: GET

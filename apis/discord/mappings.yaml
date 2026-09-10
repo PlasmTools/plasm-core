@@ -115,15 +115,6 @@ application_emoji_get:
     value: emojis
   - name: id
     type: var
-application_emoji_list:
-  method: GET
-  path:
-  - type: literal
-    value: applications
-  - name: application_id
-    type: var
-  - type: literal
-    value: emojis
 application_emoji_update:
   body:
     name: input
@@ -340,12 +331,46 @@ channel_invite_create:
 channel_invite_list:
   method: GET
   path:
-  - type: literal
-    value: channels
-  - name: channel_id
-    type: var
-  - type: literal
-    value: invites
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: guild_invite
+    then_expr:
+      type: const
+      value: guilds/{guild_id}/invites
+    else_expr:
+      type: const
+      value: channels/{channel_id}/invites
+  query:
+    type: object
+    fields:
+    - - channel_id
+      - type: if
+        condition:
+          type: exists
+          var: channel_id
+        then_expr:
+          type: var
+          name: channel_id
+        else_expr:
+          type: const
+          value: null
+    - - guild_id
+      - type: if
+        condition:
+          type: exists
+          var: guild_id
+        then_expr:
+          type: var
+          name: guild_id
+        else_expr:
+          type: const
+          value: null
 channel_list_for_guild:
   method: GET
   path:
@@ -437,44 +462,6 @@ channel_thread_create:
     type: var
   - type: literal
     value: threads
-channel_thread_list_archived_public:
-  method: GET
-  path:
-  - type: literal
-    value: channels
-  - name: channel_id
-    type: var
-  - type: literal
-    value: threads
-  - type: literal
-    value: archived
-  - type: literal
-    value: public
-  query:
-    fields:
-    - - before
-      - condition:
-          type: exists
-          var: before
-        else_expr:
-          type: const
-          value: null
-        then_expr:
-          name: before
-          type: var
-        type: if
-    - - limit
-      - condition:
-          type: exists
-          var: limit
-        else_expr:
-          type: const
-          value: null
-        then_expr:
-          name: limit
-          type: var
-        type: if
-    type: object
 channel_typing:
   method: POST
   path:
@@ -499,15 +486,6 @@ channel_webhook_create:
     name: input
     type: var
   method: POST
-  path:
-  - type: literal
-    value: channels
-  - name: channel_id
-    type: var
-  - type: literal
-    value: webhooks
-channel_webhook_list:
-  method: GET
   path:
   - type: literal
     value: channels
@@ -655,14 +633,57 @@ gateway_url_fetch:
 guild_active_thread_list:
   method: GET
   path:
-  - type: literal
-    value: guilds
-  - name: guild_id
-    type: var
-  - type: literal
-    value: threads
-  - type: literal
-    value: active
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: channel_thread_archived_public
+    then_expr:
+      type: const
+      value: channels/{channel_id}/threads/archived/public
+    else_expr:
+      type: const
+      value: guilds/{guild_id}/threads/active
+  query:
+    type: object
+    fields:
+    - - guild_id
+      - type: if
+        condition:
+          type: exists
+          var: guild_id
+        then_expr:
+          type: var
+          name: guild_id
+        else_expr:
+          type: const
+          value: null
+    - - channel_id
+      - type: if
+        condition:
+          type: exists
+          var: channel_id
+        then_expr:
+          type: var
+          name: channel_id
+        else_expr:
+          type: const
+          value: null
+    - - before
+      - type: if
+        condition:
+          type: exists
+          var: before
+        then_expr:
+          type: var
+          name: before
+        else_expr:
+          type: const
+          value: null
 guild_application_command_create:
   body:
     name: input
@@ -848,12 +869,46 @@ guild_emoji_get:
 guild_emoji_list:
   method: GET
   path:
-  - type: literal
-    value: guilds
-  - name: guild_id
-    type: var
-  - type: literal
-    value: emojis
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: application_emoji
+    then_expr:
+      type: const
+      value: applications/{application_id}/emojis
+    else_expr:
+      type: const
+      value: guilds/{guild_id}/emojis
+  query:
+    type: object
+    fields:
+    - - guild_id
+      - type: if
+        condition:
+          type: exists
+          var: guild_id
+        then_expr:
+          type: var
+          name: guild_id
+        else_expr:
+          type: const
+          value: null
+    - - application_id
+      - type: if
+        condition:
+          type: exists
+          var: application_id
+        then_expr:
+          type: var
+          name: application_id
+        else_expr:
+          type: const
+          value: null
 guild_emoji_update:
   body:
     name: input
@@ -907,15 +962,6 @@ guild_integration_list:
     type: var
   - type: literal
     value: integrations
-guild_invite_list:
-  method: GET
-  path:
-  - type: literal
-    value: guilds
-  - name: guild_id
-    type: var
-  - type: literal
-    value: invites
 guild_member_get:
   method: GET
   path:
@@ -1236,12 +1282,46 @@ guild_update:
 guild_webhook_list:
   method: GET
   path:
-  - type: literal
-    value: guilds
-  - name: guild_id
-    type: var
-  - type: literal
-    value: webhooks
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: channel_webhook
+    then_expr:
+      type: const
+      value: channels/{channel_id}/webhooks
+    else_expr:
+      type: const
+      value: guilds/{guild_id}/webhooks
+  query:
+    type: object
+    fields:
+    - - guild_id
+      - type: if
+        condition:
+          type: exists
+          var: guild_id
+        then_expr:
+          type: var
+          name: guild_id
+        else_expr:
+          type: const
+          value: null
+    - - channel_id
+      - type: if
+        condition:
+          type: exists
+          var: channel_id
+        then_expr:
+          type: var
+          name: channel_id
+        else_expr:
+          type: const
+          value: null
 guild_welcome_screen_get:
   method: GET
   path:
@@ -1373,7 +1453,6 @@ message_get:
     value: messages
   - name: id
     type: var
-# Preflight merges message_get row as parent_*; body builds message_reference for Discord reply semantics.
 message_reply:
   method: POST
   path:

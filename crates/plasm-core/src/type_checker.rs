@@ -1,15 +1,14 @@
 use crate::capability_input::{
-    domain_placeholder_literal_error, entity_ref_incompatible_value, validate_capability_input,
-    validate_multiselect_value, validate_typed_array_value, value_fits_field_type_entity_ref_aware,
+    validate_capability_invocation_input_with_path_vars, validate_concrete_named_value,
 };
 use crate::cgs_federation::{FederationDispatch, FederationResolveError};
 use crate::scope_entity_ref_infer::{
-    prepare_create_capability_input, prepare_invoke_capability_input,
+    prepare_create_capability_input, prepare_targeted_capability_input,
 };
 use crate::{
     CapabilityKind, ChainExpr, ChainStep, CompOp, CreateExpr, DeleteExpr, EntityDef, EntityKey,
     Expr, FieldType, GetExpr, InputFieldSchema, InvokeExpr, PageExpr, Predicate, QueryExpr,
-    RelationSchema, TypeError, Value, ValueWireFormat, CGS,
+    RelationSchema, TypeError, Value, CGS,
 };
 use std::collections::HashSet;
 
@@ -54,17 +53,15 @@ fn type_check_page(page: &PageExpr) -> Result<(), TypeError> {
     Ok(())
 }
 
-/// Union of `object` parameters from every Query and Search capability on `entity`.
+/// Union of scope, selection and control inputs from Query and Search capabilities.
 fn union_query_and_search_params(cgs: &CGS, entity: &str) -> Vec<InputFieldSchema> {
     let mut seen: HashSet<String> = HashSet::new();
     let mut out = Vec::new();
     for kind in [CapabilityKind::Query, CapabilityKind::Search] {
         for cap in cgs.find_capabilities(entity, kind) {
-            if let Some(fields) = cap.object_params() {
-                for f in fields {
-                    if seen.insert(f.name.clone()) {
-                        out.push(f.clone());
-                    }
+            for f in cap.query_surface_fields() {
+                if seen.insert(f.name.clone()) {
+                    out.push(f.clone());
                 }
             }
         }
@@ -74,6 +71,8 @@ fn union_query_and_search_params(cgs: &CGS, entity: &str) -> Vec<InputFieldSchem
 
 /// Type-check an expression against a CGS schema.
 pub fn type_check_expr(expr: &Expr, cgs: &CGS) -> Result<(), TypeError> {
+    let span = crate::spans::typecheck_expr();
+    let _guard = span.enter();
     match expr {
         Expr::Query(query) => type_check_query(query, cgs),
         Expr::Get(get) => type_check_get(get, cgs),
@@ -192,11 +191,6 @@ pub fn reject_domain_placeholder_in_executable(expr: &Expr) -> Result<(), TypeEr
             if g.reference.contains_domain_placeholder() {
                 return Err(err());
             }
-            if let Some(m) = &g.path_vars {
-                if m.values().any(Value::contains_domain_placeholder_deep) {
-                    return Err(err());
-                }
-            }
         }
         Expr::Create(c) => {
             if c.input.to_value().contains_domain_placeholder_deep() {
@@ -207,11 +201,6 @@ pub fn reject_domain_placeholder_in_executable(expr: &Expr) -> Result<(), TypeEr
             if d.target.contains_domain_placeholder() {
                 return Err(err());
             }
-            if let Some(m) = &d.path_vars {
-                if m.values().any(Value::contains_domain_placeholder_deep) {
-                    return Err(err());
-                }
-            }
         }
         Expr::Invoke(i) => {
             if i.target.contains_domain_placeholder() {
@@ -219,11 +208,6 @@ pub fn reject_domain_placeholder_in_executable(expr: &Expr) -> Result<(), TypeEr
             }
             if let Some(inp) = &i.input {
                 if inp.to_value().contains_domain_placeholder_deep() {
-                    return Err(err());
-                }
-            }
-            if let Some(m) = &i.path_vars {
-                if m.values().any(Value::contains_domain_placeholder_deep) {
                     return Err(err());
                 }
             }
@@ -239,9 +223,31 @@ pub fn reject_domain_placeholder_in_executable(expr: &Expr) -> Result<(), TypeEr
                 return Err(err());
             }
         }
-        Expr::Query(_) | Expr::Page(_) | Expr::Wait(_) | Expr::Cancel(_) => {}
+        Expr::Query(q) => {
+            if let Some(pred) = &q.predicate {
+                if predicate_contains_domain_placeholder(pred) {
+                    return Err(err());
+                }
+            }
+        }
+        Expr::Page(_) | Expr::Wait(_) | Expr::Cancel(_) => {}
     }
     Ok(())
+}
+
+fn predicate_contains_domain_placeholder(pred: &crate::Predicate) -> bool {
+    use crate::Predicate;
+    match pred {
+        Predicate::True | Predicate::False => false,
+        Predicate::Comparison { value, .. } => value.to_value().contains_domain_placeholder_deep(),
+        Predicate::And { args } | Predicate::Or { args } => {
+            args.iter().any(predicate_contains_domain_placeholder)
+        }
+        Predicate::Not { predicate } => predicate_contains_domain_placeholder(predicate),
+        Predicate::ExistsRelation { predicate, .. } => predicate
+            .as_ref()
+            .is_some_and(|p| predicate_contains_domain_placeholder(p)),
+    }
 }
 
 /// Resolve chain selector against source entity into `(target_entity_name, relation_if_declared)`.
@@ -259,7 +265,7 @@ fn resolve_chain_target<'a>(
                 entity: source_entity_name.to_string(),
             })?;
         let target = match &nv.field_type {
-            FieldType::EntityRef { target } => target.to_string(),
+            FieldType::EntityRef { target, .. } => target.to_string(),
             other => {
                 return Err(TypeError::IncompatibleOperator {
                     field: selector.to_string(),
@@ -395,7 +401,7 @@ pub fn type_check_query(query: &QueryExpr, cgs: &CGS) -> Result<(), TypeError> {
     // expose multiple scoped queries with different params, e.g. `team_id` vs `space_id`).
     let cap_params: Vec<InputFieldSchema> = if let Some(name) = query.capability_name.as_deref() {
         cgs.get_capability(name)
-            .and_then(|cap| cap.object_params().map(|f| f.to_vec()))
+            .map(|cap| cap.query_surface_fields().cloned().collect())
             .unwrap_or_default()
     } else {
         union_query_and_search_params(cgs, &query.entity)
@@ -416,6 +422,18 @@ pub fn type_check_query(query: &QueryExpr, cgs: &CGS) -> Result<(), TypeError> {
                 });
             }
         }
+    }
+
+    // When a query capability is resolvable, enforce ResolvedRowset lane checks early.
+    if crate::resolve_query_capability(query, cgs).is_ok() {
+        let entry_id = query
+            .catalog_entry_id
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .or(cgs.entry_id.as_deref())
+            .unwrap_or("");
+        crate::rowset::normalize_query_expr_to_rowset(query, cgs, entry_id)
+            .map_err(|message| TypeError::RowsetNormalize { message })?;
     }
 
     Ok(())
@@ -455,29 +473,12 @@ pub fn type_check_get(get: &GetExpr, cgs: &CGS) -> Result<(), TypeError> {
                 .map(|k| k.as_str().to_string())
                 .collect();
             let from_ref: std::collections::BTreeSet<String> = m.keys().cloned().collect();
-            let from_pv: std::collections::BTreeSet<String> = get
-                .path_vars
-                .as_ref()
-                .map(|pv| pv.keys().cloned().collect())
-                .unwrap_or_default();
-            let overlap: Vec<String> = from_ref.intersection(&from_pv).cloned().collect();
-            if !overlap.is_empty() {
+            if from_ref != expected {
                 return Err(TypeError::RefKeyMismatch {
                     entity: en,
                     message: format!(
-                        "compound GET identity keys {:?} must not appear in both `ref` and `path_vars`",
-                        overlap
-                    ),
-                });
-            }
-            let union: std::collections::BTreeSet<String> =
-                from_ref.union(&from_pv).cloned().collect();
-            if union != expected {
-                return Err(TypeError::RefKeyMismatch {
-                    entity: en,
-                    message: format!(
-                        "expected compound identity keys {:?} from ref ∪ path_vars, got {:?} ∪ {:?}",
-                        entity.key_vars, from_ref, from_pv
+                        "expected compound identity keys {:?}, got {:?}",
+                        entity.key_vars, from_ref
                     ),
                 });
             }
@@ -503,10 +504,11 @@ pub fn type_check_create(create: &CreateExpr, cgs: &CGS) -> Result<(), TypeError
                 capability: create.capability.to_string(),
             })?;
 
-    if let Some(input_schema) = &capability.input_schema {
+    let has_invocation_body = capability.primary_invocation_schema().is_some();
+    if has_invocation_body {
         let raw = create.input.to_value();
         let effective = prepare_create_capability_input(capability, create, raw, cgs);
-        validate_capability_input(&effective, input_schema, cgs)?;
+        validate_capability_invocation_input_with_path_vars(capability, effective, cgs)?;
     }
 
     Ok(())
@@ -514,43 +516,48 @@ pub fn type_check_create(create: &CreateExpr, cgs: &CGS) -> Result<(), TypeError
 
 /// Type-check a delete expression.
 pub fn type_check_delete(delete: &DeleteExpr, cgs: &CGS) -> Result<(), TypeError> {
-    cgs.get_entity(&delete.target.entity_type)
-        .ok_or_else(|| TypeError::EntityNotFound {
-            entity: delete.target.entity_type.to_string(),
-        })?;
-
-    cgs.get_capability(&delete.capability)
-        .ok_or_else(|| TypeError::CapabilityNotFound {
-            capability: delete.capability.to_string(),
-        })?;
-
-    Ok(())
+    type_check_targeted_call(delete, cgs)
 }
 
 /// Type-check an invoke expression.
 pub fn type_check_invoke(invoke: &InvokeExpr, cgs: &CGS) -> Result<(), TypeError> {
+    type_check_targeted_call(invoke, cgs)
+}
+
+fn type_check_targeted_call(
+    invoke: &impl crate::expr::TargetedCall,
+    cgs: &CGS,
+) -> Result<(), TypeError> {
     // Check that the target entity exists
-    cgs.get_entity(&invoke.target.entity_type)
+    cgs.get_entity(&invoke.target().entity_type)
         .ok_or_else(|| TypeError::EntityNotFound {
-            entity: invoke.target.entity_type.to_string(),
+            entity: invoke.target().entity_type.to_string(),
         })?;
 
     // Check that the capability exists
     let capability =
-        cgs.get_capability(&invoke.capability)
+        cgs.get_capability(invoke.capability())
             .ok_or_else(|| TypeError::CapabilityNotFound {
-                capability: invoke.capability.to_string(),
+                capability: invoke.capability().to_string(),
             })?;
 
-    // Validate input against capability input schema if present (same-entity scope EntityRef inferred).
-    if let Some(input_schema) = &capability.input_schema {
+    // Validate against payload ∪ arguments object lanes (same field set as parse coerce).
+    // Union constructors still require inputs.payload.
+    let has_invocation_body = capability.primary_invocation_schema().is_some()
+        || matches!(
+            invoke.input(),
+            Some(
+                crate::InvokeInputPayload::Raw(Value::UnionCtor { .. })
+                    | crate::InvokeInputPayload::Typed(crate::TypedInvokeInput::Union { .. })
+            )
+        );
+    if has_invocation_body {
         let raw = invoke
-            .input
-            .as_ref()
+            .input()
             .map(|i| i.to_value())
             .unwrap_or_else(|| Value::Object(indexmap::IndexMap::new()));
-        let effective = prepare_invoke_capability_input(capability, invoke, raw, cgs);
-        validate_capability_input(&effective, input_schema, cgs)?;
+        let effective = prepare_targeted_capability_input(capability, invoke, raw, cgs);
+        validate_capability_invocation_input_with_path_vars(capability, effective, cgs)?;
     }
 
     Ok(())
@@ -672,36 +679,21 @@ fn type_check_comparison(
         return Ok(());
     }
 
-    // Capability parameters (scope/filter HTTP slots) allow `$` in teaching table teaching lines.
-    // Check these **before** entity fields: names like `owner`/`repo` are often both entity
-    // fields and query scope parameters (e.g. `RepositoryTag{owner=$,repo=$}`).
-    if value.is_domain_example_placeholder() && cap_params.iter().any(|p| p.name == field_name) {
+    // Teaching `$` hole: allowed in typecheck for capability params **and** entity-field
+    // predicates (client-side row filters). Executable plans reject leftover `$` via
+    // [`reject_domain_placeholder_in_executable`] — never ship sample ids as teaching fill-ins.
+    if value.is_domain_example_placeholder()
+        && (cap_params.iter().any(|p| p.name == field_name)
+            || entity.fields.contains_key(field_name))
+    {
         return Ok(());
-    }
-
-    // Reject `$` for comparisons that target entity fields only (not a cap param name).
-    if value.is_domain_example_placeholder() {
-        if let Some(f) = entity.fields.get(field_name) {
-            let ft = &f
-                .named_value(cgs)
-                .map_err(|_| TypeError::FieldNotFound {
-                    field: field_name.to_string(),
-                    entity: entity.name.to_string(),
-                })?
-                .field_type;
-            return Err(domain_placeholder_literal_error(
-                field_name,
-                ft,
-                Some(f.description.as_str()),
-            ));
-        }
     }
 
     // ── 1. Capability parameter ───────────────────────────────────────────────
     // Capability params are typed HTTP inputs. Their `role` (search, sort,
     // response_control, scope, filter) is semantic metadata; at the type-checking
-    // level we enforce the declared `field_type` (same matrix as entity fields via
-    // [`Value::is_compatible_with_field_type`]) plus structured rules below.
+    // level we enforce the declared `field_type` via RA-8 coerce-then-domain
+    // ([`validate_concrete_named_value`]) plus structured rules below.
     // We do NOT enforce operator compatibility — the operator is just a hint for
     // how the CLI flag was built; the CML template determines the actual HTTP encoding.
     if let Some(param) = cap_params.iter().find(|p| p.name == field_name) {
@@ -711,49 +703,7 @@ fn type_check_comparison(
                 field: field_name.to_string(),
                 entity: entity.name.to_string(),
             })?;
-        // Enforce allowed_values for select-typed params
-        if matches!(pnv.field_type, FieldType::Select) {
-            if let (Some(av), Some(sv)) = (&pnv.allowed_values, value.as_str()) {
-                if !av.contains(&sv.to_string()) {
-                    return Err(TypeError::IncompatibleValue {
-                        field: field_name.to_string(),
-                        value_type: format!("'{}' (not in allowed values)", sv),
-                        field_type: format!("select with values: {:?}", av),
-                    });
-                }
-            }
-        }
-        if matches!(pnv.field_type, FieldType::Array) {
-            let spec = pnv.array_items.as_ref();
-            let Some(spec) = spec else {
-                return Err(TypeError::IncompatibleValue {
-                    field: field_name.to_string(),
-                    value_type: value.type_name().to_string(),
-                    field_type: "array (missing items schema)".to_string(),
-                });
-            };
-            validate_typed_array_value(&value, spec, field_name, cgs)?;
-        }
-        if matches!(pnv.field_type, FieldType::MultiSelect) {
-            if let Some(av) = pnv.allowed_values.as_deref() {
-                validate_multiselect_value(&value, av, field_name)?;
-            }
-        }
-        if !value_fits_field_type_entity_ref_aware(&value, &pnv.field_type, cgs) {
-            return Err(match &pnv.field_type {
-                FieldType::EntityRef { target } => {
-                    entity_ref_incompatible_value(field_name, target.as_str(), &value, cgs)
-                }
-                _ => TypeError::IncompatibleValue {
-                    field: field_name.to_string(),
-                    value_type: value.type_name().to_string(),
-                    field_type: format!("{:?}", pnv.field_type),
-                },
-            });
-        }
-        if matches!(pnv.field_type, FieldType::Money) {
-            validate_money_compare_value(field_name, &value, pnv)?;
-        }
+        validate_concrete_named_value(&value, pnv, field_name, cgs)?;
         return Ok(());
     }
 
@@ -778,51 +728,7 @@ fn type_check_comparison(
             return Ok(());
         }
 
-        if matches!(fnv.field_type, FieldType::Array) {
-            let spec = fnv.array_items.as_ref();
-            let Some(spec) = spec else {
-                return Err(TypeError::IncompatibleValue {
-                    field: field_name.to_string(),
-                    value_type: value.type_name().to_string(),
-                    field_type: "array (missing items schema)".to_string(),
-                });
-            };
-            return validate_typed_array_value(&value, spec, field_name, cgs);
-        }
-        if matches!(fnv.field_type, FieldType::MultiSelect) {
-            let allowed = fnv.allowed_values.as_deref().unwrap_or(&[]);
-            return validate_multiselect_value(&value, allowed, field_name);
-        }
-
-        if !value_fits_field_type_entity_ref_aware(&value, &fnv.field_type, cgs) {
-            return Err(match &fnv.field_type {
-                FieldType::EntityRef { target } => {
-                    entity_ref_incompatible_value(field_name, target.as_str(), &value, cgs)
-                }
-                _ => TypeError::IncompatibleValue {
-                    field: field_name.to_string(),
-                    value_type: value.type_name().to_string(),
-                    field_type: format!("{:?}", fnv.field_type),
-                },
-            });
-        }
-
-        if matches!(fnv.field_type, FieldType::Select) {
-            if let (Some(allowed_values), Some(string_val)) = (&fnv.allowed_values, value.as_str())
-            {
-                if !allowed_values.contains(&string_val.to_string()) {
-                    return Err(TypeError::IncompatibleValue {
-                        field: field_name.to_string(),
-                        value_type: format!("'{}' (not in allowed values)", string_val),
-                        field_type: format!("select with values: {:?}", allowed_values),
-                    });
-                }
-            }
-        }
-
-        if matches!(fnv.field_type, FieldType::Money) {
-            validate_money_compare_value(field_name, &value, fnv)?;
-        }
+        validate_concrete_named_value(&value, fnv, field_name, cgs)?;
 
         return Ok(());
     }
@@ -832,35 +738,6 @@ fn type_check_comparison(
         field: field_name.to_string(),
         entity: entity.name.to_string(),
     })
-}
-
-fn validate_money_compare_value(
-    field_name: &str,
-    value: &Value,
-    nv: &crate::NamedValueSchema,
-) -> Result<(), TypeError> {
-    let fmt = match nv.value_format {
-        Some(ValueWireFormat::Money(f)) => f,
-        _ => {
-            return Err(TypeError::IncompatibleValue {
-                field: field_name.to_string(),
-                value_type: value.type_name().to_string(),
-                field_type: "money (missing value_format)".to_string(),
-            });
-        }
-    };
-    let coerced =
-        crate::money::normalize(value.clone(), fmt, nv.currency.as_deref()).map_err(|message| {
-            TypeError::IncompatibleValue {
-                field: field_name.to_string(),
-                value_type: format!("{} ({message})", value.type_name()),
-                field_type: "money".to_string(),
-            }
-        })?;
-    let Value::Money(m) = coerced else {
-        return Ok(());
-    };
-    crate::money::currency_conflict(nv.currency.as_deref(), m.currency()).map_err(TypeError::from)
 }
 
 /// Type-check a relation predicate.
@@ -918,11 +795,11 @@ mod tests {
         cgs.values.insert(
             "tc_fx_str".into(),
             NamedValueSchema {
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
                 allowed_values: None,
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -930,11 +807,11 @@ mod tests {
         cgs.values.insert(
             "tc_fx_num".into(),
             NamedValueSchema {
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::Number,
                 value_format: None,
                 allowed_values: None,
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -942,6 +819,7 @@ mod tests {
         cgs.values.insert(
             "tc_fx_region_account".into(),
             NamedValueSchema {
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::Select,
                 value_format: None,
@@ -950,7 +828,6 @@ mod tests {
                     "APAC".to_string(),
                     "AMER".to_string(),
                 ]),
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -958,11 +835,11 @@ mod tests {
         cgs.values.insert(
             "tc_fx_role_contact".into(),
             NamedValueSchema {
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::Select,
                 value_format: None,
                 allowed_values: Some(vec!["Manager".to_string(), "Employee".to_string()]),
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -1011,6 +888,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         };
 
@@ -1038,6 +917,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         };
 
@@ -1051,11 +932,11 @@ mod tests {
         cgs.values.insert(
             "tc_chain_int".into(),
             NamedValueSchema {
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::Integer,
                 value_format: None,
                 allowed_values: None,
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -1063,11 +944,11 @@ mod tests {
         cgs.values.insert(
             "tc_chain_str".into(),
             NamedValueSchema {
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
                 allowed_values: None,
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -1075,13 +956,14 @@ mod tests {
         cgs.values.insert(
             "tc_chain_pet_ref".into(),
             NamedValueSchema {
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::EntityRef {
+                    entry_id: Default::default(),
                     target: "Pet".into(),
                 },
                 value_format: None,
                 allowed_values: None,
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -1122,6 +1004,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -1149,6 +1033,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -1159,14 +1045,16 @@ mod tests {
             kind: CapabilityKind::Get,
             domain: "Pet".into(),
             identity_key: None,
-            mapping: CapabilityMapping {
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
                     "path": [{"type": "literal", "value": "pet"}, {"type": "var", "name": "id"}],
                 })
                 .into(),
-            },
-            input_schema: None,
+            }),
+            derived: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
@@ -1184,14 +1072,16 @@ mod tests {
             kind: CapabilityKind::Get,
             domain: "Order".into(),
             identity_key: None,
-            mapping: CapabilityMapping {
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
                     "path": [{"type": "literal", "value": "store"}, {"type": "literal", "value": "order"}, {"type": "var", "name": "id"}],
                 })
                 .into(),
-            },
-            input_schema: None,
+            }),
+            derived: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
@@ -1293,11 +1183,11 @@ mod tests {
         cgs.values.insert(
             "tc_ab_str".into(),
             NamedValueSchema {
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
                 allowed_values: None,
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -1305,11 +1195,14 @@ mod tests {
         cgs.values.insert(
             "tc_ab_ref_b".into(),
             NamedValueSchema {
+                domain: Default::default(),
                 description: String::new(),
-                field_type: FieldType::EntityRef { target: "B".into() },
+                field_type: FieldType::EntityRef {
+                    entry_id: Default::default(),
+                    target: "B".into(),
+                },
                 value_format: None,
                 allowed_values: None,
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -1337,6 +1230,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -1360,6 +1255,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -1406,18 +1303,19 @@ mod tests {
     }
 
     #[test]
-    fn test_literal_dollar_rejected_in_query_predicate() {
+    fn test_literal_dollar_ok_in_query_predicate_for_teaching() {
         let cgs = create_test_schema();
         let q = QueryExpr::filtered("Account", Predicate::eq("name", "$"));
-        let err = type_check_query(&q, &cgs).unwrap_err();
-        assert!(matches!(err, TypeError::DomainPlaceholderLiteral { .. }));
+        type_check_query(&q, &cgs).expect("teaching `$` on entity-field predicates must typecheck");
+        reject_domain_placeholder_in_executable(&Expr::Query(q))
+            .expect_err("executable plans must still reject leftover `$` in query predicates");
     }
 
     /// Scoped queries often reuse names like `owner`/`repo` as HTTP scope params and as entity fields
     /// (GitHub `RepositoryTag`). teaching lines use `$` in those slots; they must type-check.
     #[test]
     fn placeholder_dollar_ok_when_scope_param_shadows_entity_field() {
-        use crate::schema::{FieldSchema, InputFieldSchema, NamedValueSchema, ParameterRole};
+        use crate::schema::{FieldSchema, InputFieldSchema, NamedValueSchema};
         use indexmap::IndexMap;
 
         let mut cgs = CGS::new();
@@ -1428,11 +1326,11 @@ mod tests {
             cgs.values.insert(
                 key.into(),
                 NamedValueSchema {
+                    domain: Default::default(),
                     description: desc.into(),
                     field_type: FieldType::String,
                     value_format: None,
                     allowed_values: None,
-                    string_semantics: None,
                     array_items: None,
                     currency: None,
                 },
@@ -1470,6 +1368,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         };
         let cap_params = [InputFieldSchema {
@@ -1480,7 +1380,6 @@ mod tests {
             required: true,
             description: None,
             default: None,
-            role: Some(ParameterRole::Scope),
             wire_json_path: None,
             wire_array_element_key: None,
             sink_class: None,
@@ -1502,11 +1401,11 @@ mod tests {
         cgs.values.insert(
             "tc_qs_state_ent".into(),
             NamedValueSchema {
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::Select,
                 value_format: None,
                 allowed_values: Some(ent_allowed),
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -1514,11 +1413,11 @@ mod tests {
         cgs.values.insert(
             "tc_qs_state_cap".into(),
             NamedValueSchema {
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::Select,
                 value_format: None,
                 allowed_values: Some(cap_allowed),
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -1557,6 +1456,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         };
         let cap_params = [InputFieldSchema {
@@ -1567,7 +1468,6 @@ mod tests {
             required: false,
             description: None,
             default: None,
-            role: None,
             wire_json_path: None,
             wire_array_element_key: None,
             sink_class: None,
@@ -1597,6 +1497,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         };
         let cap_params = [InputFieldSchema {
@@ -1605,7 +1507,6 @@ mod tests {
             required: false,
             description: None,
             default: None,
-            role: None,
             wire_json_path: None,
             wire_array_element_key: None,
             sink_class: None,
@@ -1615,11 +1516,11 @@ mod tests {
         cgs.values.insert(
             "tc_cap_bool".into(),
             NamedValueSchema {
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::Boolean,
                 value_format: None,
                 allowed_values: None,
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -1652,6 +1553,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         };
         let cap_params = [InputFieldSchema {
@@ -1662,7 +1565,6 @@ mod tests {
             required: false,
             description: None,
             default: None,
-            role: None,
             wire_json_path: None,
             wire_array_element_key: None,
             sink_class: None,
@@ -1672,11 +1574,11 @@ mod tests {
         cgs.values.insert(
             "tc_cap_q_str".into(),
             NamedValueSchema {
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
                 allowed_values: None,
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -1689,7 +1591,7 @@ mod tests {
     }
 
     #[test]
-    fn capability_integer_param_rejects_string() {
+    fn capability_integer_param_rejects_non_numeric_string() {
         use crate::schema::NamedValueSchema;
         use indexmap::IndexMap;
 
@@ -1707,6 +1609,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         };
         let cap_params = [InputFieldSchema {
@@ -1717,21 +1621,20 @@ mod tests {
             required: false,
             description: None,
             default: None,
-            role: None,
             wire_json_path: None,
             wire_array_element_key: None,
             sink_class: None,
         }];
-        let pred = Predicate::eq("limit", "10");
+        let pred = Predicate::eq("limit", "ten");
         let mut cgs = CGS::new();
         cgs.values.insert(
             "tc_cap_limit_int".into(),
             NamedValueSchema {
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::Integer,
                 value_format: None,
                 allowed_values: None,
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -1741,6 +1644,9 @@ mod tests {
             matches!(err, TypeError::IncompatibleValue { ref field, .. } if field == "limit"),
             "expected IncompatibleValue for limit, got {err:?}"
         );
+        // RA-8: numeric strings coerce to integer (compatible with coerce law).
+        let ok = type_check_predicate(&Predicate::eq("limit", "10"), &entity, &cap_params, &cgs);
+        assert!(ok.is_ok(), "numeric string must coerce: {ok:?}");
     }
 
     #[test]
@@ -1749,11 +1655,11 @@ mod tests {
         cgs.values.insert(
             "tc_visit_str".into(),
             NamedValueSchema {
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
                 allowed_values: None,
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -1761,13 +1667,14 @@ mod tests {
         cgs.values.insert(
             "tc_visit_pet_ref".into(),
             NamedValueSchema {
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::EntityRef {
+                    entry_id: Default::default(),
                     target: "Pet".into(),
                 },
                 value_format: None,
                 allowed_values: None,
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -1789,6 +1696,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -1816,6 +1725,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -1839,11 +1750,11 @@ mod tests {
         cgs.values.insert(
             "tc_visit_str".into(),
             NamedValueSchema {
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
                 allowed_values: None,
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -1851,13 +1762,14 @@ mod tests {
         cgs.values.insert(
             "tc_visit_pet_ref".into(),
             NamedValueSchema {
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::EntityRef {
+                    entry_id: Default::default(),
                     target: "Pet".into(),
                 },
                 value_format: None,
                 allowed_values: None,
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -1879,6 +1791,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -1906,6 +1820,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -1936,8 +1852,12 @@ mod tests {
 
     fn proof_document_edit_v2_operations_element_type(cgs: &CGS) -> crate::InputType {
         let cap = cgs.capabilities.get("document_edit_v2").expect("cap");
-        let crate::InputType::Object { fields, .. } =
-            &cap.input_schema.as_ref().expect("schema").input_type
+        let crate::InputType::Object { fields, .. } = &cap
+            .inputs
+            .payload
+            .as_ref()
+            .expect("payload schema")
+            .input_type
         else {
             panic!("object input");
         };
@@ -2047,10 +1967,7 @@ mod tests {
         );
         exp.expose_entities(&layers, cgs_secondary.clone(), "pokeapi", &["LangItem"]);
         let fed = FederationDispatch::from_contexts_and_exposure(by_entry, &exp);
-        let get = Expr::Get(GetExpr::from_ref_with_path_vars(
-            crate::Ref::new("LangItem", "LI1"),
-            None,
-        ));
+        let get = Expr::Get(GetExpr::from_ref(crate::Ref::new("LangItem", "LI1")));
         let chain = Expr::Chain(ChainExpr::auto_get(get, "summary".to_string()));
         type_check_expr_federated(&chain, &fed, cgs_primary.as_ref()).expect("federated chain tc");
     }
@@ -2110,10 +2027,10 @@ mod tests {
             return;
         }
         let mut cgs_github = load_schema_dir(&github_dir).expect("github");
-        cgs_github.entry_id = Some("github".into());
+        cgs_github.bind_registry_entry_id("github");
         let cgs_github = std::sync::Arc::new(cgs_github);
         let mut cgs_linear = load_schema_dir(&linear_dir).expect("linear");
-        cgs_linear.entry_id = Some("linear".into());
+        cgs_linear.bind_registry_entry_id("linear");
         let cgs_linear = std::sync::Arc::new(cgs_linear);
         let mut by_entry = IndexMap::new();
         by_entry.insert(
@@ -2157,5 +2074,180 @@ mod tests {
             }
             other => panic!("expected ambiguous or FieldNotFound, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn typecheck_rejects_bad_email_uuid_and_pattern_literals() {
+        use crate::value_domain::{Constraints, KernelKind, ProfileId, ValueDomain};
+
+        let mut cgs = CGS::new();
+        cgs.values.insert(
+            "tc_fx_str".into(),
+            NamedValueSchema {
+                domain: Default::default(),
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                array_items: None,
+                currency: None,
+            },
+        );
+        cgs.values.insert(
+            "tc_gate_email".into(),
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::new(
+                    KernelKind::String,
+                    Some(ProfileId::Email),
+                    Constraints::default(),
+                    None,
+                    None,
+                )
+                .expect("email domain"),
+                None,
+            ),
+        );
+        cgs.values.insert(
+            "tc_gate_uuid".into(),
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::new(
+                    KernelKind::String,
+                    Some(ProfileId::Uuid),
+                    Constraints::default(),
+                    None,
+                    None,
+                )
+                .expect("uuid domain"),
+                None,
+            ),
+        );
+        let pattern_constraints = Constraints {
+            pattern: Some("^a+$".into()),
+            ..Default::default()
+        };
+        cgs.values.insert(
+            "tc_gate_pattern".into(),
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::new(KernelKind::String, None, pattern_constraints, None, None)
+                    .expect("pattern domain"),
+                None,
+            ),
+        );
+        cgs.add_resource(ResourceSchema {
+            name: "GateRow".into(),
+            description: String::new(),
+            id_field: "id".into(),
+            id_format: None,
+            id_from: None,
+            fields: vec![
+                registry_test_util::entity_field_from_values(&cgs, "tc_fx_str", "id", true, ""),
+                registry_test_util::entity_field_from_values(
+                    &cgs,
+                    "tc_gate_email",
+                    "email",
+                    false,
+                    "",
+                ),
+                registry_test_util::entity_field_from_values(
+                    &cgs,
+                    "tc_gate_uuid",
+                    "uuid",
+                    false,
+                    "",
+                ),
+                registry_test_util::entity_field_from_values(
+                    &cgs,
+                    "tc_gate_pattern",
+                    "code",
+                    false,
+                    "",
+                ),
+            ],
+            relations: vec![],
+            expression_aliases: vec![],
+            implicit_request_identity: false,
+            key_vars: vec![],
+            abstract_entity: false,
+            domain_projection_examples: false,
+            primary_read: None,
+            primary_query: None,
+            primary_search: None,
+            discovery: None,
+        })
+        .unwrap();
+        let row = cgs.get_entity("GateRow").unwrap();
+
+        for (field_name, bad) in [
+            ("email", "not-an-email"),
+            ("uuid", "not-a-uuid"),
+            ("code", "bbb"),
+        ] {
+            let pred = Predicate::eq(field_name, bad);
+            let err = type_check_predicate(&pred, row, &[], &cgs).unwrap_err();
+            assert!(
+                matches!(err, TypeError::IncompatibleValue { ref field, .. } if field == field_name),
+                "field={field_name} err={err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn money_compare_accepts_decimal_string_without_value_format() {
+        use crate::value_domain::ValueDomain;
+
+        let mut cgs = CGS::new();
+        cgs.values.insert(
+            "tc_fx_str".into(),
+            NamedValueSchema {
+                domain: Default::default(),
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                array_items: None,
+                currency: None,
+            },
+        );
+        let mut nv = NamedValueSchema::from_domain(
+            String::new(),
+            ValueDomain::from_legacy(&FieldType::Money, None, None, None, Some("USD".into())),
+            None,
+        );
+        nv.value_format = None;
+        cgs.values.insert("tc_gate_money".into(), nv);
+        cgs.add_resource(ResourceSchema {
+            name: "MoneyRow".into(),
+            description: String::new(),
+            id_field: "id".into(),
+            id_format: None,
+            id_from: None,
+            fields: vec![
+                registry_test_util::entity_field_from_values(&cgs, "tc_fx_str", "id", true, ""),
+                registry_test_util::entity_field_from_values(
+                    &cgs,
+                    "tc_gate_money",
+                    "amount",
+                    false,
+                    "",
+                ),
+            ],
+            relations: vec![],
+            expression_aliases: vec![],
+            implicit_request_identity: false,
+            key_vars: vec![],
+            abstract_entity: false,
+            domain_projection_examples: false,
+            primary_read: None,
+            primary_query: None,
+            primary_search: None,
+            discovery: None,
+        })
+        .unwrap();
+        let row = cgs.get_entity("MoneyRow").unwrap();
+        let pred = Predicate::eq("amount", "12.50");
+        type_check_predicate(&pred, row, &[], &cgs).expect("decimal money literal");
     }
 }

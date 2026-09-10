@@ -1,22 +1,27 @@
-//! Unified `${binding.path}` reference scanning and compile-time classification.
+//! Program-string reference scanning for Minijinja templates (post-dollar cutover).
 //!
-//! Single scanner for program string literals, plan derive templates, effect IR strings,
-//! and runtime interpolation. Distinct from Minijinja row templates (`{{ }}`).
+//! `${…}` is rejected. Dependency roots come from `{{ path }}` expressions.
 
 use std::collections::HashSet;
 
-/// How a `${…}` root should be treated during dependency collection and validation.
+pub use crate::program_string_template::{
+    contains_dollar_interpolation, contains_minijinja_markers,
+    find_dollar_interpolation_in_minijinja_body, for_each_interpolation_path, interpolation_paths,
+    interpolation_roots, reject_dollar_interpolation, validate_interpolation_syntax,
+};
+
+/// How a template root should be treated during dependency collection and validation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefKind {
     /// `for_each` / derive row cursor (`_` or custom `item_binding`).
     RowBinding,
     /// Cross-node input declared in `uses_result` / derive `inputs`.
     InputAlias,
-    /// Not declared in the current template context.
+    /// Not declared as an alias — often a row field when `row_binding` is set.
     Unknown,
 }
 
-/// Compile-time context for classifying `${root}` / `${root.path}` references.
+/// Compile-time context for classifying Minijinja roots.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TemplateRefContext<'a> {
     pub row_binding: Option<&'a str>,
@@ -46,11 +51,22 @@ impl<'a> TemplateRefContext<'a> {
     pub fn plan_node_roots_from_string(&self, s: &str) -> Vec<(String, String)> {
         let mut out = Vec::new();
         let mut seen = HashSet::new();
+        let paths = interpolation_paths(s);
         for root in interpolation_roots(s) {
             match self.classify_root(root.as_str()) {
                 RefKind::RowBinding => {}
-                RefKind::InputAlias | RefKind::Unknown => {
+                RefKind::InputAlias => {
                     if seen.insert(root.clone()) {
+                        out.push((root.clone(), root));
+                    }
+                }
+                RefKind::Unknown => {
+                    let dotted = paths
+                        .iter()
+                        .any(|p| p.split_once('.').is_some_and(|(r, _)| r == root.as_str()));
+                    // No row cursor: every root is a cross-binding candidate.
+                    // With a row cursor: bare roots are row fields; dotted roots are upstream nodes.
+                    if (self.row_binding.is_none() || dotted) && seen.insert(root.clone()) {
                         out.push((root.clone(), root));
                     }
                 }
@@ -59,15 +75,29 @@ impl<'a> TemplateRefContext<'a> {
         out
     }
 
-    /// Validate every `${…}` root in `s` against row binding + declared input aliases.
+    /// Validate Minijinja roots: dollar forbidden; bare Unknown names are row fields when a
+    /// row cursor is in scope; dotted Unknown roots are undeclared cross-bindings.
     pub fn validate_string_roots(
         &self,
         s: &str,
         error: impl FnOnce(String) -> String,
     ) -> Result<(), String> {
+        if let Err(e) = reject_dollar_interpolation(s) {
+            return Err(error(e.to_string()));
+        }
+        let paths = interpolation_paths(s);
         for root in interpolation_roots(s) {
-            if self.classify_root(root.as_str()) == RefKind::Unknown {
-                return Err(error(root));
+            match self.classify_root(root.as_str()) {
+                RefKind::RowBinding | RefKind::InputAlias => {}
+                RefKind::Unknown => {
+                    let dotted = paths
+                        .iter()
+                        .any(|p| p.split_once('.').is_some_and(|(r, _)| r == root.as_str()));
+                    if self.row_binding.is_some() && !dotted {
+                        continue;
+                    }
+                    return Err(error(root));
+                }
             }
             if root == "_" && self.row_binding != Some("_") {
                 let cursor = self.row_binding.unwrap_or("_");
@@ -78,128 +108,16 @@ impl<'a> TemplateRefContext<'a> {
     }
 }
 
-/// Returns true if `s` contains a `${` interpolation opener (not `$$`).
-pub fn contains_dollar_interpolation(s: &str) -> bool {
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i + 1 < bytes.len() {
-        if bytes[i] == b'$' {
-            if bytes[i + 1] == b'$' {
-                i += 2;
-                continue;
-            }
-            if bytes[i + 1] == b'{' {
-                return true;
-            }
-        }
-        i += 1;
-    }
-    false
-}
-
-/// Full trimmed paths inside `${…}` (e.g. `_.p34`, `stats.content`). Respects `$$` escape.
-pub fn interpolation_paths(s: &str) -> Vec<String> {
-    let mut paths = Vec::new();
-    for_each_interpolation_path(s, |path| paths.push(path.to_string()));
-    paths
-}
-
-/// Root binding names referenced by `${name}` or `${name.path}` in `s`.
-pub fn interpolation_roots(s: &str) -> Vec<String> {
-    let mut roots = Vec::new();
-    let mut seen = HashSet::new();
-    for_each_interpolation_path(s, |path| {
-        if let Some(root) = path.split('.').next() {
-            if !root.is_empty() && seen.insert(root.to_string()) {
-                roots.push(root.to_string());
-            }
-        }
-    });
-    roots
-}
-
-/// Invoke `f` with each `${…}` path (trimmed). Skips `$$` escapes.
-pub fn for_each_interpolation_path<F: FnMut(&str)>(s: &str, mut f: F) {
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i + 1 < bytes.len() {
-        if bytes[i] == b'$' {
-            if bytes[i + 1] == b'$' {
-                i += 2;
-                continue;
-            }
-            if bytes[i + 1] == b'{' {
-                let start = i + 2;
-                let Some(end_rel) = s[start..].find('}') else {
-                    i += 1;
-                    continue;
-                };
-                f(s[start..start + end_rel].trim());
-                i = start + end_rel + 1;
-                continue;
-            }
-        }
-        i += 1;
-    }
-}
-
-/// First `${…}` span in a Minijinja row-template body, skipping `{% raw %}…{% endraw %}` and `$$`.
-pub fn find_dollar_interpolation_in_minijinja_body(s: &str) -> Option<String> {
-    let mut i = 0;
-    while i < s.len() {
-        if s[i..].starts_with("{% raw %}") {
-            if let Some(rel) = s[i..].find("{% endraw %}") {
-                i += rel + "{% endraw %}".len();
-                continue;
-            }
-        }
-        let Some(rest) = s.get(i..) else {
-            break;
-        };
-        if rest.starts_with("$$") {
-            i += 2;
-            continue;
-        }
-        if rest.starts_with("${") {
-            let start = i;
-            if let Some(rel) = rest.find('}') {
-                i += rel + 1;
-                return Some(s[start..i].to_string());
-            }
-            return Some(s[start..].to_string());
-        }
-        i += rest.chars().next().map(|c| c.len_utf8()).unwrap_or(1);
-    }
-    None
-}
-
-/// Syntax-only validation: balanced `${…}`, non-empty paths.
-pub fn validate_interpolation_syntax(
-    s: &str,
-    error: impl Fn(String) -> String,
-) -> Result<(), String> {
-    let mut rest = s;
-    while let Some(start) = rest.find("${") {
-        let after = &rest[start + 2..];
-        let Some(end) = after.find('}') else {
-            return Err(error("contains an unterminated ${...} substitution".into()));
-        };
-        if after[..end].trim().is_empty() {
-            return Err(error("contains an empty ${...} substitution".into()));
-        }
-        rest = &after[end + 1..];
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn interpolation_roots_skips_dollar_escape() {
-        assert_eq!(interpolation_roots("a ${x} $${y}"), vec!["x"]);
-        assert_eq!(interpolation_roots("a ${x} $$50"), vec!["x"]);
+    fn interpolation_roots_from_minijinja() {
+        assert_eq!(
+            interpolation_roots("a {{ x }} {{ y.z }}"),
+            vec!["x".to_string(), "y".to_string()]
+        );
     }
 
     #[test]
@@ -214,22 +132,43 @@ mod tests {
     }
 
     #[test]
-    fn plan_node_roots_skip_row_binding() {
-        let ctx = TemplateRefContext::for_row_scope("_");
-        let roots = ctx.plan_node_roots_from_string("title ${_.id} body ${stats.content}");
+    fn plan_node_roots_skip_row_fields_when_bound() {
+        let ctx = TemplateRefContext {
+            row_binding: Some("_"),
+            input_aliases: &[("stats", "stats_node")],
+        };
+        let roots = ctx.plan_node_roots_from_string("title {{ _.id }} body {{ stats.content }}");
         assert_eq!(roots, vec![("stats".to_string(), "stats".to_string())]);
     }
 
     #[test]
-    fn minijinja_body_dollar_scan_respects_raw_and_escape() {
-        assert_eq!(
-            find_dollar_interpolation_in_minijinja_body("${report.content}"),
-            Some("${report.content}".into())
-        );
-        assert!(find_dollar_interpolation_in_minijinja_body("{% raw %}${x}{% endraw %}").is_none());
-        assert!(find_dollar_interpolation_in_minijinja_body("$$ literal").is_none());
-        assert!(
-            find_dollar_interpolation_in_minijinja_body("score: {{ r.p9 or \"—\" }}").is_none()
-        );
+    fn validate_rejects_dotted_unknown_cross_binding() {
+        let ctx = TemplateRefContext::for_row_scope("_");
+        assert!(ctx
+            .validate_string_roots("{{ missing.content }}", |r| format!("undeclared alias {r}"))
+            .unwrap_err()
+            .contains("missing"));
+    }
+
+    #[test]
+    fn validate_allows_row_fields() {
+        let ctx = TemplateRefContext::for_row_scope("_");
+        assert!(ctx
+            .validate_string_roots("{{ title }} — {{ code }}", |r| r)
+            .is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_dollar() {
+        let ctx = TemplateRefContext::for_row_scope("_");
+        let err = ctx.validate_string_roots("${title}", |r| r).unwrap_err();
+        assert!(err.contains("abolished"));
+    }
+
+    #[test]
+    fn markers_detect() {
+        assert!(contains_minijinja_markers("{{ a }}"));
+        assert!(!contains_minijinja_markers("plain"));
+        assert!(contains_dollar_interpolation("${a}"));
     }
 }

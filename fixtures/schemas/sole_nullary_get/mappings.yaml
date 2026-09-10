@@ -1,0 +1,25 @@
+profile_get:
+  method: GET
+  path:
+  - type: literal
+    value: profile
+  query:
+    type: object
+    fields:
+    - - phone_number
+      - type: if
+        condition: { type: exists, var: phone_number }
+        then_expr: { type: var, name: phone_number }
+        else_expr: { type: const, value: null }
+  response:
+    type: object
+    fields:
+    - - phone_number
+      - type: path
+        path: [phone_number]
+    - - first_name
+      - type: path
+        path: [first_name]
+    - - last_name
+      - type: path
+        path: [last_name]

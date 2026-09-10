@@ -14,6 +14,16 @@ pub(crate) fn stream_consume_for_surface_read(
     graph_page_spill: bool,
 ) -> Result<StreamConsumeOpts, String> {
     if let Some(budget) = pushed_budget {
+        if matches!(budget, PushedReadBudget::Complete) {
+            return Ok(StreamConsumeOpts {
+                fetch_all: true,
+                max_items: None,
+                one_page: false,
+                graph_backed_result: graph_page_spill,
+                row_match_budget: None,
+                top_k: None,
+            });
+        }
         let (row_match_budget, top_k) = pushed_budget_to_stream_fields(budget)?;
         if top_k.is_some() {
             return Ok(StreamConsumeOpts {
@@ -89,9 +99,13 @@ fn query_has_pagination(cgs: &CGS, q: &QueryExpr) -> bool {
         Ok(c) => c,
         Err(_) => return false,
     };
-    let template = match parse_capability_template(&capability.mapping.template) {
-        Ok(t) => t,
-        Err(_) => return false,
+    let template = match capability
+        .mapping
+        .as_ref()
+        .and_then(|m| parse_capability_template(&m.template).ok())
+    {
+        Some(t) => t,
+        None => return false,
     };
     template_pagination(&template).is_some()
 }

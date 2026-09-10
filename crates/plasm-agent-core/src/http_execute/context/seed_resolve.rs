@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use plasm_core::discovery::InMemoryCgsRegistry;
+use plasm_core::discovery::CgsRegistry;
 use plasm_core::schema::CGS;
 
 use crate::http_execute::CapabilitySeed;
@@ -35,11 +35,11 @@ pub fn resolve_entity_name_case_insensitive(cgs: &CGS, raw: &str) -> Result<Stri
             let hints = nearest_entity_names(cgs, raw, 5);
             if hints.is_empty() {
                 Err(format!(
-                    "unknown entity `{raw}` in this schema (entity keys are catalog PascalCase; check teaching TSV / browse preview)"
+                    "unknown entity `{raw}` in this schema (entity keys are catalog PascalCase; check language card / browse preview)"
                 ))
             } else {
                 Err(format!(
-                    "unknown entity `{raw}` in this schema — nearest: {}; use an exact catalog key from teaching TSV / browse preview",
+                    "unknown entity `{raw}` in this schema — nearest: {}; use an exact catalog key from language card / browse preview",
                     hints.join(", ")
                 ))
             }
@@ -110,7 +110,7 @@ fn entity_name_distance(a: &str, b: &str) -> u32 {
 /// then case-fold each `entity` to the canonical CGS key for that catalog.
 pub fn resolve_capability_seeds(
     seeds: Vec<CapabilitySeed>,
-    registry: &InMemoryCgsRegistry,
+    registry: &CgsRegistry,
     allowed_entry_ids: Option<&[String]>,
 ) -> Result<Vec<CapabilitySeed>, String> {
     let mut out = normalize_capability_seeds(seeds);
@@ -137,19 +137,19 @@ pub fn resolve_capability_seeds(
 
 #[cfg(test)]
 mod tests {
-    use super::super::ranked_replay_fixtures::load_github_cgs;
+    use super::super::exposure_fixtures::load_matrix_cgs;
     use super::*;
 
     #[test]
     fn resolve_entity_name_case_insensitive_folds_unique_match() {
-        let cgs = load_github_cgs();
+        let cgs = load_matrix_cgs();
         assert_eq!(
-            resolve_entity_name_case_insensitive(&cgs, "repository").unwrap(),
-            "Repository"
+            resolve_entity_name_case_insensitive(&cgs, "langitem").unwrap(),
+            "LangItem"
         );
         assert_eq!(
-            resolve_entity_name_case_insensitive(&cgs, "Repository").unwrap(),
-            "Repository"
+            resolve_entity_name_case_insensitive(&cgs, "LangItem").unwrap(),
+            "LangItem"
         );
         let err = resolve_entity_name_case_insensitive(&cgs, "nope_entity").unwrap_err();
         assert!(err.contains("unknown entity"), "{err}");
@@ -158,11 +158,11 @@ mod tests {
 
     #[test]
     fn nearest_entity_names_suggests_close_catalog_keys() {
-        let cgs = load_github_cgs();
-        let hints = nearest_entity_names(&cgs, "CommitFil", 3);
+        let cgs = load_matrix_cgs();
+        let hints = nearest_entity_names(&cgs, "LangSummar", 3);
         assert!(
-            hints.iter().any(|h| h == "CommitFile"),
-            "expected CommitFile in {hints:?}"
+            hints.iter().any(|h| h == "LangSummary"),
+            "expected LangSummary in {hints:?}"
         );
     }
 }

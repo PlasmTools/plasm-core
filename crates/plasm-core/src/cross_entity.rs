@@ -90,7 +90,7 @@ fn resolve_cross_entity_field(
     // Find the EntityRef field whose name or target entity matches the prefix.
     for (field_name, field_schema) in &source_entity.fields {
         let nv = cgs.named_value_for_slot(field_schema).ok()?;
-        let FieldType::EntityRef { target } = &nv.field_type else {
+        let FieldType::EntityRef { target, .. } = &nv.field_type else {
             continue;
         };
 
@@ -139,16 +139,12 @@ pub fn choose_strategy(
 ) -> CrossEntityStrategy {
     // Check if the source entity's Query capability has the FK field as a parameter.
     if let Some(query_cap) = cgs.find_capability(source_entity_name, CapabilityKind::Query) {
-        if let Some(ref input) = query_cap.input_schema {
-            if let crate::InputType::Object { ref fields, .. } = input.input_type {
-                for f in fields {
-                    if f.name == cross.ref_field {
-                        return CrossEntityStrategy::PushLeft {
-                            cross: cross.clone(),
-                            source_fk_param: f.name.clone(),
-                        };
-                    }
-                }
+        for field in query_cap.selection_params() {
+            if field.name == cross.ref_field {
+                return CrossEntityStrategy::PushLeft {
+                    cross: cross.clone(),
+                    source_fk_param: field.name.clone(),
+                };
             }
         }
     }
@@ -218,7 +214,7 @@ mod tests {
     use super::*;
     use crate::schema::registry_test_util;
     use crate::{
-        CapabilityMapping, CapabilitySchema, InputSchema, InputType, InputValidation,
+        BackendSelectionSchema, CapabilityInputs, CapabilityMapping, CapabilitySchema,
         NamedValueSchema, ResourceSchema,
     };
 
@@ -227,11 +223,11 @@ mod tests {
         cgs.values.insert(
             "fx_int".into(),
             NamedValueSchema {
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::Integer,
                 value_format: None,
                 allowed_values: None,
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -239,11 +235,11 @@ mod tests {
         cgs.values.insert(
             "fx_str".into(),
             NamedValueSchema {
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
                 allowed_values: None,
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -251,11 +247,11 @@ mod tests {
         cgs.values.insert(
             "fx_pet_status".into(),
             NamedValueSchema {
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::Select,
                 value_format: None,
                 allowed_values: Some(vec!["available".into(), "pending".into(), "sold".into()]),
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -263,13 +259,14 @@ mod tests {
         cgs.values.insert(
             "fx_ref_pet".into(),
             NamedValueSchema {
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::EntityRef {
+                    entry_id: Default::default(),
                     target: "Pet".into(),
                 },
                 value_format: None,
                 allowed_values: None,
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -299,6 +296,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -321,6 +320,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -331,23 +332,22 @@ mod tests {
             kind: CapabilityKind::Query,
             domain: "Pet".into(),
             identity_key: None,
-            mapping: CapabilityMapping {
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "pet"}]}).into(),
-            },
-            input_schema: Some(InputSchema {
-                input_type: InputType::Object {
-                    fields: vec![registry_test_util::object_input_field_from_values(
+            }),
+            derived: None,
+            inputs: CapabilityInputs {
+                selection: BackendSelectionSchema(vec![
+                    registry_test_util::object_input_field_from_values(
                         &cgs,
                         "fx_pet_status",
                         "status",
                         false,
-                    )],
-                    additional_fields: true,
-                },
-                validation: InputValidation::default(),
-                description: None,
-                examples: vec![],
-            }),
+                    ),
+                ]),
+                ..CapabilityInputs::default()
+            },
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
@@ -364,23 +364,22 @@ mod tests {
             kind: CapabilityKind::Query,
             domain: "Order".into(),
             identity_key: None,
-            mapping: CapabilityMapping {
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "store"}, {"type": "literal", "value": "order"}]}).into(),
-            },
-            input_schema: Some(InputSchema {
-                input_type: InputType::Object {
-                    fields: vec![registry_test_util::object_input_field_from_values(
+            }),
+            derived: None,
+            inputs: CapabilityInputs {
+                selection: BackendSelectionSchema(vec![
+                    registry_test_util::object_input_field_from_values(
                         &cgs,
                         "fx_ref_pet",
                         "petId",
                         false,
-                    )],
-                    additional_fields: true,
-                },
-                validation: InputValidation::default(),
-                description: None,
-                examples: vec![],
-            }),
+                    ),
+                ]),
+                ..CapabilityInputs::default()
+            },
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),

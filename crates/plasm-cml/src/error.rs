@@ -2,7 +2,9 @@ use thiserror::Error;
 
 #[derive(Error, Debug, Clone)]
 pub enum CmlError {
-    #[error("Variable '{name}' not found in environment")]
+    #[error(
+        "Variable '{name}' not found in environment — bind a prior row field or a quoted teaching literal; a bare name is not in scope"
+    )]
     VariableNotFound { name: String },
 
     #[error("CML type error: {message}")]

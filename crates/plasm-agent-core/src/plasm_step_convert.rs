@@ -2,21 +2,21 @@
 
 use crate::plasm_comp_lift::ExecutablePlasmComp;
 use crate::plasm_plan::{
-    BindingName, EffectClass as PlanEffectClass, EffectTemplate, InputAlias, InputCardinalityProof,
-    Plan, PlanNodeId, PlanNodeKind, PlanResultUse, PlanValue, QualifiedEntityKey,
+    BindingName, EffectClass as PlanEffectClass, InputAlias, InputCardinalityProof, Plan,
+    PlanNodeId, PlanNodeKind, PlanResultUse, PlanValue, QualifiedEntityKey,
     ResultShape as PlanResultShape, ValidatedComputeNode, ValidatedDataNode, ValidatedDeriveNode,
-    ValidatedForEachNode, ValidatedPlan, ValidatedPlanArtifact, ValidatedPlanDataInput,
-    ValidatedPlanExprIr, ValidatedPlanExprTemplate, ValidatedPlanNode,
-    ValidatedPlanRelationTraversal, ValidatedPlanReturn, ValidatedRelationTraversalNode,
-    ValidatedSurfaceNode,
+    ValidatedEffectTemplate, ValidatedForEachNode, ValidatedIterateUntilNode, ValidatedPlan,
+    ValidatedPlanArtifact, ValidatedPlanDataInput, ValidatedPlanExprIr, ValidatedPlanExprTemplate,
+    ValidatedPlanNode, ValidatedPlanRelationTraversal, ValidatedPlanReturn,
+    ValidatedRelationTraversalNode, ValidatedSurfaceNode,
 };
 use plasm_core::{
     BindingName as CoreBindingName, DeriveKind, DerivePayload, DeriveTemplate, EffectClass,
-    EffectTemplate as CoreEffectTemplate, Expr, FlatMapEffectPayload, FlatMapRelationPayload,
+    EffectTemplate as CoreEffectTemplate, FlatMapEffectPayload, FlatMapRelationPayload,
     InputCardinality as CoreInputCardinality, InvokePayload, MapPayload, PlanDataInput, PlanExprIr,
     PlanExprTemplate, PlanInputBinding, PlanPredicate, PlanQualifiedEntityKey,
     PlanRelationTraversal, PlasmBindGraph, PlasmComp, PlasmDataValue, PlasmReturn,
-    PlasmStepPayload, PurePayload, ResultShape, StepId, SurfaceKind,
+    PlasmStepPayload, PurePayload, ResultShape, StepId, SurfaceKind, UnfoldUntilPayload,
 };
 use std::collections::HashMap;
 
@@ -33,6 +33,9 @@ pub(crate) fn validated_node_to_step_payload(
         }
         ValidatedPlanNode::ForEach(n) => {
             Ok(PlasmStepPayload::FlatMapEffect(for_each_to_payload(n)?))
+        }
+        ValidatedPlanNode::IterateUntil(n) => {
+            Ok(PlasmStepPayload::UnfoldUntil(iterate_until_to_payload(n)?))
         }
     }
 }
@@ -117,6 +120,26 @@ fn for_each_to_payload(node: &ValidatedForEachNode) -> Result<FlatMapEffectPaylo
     })
 }
 
+fn iterate_until_to_payload(
+    node: &ValidatedIterateUntilNode,
+) -> Result<UnfoldUntilPayload, String> {
+    Ok(UnfoldUntilPayload {
+        source: node.source.as_str().to_string(),
+        item_binding: binding_name(&node.item_binding)?,
+        effect_template: effect_template_to_core(&node.effect_template)?,
+        until_predicates: convert_predicates(&node.until_predicates)?,
+        take: node.take,
+        seed_ir: node
+            .seed_ir
+            .as_ref()
+            .map(validated_expr_ir_to_plan)
+            .transpose()?,
+        approval: node.approval.clone(),
+        effect_class: effect_class(node.effect_class),
+        result_shape: result_shape(node.result_shape),
+    })
+}
+
 fn relation_traversal_to_plan(
     relation: &ValidatedPlanRelationTraversal,
 ) -> Result<PlanRelationTraversal, String> {
@@ -124,8 +147,8 @@ fn relation_traversal_to_plan(
         source: relation.source.as_str().to_string(),
         relation: relation.relation.as_str().to_string(),
         target: qualified_entity_key(&relation.target),
-        cardinality: convert_via_json(&relation.cardinality)?,
-        source_cardinality: convert_via_json(&relation.source_cardinality)?,
+        cardinality: relation.cardinality,
+        source_cardinality: relation.source_cardinality,
         expr: relation_expr(&relation.ir),
         ir: validated_expr_ir_to_plan(&relation.ir)?,
         binding_proofs: relation.binding_proofs.clone(),
@@ -134,12 +157,14 @@ fn relation_traversal_to_plan(
     })
 }
 
-fn effect_template_to_core(template: &EffectTemplate) -> Result<CoreEffectTemplate, String> {
+fn effect_template_to_core(
+    template: &ValidatedEffectTemplate,
+) -> Result<CoreEffectTemplate, String> {
     Ok(CoreEffectTemplate {
         kind: plan_kind_to_surface(template.kind)?,
         qualified_entity: qualified_entity_key(&template.qualified_entity),
         expr_template: template.expr_template.clone(),
-        ir_template: convert_via_json(&template.ir_template)?,
+        ir_template: validated_expr_template_to_plan(&template.ir_template),
         effect_class: effect_class(template.effect_class),
         result_shape: result_shape(template.result_shape),
         projection: template.projection.clone(),
@@ -156,7 +181,7 @@ fn effect_template_to_core(template: &EffectTemplate) -> Result<CoreEffectTempla
 
 fn validated_expr_ir_to_plan(ir: &ValidatedPlanExprIr) -> Result<PlanExprIr, String> {
     Ok(PlanExprIr {
-        expr: serde_json::to_value(&ir.expr).map_err(|e| e.to_string())?,
+        expr: ir.expr.clone(),
         projection: ir.projection.clone(),
         display_expr: ir.display_expr.clone(),
     })
@@ -228,24 +253,17 @@ fn relation_expr(ir: &ValidatedPlanExprIr) -> String {
 }
 
 fn effect_class(value: PlanEffectClass) -> EffectClass {
-    convert_via_json(&value).expect("EffectClass wire shape aligns")
+    value
 }
 
 fn result_shape(value: PlanResultShape) -> ResultShape {
-    convert_via_json(&value).expect("ResultShape wire shape aligns")
+    value
 }
 
-fn convert_via_json<T, U>(value: &T) -> Result<U, String>
-where
-    T: serde::Serialize,
-    U: for<'de> serde::Deserialize<'de>,
-{
-    serde_json::from_value(serde_json::to_value(value).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())
-}
-
-/// Lift executable comp steps back into proof-bearing validated plan nodes.
-pub(crate) fn step_payload_to_validated_node(
+/// Decode one untrusted wire step. The caller must validate graph-wide proofs before constructing
+/// a [`ValidatedPlan`]; keeping this private prevents another module from treating the decoded
+/// node as compiler-issued evidence.
+fn step_payload_to_validated_node(
     step_id: &StepId,
     payload: &PlasmStepPayload,
     bind: &PlasmBindGraph,
@@ -343,6 +361,26 @@ pub(crate) fn step_payload_to_validated_node(
                 approval: p.approval.clone(),
             }))
         }
+        PlasmStepPayload::UnfoldUntil(p) => {
+            Ok(ValidatedPlanNode::IterateUntil(ValidatedIterateUntilNode {
+                id,
+                effect_class: plan_effect_class(p.effect_class),
+                result_shape: plan_result_shape(p.result_shape),
+                source: PlanNodeId::new(p.source.clone())?,
+                item_binding: BindingName::new(p.item_binding.as_str())?,
+                effect_template: effect_template_to_plan(&p.effect_template)?,
+                until_predicates: convert_predicates_back(&p.until_predicates)?,
+                take: p.take,
+                seed_ir: p
+                    .seed_ir
+                    .as_ref()
+                    .map(plan_expr_ir_to_validated)
+                    .transpose()?,
+                depends_on,
+                uses_result,
+                approval: p.approval.clone(),
+            }))
+        }
     }
 }
 
@@ -370,18 +408,64 @@ pub(crate) fn build_validated_plan_from_executable(
         .iter()
         .map(|id| PlanNodeId::new(id.as_str().to_string()))
         .collect::<Result<_, _>>()?;
+    let plan = Plan::new_program(
+        comp.version,
+        comp.name.clone(),
+        nodes,
+        return_value,
+        comp.metadata.clone(),
+    );
+    validate_rehydrated_cardinality_proofs(&plan)?;
     Ok(ValidatedPlanArtifact::from_validated_parts(
-        Plan::new_program(
-            comp.version,
-            comp.name.clone(),
-            nodes,
-            return_value,
-            comp.metadata.clone(),
-        ),
+        plan,
         topo,
         node_indices,
         approval_gates,
     ))
+}
+
+/// Rehydrated wire data is an untrusted DTO. In particular, the wire `auto` cardinality marker is
+/// a request for compiler inference, not a serialized `StaticSingleton` witness. Recompute the
+/// witness from the closed typed graph before constructing a trusted [`ValidatedPlan`].
+fn validate_rehydrated_cardinality_proofs(
+    plan: &Plan<crate::plasm_plan::ValidatedPlanState>,
+) -> Result<(), String> {
+    for node in &plan.nodes {
+        if let ValidatedPlanNode::Derive(derive) = node {
+            for input in &derive.inputs {
+                if input.proof == InputCardinalityProof::StaticSingleton
+                    && !crate::plasm_plan::validated_source_is_static_singleton(
+                        plan,
+                        input.node.as_str(),
+                    )
+                {
+                    return Err(format!(
+                        "derive step {} input {} claims auto cardinality but source {} is not statically singleton",
+                        derive.id.as_str(),
+                        input.alias.as_str(),
+                        input.node.as_str()
+                    ));
+                }
+            }
+        }
+        if let ValidatedPlanNode::RelationTraversal(relation) = node {
+            if relation.relation.cardinality == plasm_core::RelationCardinality::One
+                && relation.relation.source_cardinality
+                    == crate::plasm_plan::RelationSourceCardinality::Single
+                && !crate::plasm_plan::validated_source_is_static_singleton(
+                    plan,
+                    relation.relation.source.as_str(),
+                )
+            {
+                return Err(format!(
+                    "relation step {} claims a single source but {} is not statically singleton",
+                    relation.id.as_str(),
+                    relation.relation.source.as_str()
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn step_depends_on(step_id: &StepId, bind: &PlasmBindGraph) -> Vec<PlanNodeId> {
@@ -404,6 +488,7 @@ fn step_uses_result(step_id: &StepId, bind: &PlasmBindGraph) -> Vec<PlanResultUs
                 .map(|h| PlanResultUse {
                     node: h.step.as_str().to_string(),
                     r#as: h.alias.clone(),
+                    qualified_entity: None,
                 })
                 .collect()
         })
@@ -425,7 +510,7 @@ fn plasm_return_to_validated(ret: &PlasmReturn) -> Result<ValidatedPlanReturn, S
 }
 
 fn plan_expr_ir_to_validated(ir: &PlanExprIr) -> Result<ValidatedPlanExprIr, String> {
-    let expr: Expr = serde_json::from_value(ir.expr.clone()).map_err(|e| e.to_string())?;
+    let expr = ir.expr.clone();
     Ok(ValidatedPlanExprIr {
         expr,
         projection: ir.projection.clone(),
@@ -486,8 +571,8 @@ fn relation_traversal_to_validated(
         source: PlanNodeId::new(relation.source.clone())?,
         relation: crate::plasm_plan::RelationName::new(relation.relation.clone())?,
         target: plan_qualified_entity_key(&relation.target),
-        cardinality: convert_via_json(&relation.cardinality)?,
-        source_cardinality: convert_via_json(&relation.source_cardinality)?,
+        cardinality: relation.cardinality,
+        source_cardinality: relation.source_cardinality,
         ir: plan_expr_ir_to_validated(&relation.ir)?,
         materialize: relation
             .materialize
@@ -498,12 +583,14 @@ fn relation_traversal_to_validated(
     })
 }
 
-fn effect_template_to_plan(template: &CoreEffectTemplate) -> Result<EffectTemplate, String> {
-    Ok(EffectTemplate {
+fn effect_template_to_plan(
+    template: &CoreEffectTemplate,
+) -> Result<ValidatedEffectTemplate, String> {
+    Ok(ValidatedEffectTemplate {
         kind: surface_kind_to_plan(template.kind)?,
         qualified_entity: plan_qualified_entity_key(&template.qualified_entity),
         expr_template: template.expr_template.clone(),
-        ir_template: convert_via_json(&template.ir_template)?,
+        ir_template: plan_expr_template_to_validated(&template.ir_template),
         effect_class: plan_effect_class(template.effect_class),
         result_shape: plan_result_shape(template.result_shape),
         projection: template.projection.clone(),
@@ -527,20 +614,21 @@ fn convert_predicates_back(predicates: &[PlanPredicate]) -> Result<Vec<PlanPredi
 }
 
 fn plan_effect_class(value: EffectClass) -> PlanEffectClass {
-    convert_via_json(&value).expect("EffectClass wire shape aligns")
+    value
 }
 
 fn plan_result_shape(value: ResultShape) -> PlanResultShape {
-    convert_via_json(&value).expect("ResultShape wire shape aligns")
+    value
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::plasm_plan::{
-        ComputeOp, ComputeTemplate, EffectClass, OutputName, PlanNodeId, ResultShape,
-        SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind, ValidatedComputeNode,
-        ValidatedPlanNode,
+        ComputeOp, ComputeTemplate, EffectClass, InputAlias, InputCardinalityProof, OutputName,
+        PlanNodeId, PlanValue, ResultShape, SyntheticFieldSchema, SyntheticResultSchema,
+        SyntheticValueKind, ValidatedDataNode, ValidatedDeriveNode, ValidatedPlanDataInput,
+        ValidatedPlanNode, ValidatedPlanReturn,
     };
     use plasm_core::PlasmBindGraph;
     use std::collections::{BTreeMap, BTreeSet};
@@ -628,5 +716,49 @@ mod tests {
             c.compute.collection_alias.as_ref().map(|a| a.as_str()),
             Some("items")
         );
+    }
+
+    #[test]
+    fn rehydration_rejects_forged_static_singleton_proof() {
+        let rows = PlanNodeId::new("rows").expect("rows");
+        let mapped = PlanNodeId::new("mapped").expect("mapped");
+        let plan = Plan::new_program(
+            1,
+            Some("forged-cardinality".into()),
+            vec![
+                ValidatedPlanNode::Data(ValidatedDataNode {
+                    id: rows.clone(),
+                    effect_class: EffectClass::ArtifactRead,
+                    result_shape: ResultShape::Artifact,
+                    data: PlanValue::Literal {
+                        value: serde_json::json!([{"id": 1}, {"id": 2}]),
+                    },
+                    depends_on: vec![],
+                    uses_result: vec![],
+                }),
+                ValidatedPlanNode::Derive(ValidatedDeriveNode {
+                    id: mapped.clone(),
+                    effect_class: EffectClass::ArtifactRead,
+                    result_shape: ResultShape::Artifact,
+                    source: rows.clone(),
+                    item_binding: crate::plasm_plan::BindingName::new("item").expect("binding"),
+                    inputs: vec![ValidatedPlanDataInput {
+                        node: rows,
+                        alias: InputAlias::new("items").expect("alias"),
+                        proof: InputCardinalityProof::StaticSingleton,
+                    }],
+                    value: PlanValue::Literal {
+                        value: serde_json::json!({"ok": true}),
+                    },
+                    depends_on: vec![],
+                    uses_result: vec![],
+                }),
+            ],
+            ValidatedPlanReturn::Node(mapped),
+            BTreeMap::new(),
+        );
+        let error = validate_rehydrated_cardinality_proofs(&plan)
+            .expect_err("untrusted wire proof must be recomputed");
+        assert!(error.contains("not statically singleton"), "{error}");
     }
 }

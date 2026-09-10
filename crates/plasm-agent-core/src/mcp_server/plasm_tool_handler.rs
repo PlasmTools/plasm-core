@@ -188,12 +188,13 @@ impl PlasmMcpHandler {
         };
 
         let run_result = async {
+            use super::host_fault::HostFault;
             let Some(es) = self
                 .plasm
                 .get_execute_session(&b.prompt_hash, &b.session_id)
                 .await
             else {
-                return Err(MCP_EXECUTE_SESSION_UNAVAILABLE.to_string());
+                return Err(HostFault(MCP_EXECUTE_SESSION_UNAVAILABLE.to_string()));
             };
             if let Some(program) = invocation.program() {
                 if let Some(op_result) = try_dispatch_operation_program(
@@ -205,13 +206,13 @@ impl PlasmMcpHandler {
                 )
                 .await
                 {
-                    return op_result;
+                    return op_result.map_err(HostFault);
                 }
             }
             if run_live {
                 let run_target = invocation
                     .run_target()
-                    .ok_or_else(|| "missing `run_ref` on plasm_run invocation".to_string())?;
+                    .ok_or_else(|| HostFault("missing `run_ref` on plasm_run invocation".into()))?;
                 let ingress = committed_plasm_run::resolve_mcp_live_run_ingress(
                     &es,
                     &mcp_trace,
@@ -220,7 +221,8 @@ impl PlasmMcpHandler {
                     self.plasm.sessions.symbol_map_cross_cache(),
                     call_index,
                 )
-                .await?;
+                .await
+                .map_err(HostFault)?;
                 let wire = committed_plasm_run::McpExecuteWire {
                     prompt_hash: b.prompt_hash.clone(),
                     session_id: b.session_id.clone(),
@@ -248,10 +250,11 @@ impl PlasmMcpHandler {
                     wait_live,
                 })
                 .await
+                .map_err(HostFault)
             } else {
-                let program = invocation
-                    .program()
-                    .ok_or_else(|| "missing `program`: call `plasm` with a program".to_string())?;
+                let program = invocation.program().ok_or_else(|| {
+                    HostFault("missing `program`: call `plasm` with a program".into())
+                })?;
                 plasm_tool_dry_run::execute_plasm_tool_dry_run(
                     plasm_tool_dry_run::PlasmDryRunContext {
                         host: Arc::clone(&self.plasm),
@@ -274,6 +277,7 @@ impl PlasmMcpHandler {
         .await;
         match run_result {
             Ok(out) => {
+                let metrics_label = out.metrics_label();
                 let markdown = out
                     .run_markdown
                     .unwrap_or_else(|| "# Plasm program plan\n\nNo execution output.".to_string());
@@ -300,6 +304,7 @@ impl PlasmMcpHandler {
                     target: "plasm_agent::mcp",
                     tool = tool_name,
                     ok = true,
+                    agent_outcome = metrics_label,
                     tokens_est_prompt = tok_prompt,
                     tokens_est_invocation = tok_inv,
                     tokens_est_tool_response = tok_resp,
@@ -309,7 +314,7 @@ impl PlasmMcpHandler {
                 crate::metrics::record_mcp_tool(
                     tool_name,
                     Some(false),
-                    "success",
+                    metrics_label,
                     "none",
                     started.elapsed(),
                 );
@@ -339,7 +344,7 @@ impl PlasmMcpHandler {
                 self.schedule_persist_transport_state(key);
                 Ok(res)
             }
-            Err(msg) => {
+            Err(super::host_fault::HostFault(msg)) => {
                 self.plasm
                     .trace_hub
                     .trace_add_plasm_error(&ls_key, call_index, None, msg.clone())

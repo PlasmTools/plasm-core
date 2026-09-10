@@ -1,4 +1,4 @@
-version: 3
+version: 4
 auth:
   scheme: none
 http_backend: http://127.0.0.1:9
@@ -30,6 +30,44 @@ entities:
       note:
         required: true
         value_ref: nv_lang_line_note
+    relations: {}
+  LangAuthSession:
+    id_field: access_token
+    description: Login session whose primary key is access_token (AppWorld AuthSession-shaped; federated
+      provides + hole fill).
+    fields:
+      access_token:
+        required: true
+        value_ref: nv_lang_auth_access_token
+      token_type:
+        required: false
+        value_ref: nv_lang_auth_token_type
+    relations: {}
+  LangSecuredNote:
+    id_field: note_id
+    description: Note list requiring Bearer access_token from LangAuthSession (federated hole-fill witness).
+    fields:
+      note_id:
+        required: true
+        value_ref: nv_lang_secured_note_id
+      title:
+        required: true
+        value_ref: nv_lang_secured_note_title
+      body:
+        required: true
+        value_ref: nv_lang_secured_note_body
+    relations: {}
+  LangSecuredGroup:
+    id_field: group_id
+    description: Group list requiring Bearer access_token from a second LangAuthSession (CUGA dual-login
+      hole-fill witness).
+    fields:
+      group_id:
+        required: true
+        value_ref: nv_lang_secured_group_id
+      name:
+        required: true
+        value_ref: nv_lang_secured_group_name
     relations: {}
   LangItem:
     id_field: id
@@ -129,6 +167,18 @@ entities:
         required: false
         value_ref: nv_wire_int
     relations: {}
+  LangKeyPick:
+    id_field: key
+    primary_read: lang_key_pick_get
+    description: "Keyed singleton over a list-only query via derive: Get (AccountPassword pattern)."
+    fields:
+      key:
+        required: true
+        value_ref: nv_lang_key_pick_key
+      title:
+        required: true
+        value_ref: nv_lang_key_pick_title
+    relations: {}
   LangItemLink:
     id_field: item_id
     primary_read: lang_item_link_get
@@ -217,23 +267,13 @@ entities:
           view: lang_work_snapshot_empty
 capabilities:
   langitem_query:
-    description: List LangItem rows (no required HTTP filters)
+    description: List LangItem rows (optional owner filter)
     kind: query
     entity: LangItem
-    provides:
-    - id
-    - title
-    - score
-    - owner
-  langitem_query_owner:
-    description: List LangItem rows filtered by owner (required query param)
-    kind: query
-    entity: LangItem
-    parameters:
+    selection:
     - name: owner
       value_ref: nv_langitem_query_owner_owner
-      required: true
-      role: filter
+      required: false
     provides:
     - id
     - title
@@ -243,11 +283,10 @@ capabilities:
     description: Search LangItem rows
     kind: search
     entity: LangItem
-    parameters:
+    selection:
     - name: q
       value_ref: nv_langitem_search_q
       required: true
-      role: search
     provides:
     - id
     - title
@@ -257,11 +296,10 @@ capabilities:
     description: Get LangItem by id (includes embedded lines in wire JSON)
     kind: get
     entity: LangItem
-    parameters:
+    scope:
     - name: id
       value_ref: nv_lang_item_id
       required: true
-      role: scope
     provides:
     - id
     - title
@@ -271,16 +309,19 @@ capabilities:
     description: Create LangItem
     kind: create
     entity: LangItem
-    parameters:
-    - name: title
-      value_ref: nv_langitem_create_title
-      required: true
-    - name: score
-      value_ref: nv_langitem_create_score
-      required: false
-    - name: owner
-      value_ref: nv_langitem_create_owner
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: title
+          value_ref: nv_langitem_create_title
+          required: true
+        - name: score
+          value_ref: nv_langitem_create_score
+          required: false
+        - name: owner
+          value_ref: nv_langitem_create_owner
+          required: false
     provides:
     - id
     - title
@@ -290,16 +331,19 @@ capabilities:
     description: Patch LangItem
     kind: update
     entity: LangItem
-    parameters:
-    - name: title
-      value_ref: nv_langitem_update_title
-      required: false
-    - name: score
-      value_ref: nv_langitem_update_score
-      required: false
-    - name: owner
-      value_ref: nv_langitem_update_owner
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: title
+          value_ref: nv_langitem_update_title
+          required: false
+        - name: score
+          value_ref: nv_langitem_update_score
+          required: false
+        - name: owner
+          value_ref: nv_langitem_update_owner
+          required: false
     provides:
     - id
     - title
@@ -316,19 +360,108 @@ capabilities:
     output:
       type: side_effect
       description: Records a ping against the item (matrix conformance).
+  langitem_broadcast:
+    description: Pathless side-effect broadcast on LangItem (federated stamp regression; no path id).
+    kind: action
+    entity: LangItem
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: message
+          value_ref: nv_langitem_broadcast_message
+          required: false
+    output:
+      type: side_effect
+      description: Broadcasts an optional message for the catalog (no entity id in path).
+  langauthsession_login:
+    description: Pathless login returning LangAuthSession (provides access_token; MutationResult under
+      federation).
+    kind: action
+    entity: LangAuthSession
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: username
+          value_ref: nv_lang_auth_username
+          required: false
+        - name: password
+          value_ref: nv_lang_auth_password
+          required: false
+    provides:
+    - access_token
+    - token_type
+    output:
+      type: side_effect
+      description: Creates an authenticated session; use access_token on subsequent calls.
+  langsecurednote_search:
+    description: Search secured notes; Bearer access_token and free-text query required for ~ search.
+    kind: search
+    entity: LangSecuredNote
+    selection:
+    - name: access_token
+      value_ref: nv_lang_auth_access_token
+      required: true
+    - name: query
+      value_ref: nv_lang_secured_note_query
+      required: true
+    provides:
+    - note_id
+    - title
+  langsecurednote_get:
+    description: Get a secured note including body; Bearer access_token required (summary-hydrate witness).
+    kind: get
+    entity: LangSecuredNote
+    provides:
+    - note_id
+    - title
+    - body
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_lang_auth_access_token
+          required: true
+  langsecuredgroup_query:
+    description: List secured groups; Bearer access_token required (second federated auth consumer).
+    kind: query
+    entity: LangSecuredGroup
+    selection:
+    - name: access_token
+      value_ref: nv_lang_auth_access_token
+      required: true
+    provides:
+    - group_id
+    - name
+  langsecuredgroup_get:
+    description: Get a secured group by id; Bearer access_token required (anchors LangSecuredGroup under
+      context).
+    kind: get
+    entity: LangSecuredGroup
+    provides:
+    - group_id
+    - name
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_lang_auth_access_token
+          required: true
   langtag_query:
     description: List tags scoped to one LangItem
     kind: query
     entity: LangTag
-    parameters:
+    scope:
     - name: item_id
       value_ref: nv_langtag_query_item_id
       required: true
-      role: scope
+    selection:
     - name: label
       value_ref: nv_lang_tag_label
       required: false
-      role: filter
     provides:
     - id
     - item_id
@@ -345,11 +478,10 @@ capabilities:
     description: List lines scoped to one LangItem (optional list path; also on item GET)
     kind: query
     entity: LangLine
-    parameters:
+    scope:
     - name: item_id
       value_ref: nv_langline_query_item_id
       required: true
-      role: scope
     provides:
     - id
     - item_id
@@ -358,11 +490,10 @@ capabilities:
     description: Query LangDigest by item id (transport view).
     kind: query
     entity: LangDigest
-    parameters:
+    selection:
     - name: item_id
       value_ref: nv_lang_digest_scope_item_id
       required: true
-      role: filter
     provides:
     - item_id
     - echo_title
@@ -371,11 +502,10 @@ capabilities:
     description: Get LangDigest by item id (transport view).
     kind: get
     entity: LangDigest
-    parameters:
+    scope:
     - name: item_id
       value_ref: nv_lang_digest_get_item_id
       required: true
-      role: scope
     provides:
     - item_id
     - echo_title
@@ -384,11 +514,10 @@ capabilities:
     description: Query LangTriageContext by item id (composed get + scoped tag query).
     kind: query
     entity: LangTriageContext
-    parameters:
+    selection:
     - name: item_id
       value_ref: nv_lang_digest_scope_item_id
       required: true
-      role: filter
     provides:
     - item_id
     - echo_title
@@ -398,11 +527,10 @@ capabilities:
     description: Get LangTriageContext by item id.
     kind: get
     entity: LangTriageContext
-    parameters:
+    scope:
     - name: item_id
       value_ref: nv_lang_digest_get_item_id
       required: true
-      role: scope
     provides:
     - item_id
     - echo_title
@@ -412,11 +540,10 @@ capabilities:
     description: Query LangItemLink with computed url.
     kind: query
     entity: LangItemLink
-    parameters:
+    selection:
     - name: item_id
       value_ref: nv_lang_digest_scope_item_id
       required: true
-      role: filter
     provides:
     - item_id
     - echo_title
@@ -425,159 +552,178 @@ capabilities:
     description: Get LangItemLink by item id.
     kind: get
     entity: LangItemLink
-    parameters:
+    scope:
     - name: item_id
       value_ref: nv_lang_digest_get_item_id
       required: true
-      role: scope
     provides:
     - item_id
     - echo_title
     - url
   lang_owner_filter_demo_query:
+    description: Query owner-filter demo by item id (computed node bind conformance).
     kind: query
     entity: LangOwnerFilterDemo
-    description: Query owner-filter demo by item id (computed node bind conformance).
-    parameters:
+    selection:
     - name: item_id
       value_ref: nv_lang_digest_scope_item_id
       required: true
-      role: filter
     provides:
     - item_id
     - owner
     - matching_item_count
   lang_owner_filter_demo_get:
+    description: Get owner-filter demo by item id.
     kind: get
     entity: LangOwnerFilterDemo
-    description: Get owner-filter demo by item id.
-    parameters:
+    scope:
     - name: item_id
       value_ref: nv_lang_digest_get_item_id
       required: true
-      role: scope
     provides:
     - item_id
     - owner
     - matching_item_count
   lang_tag_filter_demo_query:
+    description: Query tag filter demo by item id (literal label bind in view DAG).
     kind: query
     entity: LangTagFilterDemo
-    description: Query tag filter demo by item id (literal label bind in view DAG).
-    parameters:
+    selection:
     - name: item_id
       value_ref: nv_lang_digest_scope_item_id
       required: true
-      role: filter
     provides:
     - item_id
     - tag_count
   lang_tag_filter_demo_get:
+    description: Get tag filter demo by item id.
     kind: get
     entity: LangTagFilterDemo
-    description: Get tag filter demo by item id.
-    parameters:
+    scope:
     - name: item_id
       value_ref: nv_lang_digest_get_item_id
       required: true
-      role: scope
     provides:
     - item_id
     - tag_count
+  lang_key_pick_get:
+    description: Get one LangKeyPick by key over list-only langitem_query (derive).
+    kind: get
+    entity: LangKeyPick
+    provides:
+    - key
+    - title
+    derive:
+      source: langitem_query
+      match_field: id
+      projection:
+        key: id
+        title: title
   langviewer_get:
+    description: Current viewer row (parameterless dashboard seed).
     kind: get
     entity: LangViewer
-    description: Current viewer row (parameterless dashboard seed).
     provides:
     - id
     - display_name
   langviewer_nobody_get:
+    description: Viewer row with no assigned items (empty dashboard seed).
     kind: get
     entity: LangViewer
-    description: Viewer row with no assigned items (empty dashboard seed).
     provides:
     - id
     - display_name
   lang_work_snapshot_query:
+    description: Parameterless work dashboard (nonempty assigned items).
     kind: query
     entity: LangWorkSnapshot
-    description: Parameterless work dashboard (nonempty assigned items).
     provides:
     - viewer_id
     - item_count
   lang_work_snapshot_get:
+    description: Parameterless work dashboard GET root.
     kind: get
     entity: LangWorkSnapshot
-    description: Parameterless work dashboard GET root.
     provides:
     - viewer_id
     - item_count
   lang_work_snapshot_empty_query:
+    description: Parameterless work dashboard with zero assigned items.
     kind: query
     entity: LangWorkSnapshotEmpty
-    description: Parameterless work dashboard with zero assigned items.
     provides:
     - viewer_id
     - item_count
   lang_work_snapshot_empty_get:
+    description: Parameterless empty dashboard GET root.
     kind: get
     entity: LangWorkSnapshotEmpty
-    description: Parameterless empty dashboard GET root.
     provides:
     - viewer_id
     - item_count
 values:
   nv_lang_tag_id:
     type: string
-    string_semantics: short
   nv_lang_tag_item_id:
     type: entity_ref
     target: LangItem
   nv_lang_tag_label:
     type: string
-    string_semantics: short
   nv_lang_line_id:
     type: string
-    string_semantics: short
   nv_lang_line_item_id:
     type: entity_ref
     target: LangItem
   nv_lang_line_note:
     type: string
-    string_semantics: short
   nv_lang_item_id:
     type: string
-    string_semantics: short
   nv_lang_item_title:
     type: string
-    string_semantics: short
+  nv_langitem_broadcast_message:
+    type: string
+    description: Optional broadcast body for pathless LangItem action (federation stamp matrix).
+  nv_lang_auth_access_token:
+    type: string
+    description: Bearer token primary key for LangAuthSession.
+  nv_lang_auth_token_type:
+    type: string
+  nv_lang_auth_username:
+    type: string
+  nv_lang_auth_password:
+    type: string
+  nv_lang_secured_note_id:
+    type: integer
+  nv_lang_secured_note_title:
+    type: string
+  nv_lang_secured_note_body:
+    type: string
+  nv_lang_secured_note_query:
+    type: string
+  nv_lang_secured_group_id:
+    type: integer
+  nv_lang_secured_group_name:
+    type: string
   nv_lang_item_score:
     type: integer
   nv_lang_item_owner:
     type: string
-    string_semantics: short
   nv_langitem_query_owner_owner:
     type: string
-    string_semantics: short
   nv_langitem_search_q:
     type: string
-    string_semantics: short
   nv_langitem_create_title:
     type: string
-    string_semantics: short
   nv_langitem_create_score:
     type: integer
   nv_langitem_create_owner:
     type: string
-    string_semantics: short
   nv_langitem_update_title:
     type: string
-    string_semantics: short
   nv_langitem_update_score:
     type: integer
   nv_langitem_update_owner:
     type: string
-    string_semantics: short
   nv_langtag_query_item_id:
     type: entity_ref
     target: LangItem
@@ -586,13 +732,10 @@ values:
     target: LangItem
   nv_lang_digest_item_id:
     type: string
-    string_semantics: short
   nv_lang_digest_echo_title:
     type: string
-    string_semantics: short
   nv_lang_digest_echo_slug:
     type: string
-    string_semantics: short
   nv_lang_digest_scope_item_id:
     type: entity_ref
     target: LangItem
@@ -601,18 +744,18 @@ values:
     target: LangItem
   nv_lang_item_link_url:
     type: string
-    string_semantics: short
   nv_lang_viewer_id:
     type: string
-    string_semantics: short
   nv_lang_viewer_display_name:
     type: string
-    string_semantics: short
   nv_wire_bool:
     type: boolean
   nv_wire_int:
     type: integer
-
+  nv_lang_key_pick_key:
+    type: string
+  nv_lang_key_pick_title:
+    type: string
 views:
   lang_digest:
     description: Fetch LangItem by scope item_id and echo title (view transport conformance).
@@ -638,7 +781,7 @@ views:
         field: title
       echo_slug:
         kind: computed
-        template: "{{ item_id }}-{{ echo_title }}"
+        template: '{{ item_id }}-{{ echo_title }}'
     relation_outputs:
     - relation: item_snapshot
       target: LangItem
@@ -718,7 +861,7 @@ views:
         field: title
       url:
         kind: computed
-        template: "/language/v1/items/{{ item_id }}"
+        template: /language/v1/items/{{ item_id }}
     relation_outputs:
     - relation: item
       target: LangItem
@@ -741,11 +884,11 @@ views:
           kind: scope
           param: item_id
     - id: owner_items
-      capability: langitem_query_owner
+      capability: langitem_query
       bind:
         owner:
           kind: computed
-          template: "{{ item_node.owner }}"
+          template: '{{ item_node.owner }}'
     output:
       item_id:
         kind: scope
@@ -797,7 +940,7 @@ views:
       capability: langviewer_get
       bind: {}
     - id: assigned_items
-      capability: langitem_query_owner
+      capability: langitem_query
       bind:
         owner:
           kind: node_field
@@ -827,7 +970,7 @@ views:
       capability: langviewer_nobody_get
       bind: {}
     - id: assigned_items
-      capability: langitem_query_owner
+      capability: langitem_query
       bind:
         owner:
           kind: node_field

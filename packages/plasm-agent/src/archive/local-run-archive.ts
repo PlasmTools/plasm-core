@@ -10,6 +10,11 @@ function safeFilename(value: string): string {
   return value;
 }
 
+export function sessionArchiveKey(id: string, session: string | undefined): string {
+  if (!session) throw new Error("Archive access requires logical_session_ref");
+  return `${safeFilename(session)}__${safeFilename(id)}`;
+}
+
 export class LocalRunArchive {
   constructor(private readonly root: string) {}
 
@@ -28,13 +33,13 @@ export class LocalRunArchive {
 
   async writePlanArchive(snapshot: PlanArchiveSnapshot): Promise<void> {
     await this.ensureRoot();
-    const file = path.join(this.plansDir(), `${safeFilename(snapshot.plan_commit_ref)}.json`);
+    const file = path.join(this.plansDir(), `${sessionArchiveKey(snapshot.plan_commit_ref, snapshot.logical_session_ref)}.json`);
     await writeFile(file, JSON.stringify(snapshot, null, 2), "utf8");
   }
 
   async writeRunSnapshot(snapshot: RunSnapshot): Promise<void> {
     await this.ensureRoot();
-    const file = path.join(this.runsDir(), `${safeFilename(snapshot.run_id)}.json`);
+    const file = path.join(this.runsDir(), `${sessionArchiveKey(snapshot.run_id, snapshot.logical_session_ref)}.json`);
     await writeFile(file, JSON.stringify(snapshot, null, 2), "utf8");
   }
 
@@ -46,15 +51,15 @@ export class LocalRunArchive {
     return this.listJsonDir<RunSnapshot>(this.runsDir(), limit);
   }
 
-  async getPlan(planCommitRef: string): Promise<PlanArchiveSnapshot | null> {
+  async getPlan(planCommitRef: string, logicalSessionRef: string): Promise<PlanArchiveSnapshot | null> {
     return this.readJson<PlanArchiveSnapshot>(
-      path.join(this.plansDir(), `${safeFilename(planCommitRef)}.json`),
+      path.join(this.plansDir(), `${sessionArchiveKey(planCommitRef, logicalSessionRef)}.json`),
     );
   }
 
-  async getRun(runId: string): Promise<RunSnapshot | null> {
+  async getRun(runId: string, logicalSessionRef: string): Promise<RunSnapshot | null> {
     return this.readJson<RunSnapshot>(
-      path.join(this.runsDir(), `${safeFilename(runId)}.json`),
+      path.join(this.runsDir(), `${sessionArchiveKey(runId, logicalSessionRef)}.json`),
     );
   }
 

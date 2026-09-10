@@ -1,4 +1,4 @@
-version: 6
+version: 8
 http_backend: http://localhost:3000/api
 data_classes:
   untrusted:
@@ -11,7 +11,8 @@ data_classes:
     description: Person name treated as personally identifiable.
     severity: sensitive
   credentials:
-    description: Secret token, webhook URL, or key material embedded in integration settings.
+    description: Secret token, webhook URL, or key material embedded in integration
+      settings.
     severity: critical
   external_publish:
     description: Dashboard-visible annotation or incident content change.
@@ -19,64 +20,52 @@ data_classes:
   permission_grant:
     description: RBAC role assignment or team/org permission elevation.
     severity: critical
-
 values:
   nv_wire_str_short:
     type: string
-    string_semantics: short
   nv_wire_str_markdown:
-    type: string
-    string_semantics: markdown
+    type: markdown
   nv_wire_int:
     type: integer
   nv_wire_bool:
     type: boolean
   nv_grafana_uid:
     type: string
-    string_semantics: short
   nv_grafana_title:
     type: string
-    string_semantics: short
   nv_grafana_description:
-    type: string
-    string_semantics: markdown
+    type: markdown
   nv_grafana_url:
     type: string
-    string_semantics: short
   nv_grafana_tags:
     type: array
     items:
       value_ref: nv_wire_str_short
   nv_grafana_search_type:
-    type: select
-    allowed_values: [dash-db, dash-folder]
+    type: enum
+    enum:
+    - dash-db
+    - dash-folder
   nv_grafana_int_id:
     type: integer
   nv_grafana_bool:
     type: boolean
   nv_grafana_datasource_type:
     type: string
-    string_semantics: short
   nv_grafana_datasource_name:
     type: string
-    string_semantics: short
   nv_grafana_time_range:
     type: string
-    string_semantics: short
   nv_grafana_annotation_text:
-    type: string
-    string_semantics: markdown
+    type: markdown
   nv_grafana_json_text:
-    type: string
-    string_semantics: json_text
+    type: json_text
   nv_grafana_json_value:
     type: json
   nv_grafana_alert_state:
     type: string
-    string_semantics: short
   nv_grafana_duration:
     type: string
-    string_semantics: short
   nv_grafana_folder_uid:
     type: entity_ref
     target: Folder
@@ -92,28 +81,27 @@ values:
     type: integer
   nv_grafana_email:
     type: string
-    string_semantics: short
   nv_grafana_login:
     type: string
-    string_semantics: short
   nv_grafana_org_role:
-    type: select
-    allowed_values: [Admin, Editor, Viewer]
+    type: enum
+    enum:
+    - Admin
+    - Editor
+    - Viewer
   nv_grafana_team_name:
     type: string
-    string_semantics: short
   nv_grafana_contact_point_type:
     type: string
-    string_semantics: short
   nv_grafana_mute_timing_name:
     type: string
-    string_semantics: short
   nv_grafana_silence_id:
     type: string
-    string_semantics: short
   nv_grafana_library_kind:
-    type: select
-    allowed_values: ["1", "2"]
+    type: enum
+    enum:
+    - '1'
+    - '2'
   nv_grafana_team_ref:
     type: entity_ref
     target: Team
@@ -134,37 +122,42 @@ values:
     target: Silence
   nv_grafana_role_uid:
     type: string
-    string_semantics: short
   nv_grafana_resource_type:
-    type: select
-    allowed_values: [dashboards, datasources, folders, teams, users, serviceaccounts]
+    type: enum
+    enum:
+    - dashboards
+    - datasources
+    - folders
+    - teams
+    - users
+    - serviceaccounts
   nv_grafana_deeplink_type:
-    type: select
-    allowed_values: [dashboard, panel, explore]
+    type: enum
+    enum:
+    - dashboard
+    - panel
+    - explore
   nv_grafana_uuid:
     type: string
-    string_semantics: short
   nv_grafana_label_name:
     type: string
-    string_semantics: short
   nv_grafana_logql:
     type: string
-    string_semantics: short
   nv_grafana_sql:
     type: string
-    string_semantics: short
   nv_grafana_oncall_state:
-    type: select
-    allowed_values: [new, acknowledged, resolved, silenced]
+    type: enum
+    enum:
+    - new
+    - acknowledged
+    - resolved
+    - silenced
   nv_grafana_oncall_id:
     type: string
-    string_semantics: short
   nv_grafana_incident_severity:
     type: string
-    string_semantics: short
   nv_grafana_sift_status:
     type: string
-    string_semantics: short
   nv_grafana_role_ref:
     type: entity_ref
     target: RbacRole
@@ -174,11 +167,18 @@ values:
   nv_grafana_incident_ref:
     type: entity_ref
     target: Incident
-
+  nv_rbacrole_query_shelf:
+    type: enum
+    enum:
+    - rbac_role
+    - org_user_rbac_role
+    - team_rbac_role
+    description: RbacRole query shelf
 entities:
   Dashboard:
     id_field: uid
-    description: Observability dashboard — search when the title is unknown, then get for panel layout and queries.
+    description: Observability dashboard — search when the title is unknown, then
+      get for panel layout and queries.
     primary_read: dashboard_get
     fields:
       uid:
@@ -217,7 +217,6 @@ entities:
       dashboard_json:
         required: false
         value_ref: nv_grafana_json_text
-
   Folder:
     id_field: uid
     description: Dashboard folder for organizing and ACL scoping.
@@ -231,22 +230,22 @@ entities:
       url:
         required: false
         value_ref: nv_grafana_url
-
   Datasource:
     id_field: uid
-    description: Configured metrics, logs, traces, or profiles backend reachable through Grafana.
+    description: Configured metrics, logs, traces, or profiles backend reachable through
+      Grafana.
     primary_read: datasource_get
     discovery:
-      qualifier_terms:
-        - datasource
-        - prometheus
-        - loki
-        - tempo
-        - pyroscope
-        - promql
-        - logql
-        - query metrics
-        - query logs
+      qualifier_names:
+      - datasource
+      - prometheus
+      - loki
+      - tempo
+      - pyroscope
+      - promql
+      - logql
+      - query metrics
+      - query logs
     fields:
       uid:
         required: true
@@ -275,7 +274,6 @@ entities:
         required: false
         value_ref: nv_grafana_json_value
         path: data
-
   Annotation:
     id_field: id
     description: Time-range marker on a dashboard or global timeline.
@@ -305,7 +303,6 @@ entities:
       tags:
         required: false
         value_ref: nv_grafana_tags
-
   AlertRule:
     id_field: uid
     description: Grafana unified alerting rule (provisioned configuration).
@@ -342,7 +339,6 @@ entities:
         required: false
         value_ref: nv_grafana_alert_state
         path: execErrState
-
   ContactPoint:
     id_field: uid
     description: Alert notification destination for unified alerting routes.
@@ -369,7 +365,6 @@ entities:
       provenance:
         required: false
         value_ref: nv_wire_str_short
-
   NotificationPolicy:
     id_field: id
     implicit_request_identity: true
@@ -392,10 +387,10 @@ entities:
       policy_json:
         required: false
         value_ref: nv_grafana_json_text
-
   MuteTiming:
     id_field: name
-    description: Recurring mute window referenced by notification policies and alert rules.
+    description: Recurring mute window referenced by notification policies and alert
+      rules.
     primary_read: mute_timing_get
     fields:
       name:
@@ -408,7 +403,6 @@ entities:
       version:
         required: false
         value_ref: nv_wire_int
-
   Silence:
     id_field: id
     description: Alertmanager silence suppressing notifications for matching alerts.
@@ -440,7 +434,6 @@ entities:
       comment:
         required: false
         value_ref: nv_grafana_annotation_text
-
   Team:
     id_field: id
     description: Organization team for RBAC assignments and on-call grouping.
@@ -462,7 +455,6 @@ entities:
         required: false
         value_ref: nv_grafana_url
         path: avatarUrl
-
   OrgUser:
     id_field: userId
     description: Organization member account with role and profile metadata.
@@ -483,11 +475,8 @@ entities:
         data_class: pii_email
       name:
         required: false
-        value_ref: nv_grafana_title
-        data_class: pii_name
-      role:
-        required: false
         value_ref: nv_grafana_org_role
+        data_class: pii_name
       avatar_url:
         required: false
         value_ref: nv_grafana_url
@@ -496,7 +485,6 @@ entities:
         required: false
         value_ref: nv_wire_str_short
         path: lastSeenAt
-
   LibraryElement:
     id_field: uid
     description: Reusable library panel or dashboard variable definition.
@@ -525,7 +513,6 @@ entities:
         required: false
         value_ref: nv_grafana_json_text
         path: model
-
   AnnotationTag:
     id_field: tag
     description: Annotation tag with usage count for filtering markers.
@@ -536,7 +523,6 @@ entities:
       count:
         required: false
         value_ref: nv_wire_int
-
   DashboardSummary:
     id_field: uid
     description: Compact dashboard overview without loading full panel JSON.
@@ -568,9 +554,9 @@ entities:
       dashboard:
         target: Dashboard
         cardinality: one
-
   RbacRole:
     id_field: uid
+    primary_query: rbac_role_query
     description: Grafana RBAC custom or fixed role with permission grants.
     primary_read: rbac_role_get
     fields:
@@ -593,7 +579,6 @@ entities:
         required: false
         value_ref: nv_grafana_json_text
         path: permissions
-
   RbacRoleAssignment:
     id_field: role_uid
     description: Users, teams, and service accounts assigned to an RBAC role.
@@ -613,7 +598,6 @@ entities:
         required: false
         value_ref: nv_grafana_json_text
         path: serviceAccounts
-
   ResourcePermission:
     id_field: id
     implicit_request_identity: true
@@ -631,9 +615,6 @@ entities:
       permission:
         required: false
         value_ref: nv_wire_str_short
-      role:
-        required: false
-        value_ref: nv_wire_str_short
       user_id:
         required: false
         value_ref: nv_grafana_user_id
@@ -644,7 +625,6 @@ entities:
         required: false
         value_ref: nv_grafana_org_role
         path: builtInRole
-
   ResourceTypeMeta:
     id_field: resource
     description: Available permission actions and scopes for a Grafana resource type.
@@ -660,24 +640,23 @@ entities:
         required: false
         value_ref: nv_grafana_json_text
         path: scopes
-
   FrontendSettings:
     id_field: app_url
-    id_from: [appUrl]
+    id_from:
+    - appUrl
     description: Public Grafana frontend settings including the app base URL for deeplinks.
     fields:
       app_url:
         required: true
         value_ref: nv_grafana_url
         path: appUrl
-
   NavigationLink:
     id_field: resource_type
     key_vars:
-      - resource_type
-      - dashboard_uid
-      - panel_id
-      - datasource_uid
+    - resource_type
+    - dashboard_uid
+    - panel_id
+    - datasource_uid
     description: Assembled Grafana navigation URL (dashboard, panel, or Explore).
     fields:
       resource_type:
@@ -712,7 +691,6 @@ entities:
       url:
         required: false
         value_ref: nv_grafana_url
-
   PanelRender:
     id_field: dashboard_uid
     description: PNG panel or dashboard render from the Grafana image renderer.
@@ -729,7 +707,6 @@ entities:
       height:
         required: false
         value_ref: nv_wire_int
-
   SiftInvestigation:
     id_field: id
     description: Grafana Sift investigation for automated log or trace analysis.
@@ -752,7 +729,6 @@ entities:
         required: false
         value_ref: nv_grafana_json_text
         path: analyses
-
   SiftAnalysis:
     id_field: id
     description: Single Sift analysis result attached to an investigation.
@@ -777,7 +753,6 @@ entities:
         required: false
         value_ref: nv_grafana_json_text
         path: result
-
   Incident:
     id_field: incidentId
     description: Grafana Incident (IRM) record — requires grafana-irm-app plugin.
@@ -812,7 +787,6 @@ entities:
         required: false
         value_ref: nv_grafana_json_text
         path: labels
-
   IncidentActivity:
     id_field: id
     description: Timeline note or activity on a Grafana incident.
@@ -832,7 +806,6 @@ entities:
         required: false
         value_ref: nv_wire_str_short
         path: activityKind
-
   OnCallSchedule:
     id_field: id
     description: Grafana OnCall schedule — requires IRM / OnCall plugin.
@@ -854,7 +827,6 @@ entities:
         required: false
         value_ref: nv_grafana_json_text
         path: shifts
-
   OnCallShift:
     id_field: id
     description: OnCall shift definition within a schedule.
@@ -872,7 +844,6 @@ entities:
       frequency:
         required: false
         value_ref: nv_wire_str_short
-
   OnCallUser:
     id_field: id
     description: OnCall directory user (distinct from Grafana org users).
@@ -885,11 +856,7 @@ entities:
         value_ref: nv_grafana_login
       email:
         required: false
-        value_ref: nv_grafana_email
-      role:
-        required: false
         value_ref: nv_grafana_org_role
-
   OnCallTeam:
     id_field: id
     description: Team configured in Grafana OnCall.
@@ -903,7 +870,6 @@ entities:
       email:
         required: false
         value_ref: nv_grafana_email
-
   OnCallAlertGroup:
     id_field: id
     description: OnCall alert group with routing and lifecycle state.
@@ -930,1486 +896,1460 @@ entities:
         required: false
         value_ref: nv_wire_str_short
         path: createdAt
-
 capabilities:
   dashboard_query:
+    description: Full-text search for dashboards by title, tags, or folder scope.
     kind: search
     entity: Dashboard
-    description: Full-text search for dashboards by title, tags, or folder scope.
-    parameters:
-      - name: query
-        value_ref: nv_wire_str_short
-        role: search
-      - name: tag
-        value_ref: nv_wire_str_short
-        role: filter
-      - name: folder_uid
-        value_ref: nv_grafana_folder_uid
-        role: filter
-      - name: limit
-        value_ref: nv_wire_int
-        role: response_control
-
+    selection:
+    - name: query
+      value_ref: nv_wire_str_short
+      required: true
+    - name: tag
+      value_ref: nv_wire_str_short
+    - name: folder_uid
+      value_ref: nv_grafana_folder_uid
+    controls:
+    - name: limit
+      value_ref: nv_wire_int
   dashboard_get:
+    description: Load a dashboard by uid, including panel and variable JSON.
     kind: get
     entity: Dashboard
-    description: Load a dashboard by uid, including panel and variable JSON.
-    parameters:
-      - name: uid
-        value_ref: nv_grafana_dashboard_uid
-        required: true
-        role: scope
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: uid
+          value_ref: nv_grafana_dashboard_uid
+          required: true
     provides:
-      - uid
-      - title
-      - url
-      - tags
-      - description
-      - folder_uid
-      - version
-      - schema_version
-      - dashboard_json
-
+    - uid
+    - title
+    - url
+    - tags
+    - description
+    - folder_uid
+    - version
+    - schema_version
+    - dashboard_json
   dashboard_save:
+    description: Create or update a dashboard in the organization.
     kind: action
     entity: Dashboard
-    description: Create or update a dashboard in the organization.
-    parameters:
-      - name: dashboard
-        value_ref: nv_grafana_json_text
-        required: true
-      - name: folder_uid
-        value_ref: nv_grafana_folder_uid
-      - name: overwrite
-        value_ref: nv_wire_bool
-      - name: message
-        value_ref: nv_wire_str_short
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: dashboard
+          value_ref: nv_grafana_json_text
+          required: true
+        - name: folder_uid
+          value_ref: nv_grafana_folder_uid
+        - name: overwrite
+          value_ref: nv_wire_bool
+        - name: message
+          value_ref: nv_wire_str_short
     output:
       type: side_effect
       description: Persists dashboard JSON and returns the saved uid and version.
-
   dashboard_delete:
+    description: Permanently delete a dashboard by uid.
     kind: delete
     entity: Dashboard
-    description: Permanently delete a dashboard by uid.
-
   dashboard_summary_query:
+    description: Load a compact dashboard summary without full panel JSON.
     kind: query
     entity: DashboardSummary
-    description: Load a compact dashboard summary without full panel JSON.
-    parameters:
-      - name: dashboard_uid
-        value_ref: nv_grafana_dashboard_uid
-        required: true
-        role: scope
+    selection:
+    - name: dashboard_uid
+      value_ref: nv_grafana_dashboard_uid
+      required: true
     provides:
-      - uid
-      - title
-      - description
-      - tags
-      - folder_uid
-      - version
-      - schema_version
-
+    - uid
+    - title
+    - description
+    - tags
+    - folder_uid
+    - version
+    - schema_version
   dashboard_summary_get:
     kind: get
     entity: DashboardSummary
     provides:
-      - uid
-      - title
-      - description
-      - tags
-      - folder_uid
-      - version
-      - schema_version
-
+    - uid
+    - title
+    - description
+    - tags
+    - folder_uid
+    - version
+    - schema_version
   folder_query:
+    description: List all folders in the organization.
     kind: query
     entity: Folder
-    description: List all folders in the organization.
-
   folder_get:
     kind: get
     entity: Folder
     provides:
-      - uid
-      - title
-      - url
-
+    - uid
+    - title
+    - url
   folder_create:
+    description: Create a folder with a title and optional uid.
     kind: create
     entity: Folder
-    description: Create a folder with a title and optional uid.
-    parameters:
-      - name: title
-        value_ref: nv_grafana_title
-        required: true
-      - name: uid
-        value_ref: nv_grafana_uid
-
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: title
+          value_ref: nv_grafana_title
+          required: true
+        - name: uid
+          value_ref: nv_grafana_uid
   folder_update:
+    description: Rename a folder or change its uid.
     kind: update
     entity: Folder
-    description: Rename a folder or change its uid.
-    parameters:
-      - name: title
-        value_ref: nv_grafana_title
-      - name: uid
-        value_ref: nv_grafana_uid
-      - name: overwrite
-        value_ref: nv_wire_bool
-
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: title
+          value_ref: nv_grafana_title
+        - name: uid
+          value_ref: nv_grafana_uid
+        - name: overwrite
+          value_ref: nv_wire_bool
   folder_delete:
+    description: Delete a folder and optionally its dashboards.
     kind: delete
     entity: Folder
-    description: Delete a folder and optionally its dashboards.
-
   datasource_query:
+    description: List configured datasources (Prometheus, Loki, Tempo, and others).
     kind: query
     entity: Datasource
-    description: List configured datasources (Prometheus, Loki, Tempo, and others).
-
   datasource_get:
     kind: get
     entity: Datasource
     provides:
-      - uid
-      - name
-      - type
-      - url
-      - is_default
-      - access
-
+    - uid
+    - name
+    - type
+    - url
+    - is_default
+    - access
   datasource_create:
+    description: Create a datasource configuration.
     kind: create
     entity: Datasource
-    description: Create a datasource configuration.
-    parameters:
-      - name: name
-        value_ref: nv_grafana_datasource_name
-        required: true
-      - name: type
-        value_ref: nv_grafana_datasource_type
-        required: true
-      - name: url
-        value_ref: nv_grafana_url
-      - name: access
-        value_ref: nv_wire_str_short
-      - name: is_default
-        value_ref: nv_wire_bool
-      - name: json_data
-        value_ref: nv_grafana_json_text
-      - name: secure_json_data
-        value_ref: nv_grafana_json_text
-
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_grafana_datasource_name
+          required: true
+        - name: type
+          value_ref: nv_grafana_datasource_type
+          required: true
+        - name: url
+          value_ref: nv_grafana_url
+        - name: access
+          value_ref: nv_wire_str_short
+        - name: is_default
+          value_ref: nv_wire_bool
+        - name: json_data
+          value_ref: nv_grafana_json_text
+        - name: secure_json_data
+          value_ref: nv_grafana_json_text
   datasource_update:
+    description: Replace datasource settings for an existing uid.
     kind: update
     entity: Datasource
-    description: Replace datasource settings for an existing uid.
-    parameters:
-      - name: name
-        value_ref: nv_grafana_datasource_name
-        required: true
-      - name: type
-        value_ref: nv_grafana_datasource_type
-        required: true
-      - name: url
-        value_ref: nv_grafana_url
-      - name: access
-        value_ref: nv_wire_str_short
-      - name: is_default
-        value_ref: nv_wire_bool
-      - name: json_data
-        value_ref: nv_grafana_json_text
-      - name: secure_json_data
-        value_ref: nv_grafana_json_text
-
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_grafana_datasource_name
+          required: true
+        - name: type
+          value_ref: nv_grafana_datasource_type
+          required: true
+        - name: url
+          value_ref: nv_grafana_url
+        - name: access
+          value_ref: nv_wire_str_short
+        - name: is_default
+          value_ref: nv_wire_bool
+        - name: json_data
+          value_ref: nv_grafana_json_text
+        - name: secure_json_data
+          value_ref: nv_grafana_json_text
   datasource_delete:
+    description: Remove a datasource configuration.
     kind: delete
     entity: Datasource
-    description: Remove a datasource configuration.
-
   datasource_query_run:
+    description: Run PromQL, LogQL, or other queries through the unified datasource
+      query path.
     kind: action
     entity: Datasource
-    description: Run PromQL, LogQL, or other queries through the unified datasource query path.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: expr
+          value_ref: nv_wire_str_short
+          required: true
+        - name: ref_id
+          value_ref: nv_wire_str_short
+        - name: instant
+          value_ref: nv_wire_bool
+        - name: from
+          value_ref: nv_grafana_time_range
+        - name: to
+          value_ref: nv_grafana_time_range
+    provides:
+    - uid
+    - query_results
     preflight:
     - kind: hydrate_invoke_target
       get: datasource_get
       prefix: ds
-    parameters:
-      - name: expr
-        value_ref: nv_wire_str_short
-        required: true
-      - name: ref_id
-        value_ref: nv_wire_str_short
-      - name: instant
-        value_ref: nv_wire_bool
-      - name: from
-        value_ref: nv_grafana_time_range
-      - name: to
-        value_ref: nv_grafana_time_range
-    provides:
-      - uid
-      - query_results
-
   annotation_query:
+    description: Fetch annotations filtered by time range, dashboard, or tags.
     kind: query
     entity: Annotation
-    description: Fetch annotations filtered by time range, dashboard, or tags.
-    parameters:
-      - name: from
-        value_ref: nv_wire_int
-        role: filter
-      - name: to
-        value_ref: nv_wire_int
-        role: filter
-      - name: dashboard_uid
-        value_ref: nv_grafana_dashboard_uid
-        role: filter
-      - name: tags
-        value_ref: nv_grafana_tags
-        role: filter
-      - name: limit
-        value_ref: nv_wire_int
-        role: response_control
-
+    selection:
+    - name: from
+      value_ref: nv_wire_int
+    - name: to
+      value_ref: nv_wire_int
+    - name: dashboard_uid
+      value_ref: nv_grafana_dashboard_uid
+    - name: tags
+      value_ref: nv_grafana_tags
+    controls:
+    - name: limit
+      value_ref: nv_wire_int
   annotation_get:
     kind: get
     entity: Annotation
     provides:
-      - id
-      - dashboard_uid
-      - panel_id
-      - time
-      - time_end
-      - text
-      - tags
-
+    - id
+    - dashboard_uid
+    - panel_id
+    - time
+    - time_end
+    - text
+    - tags
   annotation_create:
+    description: Create a dashboard or global annotation.
     kind: create
     entity: Annotation
-    description: Create a dashboard or global annotation.
-    parameters:
-      - name: text
-        value_ref: nv_grafana_annotation_text
-        required: true
-        sink_class: external_publish
-      - name: dashboard_uid
-        value_ref: nv_grafana_dashboard_uid
-      - name: panel_id
-        value_ref: nv_wire_int
-      - name: time
-        value_ref: nv_wire_int
-      - name: time_end
-        value_ref: nv_wire_int
-      - name: tags
-        value_ref: nv_grafana_tags
-
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: text
+          value_ref: nv_grafana_annotation_text
+          required: true
+          sink_class: external_publish
+        - name: dashboard_uid
+          value_ref: nv_grafana_dashboard_uid
+        - name: panel_id
+          value_ref: nv_wire_int
+        - name: time
+          value_ref: nv_wire_int
+        - name: time_end
+          value_ref: nv_wire_int
+        - name: tags
+          value_ref: nv_grafana_tags
   annotation_update:
+    description: Patch annotation text, time, or tags.
     kind: update
     entity: Annotation
-    description: Patch annotation text, time, or tags.
-    parameters:
-      - name: text
-        value_ref: nv_grafana_annotation_text
-        sink_class: external_publish
-      - name: time
-        value_ref: nv_wire_int
-      - name: time_end
-        value_ref: nv_wire_int
-      - name: tags
-        value_ref: nv_grafana_tags
-
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: text
+          value_ref: nv_grafana_annotation_text
+          sink_class: external_publish
+        - name: time
+          value_ref: nv_wire_int
+        - name: time_end
+          value_ref: nv_wire_int
+        - name: tags
+          value_ref: nv_grafana_tags
   annotation_delete:
     kind: delete
     entity: Annotation
-
   annotation_tag_query:
+    description: List annotation tags and usage counts.
     kind: query
     entity: AnnotationTag
-    description: List annotation tags and usage counts.
-    parameters:
-      - name: tag
-        value_ref: nv_wire_str_short
-        role: filter
+    selection:
+    - name: tag
+      value_ref: nv_wire_str_short
     provides:
-      - tag
-      - count
-
+    - tag
+    - count
   alert_rule_query:
+    description: List provisioned alert rules.
     kind: query
     entity: AlertRule
-    description: List provisioned alert rules.
-
   alert_rule_get:
     kind: get
     entity: AlertRule
     provides:
-      - uid
-      - title
-      - folder_uid
-      - rule_group
-      - condition
-      - for
-      - is_paused
-      - no_data_state
-      - exec_err_state
-
+    - uid
+    - title
+    - folder_uid
+    - rule_group
+    - condition
+    - for
+    - is_paused
+    - no_data_state
+    - exec_err_state
   alert_rule_create:
+    description: Create a provisioned alert rule.
     kind: create
     entity: AlertRule
-    description: Create a provisioned alert rule.
-    parameters:
-      - name: title
-        value_ref: nv_grafana_title
-        required: true
-      - name: folderUID
-        value_ref: nv_grafana_folder_uid
-        required: true
-      - name: ruleGroup
-        value_ref: nv_wire_str_short
-        required: true
-      - name: condition
-        value_ref: nv_wire_str_short
-        required: true
-      - name: data
-        value_ref: nv_grafana_json_text
-        required: true
-      - name: for
-        value_ref: nv_grafana_duration
-      - name: noDataState
-        value_ref: nv_grafana_alert_state
-      - name: execErrState
-        value_ref: nv_grafana_alert_state
-
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: title
+          value_ref: nv_grafana_title
+          required: true
+        - name: folderUID
+          value_ref: nv_grafana_folder_uid
+          required: true
+        - name: ruleGroup
+          value_ref: nv_wire_str_short
+          required: true
+        - name: condition
+          value_ref: nv_wire_str_short
+          required: true
+        - name: data
+          value_ref: nv_grafana_json_text
+          required: true
+        - name: for
+          value_ref: nv_grafana_duration
+        - name: noDataState
+          value_ref: nv_grafana_alert_state
+        - name: execErrState
+          value_ref: nv_grafana_alert_state
   alert_rule_update:
+    description: Replace a provisioned alert rule configuration.
     kind: update
     entity: AlertRule
-    description: Replace a provisioned alert rule configuration.
-    parameters:
-      - name: title
-        value_ref: nv_grafana_title
-        required: true
-      - name: folderUID
-        value_ref: nv_grafana_folder_uid
-        required: true
-      - name: ruleGroup
-        value_ref: nv_wire_str_short
-        required: true
-      - name: condition
-        value_ref: nv_wire_str_short
-        required: true
-      - name: data
-        value_ref: nv_grafana_json_text
-        required: true
-      - name: for
-        value_ref: nv_grafana_duration
-      - name: noDataState
-        value_ref: nv_grafana_alert_state
-      - name: execErrState
-        value_ref: nv_grafana_alert_state
-
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: title
+          value_ref: nv_grafana_title
+          required: true
+        - name: folderUID
+          value_ref: nv_grafana_folder_uid
+          required: true
+        - name: ruleGroup
+          value_ref: nv_wire_str_short
+          required: true
+        - name: condition
+          value_ref: nv_wire_str_short
+          required: true
+        - name: data
+          value_ref: nv_grafana_json_text
+          required: true
+        - name: for
+          value_ref: nv_grafana_duration
+        - name: noDataState
+          value_ref: nv_grafana_alert_state
+        - name: execErrState
+          value_ref: nv_grafana_alert_state
   alert_rule_delete:
     kind: delete
     entity: AlertRule
-
   contact_point_query:
+    description: List provisioned contact points.
     kind: query
     entity: ContactPoint
-    description: List provisioned contact points.
     provides:
-      - uid
-      - name
-      - type
-
+    - uid
+    - name
+    - type
   contact_point_get:
     kind: get
     entity: ContactPoint
     provides:
-      - uid
-      - name
-      - type
-      - settings_json
-      - disable_resolve_message
-      - provenance
-
+    - uid
+    - name
+    - type
+    - settings_json
+    - disable_resolve_message
+    - provenance
   contact_point_create:
+    description: Create a provisioned contact point.
     kind: create
     entity: ContactPoint
-    description: Create a provisioned contact point.
-    parameters:
-      - name: name
-        value_ref: nv_grafana_title
-        required: true
-      - name: type
-        value_ref: nv_grafana_contact_point_type
-        required: true
-      - name: settings
-        value_ref: nv_grafana_json_value
-        required: true
-        sink_class: credentials
-      - name: disableResolveMessage
-        value_ref: nv_wire_bool
-      - name: uid
-        value_ref: nv_grafana_uid
-
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_grafana_title
+          required: true
+        - name: type
+          value_ref: nv_grafana_contact_point_type
+          required: true
+        - name: settings
+          value_ref: nv_grafana_json_value
+          required: true
+          sink_class: credentials
+        - name: disableResolveMessage
+          value_ref: nv_wire_bool
+        - name: uid
+          value_ref: nv_grafana_uid
   contact_point_update:
+    description: Replace a provisioned contact point.
     kind: update
     entity: ContactPoint
-    description: Replace a provisioned contact point.
-    parameters:
-      - name: name
-        value_ref: nv_grafana_title
-        required: true
-      - name: type
-        value_ref: nv_grafana_contact_point_type
-        required: true
-      - name: settings
-        value_ref: nv_grafana_json_value
-        required: true
-        sink_class: credentials
-      - name: disableResolveMessage
-        value_ref: nv_wire_bool
-
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_grafana_title
+          required: true
+        - name: type
+          value_ref: nv_grafana_contact_point_type
+          required: true
+        - name: settings
+          value_ref: nv_grafana_json_value
+          required: true
+          sink_class: credentials
+        - name: disableResolveMessage
+          value_ref: nv_wire_bool
   contact_point_delete:
     kind: delete
     entity: ContactPoint
-
   notification_policy_get:
+    description: Fetch the root notification policy tree.
     kind: get
     entity: NotificationPolicy
-    description: Fetch the root notification policy tree.
     provides:
-      - receiver
-      - group_by
-      - routes_json
-      - policy_json
-
+    - receiver
+    - group_by
+    - routes_json
+    - policy_json
   notification_policy_update:
+    description: Replace the root notification policy tree.
     kind: update
     entity: NotificationPolicy
-    description: Replace the root notification policy tree.
-    parameters:
-      - name: receiver
-        value_ref: nv_wire_str_short
-        required: true
-      - name: group_by
-        value_ref: nv_grafana_tags
-        required: true
-      - name: routes
-        value_ref: nv_grafana_json_value
-
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: receiver
+          value_ref: nv_wire_str_short
+          required: true
+        - name: group_by
+          value_ref: nv_grafana_tags
+          required: true
+        - name: routes
+          value_ref: nv_grafana_json_value
   notification_policy_reset:
+    description: Reset notification policies to Grafana defaults.
     kind: delete
     entity: NotificationPolicy
-    description: Reset notification policies to Grafana defaults.
-
   mute_timing_query:
+    description: List provisioned mute timings.
     kind: query
     entity: MuteTiming
-    description: List provisioned mute timings.
     provides:
-      - name
-      - version
-
+    - name
+    - version
   mute_timing_get:
     kind: get
     entity: MuteTiming
     provides:
-      - name
-      - time_intervals_json
-      - version
-
+    - name
+    - time_intervals_json
+    - version
   mute_timing_create:
+    description: Create a provisioned mute timing window.
     kind: create
     entity: MuteTiming
-    description: Create a provisioned mute timing window.
-    parameters:
-      - name: name
-        value_ref: nv_grafana_mute_timing_name
-        required: true
-      - name: time_intervals
-        value_ref: nv_grafana_json_value
-        required: true
-
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_grafana_mute_timing_name
+          required: true
+        - name: time_intervals
+          value_ref: nv_grafana_json_value
+          required: true
   mute_timing_update:
+    description: Replace a provisioned mute timing window.
     kind: update
     entity: MuteTiming
-    description: Replace a provisioned mute timing window.
-    parameters:
-      - name: name
-        value_ref: nv_grafana_mute_timing_name
-        required: true
-      - name: time_intervals
-        value_ref: nv_grafana_json_value
-        required: true
-
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_grafana_mute_timing_name
+          required: true
+        - name: time_intervals
+          value_ref: nv_grafana_json_value
+          required: true
   mute_timing_delete:
     kind: delete
     entity: MuteTiming
-
   silence_query:
+    description: List active and pending alert silences.
     kind: query
     entity: Silence
-    description: List active and pending alert silences.
     provides:
-      - id
-      - starts_at
-      - ends_at
-      - created_by
-      - comment
-
+    - id
+    - starts_at
+    - ends_at
+    - created_by
+    - comment
   silence_get:
     kind: get
     entity: Silence
     provides:
-      - id
-      - status_json
-      - matchers_json
-      - starts_at
-      - ends_at
-      - created_by
-      - comment
-
+    - id
+    - status_json
+    - matchers_json
+    - starts_at
+    - ends_at
+    - created_by
+    - comment
   silence_create:
+    description: Create an alertmanager silence.
     kind: create
     entity: Silence
-    description: Create an alertmanager silence.
-    parameters:
-      - name: matchers
-        value_ref: nv_grafana_json_value
-        required: true
-      - name: startsAt
-        value_ref: nv_wire_str_short
-        required: true
-      - name: endsAt
-        value_ref: nv_wire_str_short
-        required: true
-      - name: createdBy
-        value_ref: nv_wire_str_short
-        required: true
-      - name: comment
-        value_ref: nv_grafana_annotation_text
-        required: true
-
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: matchers
+          value_ref: nv_grafana_json_value
+          required: true
+        - name: startsAt
+          value_ref: nv_wire_str_short
+          required: true
+        - name: endsAt
+          value_ref: nv_wire_str_short
+          required: true
+        - name: createdBy
+          value_ref: nv_wire_str_short
+          required: true
+        - name: comment
+          value_ref: nv_grafana_annotation_text
+          required: true
   silence_delete:
+    description: Expire an alertmanager silence.
     kind: delete
     entity: Silence
-    description: Expire an alertmanager silence.
-
   team_query:
+    description: Search organization teams by name.
     kind: query
     entity: Team
-    description: Search organization teams by name.
-    parameters:
-      - name: query
-        value_ref: nv_wire_str_short
-        role: search
-      - name: page
-        value_ref: nv_wire_int
-        role: response_control
-      - name: perpage
-        value_ref: nv_wire_int
-        role: response_control
+    selection:
+    - name: query
+      value_ref: nv_wire_str_short
+    - name: perpage
+      value_ref: nv_wire_int
+    controls:
+    - name: page
+      value_ref: nv_wire_int
     provides:
-      - id
-      - uid
-      - name
-      - email
-
+    - id
+    - uid
+    - name
+    - email
   team_get:
     kind: get
     entity: Team
     provides:
-      - id
-      - uid
-      - name
-      - email
-      - avatar_url
-
+    - id
+    - uid
+    - name
+    - email
+    - avatar_url
   team_create:
+    description: Create an organization team.
     kind: create
     entity: Team
-    description: Create an organization team.
-    parameters:
-      - name: name
-        value_ref: nv_grafana_team_name
-        required: true
-      - name: email
-        value_ref: nv_grafana_email
-
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_grafana_team_name
+          required: true
+        - name: email
+          value_ref: nv_grafana_email
   team_update:
+    description: Update team name or email.
     kind: update
     entity: Team
-    description: Update team name or email.
-    parameters:
-      - name: name
-        value_ref: nv_grafana_team_name
-      - name: email
-        value_ref: nv_grafana_email
-
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_grafana_team_name
+        - name: email
+          value_ref: nv_grafana_email
   team_delete:
     kind: delete
     entity: Team
-
   org_user_query:
+    description: List users in the current organization.
     kind: query
     entity: OrgUser
-    description: List users in the current organization.
     provides:
-      - userId
-      - uid
-      - login
-      - email
-      - role
-
+    - userId
+    - uid
+    - login
+    - email
+    - role
   org_user_update:
+    description: Change a user's organization role.
     kind: update
     entity: OrgUser
-    description: Change a user's organization role.
-    parameters:
-      - name: role
-        value_ref: nv_grafana_org_role
-        required: true
-
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: role
+          value_ref: nv_grafana_org_role
+          required: true
   org_user_delete:
+    description: Remove a user from the organization.
     kind: delete
     entity: OrgUser
-    description: Remove a user from the organization.
-
   library_element_query:
+    description: Search library panels and variables.
     kind: query
     entity: LibraryElement
-    description: Search library panels and variables.
-    parameters:
-      - name: searchString
-        value_ref: nv_wire_str_short
-        role: search
-      - name: kind
-        value_ref: nv_grafana_library_kind
-        role: filter
-      - name: folderUIDs
-        value_ref: nv_grafana_folder_uid
-        role: filter
-      - name: perPage
-        value_ref: nv_wire_int
-        role: response_control
+    selection:
+    - name: searchString
+      value_ref: nv_wire_str_short
+    - name: kind
+      value_ref: nv_grafana_library_kind
+    - name: folderUIDs
+      value_ref: nv_grafana_folder_uid
+    - name: perPage
+      value_ref: nv_wire_int
     provides:
-      - uid
-      - name
-      - kind
-      - type
-      - folder_uid
-
+    - uid
+    - name
+    - kind
+    - type
+    - folder_uid
   library_element_get:
     kind: get
     entity: LibraryElement
     provides:
-      - uid
-      - name
-      - kind
-      - type
-      - description
-      - folder_uid
-      - model_json
-
+    - uid
+    - name
+    - kind
+    - type
+    - description
+    - folder_uid
+    - model_json
   library_element_create:
+    description: Create a library panel or variable element.
     kind: create
     entity: LibraryElement
-    description: Create a library panel or variable element.
-    parameters:
-      - name: name
-        value_ref: nv_grafana_title
-        required: true
-      - name: kind
-        value_ref: nv_grafana_library_kind
-        required: true
-      - name: model
-        value_ref: nv_grafana_json_value
-        required: true
-      - name: folderUid
-        value_ref: nv_grafana_folder_uid
-
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_grafana_title
+          required: true
+        - name: kind
+          value_ref: nv_grafana_library_kind
+          required: true
+        - name: model
+          value_ref: nv_grafana_json_value
+          required: true
+        - name: folderUid
+          value_ref: nv_grafana_folder_uid
   library_element_update:
+    description: Update library element metadata or model JSON.
     kind: update
     entity: LibraryElement
-    description: Update library element metadata or model JSON.
-    parameters:
-      - name: name
-        value_ref: nv_grafana_title
-        required: true
-      - name: kind
-        value_ref: nv_grafana_library_kind
-        required: true
-      - name: model
-        value_ref: nv_grafana_json_value
-        required: true
-      - name: folderUid
-        value_ref: nv_grafana_folder_uid
-
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_grafana_title
+          required: true
+        - name: kind
+          value_ref: nv_grafana_library_kind
+          required: true
+        - name: model
+          value_ref: nv_grafana_json_value
+          required: true
+        - name: folderUid
+          value_ref: nv_grafana_folder_uid
   library_element_delete:
     kind: delete
     entity: LibraryElement
-
-  # ── RBAC ───────────────────────────────────────────────────────────────────
-
   rbac_role_query:
+    description: List RbacRole by shelf (rbac_role | org_user_rbac_role | team_rbac_role).
     kind: query
     entity: RbacRole
-    description: List Grafana RBAC roles (optionally delegatable only).
-    parameters:
-      - name: delegatable_only
-        value_ref: nv_wire_bool
-        role: filter
+    scope: []
+    selection:
+    - name: shelf
+      value_ref: nv_rbacrole_query_shelf
+      required: true
+      description: rbac_role | org_user_rbac_role | team_rbac_role
+    - name: delegatable_only
+      value_ref: nv_wire_bool
+    - name: user_id
+      value_ref: nv_grafana_user_ref
+      required: false
+    - name: team_id
+      value_ref: nv_grafana_team_ref
+      required: false
+    controls: []
     provides:
-      - uid
-      - name
-      - description
-
+    - uid
+    - name
+    - description
   rbac_role_get:
     kind: get
     entity: RbacRole
     provides:
-      - uid
-      - name
-      - description
-      - version
-      - global
-      - permissions_json
-
+    - uid
+    - name
+    - description
+    - version
+    - global
+    - permissions_json
   rbac_role_create:
+    description: Create a custom RBAC role with permissions.
     kind: create
     entity: RbacRole
-    description: Create a custom RBAC role with permissions.
-    parameters:
-      - name: name
-        value_ref: nv_grafana_title
-        required: true
-      - name: description
-        value_ref: nv_grafana_description
-      - name: uid
-        value_ref: nv_grafana_role_uid
-      - name: global
-        value_ref: nv_wire_bool
-      - name: permissions
-        value_ref: nv_grafana_json_value
-        required: true
-
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_grafana_title
+          required: true
+        - name: description
+          value_ref: nv_grafana_description
+        - name: uid
+          value_ref: nv_grafana_role_uid
+        - name: global
+          value_ref: nv_wire_bool
+        - name: permissions
+          value_ref: nv_grafana_json_value
+          required: true
   rbac_role_update:
+    description: Replace permissions on an RBAC role (increment version).
     kind: update
     entity: RbacRole
-    description: Replace permissions on an RBAC role (increment version).
-    parameters:
-      - name: name
-        value_ref: nv_grafana_title
-      - name: description
-        value_ref: nv_grafana_description
-      - name: version
-        value_ref: nv_wire_int
-        required: true
-      - name: global
-        value_ref: nv_wire_bool
-      - name: permissions
-        value_ref: nv_grafana_json_value
-        required: true
-
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_grafana_title
+        - name: description
+          value_ref: nv_grafana_description
+        - name: version
+          value_ref: nv_wire_int
+          required: true
+        - name: global
+          value_ref: nv_wire_bool
+        - name: permissions
+          value_ref: nv_grafana_json_value
+          required: true
   rbac_role_delete:
+    description: Delete an RBAC role; optional force drops existing assignments.
     kind: delete
     entity: RbacRole
-    description: Delete an RBAC role; optional force drops existing assignments.
-    parameters:
-      - name: force
-        value_ref: nv_wire_bool
-
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: force
+          value_ref: nv_wire_bool
   rbac_role_assignment_get:
+    description: List users, teams, and service accounts assigned to a role.
     kind: get
     entity: RbacRoleAssignment
-    description: List users, teams, and service accounts assigned to a role.
     provides:
-      - role_uid
-      - users_json
-      - teams_json
-      - service_accounts_json
-
-  org_user_rbac_role_query:
-    kind: query
-    entity: RbacRole
-    description: List RBAC roles directly assigned to an org user.
-    parameters:
-      - name: user_id
-        value_ref: nv_grafana_user_ref
-        required: true
-        role: scope
-    provides:
-      - uid
-      - name
-
+    - role_uid
+    - users_json
+    - teams_json
+    - service_accounts_json
   org_user_role_assign:
+    description: Assign one RBAC role to an org user.
     kind: action
     entity: OrgUser
-    description: Assign one RBAC role to an org user.
-    parameters:
-      - name: role_uid
-        value_ref: nv_grafana_role_ref
-        required: true
-        sink_class: permission_grant
-      - name: global
-        value_ref: nv_wire_bool
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: role_uid
+          value_ref: nv_grafana_role_ref
+          required: true
+          sink_class: permission_grant
+        - name: global
+          value_ref: nv_wire_bool
     output:
       type: side_effect
       description: Adds the RBAC role assignment for the org user.
-
   org_user_roles_set:
+    description: Replace the org user's RBAC role set with the given role UIDs.
     kind: update
     entity: OrgUser
-    description: Replace the org user's RBAC role set with the given role UIDs.
-    parameters:
-      - name: role_uids
-        value_ref: nv_grafana_tags
-        required: true
-        sink_class: permission_grant
-      - name: global
-        value_ref: nv_wire_bool
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: role_uids
+          value_ref: nv_grafana_tags
+          required: true
+          sink_class: permission_grant
+        - name: global
+          value_ref: nv_wire_bool
     output:
       type: side_effect
       description: Synchronizes RBAC role assignments for the org user.
-
   org_user_role_revoke:
-    kind: delete
-    entity: OrgUser
     description: Revoke one RBAC role from an org user.
-    parameters:
-      - name: role_uid
-        value_ref: nv_grafana_role_ref
-        required: true
-      - name: global
-        value_ref: nv_wire_bool
-
-  team_rbac_role_query:
-    kind: query
-    entity: RbacRole
-    description: List RBAC roles assigned to a team.
-    parameters:
-      - name: team_id
-        value_ref: nv_grafana_team_ref
-        required: true
-        role: scope
-    provides:
-      - uid
-      - name
-
+    kind: action
+    entity: OrgUser
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: role_uid
+          value_ref: nv_grafana_role_ref
+          required: true
+        - name: global
+          value_ref: nv_wire_bool
+    output:
+      type: side_effect
+      description: Removes the specified role assignment from the user; the user remains.
   team_role_assign:
+    description: Assign one RBAC role to a team.
     kind: action
     entity: Team
-    description: Assign one RBAC role to a team.
-    parameters:
-      - name: role_uid
-        value_ref: nv_grafana_role_ref
-        required: true
-        sink_class: permission_grant
-      - name: global
-        value_ref: nv_wire_bool
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: role_uid
+          value_ref: nv_grafana_role_ref
+          required: true
+          sink_class: permission_grant
     output:
       type: side_effect
       description: Adds the RBAC role assignment for the team.
-
   team_roles_set:
+    description: Replace the team's RBAC role set with the given role UIDs.
     kind: update
     entity: Team
-    description: Replace the team's RBAC role set with the given role UIDs.
-    parameters:
-      - name: role_uids
-        value_ref: nv_grafana_tags
-        required: true
-        sink_class: permission_grant
-      - name: global
-        value_ref: nv_wire_bool
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: role_uids
+          value_ref: nv_grafana_tags
+          required: true
+          sink_class: permission_grant
     output:
       type: side_effect
       description: Synchronizes RBAC role assignments for the team.
-
   team_role_revoke:
-    kind: delete
-    entity: Team
     description: Revoke one RBAC role from a team.
-    parameters:
-      - name: role_uid
-        value_ref: nv_grafana_role_ref
-        required: true
-      - name: global
-        value_ref: nv_wire_bool
-
+    kind: action
+    entity: Team
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: role_uid
+          value_ref: nv_grafana_role_ref
+          required: true
+    output:
+      type: side_effect
+      description: Removes the specified role assignment from the team; the team remains.
   resource_permission_query:
+    description: List permissions on a dashboard, folder, or datasource.
     kind: query
     entity: ResourcePermission
-    description: List permissions on a dashboard, folder, or datasource.
-    parameters:
-      - name: resource
-        value_ref: nv_grafana_resource_type
-        required: true
-        role: scope
-      - name: resource_id
-        value_ref: nv_grafana_uid
-        required: true
-        role: scope
+    selection:
+    - name: resource
+      value_ref: nv_grafana_resource_type
+      required: true
+    - name: resource_id
+      value_ref: nv_grafana_uid
+      required: true
     provides:
-      - permission
-      - role
-      - user_id
-      - team_id
-
+    - permission
+    - role
+    - user_id
+    - team_id
   resource_type_description_get:
+    description: Describe assignable actions and scopes for a resource type.
     kind: get
     entity: ResourceTypeMeta
-    description: Describe assignable actions and scopes for a resource type.
-    parameters:
-      - name: resource
-        value_ref: nv_grafana_resource_type
-        required: true
-        role: scope
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: resource
+          value_ref: nv_grafana_resource_type
+          required: true
     provides:
-      - resource
-      - actions_json
-      - scopes_json
-
-  # ── Datasource explorers ─────────────────────────────────────────────────────
-
+    - resource
+    - actions_json
+    - scopes_json
   datasource_prometheus_label_names_query:
-    kind: action
-    entity: Datasource
     description: List Prometheus label names through the datasource discovery proxy.
+    kind: action
+    entity: Datasource
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: from
+          value_ref: nv_grafana_time_range
+        - name: to
+          value_ref: nv_grafana_time_range
+    provides:
+    - uid
+    - discovery_data
     preflight:
     - kind: hydrate_invoke_target
       get: datasource_get
       prefix: ds
-    parameters:
-      - name: from
-        value_ref: nv_grafana_time_range
-      - name: to
-        value_ref: nv_grafana_time_range
-    provides:
-      - uid
-      - discovery_data
-
   datasource_prometheus_label_values_query:
-    kind: action
-    entity: Datasource
     description: List values for one Prometheus label name.
+    kind: action
+    entity: Datasource
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: label_name
+          value_ref: nv_grafana_label_name
+          required: true
+        - name: from
+          value_ref: nv_grafana_time_range
+        - name: to
+          value_ref: nv_grafana_time_range
+    provides:
+    - uid
+    - discovery_data
     preflight:
     - kind: hydrate_invoke_target
       get: datasource_get
       prefix: ds
-    parameters:
-      - name: label_name
-        value_ref: nv_grafana_label_name
-        required: true
-      - name: from
-        value_ref: nv_grafana_time_range
-      - name: to
-        value_ref: nv_grafana_time_range
-    provides:
-      - uid
-      - discovery_data
-
   datasource_prometheus_metric_names_query:
-    kind: action
-    entity: Datasource
     description: List Prometheus metric names (__name__ label values).
+    kind: action
+    entity: Datasource
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: from
+          value_ref: nv_grafana_time_range
+        - name: to
+          value_ref: nv_grafana_time_range
+        - name: regex
+          value_ref: nv_wire_str_short
+    provides:
+    - uid
+    - discovery_data
     preflight:
     - kind: hydrate_invoke_target
       get: datasource_get
       prefix: ds
-    parameters:
-      - name: from
-        value_ref: nv_grafana_time_range
-      - name: to
-        value_ref: nv_grafana_time_range
-      - name: regex
-        value_ref: nv_wire_str_short
-    provides:
-      - uid
-      - discovery_data
-
   datasource_loki_label_names_query:
-    kind: action
-    entity: Datasource
     description: List Loki label names through the datasource discovery proxy.
+    kind: action
+    entity: Datasource
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: from
+          value_ref: nv_grafana_time_range
+        - name: to
+          value_ref: nv_grafana_time_range
+    provides:
+    - uid
+    - discovery_data
     preflight:
     - kind: hydrate_invoke_target
       get: datasource_get
       prefix: ds
-    parameters:
-      - name: from
-        value_ref: nv_grafana_time_range
-      - name: to
-        value_ref: nv_grafana_time_range
-    provides:
-      - uid
-      - discovery_data
-
   datasource_loki_label_values_query:
-    kind: action
-    entity: Datasource
     description: List Loki values for one label name.
+    kind: action
+    entity: Datasource
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: label_name
+          value_ref: nv_grafana_label_name
+          required: true
+        - name: from
+          value_ref: nv_grafana_time_range
+        - name: to
+          value_ref: nv_grafana_time_range
+    provides:
+    - uid
+    - discovery_data
     preflight:
     - kind: hydrate_invoke_target
       get: datasource_get
       prefix: ds
-    parameters:
-      - name: label_name
-        value_ref: nv_grafana_label_name
-        required: true
-      - name: from
-        value_ref: nv_grafana_time_range
-      - name: to
-        value_ref: nv_grafana_time_range
-    provides:
-      - uid
-      - discovery_data
-
   datasource_loki_patterns_query:
-    kind: action
-    entity: Datasource
     description: Detect log patterns for a Loki stream selector.
+    kind: action
+    entity: Datasource
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: logql
+          value_ref: nv_grafana_logql
+          required: true
+        - name: from
+          value_ref: nv_grafana_time_range
+        - name: to
+          value_ref: nv_grafana_time_range
+        - name: step
+          value_ref: nv_grafana_duration
+    provides:
+    - uid
+    - discovery_data
     preflight:
     - kind: hydrate_invoke_target
       get: datasource_get
       prefix: ds
-    parameters:
-      - name: logql
-        value_ref: nv_grafana_logql
-        required: true
-      - name: from
-        value_ref: nv_grafana_time_range
-      - name: to
-        value_ref: nv_grafana_time_range
-      - name: step
-        value_ref: nv_grafana_duration
-    provides:
-      - uid
-      - discovery_data
-
   datasource_loki_stats_query:
-    kind: action
-    entity: Datasource
     description: Approximate Loki index stats for a stream selector.
+    kind: action
+    entity: Datasource
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: logql
+          value_ref: nv_grafana_logql
+          required: true
+        - name: from
+          value_ref: nv_grafana_time_range
+        - name: to
+          value_ref: nv_grafana_time_range
+    provides:
+    - uid
+    - query_results
     preflight:
     - kind: hydrate_invoke_target
       get: datasource_get
       prefix: ds
-    parameters:
-      - name: logql
-        value_ref: nv_grafana_logql
-        required: true
-      - name: from
-        value_ref: nv_grafana_time_range
-      - name: to
-        value_ref: nv_grafana_time_range
-    provides:
-      - uid
-      - query_results
-
   datasource_clickhouse_query_run:
-    kind: action
-    entity: Datasource
     description: Run raw SQL against a ClickHouse datasource through unified query.
+      Express any row limit in the SQL query.
+    kind: action
+    entity: Datasource
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: query
+          value_ref: nv_grafana_sql
+          required: true
+        - name: from
+          value_ref: nv_grafana_time_range
+        - name: to
+          value_ref: nv_grafana_time_range
+    provides:
+    - uid
+    - query_results
     preflight:
     - kind: hydrate_invoke_target
       get: datasource_get
       prefix: ds
-    parameters:
-      - name: query
-        value_ref: nv_grafana_sql
-        required: true
-      - name: from
-        value_ref: nv_grafana_time_range
-      - name: to
-        value_ref: nv_grafana_time_range
-      - name: limit
-        value_ref: nv_wire_int
-    provides:
-      - uid
-      - query_results
-
   datasource_clickhouse_table_query:
-    kind: action
-    entity: Datasource
     description: List ClickHouse tables from system.tables.
-    preflight:
-    - kind: hydrate_invoke_target
-      get: datasource_get
-      prefix: ds
-    parameters:
-      - name: database
-        value_ref: nv_wire_str_short
-    provides:
-      - uid
-      - query_results
-
-  datasource_clickhouse_column_query:
     kind: action
     entity: Datasource
-    description: Describe columns for a ClickHouse table via system.columns.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: database
+          value_ref: nv_wire_str_short
+    provides:
+    - uid
+    - query_results
     preflight:
     - kind: hydrate_invoke_target
       get: datasource_get
       prefix: ds
-    parameters:
-      - name: table
-        value_ref: nv_wire_str_short
-        required: true
-      - name: database
-        value_ref: nv_wire_str_short
+  datasource_clickhouse_column_query:
+    description: Describe columns for a ClickHouse table via system.columns.
+    kind: action
+    entity: Datasource
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: table
+          value_ref: nv_wire_str_short
+          required: true
+        - name: database
+          value_ref: nv_wire_str_short
     provides:
-      - uid
-      - query_results
-
-  # ── Navigation / render ──────────────────────────────────────────────────────
-
+    - uid
+    - query_results
+    preflight:
+    - kind: hydrate_invoke_target
+      get: datasource_get
+      prefix: ds
   frontend_settings_query:
+    description: Load public frontend settings (appUrl for deeplinks).
     kind: query
     entity: FrontendSettings
-    description: Load public frontend settings (appUrl for deeplinks).
     provides:
-      - app_url
-
+    - app_url
   deeplink_generate_query:
+    description: 'Compose a Grafana navigation URL (MCP generate_deeplink parity).
+
+      Loads appUrl from frontend settings; returns assembled `url` plus scope echo
+      fields.
+
+      '
     kind: query
     entity: NavigationLink
-    description: |
-      Compose a Grafana navigation URL (MCP generate_deeplink parity).
-      Loads appUrl from frontend settings; returns assembled `url` plus scope echo fields.
-    parameters:
-      - name: resource_type
-        value_ref: nv_grafana_deeplink_type
-        required: true
-        role: scope
-      - name: dashboard_uid
-        value_ref: nv_grafana_dashboard_uid
-        role: scope
-      - name: panel_id
-        value_ref: nv_wire_int
-        role: scope
-      - name: datasource_uid
-        value_ref: nv_grafana_datasource_uid
-        role: scope
-      - name: queries_json
-        value_ref: nv_grafana_json_text
-        role: scope
-      - name: query_params_json
-        value_ref: nv_grafana_json_text
-        role: scope
-      - name: from
-        value_ref: nv_grafana_time_range
-        role: scope
-      - name: to
-        value_ref: nv_grafana_time_range
-        role: scope
+    selection:
+    - name: resource_type
+      value_ref: nv_grafana_deeplink_type
+      required: true
+    - name: dashboard_uid
+      value_ref: nv_grafana_dashboard_uid
+    - name: panel_id
+      value_ref: nv_wire_int
+    - name: datasource_uid
+      value_ref: nv_grafana_datasource_uid
+    - name: queries_json
+      value_ref: nv_grafana_json_text
+    - name: query_params_json
+      value_ref: nv_grafana_json_text
+    - name: from
+      value_ref: nv_grafana_time_range
+    - name: to
+      value_ref: nv_grafana_time_range
     provides:
-      - resource_type
-      - url
-      - app_url
-      - dashboard_uid
-      - panel_id
-      - datasource_uid
-      - queries_json
-      - query_params_json
-      - from
-      - to
-
+    - resource_type
+    - url
+    - app_url
+    - dashboard_uid
+    - panel_id
+    - datasource_uid
+    - queries_json
+    - query_params_json
+    - from
+    - to
   panel_render_query:
+    description: Fetch a PNG render of a dashboard panel (requires image renderer).
     kind: query
     entity: PanelRender
-    description: Fetch a PNG render of a dashboard panel (requires image renderer).
-    parameters:
-      - name: dashboard_uid
-        value_ref: nv_grafana_dashboard_uid
-        required: true
-        role: scope
-      - name: panel_id
-        value_ref: nv_wire_int
-        role: filter
-      - name: width
-        value_ref: nv_wire_int
-        role: response_control
-      - name: height
-        value_ref: nv_wire_int
-        role: response_control
-      - name: from
-        value_ref: nv_grafana_time_range
-        role: filter
-      - name: to
-        value_ref: nv_grafana_time_range
-        role: filter
-      - name: theme
-        value_ref: nv_wire_str_short
-        role: filter
+    selection:
+    - name: dashboard_uid
+      value_ref: nv_grafana_dashboard_uid
+      required: true
+    - name: panel_id
+      value_ref: nv_wire_int
+    - name: width
+      value_ref: nv_wire_int
+    - name: height
+      value_ref: nv_wire_int
+    - name: from
+      value_ref: nv_grafana_time_range
+    - name: to
+      value_ref: nv_grafana_time_range
+    - name: theme
+      value_ref: nv_wire_str_short
     provides:
-      - dashboard_uid
-      - panel_id
-
+    - dashboard_uid
+    - panel_id
   panel_query_run:
+    description: Run a dashboard panel query when expr and datasource uid are known
+      (from dashboard_get panel targets).
     kind: action
     entity: Datasource
-    description: Run a dashboard panel query when expr and datasource uid are known (from dashboard_get panel targets).
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: expr
+          value_ref: nv_wire_str_short
+          required: true
+        - name: dashboard_uid
+          value_ref: nv_grafana_dashboard_uid
+        - name: panel_id
+          value_ref: nv_wire_int
+        - name: from
+          value_ref: nv_grafana_time_range
+        - name: to
+          value_ref: nv_grafana_time_range
+        - name: instant
+          value_ref: nv_wire_bool
+    provides:
+    - uid
+    - query_results
     preflight:
     - kind: hydrate_invoke_target
       get: datasource_get
       prefix: ds
-    parameters:
-      - name: expr
-        value_ref: nv_wire_str_short
-        required: true
-      - name: dashboard_uid
-        value_ref: nv_grafana_dashboard_uid
-      - name: panel_id
-        value_ref: nv_wire_int
-      - name: from
-        value_ref: nv_grafana_time_range
-      - name: to
-        value_ref: nv_grafana_time_range
-      - name: instant
-        value_ref: nv_wire_bool
-    provides:
-      - uid
-      - query_results
-
-  # ── Sift (grafana-ml-app plugin) ─────────────────────────────────────────────
-
   sift_investigation_query:
+    description: List Sift investigations (requires grafana-ml-app plugin).
     kind: query
     entity: SiftInvestigation
-    description: List Sift investigations (requires grafana-ml-app plugin).
-    parameters:
-      - name: limit
-        value_ref: nv_wire_int
-        role: response_control
+    selection: []
+    controls:
+    - name: limit
+      value_ref: nv_wire_int
     provides:
-      - id
-      - name
-      - status
-
+    - id
+    - name
+    - status
   sift_investigation_get:
     kind: get
     entity: SiftInvestigation
     provides:
-      - id
-      - name
-      - status
-      - failure_reason
-      - analyses_json
-
+    - id
+    - name
+    - status
+    - failure_reason
+    - analyses_json
   sift_investigation_create:
+    description: Create a Sift investigation with labels and optional checks.
     kind: create
     entity: SiftInvestigation
-    description: Create a Sift investigation with labels and optional checks.
-    parameters:
-      - name: name
-        value_ref: nv_grafana_title
-        required: true
-      - name: labels
-        value_ref: nv_grafana_json_value
-        required: true
-      - name: start
-        value_ref: nv_wire_str_short
-      - name: end
-        value_ref: nv_wire_str_short
-      - name: checks
-        value_ref: nv_grafana_tags
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_grafana_title
+          required: true
+        - name: labels
+          value_ref: nv_grafana_json_value
+          required: true
+        - name: start
+          value_ref: nv_wire_str_short
+        - name: end
+          value_ref: nv_wire_str_short
+        - name: checks
+          value_ref: nv_grafana_tags
     output:
       type: side_effect
       description: Starts a Sift investigation and returns the created record.
-
   sift_analysis_query:
+    description: List analyses for a Sift investigation.
     kind: query
     entity: SiftAnalysis
-    description: List analyses for a Sift investigation.
-    parameters:
-      - name: investigation_id
-        value_ref: nv_grafana_investigation_ref
-        required: true
-        role: scope
+    selection:
+    - name: investigation_id
+      value_ref: nv_grafana_investigation_ref
+      required: true
     provides:
-      - id
-      - name
-      - status
-      - title
-
-  # ── Incident (grafana-irm-app plugin RPC) ────────────────────────────────────
-
+    - id
+    - name
+    - status
+    - title
   incident_query:
+    description: Search Grafana Incident previews (requires grafana-irm-app plugin).
     kind: query
     entity: Incident
-    description: Search Grafana Incident previews (requires grafana-irm-app plugin).
-    parameters:
-      - name: limit
-        value_ref: nv_wire_int
-        role: response_control
-      - name: query_string
-        value_ref: nv_wire_str_short
-        role: search
+    selection:
+    - name: query_string
+      value_ref: nv_wire_str_short
+    controls:
+    - name: limit
+      value_ref: nv_wire_int
     provides:
-      - incidentId
-      - title
-      - status
-      - severity
-
+    - incidentId
+    - title
+    - status
+    - severity
   incident_get:
     kind: get
     entity: Incident
     provides:
-      - incidentId
-      - title
-      - status
-      - severity
-      - is_drill
-      - created_time
-      - labels_json
-
+    - incidentId
+    - title
+    - status
+    - severity
+    - is_drill
+    - created_time
+    - labels_json
   incident_create:
+    description: Create a Grafana incident (Editor role; may notify responders).
     kind: create
     entity: Incident
-    description: Create a Grafana incident (Editor role; may notify responders).
-    parameters:
-      - name: title
-        value_ref: nv_grafana_title
-        required: true
-      - name: severity
-        value_ref: nv_grafana_incident_severity
-        required: true
-      - name: room_prefix
-        value_ref: nv_wire_str_short
-        required: true
-      - name: is_drill
-        value_ref: nv_wire_bool
-      - name: labels
-        value_ref: nv_grafana_json_value
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: title
+          value_ref: nv_grafana_title
+          required: true
+        - name: severity
+          value_ref: nv_grafana_incident_severity
+          required: true
+        - name: room_prefix
+          value_ref: nv_wire_str_short
+          required: true
+        - name: is_drill
+          value_ref: nv_wire_bool
+        - name: labels
+          value_ref: nv_grafana_json_value
     output:
       type: side_effect
       description: Opens a new Grafana incident and returns the incident record.
-
   incident_activity_create:
+    description: Add a user note to an incident timeline.
     kind: create
     entity: IncidentActivity
-    description: Add a user note to an incident timeline.
-    parameters:
-      - name: incident_id
-        value_ref: nv_grafana_incident_ref
-        required: true
-      - name: body
-        value_ref: nv_grafana_annotation_text
-        required: true
-        sink_class: external_publish
-      - name: event_time
-        value_ref: nv_wire_str_short
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: incident_id
+          value_ref: nv_grafana_incident_ref
+          required: true
+        - name: body
+          value_ref: nv_grafana_annotation_text
+          required: true
+          sink_class: external_publish
+        - name: event_time
+          value_ref: nv_wire_str_short
     output:
       type: side_effect
       description: Appends an activity item to the incident timeline.
-
-  # ── OnCall (grafana-irm-app plugin proxy) ────────────────────────────────────
-
   oncall_schedule_query:
+    description: List OnCall schedules via the IRM plugin proxy.
     kind: query
     entity: OnCallSchedule
-    description: List OnCall schedules via the IRM plugin proxy.
-    parameters:
-      - name: team_id
-        value_ref: nv_grafana_oncall_id
-        role: filter
-      - name: page
-        value_ref: nv_wire_int
-        role: response_control
+    selection:
+    - name: team_id
+      value_ref: nv_grafana_oncall_id
+    controls:
+    - name: page
+      value_ref: nv_wire_int
     provides:
-      - id
-      - name
-      - timezone
-
+    - id
+    - name
+    - timezone
   oncall_shift_get:
     kind: get
     entity: OnCallShift
     provides:
-      - id
-      - name
-      - type
-      - frequency
-
+    - id
+    - name
+    - type
+    - frequency
   oncall_user_query:
+    description: List OnCall directory users.
     kind: query
     entity: OnCallUser
-    description: List OnCall directory users.
-    parameters:
-      - name: username
-        value_ref: nv_grafana_login
-        role: search
-      - name: page
-        value_ref: nv_wire_int
-        role: response_control
+    selection:
+    - name: username
+      value_ref: nv_grafana_login
+    controls:
+    - name: page
+      value_ref: nv_wire_int
     provides:
-      - id
-      - username
-      - email
-
+    - id
+    - username
+    - email
   oncall_team_query:
+    description: List OnCall teams.
     kind: query
     entity: OnCallTeam
-    description: List OnCall teams.
-    parameters:
-      - name: page
-        value_ref: nv_wire_int
-        role: response_control
+    selection: []
+    controls:
+    - name: page
+      value_ref: nv_wire_int
     provides:
-      - id
-      - name
-
+    - id
+    - name
   oncall_alert_group_query:
+    description: List OnCall alert groups with optional filters.
     kind: query
     entity: OnCallAlertGroup
-    description: List OnCall alert groups with optional filters.
-    parameters:
-      - name: state
-        value_ref: nv_grafana_oncall_state
-        role: filter
-      - name: team_id
-        value_ref: nv_grafana_oncall_id
-        role: filter
-      - name: name
-        value_ref: nv_wire_str_short
-        role: search
-      - name: page
-        value_ref: nv_wire_int
-        role: response_control
+    selection:
+    - name: state
+      value_ref: nv_grafana_oncall_state
+    - name: team_id
+      value_ref: nv_grafana_oncall_id
+    - name: name
+      value_ref: nv_wire_str_short
+    controls:
+    - name: page
+      value_ref: nv_wire_int
     provides:
-      - id
-      - title
-      - state
-
+    - id
+    - title
+    - state
   oncall_alert_group_get:
     kind: get
     entity: OnCallAlertGroup
     provides:
-      - id
-      - title
-      - state
-      - integration_id
-      - alerts_count
-      - created_at
-
+    - id
+    - title
+    - state
+    - integration_id
+    - alerts_count
+    - created_at
 views:
   dashboard_summary:
     description: Compact dashboard overview without loading full panel JSON.
     capability: dashboard_summary_query
     entity: DashboardSummary
     scope:
-      - name: dashboard_uid
-        value_ref: nv_grafana_dashboard_uid
+    - name: dashboard_uid
+      value_ref: nv_grafana_dashboard_uid
     nodes:
-      - id: dash
-        capability: dashboard_get
-        bind:
-          uid:
-            kind: scope
-            param: dashboard_uid
+    - id: dash
+      capability: dashboard_get
+      bind:
+        uid:
+          kind: scope
+          param: dashboard_uid
     output:
       uid:
         kind: scope
@@ -2439,39 +2379,38 @@ views:
         node: dash
         field: schema_version
     relation_outputs:
-      - relation: dashboard
-        target: Dashboard
-        cardinality: one
-        binding:
-          kind: node_single_row
-          node: dash
-
+    - relation: dashboard
+      target: Dashboard
+      cardinality: one
+      binding:
+        kind: node_single_row
+        node: dash
   deeplink_generate:
     description: Fetch appUrl and assemble navigation URL (dashboard, panel, or Explore).
     capability: deeplink_generate_query
     entity: NavigationLink
     scope:
-      - name: resource_type
-        value_ref: nv_grafana_deeplink_type
-        required: true
-      - name: dashboard_uid
-        value_ref: nv_grafana_dashboard_uid
-      - name: panel_id
-        value_ref: nv_wire_int
-      - name: datasource_uid
-        value_ref: nv_grafana_datasource_uid
-      - name: queries_json
-        value_ref: nv_grafana_json_text
-      - name: query_params_json
-        value_ref: nv_grafana_json_text
-      - name: from
-        value_ref: nv_grafana_time_range
-      - name: to
-        value_ref: nv_grafana_time_range
+    - name: resource_type
+      value_ref: nv_grafana_deeplink_type
+      required: true
+    - name: dashboard_uid
+      value_ref: nv_grafana_dashboard_uid
+    - name: panel_id
+      value_ref: nv_wire_int
+    - name: datasource_uid
+      value_ref: nv_grafana_datasource_uid
+    - name: queries_json
+      value_ref: nv_grafana_json_text
+    - name: query_params_json
+      value_ref: nv_grafana_json_text
+    - name: from
+      value_ref: nv_grafana_time_range
+    - name: to
+      value_ref: nv_grafana_time_range
     nodes:
-      - id: frontend
-        capability: frontend_settings_query
-        bind: {}
+    - id: frontend
+      capability: frontend_settings_query
+      bind: {}
     output:
       resource_type:
         kind: scope
@@ -2503,36 +2442,73 @@ views:
         param: to
       url:
         kind: computed
-        template: |
-          {%- set base = app_url | strip_trailing_slash -%}
-          {%- if resource_type == 'dashboard' -%}
-          {{ base }}/d/{{ dashboard_uid }}{% if from or to or query_params_json %}?{% endif %}{% if from %}from={{ from | wire_time('unix_ms') }}{% endif %}{% if from and to %}&{% endif %}{% if to %}to={{ to | wire_time('unix_ms') }}{% endif %}{% if query_params_json %}{{ query_params_json | wire_query_suffix }}{% endif %}
-          {%- elif resource_type == 'panel' -%}
-          {{ base }}/d/{{ dashboard_uid }}?viewPanel={{ panel_id }}{% if from or to or query_params_json %}&{% endif %}{% if from %}from={{ from | wire_time('unix_ms') }}{% endif %}{% if from and to %}&{% endif %}{% if to %}to={{ to | wire_time('unix_ms') }}{% endif %}{% if query_params_json %}{{ query_params_json | wire_query_suffix }}{% endif %}
-          {%- elif resource_type == 'explore' -%}
-          {%- set left = '{"datasource":' ~ (datasource_uid | json_encode) -%}
+        template: '{%- set base = app_url | strip_trailing_slash -%}
+
+          {%- if resource_type == ''dashboard'' -%}
+
+          {{ base }}/d/{{ dashboard_uid }}{% if from or to or query_params_json %}?{%
+          endif %}{% if from %}from={{ from | wire_time(''unix_ms'') }}{% endif %}{%
+          if from and to %}&{% endif %}{% if to %}to={{ to | wire_time(''unix_ms'')
+          }}{% endif %}{% if query_params_json %}{{ query_params_json | wire_query_suffix
+          }}{% endif %}
+
+          {%- elif resource_type == ''panel'' -%}
+
+          {{ base }}/d/{{ dashboard_uid }}?viewPanel={{ panel_id }}{% if from or to
+          or query_params_json %}&{% endif %}{% if from %}from={{ from | wire_time(''unix_ms'')
+          }}{% endif %}{% if from and to %}&{% endif %}{% if to %}to={{ to | wire_time(''unix_ms'')
+          }}{% endif %}{% if query_params_json %}{{ query_params_json | wire_query_suffix
+          }}{% endif %}
+
+          {%- elif resource_type == ''explore'' -%}
+
+          {%- set left = ''{"datasource":'' ~ (datasource_uid | json_encode) -%}
+
           {%- if queries_json -%}
-          {%- set left = left ~ ',"queries":' ~ queries_json -%}
-          {%- endif -%}
-          {%- if from or to -%}
-          {%- set left = left ~ ',"range":{' -%}
-          {%- if from -%}
-          {%- set left = left ~ '"from":' ~ (from | wire_time('unix_ms') | json_encode) -%}
-          {%- endif -%}
-          {%- if from and to -%}
-          {%- set left = left ~ ',' -%}
-          {%- endif -%}
-          {%- if to -%}
-          {%- set left = left ~ '"to":' ~ (to | wire_time('unix_ms') | json_encode) -%}
-          {%- endif -%}
-          {%- set left = left ~ '}' -%}
-          {%- endif -%}
-          {%- set left = left ~ '}' -%}
-          {{ base }}/explore?left={{ left | urlencode }}
-          {%- else -%}
-          {{ base }}
+
+          {%- set left = left ~ '',"queries":'' ~ queries_json -%}
+
           {%- endif -%}
 
+          {%- if from or to -%}
+
+          {%- set left = left ~ '',"range":{'' -%}
+
+          {%- if from -%}
+
+          {%- set left = left ~ ''"from":'' ~ (from | wire_time(''unix_ms'') | json_encode)
+          -%}
+
+          {%- endif -%}
+
+          {%- if from and to -%}
+
+          {%- set left = left ~ '','' -%}
+
+          {%- endif -%}
+
+          {%- if to -%}
+
+          {%- set left = left ~ ''"to":'' ~ (to | wire_time(''unix_ms'') | json_encode)
+          -%}
+
+          {%- endif -%}
+
+          {%- set left = left ~ ''}'' -%}
+
+          {%- endif -%}
+
+          {%- set left = left ~ ''}'' -%}
+
+          {{ base }}/explore?left={{ left | urlencode }}
+
+          {%- else -%}
+
+          {{ base }}
+
+          {%- endif -%}
+
+          '
 auth:
   scheme: bearer_token
   env: GRAFANA_SERVICE_ACCOUNT_TOKEN

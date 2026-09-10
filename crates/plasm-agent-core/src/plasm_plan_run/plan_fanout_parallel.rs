@@ -443,13 +443,10 @@ mod tests {
             index,
             expr_label: id.into(),
             trace_line_index: index,
-            parsed: ParsedExpr {
-                expr: plasm_core::Expr::get(plasm_core::GetExpr::new(
-                    plasm_core::EntityName::new("E".to_string()),
-                    id,
-                )),
-                projection: None,
-            },
+            parsed: ParsedExpr::from_expr(plasm_core::Expr::get(plasm_core::GetExpr::new(
+                plasm_core::EntityName::new("E".to_string()),
+                id,
+            ))),
             result: ExecutionResult {
                 count: 1,
                 entities: vec![test_entity(id)],
@@ -497,13 +494,10 @@ mod tests {
                 index: 0,
                 expr_label: "a".into(),
                 trace_line_index: 0,
-                parsed: ParsedExpr {
-                    expr: plasm_core::Expr::get(plasm_core::GetExpr::new(
-                        plasm_core::EntityName::new("E".to_string()),
-                        "1",
-                    )),
-                    projection: None,
-                },
+                parsed: ParsedExpr::from_expr(plasm_core::Expr::get(plasm_core::GetExpr::new(
+                    plasm_core::EntityName::new("E".to_string()),
+                    "1",
+                ))),
                 result: ExecutionResult {
                     count: 1,
                     entities: vec![CachedEntity {
@@ -526,13 +520,10 @@ mod tests {
                 index: 1,
                 expr_label: "b".into(),
                 trace_line_index: 1,
-                parsed: ParsedExpr {
-                    expr: plasm_core::Expr::get(plasm_core::GetExpr::new(
-                        plasm_core::EntityName::new("E".to_string()),
-                        "2",
-                    )),
-                    projection: None,
-                },
+                parsed: ParsedExpr::from_expr(plasm_core::Expr::get(plasm_core::GetExpr::new(
+                    plasm_core::EntityName::new("E".to_string()),
+                    "2",
+                ))),
                 result: ExecutionResult {
                     count: 1,
                     entities: vec![CachedEntity {

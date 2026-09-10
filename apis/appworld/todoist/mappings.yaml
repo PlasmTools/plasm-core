@@ -1,0 +1,550 @@
+# Todoist — AppWorld. Auth: login → access_token → Bearer header.
+
+_request_auth: &request_auth
+  scheme: bearer
+  token: { type: var, name: access_token }
+
+# AppWorld OpenAPI list endpoints use page_index (0-based) + page_limit (default 5, max 20).
+_appworld_page_index_limit: &appworld_page_index_limit
+  params:
+    page_index:
+      counter: 0
+    page_limit:
+      fixed: 20
+      role: page_size
+  strategy: page_number
+
+login:
+  method: POST
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: auth }
+  - { type: literal, value: token }
+  body_format: form_urlencoded
+  body:
+    type: object
+    fields:
+    - [username, { type: var, name: username }]
+    - [password, { type: var, name: password }]
+
+logout:
+  method: POST
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: auth }
+  - { type: literal, value: logout }
+  auth: *request_auth
+
+project_query:
+  method: GET
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: projects }
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+    - - color
+      - type: if
+        condition: { type: exists, var: color }
+        then_expr: { type: var, name: color }
+        else_expr: { type: const, value: null }
+
+project_get:
+  method: GET
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: projects }
+  - { type: var, name: id }
+  auth: *request_auth
+
+project_create:
+  method: POST
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: projects }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [name, { type: var, name: name }]
+    - - color
+      - type: if
+        condition: { type: exists, var: color }
+        then_expr: { type: var, name: color }
+        else_expr: { type: const, value: null }
+    - - description
+      - type: if
+        condition: { type: exists, var: description }
+        then_expr: { type: var, name: description }
+        else_expr: { type: const, value: null }
+
+project_update:
+  method: PATCH
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: projects }
+  - { type: var, name: id }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - name
+      - type: if
+        condition: { type: exists, var: name }
+        then_expr: { type: var, name: name }
+        else_expr: { type: const, value: null }
+    - - color
+      - type: if
+        condition: { type: exists, var: color }
+        then_expr: { type: var, name: color }
+        else_expr: { type: const, value: null }
+    - - description
+      - type: if
+        condition: { type: exists, var: description }
+        then_expr: { type: var, name: description }
+        else_expr: { type: const, value: null }
+
+project_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: projects }
+  - { type: var, name: id }
+  auth: *request_auth
+
+task_query:
+  method: GET
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: projects }
+  - { type: var, name: project_id }
+  - { type: literal, value: tasks }
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - priority
+      - type: if
+        condition: { type: exists, var: priority }
+        then_expr: { type: var, name: priority }
+        else_expr: { type: const, value: null }
+
+task_get:
+  method: GET
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: tasks }
+  - { type: var, name: id }
+  auth: *request_auth
+
+task_create:
+  method: POST
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: projects }
+  - { type: var, name: project_id }
+  - { type: literal, value: tasks }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [title, { type: var, name: title }]
+    - - description
+      - type: if
+        condition: { type: exists, var: description }
+        then_expr: { type: var, name: description }
+        else_expr: { type: const, value: null }
+    - - due_date
+      - type: if
+        condition: { type: exists, var: due_date }
+        then_expr: { type: var, name: due_date }
+        else_expr: { type: const, value: null }
+    - - priority
+      - type: if
+        condition: { type: exists, var: priority }
+        then_expr: { type: var, name: priority }
+        else_expr: { type: const, value: null }
+    - - duration_unit
+      - type: if
+        condition: { type: exists, var: duration_unit }
+        then_expr: { type: var, name: duration_unit }
+        else_expr: { type: const, value: null }
+    - - section_id
+      - type: if
+        condition: { type: exists, var: section_id }
+        then_expr: { type: var, name: section_id }
+        else_expr: { type: const, value: null }
+
+task_update:
+  method: PATCH
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: tasks }
+  - { type: var, name: id }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - title
+      - type: if
+        condition: { type: exists, var: title }
+        then_expr: { type: var, name: title }
+        else_expr: { type: const, value: null }
+    - - description
+      - type: if
+        condition: { type: exists, var: description }
+        then_expr: { type: var, name: description }
+        else_expr: { type: const, value: null }
+    - - due_date
+      - type: if
+        condition: { type: exists, var: due_date }
+        then_expr: { type: var, name: due_date }
+        else_expr: { type: const, value: null }
+    - - priority
+      - type: if
+        condition: { type: exists, var: priority }
+        then_expr: { type: var, name: priority }
+        else_expr: { type: const, value: null }
+    - - duration_unit
+      - type: if
+        condition: { type: exists, var: duration_unit }
+        then_expr: { type: var, name: duration_unit }
+        else_expr: { type: const, value: null }
+    - - is_completed
+      - type: if
+        condition: { type: exists, var: is_completed }
+        then_expr: { type: var, name: is_completed }
+        else_expr: { type: const, value: null }
+
+task_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: tasks }
+  - { type: var, name: id }
+  auth: *request_auth
+
+task_assign:
+  method: POST
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: tasks }
+  - { type: var, name: id }
+  - { type: literal, value: assign }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - assignee_email
+      - type: if
+        condition: { type: exists, var: assignee_email }
+        then_expr: { type: var, name: assignee_email }
+        else_expr: { type: const, value: null }
+
+label_query:
+  method: GET
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: labels }
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+    - - color
+      - type: if
+        condition: { type: exists, var: color }
+        then_expr: { type: var, name: color }
+        else_expr: { type: const, value: null }
+
+label_create:
+  method: POST
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: labels }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [name, { type: var, name: name }]
+    - - color
+      - type: if
+        condition: { type: exists, var: color }
+        then_expr: { type: var, name: color }
+        else_expr: { type: const, value: null }
+
+label_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: labels }
+  - { type: var, name: id }
+  auth: *request_auth
+
+task_add_label:
+  method: POST
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: tasks }
+  - { type: var, name: id }
+  - { type: literal, value: labels }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [label_id, { type: var, name: label_id }]
+
+task_remove_label:
+  method: DELETE
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: tasks }
+  - { type: var, name: id }
+  - { type: literal, value: labels }
+  - { type: var, name: label_id }
+  auth: *request_auth
+
+section_query:
+  method: GET
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: projects }
+  - { type: var, name: project_id }
+  - { type: literal, value: sections }
+  auth: *request_auth
+
+section_create:
+  method: POST
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: projects }
+  - { type: var, name: project_id }
+  - { type: literal, value: sections }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [name, { type: var, name: name }]
+
+section_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: sections }
+  - { type: var, name: id }
+  auth: *request_auth
+
+task_comment_query:
+  method: GET
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: tasks }
+  - { type: var, name: task_id }
+  - { type: literal, value: comments }
+  auth: *request_auth
+
+task_comment_create:
+  method: POST
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: tasks }
+  - { type: var, name: task_id }
+  - { type: literal, value: comments }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [content, { type: var, name: content }]
+
+task_comment_update:
+  method: PATCH
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: task_comments }
+  - { type: var, name: id }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - - content
+      - type: if
+        condition: { type: exists, var: content }
+        then_expr: { type: var, name: content }
+        else_expr: { type: const, value: null }
+
+task_comment_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: task_comments }
+  - { type: var, name: id }
+  auth: *request_auth
+
+task_comment_upload_attachment:
+  method: POST
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: task_comments }
+  - { type: var, name: id }
+  - { type: literal, value: attachments }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [upload_from_file_path, { type: var, name: upload_from_file_path }]
+    - - overwrite
+      - type: if
+        condition: { type: exists, var: overwrite }
+        then_expr: { type: var, name: overwrite }
+        else_expr: { type: const, value: null }
+    - [file_system_access_token, { type: var, name: file_system_access_token }]
+
+task_comment_delete_attachment:
+  method: DELETE
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: task_comments }
+  - { type: var, name: id }
+  - { type: literal, value: attachments }
+  - { type: var, name: attachment_file_name }
+  auth: *request_auth
+
+sub_task_query:
+  method: GET
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: tasks }
+  - { type: var, name: task_id }
+  - { type: literal, value: sub_tasks }
+  auth: *request_auth
+
+sub_task_create:
+  method: POST
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: tasks }
+  - { type: var, name: task_id }
+  - { type: literal, value: sub_tasks }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [title, { type: var, name: title }]
+
+sub_task_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: sub_tasks }
+  - { type: var, name: id }
+  auth: *request_auth
+
+user_query:
+  method: GET
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: users }
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+
+profile_get:
+  method: GET
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: profile }
+  query:
+    type: object
+    fields:
+    - - email
+      - type: if
+        condition: { type: exists, var: email }
+        then_expr: { type: var, name: email }
+        else_expr: { type: const, value: null }
+
+project_invite_accept:
+  method: POST
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: project_invites }
+  - { type: var, name: id }
+  - { type: literal, value: accept }
+  auth: *request_auth
+
+project_invite_delete:
+  method: POST
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: project_invites }
+  - { type: var, name: id }
+  - { type: literal, value: delete }
+  auth: *request_auth
+
+notification_query:
+  method: GET
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: notifications }
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - read
+      - type: if
+        condition: { type: exists, var: read }
+        then_expr: { type: var, name: read }
+        else_expr: { type: const, value: null }
+  pagination: *appworld_page_index_limit
+notification_delete:
+  method: DELETE
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: notifications }
+  - { type: var, name: id }
+  auth: *request_auth
+
+notification_mark:
+  method: PATCH
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: notifications }
+  - { type: var, name: id }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [read, { type: var, name: read }]
+
+notification_delete_all:
+  method: DELETE
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: notifications }
+  auth: *request_auth
+
+notification_mark_all:
+  method: PATCH
+  path:
+  - { type: literal, value: todoist }
+  - { type: literal, value: notifications }
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [read, { type: var, name: read }]

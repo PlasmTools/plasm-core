@@ -1,4 +1,4 @@
-//! Typed errors for execute-session mutation (extend / federate / intent / ranked caps).
+//! Typed errors for execute-session mutation (extend / federate / intent).
 
 use crate::mcp_transport_store::execute_session_registry::ExecuteSessionPersistError;
 

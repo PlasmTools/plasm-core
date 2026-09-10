@@ -99,6 +99,11 @@ fn append_compiled_query_pairs(url: &mut String, query: Option<&Value>) {
 /// Outbound HTTP: compile CML to request, then send and return JSON + optional `Link: rel=next` URL.
 #[async_trait]
 pub trait HttpTransport: Send + Sync {
+    /// The transport resolves configured host credentials and rejects missing required injection.
+    fn injects_host_auth(&self) -> bool {
+        false
+    }
+
     /// Send a compiled HTTP operation against `base_url` (no trailing slash).
     async fn send_compiled_http(
         &self,
@@ -119,11 +124,21 @@ pub trait HttpTransport: Send + Sync {
 #[derive(Debug, Clone)]
 pub struct ReqwestHttpTransport {
     client: reqwest::Client,
+    scoped_client: Option<reqwest::Client>,
 }
 
 impl ReqwestHttpTransport {
     pub fn new(client: reqwest::Client) -> Self {
-        Self { client }
+        Self {
+            client,
+            scoped_client: None,
+        }
+    }
+
+    /// The caller must configure this client with redirects disabled.
+    pub(crate) fn with_scoped_client(mut self, client: reqwest::Client) -> Self {
+        self.scoped_client = Some(client);
+        self
     }
 
     pub fn client(&self) -> &reqwest::Client {
@@ -144,7 +159,16 @@ impl ReqwestHttpTransport {
         let url = join_base_url_path(base_url, request.url_path());
         let http_span =
             crate::spans::http_compiled_request(compiled_method_label(&request.method), url.len());
-        let req_builder = build_compiled_reqwest(&self.client, &url, request, auth)?;
+        let client = if request.credential.is_some() {
+            self.scoped_client.as_ref().ok_or_else(|| {
+                crate::credentials::credential_error(
+                    "transport has no redirect-free scoped credential client",
+                )
+            })?
+        } else {
+            &self.client
+        };
+        let req_builder = build_compiled_reqwest(client, &url, request, auth)?;
         let method = compiled_method_label(&request.method);
         let response = req_builder
             .send()
@@ -286,33 +310,58 @@ fn build_compiled_reqwest(
         }
     }
 
-    req_builder = apply_resolved_auth(req_builder, auth);
-
-    if let Some(headers) = &request.headers {
-        let json_val = plasm_value_to_json(headers)?;
-        if let Some(obj) = json_val.as_object() {
-            for (key, value) in obj {
-                let header_val = match value {
-                    serde_json::Value::Null => continue,
-                    serde_json::Value::String(s) => {
-                        if s.trim().is_empty() {
-                            continue;
-                        }
-                        s.clone()
-                    }
-                    serde_json::Value::Number(n) => n.to_string(),
-                    serde_json::Value::Bool(b) => b.to_string(),
-                    other => other.to_string(),
-                };
-                if header_val.trim().is_empty() {
-                    continue;
-                }
-                req_builder = req_builder.header(key, header_val);
-            }
-        }
+    for (key, header_val) in compiled_template_headers(request, auth.as_ref())? {
+        req_builder = req_builder.header(key, header_val);
     }
 
-    Ok(req_builder)
+    Ok(apply_resolved_auth(req_builder, auth))
+}
+
+/// CML template headers for the outbound wire (Authorization bearer from `access_token`, etc.).
+/// Shared by reqwest MCP transport and the NAPI JS host callback — must stay in lockstep.
+pub fn compiled_template_headers(
+    request: &CompiledRequest,
+    auth: Option<&ResolvedAuth>,
+) -> Result<Vec<(String, String)>, RuntimeError> {
+    let mut out = Vec::new();
+    let Some(headers) = &request.headers else {
+        return Ok(out);
+    };
+    let json_val = plasm_value_to_json(headers)?;
+    let Some(obj) = json_val.as_object() else {
+        return Ok(out);
+    };
+    for (key, value) in obj {
+        let header_val = match value {
+            serde_json::Value::Null => continue,
+            serde_json::Value::String(s) => {
+                if s.trim().is_empty() {
+                    continue;
+                }
+                s.clone()
+            }
+            serde_json::Value::Number(n) => n.to_string(),
+            serde_json::Value::Bool(b) => b.to_string(),
+            other => other.to_string(),
+        };
+        if header_val.trim().is_empty() {
+            continue;
+        }
+        if let Some((resolved_key, _)) = auth.and_then(|resolved| {
+            resolved
+                .headers
+                .iter()
+                .find(|(resolved_key, _)| resolved_key.eq_ignore_ascii_case(key))
+        }) {
+            return Err(RuntimeError::ConfigurationError {
+                message: format!(
+                    "CML template header `{key}` conflicts with resolver-owned authentication header `{resolved_key}`"
+                ),
+            });
+        }
+        out.push((key.clone(), header_val));
+    }
+    Ok(out)
 }
 
 #[async_trait]
@@ -475,7 +524,7 @@ fn add_multipart_part(
     }
 
     let text = match &spec.content {
-        Value::PlasmInputRef(_) => {
+        Value::PlasmInputRef(_) | Value::StringTemplate(_) => {
             return Err(RuntimeError::ConfigurationError {
                 message: format!(
                     "multipart part `{}`: compile-time Plasm input refs are not valid HTTP wire values",
@@ -580,7 +629,7 @@ fn plasm_attachment_bytes_for_multipart(
     })
 }
 
-fn plasm_value_to_form_urlencoded(body: &Value) -> Result<String, RuntimeError> {
+pub fn plasm_value_to_form_urlencoded(body: &Value) -> Result<String, RuntimeError> {
     let m = body
         .as_object()
         .ok_or_else(|| RuntimeError::ConfigurationError {
@@ -1041,8 +1090,10 @@ fn strip_null_fields(value: serde_json::Value) -> serde_json::Value {
 
 fn plasm_value_to_json(value: &Value) -> Result<serde_json::Value, RuntimeError> {
     match value {
-        Value::PlasmInputRef(_) => {
-            Ok(serde_json::to_value(value).unwrap_or(serde_json::Value::Null))
+        Value::PlasmInputRef(_) | Value::StringTemplate(_) => {
+            Err(RuntimeError::ConfigurationError {
+                message: "unbound program operand reached HTTP body encoding".into(),
+            })
         }
         Value::Null => Ok(serde_json::Value::Null),
         Value::Bool(b) => Ok(serde_json::Value::Bool(*b)),
@@ -1090,6 +1141,7 @@ mod compiled_http_url_tests {
             map.insert("per_page".to_string(), Value::Integer(5));
         }
         let request = CompiledRequest {
+            credential: None,
             method: HttpMethod::Get,
             path: "https://hn.algolia.com/api/v1/search_by_date".to_string(),
             query: Some(query),
@@ -1326,6 +1378,7 @@ mod multipart_wire_tests {
 #[cfg(test)]
 mod json_wire_tests {
     use super::build_compiled_reqwest;
+    use crate::auth::ResolvedAuth;
     use indexmap::IndexMap;
     use plasm_compile::{CompiledRequest, HttpBodyFormat, HttpMethod};
     use plasm_core::Value;
@@ -1339,6 +1392,7 @@ mod json_wire_tests {
             Value::String(markdown.into()),
         )]));
         let request = CompiledRequest {
+            credential: None,
             method: HttpMethod::Post,
             path: "/v1/share".into(),
             query: None,
@@ -1369,6 +1423,103 @@ mod json_wire_tests {
             !decoded.contains("PokÃ"),
             "mojibake must not appear in wire JSON: {decoded}"
         );
+    }
+
+    #[test]
+    fn compiled_request_rejects_template_override_of_resolver_auth_header() {
+        let request = CompiledRequest {
+            credential: None,
+            method: HttpMethod::Get,
+            path: "/v1/items".into(),
+            query: None,
+            body: None,
+            body_format: HttpBodyFormat::Json,
+            multipart: None,
+            headers: Some(Value::Object(IndexMap::from([(
+                "authorization".into(),
+                Value::String("Bearer template-secret".into()),
+            )]))),
+        };
+        let auth = ResolvedAuth {
+            headers: vec![("Authorization".into(), "Bearer resolver-secret".into())],
+            query_params: Vec::new(),
+        };
+
+        let err = build_compiled_reqwest(
+            &reqwest::Client::new(),
+            "https://api.example.test/v1/items",
+            &request,
+            Some(auth),
+        )
+        .expect_err("template must not override resolver auth");
+
+        assert!(
+            err.to_string()
+                .contains("resolver-owned authentication header"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn compiled_form_urlencoded_request_sets_form_content_type_and_pairs() {
+        use super::plasm_value_to_form_urlencoded;
+        let body = Value::Object(IndexMap::from([
+            ("username".into(), Value::String("joyce@x.com".into())),
+            ("password".into(), Value::String("s3cret".into())),
+        ]));
+        let encoded = plasm_value_to_form_urlencoded(&body).expect("form");
+        assert!(!encoded.starts_with('{'), "{encoded}");
+        assert!(encoded.contains("username=joyce"), "{encoded}");
+        assert!(encoded.contains("password=s3cret"), "{encoded}");
+
+        let request = CompiledRequest {
+            credential: None,
+            method: HttpMethod::Post,
+            path: "/auth/token".into(),
+            query: None,
+            body: Some(body),
+            body_format: HttpBodyFormat::FormUrlencoded,
+            multipart: None,
+            headers: None,
+        };
+        let client = reqwest::Client::new();
+        let builder = build_compiled_reqwest(&client, "https://api.example.test", &request, None)
+            .expect("builder");
+        let req = builder.build().expect("build");
+        let ct = req
+            .headers()
+            .get(CONTENT_TYPE)
+            .expect("content-type")
+            .to_str()
+            .expect("ct str");
+        assert_eq!(ct, "application/x-www-form-urlencoded");
+        let bytes = req.body().expect("body").as_bytes().expect("bytes");
+        let decoded = std::str::from_utf8(bytes).expect("utf8");
+        assert!(decoded.contains("username=joyce"), "{decoded}");
+        assert!(!decoded.starts_with('{'), "{decoded}");
+    }
+
+    #[test]
+    fn compiled_template_headers_emit_authorization_bearer() {
+        use super::compiled_template_headers;
+        let headers = Value::Object(IndexMap::from([(
+            "Authorization".into(),
+            Value::String("Bearer tok-abc".into()),
+        )]));
+        let request = CompiledRequest {
+            credential: None,
+            method: HttpMethod::Get,
+            path: "/friends".into(),
+            query: None,
+            body: None,
+            body_format: HttpBodyFormat::Json,
+            multipart: None,
+            headers: Some(headers),
+        };
+        let pairs = compiled_template_headers(&request, None).expect("headers");
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].0, "Authorization");
+        assert_eq!(pairs[0].1, "Bearer tok-abc");
     }
 }
 

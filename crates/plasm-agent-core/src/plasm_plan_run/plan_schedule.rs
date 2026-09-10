@@ -78,6 +78,7 @@ pub(crate) fn comp_step_parallel_safe(payload: &PlasmStepPayload) -> bool {
         PlasmStepPayload::Pure(_) | PlasmStepPayload::Map(_) | PlasmStepPayload::Derive(_) => true,
         PlasmStepPayload::FlatMapRelation(_) => true,
         PlasmStepPayload::FlatMapEffect(p) => p.effect_class == EffectClass::Read,
+        PlasmStepPayload::UnfoldUntil(_) => false,
     }
 }
 
@@ -166,7 +167,7 @@ mod tests {
                 source_cardinality: plasm_core::RelationSourceCardinality::Single,
                 expr: String::new(),
                 ir: PlanExprIr {
-                    expr: serde_json::json!({"op": "query", "entity": "Tag"}),
+                    expr: plasm_core::Expr::Query(plasm_core::QueryExpr::all("Tag")),
                     projection: None,
                     display_expr: None,
                 },

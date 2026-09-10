@@ -379,6 +379,47 @@ fn lazy_fork_base_scales_with_touch_set_not_session_size() {
     );
 }
 
+#[test]
+fn mutation_branch_commit_replaces_poisoned_read_caches() {
+    use crate::cache::EntityCompleteness;
+    use plasm_core::Value;
+
+    let mut session = SessionMaterialization::new();
+    let card_ref = Ref::new("CreditCardAccount", "cc1");
+    let card = crate::CachedEntity::from_decoded(
+        card_ref.clone(),
+        [("balance".into(), Value::Integer(3000))]
+            .into_iter()
+            .collect(),
+        indexmap::IndexMap::new(),
+        1,
+        EntityCompleteness::Complete,
+    );
+    session.insert(card).expect("seed card");
+    let key = QueryCacheKey::test("CreditCardAccount\0get\0user_id=u1");
+    session
+        .query_index
+        .insert(key.clone(), vec![card_ref.clone()]);
+    let fp = RequestFingerprint::from_hex(&format!("{:064x}", 42u64)).expect("fp");
+    session.responses.store(
+        fp.clone(),
+        serde_json::json!({"balance": 3000}),
+        ExecutionSource::Live,
+    );
+
+    let (mut branch, _base) = BranchMaterializationBase::fork_from(&session);
+    branch.graph.remove(&card_ref);
+    branch.poison_read_caches_after_mutation();
+
+    session
+        .absorb_branch(branch)
+        .expect("commit mutation branch");
+
+    assert!(session.get(&card_ref).is_none());
+    assert!(session.query_index.get(&key).is_none());
+    assert!(session.responses.lookup(&fp).is_none());
+}
+
 proptest::proptest! {
     #[test]
     fn proptest_additive_relation_keys_never_conflict(

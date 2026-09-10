@@ -7,7 +7,7 @@ use crate::execute_session::ExecuteSession;
 use crate::http::{build_plasm_host_state, PlasmHostBootstrap};
 use crate::http_execute::{
     apply_capability_seeds, try_dispatch_operation_program, ApplyCapabilitySeedsOutcome,
-    CapabilitySeed, RankedCapabilitiesArg,
+    CapabilitySeed,
 };
 use crate::plan_dry_display::PlanDryCompactView;
 use crate::plasm_compile::{compile_plasm_expression, compile_plasm_program};
@@ -22,7 +22,7 @@ use crate::trace_hub::{McpPlasmTraceSink, PlanRunTraceHooks, TraceSessionMeta};
 use crate::trace_sink_emit::PlasmTraceContext;
 use crate::PlasmCompBundle;
 use indexmap::IndexMap;
-use plasm_core::discovery::InMemoryCgsRegistry;
+use plasm_core::discovery::CgsRegistry;
 use plasm_core::loader::load_schema_dir;
 use plasm_core::PlanCommitRef;
 use plasm_core::{CgsContext, CGS};
@@ -48,7 +48,7 @@ fn ensure_test_http_no_system_proxy() {
 fn matrix_federated_host_with_base(base_url: Option<&str>) -> PlasmHostState {
     ensure_test_http_no_system_proxy();
     let cgs = Arc::new(load_schema_dir(&matrix_fixture_dir()).expect("plasm_language_matrix"));
-    let reg = InMemoryCgsRegistry::from_pairs(vec![
+    let reg = CgsRegistry::from_pairs(vec![
         (
             "github".into(),
             "GitHub".into(),
@@ -156,7 +156,6 @@ fn minimal_execute_session() -> ExecuteSession {
         None,
         "hash".into(),
         None,
-        None,
     )
 }
 
@@ -185,19 +184,9 @@ impl MatrixPcNFixture {
             entry_id: "github".into(),
             entity: "LangItem".into(),
         }];
-        let out = apply_capability_seeds(
-            st.as_ref(),
-            None,
-            None,
-            seeds,
-            None,
-            None,
-            None,
-            intent,
-            RankedCapabilitiesArg::Unspecified,
-        )
-        .await
-        .expect("apply_capability_seeds");
+        let out = apply_capability_seeds(st.as_ref(), None, None, seeds, None, None, None, intent)
+            .await
+            .expect("apply_capability_seeds");
         let es = st
             .get_execute_session(&out.prompt_hash, &out.session_id)
             .await
@@ -286,7 +275,6 @@ async fn mcp_apply_capability_seeds_federates_multi_catalog_and_dry_runs_distinc
         None,
         None,
         "federated matrix eval",
-        RankedCapabilitiesArg::Unspecified,
     )
     .await
     .expect("apply_capability_seeds");
@@ -356,7 +344,6 @@ async fn mcp_federated_post_async_finalize_compiles_e2_with_cross_cache() {
         None,
         None,
         "federated matrix eval",
-        RankedCapabilitiesArg::Unspecified,
     )
     .await
     .expect("apply_capability_seeds");
@@ -377,6 +364,7 @@ async fn mcp_federated_post_async_finalize_compiles_e2_with_cross_cache() {
         &handle,
         crate::plasm_plan_run::PlasmPlanRunResult {
             version: serde_json::json!({}),
+            agent_outcome: Default::default(),
             node_results: vec![serde_json::json!({"id": "done"})],
             graph_summary: serde_json::json!({}),
             comp: None,
@@ -436,6 +424,7 @@ async fn mcp_async_wait_poll_reaches_terminal_result() {
         &handle,
         crate::plasm_plan_run::PlasmPlanRunResult {
             version: serde_json::json!({}),
+            agent_outcome: Default::default(),
             node_results: vec![serde_json::json!({"id": "done"})],
             graph_summary: serde_json::json!({}),
             comp: None,
@@ -474,7 +463,6 @@ async fn mcp_policy_always_spawns_async_when_wait_live() {
         None,
         None,
         "await policy",
-        RankedCapabilitiesArg::Unspecified,
     )
     .await
     .expect("apply_capability_seeds");
@@ -515,7 +503,6 @@ async fn mcp_query_limit_uses_async_await_path() {
         None,
         None,
         "query limit await",
-        RankedCapabilitiesArg::Unspecified,
     )
     .await
     .expect("apply_capability_seeds");
@@ -525,7 +512,7 @@ async fn mcp_query_limit_uses_async_await_path() {
         .expect("execute session");
     let pipeline = st.engine.prompt_pipeline();
     let cross = st.sessions.symbol_map_cross_cache();
-    let program = "items = e1.limit(3)\nitems";
+    let program = "items = e1 | take 3\nitems";
     let bundle = compile_plasm_expression(pipeline, Some(cross), &es, program, program)
         .expect("query+limit compile");
     let dry = evaluate_plasm_comp_dry(&es, &bundle).expect("dry");
@@ -600,7 +587,6 @@ async fn matrix_query_limit_on_injected_live_plan_pool() {
         None,
         None,
         "injected pool",
-        RankedCapabilitiesArg::Unspecified,
     )
     .await
     .expect("apply_capability_seeds");
@@ -674,7 +660,6 @@ async fn matrix_render_only_live_await_finishes_within_wall_time() {
         None,
         None,
         "render-only await",
-        RankedCapabilitiesArg::Unspecified,
     )
     .await
     .expect("apply_capability_seeds");
@@ -756,7 +741,6 @@ async fn matrix_query_limit_on_release_stack_budget() {
         None,
         None,
         "release stack budget",
-        RankedCapabilitiesArg::Unspecified,
     )
     .await
     .expect("apply_capability_seeds");
@@ -1043,6 +1027,7 @@ fn plan_run_result_is_terminal_rejects_operation_poll_markdown() {
     );
     let poll = crate::plasm_plan_run::PlasmPlanRunResult {
         version: serde_json::json!({}),
+        agent_outcome: Default::default(),
         node_results: Vec::new(),
         graph_summary: serde_json::json!({}),
         comp: None,
@@ -1467,4 +1452,53 @@ async fn plasm_read_run_artifact_matches_resources_read() {
     } else {
         std::env::remove_var("PLASM_MCP_ARTIFACT_ACCESS");
     }
+}
+
+/// Regression: `dry_workflow` MUST verify tenant scope on the caller-supplied
+/// `logical_session_ref` before resolving an execute binding.
+///
+/// `resolve_binding_for_logical` falls back to the process-wide
+/// `logical_execute_bindings` map, which is keyed on the logical UUID alone with no
+/// tenant scoping. Without this gate, a caller who has learned another tenant's
+/// `logical_session_ref` reaches that tenant's execute binding.
+///
+/// A well-formed but never-minted ref exercises the gate without needing incoming-auth
+/// scaffolding: `verify_tenant` returns false for unknown sessions, so the tenant error
+/// must surface *before* the workflow-id lookup. Remove the gate and this test fails with
+/// `unknown workflow` instead.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dry_workflow_rejects_ref_outside_tenant_scope() {
+    use super::PlasmMcpHandler;
+    use rust_mcp_sdk::ToMcpServerHandler;
+    use serde_json::json;
+
+    let st = Arc::new(matrix_federated_host());
+    let handler = PlasmMcpHandler::new(Arc::clone(&st));
+    let mcp_handler = PlasmMcpHandler::new(Arc::clone(&st)).to_mcp_server_handler();
+    let mcp_key = "mcp-dry-workflow-tenant-gate";
+    let runtime = test_mcp_runtime(mcp_handler, mcp_key);
+
+    // Valid wire format, never minted in this registry -> not in any tenant scope.
+    let foreign_ref =
+        crate::mcp_logical_ref::format_logical_session_wire_ref_from_uuid(uuid::Uuid::new_v4());
+
+    let res = handler
+        .handle_mcp_tool_dry_workflow(
+            mcp_key,
+            &runtime,
+            &json!({ "id": "any-workflow", "logical_session_ref": foreign_ref }),
+        )
+        .await
+        .expect("handler returns Ok with an error CallToolResult");
+
+    assert_eq!(
+        res.is_error,
+        Some(true),
+        "expected an error result: {res:?}"
+    );
+    let text = call_tool_result_markdown(&res);
+    assert!(
+        text.contains("does not belong to this tenant scope"),
+        "expected tenant-scope rejection before workflow lookup, got: {text}"
+    );
 }

@@ -1,152 +1,173 @@
-# ClickUp API v2 — CML (Capability Mapping Language). Semantic model is in domain.yaml.
-#
-# Base URL: join `--backend` / `http_backend` (https://api.clickup.com/api) with
-# path `v2/...` for `https://api.clickup.com/api/v2/...` (see ClickUp OpenAPI `servers.url`).
-#
-# Auth: api_key_header — token sent verbatim as `Authorization: <token>` (no "Bearer ").
-#
-# Pagination quirk: ClickUp uses zero-indexed page numbers (page=0, 1, 2, …)
-# and stops when `last_page: true` appears in the response body. This is
-# modelled with a Counter param + FieldEquals stop condition.
-#
-# Response envelopes: each list endpoint wraps its array under a named key
-# (teams, spaces, folders, lists, tasks, etc.) — declared per-capability
-# via `response: {items: <key>}`.
-
-# ── Team (workspace) ──────────────────────────────────────────────────────
-
 team_query:
   response:
     items: teams
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: team
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: team
 user_get_me:
-  # GET /v2/user — returns {"user": {...}}
-  # Decode the nested object under the "user" key.
   response:
     items: user
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: user
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: user
 team_member_query:
-  # GET /v2/team (authorized workspaces) — pick the workspace matching team_id and pluck `members`.
-  # There is no GET /v2/team/{id}/member in the public v2 spec.
   response:
     items: members
     response_preprocess:
       kind: array_find_pluck
-      path: [teams]
+      path:
+      - teams
       id_field: id
       id_var: team_id
       nested_array: members
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: team
-
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: list_members
+    then_expr:
+      type: format
+      template: v2/list/{list_id}/member
+      vars:
+        list_id:
+          type: var
+          name: list_id
+    else_expr:
+      type: if
+      condition:
+        type: equals
+        left:
+          type: var
+          name: shelf
+        right:
+          type: const
+          value: task_member
+      then_expr:
+        type: format
+        template: v2/task/{task_id}/member
+        vars:
+          task_id:
+            type: var
+            name: task_id
+      else_expr:
+        type: const
+        value: v2/team
+  query:
+    type: object
+    fields:
+    - - team_id
+      - type: var
+        name: team_id
+        if: { exists: team_id }
 team_seats:
   response: single
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: team
-    - type: var
-      name: team_id
-    - type: literal
-      value: seats
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: team
+  - type: var
+    name: team_id
+  - type: literal
+    value: seats
 team_plan:
   response: single
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: team
-    - type: var
-      name: team_id
-    - type: literal
-      value: plan
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: team
+  - type: var
+    name: team_id
+  - type: literal
+    value: plan
 team_create_space:
-  # POST /v2/team/{team_id}/space — requires name, multiple_assignees, and features.
   response: single
   method: POST
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: team
-    - type: var
-      name: team_id
-    - type: literal
-      value: space
+  - type: literal
+    value: v2
+  - type: literal
+    value: team
+  - type: var
+    name: team_id
+  - type: literal
+    value: space
   body:
     type: object
     fields:
-      - - name
-        - type: var
-          name: name
-      - - multiple_assignees
-        - type: if
-          condition: { type: exists, var: multiple_assignees }
-          then_expr: { type: var, name: multiple_assignees }
-          else_expr: { type: const, value: true }
-      - - features
-        - type: if
-          condition: { type: exists, var: features }
-          then_expr: { type: var, name: features }
-          else_expr:
-            type: const
-            value:
-              due_dates:
-                enabled: true
-                start_date: false
-                remap_due_dates: true
-                remap_closed_due_date: false
-              time_tracking:
-                enabled: false
-              tags:
-                enabled: true
-              time_estimates:
-                enabled: true
-              checklists:
-                enabled: true
-              custom_fields:
-                enabled: true
-              remap_dependencies:
-                enabled: true
-              dependency_warning:
-                enabled: true
-              portfolios:
-                enabled: true
-
+    - - name
+      - type: var
+        name: name
+    - - multiple_assignees
+      - type: if
+        condition:
+          type: exists
+          var: multiple_assignees
+        then_expr:
+          type: var
+          name: multiple_assignees
+        else_expr:
+          type: const
+          value: true
+    - - features
+      - type: if
+        condition:
+          type: exists
+          var: features
+        then_expr:
+          type: var
+          name: features
+        else_expr:
+          type: const
+          value:
+            due_dates:
+              enabled: true
+              start_date: false
+              remap_due_dates: true
+              remap_closed_due_date: false
+            time_tracking:
+              enabled: false
+            tags:
+              enabled: true
+            time_estimates:
+              enabled: true
+            checklists:
+              enabled: true
+            custom_fields:
+              enabled: true
+            remap_dependencies:
+              enabled: true
+            dependency_warning:
+              enabled: true
+            portfolios:
+              enabled: true
 team_create_goal:
   response: single
   method: POST
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: team
-    - type: var
-      name: team_id
-    - type: literal
-      value: goal
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: team
+  - type: var
+    name: team_id
+  - type: literal
+    value: goal
   body:
     type: var
     name: input
@@ -154,15 +175,14 @@ team_create_group:
   response: single
   method: POST
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: team
-    - type: var
-      name: team_id
-    - type: literal
-      value: group
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: team
+  - type: var
+    name: team_id
+  - type: literal
+    value: group
   body:
     type: var
     name: input
@@ -170,15 +190,14 @@ team_create_webhook:
   response: single
   method: POST
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: team
-    - type: var
-      name: team_id
-    - type: literal
-      value: webhook
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: team
+  - type: var
+    name: team_id
+  - type: literal
+    value: webhook
   body:
     type: var
     name: input
@@ -186,15 +205,14 @@ team_create_view:
   response: single
   method: POST
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: team
-    - type: var
-      name: team_id
-    - type: literal
-      value: view
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: team
+  - type: var
+    name: team_id
+  - type: literal
+    value: view
   body:
     type: var
     name: input
@@ -202,15 +220,14 @@ team_create_time_entry:
   response: single
   method: POST
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: team
-    - type: var
-      name: team_id
-    - type: literal
-      value: time_entries
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: team
+  - type: var
+    name: team_id
+  - type: literal
+    value: time_entries
   body:
     type: var
     name: input
@@ -218,17 +235,16 @@ team_start_time_entry:
   response: single
   method: POST
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: team
-    - type: var
-      name: team_id
-    - type: literal
-      value: time_entries
-    - type: literal
-      value: start
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: team
+  - type: var
+    name: id
+  - type: literal
+    value: time_entries
+  - type: literal
+    value: start
   body:
     type: var
     name: input
@@ -236,58 +252,59 @@ team_stop_time_entry:
   response: single
   method: POST
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: team
-    - type: var
-      name: team_id
-    - type: literal
-      value: time_entries
-    - type: literal
-      value: stop
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: team
+  - type: var
+    name: id
+  - type: literal
+    value: time_entries
+  - type: literal
+    value: stop
   body:
     type: var
     name: input
-# ── Space ─────────────────────────────────────────────────────────────────
-
 space_query:
   response:
     items: spaces
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: team
-    - type: var
-      name: team_id
-    - type: literal
-      value: space
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: team
+  - type: var
+    name: team_id
+  - type: literal
+    value: space
+  query:
+    type: object
+    fields:
+    - - archived
+      - type: var
+        name: archived
+        if: { exists: archived }
 space_get:
   response: single
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: space
-    - type: var
-      name: id
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: space
+  - type: var
+    name: id
 space_update:
   response: single
   method: PUT
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: space
-    - type: var
-      name: id
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: space
+  - type: var
+    name: id
   body:
     type: var
     name: input
@@ -295,26 +312,24 @@ space_delete:
   response: single
   method: DELETE
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: space
-    - type: var
-      name: id
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: space
+  - type: var
+    name: id
 space_create_folder:
   response: single
   method: POST
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: space
-    - type: var
-      name: space_id
-    - type: literal
-      value: folder
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: space
+  - type: var
+    name: space_id
+  - type: literal
+    value: folder
   body:
     type: var
     name: input
@@ -322,15 +337,14 @@ space_create_list:
   response: single
   method: POST
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: space
-    - type: var
-      name: space_id
-    - type: literal
-      value: list
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: space
+  - type: var
+    name: space_id
+  - type: literal
+    value: list
   body:
     type: var
     name: input
@@ -339,67 +353,154 @@ space_views:
     items: views
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: space
-    - type: var
-      name: space_id
-    - type: literal
-      value: view
-
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: folder_views
+    then_expr:
+      type: format
+      template: v2/folder/{folder_id}/view
+      vars:
+        folder_id:
+          type: var
+          name: folder_id
+    else_expr:
+      type: if
+      condition:
+        type: equals
+        left:
+          type: var
+          name: shelf
+        right:
+          type: const
+          value: view
+      then_expr:
+        type: format
+        template: v2/team/{team_id}/view
+        vars:
+          team_id:
+            type: var
+            name: team_id
+      else_expr:
+        type: format
+        template: v2/space/{space_id}/view
+        vars:
+          space_id:
+            type: var
+            name: space_id
+  query:
+    type: object
+    fields: []
 space_fields:
   response:
     items: fields
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: space
-    - type: var
-      name: space_id
-    - type: literal
-      value: field
-
-# ── Folder ────────────────────────────────────────────────────────────────
-
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: folder_fields
+    then_expr:
+      type: format
+      template: v2/folder/{folder_id}/field
+      vars:
+        folder_id:
+          type: var
+          name: folder_id
+    else_expr:
+      type: if
+      condition:
+        type: equals
+        left:
+          type: var
+          name: shelf
+        right:
+          type: const
+          value: list_fields
+      then_expr:
+        type: format
+        template: v2/list/{list_id}/field
+        vars:
+          list_id:
+            type: var
+            name: list_id
+      else_expr:
+        type: if
+        condition:
+          type: equals
+          left:
+            type: var
+            name: shelf
+          right:
+            type: const
+            value: custom_field
+        then_expr:
+          type: format
+          template: v2/team/{team_id}/field
+          vars:
+            team_id:
+              type: var
+              name: team_id
+        else_expr:
+          type: format
+          template: v2/space/{space_id}/field
+          vars:
+            space_id:
+              type: var
+              name: space_id
+  query:
+    type: object
+    fields: []
 folder_query:
   response:
     items: folders
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: space
-    - type: var
-      name: space_id
-    - type: literal
-      value: folder
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: space
+  - type: var
+    name: space_id
+  - type: literal
+    value: folder
+  query:
+    type: object
+    fields:
+    - - archived
+      - type: var
+        name: archived
+        if: { exists: archived }
 folder_get:
   response: single
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: folder
-    - type: var
-      name: id
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: folder
+  - type: var
+    name: id
 folder_update:
   response: single
   method: PUT
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: folder
-    - type: var
-      name: id
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: folder
+  - type: var
+    name: id
   body:
     type: var
     name: input
@@ -407,109 +508,82 @@ folder_delete:
   response: single
   method: DELETE
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: folder
-    - type: var
-      name: id
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: folder
+  - type: var
+    name: id
 folder_create_list:
   response: single
   method: POST
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: folder
-    - type: var
-      name: folder_id
-    - type: literal
-      value: list
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: folder
+  - type: var
+    name: folder_id
+  - type: literal
+    value: list
   body:
     type: var
     name: input
-folder_list_query:
-  response:
-    items: lists
-  method: GET
-  path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: folder
-    - type: var
-      name: folder_id
-    - type: literal
-      value: list
-
-folder_views:
-  response:
-    items: views
-  method: GET
-  path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: folder
-    - type: var
-      name: folder_id
-    - type: literal
-      value: view
-
-folder_fields:
-  response:
-    items: fields
-  method: GET
-  path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: folder
-    - type: var
-      name: folder_id
-    - type: literal
-      value: field
-
-# ── List ──────────────────────────────────────────────────────────────────
-
 list_query:
   response:
     items: lists
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: space
-    - type: var
-      name: space_id
-    - type: literal
-      value: list
-
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: folder
+    then_expr:
+      type: format
+      template: v2/folder/{folder_id}/list
+      vars:
+        folder_id:
+          type: var
+          name: folder_id
+    else_expr:
+      type: format
+      template: v2/space/{space_id}/list
+      vars:
+        space_id:
+          type: var
+          name: space_id
+  query:
+    type: object
+    fields:
+    - - archived
+      - type: var
+        name: archived
+        if: { exists: archived }
 list_get:
   response: single
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: list
-    - type: var
-      name: id
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: list
+  - type: var
+    name: id
 list_update:
   response: single
   method: PUT
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: list
-    - type: var
-      name: id
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: list
+  - type: var
+    name: id
   body:
     type: var
     name: input
@@ -517,137 +591,152 @@ list_delete:
   response: single
   method: DELETE
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: list
-    - type: var
-      name: id
-
-list_members:
-  response:
-    items: members
-  method: GET
-  path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: list
-    - type: var
-      name: list_id
-    - type: literal
-      value: member
-
-list_comments:
-  response:
-    items: comments
-  method: GET
-  path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: list
-    - type: var
-      name: list_id
-    - type: literal
-      value: comment
-
-list_fields:
-  response:
-    items: fields
-  method: GET
-  path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: list
-    - type: var
-      name: list_id
-    - type: literal
-      value: field
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: list
+  - type: var
+    name: id
 list_create_task:
   response: single
   method: POST
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: list
-    - type: var
-      name: list_id
-    - type: literal
-      value: task
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: list
+  - type: var
+    name: list_id
+  - type: literal
+    value: task
   body:
     type: var
     name: input
-# ── Task ──────────────────────────────────────────────────────────────────
-
-task_query:
-  # Workspace-wide task query.
-  # ClickUp stops pagination when last_page:true appears in the response body.
-  response:
-    items: tasks
-    last_page: last_page
-  method: GET
-  path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: team
-    - type: var
-      name: team_id
-    - type: literal
-      value: task
-  pagination:
-    params:
-      page: {counter: 0}
-    stop_when: {field: last_page, eq: true}
-
 list_task_query:
-  # List-scoped task query. GET /v2/list/{list_id}/task
-  # Uses the same last_page pagination pattern as task_query.
   response:
     items: tasks
     last_page: last_page
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: list
-    - type: var
-      name: list_id
-    - type: literal
-      value: task
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: list_task
+    then_expr:
+      type: format
+      template: v2/list/{list_id}/task
+      vars:
+        list_id:
+          type: var
+          name: list_id
+    else_expr:
+      type: if
+      condition:
+        type: equals
+        left:
+          type: var
+          name: shelf
+        right:
+          type: const
+          value: view_tasks
+      then_expr:
+        type: format
+        template: v2/view/{view_id}/task
+        vars:
+          view_id:
+            type: var
+            name: view_id
+      else_expr:
+        type: format
+        template: v2/team/{team_id}/task
+        vars:
+          team_id:
+            type: var
+            name: team_id
   pagination:
     params:
-      page: {counter: 0}
-    stop_when: {field: last_page, eq: true}
-
+      page:
+        counter: 0
+    stop_when:
+      field: last_page
+      eq: true
+    strategy: page_number
+  query:
+    type: object
+    fields:
+    - - date_created_gt
+      - type: var
+        name: date_created_gt
+        if: { exists: date_created_gt }
+    - - date_created_lt
+      - type: var
+        name: date_created_lt
+        if: { exists: date_created_lt }
+    - - date_updated_gt
+      - type: var
+        name: date_updated_gt
+        if: { exists: date_updated_gt }
+    - - date_updated_lt
+      - type: var
+        name: date_updated_lt
+        if: { exists: date_updated_lt }
+    - - due_date_gt
+      - type: var
+        name: due_date_gt
+        if: { exists: due_date_gt }
+    - - due_date_lt
+      - type: var
+        name: due_date_lt
+        if: { exists: due_date_lt }
+    - - archived
+      - type: var
+        name: archived
+        if: { exists: archived }
+    - - include_closed
+      - type: var
+        name: include_closed
+        if: { exists: include_closed }
+    - - include_markdown_description
+      - type: var
+        name: include_markdown_description
+        if: { exists: include_markdown_description }
+    - - order_by
+      - type: var
+        name: order_by
+        if: { exists: order_by }
+    - - reverse
+      - type: var
+        name: reverse
+        if: { exists: reverse }
+    - - subtasks
+      - type: var
+        name: subtasks
+        if: { exists: subtasks }
 task_get:
   response: single
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: task
-    - type: var
-      name: id
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: task
+  - type: var
+    name: id
 task_update:
   response: single
   method: PUT
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: task
-    - type: var
-      name: id
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: task
+  - type: var
+    name: id
   body:
     type: var
     name: input
@@ -655,26 +744,24 @@ task_delete:
   response: single
   method: DELETE
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: task
-    - type: var
-      name: id
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: task
+  - type: var
+    name: id
 task_create_comment:
   response: single
   method: POST
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: task
-    - type: var
-      name: task_id
-    - type: literal
-      value: comment
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: task
+  - type: var
+    name: task_id
+  - type: literal
+    value: comment
   body:
     type: var
     name: input
@@ -682,28 +769,26 @@ task_create_attachment:
   response: single
   method: POST
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: task
-    - type: var
-      name: task_id
-    - type: literal
-      value: attachment
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: task
+  - type: var
+    name: id
+  - type: literal
+    value: attachment
 task_create_checklist:
   response: single
   method: POST
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: task
-    - type: var
-      name: task_id
-    - type: literal
-      value: checklist
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: task
+  - type: var
+    name: id
+  - type: literal
+    value: checklist
   body:
     type: var
     name: input
@@ -711,15 +796,14 @@ task_add_dependency:
   response: single
   method: POST
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: task
-    - type: var
-      name: task_id
-    - type: literal
-      value: dependency
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: task
+  - type: var
+    name: id
+  - type: literal
+    value: dependency
   body:
     type: var
     name: input
@@ -727,92 +811,82 @@ task_remove_dependency:
   response: single
   method: DELETE
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: task
-    - type: var
-      name: task_id
-    - type: literal
-      value: dependency
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: task
+  - type: var
+    name: id
+  - type: literal
+    value: dependency
+  query:
+    type: object
+    fields:
+    - - depends_on
+      - type: var
+        name: depends_on
+    - - dependency_of
+      - type: var
+        name: dependency_of
 task_time_in_status:
   response: single
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: task
-    - type: var
-      name: task_id
-    - type: literal
-      value: time_in_status
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: task
+  - type: var
+    name: task_id
+  - type: literal
+    value: time_in_status
 task_intervals:
-  # GET /v2/task/{task_id}/time (legacy) — merge data[*].intervals for TimeInterval rows.
   response:
     items: intervals
     response_preprocess:
       kind: concat_field_arrays
-      path: [data]
+      path:
+      - data
       from_each: intervals
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: task
-    - type: var
-      name: task_id
-    - type: literal
-      value: time
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: task
+  - type: var
+    name: task_id
+  - type: literal
+    value: time
 task_create_interval:
   response: single
   method: POST
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: task
-    - type: var
-      name: task_id
-    - type: literal
-      value: time
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: task
+  - type: var
+    name: task_id
+  - type: literal
+    value: time
   body:
     type: var
     name: input
-task_member_query:
-  response:
-    items: members
-  method: GET
-  path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: task
-    - type: var
-      name: task_id
-    - type: literal
-      value: member
-
 task_tag_add:
   response: single
   method: POST
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: task
-    - type: var
-      name: task_id
-    - type: literal
-      value: tag
-    - type: var
-      name: tag_name
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: task
+  - type: var
+    name: id
+  - type: literal
+    value: tag
+  - type: var
+    name: tag_name
   body:
     type: var
     name: input
@@ -820,55 +894,36 @@ task_tag_remove:
   response: single
   method: DELETE
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: task
-    - type: var
-      name: task_id
-    - type: literal
-      value: tag
-    - type: var
-      name: tag_name
-
-# ── View ──────────────────────────────────────────────────────────────────
-
-view_query:
-  response:
-    items: views
-  method: GET
-  path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: team
-    - type: var
-      name: team_id
-    - type: literal
-      value: view
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: task
+  - type: var
+    name: id
+  - type: literal
+    value: tag
+  - type: var
+    name: tag_name
 view_get:
   response: single
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: view
-    - type: var
-      name: id
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: view
+  - type: var
+    name: id
 view_update:
   response: single
   method: PUT
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: view
-    - type: var
-      name: id
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: view
+  - type: var
+    name: id
   body:
     type: var
     name: input
@@ -876,101 +931,60 @@ view_delete:
   response: single
   method: DELETE
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: view
-    - type: var
-      name: id
-
-view_tasks:
-  # GET /v2/view/{view_id}/task — paginated, same last_page pattern
-  response:
-    items: tasks
-    last_page: last_page
-  method: GET
-  path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: view
-    - type: var
-      name: view_id
-    - type: literal
-      value: task
-  pagination:
-    params:
-      page: {counter: 0}
-    stop_when: {field: last_page, eq: true}
-
-view_comments:
-  response:
-    items: comments
-  method: GET
-  path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: view
-    - type: var
-      name: view_id
-    - type: literal
-      value: comment
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: view
+  - type: var
+    name: id
 view_create_comment:
   response: single
   method: POST
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: view
-    - type: var
-      name: view_id
-    - type: literal
-      value: comment
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: view
+  - type: var
+    name: view_id
+  - type: literal
+    value: comment
   body:
     type: var
     name: input
-# ── Goal / KeyResult ──────────────────────────────────────────────────────
-
 goal_query:
   response:
     items: goals
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: team
-    - type: var
-      name: team_id
-    - type: literal
-      value: goal
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: team
+  - type: var
+    name: team_id
+  - type: literal
+    value: goal
 goal_get:
   response: single
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: goal
-    - type: var
-      name: id
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: goal
+  - type: var
+    name: id
 goal_update:
   response: single
   method: PUT
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: goal
-    - type: var
-      name: id
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: goal
+  - type: var
+    name: id
   body:
     type: var
     name: input
@@ -978,26 +992,24 @@ goal_delete:
   response: single
   method: DELETE
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: goal
-    - type: var
-      name: id
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: goal
+  - type: var
+    name: id
 goal_create_key_result:
   response: single
   method: POST
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: goal
-    - type: var
-      name: goal_id
-    - type: literal
-      value: key_result
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: goal
+  - type: var
+    name: goal_id
+  - type: literal
+    value: key_result
   body:
     type: var
     name: input
@@ -1005,24 +1017,22 @@ key_result_get:
   response: single
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: key_result
-    - type: var
-      name: id
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: key_result
+  - type: var
+    name: id
 key_result_update:
   response: single
   method: PUT
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: key_result
-    - type: var
-      name: id
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: key_result
+  - type: var
+    name: id
   body:
     type: var
     name: input
@@ -1030,51 +1040,80 @@ key_result_delete:
   response: single
   method: DELETE
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: key_result
-    - type: var
-      name: id
-
-# ── Comment ───────────────────────────────────────────────────────────────
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: key_result
+  - type: var
+    name: id
 comment_query:
   response:
     items: comments
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: task
-    - type: var
-      name: task_id
-    - type: literal
-      value: comment
-
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: view_comments
+    then_expr:
+      type: format
+      template: v2/view/{view_id}/comment
+      vars:
+        view_id:
+          type: var
+          name: view_id
+    else_expr:
+      type: if
+      condition:
+        type: equals
+        left:
+          type: var
+          name: shelf
+        right:
+          type: const
+          value: comment
+      then_expr:
+        type: format
+        template: v2/task/{task_id}/comment
+        vars:
+          task_id:
+            type: var
+            name: task_id
+      else_expr:
+        type: format
+        template: v2/list/{list_id}/comment
+        vars:
+          list_id:
+            type: var
+            name: list_id
+  query:
+    type: object
+    fields: []
 comment_get:
   response: single
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: comment
-    - type: var
-      name: id
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: comment
+  - type: var
+    name: id
 comment_update:
   response: single
   method: PUT
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: comment
-    - type: var
-      name: id
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: comment
+  - type: var
+    name: id
   body:
     type: var
     name: input
@@ -1082,160 +1121,129 @@ comment_delete:
   response: single
   method: DELETE
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: comment
-    - type: var
-      name: id
-
-# ── Custom fields ─────────────────────────────────────────────────────────
-
-custom_field_query:
-  response:
-    items: fields
-  method: GET
-  path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: team
-    - type: var
-      name: team_id
-    - type: literal
-      value: field
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: comment
+  - type: var
+    name: id
 custom_task_type_query:
-  # GET /v2/team/{team_id}/custom_item
   response:
     items: custom_items
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: team
-    - type: var
-      name: team_id
-    - type: literal
-      value: custom_item
-
-# ── Tags ──────────────────────────────────────────────────────────────────
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: team
+  - type: var
+    name: team_id
+  - type: literal
+    value: custom_item
 tag_query:
   response:
     items: tags
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: space
-    - type: var
-      name: space_id
-    - type: literal
-      value: tag
-
-# ── Members / Roles ───────────────────────────────────────────────────────
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: space
+  - type: var
+    name: space_id
+  - type: literal
+    value: tag
 role_query:
-  # GET /v2/team/{team_id}/customroles
   response:
     items: custom_roles
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: team
-    - type: var
-      name: team_id
-    - type: literal
-      value: customroles
-
-# ── Time tracking ─────────────────────────────────────────────────────────
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: team
+  - type: var
+    name: team_id
+  - type: literal
+    value: customroles
 time_entry_query:
   response:
     items: data
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: team
-    - type: var
-      name: team_id
-    - type: literal
-      value: time_entries
-
-# ── Templates ─────────────────────────────────────────────────────────────
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: team
+  - type: var
+    name: team_id
+  - type: literal
+    value: time_entries
 template_query:
-  # GET /v2/team/{team_id}/taskTemplate?… — API returns string ids; map to {id: …} for Template.
   response:
     items: templates
     response_preprocess:
       kind: string_ids_to_field_objects
-      path: [templates]
+      path:
+      - templates
       field: id
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: team
-    - type: var
-      name: team_id
-    - type: literal
-      value: taskTemplate
+  - type: literal
+    value: v2
+  - type: literal
+    value: team
+  - type: var
+    name: team_id
+  - type: literal
+    value: taskTemplate
   query:
     type: object
     fields:
-      - - page
-        - type: if
-          condition: { type: exists, var: page }
-          then_expr: { type: var, name: page }
-          else_expr: { type: const, value: 0 }
-
-# ── Webhooks ──────────────────────────────────────────────────────────────
-
+    - - page
+      - type: if
+        condition:
+          type: exists
+          var: page
+        then_expr:
+          type: var
+          name: page
+        else_expr:
+          type: const
+          value: 0
 webhook_query:
   response:
     items: webhooks
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: team
-    - type: var
-      name: team_id
-    - type: literal
-      value: webhook
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: team
+  - type: var
+    name: team_id
+  - type: literal
+    value: webhook
 webhook_get:
   response: single
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: webhook
-    - type: var
-      name: id
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: webhook
+  - type: var
+    name: id
 webhook_update:
   response: single
   method: PUT
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: webhook
-    - type: var
-      name: id
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: webhook
+  - type: var
+    name: id
   body:
     type: var
     name: input
@@ -1243,41 +1251,37 @@ webhook_delete:
   response: single
   method: DELETE
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: webhook
-    - type: var
-      name: id
-
-# ── Groups ────────────────────────────────────────────────────────────────
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: webhook
+  - type: var
+    name: id
 group_query:
   response:
     items: groups
   method: GET
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: group
-  query_params:
-    - name: team_id
-      value:
-        type: var
+  - type: literal
+    value: v2
+  - type: literal
+    value: group
+  query:
+    type: object
+    fields:
+    - - team_id
+      - type: var
         name: team_id
-
 group_update:
   response: single
   method: PUT
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: group
-    - type: var
-      name: id
-
+  - type: literal
+    value: v2
+  - type: literal
+    value: group
+  - type: var
+    name: id
   body:
     type: var
     name: input
@@ -1285,9 +1289,9 @@ group_delete:
   response: single
   method: DELETE
   path:
-    - type: literal
-      value: v2
-    - type: literal
-      value: group
-    - type: var
-      name: id
+  - type: literal
+    value: v2
+  - type: literal
+    value: group
+  - type: var
+    name: id

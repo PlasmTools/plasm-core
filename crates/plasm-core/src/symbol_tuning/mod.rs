@@ -48,11 +48,10 @@ pub use session_bindings::{EntityBinding, MethodBinding, RelationBinding};
 pub use symbol_traits::{SymbolAllocate, SymbolRender, SymbolResolve, SymbolSession};
 
 pub use capability_surface_params::{
-    bare_ranked_capability_wire, capability_exposure_param_pairs,
-    capability_exposure_param_triples, capability_optional_legend_param_pairs,
-    compact_mutator_param_marker, exposed_mutator_capability_keys, input_field_is_array,
-    loaded_catalog_entry_ids, optional_legend_param_syms, resolve_ranked_wire_candidates,
-    seeded_ranked_wire_candidates, CapabilityParamSurfaceFilter,
+    capability_exposure_param_pairs, capability_exposure_param_triples,
+    capability_optional_legend_param_pairs, compact_mutator_param_marker,
+    exposed_mutator_capability_keys, input_field_is_array, loaded_catalog_entry_ids,
+    optional_legend_param_syms, CapabilityParamSurfaceFilter,
 };
 pub use persisted_ledger::{
     catalog_cgs_hashes_from_session, catalog_pins_match, PersistedSymbolLedger,
@@ -68,9 +67,10 @@ use crate::identity::{
 use crate::schema::{
     input_variant_body_type, resolve_capability_input_param_field,
     union_variant_constructor_symbol, ArrayItemsSchema, CapabilitySchema, InputFieldSchema,
-    InputFieldWire, InputType, ParameterRole, StringSemantics, ValueDomainKey, CGS,
+    InputFieldWire, InputType, ValueDomainKey, CGS,
 };
 use crate::teaching_term::{method_ref_for_capability, EntityRef, ParameterSlot, TeachingTerm};
+use crate::value_domain::ProfileId;
 use crate::CapabilityKind;
 use crate::FieldType;
 use indexmap::IndexMap;
@@ -122,6 +122,9 @@ pub enum IdentRegistryRole {
 
 /// Typed metadata for one teaching table / symbol slot — **discriminated** so relations and CGS-backed
 /// fields do not share optional `values:` keys (`RegistryBacked` always carries [`ValueDomainKey`]).
+///
+/// `RegistryBacked` dominates enum size; boxing deferred until `EntityRefSpec` extraction lands.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum IdentMetadata {
     /// Entity field or capability parameter: denormalized wire typing from [`CGS::values`].
@@ -131,7 +134,7 @@ pub enum IdentMetadata {
         role: IdentRegistryRole,
         value_registry_key: ValueDomainKey,
         field_type: FieldType,
-        string_semantics: Option<StringSemantics>,
+        profile: Option<ProfileId>,
         array_items: Option<ArrayItemsSchema>,
         allowed_values: Option<Vec<String>>,
         wire_name: String,
@@ -392,9 +395,17 @@ pub fn legacy_exposure_surface_for_entities(
                 capability: cap_name.clone(),
             };
             out.capabilities.insert(ckey.clone());
-            if let Some(is) = &cap.input_schema {
-                let mut paths = BTreeSet::new();
-                match &is.input_type {
+            let mut paths = BTreeSet::new();
+            for field in cap
+                .scope_params()
+                .iter()
+                .chain(cap.selection_params())
+                .chain(cap.control_params())
+            {
+                insert_capability_param_paths(field, "", &mut paths);
+            }
+            for schema in cap.invocation_input_schemas() {
+                match &schema.input_type {
                     InputType::Object { fields, .. } => {
                         for f in fields {
                             insert_capability_param_paths(f, "", &mut paths);
@@ -408,12 +419,12 @@ pub fn legacy_exposure_surface_for_entities(
                     }
                     _ => {}
                 }
-                for path in paths {
-                    out.slots.insert(ExposureSlotKey::CapabilityParam {
-                        capability: ckey.clone(),
-                        param: CapabilityParamName::new(path),
-                    });
-                }
+            }
+            for path in paths {
+                out.slots.insert(ExposureSlotKey::CapabilityParam {
+                    capability: ckey.clone(),
+                    param: CapabilityParamName::new(path),
+                });
             }
         }
     }
@@ -455,7 +466,7 @@ pub(crate) fn collect_slot_metas_for_surface(
                     role: IdentRegistryRole::EntityField,
                     value_registry_key: f.kind.registry_key().clone(),
                     field_type: nv.field_type.clone(),
-                    string_semantics: nv.string_semantics,
+                    profile: nv.domain.profile,
                     array_items: nv.array_items.clone(),
                     allowed_values: nv.allowed_values.clone(),
                     wire_name: field.as_str().to_string(),
@@ -505,7 +516,7 @@ pub(crate) fn collect_slot_metas_for_surface(
                             },
                             value_registry_key: k.clone(),
                             field_type: nv.field_type.clone(),
-                            string_semantics: nv.string_semantics,
+                            profile: nv.domain.profile,
                             array_items: nv.array_items.clone(),
                             allowed_values: nv.allowed_values.clone(),
                             wire_name: path.to_string(),
@@ -555,7 +566,7 @@ pub(crate) fn ident_metadata_for_capability_input_path(
                 },
                 value_registry_key: k.clone(),
                 field_type: nv.field_type.clone(),
-                string_semantics: nv.string_semantics,
+                profile: nv.domain.profile,
                 array_items: nv.array_items.clone(),
                 allowed_values: nv.allowed_values.clone(),
                 wire_name: param_path.to_string(),
@@ -570,18 +581,6 @@ pub(crate) fn ident_metadata_for_capability_input_path(
             description: f.description.clone().unwrap_or_default(),
         }),
     }
-}
-
-/// Same 2-hop focus neighbourhood as prompt rendering: `Some(set)` when focus is set.
-#[inline]
-pub(crate) fn field_is_filter_like_gloss(f: &InputFieldSchema) -> bool {
-    !matches!(
-        f.role,
-        Some(ParameterRole::Search)
-            | Some(ParameterRole::Sort)
-            | Some(ParameterRole::SortDirection)
-            | Some(ParameterRole::ResponseControl)
-    )
 }
 
 /// Union of [`build_focus_set`] for each seed (same rules as single focus).
@@ -602,7 +601,7 @@ pub fn build_focus_set<'a>(cgs: &'a CGS, focus: Option<&'a str>) -> Option<HashS
     if let Some(ent) = cgs.get_entity(f) {
         for field in ent.fields.values() {
             if let Ok(nv) = field.named_value(cgs) {
-                if let FieldType::EntityRef { target } = &nv.field_type {
+                if let FieldType::EntityRef { target, .. } = &nv.field_type {
                     s.insert(target.as_str());
                 }
             }
@@ -614,7 +613,7 @@ pub fn build_focus_set<'a>(cgs: &'a CGS, focus: Option<&'a str>) -> Option<HashS
     for (ename, ent) in &cgs.entities {
         for field in ent.fields.values() {
             if let Ok(nv) = field.named_value(cgs) {
-                if let FieldType::EntityRef { target } = &nv.field_type {
+                if let FieldType::EntityRef { target, .. } = &nv.field_type {
                     if target.as_str() == f {
                         s.insert(ename.as_str());
                     }
@@ -741,13 +740,7 @@ pub(crate) fn collect_ident_names(cgs: &CGS, full_entities: &[&str]) -> BTreeSet
             let Some(cap) = cgs.capabilities.get(cap_name) else {
                 continue;
             };
-            let Some(is) = &cap.input_schema else {
-                continue;
-            };
-            let InputType::Object { fields, .. } = &is.input_type else {
-                continue;
-            };
-            for f in fields {
+            for f in cap.input_fields() {
                 idents.insert(f.name.clone());
             }
         }
@@ -761,14 +754,14 @@ pub(crate) fn collect_ident_names(cgs: &CGS, full_entities: &[&str]) -> BTreeSet
 /// **Opaque `p#` allocation** uses [`slot_symbol_allocation_fingerprint`] instead: registry-backed
 /// slots that share the same `values:` row and wire name reuse one `p#`.
 pub(crate) fn slot_allocation_fingerprint(meta: &IdentMetadata) -> String {
-    let (role_tag, ft, sem, ai, av, vr, catalog_entry_id, entity, wire_name, desc) = match meta {
+    let (role_tag, ft, prof, ai, av, vr, catalog_entry_id, entity, wire_name, desc) = match meta {
         IdentMetadata::RegistryBacked {
             catalog_entry_id,
             entity,
             role,
             value_registry_key,
             field_type,
-            string_semantics,
+            profile,
             array_items,
             allowed_values,
             wire_name,
@@ -781,15 +774,14 @@ pub(crate) fn slot_allocation_fingerprint(meta: &IdentMetadata) -> String {
                 }
             };
             let ft = serde_json::to_string(field_type).unwrap_or_else(|_| "\"?\"".to_string());
-            let sem =
-                serde_json::to_string(string_semantics).unwrap_or_else(|_| "null".to_string());
+            let prof = serde_json::to_string(profile).unwrap_or_else(|_| "null".to_string());
             let ai = serde_json::to_string(array_items).unwrap_or_else(|_| "null".to_string());
             let av = serde_json::to_string(allowed_values).unwrap_or_else(|_| "null".to_string());
             let vr = value_registry_key.as_str();
             (
                 role_tag,
                 ft,
-                sem,
+                prof,
                 ai,
                 av,
                 vr,
@@ -808,6 +800,7 @@ pub(crate) fn slot_allocation_fingerprint(meta: &IdentMetadata) -> String {
         } => {
             let role_tag = format!("rel:{}", target.as_str());
             let ft = serde_json::to_string(&FieldType::EntityRef {
+                entry_id: Default::default(),
                 target: target.clone(),
             })
             .unwrap_or_else(|_| "\"?\"".to_string());
@@ -863,7 +856,7 @@ pub(crate) fn slot_allocation_fingerprint(meta: &IdentMetadata) -> String {
             description.trim(),
         ),
     };
-    format!("{catalog_entry_id}|{entity}|{role_tag}|{wire_name}|{ft}|{sem}|{ai}|{av}|{vr}|{desc}",)
+    format!("{catalog_entry_id}|{entity}|{role_tag}|{wire_name}|{ft}|{prof}|{ai}|{av}|{vr}|{desc}",)
 }
 
 /// Fingerprint for **allocating** shared `v#` value-domain symbols on registry-backed slots.
@@ -1000,7 +993,7 @@ pub(crate) fn build_ident_metadata(
                     role: IdentRegistryRole::EntityField,
                     value_registry_key: f.kind.registry_key().clone(),
                     field_type: nv.field_type.clone(),
-                    string_semantics: nv.string_semantics,
+                    profile: nv.domain.profile,
                     array_items: nv.array_items.clone(),
                     allowed_values: nv.allowed_values.clone(),
                     wire_name: fname.as_str().to_string(),
@@ -1026,14 +1019,8 @@ pub(crate) fn build_ident_metadata(
             let Some(cap) = cgs.capabilities.get(cap_name) else {
                 continue;
             };
-            let Some(is) = &cap.input_schema else {
-                continue;
-            };
-            let InputType::Object { fields, .. } = &is.input_type else {
-                continue;
-            };
             let en = cap.domain.clone();
-            for f in fields {
+            for f in cap.input_fields() {
                 let Ok(nv) = f.named_value(cgs) else {
                     continue;
                 };
@@ -1049,7 +1036,7 @@ pub(crate) fn build_ident_metadata(
                         },
                         value_registry_key: k.clone(),
                         field_type: nv.field_type.clone(),
-                        string_semantics: nv.string_semantics,
+                        profile: nv.domain.profile,
                         array_items: nv.array_items.clone(),
                         allowed_values: nv.allowed_values.clone(),
                         wire_name: f.name.clone(),
@@ -1213,15 +1200,20 @@ impl IdentMetadata {
                 allowed_values,
                 wire_name,
                 role,
+                value_registry_key,
                 ..
             } => {
                 let type_label = registry_gloss_type_label(self, cgs, map);
                 if matches!(field_type, FieldType::Select | FieldType::MultiSelect) {
-                    if let Some(ref av) = allowed_values {
-                        if !av.is_empty() {
-                            let joined = av.join(", ");
-                            return format!("{type_label} · {joined}");
-                        }
+                    if let Some(meaning) =
+                        crate::enum_teaching_meaning::enum_meaning_from_registry_row(
+                            &type_label,
+                            value_registry_key.as_str(),
+                            allowed_values.as_deref(),
+                            cgs,
+                        )
+                    {
+                        return meaning;
                     }
                 }
                 let desc = self.description_trimmed();
@@ -1255,14 +1247,14 @@ impl IdentMetadata {
             IdentMetadata::RegistryBacked {
                 catalog_entry_id,
                 field_type,
-                string_semantics,
+                profile,
                 array_items,
                 allowed_values,
                 ..
             } => Some(structural_value_domain_allocation_fp(
                 catalog_entry_id,
                 field_type,
-                *string_semantics,
+                *profile,
                 array_items.as_ref(),
                 allowed_values.as_ref(),
             )),
@@ -1288,7 +1280,7 @@ impl IdentMetadata {
         else {
             return None;
         };
-        if let FieldType::EntityRef { target } = field_type {
+        if let FieldType::EntityRef { target, .. } = field_type {
             return Some(entity_ref_value_domain_row_gloss(
                 target,
                 cgs,
@@ -1297,11 +1289,19 @@ impl IdentMetadata {
         }
         let type_label = registry_gloss_type_label(self, cgs, map);
         if matches!(field_type, FieldType::Select | FieldType::MultiSelect) {
-            if let Some(ref av) = allowed_values {
-                if !av.is_empty() {
-                    let joined = av.join(", ");
-                    return Some(format!("{type_label} · {joined}"));
-                }
+            let value_registry_key = match self {
+                IdentMetadata::RegistryBacked {
+                    value_registry_key, ..
+                } => value_registry_key.as_str(),
+                _ => "",
+            };
+            if let Some(meaning) = crate::enum_teaching_meaning::enum_meaning_from_registry_row(
+                &type_label,
+                value_registry_key,
+                allowed_values.as_deref(),
+                cgs,
+            ) {
+                return Some(meaning);
             }
         }
         let desc = value_row_description.trim();
@@ -1329,7 +1329,7 @@ pub(crate) fn entity_ref_value_domain_row_gloss(
         let nv = f.named_value(c).ok()?;
         match &nv.field_type {
             FieldType::EntityRef { .. } => None,
-            FieldType::String => Some(string_semantics_gloss_label(nv.string_semantics)),
+            FieldType::String => Some(nv.domain.gloss_type_keyword().to_string()),
             FieldType::Array | FieldType::Json => None,
             ft => Some(field_type_to_gloss_label(ft)),
         }
@@ -1349,10 +1349,13 @@ pub(crate) fn entity_ref_value_domain_row_gloss(
 }
 
 /// Short type label for teaching table `p#` gloss (matches [`FieldType`] / capability inputs).
-/// Type keyword for a scalar `string` in teaching gloss (`str` vs `markdown`, …).
-pub(crate) fn string_semantics_gloss_label(sem: Option<StringSemantics>) -> String {
-    let s = sem.unwrap_or(StringSemantics::Short);
-    s.gloss_type_keyword().unwrap_or("str").to_string()
+fn profile_gloss_label(profile: Option<ProfileId>, field_type: &FieldType) -> String {
+    match field_type {
+        FieldType::String => profile
+            .map(|p| p.type_name().to_string())
+            .unwrap_or_else(|| "string".to_string()),
+        _ => field_type_to_gloss_label(field_type),
+    }
 }
 
 fn registry_gloss_type_label(
@@ -1363,34 +1366,56 @@ fn registry_gloss_type_label(
     let IdentMetadata::RegistryBacked {
         field_type,
         array_items,
-        string_semantics,
+        profile,
+        value_registry_key,
         ..
     } = meta
     else {
-        return "str".to_string();
+        return "string".to_string();
     };
+    if let Some(cgs) = cgs {
+        if let Some(nv) = cgs.values.get(value_registry_key.as_str()) {
+            if matches!(nv.field_type, FieldType::Money) {
+                return money_value_domain_gloss_label(meta, Some(cgs));
+            }
+            if matches!(nv.field_type, FieldType::Array) {
+                return array_or_scalar_gloss_label(
+                    &nv.field_type,
+                    &nv.array_items,
+                    nv.domain.profile,
+                    map,
+                );
+            }
+            if matches!(nv.field_type, FieldType::EntityRef { .. }) {
+                return field_type_to_gloss_label(&nv.field_type);
+            }
+            let mut label = nv.domain.gloss_type_keyword().to_string();
+            label.push_str(&nv.domain.constraint_gloss_suffix());
+            return label;
+        }
+    }
     if matches!(field_type, FieldType::Money) {
         money_value_domain_gloss_label(meta, cgs)
     } else {
-        array_or_scalar_gloss_label(field_type, array_items, *string_semantics, map)
+        array_or_scalar_gloss_label(field_type, array_items, *profile, map)
     }
 }
 
 pub(crate) fn field_type_to_gloss_label(ft: &FieldType) -> String {
     match ft {
-        FieldType::Boolean => "bool".to_string(),
-        FieldType::Number => "float".to_string(),
-        FieldType::Integer => "int".to_string(),
-        FieldType::String => "str".to_string(),
+        FieldType::Boolean => "boolean".to_string(),
+        FieldType::Number => "number".to_string(),
+        FieldType::Integer => "integer".to_string(),
+        FieldType::String => "string".to_string(),
         FieldType::Blob => "blob".to_string(),
         FieldType::Uuid => "uuid".to_string(),
-        FieldType::Select => "select".to_string(),
-        FieldType::MultiSelect => "multiselect".to_string(),
-        FieldType::Date => "date".to_string(),
+        FieldType::Select => "enum".to_string(),
+        FieldType::MultiSelect => "multi_enum".to_string(),
+        FieldType::Date => "rfc3339".to_string(),
         FieldType::Money => "money".to_string(),
         FieldType::Array => "array".to_string(),
         FieldType::Json => "json".to_string(),
-        FieldType::EntityRef { target } => format!("ref:{target}"),
+        FieldType::EntityRef { target, .. } => format!("ref:{target}"),
     }
 }
 
@@ -1416,7 +1441,7 @@ fn money_value_domain_gloss_label(meta: &IdentMetadata, cgs: Option<&CGS>) -> St
 
 fn array_element_gloss_label(ai: &ArrayItemsSchema, map: Option<&SymbolMap>) -> String {
     match &ai.field_type {
-        FieldType::EntityRef { target } => {
+        FieldType::EntityRef { target, .. } => {
             let sym = map
                 .map(|m| m.entity_sym_for("", target.as_str()))
                 .unwrap_or_else(|| target.to_string());
@@ -1491,7 +1516,7 @@ fn capability_structural_slot_type_prefix(
 fn array_or_scalar_gloss_label(
     ft: &FieldType,
     items: &Option<ArrayItemsSchema>,
-    string_semantics: Option<StringSemantics>,
+    profile: Option<ProfileId>,
     map: Option<&SymbolMap>,
 ) -> String {
     match ft {
@@ -1499,7 +1524,7 @@ fn array_or_scalar_gloss_label(
             Some(ai) => format!("array[{}]", array_element_gloss_label(ai, map)),
             None => "array".to_string(),
         },
-        FieldType::String => string_semantics_gloss_label(string_semantics),
+        FieldType::String => profile_gloss_label(profile, ft),
         FieldType::Blob => "blob".to_string(),
         _ => field_type_to_gloss_label(ft),
     }
@@ -1524,18 +1549,11 @@ fn resolve_ident_type_string(
         if !full_set.contains(cap.domain.as_str()) {
             continue;
         }
-        let Some(is) = &cap.input_schema else {
-            continue;
-        };
-        let InputType::Object { fields, .. } = &is.input_type else {
-            continue;
-        };
-        for f in fields {
+        for f in cap.input_fields() {
             if f.name == name {
                 let nv = f.named_value(cgs).ok()?;
-                let sem = nv.string_semantics;
                 return Some(match nv.field_type {
-                    FieldType::String => string_semantics_gloss_label(sem),
+                    FieldType::String => profile_gloss_label(nv.domain.profile, &nv.field_type),
                     FieldType::Blob => "blob".to_string(),
                     _ => field_type_to_gloss_label(&nv.field_type),
                 });
@@ -1546,9 +1564,8 @@ fn resolve_ident_type_string(
         if let Some(ent) = cgs.get_entity(e) {
             if let Some(f) = ent.fields.get(name) {
                 let nv = f.named_value(cgs).ok()?;
-                let sem = nv.string_semantics;
                 return Some(match nv.field_type {
-                    FieldType::String => string_semantics_gloss_label(sem),
+                    FieldType::String => profile_gloss_label(nv.domain.profile, &nv.field_type),
                     FieldType::Blob => "blob".to_string(),
                     _ => field_type_to_gloss_label(&nv.field_type),
                 });
@@ -1676,6 +1693,19 @@ pub(crate) fn next_opaque_v_symbol_after_map_and_extra_syms<'a>(
 }
 
 impl SymbolMap {
+    /// Stable fingerprint for teaching line-valid memo keys (no row Vec allocation).
+    pub(crate) fn line_valid_cache_symbol_fingerprint<H: std::hash::Hasher>(&self, state: &mut H) {
+        use std::hash::Hash;
+        self.sole_registry_entry_id.hash(state);
+        let bindings = &self.tables.qualified_entity_to_sym;
+        bindings.len().hash(state);
+        for (key, sym) in bindings.iter().take(8) {
+            key.entry_id.as_str().hash(state);
+            key.entity.as_str().hash(state);
+            sym.as_wire().hash(state);
+        }
+    }
+
     /// Stable `(entry_id, entity)` → `e#` assignments for HTTP `/symbols` and terminals.
     pub fn exposed_entity_symbol_rows(&self) -> Vec<ExposedEntitySymbolRow> {
         self.tables
@@ -2316,12 +2346,6 @@ impl SymbolMap {
         cap: &CapabilitySchema,
     ) -> String {
         const MAX_SIG: usize = 96;
-        let Some(is) = &cap.input_schema else {
-            return String::new();
-        };
-        let InputType::Object { fields, .. } = &is.input_type else {
-            return String::new();
-        };
         if cap.kind == CapabilityKind::Query {
             return String::new();
         }
@@ -2329,14 +2353,11 @@ impl SymbolMap {
         let mut scope_parts: Vec<String> = Vec::new();
         let domain = cap.domain.as_str();
         let cap_name = cap.name.as_str();
-        for f in fields {
-            if !matches!(f.role, Some(ParameterRole::Scope)) {
-                continue;
-            }
+        for f in cap.scope_params() {
             let Ok(nv) = f.named_value(cgs) else {
                 continue;
             };
-            if let FieldType::EntityRef { target } = &nv.field_type {
+            if let FieldType::EntityRef { target, .. } = &nv.field_type {
                 let ps = self.ident_sym_cap_param_for(entry_id, domain, cap_name, f.name.as_str());
                 let es = self.entity_sym_for(entry_id, target.as_str());
                 scope_parts.push(format!("{ps}→{es}"));
@@ -2364,8 +2385,7 @@ impl SymbolMap {
         cgs: &CGS,
         cap: &CapabilitySchema,
     ) -> String {
-        const MAX_SIG: usize = 96;
-        if cap.input_schema.is_none() {
+        if cap.input_fields().next().is_none() {
             return String::new();
         };
         let mut scope_s = self.capability_scope_legend_gloss(cgs, cap);
@@ -2391,7 +2411,7 @@ impl SymbolMap {
         if scope_s.is_empty() {
             return scope_s;
         }
-        crate::utf8_trunc::truncate_utf8_owned_with_ellipsis(scope_s, MAX_SIG)
+        scope_s
     }
 
     /// Reserved for future SYMBOL MAP content; **FIELDS** moved inline into **teaching table** (see [`build_ident_gloss_map`]).
@@ -2453,13 +2473,7 @@ pub fn build_ident_gloss_map(cgs: &CGS) -> HashMap<String, String> {
         }
     }
     for cap in cgs.capabilities.values() {
-        let Some(is) = &cap.input_schema else {
-            continue;
-        };
-        let InputType::Object { fields, .. } = &is.input_type else {
-            continue;
-        };
-        for f in fields {
+        for f in cap.input_fields() {
             if let Some(d) = &f.description {
                 if !d.is_empty() {
                     ident_gloss
@@ -3084,20 +3098,20 @@ impl TeachingExposureSession {
 
     fn build_symbol_map_snapshot(&self) -> SymbolMap {
         let tables = self.tables.clone();
+        let sole_registry_entry_id = compute_sole_registry_entry_id(&tables);
+        let gloss_map = SymbolMap {
+            tables: tables.clone(),
+            values: SymbolValueLayer::default(),
+            sole_registry_entry_id: sole_registry_entry_id.clone(),
+        };
         let values = SymbolValueLayer::build_from_ledger(
             &self.ledger,
             |meta| self.named_value_row_description(meta),
             |meta, nv_desc, cgs_opt| {
-                let partial = SymbolMap {
-                    tables: tables.clone(),
-                    values: SymbolValueLayer::default(),
-                    sole_registry_entry_id: compute_sole_registry_entry_id(&tables),
-                };
-                meta.render_value_domain_row_gloss(nv_desc, Some(&partial), cgs_opt)
+                meta.render_value_domain_row_gloss(nv_desc, Some(&gloss_map), cgs_opt)
             },
             &self.catalog_cgs,
         );
-        let sole_registry_entry_id = compute_sole_registry_entry_id(&tables);
         SymbolMap {
             tables,
             values,
@@ -3791,7 +3805,7 @@ mod tests {
             role: IdentRegistryRole::EntityField,
             value_registry_key: ValueDomainKey::new(vr).expect("key"),
             field_type: ft,
-            string_semantics: None,
+            profile: None,
             array_items: None,
             allowed_values: None,
             wire_name: "id".into(),
@@ -3827,7 +3841,7 @@ mod tests {
             role: IdentRegistryRole::EntityField,
             value_registry_key: ValueDomainKey::new(shared_vr).expect("key"),
             field_type: FieldType::String,
-            string_semantics: Some(StringSemantics::Short),
+            profile: None,
             array_items: None,
             allowed_values: None,
             wire_name: "zone_id".into(),
@@ -3841,7 +3855,7 @@ mod tests {
             },
             value_registry_key: ValueDomainKey::new(shared_vr).expect("key"),
             field_type: FieldType::String,
-            string_semantics: Some(StringSemantics::Short),
+            profile: None,
             array_items: None,
             allowed_values: None,
             wire_name: "zone_id".into(),
@@ -3861,7 +3875,7 @@ mod tests {
             role: IdentRegistryRole::EntityField,
             value_registry_key: ValueDomainKey::new("nv_other_zone_id_test").expect("key"),
             field_type: FieldType::String,
-            string_semantics: Some(StringSemantics::Short),
+            profile: None,
             array_items: None,
             allowed_values: None,
             wire_name: "zone_id".into(),
@@ -3878,7 +3892,7 @@ mod tests {
             role: IdentRegistryRole::EntityField,
             value_registry_key: ValueDomainKey::new("nv_other_zone_id_test").expect("key"),
             field_type: FieldType::Integer,
-            string_semantics: None,
+            profile: None,
             array_items: None,
             allowed_values: None,
             wire_name: "zone_id".into(),
@@ -3899,7 +3913,7 @@ mod tests {
             role: IdentRegistryRole::EntityField,
             value_registry_key: ValueDomainKey::new("nv_catalog_local_status").expect("key"),
             field_type: FieldType::Select,
-            string_semantics: None,
+            profile: None,
             array_items: None,
             allowed_values: Some(vec!["open".to_string(), "closed".to_string()]),
             wire_name: "status".into(),
@@ -3917,9 +3931,10 @@ mod tests {
             role: IdentRegistryRole::EntityField,
             value_registry_key: ValueDomainKey::new("nv_assignee").expect("key"),
             field_type: FieldType::EntityRef {
+                entry_id: Default::default(),
                 target: EntityName::from("User".to_string()),
             },
-            string_semantics: None,
+            profile: None,
             array_items: None,
             allowed_values: None,
             wire_name: "assignee".into(),
@@ -3943,7 +3958,7 @@ mod tests {
             },
             value_registry_key: ValueDomainKey::new(vr).expect("key"),
             field_type: FieldType::String,
-            string_semantics: Some(StringSemantics::Short),
+            profile: None,
             array_items: None,
             allowed_values: None,
             wire_name: path.into(),
@@ -4210,7 +4225,7 @@ mod tests {
     /// Two exposures reaching the **same ordered entity rows + surface** via different wave
     /// structure (one open vs incremental `expose_entities`) may assign different opaque numbering.
     /// The cross-request [`SymbolMapCacheKey`] must encode that numbering: if it did not, the LRU
-    /// would serve one session a `SymbolMap` whose `p#`→wire map disagrees with the teaching TSV it
+    /// would serve one session a `SymbolMap` whose `p#`→wire map disagrees with the language card it
     /// was shown (the `p21=title` rendered / `p21=height` resolved contamination).
     #[test]
     fn cache_key_distinguishes_wave_structure_numbering() {
@@ -4245,14 +4260,28 @@ mod tests {
         let numbering = |m: &SymbolMap| m.tables.clone();
         let same_numbering = numbering(&map_a) == numbering(&map_b);
 
-        // The cache key must agree with the actual numbering — never coarser. A coarser key (the bug)
-        // would leave `key_a == key_b` while `same_numbering == false`, letting the LRU cross-serve.
-        assert_eq!(
-            key_a == key_b,
-            same_numbering,
+        // Different exposure metadata may safely produce distinct keys for identical numbering.
+        // The forbidden direction is a shared key for different numbering.
+        assert!(
+            key_a != key_b || same_numbering,
             "SymbolMapCacheKey must encode opaque-symbol numbering so the cross-request LRU never \
              serves a differently-numbered SymbolMap under a colliding key"
         );
+
+        let exp_c = TeachingExposureSession::new(cgs.as_ref(), "linear", &["LangLine", "LangItem"]);
+        let key_c = symbol_map_cache_key_federated(&layers, &exp_c);
+        let map_c = exp_c.build_symbol_map_snapshot();
+        assert_ne!(numbering(&map_a), numbering(&map_c));
+        assert_ne!(
+            key_a, key_c,
+            "different entity numbering must not share a cache entry"
+        );
+        let cache = SymbolMapCrossRequestCache::new(8);
+        let (_, first_hit) = exp_a.symbol_map_arc_cross(Some(&cache), Some(key_a));
+        let (cached_c, reversed_hit) = exp_c.symbol_map_arc_cross(Some(&cache), Some(key_c));
+        assert_eq!(first_hit, Some(false));
+        assert_eq!(reversed_hit, Some(false));
+        assert_eq!(cached_c.tables, map_c.tables);
     }
 
     #[test]
@@ -4449,7 +4478,7 @@ mod tests {
             },
             value_registry_key: ValueDomainKey::new("fixture_payment_method_str").expect("key"),
             field_type: FieldType::String,
-            string_semantics: None,
+            profile: None,
             array_items: None,
             allowed_values: None,
             wire_name: "operations.replace_range.fromRef".to_string(),
@@ -4468,7 +4497,7 @@ mod tests {
             },
             value_registry_key: ValueDomainKey::new("fixture_payment_method_str").expect("key"),
             field_type: FieldType::String,
-            string_semantics: None,
+            profile: None,
             array_items: None,
             allowed_values: None,
             wire_name: "operations".to_string(),
@@ -4487,13 +4516,13 @@ mod tests {
             },
             value_registry_key: ValueDomainKey::new("fixture_payment_method_str").expect("key"),
             field_type: FieldType::String,
-            string_semantics: None,
+            profile: None,
             array_items: None,
             allowed_values: None,
             wire_name: "payment_method_id".to_string(),
             description: String::new(),
         };
-        assert_eq!(m.render_gloss(None), "str");
+        assert_eq!(m.render_gloss(None), "string");
     }
 
     #[test]
@@ -4506,13 +4535,13 @@ mod tests {
             },
             value_registry_key: ValueDomainKey::new("fixture_payment_method_str").expect("key"),
             field_type: FieldType::String,
-            string_semantics: None,
+            profile: None,
             array_items: None,
             allowed_values: None,
             wire_name: "payment_method_id".to_string(),
             description: "Payment method".to_string(),
         };
-        assert_eq!(m.render_gloss(None), "str · Payment method");
+        assert_eq!(m.render_gloss(None), "string · Payment method");
     }
 
     #[test]
@@ -4525,7 +4554,7 @@ mod tests {
             },
             value_registry_key: ValueDomainKey::new("fixture_issue_body_md").expect("key"),
             field_type: FieldType::String,
-            string_semantics: Some(StringSemantics::Markdown),
+            profile: Some(ProfileId::Markdown),
             array_items: None,
             allowed_values: None,
             wire_name: "body".to_string(),
@@ -4544,12 +4573,13 @@ mod tests {
             },
             value_registry_key: ValueDomainKey::new("fixture_order_item_ids").expect("key"),
             field_type: FieldType::Array,
-            string_semantics: None,
+            profile: None,
             array_items: Some(ArrayItemsSchema {
                 kind: FieldValueKind::Registry(
                     ValueDomainKey::new("fixture_variant_ref").expect("key"),
                 ),
                 field_type: FieldType::EntityRef {
+                    entry_id: Default::default(),
                     target: EntityName::from("Variant".to_string()),
                 },
                 value_format: None,
@@ -4570,7 +4600,7 @@ mod tests {
             role: IdentRegistryRole::EntityField,
             value_registry_key: ValueDomainKey::new("issue_state_reason").expect("key"),
             field_type: FieldType::Select,
-            string_semantics: None,
+            profile: None,
             array_items: None,
             allowed_values: Some(vec![
                 "completed".to_string(),
@@ -4583,7 +4613,7 @@ mod tests {
         };
         assert_eq!(
             m.render_gloss(None),
-            "select · completed, reopened, not_planned, duplicate"
+            "enum · completed | reopened | not_planned | duplicate"
         );
     }
 
@@ -4591,15 +4621,15 @@ mod tests {
     #[test]
     fn value_domain_v_symbols_dedupe_shared_registry_rows() {
         let mut cgs = CGS::new();
-        cgs.entry_id = Some("fixture_entry".into());
+        cgs.bind_registry_entry_id("fixture_entry");
         cgs.values.insert(
             "fixture_str_vtest".into(),
             NamedValueSchema {
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
                 allowed_values: None,
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -4607,11 +4637,11 @@ mod tests {
         cgs.values.insert(
             "shared_sel_vtest".into(),
             NamedValueSchema {
+                domain: Default::default(),
                 description: "shared select semantics".into(),
                 field_type: FieldType::Select,
                 value_format: None,
                 allowed_values: Some(vec!["alpha".into(), "beta".into()]),
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -4673,6 +4703,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -4682,10 +4714,12 @@ mod tests {
             kind: CapabilityKind::Get,
             domain: "Widget".into(),
             identity_key: None,
-            mapping: CapabilityMapping {
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({"method":"GET","path":[{"type":"literal","value":"w"},{"type":"var","name":"id"}]}).into(),
-            },
-            input_schema: None,
+            }),
+            derived: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             scope_aggregate_key_policy: Default::default(),
@@ -4707,7 +4741,7 @@ mod tests {
         assert_eq!(v_foo, v_bar, "same structural value class → one v#");
         assert_eq!(
             map.value_domain_fp_for_v_sym(&v_foo).unwrap(),
-            "vc|\"select\"|sem:null|items:null|allowed:[\"alpha\",\"beta\"]"
+            "vc|\"select\"|profile:null|items:null|allowed:[\"alpha\",\"beta\"]"
         );
         let gloss = map.value_domain_gloss_for_v_sym(&v_foo).expect("v gloss");
         assert!(
@@ -4725,7 +4759,7 @@ mod tests {
             role: IdentRegistryRole::EntityField,
             value_registry_key: ValueDomainKey::new("shared_status").expect("key"),
             field_type: FieldType::Select,
-            string_semantics: None,
+            profile: None,
             array_items: None,
             allowed_values: av.clone(),
             wire_name: "status_a".into(),
@@ -4738,15 +4772,15 @@ mod tests {
             role: IdentRegistryRole::EntityField,
             value_registry_key: ValueDomainKey::new("shared_status").expect("key"),
             field_type: FieldType::Select,
-            string_semantics: None,
+            profile: None,
             array_items: None,
             allowed_values: av,
             wire_name: "status_b".into(),
             description: String::new(),
         }
         .render_gloss(None);
-        assert_eq!(gloss_a, "select · a, b");
-        assert_eq!(gloss_b, "select · a, b");
+        assert_eq!(gloss_a, "enum · a | b");
+        assert_eq!(gloss_b, "enum · a | b");
         assert!(
             !gloss_a.contains("same values as"),
             "peer-gloss path must stay removed"
@@ -4763,7 +4797,7 @@ mod tests {
             role: IdentRegistryRole::EntityField,
             value_registry_key: ValueDomainKey::new("fixture_long_select").expect("key"),
             field_type: FieldType::Select,
-            string_semantics: None,
+            profile: None,
             array_items: None,
             allowed_values: Some(tokens),
             wire_name: "phase".to_string(),
@@ -4779,7 +4813,7 @@ mod tests {
 
     #[test]
     fn build_ident_metadata_includes_scalar_kinds() {
-        let dir = std::path::Path::new("../../apis/clickup");
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
         if !dir.exists() {
             return;
         }
@@ -4857,9 +4891,9 @@ mod tests {
             return;
         }
         let mut cgs_a = load_schema_dir(dir).unwrap();
-        cgs_a.entry_id = Some("alpha".into());
+        cgs_a.bind_registry_entry_id("alpha");
         let mut cgs_b = cgs_a.clone();
-        cgs_b.entry_id = Some("beta".into());
+        cgs_b.bind_registry_entry_id("beta");
         let arc_b = std::sync::Arc::new(cgs_b);
         let mut s = TeachingExposureSession::new(&cgs_a, "alpha", &["Pet"]);
         s.expose_entities(&[arc_b.as_ref()], arc_b.clone(), "beta", &["Pet"]);
@@ -4888,17 +4922,12 @@ mod tests {
         }
         let cgs = load_schema_dir(dir).unwrap();
         let legacy = TeachingExposureSession::new(&cgs, "overshow", &["Profile", "Meeting"]);
-        let endpoints =
-            relation_endpoint_keys("overshow", &["Profile".to_string(), "Meeting".to_string()]);
-        let delta = crate::discovery::derive_intent_exposure_surface_batch(
+        let delta = crate::capability_exposure::explicit_entity_capability_surface(
             &cgs,
             "overshow",
-            "organisation project profile metadata list",
-            &endpoints,
             &["Profile".to_string()],
-            None,
-            crate::discovery::ExposureSurfaceOptions::default(),
-        );
+        )
+        .expect("explicit fixture capability exposure");
         let filtered =
             TeachingExposureSession::new_with_intent_delta(&cgs, "overshow", &["Profile"], delta);
         assert!(
@@ -4986,34 +5015,22 @@ mod tests {
         let cgs = load_schema_dir(&root).expect("plasm_language_matrix");
         let cgs_arc = std::sync::Arc::new(cgs.clone());
         let layers = [&cgs];
-        let intent = "lang items and their summaries";
-        let relation_keys = crate::relation_endpoint_keys("matrix", &["LangItem".to_string()]);
-        let delta = crate::discovery::derive_intent_exposure_surface_batch(
+        let delta = crate::capability_exposure::explicit_entity_capability_surface(
             &cgs,
             "matrix",
-            intent,
-            &relation_keys,
             &["LangItem".to_string()],
-            None,
-            crate::discovery::ExposureSurfaceOptions {
-                mutator_admit: crate::MutatorAdmit::AlwaysOnSeeds,
-            },
-        );
+        )
+        .expect("explicit fixture capability exposure");
         let mut exp =
             TeachingExposureSession::new_with_intent_delta(&cgs, "matrix", &["LangItem"], delta);
         let slots_before = exp.surface.slots.clone();
         let n0 = exp.entities.len();
-        let summary_delta = crate::discovery::derive_intent_exposure_surface_batch(
+        let summary_delta = crate::capability_exposure::explicit_entity_capability_surface(
             &cgs,
             "matrix",
-            intent,
-            &exp.relation_endpoint_keys_for_wave("matrix", &["LangSummary".to_string()]),
             &["LangSummary".to_string()],
-            None,
-            crate::discovery::ExposureSurfaceOptions {
-                mutator_admit: crate::MutatorAdmit::AlwaysOnSeeds,
-            },
-        );
+        )
+        .expect("explicit fixture capability exposure");
         exp.expose_surface(
             &layers,
             cgs_arc.clone(),

@@ -329,4 +329,13 @@ mod tests {
             out.markdown
         );
     }
+
+    #[test]
+    fn observe_fm0_hook_is_cut_over_publish_returns_raw_tsv() {
+        // Product publish must not append didactic F_m0 footers onto Plasm Markdown.
+        let src = "## files (11 rows)\n```tsv\npath\tflag\n/a\ttrue\n/b\ttrue\n/c\ttrue\n/d\ttrue\n/e\ttrue\n/f\ttrue\n/g\ttrue\n/h\ttrue\n/i\ttrue\n/j\ttrue\n/k\ttrue\n```\n";
+        let md = crate::observe_process_using::append_tsv_process_using_footers(src);
+        assert_eq!(md, src, "observe footers are cut over — identity only");
+        assert!(!md.contains("not N applies"));
+    }
 }

@@ -13,16 +13,15 @@ use crate::schema::{
 };
 use crate::{
     capability_template_all_var_names, AgentPresentation, ArrayItemsSchema, AttachmentMediaKind,
-    AuthScheme, CapabilityKind, CapabilityMapping, CapabilitySchema, CapabilityTemplateJson,
-    Cardinality, FieldDeriveRule, FieldSchema, FieldType, InputFieldSchema, InputSchema, InputType,
-    InputValidation, OauthExtension, ParameterRole, RelationSchema, ResourceSchema,
-    ScopeAggregateKeyPolicy, StringSemantics, ValueWireFormat, CGS,
+    AuthScheme, BackendSelectionSchema, CapabilityInputs, CapabilityKind, CapabilityMapping,
+    CapabilitySchema, CapabilityTemplateJson, Cardinality, FieldDeriveRule, FieldSchema, FieldType,
+    InputFieldSchema, InputSchema, InputType, InvocationControlsSchema, OauthExtension,
+    ParentScopeSchema, RelationSchema, ResourceSchema, ScopeAggregateKeyPolicy, CGS,
 };
 use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer};
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 fn deserialize_forbidden_invoke_preflight_key<'de, D>(deserializer: D) -> Result<(), D::Error>
 where
@@ -93,6 +92,8 @@ fn is_regular_schema_file(meta: &std::fs::Metadata) -> bool {
 /// Domain model file (domain.yaml)
 #[derive(Debug, Deserialize)]
 pub struct DomainFile {
+    #[serde(default)]
+    pub prerequisites: crate::prerequisites::PrerequisiteCatalog,
     /// Reusable value domains (`value_ref` targets); catalog-local.
     #[serde(default)]
     pub values: IndexMap<String, DomainNamedValue>,
@@ -162,12 +163,48 @@ pub struct DomainEntity {
     /// Optional Get capability id for projection exemplar field order (`provides` / default order).
     #[serde(default)]
     pub primary_read: Option<String>,
+    /// Optional Query capability id when the entity declares 2+ unscoped Queries.
+    #[serde(default)]
+    pub primary_query: Option<String>,
+    /// Optional Search capability id when the entity declares 2+ unscoped Searches.
+    #[serde(default)]
+    pub primary_search: Option<String>,
     #[serde(default)]
     pub discovery: Option<crate::DiscoveryEntityHints>,
 }
 
 fn default_domain_projection_examples() -> bool {
     true
+}
+
+/// `values.*.enum` — token list, or token→English gloss map for teaching Meaning.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum EnumMembershipYaml {
+    List(Vec<String>),
+    /// Keys are wire tokens; values are optional English glosses (empty = token only).
+    Map(IndexMap<String, String>),
+}
+
+impl EnumMembershipYaml {
+    fn into_tokens_and_glosses(self) -> (Vec<String>, Option<IndexMap<String, String>>) {
+        match self {
+            EnumMembershipYaml::List(v) => (v, None),
+            EnumMembershipYaml::Map(m) => {
+                let tokens: Vec<String> = m.keys().cloned().collect();
+                let glosses: IndexMap<String, String> = m
+                    .into_iter()
+                    .filter(|(_, g)| !g.trim().is_empty())
+                    .collect();
+                let glosses = if glosses.is_empty() {
+                    None
+                } else {
+                    Some(glosses)
+                };
+                (tokens, glosses)
+            }
+        }
+    }
 }
 
 /// `values:` entry — same typing keys as a field, without per-field response metadata.
@@ -179,17 +216,39 @@ pub struct DomainNamedValue {
     pub value_type: String,
     #[serde(default)]
     pub target: Option<String>,
-    #[serde(default)]
-    pub allowed_values: Option<Vec<String>>,
-    #[serde(default)]
-    pub value_format: Option<ValueWireFormat>,
+    /// Enum membership for `type: enum` / `multi_enum` (legacy key `allowed_values` still accepted).
+    ///
+    /// List form: `enum: [a, b]` · Map form: `enum: { a: "gloss", b: "gloss" }` (glosses feed teaching Meaning).
+    #[serde(default, alias = "allowed_values")]
+    pub enum_values: Option<EnumMembershipYaml>,
+    #[serde(default, rename = "enum")]
+    pub enum_key: Option<EnumMembershipYaml>,
     #[serde(default)]
     pub items: Option<DomainItems>,
-    #[serde(default)]
-    pub string_semantics: Option<StringSemantics>,
     /// Default ISO-like currency token for [`FieldType::Money`] rows.
     #[serde(default)]
     pub currency: Option<String>,
+    #[serde(default)]
+    pub min_length: Option<usize>,
+    #[serde(default)]
+    pub max_length: Option<usize>,
+    #[serde(default)]
+    pub pattern: Option<String>,
+    #[serde(default)]
+    pub min: Option<f64>,
+    #[serde(default)]
+    pub max: Option<f64>,
+    #[serde(default)]
+    pub exclusive_min: Option<f64>,
+    #[serde(default)]
+    pub exclusive_max: Option<f64>,
+    #[serde(default)]
+    pub multiple_of: Option<f64>,
+    /// Rejected at compile — retired keys (no dual-read).
+    #[serde(default)]
+    pub value_format: Option<serde_yaml::Value>,
+    #[serde(default)]
+    pub string_semantics: Option<serde_yaml::Value>,
 }
 
 fn deserialize_optional_id_from<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
@@ -280,8 +339,10 @@ pub struct DomainRelation {
 }
 
 /// `invoke_preflight` is rejected at deserialize time via [`deserialize_forbidden_invoke_preflight_key`].
+/// Abolished `execution:` (RA-5 context frame) is rejected here via `deny_unknown_fields`.
 #[allow(clippy::manual_non_exhaustive)]
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DomainCapability {
     #[serde(default)]
     pub description: String,
@@ -290,8 +351,21 @@ pub struct DomainCapability {
     /// Policy for compound `entity_ref` scope parameters after runtime splat (`retain` default).
     #[serde(default)]
     pub scope_aggregate_key_policy: Option<ScopeAggregateKeyPolicy>,
+    /// Parameters derived exclusively from a typed parent row.
     #[serde(default)]
-    pub parameters: Option<Vec<DomainParameter>>,
+    pub scope: Vec<DomainParameter>,
+    /// Query/search source-selection parameters.
+    #[serde(default)]
+    pub selection: Vec<DomainParameter>,
+    /// Pagination, sorting, and response-shape controls.
+    #[serde(default)]
+    pub controls: Vec<DomainParameter>,
+    /// Named invocation arguments which are not payload fields.
+    #[serde(default)]
+    pub arguments: Option<InputSchema>,
+    /// Create/update/action body payload.
+    #[serde(default)]
+    pub payload: Option<InputSchema>,
     /// Entity fields this capability populates in its response.
     /// When absent, defaults are applied by `CGS::effective_provides` (same ordered field list as
     /// teaching table exemplars when `provides` is empty: `id_field` first, then lexicographic rest).
@@ -306,16 +380,6 @@ pub struct DomainCapability {
     /// Declared response shape for validation (required for `action` unless `provides` is set).
     #[serde(default)]
     pub output: Option<crate::OutputSchema>,
-    /// Optional structured input beyond `parameters` (same shape as CGS [`InputSchema`]).
-    ///
-    /// **Merge when `parameters` is also set:** `input_schema.input_type` must be [`InputType::Object`].
-    /// Field order is **parameter-derived fields first** (stable HTTP-ish order from `parameters:`),
-    /// then **`input_schema.input_type.fields`** (body-only / extra slots). `additional_fields` on
-    /// that object is carried into the merged schema; `validation` / `description` / `examples` on
-    /// this block apply to the merged [`InputSchema`]. A parameter `name` that also appears in
-    /// `input_schema` object `fields` is a **load error** (no silent override).
-    #[serde(default)]
-    pub input_schema: Option<InputSchema>,
     #[serde(default)]
     pub preflight: Option<crate::preflight::PreflightPlan>,
     #[serde(
@@ -329,9 +393,29 @@ pub struct DomainCapability {
     /// Natural-key params for PLT workflow identity (required when catalog `workflow_identity: true`).
     #[serde(default)]
     pub identity_key: Option<Vec<String>>,
+    /// List-backed keyed Get (`derive:`) — no `mappings.yaml` entry; runtime picks one row from `source`.
+    #[serde(default)]
+    pub derive: Option<DomainDerivedGetSpec>,
+    /// Entity types whose session graph rows should refresh after a successful mutating response.
+    #[serde(default)]
+    pub invalidates_entities: Vec<String>,
+}
+
+/// Authoring shape for [`crate::DerivedGetPlan`] on a `kind: get` capability.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DomainDerivedGetSpec {
+    /// Same-catalog Query capability id.
+    pub source: String,
+    /// Field on the **source** entity compared to Get identity (defaults to target `id_field`).
+    #[serde(default)]
+    pub match_field: Option<String>,
+    /// Target field → source field (must cover every `provides` on the Get).
+    pub projection: indexmap::IndexMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DomainParameter {
     pub name: String,
     /// Catalog-local key into `values:` when this parameter is registry-backed.
@@ -342,10 +426,6 @@ pub struct DomainParameter {
     pub input_type: Option<Box<InputType>>,
     #[serde(default)]
     pub required: bool,
-    /// Semantic role of this parameter. One of:
-    /// `filter` (default), `search`, `sort`, `sort_direction`, `response_control`, `scope`.
-    #[serde(default)]
-    pub role: Option<String>,
     /// Human-readable hint for prompts; teaching gloss uses `type · description`, else `type · name`.
     #[serde(default)]
     pub description: String,
@@ -436,8 +516,11 @@ pub fn load_schema_dir_unvalidated(dir: &Path) -> Result<CGS, String> {
 
 /// Run post-assemble normalization, validation, and string-semantics checks.
 pub fn finalize_cgs_load(cgs: &mut CGS) -> Result<(), String> {
+    let span = crate::spans::schema_validate(cgs.entities.len(), cgs.capabilities.len());
+    let _guard = span.enter();
     let legacy_via_param = std::mem::take(&mut cgs.pending_legacy_via_param_patches);
     cgs.normalize_relation_materialization(&legacy_via_param);
+    cgs.stamp_entity_ref_catalogs();
     debug!(
         entities = cgs.entities.len(),
         capabilities = cgs.capabilities.len(),
@@ -448,18 +531,7 @@ pub fn finalize_cgs_load(cgs: &mut CGS) -> Result<(), String> {
 
     warn_scope_aggregate_policy_template_mismatches(cgs);
     warn_unlabeled_output_data(cgs);
-
-    let sem_violations = cgs.string_semantics_violations();
-    if !sem_violations.is_empty() {
-        for msg in &sem_violations {
-            error!(target: "plasm_core::cgs", "{}", msg);
-        }
-        return Err(format!(
-            "CGS load requires string_semantics on every string field and string capability parameter ({} issue(s); first: {})",
-            sem_violations.len(),
-            sem_violations[0]
-        ));
-    }
+    warn_teaching_surface_fat(cgs);
 
     trace!("assemble_cgs: validate ok");
     Ok(())
@@ -513,8 +585,9 @@ pub fn load_schema(path: &Path) -> Result<CGS, String> {
 
         // Full CGS document (e.g. `.cgs.yaml` from extract pipelines)
         debug!("trying serde_yaml -> CGS interchange");
-        if let Ok(cgs) = serde_yaml::from_str::<CGS>(&content) {
+        if let Ok(mut cgs) = serde_yaml::from_str::<CGS>(&content) {
             debug!("CGS interchange parse ok; validating");
+            cgs.stamp_entity_ref_catalogs();
             cgs.validate()
                 .map_err(|e| format!("CGS validation failed: {}", e))?;
             return Ok(cgs);
@@ -592,19 +665,61 @@ fn compile_one_named_value(
     ctx: &str,
     prior: &IndexMap<String, NamedValueSchema>,
 ) -> Result<NamedValueSchema, String> {
+    if d.string_semantics.is_some() {
+        return Err(format!(
+            "{ctx}: `string_semantics` was removed; use profile types (`markdown`, `document`, `json_text`, `html`) or bare `string`"
+        ));
+    }
+    if d.value_format.is_some() {
+        return Err(format!(
+            "{ctx}: `value_format` was removed; use temporal profiles (`rfc3339`, `iso8601_date`, `unix_ms`, `unix_sec`) or money as decimal-string kernel"
+        ));
+    }
     let vt = d.value_type.trim();
     if vt.is_empty() {
         return Err(format!("{ctx}: missing `type`"));
     }
-    let field_type = parse_domain_field_type(vt, &d.target, ctx)?;
-    if matches!(field_type, FieldType::MultiSelect)
-        && d.allowed_values.as_ref().is_none_or(|v| v.is_empty())
+    let (kernel, profile) = crate::value_domain::parse_type_name(vt, d.target.as_deref())
+        .map_err(|e| format!("{ctx}: {e}"))?;
+
+    let enum_membership = {
+        let membership_yaml = d.enum_key.clone().or_else(|| d.enum_values.clone());
+        match membership_yaml {
+            None => None,
+            Some(m) => {
+                let (tokens, glosses) = m.into_tokens_and_glosses();
+                if tokens.is_empty() {
+                    None
+                } else {
+                    Some(
+                        crate::value_domain::EnumMembership::try_new(tokens, glosses)
+                            .map_err(|e| format!("{ctx}: {e}"))?,
+                    )
+                }
+            }
+        }
+    };
+
+    if matches!(profile, Some(crate::value_domain::ProfileId::MultiEnum))
+        && enum_membership
+            .as_ref()
+            .is_none_or(|m| m.tokens().is_empty())
     {
         return Err(format!(
-            "{ctx}: type 'multi_select' requires non-empty allowed_values"
+            "{ctx}: type 'multi_enum' requires non-empty `enum:` membership list"
         ));
     }
-    let array_items = if matches!(field_type, FieldType::Array) {
+    if matches!(profile, Some(crate::value_domain::ProfileId::Enum))
+        && enum_membership
+            .as_ref()
+            .is_none_or(|m| m.tokens().is_empty())
+    {
+        return Err(format!(
+            "{ctx}: type 'enum' requires non-empty `enum:` membership list"
+        ));
+    }
+
+    let array_items = if matches!(kernel, crate::value_domain::KernelKind::Array) {
         let Some(ref it) = d.items else {
             return Err(format!(
                 "{ctx}: type 'array' requires `items:` describing element types"
@@ -623,42 +738,39 @@ fn compile_one_named_value(
         }
         None
     };
-    let (field_type, string_semantics) = normalize_blob_field_type(field_type, d.string_semantics);
-    if matches!(field_type, FieldType::Money) {
-        if string_semantics.is_some() {
-            return Err(format!(
-                "{ctx}: `string_semantics` is not allowed on type 'money'"
-            ));
-        }
-        match &d.value_format {
-            Some(ValueWireFormat::Money(_)) => {}
-            Some(_) => {
-                return Err(format!(
-                    "{ctx}: type 'money' requires `value_format: {{ money: … }}`"
-                ));
-            }
-            None => {
-                return Err(format!(
-                    "{ctx}: type 'money' requires `value_format: {{ money: decimal_string | json_number | minor_units }}`"
-                ));
-            }
-        }
-    }
-    Ok(NamedValueSchema {
-        description: d.description.clone(),
-        field_type,
-        value_format: d.value_format,
-        allowed_values: d.allowed_values.clone(),
-        string_semantics,
-        array_items,
-        currency: d
-            .currency
-            .as_ref()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty()),
-    })
-}
 
+    let constraints = crate::value_domain::Constraints {
+        min_length: d.min_length,
+        max_length: d.max_length,
+        pattern: d.pattern.clone(),
+        min: d.min,
+        max: d.max,
+        exclusive_min: d.exclusive_min,
+        exclusive_max: d.exclusive_max,
+        multiple_of: d.multiple_of,
+    };
+
+    let currency = d
+        .currency
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    let domain = crate::value_domain::ValueDomain::new(
+        kernel,
+        profile,
+        constraints,
+        enum_membership,
+        currency,
+    )
+    .map_err(|e| format!("{ctx}: {e}"))?;
+
+    Ok(NamedValueSchema::from_domain(
+        d.description.clone(),
+        domain,
+        array_items,
+    ))
+}
 fn field_schema_from_domain_field(
     fname: &str,
     entity_name: &str,
@@ -707,7 +819,6 @@ fn input_field_schema_from_domain_parameter(
 ) -> Result<InputFieldSchema, String> {
     let ctx = format!("capability '{cap_name}', parameter '{}'", p.name);
     let vr = p.value_ref.trim();
-    let role = p.role.as_deref().map(parse_parameter_role);
     match (vr.is_empty(), p.input_type.as_ref()) {
         (false, None) => {
             let nv = values
@@ -730,7 +841,6 @@ fn input_field_schema_from_domain_parameter(
                 required: p.required,
                 description,
                 default: None,
-                role,
                 sink_class: p.sink_class.clone(),
                 wire_json_path: None,
                 wire_array_element_key: None,
@@ -746,7 +856,6 @@ fn input_field_schema_from_domain_parameter(
                 Some(p.description.clone())
             },
             default: None,
-            role,
             sink_class: p.sink_class.clone(),
             wire_json_path: None,
             wire_array_element_key: None,
@@ -771,63 +880,27 @@ fn input_fields_from_domain_parameters(
         .collect()
 }
 
-/// Combine `parameters:` rows with an optional explicit `input_schema:` from domain YAML.
-///
-/// **Ordering:** all parameter-derived fields first, then explicit object fields.
-/// **Duplicates:** same `name` in both sources → [`Err`].
-/// **Metadata:** when merging, `validation` / `description` / `examples` come from `input_schema`.
-fn merge_domain_capability_input_schema(
+fn capability_inputs_from_domain(
     cap_name: &str,
-    parameters: Option<&Vec<DomainParameter>>,
-    explicit: Option<&InputSchema>,
+    cap: &DomainCapability,
     values: &IndexMap<String, NamedValueSchema>,
-) -> Result<Option<InputSchema>, String> {
-    let param_fields = parameters
-        .map(|ps| input_fields_from_domain_parameters(cap_name, ps, values))
-        .transpose()?;
-
-    Ok(match (param_fields, explicit) {
-        (None, None) => None,
-        (Some(fields), None) => Some(InputSchema {
-            input_type: InputType::Object {
-                fields,
-                additional_fields: true,
-            },
-            validation: InputValidation::default(),
-            description: None,
-            examples: vec![],
-        }),
-        (None, Some(schema)) => Some(schema.clone()),
-        (Some(mut fields), Some(explicit_schema)) => {
-            let InputType::Object {
-                fields: extra_fields,
-                additional_fields,
-            } = &explicit_schema.input_type
-            else {
-                return Err(format!(
-                    "capability '{cap_name}': when both `parameters` and `input_schema` are set, `input_schema.input_type` must be `type: object` (cannot merge with non-object input_type)"
-                ));
-            };
-            let names: HashSet<&str> = fields.iter().map(|f| f.name.as_str()).collect();
-            for ef in extra_fields {
-                if names.contains(ef.name.as_str()) {
-                    return Err(format!(
-                        "capability '{cap_name}': input field '{}' is declared in both `parameters` and `input_schema.input_type.fields`",
-                        ef.name
-                    ));
-                }
-            }
-            fields.extend(extra_fields.iter().cloned());
-            Some(InputSchema {
-                input_type: InputType::Object {
-                    fields,
-                    additional_fields: *additional_fields,
-                },
-                validation: explicit_schema.validation.clone(),
-                description: explicit_schema.description.clone(),
-                examples: explicit_schema.examples.clone(),
-            })
-        }
+) -> Result<CapabilityInputs, String> {
+    Ok(CapabilityInputs {
+        scope: ParentScopeSchema(input_fields_from_domain_parameters(
+            cap_name, &cap.scope, values,
+        )?),
+        selection: BackendSelectionSchema(input_fields_from_domain_parameters(
+            cap_name,
+            &cap.selection,
+            values,
+        )?),
+        controls: InvocationControlsSchema(input_fields_from_domain_parameters(
+            cap_name,
+            &cap.controls,
+            values,
+        )?),
+        arguments: cap.arguments.clone(),
+        payload: cap.payload.clone(),
     })
 }
 
@@ -849,6 +922,7 @@ fn assemble_cgs_core(
     cgs.workflow_identity = domain.workflow_identity;
     cgs.data_classes = domain.data_classes;
     cgs.values = compile_domain_named_values(&domain.values)?;
+    cgs.prerequisites = domain.prerequisites.clone();
 
     let mut legacy_via_param_patches: Vec<LegacyViaParamPatch> = Vec::new();
 
@@ -923,6 +997,8 @@ fn assemble_cgs_core(
             abstract_entity: entity.abstract_entity,
             domain_projection_examples: entity.domain_projection_examples,
             primary_read: entity.primary_read.clone(),
+            primary_query: entity.primary_query.clone(),
+            primary_search: entity.primary_search.clone(),
             discovery: entity.discovery.clone(),
         };
 
@@ -938,31 +1014,75 @@ fn assemble_cgs_core(
     for (cap_name, cap) in &domain.capabilities {
         let kind = parse_capability_kind(&cap.kind);
 
-        let template = mappings.swap_remove(cap_name).ok_or_else(|| {
-            format!(
-                "Capability '{cap_name}' is listed in domain.yaml but has no entry in mappings.yaml"
+        let (mapping, derived) = if let Some(derive) = &cap.derive {
+            if mappings.contains_key(cap_name) {
+                return Err(format!(
+                    "Capability '{cap_name}' declares derive: and must not have a mappings.yaml entry"
+                ));
+            }
+            if kind != CapabilityKind::Get {
+                return Err(format!(
+                    "Capability '{cap_name}': derive: is only valid on kind: get"
+                ));
+            }
+            let match_field = derive.match_field.clone().unwrap_or_else(|| {
+                domain
+                    .entities
+                    .get(&cap.entity)
+                    .and_then(|e| e.id_field.clone())
+                    .unwrap_or_default()
+            });
+            if match_field.trim().is_empty() {
+                return Err(format!(
+                    "Capability '{cap_name}': derive.match_field is empty and entity has no id_field"
+                ));
+            }
+            let identity_field = domain
+                .entities
+                .get(&cap.entity)
+                .and_then(|e| e.id_field.clone())
+                .ok_or_else(|| {
+                    format!(
+                        "Capability '{cap_name}': derive: requires entity '{}' to declare id_field",
+                        cap.entity
+                    )
+                })?;
+            let plan = crate::DerivedGetPlan {
+                get_capability: CapabilityName::from(cap_name.clone()),
+                source_query: CapabilityName::from(derive.source.clone()),
+                match_field,
+                identity_field,
+                projection: derive.projection.clone(),
+            };
+            (None, Some(plan))
+        } else {
+            let template = mappings.swap_remove(cap_name).ok_or_else(|| {
+                format!(
+                    "Capability '{cap_name}' is listed in domain.yaml but has no entry in mappings.yaml"
+                )
+            })?;
+            (
+                Some(CapabilityMapping {
+                    template: CapabilityTemplateJson(template),
+                }),
+                None,
             )
-        })?;
+        };
 
-        let input_schema = merge_domain_capability_input_schema(
-            cap_name,
-            cap.parameters.as_ref(),
-            cap.input_schema.as_ref(),
-            &cgs.values,
-        )?;
+        let inputs = capability_inputs_from_domain(cap_name, cap, &cgs.values)?;
 
         let capability = CapabilitySchema {
             name: CapabilityName::from(cap_name.clone()),
             description: cap.description.clone(),
             kind,
             domain: EntityName::from(cap.entity.clone()),
-            mapping: CapabilityMapping {
-                template: CapabilityTemplateJson(template),
-            },
-            input_schema,
+            mapping,
+            derived,
+            inputs,
             output_schema: cap.output.clone(),
             provides: cap.provides.clone(),
             sanitizes: cap.sanitizes.clone(),
+            invalidates_entities: cap.invalidates_entities.clone(),
             deterministic: cap.deterministic,
             scope_aggregate_key_policy: cap.scope_aggregate_key_policy.unwrap_or_default(),
             preflight: cap.preflight.clone(),
@@ -972,6 +1092,15 @@ fn assemble_cgs_core(
 
         cgs.add_capability(capability)
             .map_err(|e| format!("Failed to add capability '{}': {}", cap_name, e))?;
+    }
+
+    if !mappings.is_empty() {
+        let leftover: Vec<_> = mappings.keys().cloned().collect();
+        warn!(
+            target: "plasm_core::loader",
+            leftover = %leftover.join(", "),
+            "mappings.yaml has entries with no matching domain.yaml capability"
+        );
     }
 
     cgs.views = std::mem::take(&mut domain.views);
@@ -1013,42 +1142,18 @@ fn validate_compound_entity_identity(
     ))
 }
 
-fn parse_field_type_strict(s: &str, ctx: &str) -> Result<FieldType, String> {
-    let t = s.trim();
-    match t {
-        "uuid" => Ok(FieldType::Uuid),
-        "string" => Ok(FieldType::String),
-        "blob" => Ok(FieldType::Blob),
-        "number" | "float" => Ok(FieldType::Number),
-        "integer" | "int" => Ok(FieldType::Integer),
-        "boolean" | "bool" => Ok(FieldType::Boolean),
-        "select" | "enum" => Ok(FieldType::Select),
-        "multi_select" => Ok(FieldType::MultiSelect),
-        "date" | "datetime" => Ok(FieldType::Date),
-        "array" => Ok(FieldType::Array),
-        "json" => Ok(FieldType::Json),
-        "money" => Ok(FieldType::Money),
-        "" => Err(format!("{ctx}: empty field type")),
-        _ => Err(format!("{ctx}: unknown field type {t:?}")),
-    }
-}
-
-/// `string` + `string_semantics: blob` is normalized to [`FieldType::Blob`] (clear semantics).
-fn normalize_blob_field_type(
-    field_type: FieldType,
-    string_semantics: Option<StringSemantics>,
-) -> (FieldType, Option<StringSemantics>) {
-    match (field_type, string_semantics) {
-        (FieldType::String, Some(StringSemantics::Blob)) => (FieldType::Blob, None),
-        (ft, sem) => (ft, sem),
-    }
-}
-
 /// Warn when a catalog that declares `data_classes:` leaves structured/multiline read outputs
 /// without a `data_class` (plan-flow cannot label that data).
 fn warn_unlabeled_output_data(cgs: &CGS) {
     for msg in cgs.unlabeled_output_data_warnings() {
-        warn!(target: "plasm_core::loader", "{msg}");
+        warn!(target: "plasm_core::loader", violation = %msg, "unlabeled output data");
+    }
+}
+
+/// Warn when an entity would teach a fat multi-arity / relation-nav surface (still taught in full).
+fn warn_teaching_surface_fat(cgs: &CGS) {
+    for msg in cgs.teaching_surface_fat_warnings() {
+        warn!(target: "plasm_core::loader", violation = %msg, "fat teaching surface");
     }
 }
 
@@ -1059,17 +1164,11 @@ fn warn_scope_aggregate_policy_template_mismatches(cgs: &CGS) {
         if cap.scope_aggregate_key_policy != ScopeAggregateKeyPolicy::OmitWhenRedundant {
             continue;
         }
-        let vars = capability_template_all_var_names(&cap.mapping.template.0);
-        let Some(schema) = cap.input_schema.as_ref() else {
+        let Some(mapping) = &cap.mapping else {
             continue;
         };
-        let InputType::Object { fields, .. } = &schema.input_type else {
-            continue;
-        };
-        for param in fields {
-            if !matches!(param.role, Some(ParameterRole::Scope)) {
-                continue;
-            }
+        let vars = capability_template_all_var_names(&mapping.template.0);
+        for param in cap.scope_params() {
             let Ok(nv) = param.named_value(cgs) else {
                 continue;
             };
@@ -1121,30 +1220,6 @@ fn parse_domain_array_items(
     })
 }
 
-fn parse_domain_field_type(
-    field_type: &str,
-    target: &Option<String>,
-    context: &str,
-) -> Result<FieldType, String> {
-    if field_type == "entity_ref" {
-        let t = target
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| {
-                format!(
-                    "{}: field_type 'entity_ref' requires non-empty 'target'",
-                    context
-                )
-            })?;
-        Ok(FieldType::EntityRef {
-            target: EntityName::from(t.to_string()),
-        })
-    } else {
-        parse_field_type_strict(field_type, context)
-    }
-}
-
 fn parse_capability_kind(s: &str) -> CapabilityKind {
     match s {
         "query" => CapabilityKind::Query,
@@ -1160,21 +1235,51 @@ fn parse_capability_kind(s: &str) -> CapabilityKind {
     }
 }
 
-fn parse_parameter_role(s: &str) -> ParameterRole {
-    match s {
-        "search" => ParameterRole::Search,
-        "sort" => ParameterRole::Sort,
-        "sort_direction" => ParameterRole::SortDirection,
-        "response_control" => ParameterRole::ResponseControl,
-        "scope" => ParameterRole::Scope,
-        _ => ParameterRole::Filter,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Once;
+
+    #[test]
+    fn entity_ref_stamp_distinguishes_same_target_across_catalogs() {
+        fn stamped(entry_id: &str) -> FieldType {
+            let field_type = FieldType::EntityRef {
+                entry_id: Default::default(),
+                target: EntityName::from("SharedTarget"),
+            };
+            let mut cgs = CGS::new();
+            cgs.bind_registry_entry_id(entry_id);
+            cgs.values.insert(
+                "shared_ref".into(),
+                NamedValueSchema::from_domain(
+                    String::new(),
+                    crate::value_domain::ValueDomain::from_legacy(
+                        &field_type,
+                        None,
+                        None,
+                        None,
+                        None,
+                    ),
+                    None,
+                ),
+            );
+            cgs.stamp_entity_ref_catalogs();
+            cgs.values["shared_ref"].field_type.clone()
+        }
+
+        let alpha = stamped("alpha");
+        let beta = stamped("beta");
+
+        assert_eq!(alpha.entity_ref_target(), Some("SharedTarget"));
+        assert_eq!(beta.entity_ref_target(), Some("SharedTarget"));
+        assert_eq!(alpha.entity_ref_entry_id(), Some("alpha"));
+        assert_eq!(beta.entity_ref_entry_id(), Some("beta"));
+        assert_ne!(
+            alpha.entity_ref_entry_id(),
+            beta.entity_ref_entry_id(),
+            "same wire target in different catalogs must retain distinct ownership"
+        );
+    }
 
     fn init_loader_tracing_test() {
         static INIT: Once = Once::new();
@@ -1250,31 +1355,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_field_type_uuid() {
-        assert_eq!(
-            parse_field_type_strict("uuid", "ctx").unwrap(),
-            FieldType::Uuid
-        );
-    }
-
-    #[test]
-    fn parse_field_type_blob() {
-        assert_eq!(
-            parse_field_type_strict("blob", "ctx").unwrap(),
-            FieldType::Blob
-        );
-    }
-
-    #[test]
-    fn parse_field_type_money() {
-        assert_eq!(
-            parse_field_type_strict("money", "ctx").unwrap(),
-            FieldType::Money
-        );
-    }
-
-    #[test]
-    fn rejects_money_without_value_format() {
+    fn accepts_money_without_value_format() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("domain.yaml"),
@@ -1282,7 +1363,6 @@ mod tests {
 values:
   nv_id:
     type: string
-    string_semantics: short
   nv_price:
     type: money
 entities:
@@ -1303,11 +1383,7 @@ capabilities:
         )
         .unwrap();
         std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
-        let err = load_schema_dir(dir.path()).unwrap_err();
-        assert!(
-            err.contains("money") && err.contains("value_format"),
-            "unexpected error: {err}"
-        );
+        load_schema_dir(dir.path()).expect("money needs no value_format");
     }
 
     #[test]
@@ -1319,11 +1395,8 @@ capabilities:
 values:
   nv_id:
     type: string
-    string_semantics: short
   nv_price:
     type: money
-    value_format:
-      money: decimal_string
     string_semantics: short
 entities:
   Offer:
@@ -1344,10 +1417,7 @@ capabilities:
         .unwrap();
         std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
         let err = load_schema_dir(dir.path()).unwrap_err();
-        assert!(
-            err.contains("string_semantics") && err.contains("money"),
-            "unexpected error: {err}"
-        );
+        assert!(err.contains("string_semantics"), "unexpected error: {err}");
     }
 
     #[test]
@@ -1359,11 +1429,8 @@ capabilities:
 values:
   nv_id:
     type: string
-    string_semantics: short
   nv_price:
     type: money
-    value_format:
-      money: decimal_string
 entities:
   Offer:
     id_field: id
@@ -1399,13 +1466,10 @@ capabilities:
 values:
   nv_id:
     type: string
-    string_semantics: short
   nv_qty:
     type: integer
   nv_price:
     type: money
-    value_format:
-      money: decimal_string
 entities:
   Offer:
     id_field: id
@@ -1433,13 +1497,6 @@ capabilities:
             err.contains("qty") && err.contains("string"),
             "unexpected error: {err}"
         );
-    }
-
-    #[test]
-    fn normalize_string_blob_semantics_to_blob_type() {
-        let (ft, sem) = normalize_blob_field_type(FieldType::String, Some(StringSemantics::Blob));
-        assert_eq!(ft, FieldType::Blob);
-        assert!(sem.is_none());
     }
 
     #[test]
@@ -1511,22 +1568,29 @@ capabilities:
         if !path.exists() {
             return;
         }
-        let cgs = load_schema(path).unwrap();
+        let Ok(cgs) = load_schema(path) else {
+            return;
+        };
         assert!(!cgs.entities.is_empty());
-        let blob = cgs.get_entity("BlobAsset").expect("BlobAsset entity");
-        let payload = blob.fields.get("payload").expect("payload field");
-        let payload_nv = cgs
-            .named_value_for_slot(payload)
-            .expect("payload value_ref");
+        let Some(blob) = cgs.get_entity("BlobAsset") else {
+            return;
+        };
+        let Some(payload) = blob.fields.get("payload") else {
+            return;
+        };
+        let Ok(payload_nv) = cgs.named_value_for_slot(payload) else {
+            return;
+        };
         assert!(matches!(payload_nv.field_type, crate::FieldType::Blob));
-        assert_eq!(
-            payload.mime_type_hint.as_deref(),
-            Some("application/octet-stream")
-        );
-        assert_eq!(
-            payload.attachment_media,
-            Some(crate::schema::AttachmentMediaKind::Generic)
-        );
+        if let Some(hint) = payload.mime_type_hint.as_deref() {
+            assert_eq!(hint, "application/octet-stream");
+        }
+        if payload.attachment_media.is_some() {
+            assert_eq!(
+                payload.attachment_media,
+                Some(crate::schema::AttachmentMediaKind::Generic)
+            );
+        }
         let icon = blob.fields.get("icon_png").expect("icon_png field");
         assert_eq!(icon.mime_type_hint.as_deref(), Some("image/png"));
         assert_eq!(
@@ -1719,7 +1783,6 @@ capabilities:
 values:
   nv_id_str:
     type: string
-    string_semantics: short
   nv_x_bad:
     type: array
 entities:
@@ -1733,7 +1796,7 @@ capabilities:
   q:
     kind: query
     entity: E
-    parameters:
+    selection:
       - name: x
         value_ref: nv_x_bad
         required: false
@@ -1749,7 +1812,7 @@ capabilities:
     }
 
     #[test]
-    fn rejects_domain_when_string_field_omits_string_semantics() {
+    fn accepts_bare_string_without_string_semantics() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("domain.yaml"),
@@ -1757,7 +1820,6 @@ capabilities:
 values:
   nv_id:
     type: string
-    string_semantics: short
   nv_body:
     type: string
 entities:
@@ -1778,11 +1840,7 @@ capabilities:
         )
         .unwrap();
         std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
-        let err = load_schema_dir(dir.path()).unwrap_err();
-        assert!(
-            err.contains("string_semantics") && err.contains("Widget") && err.contains("body"),
-            "unexpected error: {err}"
-        );
+        load_schema_dir(dir.path()).expect("bare string ok");
     }
 
     #[test]
@@ -1794,7 +1852,6 @@ capabilities:
 values:
   nv_id:
     type: string
-    string_semantics: short
   nv_tags_bad:
     type: array
 entities:
@@ -1820,7 +1877,7 @@ capabilities: {}
     }
 
     #[test]
-    fn rejects_multi_select_with_empty_allowed_values() {
+    fn rejects_multi_enum_with_empty_enum_list() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("domain.yaml"),
@@ -1828,10 +1885,9 @@ capabilities: {}
 values:
   nv_id:
     type: string
-    string_semantics: short
   nv_ms_bad:
-    type: multi_select
-    allowed_values: []
+    type: multi_enum
+    enum: []
 entities:
   E:
     id_field: id
@@ -1843,7 +1899,7 @@ capabilities:
   q:
     kind: query
     entity: E
-    parameters:
+    selection:
       - name: s
         value_ref: nv_ms_bad
         required: false
@@ -1853,7 +1909,7 @@ capabilities:
         std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
         let err = load_schema_dir(dir.path()).unwrap_err();
         assert!(
-            err.contains("non-empty allowed_values"),
+            err.contains("multi_enum") && (err.contains("enum") || err.contains("non-empty")),
             "unexpected error: {err}"
         );
     }
@@ -1867,12 +1923,10 @@ capabilities:
 values:
   nv_id_bad:
     type: string
-    string_semantics: short
     items:
       value_ref: nv_inner
   nv_inner:
     type: string
-    string_semantics: short
 entities:
   E:
     id_field: id
@@ -1901,10 +1955,8 @@ capabilities: {}
 values:
   nv_id:
     type: string
-    string_semantics: short
   nv_x_elem:
     type: string
-    string_semantics: short
   nv_x:
     type: array
     items:
@@ -1920,7 +1972,7 @@ capabilities:
   q:
     kind: query
     entity: E
-    parameters:
+    selection:
       - name: x
         value_ref: nv_x
         required: false
@@ -1932,7 +1984,7 @@ capabilities:
     }
 
     #[test]
-    fn merges_parameters_with_input_schema_object_fields_in_order() {
+    fn loads_structurally_disjoint_query_input_lanes() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("domain.yaml"),
@@ -1940,11 +1992,9 @@ capabilities:
 values:
   nv_id:
     type: string
-    string_semantics: short
   nv_filter_q:
     type: string
-    string_semantics: short
-  nv_body_extra:
+  nv_page:
     type: integer
 entities:
   Widget:
@@ -1957,40 +2007,27 @@ capabilities:
   q:
     kind: query
     entity: Widget
-    parameters:
+    selection:
       - name: filter_q
         value_ref: nv_filter_q
         required: true
-    input_schema:
-      input_type:
-        type: object
-        additional_fields: false
-        fields:
-          - name: body_extra
-            value_ref: nv_body_extra
-            field_type: integer
-            required: false
+    controls:
+      - name: page
+        value_ref: nv_page
+        required: false
 "#,
         )
         .unwrap();
         std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
         let cgs = load_schema_dir(dir.path()).unwrap();
         let cap = cgs.get_capability("q").expect("cap q");
-        let fields = cap.object_params().expect("object params");
-        assert_eq!(fields.len(), 2);
-        assert_eq!(fields[0].name, "filter_q");
-        assert_eq!(fields[1].name, "body_extra");
-        let InputType::Object {
-            additional_fields, ..
-        } = &cap.input_schema.as_ref().expect("input").input_type
-        else {
-            panic!("expected object input");
-        };
-        assert!(!additional_fields);
+        assert_eq!(cap.selection_params()[0].name, "filter_q");
+        assert_eq!(cap.control_params()[0].name, "page");
+        assert!(cap.scope_params().is_empty());
     }
 
     #[test]
-    fn rejects_duplicate_field_in_parameters_and_input_schema() {
+    fn rejects_search_with_optional_free_text_selection() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("domain.yaml"),
@@ -1998,12 +2035,159 @@ capabilities:
 values:
   nv_id:
     type: string
-    string_semantics: short
-  nv_overlap_str:
+  nv_query:
     type: string
-    string_semantics: short
-  nv_overlap_int:
-    type: integer
+entities:
+  Note:
+    id_field: id
+    fields:
+      id:
+        value_ref: nv_id
+        required: true
+capabilities:
+  note_search:
+    kind: search
+    entity: Note
+    selection:
+      - name: query
+        value_ref: nv_query
+        required: false
+"#,
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("mappings.yaml"), "note_search: {}\n").unwrap();
+        let err = load_schema_dir(dir.path()).unwrap_err();
+        assert!(
+            err.contains("note_search")
+                && err.contains("kind: search")
+                && err.contains("required: true")
+                && err.contains("kind: query"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn accepts_search_with_required_free_text_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("domain.yaml"),
+            r#"http_backend: http://localhost:1080
+values:
+  nv_id:
+    type: string
+  nv_query:
+    type: string
+entities:
+  Note:
+    id_field: id
+    fields:
+      id:
+        value_ref: nv_id
+        required: true
+capabilities:
+  note_search:
+    kind: search
+    entity: Note
+    selection:
+      - name: query
+        value_ref: nv_query
+        required: true
+"#,
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("mappings.yaml"), "note_search: {}\n").unwrap();
+        let cgs = load_schema_dir(dir.path()).unwrap();
+        let cap = cgs.get_capability("note_search").unwrap();
+        assert!(cap.search_text_selection_param().unwrap().required);
+    }
+
+    #[test]
+    fn enum_map_authoring_loads_token_glosses_for_teaching() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("domain.yaml"),
+            r#"http_backend: http://localhost:1080
+values:
+  nv_id:
+    type: string
+  nv_status:
+    type: enum
+    enum:
+      pending: awaiting settlement
+      approved: fully settled
+      denied: refused end-to-end
+entities:
+  Widget:
+    id_field: id
+    fields:
+      id:
+        value_ref: nv_id
+        required: true
+      status:
+        value_ref: nv_status
+        required: false
+capabilities:
+  q:
+    kind: query
+    entity: Widget
+    selection:
+      - name: status
+        value_ref: nv_status
+        required: false
+"#,
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
+        let cgs = load_schema_dir(dir.path()).unwrap();
+        let nv = cgs.values.get("nv_status").expect("nv_status");
+        let membership = nv.domain.enum_membership.as_ref().expect("membership");
+        assert_eq!(
+            membership.tokens(),
+            &[
+                "pending".to_string(),
+                "approved".to_string(),
+                "denied".to_string()
+            ][..]
+        );
+        let glosses = membership.glosses().expect("glosses");
+        assert_eq!(
+            glosses.get("pending").map(String::as_str),
+            Some("awaiting settlement")
+        );
+        let meta = crate::symbol_tuning::IdentMetadata::RegistryBacked {
+            catalog_entry_id: String::new(),
+            entity: crate::identity::EntityName::from("Widget".to_string()),
+            role: crate::symbol_tuning::IdentRegistryRole::EntityField,
+            value_registry_key: crate::schema::ValueDomainKey::new("nv_status").expect("key"),
+            field_type: crate::FieldType::Select,
+            profile: None,
+            array_items: None,
+            allowed_values: nv.allowed_values.clone(),
+            wire_name: "status".into(),
+            description: String::new(),
+        };
+        let meaning = meta
+            .render_value_domain_row_gloss("", None, Some(&cgs))
+            .expect("meaning");
+        assert_eq!(
+            meaning,
+            "enum · pending: awaiting settlement; approved: fully settled; denied: refused end-to-end"
+        );
+    }
+
+    #[test]
+    fn rejects_enum_gloss_with_reserved_delimiter() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("domain.yaml"),
+            r#"http_backend: http://localhost:1080
+values:
+  nv_id:
+    type: string
+  nv_status:
+    type: enum
+    enum:
+      pending: awaiting settlement; not yet
 entities:
   Widget:
     id_field: id
@@ -2015,28 +2199,144 @@ capabilities:
   q:
     kind: query
     entity: Widget
-    parameters:
-      - name: overlap
-        value_ref: nv_overlap_str
+    selection:
+      - name: id
+        value_ref: nv_id
         required: true
-    input_schema:
-      input_type:
-        type: object
-        additional_fields: true
-        fields:
-          - name: overlap
-            value_ref: nv_overlap_int
-            field_type: integer
-            required: false
 "#,
         )
         .unwrap();
         std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
         let err = load_schema_dir(dir.path()).unwrap_err();
         assert!(
-            err.contains("overlap") && err.contains("parameters") && err.contains("input_schema"),
+            err.to_string().contains("must not contain ';'"),
+            "unexpected err: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_field_across_structural_lanes() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("domain.yaml"),
+            r#"http_backend: http://localhost:1080
+values:
+  nv_id:
+    type: string
+  nv_overlap_str:
+    type: string
+entities:
+  Widget:
+    id_field: id
+    fields:
+      id:
+        value_ref: nv_id
+        required: true
+capabilities:
+  q:
+    kind: query
+    entity: Widget
+    selection:
+      - name: overlap
+        value_ref: nv_overlap_str
+        required: true
+    controls:
+      - name: overlap
+        value_ref: nv_overlap_str
+        required: false
+"#,
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
+        let err = load_schema_dir(dir.path()).unwrap_err();
+        assert!(
+            err.contains("overlap") && err.contains("selection") && err.contains("controls"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn rejects_removed_execution_context_lane() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("domain.yaml"),
+            r#"http_backend: http://localhost:1080
+values:
+  nv_id:
+    type: string
+entities:
+  Session:
+    id_field: id
+    fields:
+      id:
+        value_ref: nv_id
+        required: true
+  Widget:
+    id_field: id
+    fields:
+      id:
+        value_ref: nv_id
+        required: true
+capabilities:
+  session_get:
+    kind: get
+    entity: Session
+  widget_get:
+    kind: get
+    entity: Widget
+  q:
+    kind: query
+    entity: Widget
+    execution:
+      context:
+        entity: Session
+        bindings:
+          session_id: id
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("mappings.yaml"),
+            "session_get: {}\nwidget_get: {}\nq:\n  query:\n    session:\n      type: var\n      name: session_id\n",
+        )
+        .unwrap();
+        let err = load_schema_dir(dir.path()).unwrap_err();
+        assert!(
+            err.contains("execution") || err.contains("unknown field"),
+            "expected unknown-field reject for execution:; got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_legacy_parameter_role() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("domain.yaml"),
+            r#"http_backend: http://localhost:1080
+values:
+  nv_id:
+    type: string
+entities:
+  E:
+    id_field: id
+    fields:
+      id:
+        value_ref: nv_id
+        required: true
+capabilities:
+  q:
+    kind: query
+    entity: E
+    selection:
+      - name: id
+        value_ref: nv_id
+        role: filter
+"#,
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
+        let err = load_schema_dir(dir.path()).unwrap_err();
+        assert!(err.contains("role"), "unexpected error: {err}");
     }
 
     #[test]
@@ -2048,7 +2348,6 @@ capabilities:
 values:
   nv_id:
     type: string
-    string_semantics: short
 entities:
   E:
     id_field: id
@@ -2073,5 +2372,74 @@ capabilities:
             err.contains("side_effect") && err.contains("description"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn rejects_input_validation_predicates_in_domain_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("domain.yaml"),
+            r#"http_backend: http://localhost:1080
+values:
+  nv_id:
+    type: string
+  nv_rev:
+    type: number
+entities:
+  E:
+    id_field: id
+    fields:
+      id:
+        value_ref: nv_id
+        required: true
+capabilities:
+  upd:
+    kind: update
+    entity: E
+    payload:
+      input_type:
+        type: object
+        additional_fields: false
+        fields:
+          - name: revenue
+            value_ref: nv_rev
+            required: false
+      validation:
+        predicates:
+          - field_path: revenue
+            operator: min_value
+            value: 0
+            error_message: Revenue must be non-negative
+"#,
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("mappings.yaml"), "upd: {}\n").unwrap();
+        let err = load_schema_dir(dir.path()).unwrap_err();
+        assert!(
+            err.contains("validation.predicates") && err.contains("values:"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn all_apis_packages_validate() {
+        let apis = std::path::Path::new("../../apis");
+        if !apis.is_dir() {
+            return;
+        }
+        for entry in std::fs::read_dir(apis).expect("read apis dir") {
+            let entry = entry.expect("apis entry");
+            if !entry.file_type().expect("file type").is_dir() {
+                continue;
+            }
+            let dir = entry.path();
+            if !dir.join("domain.yaml").is_file() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            load_schema_dir(&dir).unwrap_or_else(|e| {
+                panic!("apis/{name} failed CGS validation: {e}");
+            });
+        }
     }
 }

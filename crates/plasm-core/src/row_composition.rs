@@ -4,7 +4,7 @@
 
 use crate::cgs_federation::QualifiedEntityKey;
 use crate::expr::{EntityKey, Ref};
-use crate::expr_parser::postfix::PlasmPostfixOp;
+use crate::expr_parser::CollectMeta;
 use indexmap::IndexMap;
 
 /// How the primary reference is encoded on the wire for this row.
@@ -71,32 +71,21 @@ pub enum RowSuffix {
     GroupBy { args: String },
     Dedupe { keys: String },
     Distinct { keys: Option<String> },
+    With { body: String },
     Singleton,
     PageSize { n: u32 },
 }
 
-impl RowSuffix {
-    pub fn from_postfix_op(op: &PlasmPostfixOp) -> Result<Self, String> {
-        match op {
-            PlasmPostfixOp::Limit(n) => Ok(Self::Limit { count: *n as u32 }),
-            PlasmPostfixOp::Projection { fields } => Ok(Self::Project {
-                fields: fields
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect(),
-            }),
-            PlasmPostfixOp::Sort { args } => Ok(Self::Sort { args: args.clone() }),
-            PlasmPostfixOp::Filter { body } => Ok(Self::Filter { body: body.clone() }),
-            PlasmPostfixOp::Aggregate { args } => Ok(Self::Aggregate { args: args.clone() }),
-            PlasmPostfixOp::GroupBy { args } => Ok(Self::GroupBy { args: args.clone() }),
-            PlasmPostfixOp::Dedupe { keys } => Ok(Self::Dedupe { keys: keys.clone() }),
-            PlasmPostfixOp::Distinct { keys } => Ok(Self::Distinct { keys: keys.clone() }),
-            PlasmPostfixOp::Singleton => Ok(Self::Singleton),
-            PlasmPostfixOp::PageSize(n) => Ok(Self::PageSize { n: *n as u32 }),
+impl From<&CollectMeta> for RowSuffix {
+    fn from(m: &CollectMeta) -> Self {
+        match m {
+            CollectMeta::Singleton => Self::Singleton,
+            CollectMeta::PageSize(n) => Self::PageSize { n: *n as u32 },
         }
     }
+}
 
+impl RowSuffix {
     pub fn is_terminal_transform(&self) -> bool {
         matches!(
             self,
@@ -145,8 +134,8 @@ pub fn row_identity_from_parts(
     let mut ambient = IndexMap::new();
     if let EntityKey::Compound(parts) = &reference.key {
         for (k, v) in parts {
-            if !v.is_empty() {
-                ambient.insert(k.clone(), v.clone());
+            if !v.is_empty_lit() {
+                ambient.insert(k.clone(), v.display_str());
             }
         }
     }
@@ -201,17 +190,6 @@ pub fn resolve_relation_target_id(
     ))
 }
 
-/// Documented suffix-stream peel for postfix transforms only (relation hops require CGS-aware decompose in agent-core).
-pub fn parse_row_suffix_stream_tail(expr: &str) -> Result<(String, Vec<RowSuffix>), String> {
-    use crate::expr_parser::postfix::peel_postfix_suffixes;
-    let (core, ops) = peel_postfix_suffixes(expr)?;
-    let suffixes = ops
-        .iter()
-        .map(RowSuffix::from_postfix_op)
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok((core, suffixes))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,6 +231,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: true,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         };
         let target_ref =
@@ -286,6 +266,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: true,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         };
         assert!(resolve_relation_target_id(&identity, "evolution_chain", &target).is_err());

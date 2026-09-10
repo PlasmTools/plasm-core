@@ -89,6 +89,12 @@ macro_rules! string_id {
                 s.into_inner()
             }
         }
+
+        impl Default for $name {
+            fn default() -> Self {
+                Self(String::new())
+            }
+        }
     };
 }
 

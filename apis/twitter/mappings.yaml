@@ -1,323 +1,387 @@
-# X API v2 — CML mappings. Semantic model in domain.yaml.
-#
-# Base URL: set via domain `http_backend` (https://api.x.com) or override with
-# `plasm --backend https://api.twitter.com`.
-#
-# Responses commonly wrap entities as { "data": ... , "meta": { "next_token": ... } }.
-# Pagination uses meta.next_token with request param `pagination_token` (timelines, lists)
-# or `next_token` (recent search), per upstream OpenAPI.
-#
-# Auth: Bearer OAuth 2 user token or app-only bearer; runtime injects Authorization.
-
-# ── User ─────────────────────────────────────────────────────────────────────
-
 user_get:
   method: GET
   path:
-    - { type: literal, value: "2" }
-    - { type: literal, value: users }
-    - { type: var, name: id }
+  - type: literal
+    value: '2'
+  - type: literal
+    value: users
+  - type: var
+    name: id
   response:
     single: true
-    items_path: [data]
-
+    items_path:
+    - data
 user_get_me:
   method: GET
   path:
-    - { type: literal, value: "2" }
-    - { type: literal, value: users }
-    - { type: literal, value: me }
+  - type: literal
+    value: '2'
+  - type: literal
+    value: users
+  - type: literal
+    value: me
   response:
     single: true
-    items_path: [data]
-
+    items_path:
+    - data
 user_query:
   method: GET
   path:
-    - { type: literal, value: "2" }
-    - { type: literal, value: users }
-    - { type: literal, value: by }
+  - type: literal
+    value: '2'
+  - type: literal
+    value: users
+  - type: literal
+    value: by
   response:
     items: data
   query:
     type: object
     fields:
-      - - usernames
-        - type: join
-          sep: ","
-          expr: { type: var, name: usernames }
-
-# ── Tweet ────────────────────────────────────────────────────────────────────
-
+    - - usernames
+      - type: join
+        sep: ','
+        expr:
+          type: var
+          name: usernames
 tweet_get:
   method: GET
   path:
-    - { type: literal, value: "2" }
-    - { type: literal, value: tweets }
-    - { type: var, name: id }
+  - type: literal
+    value: '2'
+  - type: literal
+    value: tweets
+  - type: var
+    name: id
   response:
     single: true
-    items_path: [data]
-
-tweet_lookup_query:
-  method: GET
-  path:
-    - { type: literal, value: "2" }
-    - { type: literal, value: tweets }
-  response:
-    items: data
-  query:
-    type: object
-    fields:
-      - - ids
-        - type: join
-          sep: ","
-          expr: { type: var, name: ids }
-
+    items_path:
+    - data
 tweet_search:
   method: GET
   path:
-    - { type: literal, value: "2" }
-    - { type: literal, value: tweets }
-    - { type: literal, value: search }
-    - { type: literal, value: recent }
+  - type: literal
+    value: '2'
+  - type: literal
+    value: tweets
+  - type: literal
+    value: search
+  - type: literal
+    value: recent
   response:
     items: data
   query:
     type: object
     fields:
-      - - query
-        - { type: var, name: query }
-      - - sort_order
-        - type: if
-          condition: { type: exists, var: sort_order }
-          then_expr: { type: var, name: sort_order }
-          else_expr: { type: const, value: null }
-      - - start_time
-        - type: if
-          condition: { type: exists, var: start_time }
-          then_expr: { type: var, name: start_time }
-          else_expr: { type: const, value: null }
-      - - end_time
-        - type: if
-          condition: { type: exists, var: end_time }
-          then_expr: { type: var, name: end_time }
-          else_expr: { type: const, value: null }
-      - - since_id
-        - type: if
-          condition: { type: exists, var: since_id }
-          then_expr: { type: var, name: since_id }
-          else_expr: { type: const, value: null }
-      - - until_id
-        - type: if
-          condition: { type: exists, var: until_id }
-          then_expr: { type: var, name: until_id }
-          else_expr: { type: const, value: null }
+    - - query
+      - type: var
+        name: query
+    - - sort_order
+      - type: if
+        condition:
+          type: exists
+          var: sort_order
+        then_expr:
+          type: var
+          name: sort_order
+        else_expr:
+          type: const
+          value: null
+    - - start_time
+      - type: if
+        condition:
+          type: exists
+          var: start_time
+        then_expr:
+          type: var
+          name: start_time
+        else_expr:
+          type: const
+          value: null
+    - - end_time
+      - type: if
+        condition:
+          type: exists
+          var: end_time
+        then_expr:
+          type: var
+          name: end_time
+        else_expr:
+          type: const
+          value: null
+    - - since_id
+      - type: if
+        condition:
+          type: exists
+          var: since_id
+        then_expr:
+          type: var
+          name: since_id
+        else_expr:
+          type: const
+          value: null
+    - - until_id
+      - type: if
+        condition:
+          type: exists
+          var: until_id
+        then_expr:
+          type: var
+          name: until_id
+        else_expr:
+          type: const
+          value: null
   pagination:
     location: query
-    response_prefix: [meta]
+    response_prefix:
+    - meta
     params:
-      max_results: { fixed: 25 }
-      next_token: { from_response: next_token }
-
+      max_results:
+        fixed: 25
+        role: page_size
+      next_token:
+        from_response: next_token
+    strategy: cursor
 tweet_timeline_query:
   method: GET
   path:
-    - { type: literal, value: "2" }
-    - { type: literal, value: users }
-    - { type: var, name: id }
-    - { type: literal, value: tweets }
-  response:
-    items: data
-  query:
-    type: object
-    fields:
-      - - exclude
-        - type: if
-          condition: { type: exists, var: exclude }
+  - type: if
+    condition:
+      type: equals
+      left:
+        type: var
+        name: shelf
+      right:
+        type: const
+        value: tweet_timeline
+    then_expr:
+      type: const
+      value: 2/users/{id}/tweets
+    else_expr:
+      type: if
+      condition:
+        type: equals
+        left:
+          type: var
+          name: shelf
+        right:
+          type: const
+          value: tweet_mentions
+      then_expr:
+        type: const
+        value: 2/users/{id}/mentions
+      else_expr:
+        type: if
+        condition:
+          type: equals
+          left:
+            type: var
+            name: shelf
+          right:
+            type: const
+            value: user_liked_tweets
+        then_expr:
+          type: const
+          value: 2/users/{id}/liked_tweets
+        else_expr:
+          type: if
+          condition:
+            type: equals
+            left:
+              type: var
+              name: shelf
+            right:
+              type: const
+              value: list_tweets
           then_expr:
-            type: join
-            sep: ","
-            expr: { type: var, name: exclude }
-          else_expr: { type: const, value: null }
-      - - start_time
-        - type: if
-          condition: { type: exists, var: start_time }
-          then_expr: { type: var, name: start_time }
-          else_expr: { type: const, value: null }
-      - - end_time
-        - type: if
-          condition: { type: exists, var: end_time }
-          then_expr: { type: var, name: end_time }
-          else_expr: { type: const, value: null }
-      - - since_id
-        - type: if
-          condition: { type: exists, var: since_id }
-          then_expr: { type: var, name: since_id }
-          else_expr: { type: const, value: null }
-      - - until_id
-        - type: if
-          condition: { type: exists, var: until_id }
-          then_expr: { type: var, name: until_id }
-          else_expr: { type: const, value: null }
-  pagination:
-    location: query
-    response_prefix: [meta]
-    params:
-      max_results: { fixed: 25 }
-      pagination_token: { from_response: next_token }
-
-tweet_mentions_query:
-  method: GET
-  path:
-    - { type: literal, value: "2" }
-    - { type: literal, value: users }
-    - { type: var, name: id }
-    - { type: literal, value: mentions }
+            type: const
+            value: 2/lists/{id}/tweets
+          else_expr:
+            type: const
+            value: 2/tweets
   response:
     items: data
   query:
     type: object
     fields:
-      - - start_time
-        - type: if
-          condition: { type: exists, var: start_time }
-          then_expr: { type: var, name: start_time }
-          else_expr: { type: const, value: null }
-      - - end_time
-        - type: if
-          condition: { type: exists, var: end_time }
-          then_expr: { type: var, name: end_time }
-          else_expr: { type: const, value: null }
-      - - since_id
-        - type: if
-          condition: { type: exists, var: since_id }
-          then_expr: { type: var, name: since_id }
-          else_expr: { type: const, value: null }
-      - - until_id
-        - type: if
-          condition: { type: exists, var: until_id }
-          then_expr: { type: var, name: until_id }
-          else_expr: { type: const, value: null }
+    - - exclude
+      - type: if
+        condition:
+          type: exists
+          var: exclude
+        then_expr:
+          type: join
+          sep: ','
+          expr:
+            type: var
+            name: exclude
+        else_expr:
+          type: const
+          value: null
+    - - start_time
+      - type: if
+        condition:
+          type: exists
+          var: start_time
+        then_expr:
+          type: var
+          name: start_time
+        else_expr:
+          type: const
+          value: null
+    - - end_time
+      - type: if
+        condition:
+          type: exists
+          var: end_time
+        then_expr:
+          type: var
+          name: end_time
+        else_expr:
+          type: const
+          value: null
+    - - since_id
+      - type: if
+        condition:
+          type: exists
+          var: since_id
+        then_expr:
+          type: var
+          name: since_id
+        else_expr:
+          type: const
+          value: null
+    - - until_id
+      - type: if
+        condition:
+          type: exists
+          var: until_id
+        then_expr:
+          type: var
+          name: until_id
+        else_expr:
+          type: const
+          value: null
   pagination:
     location: query
-    response_prefix: [meta]
+    response_prefix:
+    - meta
     params:
-      max_results: { fixed: 25 }
-      pagination_token: { from_response: next_token }
-
-user_liked_tweets_query:
-  method: GET
-  path:
-    - { type: literal, value: "2" }
-    - { type: literal, value: users }
-    - { type: var, name: id }
-    - { type: literal, value: liked_tweets }
-  response:
-    items: data
-  query:
-    type: object
-    fields: []
-  pagination:
-    location: query
-    response_prefix: [meta]
-    params:
-      max_results: { fixed: 25 }
-      pagination_token: { from_response: next_token }
-
+      max_results:
+        fixed: 25
+        role: page_size
+      pagination_token:
+        from_response: next_token
+    strategy: cursor
 tweet_create:
   method: POST
   path:
-    - { type: literal, value: "2" }
-    - { type: literal, value: tweets }
+  - type: literal
+    value: '2'
+  - type: literal
+    value: tweets
   response:
     single: true
-    items_path: [data]
+    items_path:
+    - data
   body:
     type: object
     fields:
-      - - text
-        - { type: var, name: text }
-      - - quote_tweet_id
-        - type: if
-          condition: { type: exists, var: quote_tweet_id }
-          then_expr: { type: var, name: quote_tweet_id }
-          else_expr: { type: const, value: null }
-      - - reply
-        - type: if
-          condition: { type: exists, var: reply_to_tweet_id }
-          then_expr:
-            type: object
-            fields:
-              - - in_reply_to_tweet_id
-                - { type: var, name: reply_to_tweet_id }
-          else_expr: { type: const, value: null }
-
+    - - text
+      - type: var
+        name: text
+    - - quote_tweet_id
+      - type: if
+        condition:
+          type: exists
+          var: quote_tweet_id
+        then_expr:
+          type: var
+          name: quote_tweet_id
+        else_expr:
+          type: const
+          value: null
+    - - reply
+      - type: if
+        condition:
+          type: exists
+          var: reply_to_tweet_id
+        then_expr:
+          type: object
+          fields:
+          - - in_reply_to_tweet_id
+            - type: var
+              name: reply_to_tweet_id
+        else_expr:
+          type: const
+          value: null
 tweet_delete:
   method: DELETE
   path:
-    - { type: literal, value: "2" }
-    - { type: literal, value: tweets }
-    - { type: var, name: id }
-
-# ── List ─────────────────────────────────────────────────────────────────────
-
+  - type: literal
+    value: '2'
+  - type: literal
+    value: tweets
+  - type: var
+    name: id
 list_get:
   method: GET
   path:
-    - { type: literal, value: "2" }
-    - { type: literal, value: lists }
-    - { type: var, name: id }
+  - type: literal
+    value: '2'
+  - type: literal
+    value: lists
+  - type: var
+    name: id
   response:
     single: true
-    items_path: [data]
-
+    items_path:
+    - data
 list_create:
   method: POST
   path:
-    - { type: literal, value: "2" }
-    - { type: literal, value: lists }
+  - type: literal
+    value: '2'
+  - type: literal
+    value: lists
   response:
     single: true
-    items_path: [data]
+    items_path:
+    - data
   body:
     type: object
     fields:
-      - - name
-        - { type: var, name: name }
-      - - description
-        - type: if
-          condition: { type: exists, var: description }
-          then_expr: { type: var, name: description }
-          else_expr: { type: const, value: null }
-      - - private
-        - type: if
-          condition: { type: exists, var: private }
-          then_expr: { type: var, name: private }
-          else_expr: { type: const, value: null }
-
+    - - name
+      - type: var
+        name: name
+    - - description
+      - type: if
+        condition:
+          type: exists
+          var: description
+        then_expr:
+          type: var
+          name: description
+        else_expr:
+          type: const
+          value: null
+    - - private
+      - type: if
+        condition:
+          type: exists
+          var: private
+        then_expr:
+          type: var
+          name: private
+        else_expr:
+          type: const
+          value: null
 list_delete:
   method: DELETE
   path:
-    - { type: literal, value: "2" }
-    - { type: literal, value: lists }
-    - { type: var, name: id }
-
-list_tweets_query:
-  method: GET
-  path:
-    - { type: literal, value: "2" }
-    - { type: literal, value: lists }
-    - { type: var, name: id }
-    - { type: literal, value: tweets }
-  response:
-    items: data
-  query:
-    type: object
-    fields: []
-  pagination:
-    location: query
-    response_prefix: [meta]
-    params:
-      max_results: { fixed: 50 }
-      pagination_token: { from_response: next_token }
+  - type: literal
+    value: '2'
+  - type: literal
+    value: lists
+  - type: var
+    name: id

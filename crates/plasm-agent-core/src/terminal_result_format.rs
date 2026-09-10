@@ -160,7 +160,6 @@ mod tests {
             None,
             "hash".into(),
             None,
-            None,
         );
         let doc = RunArtifactDocument {
             run_id: "pr".to_string() + &"a".repeat(64),
@@ -169,20 +168,17 @@ mod tests {
             entry_id: "default".into(),
             resource_index: Some(1),
             principal: None,
-            parsed_preimage: ParsedExpr {
-                expr: Expr::Query(QueryExpr {
-                    entity: "Pet".into(),
-                    predicate: None,
-                    projection: None,
-                    pagination: None,
-                    hydrate: None,
-                    capability_name: None,
-                    catalog_entry_id: plasm_core::CatalogEntryStamp::some(
-                        plasm_core::RegistryEntryId::from("default"),
-                    ),
-                }),
+            parsed_preimage: ParsedExpr::from_expr(Expr::Query(QueryExpr {
+                entity: "Pet".into(),
+                predicate: None,
                 projection: None,
-            },
+                pagination: None,
+                hydrate: None,
+                capability_name: None,
+                catalog_entry_id: plasm_core::CatalogEntryStamp::some(
+                    plasm_core::RegistryEntryId::from("default"),
+                ),
+            })),
             display_lines: vec!["pets".into()],
             request_fingerprints: vec!["fp1".into()],
             entities: vec![],

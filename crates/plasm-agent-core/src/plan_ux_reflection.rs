@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::execute_session::ExecuteSession;
 use crate::plan_dry_display::{
-    build_plan_dry_compact_view, human_ux_headline_for_op, human_ux_summary_for_op, PlanDryVerdict,
+    build_plan_dry_compact_view, human_ux_headline_for_op, human_ux_summary_for_op,
 };
 use crate::plan_flow_reflection::{plan_ux_flow_reflection, PlanUxFlowReflection};
 use crate::plasm_plan::{
@@ -175,11 +175,7 @@ pub fn plan_ux_reflection(
         returns,
         writes,
         review: PlanUxReview {
-            verdict: match compact.verdict {
-                PlanDryVerdict::Ok => "ok".into(),
-                PlanDryVerdict::Review => "review".into(),
-                PlanDryVerdict::Deny => "deny".into(),
-            },
+            verdict: compact.verdict.as_wire().into(),
             warnings: compact.warnings.clone(),
             write_count: compact.write_count,
             read_count: compact.read_count,
@@ -360,7 +356,8 @@ fn widget_for_node(
         return match op {
             crate::plan_dry_display::PlanDryOp::Relation { .. } => PlanUxWidgetKind::RelationHop,
             crate::plan_dry_display::PlanDryOp::Render { .. } => PlanUxWidgetKind::RenderTemplate,
-            crate::plan_dry_display::PlanDryOp::ForEach { .. } => PlanUxWidgetKind::ForEach,
+            crate::plan_dry_display::PlanDryOp::ForEach { .. }
+            | crate::plan_dry_display::PlanDryOp::IterateUntil { .. } => PlanUxWidgetKind::ForEach,
             crate::plan_dry_display::PlanDryOp::Derive { .. } => PlanUxWidgetKind::Derive,
             crate::plan_dry_display::PlanDryOp::Data { .. } => PlanUxWidgetKind::Data,
             crate::plan_dry_display::PlanDryOp::Surface { kind, .. } => match kind {
@@ -385,7 +382,9 @@ fn widget_for_node(
             PlanUxWidgetKind::RenderTemplate
         }
         ValidatedPlanNode::Compute(_) => PlanUxWidgetKind::Compute,
-        ValidatedPlanNode::ForEach(_) => PlanUxWidgetKind::ForEach,
+        ValidatedPlanNode::ForEach(_) | ValidatedPlanNode::IterateUntil(_) => {
+            PlanUxWidgetKind::ForEach
+        }
         ValidatedPlanNode::Derive(_) => PlanUxWidgetKind::Derive,
         ValidatedPlanNode::Data(_) => PlanUxWidgetKind::Data,
     }

@@ -18,6 +18,7 @@ pub struct LiveRunTelemetry {
     last_latency_ms: AtomicU64,
     started_at: Instant,
     http_trace_entries: Mutex<Vec<HttpTraceEntry>>,
+    page_audits: Mutex<Vec<crate::PageAudit>>,
 }
 
 impl LiveRunTelemetry {
@@ -28,6 +29,7 @@ impl LiveRunTelemetry {
             last_latency_ms: AtomicU64::new(0),
             started_at: Instant::now(),
             http_trace_entries: Mutex::new(Vec::new()),
+            page_audits: Mutex::new(Vec::new()),
         }
     }
 
@@ -51,6 +53,13 @@ impl LiveRunTelemetry {
         }
     }
 
+    /// Append one sanitized pagination page audit (one-per-attempt).
+    pub fn record_page_audit(&self, audit: crate::PageAudit) {
+        if let Ok(mut g) = self.page_audits.lock() {
+            g.push(audit);
+        }
+    }
+
     pub fn record_http_completion(&self, duration: Duration) {
         self.record_http_trace("HTTP", "", duration, HttpTraceOutcome::Ok);
     }
@@ -58,6 +67,14 @@ impl LiveRunTelemetry {
     /// Take HTTP trace rows accumulated since the previous drain (per plan line / expression).
     pub fn drain_http_trace_entries(&self) -> Vec<HttpTraceEntry> {
         self.http_trace_entries
+            .lock()
+            .map(|mut g| std::mem::take(&mut *g))
+            .unwrap_or_default()
+    }
+
+    /// Take page audit rows accumulated since the previous drain.
+    pub fn drain_page_audits(&self) -> Vec<crate::PageAudit> {
+        self.page_audits
             .lock()
             .map(|mut g| std::mem::take(&mut *g))
             .unwrap_or_default()
@@ -110,6 +127,23 @@ pub fn drain_active_live_http_trace_entries() -> Vec<HttpTraceEntry> {
         return Vec::new();
     };
     tel.drain_http_trace_entries()
+}
+
+/// Record a sanitized page audit on the active live-run telemetry scope, if any.
+pub fn record_live_page_audit(audit: crate::PageAudit) {
+    let Ok(Some(tel)) = ACTIVE_LIVE_RUN_TELEMETRY.try_with(|slot| slot.clone()) else {
+        return;
+    };
+    tel.record_page_audit(audit);
+}
+
+/// Drain page audits from the active live-run telemetry scope, if any.
+#[must_use]
+pub fn drain_active_live_page_audits() -> Vec<crate::PageAudit> {
+    let Ok(Some(tel)) = ACTIVE_LIVE_RUN_TELEMETRY.try_with(|slot| slot.clone()) else {
+        return Vec::new();
+    };
+    tel.drain_page_audits()
 }
 
 pub async fn with_live_run_telemetry<Fut, T>(telemetry: Arc<LiveRunTelemetry>, fut: Fut) -> T

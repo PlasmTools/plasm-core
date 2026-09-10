@@ -1,0 +1,178 @@
+{
+  "activate_debit_card_8291": {
+    "capability": "DebitCard_activate_new",
+    "entity": "DebitCard"
+  },
+  "activate_debit_card_8292": {
+    "capability": "DebitCard_activate_replacement",
+    "entity": "DebitCard"
+  },
+  "activate_debit_card_8293": {
+    "capability": "DebitCard_activate_reissue",
+    "entity": "DebitCard"
+  },
+  "apply_checking_account_credit_5829": {
+    "capability": "BankAccount_apply_checking_credit",
+    "entity": "BankAccount"
+  },
+  "apply_credit_card_account_flag_6147": {
+    "capability": "CreditCardAccountLocked_apply_flag",
+    "entity": "CreditCardAccountLocked"
+  },
+  "apply_savings_account_credit_6831": {
+    "capability": "BankAccount_apply_savings_credit",
+    "entity": "BankAccount"
+  },
+  "apply_statement_credit_8472": {
+    "capability": "CreditCardAccountLocked_apply_statement_credit",
+    "entity": "CreditCardAccountLocked"
+  },
+  "deny_credit_limit_increase_5848": {
+    "capability": "CreditLimitRequest_deny",
+    "entity": "CreditLimitRequest"
+  },
+  "approve_credit_limit_increase_5847": {
+    "capability": "CreditLimitRequest_approve",
+    "entity": "CreditLimitRequest"
+  },
+  "change_debit_card_pin_6285": {
+    "capability": "DebitCard_change_pin",
+    "entity": "DebitCard"
+  },
+  "clear_debit_card_fraud_alert_4892": {
+    "capability": "DebitCard_clear_fraud_alert",
+    "entity": "DebitCard"
+  },
+  "close_bank_account_7392": {
+    "capability": "BankAccount_close",
+    "entity": "BankAccount"
+  },
+  "close_credit_card_account_7834": {
+    "capability": "CreditCardAccountLocked_close",
+    "entity": "CreditCardAccountLocked"
+  },
+  "close_debit_card_4721": {
+    "capability": "DebitCard_close",
+    "entity": "DebitCard"
+  },
+  "emergency_credit_bureau_incident_transfer_1114": {
+    "capability": "AgentToolkit_emergency_bureau_transfer",
+    "entity": "AgentToolkit"
+  },
+  "example_agent_tool_0000": {
+    "capability": "AgentToolkit_example_noop",
+    "entity": "AgentToolkit"
+  },
+  "file_credit_card_transaction_dispute_4829": {
+    "capability": "CreditCardDispute_file",
+    "entity": "CreditCardDispute"
+  },
+  "file_debit_card_transaction_dispute_6281": {
+    "capability": "DebitCardDispute_file",
+    "entity": "DebitCardDispute"
+  },
+  "freeze_debit_card_3892": {
+    "capability": "DebitCard_freeze",
+    "entity": "DebitCard"
+  },
+  "get_all_user_accounts_by_user_id_3847": {
+    "capability": "BankAccount_list_by_user",
+    "entity": "BankAccount"
+  },
+  "get_atm_deposit_images_8473": {
+    "capability": "BankTransaction_get_atm_images",
+    "entity": "BankTransaction"
+  },
+  "get_bank_account_transactions_9173": {
+    "capability": "BankTransaction_list_by_account",
+    "entity": "BankTransaction"
+  },
+  "get_closure_reason_history_8293": {
+    "capability": "ClosureReason_list_by_account",
+    "entity": "ClosureReason"
+  },
+  "get_credit_limit_increase_history_4829": {
+    "capability": "CreditLimitRequest_list_by_account",
+    "entity": "CreditLimitRequest"
+  },
+  "get_debit_cards_by_account_id_7823": {
+    "capability": "DebitCard_list_by_account",
+    "entity": "DebitCard"
+  },
+  "get_debit_dispute_status_7483": {
+    "capability": "DebitCardDispute_list_by_user",
+    "entity": "DebitCardDispute"
+  },
+  "get_payment_history_6183": {
+    "capability": "PaymentHistory_list_by_account",
+    "entity": "PaymentHistory"
+  },
+  "get_pending_replacement_orders_5765": {
+    "capability": "CreditCardOrder_list_pending",
+    "entity": "CreditCardOrder"
+  },
+  "get_user_dispute_history_7291": {
+    "capability": "CreditCardDispute_list_by_user",
+    "entity": "CreditCardDispute"
+  },
+  "initial_transfer_to_human_agent_0218": {
+    "capability": "AgentToolkit_initial_transfer_0218",
+    "entity": "AgentToolkit"
+  },
+  "initial_transfer_to_human_agent_1822": {
+    "capability": "AgentToolkit_initial_transfer_1822",
+    "entity": "AgentToolkit"
+  },
+  "log_credit_card_closure_reason_4521": {
+    "capability": "ClosureReason_log",
+    "entity": "ClosureReason"
+  },
+  "open_bank_account_4821": {
+    "capability": "BankAccount_open",
+    "entity": "BankAccount"
+  },
+  "order_debit_card_5739": {
+    "capability": "DebitCard_order",
+    "entity": "DebitCard"
+  },
+  "order_replacement_credit_card_7291": {
+    "capability": "CreditCardOrder_order_replacement",
+    "entity": "CreditCardOrder"
+  },
+  "pay_credit_card_from_checking_9182": {
+    "capability": "CreditCardAccountLocked_pay_from_checking",
+    "entity": "CreditCardAccountLocked"
+  },
+  "request_temporary_debit_card_limit_increase_8374": {
+    "capability": "DebitCard_request_limit_increase",
+    "entity": "DebitCard"
+  },
+  "reset_debit_card_pin_6284": {
+    "capability": "DebitCard_reset_pin",
+    "entity": "DebitCard"
+  },
+  "set_debit_card_recurring_block_7382": {
+    "capability": "DebitCard_set_recurring_block",
+    "entity": "DebitCard"
+  },
+  "submit_credit_limit_increase_request_7392": {
+    "capability": "CreditLimitRequest_submit",
+    "entity": "CreditLimitRequest"
+  },
+  "submit_interest_discrepancy_report_7294": {
+    "capability": "BankAccount_report_interest_discrepancy",
+    "entity": "BankAccount"
+  },
+  "transfer_funds_between_bank_accounts_7291": {
+    "capability": "BankAccount_transfer",
+    "entity": "BankAccount"
+  },
+  "unfreeze_debit_card_3893": {
+    "capability": "DebitCard_unfreeze",
+    "entity": "DebitCard"
+  },
+  "update_transaction_rewards_3847": {
+    "capability": "CreditCardTransaction_update_rewards",
+    "entity": "CreditCardTransactionLocked"
+  }
+}

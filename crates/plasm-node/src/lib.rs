@@ -5,18 +5,23 @@ mod transport;
 mod types;
 
 pub use engine::{
-    AgentEngine, CapabilityIntrospection, CatalogInfo, CatalogIntrospection, DiscoverResult,
-    DryRunResult, EntityIntrospection, RunPlanResult, TeachingExposureResult,
+    AgentEngine, CapabilityIntrospection, CatalogInfo, CatalogIntrospection, DryRunResult,
+    EntityIntrospection, RunPlanResult, TeachingExposureResult,
 };
 pub use types::{JsTransportRequest, JsTransportResponse};
 
 use engine::AgentEngine as InnerEngine;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
+use plasm_agent_core::discovery_service::{DiscoveryService, RouteTurn};
+use plasm_agent_core::discovery_store::{
+    DiscoveryAuthorization, DiscoverySessionPin, DiscoveryStore, PreparedCatalog,
+};
 use plasm_agent_core::http_execute::CapabilitySeed;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, OnceCell};
 
 use crate::transport::{JsCallbackHttpTransport, JsHostTransport};
 
@@ -43,11 +48,7 @@ pub struct JsDryRunResult {
     pub plan_commit_ref: String,
     pub summary: String,
     pub comp_json: String,
-}
-
-#[napi(object)]
-pub struct JsDiscoverResult {
-    pub markdown: String,
+    pub fused_clean_read: bool,
 }
 
 #[napi(object)]
@@ -58,20 +59,86 @@ pub struct JsRunPlanResult {
     pub rows_json: Option<String>,
     #[napi(js_name = "metaJson")]
     pub meta_json: Option<String>,
+    #[napi(js_name = "artifactsJson")]
+    pub artifacts_json: Option<String>,
 }
 
 fn map_err(err: anyhow::Error) -> Error {
     Error::from_reason(err.to_string())
 }
 
+/// In-process Plasm engine for NAPI.
+///
+/// **Mutex law (full cutover):** every method acquires `inner` only via
+/// `lock().await`. Never use `blocking_lock` — mixing sync `blocking_lock` with
+/// async NAPI entrypoints deadlocks under parallel JS tool calls (e.g. concurrent
+/// `plasm` dry-runs) on the Tokio runtime that services napi-rs async.
 #[napi]
 pub struct PlasmEngine {
     inner: Arc<Mutex<InnerEngine>>,
+    sessions: Arc<Mutex<HashMap<String, InnerEngine>>>,
+    discovery_store: Arc<OnceCell<DiscoveryStore>>,
+    activated: tokio::sync::RwLock<Option<(String, std::collections::BTreeSet<String>)>>,
 }
 
 impl Default for PlasmEngine {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl PlasmEngine {
+    async fn routing_inputs(
+        &self,
+        logical_session_id: Option<&str>,
+    ) -> anyhow::Result<(
+        String,
+        DiscoveryAuthorization,
+        Vec<plasm_core::prerequisites::CapabilityRef>,
+    )> {
+        if let Some(id) = logical_session_id {
+            let sessions = self.sessions.lock().await;
+            let engine = sessions
+                .get(id)
+                .ok_or_else(|| anyhow::anyhow!("unknown logical session"))?;
+            let pin = engine.discovery_pin().ok_or_else(|| {
+                anyhow::anyhow!("logical session has no discovery generation pin")
+            })?;
+            Ok((
+                pin.generation.clone(),
+                pin.authorization.clone(),
+                engine.exposed_capabilities(),
+            ))
+        } else {
+            let (generation, allowed) = self
+                .activated
+                .read()
+                .await
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("no activated discovery generation"))?;
+            Ok((
+                generation,
+                DiscoveryAuthorization::catalogs(allowed),
+                Vec::new(),
+            ))
+        }
+    }
+
+    async fn refresh_discovery_session(&self, id: &str) -> anyhow::Result<()> {
+        let pin = self
+            .sessions
+            .lock()
+            .await
+            .get(id)
+            .ok_or_else(|| anyhow::anyhow!("unknown logical session"))?
+            .discovery_pin()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("logical session has no discovery generation pin"))?;
+        let store = self
+            .discovery_store
+            .get()
+            .ok_or_else(|| anyhow::anyhow!("discovery store is unavailable"))?;
+        store.refresh_session_pin(&pin).await
     }
 }
 
@@ -81,12 +148,15 @@ impl PlasmEngine {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(Mutex::new(InnerEngine::new())),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+            discovery_store: Arc::new(OnceCell::new()),
+            activated: Default::default(),
         }
     }
 
     #[napi]
-    pub fn load_catalog(&self, catalog_dir: String) -> Result<JsCatalogInfo> {
-        let mut engine = self.inner.blocking_lock();
+    pub async fn load_catalog(&self, catalog_dir: String) -> Result<JsCatalogInfo> {
+        let mut engine = self.inner.lock().await;
         let info = engine
             .load_catalog(PathBuf::from(catalog_dir).as_path())
             .map_err(map_err)?;
@@ -96,9 +166,115 @@ impl PlasmEngine {
         })
     }
 
+    /// Activate the complete loaded manifest set using explicit deployment bindings.
     #[napi]
-    pub fn expose_seeds(&self, intent: String, seeds: Vec<JsSeed>) -> Result<JsTeachingResult> {
-        let mut engine = self.inner.blocking_lock();
+    pub async fn activate_discovery(
+        &self,
+        deployment_id: String,
+        bindings_json: String,
+    ) -> Result<String> {
+        let (paths, allowed) = {
+            let engine = self.inner.lock().await;
+            (engine.packed_manifests(), engine.allowed_catalogs())
+        };
+        let bindings = serde_json::from_str(&bindings_json)
+            .map_err(|e| Error::from_reason(format!("invalid deployment bindings: {e}")))?;
+        let catalogs = paths
+            .iter()
+            .map(|p| PreparedCatalog::load(p))
+            .collect::<anyhow::Result<Vec<_>>>()
+            .map_err(map_err)?;
+        let store = self
+            .discovery_store
+            .get_or_try_init(|| async {
+                let url = std::env::var("PLASM_DISCOVERY_DATABASE_URL")
+                    .or_else(|_| std::env::var("DATABASE_URL"))
+                    .map_err(|_| {
+                        anyhow::anyhow!(
+                            "discovery requires PLASM_DISCOVERY_DATABASE_URL or DATABASE_URL"
+                        )
+                    })?;
+                let store = DiscoveryStore::connect(&url).await?;
+                store.migrate().await?;
+                Ok::<_, anyhow::Error>(store)
+            })
+            .await
+            .map_err(map_err)?;
+        let generation = store
+            .import(&deployment_id, catalogs, &bindings)
+            .await
+            .map_err(map_err)?;
+        *self.activated.write().await = Some((generation.clone(), allowed));
+        Ok(generation)
+    }
+
+    /// Intent-only new/extend; selection runs outside the execution mutex.
+    #[napi]
+    pub async fn route_intent(
+        &self,
+        intent: String,
+        logical_session_id: Option<String>,
+    ) -> Result<String> {
+        let store = self.discovery_store.get().ok_or_else(|| {
+            Error::from_reason(
+                "activateDiscovery must validate a complete generation before routing",
+            )
+        })?;
+        let (generation, allowed, exposed) = self
+            .routing_inputs(logical_session_id.as_deref())
+            .await
+            .map_err(map_err)?;
+        let service = DiscoveryService::from_env(store.clone()).map_err(map_err)?;
+        let receipt = service
+            .route_turn(RouteTurn {
+                new_generation: &generation,
+                intent: &intent,
+                logical_session: logical_session_id.as_deref(),
+                allowed: &allowed,
+                exposed: &exposed,
+                expires_at: std::time::SystemTime::now()
+                    + std::time::Duration::from_secs(24 * 60 * 60),
+            })
+            .await
+            .map_err(map_err)?;
+        let teaching = if let Some(closure) = &receipt.closure {
+            let (catalogs, compiled_catalogs, _) = store
+                .load_generation(&receipt.retrieval.generation)
+                .await
+                .map_err(map_err)?;
+            let mut sessions = self.sessions.lock().await;
+            let pin = DiscoverySessionPin {
+                authorization: receipt.authorization.clone(),
+                generation: receipt.retrieval.generation.clone(),
+                pin_id: receipt.pin_id.clone(),
+            };
+            let engine = sessions.entry(receipt.pin_id.clone()).or_insert_with(|| {
+                InnerEngine::from_pinned_generation(catalogs, compiled_catalogs, pin.clone())
+            });
+            if engine.discovery_pin() != Some(&pin) {
+                return Err(Error::from_reason(
+                    "routing receipt does not match the logical session pin",
+                ));
+            }
+            Some(
+                engine
+                    .expose_routing(&receipt.intent, closure)
+                    .map_err(map_err)?,
+            )
+        } else {
+            None
+        };
+        serde_json::to_string(&serde_json::json!({"routing":receipt,"teaching":teaching}))
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub async fn expose_seeds(
+        &self,
+        intent: String,
+        seeds: Vec<JsSeed>,
+    ) -> Result<JsTeachingResult> {
+        let mut engine = self.inner.lock().await;
         let capability_seeds: Vec<CapabilitySeed> = seeds
             .into_iter()
             .map(|s| CapabilitySeed {
@@ -116,68 +292,158 @@ impl PlasmEngine {
     }
 
     #[napi]
-    pub fn introspect_catalog(&self, entry_id: String) -> Result<String> {
-        let engine = self.inner.blocking_lock();
+    pub async fn introspect_catalog(&self, entry_id: String) -> Result<String> {
+        let engine = self.inner.lock().await;
         let info = engine.introspect_catalog(&entry_id).map_err(map_err)?;
         serde_json::to_string(&info).map_err(|e| Error::from_reason(e.to_string()))
     }
 
     #[napi]
-    pub fn dry_run(&self, program: String) -> Result<JsDryRunResult> {
-        let mut engine = self.inner.blocking_lock();
-        let result = engine.dry_run(&program).map_err(map_err)?;
+    pub async fn dry_run(
+        &self,
+        program: String,
+        logical_session_id: Option<String>,
+    ) -> Result<JsDryRunResult> {
+        let result = if let Some(id) = logical_session_id {
+            self.refresh_discovery_session(&id).await.map_err(map_err)?;
+            self.sessions
+                .lock()
+                .await
+                .get_mut(&id)
+                .ok_or_else(|| Error::from_reason("unknown logical session"))?
+                .dry_run(&program)
+                .map_err(map_err)?
+        } else {
+            self.inner.lock().await.dry_run(&program).map_err(map_err)?
+        };
         Ok(JsDryRunResult {
             plan_commit_ref: result.plan_commit_ref,
             summary: result.summary,
             comp_json: serde_json::to_string(&result.comp_json)
                 .map_err(|e| Error::from_reason(e.to_string()))?,
+            fused_clean_read: result.fused_clean_read,
         })
     }
 
     #[napi]
-    pub fn discover(&self, intent: String) -> Result<JsDiscoverResult> {
-        let engine = self.inner.blocking_lock();
-        let result = engine.discover(&intent).map_err(map_err)?;
-        Ok(JsDiscoverResult {
-            markdown: result.markdown,
-        })
-    }
-
-    #[napi]
-    pub fn run_plan(&self, plan_commit_ref: String) -> Result<JsRunPlanResult> {
-        let mut engine = self.inner.blocking_lock();
-        let result = engine.run_plan(&plan_commit_ref).map_err(map_err)?;
+    pub async fn run_plan(
+        &self,
+        plan_commit_ref: String,
+        logical_session_id: Option<String>,
+    ) -> Result<JsRunPlanResult> {
+        let result = if let Some(id) = logical_session_id {
+            self.refresh_discovery_session(&id).await.map_err(map_err)?;
+            self.sessions
+                .lock()
+                .await
+                .get_mut(&id)
+                .ok_or_else(|| Error::from_reason("unknown logical session"))?
+                .run_plan(&plan_commit_ref)
+                .map_err(map_err)?
+        } else {
+            self.inner
+                .lock()
+                .await
+                .run_plan(&plan_commit_ref)
+                .map_err(map_err)?
+        };
         Ok(JsRunPlanResult {
             ok: result.ok,
             message: result.message,
             rows_json: result.rows_json,
             meta_json: result.meta_json,
+            artifacts_json: result.artifacts_json,
         })
     }
 
     #[napi(
-        ts_args_type = "planCommitRef: string, transport: (request: JsTransportRequest) => JsTransportResponse | Promise<JsTransportResponse>"
+        ts_args_type = "planCommitRef: string, transport: (request: JsTransportRequest) => JsTransportResponse | Promise<JsTransportResponse>, logicalSessionId?: string"
     )]
     pub async fn run_plan_live(
         &self,
         plan_commit_ref: String,
         transport: JsHostTransport,
+        logical_session_id: Option<String>,
     ) -> Result<JsRunPlanResult> {
-        let callback_transport = {
-            let engine = self.inner.lock().await;
-            let entry_id = engine.primary_entry_id();
-            JsCallbackHttpTransport::new(transport.0, entry_id)
+        // Reviewed plan state stays owned by the addressed logical session.
+        let result = if let Some(id) = logical_session_id {
+            self.refresh_discovery_session(&id).await.map_err(map_err)?;
+            let mut sessions = self.sessions.lock().await;
+            let engine = sessions
+                .get_mut(&id)
+                .ok_or_else(|| Error::from_reason("unknown logical session"))?;
+            let callback = JsCallbackHttpTransport::new(transport.0, engine.primary_entry_id());
+            engine
+                .run_plan_live(&plan_commit_ref, callback)
+                .await
+                .map_err(map_err)?
+        } else {
+            let mut engine = self.inner.lock().await;
+            let callback = JsCallbackHttpTransport::new(transport.0, engine.primary_entry_id());
+            engine
+                .run_plan_live(&plan_commit_ref, callback)
+                .await
+                .map_err(map_err)?
         };
-        let mut engine = self.inner.lock().await;
-        let result = engine
-            .run_plan_live(&plan_commit_ref, callback_transport)
-            .await
-            .map_err(map_err)?;
         Ok(JsRunPlanResult {
             ok: result.ok,
             message: result.message,
             rows_json: result.rows_json,
             meta_json: result.meta_json,
+            artifacts_json: result.artifacts_json,
         })
+    }
+}
+
+#[cfg(test)]
+mod mutex_law_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn extension_keeps_generation_and_policy_after_activation_changes() {
+        let engine = PlasmEngine::new();
+        let authorization = DiscoveryAuthorization {
+            catalogs: ["retained".into()].into(),
+            capabilities: [("retained".into(), ["read".into()].into())].into(),
+        };
+        let pin = DiscoverySessionPin {
+            generation: "retained-generation".into(),
+            authorization: authorization.clone(),
+            pin_id: "logical-session".into(),
+        };
+        engine.sessions.lock().await.insert(
+            pin.pin_id.clone(),
+            InnerEngine::from_pinned_generation(Default::default(), Default::default(), pin),
+        );
+        *engine.activated.write().await =
+            Some(("new-generation".into(), ["replacement".into()].into()));
+        let (generation, policy, _) = engine
+            .routing_inputs(Some("logical-session"))
+            .await
+            .unwrap();
+        assert_eq!(generation, "retained-generation");
+        assert_eq!(policy, authorization);
+        let (generation, policy, _) = engine.routing_inputs(None).await.unwrap();
+        assert_eq!(generation, "new-generation");
+        assert_eq!(policy.catalogs, ["replacement".into()].into());
+        assert!(engine.routing_inputs(Some("missing")).await.is_err());
+        assert!(
+            engine
+                .refresh_discovery_session("logical-session")
+                .await
+                .is_err(),
+            "routed execution must fail when its discovery store is unavailable"
+        );
+    }
+
+    /// Full cutover guard: sync acquisition on the shared Tokio mutex must not return.
+    #[test]
+    fn plasm_engine_napi_surface_forbids_blocking_lock() {
+        let src = include_str!("lib.rs");
+        let forbidden = concat!("self.inner.", "blocking_lock", "(");
+        assert!(
+            !src.contains(forbidden),
+            "plasm-node NAPI surface must use lock().await only — sync mutex acquisition deadlocks under parallel JS tool calls"
+        );
     }
 }

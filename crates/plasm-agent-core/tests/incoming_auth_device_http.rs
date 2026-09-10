@@ -12,7 +12,7 @@ use plasm_agent_core::incoming_auth_device::{
     incoming_auth_device_public_routes, mint_incoming_access_token,
 };
 use plasm_agent_core::server_state::CatalogBootstrap;
-use plasm_core::discovery::InMemoryCgsRegistry;
+use plasm_core::discovery::CgsRegistry;
 use plasm_core::loader::load_schema;
 use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 use serde_json::json;
@@ -21,11 +21,11 @@ use tower::ServiceExt;
 
 const TEST_SECRET: &str = "device-http-test-secret-01234567890123456789012";
 
-fn fixture_registry() -> Arc<InMemoryCgsRegistry> {
+fn fixture_registry() -> Arc<CgsRegistry> {
     let dir =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_prompt_matrix");
     let cgs = Arc::new(load_schema(&dir).expect("prompt matrix schema"));
-    Arc::new(InMemoryCgsRegistry::from_pairs(vec![(
+    Arc::new(CgsRegistry::from_pairs(vec![(
         "prompt_matrix".into(),
         "Prompt matrix".into(),
         vec![],

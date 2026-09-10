@@ -1,0 +1,2704 @@
+version: 20
+entry_id: spotify
+auth:
+  scheme: none
+http_backend: http://127.0.0.1:9000
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  pii_payment:
+    description: Payment-card numbers and CVV.
+    severity: sensitive
+  external_subscribe:
+    description: Outbound premium subscription that charges a payment card.
+    severity: critical
+entities:
+  AuthSession:
+    id_field: access_token
+    description: Login session for Spotify (Bearer token).
+    discovery:
+      names:
+      - login
+      - auth
+      - access token
+    fields:
+      access_token:
+        required: true
+        value_ref: nv_access_token
+      token_type:
+        required: false
+        value_ref: nv_str
+  Song:
+    id_field: song_id
+    primary_query: song_library_query
+    description: A Spotify track on the catalog or library shelf. Not the liked-songs shelf (use LikedSong) and not the playback queue (use Player / QueueEntry).
+    discovery:
+      names:
+      - song
+      - songs
+      - track
+      - music
+      - song library
+      - library songs
+    fields:
+      song_id:
+        required: true
+        value_ref: nv_song_id
+      title:
+        required: true
+        value_ref: nv_str
+      album_id:
+        required: false
+        value_ref: nv_album_id
+      album_title:
+        required: false
+        value_ref: nv_str
+      duration:
+        required: false
+        value_ref: nv_int
+      genre:
+        required: false
+        value_ref: nv_genre
+      release_date:
+        required: false
+        value_ref: nv_str
+      play_count:
+        required: false
+        value_ref: nv_int
+      rating:
+        required: false
+        value_ref: nv_number
+      like_count:
+        required: false
+        value_ref: nv_like_count
+      shareable_link:
+        required: false
+        value_ref: nv_str
+  LikedSong:
+    id_field: song_id
+    primary_query: liked_song_query
+    primary_read: liked_song_get
+    description: A track on the user's liked-songs shelf (hearted favorites). Distinct from the library shelf and from catalog search.
+    discovery:
+      names:
+      - liked song
+      - liked songs
+      - favorites
+      - hearted song
+    fields:
+      song_id:
+        required: true
+        value_ref: nv_song_id
+      title:
+        required: true
+        value_ref: nv_str
+      album_id:
+        required: false
+        value_ref: nv_album_id
+      album_title:
+        required: false
+        value_ref: nv_str
+      duration:
+        required: false
+        value_ref: nv_int
+      # Filled by liked_song_get hydration (GET /songs/{song_id}); the liked_songs *list* wire has no genre.
+      genre:
+        required: false
+        value_ref: nv_genre
+      liked_at:
+        required: false
+        value_ref: nv_datetime
+    relations:
+      song:
+        description: Catalog song for this liked shelf entry (genre and play stats live here on the Song GET).
+        target: Song
+        cardinality: one
+        materialize:
+          kind: get_scoped_bindings
+          capability: song_get
+          bindings:
+            song_id: song_id
+  Album:
+    id_field: album_id
+    primary_query: album_library_query
+    description: An album on the catalog and library shelf. Not the liked-albums shelf (use LikedAlbum).
+    discovery:
+      names:
+      - album
+      - albums
+      - album library
+      - library albums
+    fields:
+      album_id:
+        required: true
+        value_ref: nv_album_id
+      title:
+        required: true
+        value_ref: nv_str
+      genre:
+        required: false
+        value_ref: nv_genre
+      rating:
+        required: false
+        value_ref: nv_number
+      like_count:
+        required: false
+        value_ref: nv_like_count
+      release_date:
+        required: false
+        value_ref: nv_str
+  LikedAlbum:
+    id_field: album_id
+    primary_query: liked_album_query
+    description: 'An album on the user''s liked-albums shelf. Distinct from albums saved in the library.
+
+      '
+    discovery:
+      names:
+      - liked album
+      - liked albums
+    fields:
+      album_id:
+        required: true
+        value_ref: nv_album_id
+      title:
+        required: true
+        value_ref: nv_str
+      genre:
+        required: false
+        value_ref: nv_genre
+      rating:
+        required: false
+        value_ref: nv_number
+      like_count:
+        required: false
+        value_ref: nv_like_count
+      release_date:
+        required: false
+        value_ref: nv_str
+      liked_at:
+        required: false
+        value_ref: nv_datetime
+  Artist:
+    id_field: artist_id
+    primary_query: following_artist_query
+    description: Music artist.
+    discovery:
+      names:
+      - artist
+      - artists
+    fields:
+      artist_id:
+        required: true
+        value_ref: nv_artist_id
+      name:
+        required: true
+        value_ref: nv_str
+      genre:
+        required: false
+        value_ref: nv_genre
+      follower_count:
+        required: false
+        value_ref: nv_int
+  Profile:
+    id_field: email
+    description: Spotify user public profile.
+    discovery:
+      names:
+      - profile
+      - user
+    fields:
+      first_name:
+        required: false
+        value_ref: nv_str
+      last_name:
+        required: false
+        value_ref: nv_str
+      email:
+        required: true
+        value_ref: nv_email
+      registered_at:
+        required: false
+        value_ref: nv_datetime
+  Genre:
+    id_field: name
+    description: Music genre label from the Spotify catalog vocabulary.
+    discovery:
+      names:
+      - genre
+      - genres
+      - music genre
+    fields:
+      name:
+        required: true
+        value_ref: nv_genre
+  Playlist:
+    id_field: playlist_id
+    primary_query: playlist_library_query
+    description: A playlist on the catalog and library shelf. Not the liked-playlists shelf (use LikedPlaylist).
+    discovery:
+      names:
+      - playlist
+      - playlists
+      - playlist library
+      - library playlists
+    fields:
+      playlist_id:
+        required: true
+        value_ref: nv_playlist_id
+      title:
+        required: true
+        value_ref: nv_str
+      is_public:
+        required: false
+        value_ref: nv_bool
+      rating:
+        required: false
+        value_ref: nv_number
+      like_count:
+        required: false
+        value_ref: nv_like_count
+      created_at:
+        required: false
+        value_ref: nv_datetime
+      shareable_link:
+        required: false
+        value_ref: nv_str
+    relations:
+      songs:
+        description: Songs currently on this playlist.
+        target: Song
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: songs
+          - wildcard: true
+          - key: id
+  LikedPlaylist:
+    id_field: playlist_id
+    primary_query: liked_playlist_query
+    description: 'A playlist on the user''s liked-playlists shelf. Distinct from playlists saved in the library.
+
+      '
+    discovery:
+      names:
+      - liked playlist
+      - liked playlists
+    fields:
+      playlist_id:
+        required: true
+        value_ref: nv_playlist_id
+      title:
+        required: true
+        value_ref: nv_str
+      is_public:
+        required: false
+        value_ref: nv_bool
+      rating:
+        required: false
+        value_ref: nv_number
+      like_count:
+        required: false
+        value_ref: nv_like_count
+      created_at:
+        required: false
+        value_ref: nv_datetime
+      liked_at:
+        required: false
+        value_ref: nv_datetime
+  DownloadedSong:
+    id_field: song_id
+    description: A song downloaded for offline playback.
+    discovery:
+      names:
+      - downloaded song
+      - downloads
+      - offline song
+    fields:
+      song_id:
+        required: true
+        value_ref: nv_song_id
+      title:
+        required: false
+        value_ref: nv_str
+      album_id:
+        required: false
+        value_ref: nv_album_id
+      album_title:
+        required: false
+        value_ref: nv_str
+      duration:
+        required: false
+        value_ref: nv_int
+      downloaded_at:
+        required: false
+        value_ref: nv_datetime
+  Player:
+    # Identity is the Bearer token (RA-5 get arg), not song_id — current playback has no path id;
+    # song_id/title/… are output of player_current only. Wire SongPlayerResponse has no access_token;
+    # request identity must override decode (same pattern as other bearer-scoped singletons).
+    id_field: access_token
+    implicit_request_identity: true
+    primary_read: player_current
+    description: Current playback session and queue control. Distinct from browsing songs or playlists.
+    discovery:
+      names:
+      - player
+      - queue
+      - volume
+      - playback
+      - shuffle
+      - previous song
+      - next song
+      - play
+    fields:
+      access_token:
+        required: true
+        value_ref: nv_access_token
+      song_id:
+        required: false
+        value_ref: nv_song_id
+      title:
+        required: false
+        value_ref: nv_str
+      position:
+        required: false
+        value_ref: nv_int
+      is_playing:
+        required: false
+        value_ref: nv_bool
+      # Composed on player_current view: true when current song_id is on the LikedSong shelf.
+      # Not on OpenAPI SongPlayerResponse — membership is Player×LikedSong, not a LikedSong field.
+      is_liked:
+        required: false
+        value_ref: nv_bool
+      # Intermediate for is_liked (song_id → count JSON from liked_song_query). Not a domain concept.
+      liked_by_song_id:
+        required: false
+        value_ref: nv_str
+      volume:
+        required: false
+        value_ref: nv_int
+  QueueEntry:
+    id_field: position
+    description: A song in the player queue.
+    fields:
+      position:
+        required: true
+        value_ref: nv_int
+      song_id:
+        required: false
+        value_ref: nv_song_id
+      title:
+        required: false
+        value_ref: nv_str
+  SongReview:
+    id_field: song_review_id
+    description: User review of a song.
+    discovery:
+      names:
+      - song review
+      - song reviews
+      - rate song
+    fields:
+      song_review_id:
+        required: true
+        value_ref: nv_song_review_id
+      song_id:
+        required: true
+        value_ref: nv_song_id
+      rating:
+        required: false
+        value_ref: nv_rating
+      title:
+        required: false
+        value_ref: nv_review_title
+      text:
+        required: false
+        value_ref: nv_review_text
+        data_class: untrusted
+  AlbumReview:
+    id_field: album_review_id
+    description: User review of an album.
+    discovery:
+      names:
+      - album review
+      - album reviews
+      - rate album
+    fields:
+      album_review_id:
+        required: true
+        value_ref: nv_album_review_id
+      album_id:
+        required: true
+        value_ref: nv_album_id
+      rating:
+        required: false
+        value_ref: nv_rating
+      title:
+        required: false
+        value_ref: nv_review_title
+      text:
+        required: false
+        value_ref: nv_review_text
+        data_class: untrusted
+  PlaylistReview:
+    id_field: playlist_review_id
+    description: User review of a playlist.
+    discovery:
+      names:
+      - playlist review
+      - playlist reviews
+      - rate playlist
+    fields:
+      playlist_review_id:
+        required: true
+        value_ref: nv_playlist_review_id
+      playlist_id:
+        required: true
+        value_ref: nv_playlist_id
+      rating:
+        required: false
+        value_ref: nv_rating
+      title:
+        required: false
+        value_ref: nv_review_title
+      text:
+        required: false
+        value_ref: nv_review_text
+        data_class: untrusted
+  PaymentCard:
+    id_field: payment_card_id
+    description: Saved payment card.
+    discovery:
+      names:
+      - payment card
+      - card
+      - payment cards
+    fields:
+      payment_card_id:
+        required: true
+        value_ref: nv_payment_card_id
+      card_name:
+        required: false
+        value_ref: nv_str
+      owner_name:
+        required: false
+        value_ref: nv_str
+      card_number:
+        required: false
+        value_ref: nv_int
+        data_class: pii_payment
+      expiry_year:
+        required: false
+        value_ref: nv_int
+      expiry_month:
+        required: false
+        value_ref: nv_int
+      cvv_number:
+        required: false
+        value_ref: nv_int
+        data_class: pii_payment
+  PremiumPlan:
+    id_field: monthly
+    description: Spotify premium pricing sheet.
+    discovery:
+      names:
+      - premium plan
+      - premium plans
+      - premium pricing
+    fields:
+      monthly:
+        required: true
+        value_ref: nv_int
+      yearly:
+        required: true
+        value_ref: nv_int
+  PremiumSubscription:
+    id_field: premium_subscription_id
+    description: Spotify premium subscription period.
+    discovery:
+      names:
+      - premium
+      - premium subscription
+      - subscription
+    fields:
+      premium_subscription_id:
+        required: true
+        value_ref: nv_premium_subscription_id
+      start_date:
+        required: false
+        value_ref: nv_datetime
+      end_date:
+        required: false
+        value_ref: nv_datetime
+      payment_card_digits:
+        required: false
+        value_ref: nv_str
+        data_class: pii_payment
+      paid_amount:
+        required: false
+        value_ref: nv_number
+capabilities:
+  login:
+    description: Login to Spotify; returns access_token for Bearer auth.
+    kind: action
+    entity: AuthSession
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: username
+          value_ref: nv_login_username
+          required: true
+        - name: password
+          value_ref: nv_password
+          required: true
+    provides:
+    - access_token
+    - token_type
+    output:
+      type: entity
+      entity_type: AuthSession
+  logout:
+    description: Logout and invalidate the access token.
+    kind: action
+    entity: AuthSession
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Ends the Spotify session for this token.
+  song_get:
+    description: Show one song.
+    kind: get
+    entity: Song
+    # Scope slot so LikedSong.song (get_scoped_bindings) can bind parent.song_id → this get.
+    scope:
+    - name: song_id
+      value_ref: nv_song_id
+      required: true
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - song_id
+    - title
+    - album_id
+    - album_title
+    - duration
+    - genre
+    - release_date
+    - play_count
+    - rating
+    - like_count
+    - shareable_link
+  song_like:
+    description: Like a song.
+    kind: action
+    entity: Song
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Likes the song.
+  song_unlike:
+    description: Unlike a song.
+    kind: action
+    entity: Song
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Unlikes the song.
+  downloaded_song_query:
+    description: Search downloaded songs for offline play.
+    kind: query
+    entity: DownloadedSong
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+    - name: min_downloaded_at
+      value_ref: nv_datetime
+      required: false
+    - name: max_downloaded_at
+      value_ref: nv_datetime
+      required: false
+    controls:
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+    provides:
+    - song_id
+    - title
+    - album_id
+    - album_title
+    - duration
+    - downloaded_at
+  song_download:
+    description: Download a song for offline playback.
+    kind: action
+    entity: Song
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Downloads this song for offline play.
+  song_undownload:
+    description: Remove a song from offline downloads.
+    kind: action
+    entity: Song
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Removes this song from offline downloads.
+  album_get:
+    description: Show one album.
+    kind: get
+    entity: Album
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - album_id
+    - title
+    - genre
+    - rating
+    - like_count
+    - release_date
+  album_like:
+    description: Like an album.
+    kind: action
+    entity: Album
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Likes the album.
+  album_unlike:
+    description: Unlike an album.
+    kind: action
+    entity: Album
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Unlikes the album.
+  artist_get:
+    description: Show one artist.
+    kind: get
+    entity: Artist
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - artist_id
+    - name
+    - genre
+    - follower_count
+  artist_follow:
+    description: Follow an artist.
+    kind: action
+    entity: Artist
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Follows the artist.
+  artist_unfollow:
+    description: Unfollow an artist.
+    kind: action
+    entity: Artist
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Unfollows the artist.
+  playlist_get:
+    description: Show one playlist.
+    kind: get
+    entity: Playlist
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - playlist_id
+    - title
+    - is_public
+    - rating
+    - like_count
+    - created_at
+    - shareable_link
+  playlist_create:
+    description: Create a playlist.
+    kind: create
+    entity: Playlist
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: title
+          value_ref: nv_str
+          required: true
+        - name: is_public
+          value_ref: nv_bool
+          required: false
+    provides:
+    - playlist_id
+  playlist_update:
+    description: Update a playlist.
+    kind: update
+    entity: Playlist
+    discovery:
+      operation_terms:
+      - update
+      - rename
+      - retitle
+      - change title
+      target_terms:
+      - playlist
+      - playlist title
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: title
+          value_ref: nv_str
+          required: false
+        - name: is_public
+          value_ref: nv_bool
+          required: false
+  playlist_delete:
+    description: Delete a playlist.
+    kind: delete
+    entity: Playlist
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+  playlist_add_song:
+    description: Add a song to this playlist.
+    kind: action
+    entity: Playlist
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: song_id
+          value_ref: nv_song_id
+          required: true
+    output:
+      type: side_effect
+      description: Adds song_id to the playlist.
+  playlist_remove_song:
+    description: Remove a song from this playlist.
+    kind: action
+    entity: Playlist
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: song_id
+          value_ref: nv_song_id
+          required: true
+    output:
+      type: side_effect
+      description: Removes song_id from the playlist.
+  playlist_like:
+    description: Like a playlist.
+    kind: action
+    entity: Playlist
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Likes the playlist.
+  playlist_unlike:
+    description: Unlike a playlist.
+    kind: action
+    entity: Playlist
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Unlikes the playlist.
+  player_current_wire:
+    description: Show the current song on the music player wire (no liked-shelf membership).
+    kind: get
+    entity: Player
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - song_id
+    - title
+    - position
+    - is_playing
+    - volume
+  player_current:
+    description: Show current playback including whether that song is on the liked shelf.
+    kind: get
+    entity: Player
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - song_id
+    - title
+    - position
+    - is_playing
+    - volume
+    - is_liked
+  player_play:
+    description: Start or resume playback.
+    kind: action
+    entity: Player
+    discovery:
+      operation_terms:
+      - play
+      - resume
+      - start
+      target_terms:
+      - player
+      - song
+      - playback
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: song_id
+          value_ref: nv_song_id
+          required: false
+        - name: album_id
+          value_ref: nv_album_id
+          required: false
+        - name: playlist_id
+          value_ref: nv_playlist_id
+          required: false
+    output:
+      type: side_effect
+      description: Starts playback.
+  player_pause:
+    description: Pause playback.
+    kind: action
+    entity: Player
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Pauses playback.
+  player_previous:
+    description: Skip to the previous song in the playback queue.
+    kind: action
+    entity: Player
+    discovery:
+      operation_terms:
+      - previous
+      - back
+      - skip back
+      target_terms:
+      - song
+      - queue
+      - player
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    # No provides: membership (`is_liked`) lives only on player_current. Side-effect-only so
+    # iterate…until re-observes the composed Get. Invalidate Player so re-Get is not cache-stale.
+    invalidates_entities:
+    - Player
+    output:
+      type: side_effect
+      description: Moves playback to the previous song in the queue.
+  player_next:
+    description: Skip to the next song in the playback queue.
+    kind: action
+    entity: Player
+    discovery:
+      operation_terms:
+      - next
+      - skip
+      - skip forward
+      target_terms:
+      - song
+      - queue
+      - player
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    invalidates_entities:
+    - Player
+    output:
+      type: side_effect
+      description: Moves playback to the next song in the queue.
+  player_queue:
+    description: Show the song queue.
+    kind: query
+    entity: QueueEntry
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - position
+    - song_id
+    - title
+  player_queue_add:
+    description: Add to the song queue.
+    kind: action
+    entity: Player
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: song_id
+          value_ref: nv_song_id
+          required: false
+        - name: album_id
+          value_ref: nv_album_id
+          required: false
+        - name: playlist_id
+          value_ref: nv_playlist_id
+          required: false
+    output:
+      type: side_effect
+      description: Appends to the playback queue.
+  player_queue_clear:
+    description: Clear (reset) the playback queue of all songs.
+    kind: action
+    entity: Player
+    discovery:
+      operation_terms:
+      - clear
+      - reset
+      - empty
+      target_terms:
+      - queue
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Clears the playback queue.
+  player_queue_remove:
+    description: Remove a song at a queue position.
+    kind: action
+    entity: QueueEntry
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: position
+          value_ref: nv_int
+          required: true
+    output:
+      type: side_effect
+      description: Removes the song at the given queue position.
+  player_move_song:
+    description: Move a song in the queue to a new position.
+    kind: action
+    entity: Player
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: current_position
+          value_ref: nv_int
+          required: true
+        - name: new_position
+          value_ref: nv_int
+          required: true
+    output:
+      type: side_effect
+      description: Reorders a song within the playback queue.
+  player_seek:
+    description: Seek the current song to a given number of seconds.
+    kind: action
+    entity: Player
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: seek_seconds
+          value_ref: nv_int
+          required: true
+    output:
+      type: side_effect
+      description: Seeks within the current song.
+  player_loop:
+    description: Set whether to loop the current song.
+    kind: action
+    entity: Player
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: loop
+          value_ref: nv_bool
+          required: true
+    output:
+      type: side_effect
+      description: Enables or disables looping the current song.
+  player_shuffle:
+    description: Shuffle the order of songs currently in the playback queue.
+    kind: action
+    entity: Player
+    discovery:
+      operation_terms:
+      - shuffle
+      - randomize
+      target_terms:
+      - queue
+      - player
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Shuffles the playback queue.
+  player_volume_get:
+    description: Get player volume.
+    kind: get
+    entity: Player
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - volume
+  player_volume_set:
+    description: Set player volume.
+    kind: action
+    entity: Player
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: volume
+          value_ref: nv_int
+          required: true
+    output:
+      type: side_effect
+      description: Sets the playback volume.
+  liked_song_query:
+    description: 'List songs the user has liked (heart/favorite). Distinct from the broader song library and from catalog
+      search — use this when the goal is liked tracks.
+
+      '
+    kind: query
+    entity: LikedSong
+    discovery:
+      operation_terms:
+      - list
+      - show
+      - liked
+      target_terms:
+      - liked song
+      - liked songs
+      - favorites
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    controls:
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+    # Shelf list omits genre on the wire; declare it for hydrate/plan (liked_song_get fills values).
+    provides:
+    - song_id
+    - title
+    - album_id
+    - album_title
+    - duration
+    - genre
+    - liked_at
+  liked_song_get:
+    description: Show one liked shelf entry as a catalog song detail (genre and play stats from GET /songs/{song_id}).
+    kind: get
+    entity: LikedSong
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - song_id
+    - title
+    - album_id
+    - album_title
+    - duration
+    - genre
+    - liked_at
+    - release_date
+    - play_count
+    - rating
+    - like_count
+    - shareable_link
+  song_library_query:
+    description: 'List songs by shelf — catalog (optional query/genre filters), library saves, or personalized recommendations.
+
+      '
+    kind: query
+    entity: Song
+    discovery:
+      operation_terms:
+      - list
+      - show
+      - library
+      - recommend
+      - search
+      target_terms:
+      - song
+      - songs
+      - track
+      - song library
+      - recommendations
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: shelf
+      value_ref: nv_song_shelf
+      required: true
+      description: catalog | library | recommendations
+    - name: query
+      value_ref: nv_str
+      required: false
+    - name: genre
+      value_ref: nv_genre
+      required: false
+    controls:
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+    provides:
+    - song_id
+    - title
+    - album_id
+    - album_title
+    - duration
+    - genre
+    - release_date
+    - play_count
+    - rating
+    - like_count
+    - shareable_link
+  song_library_add:
+    description: Add a song to the user's library.
+    kind: action
+    entity: Song
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Saves this song to the library.
+  song_library_remove:
+    description: Remove a song from the user's library.
+    kind: action
+    entity: Song
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Removes this song from the library.
+  album_library_query:
+    description: 'List albums by shelf — catalog (optional query/genre filters) or saved library.
+
+      '
+    kind: query
+    entity: Album
+    discovery:
+      operation_terms:
+      - list
+      - show
+      - library
+      - search
+      target_terms:
+      - album
+      - albums
+      - album library
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: shelf
+      value_ref: nv_album_shelf
+      required: true
+      description: catalog | library
+    - name: query
+      value_ref: nv_str
+      required: false
+    - name: genre
+      value_ref: nv_genre
+      required: false
+    controls:
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+    provides:
+    - album_id
+    - title
+    - genre
+    - rating
+    - like_count
+    - release_date
+  album_library_add:
+    description: Add an album to the user's library.
+    kind: action
+    entity: Album
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Saves this album to the library.
+  album_library_remove:
+    description: Remove an album from the user's library.
+    kind: action
+    entity: Album
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Removes this album from the library.
+  playlist_library_query:
+    description: 'List playlists by shelf — catalog (optional query filter) or saved library.
+
+      '
+    kind: query
+    entity: Playlist
+    discovery:
+      operation_terms:
+      - list
+      - show
+      - library
+      - search
+      target_terms:
+      - playlist
+      - playlists
+      - playlist library
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: shelf
+      value_ref: nv_playlist_shelf
+      required: true
+      description: catalog | library
+    - name: query
+      value_ref: nv_str
+      required: false
+    controls:
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+    provides:
+    - playlist_id
+    - title
+    - is_public
+    - rating
+    - like_count
+    - created_at
+    - shareable_link
+  liked_playlist_query:
+    description: List playlists the user has liked.
+    kind: query
+    entity: LikedPlaylist
+    discovery:
+      operation_terms:
+      - list
+      - show
+      - liked
+      target_terms:
+      - liked playlist
+      - liked playlists
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - playlist_id
+    - title
+    - is_public
+    - rating
+    - like_count
+    - created_at
+    - liked_at
+  liked_album_query:
+    description: List albums the user has liked.
+    kind: query
+    entity: LikedAlbum
+    discovery:
+      operation_terms:
+      - list
+      - show
+      - liked
+      target_terms:
+      - liked album
+      - liked albums
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - album_id
+    - title
+    - genre
+    - rating
+    - like_count
+    - release_date
+    - liked_at
+  following_artist_query:
+    description: 'List artists by shelf — catalog (optional query filter) or artists the user follows.
+
+      '
+    kind: query
+    entity: Artist
+    discovery:
+      operation_terms:
+      - list
+      - show
+      - follow
+      - search
+      target_terms:
+      - artist
+      - artists
+      - following
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: shelf
+      value_ref: nv_artist_shelf
+      required: true
+      description: catalog | following
+    - name: query
+      value_ref: nv_str
+      required: false
+    provides:
+    - artist_id
+    - name
+    - genre
+    - follower_count
+  song_review_create:
+    description: Write a review for a song.
+    kind: create
+    entity: SongReview
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: song_id
+          value_ref: nv_song_id
+          required: true
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: rating
+          value_ref: nv_rating
+          required: true
+        - name: title
+          value_ref: nv_review_title
+          required: false
+        - name: text
+          value_ref: nv_review_text
+          required: false
+    provides:
+    - song_review_id
+  song_review_update:
+    description: Update a song review.
+    kind: update
+    entity: SongReview
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: rating
+          value_ref: nv_rating
+          required: false
+        - name: title
+          value_ref: nv_review_title
+          required: false
+        - name: text
+          value_ref: nv_review_text
+          required: false
+  song_review_delete:
+    description: Delete a song review.
+    kind: delete
+    entity: SongReview
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+  album_review_create:
+    description: Write a review for an album.
+    kind: create
+    entity: AlbumReview
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: album_id
+          value_ref: nv_album_id
+          required: true
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: rating
+          value_ref: nv_rating
+          required: true
+        - name: title
+          value_ref: nv_review_title
+          required: false
+        - name: text
+          value_ref: nv_review_text
+          required: false
+    provides:
+    - album_review_id
+  album_review_update:
+    description: Update an album review.
+    kind: update
+    entity: AlbumReview
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: rating
+          value_ref: nv_rating
+          required: false
+        - name: title
+          value_ref: nv_review_title
+          required: false
+        - name: text
+          value_ref: nv_review_text
+          required: false
+  album_review_delete:
+    description: Delete an album review.
+    kind: delete
+    entity: AlbumReview
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+  playlist_review_create:
+    description: Write a review for a playlist.
+    kind: create
+    entity: PlaylistReview
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: playlist_id
+          value_ref: nv_playlist_id
+          required: true
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: rating
+          value_ref: nv_rating
+          required: true
+        - name: title
+          value_ref: nv_review_title
+          required: false
+        - name: text
+          value_ref: nv_review_text
+          required: false
+    provides:
+    - playlist_review_id
+  playlist_review_update:
+    description: Update a playlist review.
+    kind: update
+    entity: PlaylistReview
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: rating
+          value_ref: nv_rating
+          required: false
+        - name: title
+          value_ref: nv_review_title
+          required: false
+        - name: text
+          value_ref: nv_review_text
+          required: false
+  playlist_review_delete:
+    description: Delete a playlist review.
+    kind: delete
+    entity: PlaylistReview
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+  payment_card_query:
+    description: List saved payment cards.
+    kind: query
+    entity: PaymentCard
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - payment_card_id
+    - card_name
+    - owner_name
+    - card_number
+    - expiry_year
+    - expiry_month
+    - cvv_number
+  payment_card_create:
+    description: Add a payment card.
+    kind: create
+    entity: PaymentCard
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: card_name
+          value_ref: nv_str
+          required: true
+        - name: owner_name
+          value_ref: nv_str
+          required: true
+        - name: card_number
+          value_ref: nv_int
+          required: true
+        - name: expiry_year
+          value_ref: nv_int
+          required: true
+        - name: expiry_month
+          value_ref: nv_int
+          required: true
+        - name: cvv_number
+          value_ref: nv_int
+          required: true
+    provides:
+    - payment_card_id
+  payment_card_update:
+    description: Rename a payment card.
+    kind: update
+    entity: PaymentCard
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: card_name
+          value_ref: nv_str
+          required: true
+  payment_card_delete:
+    description: Delete a payment card.
+    kind: delete
+    entity: PaymentCard
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+  premium_plan_get:
+    description: Show Spotify premium plan prices (monthly and yearly).
+    kind: get
+    entity: PremiumPlan
+    arguments:
+      input_type:
+        type: object
+        fields: []
+    provides:
+    - monthly
+    - yearly
+  premium_subscription_query:
+    description: List premium subscription history.
+    kind: query
+    entity: PremiumSubscription
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - premium_subscription_id
+    - start_date
+    - end_date
+    - payment_card_digits
+    - paid_amount
+  premium_subscribe:
+    description: Subscribe to Spotify Premium with a saved payment card.
+    kind: create
+    entity: PremiumSubscription
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: payment_card_id
+          value_ref: nv_payment_card_id
+          required: true
+          sink_class: external_subscribe
+        - name: duration
+          value_ref: nv_premium_duration
+          required: true
+    provides:
+    - premium_subscription_id
+  premium_subscription_receipt:
+    description: Download a premium subscription receipt to a file-system path.
+    kind: action
+    entity: PremiumSubscription
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: download_to_file_path
+          value_ref: nv_file_path
+          required: false
+        - name: overwrite
+          value_ref: nv_bool
+          required: false
+        - name: file_system_access_token
+          value_ref: nv_access_token
+          required: false
+    output:
+      type: side_effect
+      description: Writes the premium subscription receipt to the given file path.
+  profile_get:
+    description: Show a Spotify user's public profile (omit email for the default profile).
+    kind: query
+    entity: Profile
+    selection:
+    - name: email
+      value_ref: nv_email
+      required: false
+    provides:
+    - first_name
+    - last_name
+    - email
+    - registered_at
+  genre_query:
+    description: List all music genres in the Spotify catalog.
+    kind: query
+    entity: Genre
+    discovery:
+      operation_terms:
+      - list
+      - show
+      target_terms:
+      - genre
+      - genres
+    provides:
+    - name
+
+# OpenAPI SongPlayerResponse has no liked flag. Compose player wire + liked_songs list;
+# is_liked := current song_id appears in the liked shelf (Player membership, not LikedSong.is_liked).
+views:
+  player_current:
+    description: Current playback with liked-shelf membership for the song on the cursor.
+    capability: player_current
+    entity: Player
+    scope:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    nodes:
+    - id: wire
+      capability: player_current_wire
+      bind:
+        access_token:
+          kind: scope
+          param: access_token
+    - id: liked
+      capability: liked_song_query
+      bind:
+        access_token:
+          kind: scope
+          param: access_token
+    output:
+      access_token:
+        kind: scope
+        param: access_token
+      song_id:
+        kind: node_field
+        node: wire
+        field: song_id
+      title:
+        kind: node_field
+        node: wire
+        field: title
+      position:
+        kind: node_field
+        node: wire
+        field: position
+      is_playing:
+        kind: node_field
+        node: wire
+        field: is_playing
+      volume:
+        kind: node_field
+        node: wire
+        field: volume
+      liked_by_song_id:
+        kind: node_field_histogram_json
+        node: liked
+        field: song_id
+      is_liked:
+        kind: computed
+        # Histogram keys are decimal strings; coerce song_id for map lookup.
+        template: "{{ (song_id ~ '') in liked_by_song_id }}"
+
+values:
+  nv_str:
+    type: string
+    description: Free-form string.
+  nv_login_username:
+    type: email
+    description: Task-principal email from Supervisor — the login username for this service (not a counterparty).
+  nv_email:
+    type: email
+    description: Email address of a user or counterparty.
+  nv_password:
+    type: string
+    description: Account-holder password for this service.
+  nv_access_token:
+    type: string
+    description: Bearer access token from login.
+  nv_song_shelf:
+    type: enum
+    enum:
+    - catalog
+    - library
+    - recommendations
+    description: Song list shelf — catalog browse/filter, saved library, or personalized recommendations.
+  nv_album_shelf:
+    type: enum
+    enum:
+    - catalog
+    - library
+    description: Album list shelf — catalog browse/filter or saved library.
+  nv_artist_shelf:
+    type: enum
+    enum:
+    - catalog
+    - following
+    description: Artist list shelf — catalog browse/filter or followed artists.
+  nv_playlist_shelf:
+    type: enum
+    enum:
+    - catalog
+    - library
+    description: Playlist list shelf — catalog browse/filter or saved library.
+  nv_song_id:
+    type: integer
+    description: Song primary key.
+  nv_album_id:
+    type: integer
+    description: Album primary key.
+  nv_artist_id:
+    type: integer
+    description: Artist primary key.
+  nv_playlist_id:
+    type: integer
+    description: Playlist primary key.
+  nv_song_review_id:
+    type: integer
+    description: Song review primary key.
+  nv_album_review_id:
+    type: integer
+    description: Album review primary key.
+  nv_playlist_review_id:
+    type: integer
+    description: Playlist review primary key.
+  nv_payment_card_id:
+    type: integer
+    description: Payment card primary key.
+  nv_premium_subscription_id:
+    type: integer
+    description: Premium subscription primary key.
+  nv_premium_duration:
+    type: enum
+    description: Premium subscription billing duration.
+    enum:
+    - monthly
+    - yearly
+  nv_genre:
+    type: enum
+    description: Music genre in the Spotify catalog.
+    enum:
+    - EDM
+    - R&B
+    - classical
+    - country
+    - hip-hop
+    - indie
+    - jazz
+    - pop
+    - reggae
+    - rock
+  nv_file_path:
+    type: string
+    description: File-system path for download or save — absolute /home/… or ~/subpath (bare ~ alone is invalid).
+  nv_rating:
+    type: integer
+    description: Star rating from 1 to 5.
+  nv_review_title:
+    type: string
+    description: Review title.
+  nv_review_text:
+    type: string
+    description: Review body text.
+  nv_number:
+    type: number
+    description: Rating or numeric value.
+  nv_bool:
+    type: boolean
+    description: Boolean flag.
+  nv_int:
+    type: integer
+    description: Integer.
+  nv_like_count:
+    type: integer
+    description: Community/social popularity tally for this item — how many users have liked it, not whether the current user
+      hearted it.
+  nv_datetime:
+    type: rfc3339
+    description: ISO datetime string.
+  prerequisite_principal_email:
+    type: email
+    description: Account holder email.
+  prerequisite_principal_phone:
+    type: e164
+    description: Account holder phone number.
+  prerequisite_account_name:
+    type: string
+    description: Service account identifier.
+prerequisites:
+  contracts:
+    appworld.principal:
+      version: 1
+      inputs: {}
+      outputs:
+        email: prerequisite_principal_email
+        phone: prerequisite_principal_phone
+    appworld.password:
+      version: 1
+      inputs:
+        account: prerequisite_account_name
+      outputs:
+        password: nv_password
+    appworld.session:
+      version: 1
+      inputs: {}
+      outputs:
+        token: nv_access_token
+  providers:
+    session:
+      contract: appworld.session
+      capability: login
+      outputs:
+        token: access_token
+  requirements:
+    login:
+    - id: principal
+      contract: appworld.principal
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - username
+        output: email
+    - id: password
+      contract: appworld.password
+      arguments:
+        account:
+          kind: constant
+          value: spotify
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - password
+        output: password
+    logout:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    song_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    song_like:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    song_unlike:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    downloaded_song_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    song_download:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    song_undownload:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    album_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    album_like:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    album_unlike:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    artist_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    artist_follow:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    artist_unfollow:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    playlist_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    playlist_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    playlist_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    playlist_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    playlist_add_song:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    playlist_remove_song:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    playlist_like:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    playlist_unlike:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    player_current_wire:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    player_current:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    player_play:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    player_pause:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    player_previous:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    player_next:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    player_queue:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    player_queue_add:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    player_queue_clear:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    player_queue_remove:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    player_move_song:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    player_seek:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    player_loop:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    player_shuffle:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    player_volume_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    player_volume_set:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    liked_song_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    liked_song_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    song_library_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    song_library_add:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    song_library_remove:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    album_library_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    album_library_add:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    album_library_remove:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    playlist_library_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    liked_playlist_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    liked_album_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    following_artist_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    song_review_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    song_review_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    song_review_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    album_review_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    album_review_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    album_review_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    playlist_review_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    playlist_review_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    playlist_review_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_card_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    payment_card_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_card_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_card_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    premium_subscription_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    premium_subscribe:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    premium_subscription_receipt:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+      - input:
+          lane: payload
+          path:
+          - file_system_access_token
+        output: token

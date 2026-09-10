@@ -1,7 +1,6 @@
 //! Expand teaching waves.
 
 use super::super::super::*;
-use plasm_core::MutatorAdmit;
 
 use super::super::seeds::{
     dedup_preserve_arrival_order, normalize_capability_seeds, process_order_for_expand_group,
@@ -28,8 +27,9 @@ async fn commit_expand_wave(
     }
 
     let Some(sess_arc) = st
-        .get_execute_session(prompt_hash_p.as_str(), session_id_p.as_str())
+        .try_get_execute_session(prompt_hash_p.as_str(), session_id_p.as_str())
         .await
+        .map_err(|error| error.to_string())?
     else {
         return Err("unknown or expired execute session".into());
     };
@@ -37,10 +37,6 @@ async fn commit_expand_wave(
     if !session_allows_principal(&sess, principal) {
         return Err("forbidden: execute session tenant does not match caller".into());
     }
-    let scope_intent = sess.context_intent.clone();
-    let ranked_names = sess.ranked_capabilities.clone();
-    let ranked_slice = ranked_names.as_deref();
-    let emit_ranked_replay_diagnostics = sess.ranked_replay_emit_diagnostics;
     let Some(mut exp) = sess.teaching_exposure.take() else {
         return Err("session has no incremental exposure state".into());
     };
@@ -117,22 +113,8 @@ async fn commit_expand_wave(
             .clone();
         let normalized = dedup_preserve_arrival_order(group);
         let refs: Vec<&str> = normalized.iter().map(|s| s.as_str()).collect();
-        if let Some(ref intent_s) = scope_intent {
-            let delta = plasm_core::discovery::derive_intent_exposure_surface_batch(
-                ctx.cgs.as_ref(),
-                eid.as_str(),
-                intent_s.as_str(),
-                &relation_keys,
-                &normalized,
-                ranked_slice,
-                plasm_core::discovery::ExposureSurfaceOptions {
-                    mutator_admit: MutatorAdmit::IntentOnly,
-                },
-            );
-            exp.expose_surface(&layers, ctx.cgs.clone(), eid.as_str(), &refs, delta);
-        } else {
-            exp.expose_entities(&layers, ctx.cgs.clone(), eid.as_str(), &refs);
-        }
+        let delta = st.capability_surface_for_wave(ctx.cgs.as_ref(), &eid, &normalized)?;
+        exp.expose_surface(&layers, ctx.cgs.clone(), &eid, &refs, delta);
     }
     let committed = super::commit::commit_exposure_wave_delta(
         st,
@@ -145,8 +127,6 @@ async fn commit_expand_wave(
             caps_before,
             entity_count_before: n0,
             relation_keys,
-            ranked_capability_names: ranked_names,
-            emit_ranked_replay_diagnostics,
         },
     )
     .await?;

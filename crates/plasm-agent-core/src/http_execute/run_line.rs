@@ -4,9 +4,6 @@ use crate::execute_pipeline::RunLineError;
 use crate::run_artifacts::{persist_execute_run, PersistExecuteRunError, PersistExecuteRunInput};
 
 use super::ingress::execute_session_parse_error_message;
-use super::proof_bind::{
-    maybe_proof_refresh_session_base_token, try_proof_document_share_bind, ProofBindError,
-};
 use super::trace::{emit_plasm_line_trace, trace_expr_api_meta, PlasmLineTraceSink};
 use super::{resolve_paging_storage_handle, trace_api_entry_id_for_execute_root, *};
 
@@ -17,12 +14,6 @@ impl From<PersistExecuteRunError> for RunLineError {
             PersistExecuteRunError::Serialization(e) => RunLineError::ArtifactSerialization(e),
             PersistExecuteRunError::Persist(d) => RunLineError::ArtifactPersist(d),
         }
-    }
-}
-
-impl From<ProofBindError> for RunLineError {
-    fn from(e: ProofBindError) -> Self {
-        RunLineError::Parse(e.to_string())
     }
 }
 
@@ -58,24 +49,6 @@ fn record_run_line_error_metrics(
     let ms = wall.elapsed().as_secs_f64() * 1000.0;
     let (status, phase) = run_line_error_metric_labels(err);
     crate::metrics::record_execute_expression_line(entry_id, operation, status, phase, ms, 0, 0);
-}
-
-async fn persist_session_credentials_after_mutation(
-    st: &PlasmHostState,
-    sess: &ExecuteSession,
-    session_id: &str,
-) {
-    use crate::mcp_transport_store::execute_session_registry::ExecuteSessionPersistOutcome;
-
-    match st.persist_session_bind_credentials(sess, session_id).await {
-        Ok(ExecuteSessionPersistOutcome::Durable) => {}
-        Ok(ExecuteSessionPersistOutcome::InMemoryOnly) => {}
-        Err(e) => tracing::warn!(
-            target: "plasm_agent::session_credentials",
-            error = %e,
-            "failed to persist session bind credentials to durable execute session"
-        ),
-    }
 }
 
 /// Parse one Plasm line for the active session (HTTP/MCP ingress).
@@ -175,7 +148,7 @@ pub(crate) async fn run_parsed_plasm_line(
         Some(token) => token,
         None => {
             crate::execute_pipeline::PlasmPreflight::preflight_parsed_line(sess, line, &parsed)
-                .map_err(RunLineError::Parse)?;
+                .map_err(|e| RunLineError::Parse(e.into()))?;
             plasm_core::PreflightToken::VERIFIED
         }
     };
@@ -311,41 +284,27 @@ pub(crate) async fn run_parsed_plasm_line(
     let graph_spill_active = exec_opts.graph_page_spill.is_some();
     let page_resume_backup = page_resume_owned.clone();
 
-    let mut credential_mutation = false;
-    let mut result = match try_proof_document_share_bind(sess, exec_cgs, &parsed.expr).await? {
-        Some(r) => {
-            credential_mutation = true;
-            r
-        }
-        None => {
-            let input = crate::graph_execute::LiveBranchExecuteInput {
-                line,
-                log_expr: log_expr.as_str(),
-                sess,
-                st,
-                session_id,
-                parsed: &parsed,
-                exec_cgs,
-                root_entity,
-                page_resume_backup: page_resume_backup.clone(),
-                exec_opts: exec_opts.clone(),
-                graph_spill_active,
-                host_page_size,
-                surface_read_budget: surface_read_budget.clone(),
-                expr_span: expr_span.clone(),
-            };
-            match crate::graph_execute::run_with_write_conflict_retry(sess, &input).await {
-                Ok(r) => r,
-                Err(e) => {
-                    record_run_line_error_metrics(
-                        sess.entry_id.as_str(),
-                        operation.as_str(),
-                        &e,
-                        wall,
-                    );
-                    return Err(e);
-                }
-            }
+    let input = crate::graph_execute::LiveBranchExecuteInput {
+        line,
+        log_expr: log_expr.as_str(),
+        sess,
+        st,
+        session_id,
+        parsed: &parsed,
+        exec_cgs,
+        root_entity,
+        page_resume_backup: page_resume_backup.clone(),
+        exec_opts: exec_opts.clone(),
+        graph_spill_active,
+        host_page_size,
+        surface_read_budget: surface_read_budget.clone(),
+        expr_span: expr_span.clone(),
+    };
+    let mut result = match crate::graph_execute::run_with_write_conflict_retry(sess, &input).await {
+        Ok(r) => r,
+        Err(e) => {
+            record_run_line_error_metrics(sess.entry_id.as_str(), operation.as_str(), &e, wall);
+            return Err(e);
         }
     };
 
@@ -367,12 +326,6 @@ pub(crate) async fn run_parsed_plasm_line(
             );
             result.paging_handle = Some(h);
         }
-    }
-
-    let base_token_refreshed =
-        maybe_proof_refresh_session_base_token(sess, exec_cgs, &parsed, &result).await;
-    if credential_mutation || base_token_refreshed {
-        persist_session_credentials_after_mutation(st, sess, session_id).await;
     }
 
     result.request_fingerprints = fp_sink.lock().unwrap_or_else(|e| e.into_inner()).clone();

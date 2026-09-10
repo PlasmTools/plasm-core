@@ -7,12 +7,12 @@ mod tests {
 
     use crate::execute_session::ExecuteSession;
     use crate::http::{build_plasm_host_state, PlasmHostBootstrap};
-    use crate::http_execute::{apply_capability_seeds, CapabilitySeed, RankedCapabilitiesArg};
+    use crate::http_execute::{apply_capability_seeds, CapabilitySeed};
     use crate::plasm_compile::compile_plasm_expression;
     use crate::plasm_plan_run::{evaluate_plasm_comp_dry, format_session_symbolic_parse_error};
     use crate::server_state::PlasmHostState;
     use indexmap::IndexMap;
-    use plasm_core::discovery::InMemoryCgsRegistry;
+    use plasm_core::discovery::CgsRegistry;
     use plasm_core::loader::load_schema_dir;
     use plasm_core::symbol_map_fingerprint_hex;
     use plasm_core::{CgsContext, TeachingExposureSession};
@@ -29,7 +29,7 @@ mod tests {
             return None;
         }
         let cgs = Arc::new(load_schema_dir(&dir).ok()?);
-        let reg = InMemoryCgsRegistry::from_pairs(vec![(
+        let reg = CgsRegistry::from_pairs(vec![(
             "github".into(),
             "GitHub".into(),
             vec!["github".into()],
@@ -181,7 +181,6 @@ mod tests {
             None,
             Some(logical_id),
             intent,
-            RankedCapabilitiesArg::Unspecified,
         )
         .await
         .expect("plasm_context open");
@@ -263,7 +262,6 @@ mod tests {
             None,
             Some(logical_id),
             "create branch for label guide",
-            RankedCapabilitiesArg::Unspecified,
         )
         .await
         .expect("open");
@@ -290,7 +288,6 @@ mod tests {
             None,
             Some(logical_id),
             "list public organization repositories and org repos query",
-            RankedCapabilitiesArg::Unspecified,
         )
         .await
         .expect("extend");
@@ -352,7 +349,6 @@ mod tests {
             None,
             Some(Uuid::new_v4()),
             intent,
-            RankedCapabilitiesArg::Unspecified,
         )
         .await
         .expect("session a");
@@ -378,7 +374,6 @@ mod tests {
             None,
             Some(logical_b),
             intent,
-            RankedCapabilitiesArg::Unspecified,
         )
         .await
         .expect("session b");
@@ -417,7 +412,6 @@ mod tests {
             None,
             Some(logical_b),
             "continue label branch workflow",
-            RankedCapabilitiesArg::Unspecified,
         )
         .await
         .expect("extend b");
@@ -456,7 +450,6 @@ mod tests {
             None,
             Some(Uuid::new_v4()),
             "list public organization repositories",
-            RankedCapabilitiesArg::Unspecified,
         )
         .await
         .expect("open");
@@ -481,7 +474,8 @@ mod tests {
             "query_as_mutator",
             &line,
         )
-        .expect_err("query m# in mutator invoke position");
+        .expect_err("query m# in mutator invoke position")
+        .to_string();
         let msg = if err.contains("not a mutator") {
             append_symbol_stability_context_for_test(&es, &err, &line)
         } else {
@@ -549,7 +543,6 @@ mod tests {
             None,
             Some(logical_id),
             intent,
-            RankedCapabilitiesArg::Unspecified,
         )
         .await
         .expect("open");
@@ -579,7 +572,6 @@ mod tests {
             None,
             Some(logical_id),
             intent,
-            RankedCapabilitiesArg::Unspecified,
         )
         .await
         .expect("extend branch");
@@ -638,7 +630,6 @@ mod tests {
             None,
             cgs.catalog_cgs_hash_hex(),
             Some("branch workflow".into()),
-            None,
         );
         let cross = plasm_core::SymbolMapCrossRequestCache::new(8);
         let program = github_branch_create_program(&exp);

@@ -7,6 +7,7 @@ use plasm_core::{GetExpr, Predicate, QueryExpr, Value, CGS};
 
 use crate::execution::preflight_compile_expr;
 use crate::execution::ExecutionResult;
+use crate::materialization::SessionMaterialization;
 use crate::view_dag_run::run_view_dag_sync;
 use crate::view_plan::{
     derive_view_get_scope, derive_view_query_scope, resolve_binding, ViewAmbientContext,
@@ -20,13 +21,17 @@ pub fn preflight_view_query(
     view_name: &str,
     query: &QueryExpr,
     cgs: &CGS,
+    compiled: &plasm_compile::CompiledCatalog,
     ambient: &ViewAmbientContext,
+    mat: &SessionMaterialization,
 ) -> Result<(), RuntimeError> {
     preflight_view_scoped_with_proof(
         view_name,
         derive_view_query_scope(view_name, query, cgs)?,
         cgs,
+        compiled,
         ambient,
+        mat,
     )
     .map(|_| ())
 }
@@ -36,13 +41,17 @@ pub fn preflight_view_get(
     view_name: &str,
     get: &GetExpr,
     cgs: &CGS,
+    compiled: &plasm_compile::CompiledCatalog,
     ambient: &ViewAmbientContext,
+    mat: &SessionMaterialization,
 ) -> Result<(), RuntimeError> {
     preflight_view_scoped_with_proof(
         view_name,
         derive_view_get_scope(view_name, get, cgs)?,
         cgs,
+        compiled,
         ambient,
+        mat,
     )
     .map(|_| ())
 }
@@ -52,15 +61,24 @@ pub fn preflight_view_scoped_with_proof(
     view_name: &str,
     scope: IndexMap<String, Value>,
     cgs: &CGS,
+    compiled: &plasm_compile::CompiledCatalog,
     ambient: &ViewAmbientContext,
+    mat: &SessionMaterialization,
 ) -> Result<ViewRunProof, RuntimeError> {
-    let runner = PreflightViewNodeRunner { cgs, ambient };
+    let runner = PreflightViewNodeRunner {
+        cgs,
+        compiled,
+        ambient,
+        mat,
+    };
     run_view_dag_sync(&runner, view_name, scope, cgs, ambient).map(|(proof, _)| proof)
 }
 
 pub(crate) struct PreflightViewNodeRunner<'a> {
     pub(crate) cgs: &'a CGS,
+    pub(crate) compiled: &'a plasm_compile::CompiledCatalog,
     pub(crate) ambient: &'a ViewAmbientContext,
+    pub(crate) mat: &'a SessionMaterialization,
 }
 
 impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
@@ -73,14 +91,19 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
         node_fields: &ViewNodeFieldMap,
     ) -> Result<ExecutionResult, RuntimeError> {
         let q = QueryExpr::filtered(cap.domain.as_str(), pred.clone());
-        preflight_compile_expr(&plasm_core::Expr::Query(q), self.cgs, self.ambient).map_err(
-            |e| RuntimeError::ConfigurationError {
-                message: format!(
-                    "view `{}` node `{}` (capability `{}`): {e}",
-                    ctx.view_name, node.id, node.capability
-                ),
-            },
-        )?;
+        preflight_compile_expr(
+            &plasm_core::Expr::Query(q),
+            self.cgs,
+            self.compiled,
+            self.ambient,
+            self.mat,
+        )
+        .map_err(|e| RuntimeError::ConfigurationError {
+            message: format!(
+                "view `{}` node `{}` (capability `{}`): {e}",
+                ctx.view_name, node.id, node.capability
+            ),
+        })?;
         let mut bound_values = IndexMap::with_capacity(node.bind.len());
         for (param, bspec) in &node.bind {
             bound_values.insert(
@@ -99,14 +122,19 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
         get: &GetExpr,
         bound: &BTreeMap<String, String>,
     ) -> Result<ExecutionResult, RuntimeError> {
-        preflight_compile_expr(&plasm_core::Expr::Get(get.clone()), self.cgs, self.ambient).map_err(
-            |e| RuntimeError::ConfigurationError {
-                message: format!(
-                    "view `{}` node `{}` (capability `{}`): {e}",
-                    ctx.view_name, node.id, node.capability
-                ),
-            },
-        )?;
+        preflight_compile_expr(
+            &plasm_core::Expr::Get(get.clone()),
+            self.cgs,
+            self.compiled,
+            self.ambient,
+            self.mat,
+        )
+        .map_err(|e| RuntimeError::ConfigurationError {
+            message: format!(
+                "view `{}` node `{}` (capability `{}`): {e}",
+                ctx.view_name, node.id, node.capability
+            ),
+        })?;
         stub_get_result(cap, self.cgs, bound)
     }
 
@@ -120,7 +148,9 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
         preflight_compile_expr(
             &plasm_core::Expr::Create(create.clone()),
             self.cgs,
+            self.compiled,
             self.ambient,
+            self.mat,
         )
         .map_err(|e| RuntimeError::ConfigurationError {
             message: format!(

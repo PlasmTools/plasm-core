@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use auth_framework::storage::AuthStorage;
 use plasm_agent_core::oauth_link_catalog::OauthLinkCatalog;
-use plasm_core::discovery::{CgsCatalog, DiscoveryError, InMemoryCgsRegistry};
+use plasm_core::discovery::{CgsCatalog, CgsRegistry, DiscoveryError};
 use plasm_core::schema::{OauthDefaultScopeSet, OauthScopeEntry};
 
 #[derive(Clone)]
@@ -40,7 +40,7 @@ impl OAuthDeviceScopePickState {
     /// first `default_scope_sets` entry (if any). Otherwise `Ok(None)` so callers fall back to
     /// empty scopes (legacy provider defaults).
     pub fn try_open(
-        reg: &InMemoryCgsRegistry,
+        reg: &CgsRegistry,
         entry_id: String,
         link_catalog: Arc<OauthLinkCatalog>,
         storage: Arc<dyn AuthStorage>,

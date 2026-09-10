@@ -5,11 +5,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use indexmap::IndexMap;
-use plasm_core::discovery::{CgsCatalog, InMemoryCgsRegistry};
+use plasm_core::discovery::{CgsCatalog, CgsRegistry};
 use thiserror::Error;
 use tokio::sync::Mutex;
 
-use crate::catalog_data::load_registry_from_catalog_dir;
 use crate::server_state::PlasmHostState;
 
 #[derive(Debug, Error)]
@@ -35,7 +34,7 @@ pub struct CatalogReloadReport {
     pub logical_keys_purged: u64,
 }
 
-fn entry_hash_map(reg: &InMemoryCgsRegistry) -> IndexMap<String, String> {
+fn entry_hash_map(reg: &CgsRegistry) -> IndexMap<String, String> {
     let mut m = IndexMap::new();
     for meta in reg.list_entries() {
         if !meta.catalog_cgs_hash.is_empty() {
@@ -85,14 +84,12 @@ impl PlasmHostState {
         let prev = self.catalog.snapshot();
         let old_hashes = entry_hash_map(prev.as_ref());
 
-        let path_buf = path.to_path_buf();
-        let new_reg = self
-            .blocking_compute()
-            .run("load_registry_from_catalog_dir", move || {
-                load_registry_from_catalog_dir(&path_buf)
-            })
-            .await?
-            .map_err(CatalogReloadError::Load)?;
+        let _ = path; // Bootstrap path is owned by CatalogRuntime for one atomic manifest-set read.
+        self.catalog
+            .activate_discovery()
+            .await
+            .map_err(|e| CatalogReloadError::Load(e.to_string()))?;
+        let new_reg = self.catalog.snapshot();
 
         let new_hashes = entry_hash_map(&new_reg);
         let (added_entry_ids, removed_entry_ids, changed_entry_ids) =
@@ -108,16 +105,11 @@ impl PlasmHostState {
             || !removed_entry_ids.is_empty()
             || !changed_entry_ids.is_empty();
 
-        self.catalog.publish_catalog(Arc::new(new_reg));
         self.invalidate_catalog_derived_caches();
 
         let generation = self.catalog.bump_reload_generation();
-        let (session_keys_purged, logical_keys_purged) = if catalog_changed {
-            self.sessions.invalidate_cgs_derived_caches();
-            self.purge_persisted_execute_state().await
-        } else {
-            (0, 0)
-        };
+        // Catalog-only publication preserves sessions and their pinned generations.
+        let (session_keys_purged, logical_keys_purged) = (0, 0);
 
         Ok(CatalogReloadReport {
             generation,
@@ -132,13 +124,9 @@ impl PlasmHostState {
         })
     }
 
-    /// Tool-model memo + typed-discovery index caches (after catalog digest rotation).
-    ///
-    /// Lexical BM25 (`CatalogSearchIndex`) lives inside [`InMemoryCgsRegistry`] and is rebuilt
-    /// when [`Self::reload_catalog_registry`] publishes a new registry via `from_pairs`.
+    /// Invalidate operator projections after publication; generation data remains immutable.
     pub fn invalidate_catalog_derived_caches(&self) {
         self.tool_model_service().clear_cache();
-        self.discovery_index_cache().clear();
     }
 
     pub(crate) fn catalog_reload_lock(&self) -> &Arc<Mutex<()>> {

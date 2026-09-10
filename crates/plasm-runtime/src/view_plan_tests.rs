@@ -78,6 +78,7 @@ fn merge_ambient_scope_uses_explicit_transport_origin() {
     let ambient = ViewAmbientContext {
         transport_origin: Some("https://host.test".into()),
         ui_origin: None,
+        capability_params: indexmap::IndexMap::new(),
     };
     merge_view_ambient_scope(&view, &mut scope, &ambient);
     assert_eq!(
@@ -108,7 +109,9 @@ fn preflight_proof_matches_fixture_runner_on_lang_digest() {
         "lang_digest",
         scope.clone(),
         &cgs,
+        &plasm_compile::compile_cgs_capability_templates(&cgs).unwrap(),
         &ambient,
+        &crate::SessionMaterialization::new(),
     )
     .expect("preflight proof");
     assert_eq!(
@@ -294,4 +297,12 @@ impl ViewNodeRunner for FixtureViewNodeRunner {
                 message: format!("fixture runner missing node `{}`", node.id),
             })
     }
+}
+
+#[test]
+fn binds_to_predicate_empty_bind_is_true() {
+    let scope = indexmap::IndexMap::new();
+    let node_fields = indexmap::IndexMap::new();
+    let pred = binds_to_predicate(&indexmap::IndexMap::new(), &scope, &node_fields).expect("pred");
+    assert_eq!(pred, Predicate::True);
 }

@@ -86,11 +86,15 @@ pub(crate) fn arg_for_input_field(field: &InputFieldSchema, help: FieldArgHelp, 
 }
 
 pub(crate) fn build_field_args(cap: &CapabilitySchema, help: FieldArgHelp, cgs: &CGS) -> Vec<Arg> {
-    let Some(fields) = cap.object_params() else {
-        return vec![];
+    let fields: Vec<&plasm_core::InputFieldSchema> = match help {
+        FieldArgHelp::Query => cap.query_surface_fields().collect(),
+        FieldArgHelp::Invoke => cap.invocation_object_fields().collect(),
     };
+    if fields.is_empty() {
+        return vec![];
+    }
     fields
-        .iter()
+        .into_iter()
         .map(|f| arg_for_input_field(f, help, cgs))
         .collect()
 }

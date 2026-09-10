@@ -60,11 +60,11 @@ mod property_tests {
         cgs.values.insert(
             "fx_str".into(),
             crate::schema::NamedValueSchema {
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::String,
                 value_format: None,
                 allowed_values: None,
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -72,11 +72,11 @@ mod property_tests {
         cgs.values.insert(
             "fx_region".into(),
             crate::schema::NamedValueSchema {
+                domain: Default::default(),
                 description: String::new(),
                 field_type: FieldType::Select,
                 value_format: None,
                 allowed_values: Some(vec!["EMEA".to_string(), "APAC".to_string()]),
-                string_semantics: None,
                 array_items: None,
                 currency: None,
             },
@@ -106,6 +106,8 @@ mod property_tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         };
         cgs.add_resource(account).unwrap();

@@ -1,3 +1,4 @@
+import { loadPackedCatalog } from "../catalog/loader.js";
 import type { HostTransportFn } from "../engine/napi-binding.js";
 import { createStubHostTransport } from "../engine/create-host-transport.js";
 import {
@@ -32,10 +33,7 @@ export async function ensureStubSession(builder: ProgramBuilder): Promise<void> 
     const catalogRoot = builder.catalogRoot;
     const engine = builder.engine ?? createEngine();
     if (catalogRoot) {
-      await engine.loadCatalog({
-        rootDir: catalogRoot,
-        manifest: { entryId: builder.entryId },
-      });
+      await engine.loadCatalog(await loadPackedCatalog(catalogRoot));
     }
     const entities = [...(builder.stubEntities ?? [])].sort((a, b) => a.localeCompare(b));
     if (!entities.length) return;

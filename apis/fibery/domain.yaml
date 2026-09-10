@@ -13,44 +13,43 @@ data_classes:
   external_publish:
     description: Workspace-visible record or document content change.
     severity: critical
-
 schema_overlay:
   source:
     capability: schema_query
   projection:
     mode: per_scope_entity
     items_path:
-      - result
-      - fibery/types
+    - result
+    - fibery/types
   entity:
     from_template: Record
     name:
-      template: "{{ row['fibery/name'] | join_sanitize('__', '/') }}"
+      template: '{{ row[''fibery/name''] | join_sanitize(''__'', ''/'') }}'
     expression_aliases:
-      - template: "{{ row['fibery/name'] }}"
+    - template: '{{ row[''fibery/name''] }}'
     scope_key:
-      template: "{{ row['fibery/name'] }}"
+      template: '{{ row[''fibery/name''] }}'
     static_fields:
       database:
-        template: "{{ row['fibery/name'] }}"
+        template: '{{ row[''fibery/name''] }}'
         value_ref: nv_fibery_database_name
     dynamic_fields:
       from:
         kind: array
         path:
-          - fibery/fields
+        - fibery/fields
       skip:
         wire_name_path:
-          - fibery/name
-        values_in:
-          - fibery/id
-          - fibery/public-id
-      wire_name_path:
         - fibery/name
+        values_in:
+        - fibery/id
+        - fibery/public-id
+      wire_name_path:
+      - fibery/name
       wire_type_path:
-        - fibery/type
+      - fibery/type
       name:
-        template: "{{ field['fibery/name'] | sanitize_identifier }}"
+        template: '{{ field[''fibery/name''] | sanitize_identifier }}'
       type_map:
         fibery/text: nv_wire_str_short
         fibery/bool: nv_wire_bool
@@ -65,12 +64,12 @@ schema_overlay:
   decode:
     scope:
       params:
-        - database
+      - database
       key:
-        template: "{{ ambient.database }}"
+        template: '{{ ambient.database }}'
     capabilities:
-      - entity_query
-      - entity_get
+    - entity_query
+    - entity_get
 auth:
   scheme: api_key_header
   header: Authorization
@@ -83,7 +82,6 @@ entities:
       names:
       - fibery space
       - space
-      seed_class: primary
     fields:
       name:
         required: true
@@ -93,8 +91,7 @@ entities:
         description: Databases belonging to this space.
         target: Database
         cardinality: many
-        discovery:
-          seed_nav: own
+        discovery: null
         materialize:
           kind: query_scoped
           capability: schema_query
@@ -102,25 +99,24 @@ entities:
   Database:
     id_field: qualified_name
     id_from:
-      - fibery/name
+    - fibery/name
     description: A Fibery database (API type) from workspace schema metadata.
     discovery:
       names:
       - fibery database
       - database
       - schema type
-      seed_class: primary
     fields:
       qualified_name:
         required: true
         value_ref: nv_fibery_database_name
         path:
-          - fibery/name
+        - fibery/name
       type_id:
         required: false
         value_ref: nv_fibery_id
         path:
-          - fibery/id
+        - fibery/id
       space_name:
         required: false
         value_ref: nv_fibery_space_name
@@ -144,34 +140,34 @@ entities:
   Field:
     id_field: id
     id_from:
-      - fibery/id
+    - fibery/id
     description: A field definition on a Fibery database.
     fields:
       id:
         required: true
         value_ref: nv_fibery_id
         path:
-          - fibery/id
+        - fibery/id
       name:
         required: false
         value_ref: nv_fibery_field_name
         path:
-          - fibery/name
+        - fibery/name
       field_type:
         required: false
         value_ref: nv_fibery_field_type
         path:
-          - fibery/type
+        - fibery/type
       database:
         required: false
         value_ref: nv_fibery_database_name
   Record:
     id_field: id
     id_from:
-      - fibery/id
+    - fibery/id
     key_vars:
-      - database
-      - id
+    - database
+    - id
     description: Generic Fibery database record; runtime overlay adds typed entities per database.
     primary_read: entity_get
     fields:
@@ -179,12 +175,12 @@ entities:
         required: true
         value_ref: nv_fibery_id
         path:
-          - fibery/id
+        - fibery/id
       public_id:
         required: false
         value_ref: nv_fibery_public_id
         path:
-          - fibery/public-id
+        - fibery/public-id
       database:
         required: true
         value_ref: nv_fibery_database_name
@@ -200,88 +196,88 @@ entities:
   User:
     id_field: id
     id_from:
-      - fibery/id
+    - fibery/id
     description: A Fibery workspace member.
     fields:
       id:
         required: true
         value_ref: nv_fibery_id
         path:
-          - fibery/id
+        - fibery/id
       name:
         required: false
         value_ref: nv_fibery_user_name
         path:
-          - user/name
+        - user/name
         data_class: pii_name
       email:
         required: false
         value_ref: nv_fibery_user_email
         path:
-          - user/email
+        - user/email
         data_class: pii_email
       role:
         required: false
         value_ref: nv_wire_str_short
         path:
-          - user/role
+        - user/role
       admin:
         required: false
         value_ref: nv_wire_bool
         path:
-          - user/admin?
+        - user/admin?
   File:
     id_field: id
     id_from:
-      - fibery/id
+    - fibery/id
     description: A Fibery file entity backed by object storage.
     fields:
       id:
         required: true
         value_ref: nv_fibery_id
         path:
-          - fibery/id
+        - fibery/id
       name:
         required: false
         value_ref: nv_fibery_file_name
         path:
-          - fibery/name
+        - fibery/name
       secret:
         required: false
         value_ref: nv_fibery_file_secret
         path:
-          - fibery/secret
+        - fibery/secret
       content_type:
         required: false
         value_ref: nv_fibery_file_content_type
         path:
-          - fibery/content-type
+        - fibery/content-type
       content_length:
         required: false
         value_ref: nv_fibery_file_content_length
         path:
-          - fibery/content-length
+        - fibery/content-length
   View:
     id_field: id
     id_from:
-      - fibery/id
+    - fibery/id
     description: A saved Fibery view (board, grid, document, timeline, etc.).
     fields:
       id:
         required: true
         value_ref: nv_fibery_id
         path:
-          - fibery/id
+        - fibery/id
       name:
         required: false
         value_ref: nv_fibery_view_name
         path:
-          - fibery/name
+        - fibery/name
       view_type:
         required: false
         value_ref: nv_fibery_view_type
         path:
-          - fibery/type
+        - fibery/type
       space_name:
         required: false
         value_ref: nv_fibery_space_name
@@ -289,7 +285,7 @@ entities:
         required: false
         value_ref: nv_fibery_public_id
         path:
-          - fibery/public-id
+        - fibery/public-id
   Webhook:
     id_field: id
     description: A webhook subscription for database change notifications.
@@ -304,7 +300,7 @@ entities:
         required: false
         value_ref: nv_fibery_database_name
         path:
-          - type
+        - type
       state:
         required: false
         value_ref: nv_fibery_webhook_state
@@ -319,7 +315,7 @@ entities:
         required: false
         value_ref: nv_fibery_public_id
         path:
-          - publicId
+        - publicId
       title:
         required: false
         value_ref: nv_wire_str_short
@@ -349,14 +345,14 @@ entities:
         required: false
         value_ref: nv_fibery_database_name
         path:
-          - type
-          - name
+        - type
+        - name
       entity_name:
         required: false
         value_ref: nv_wire_str_short
         path:
-          - entity
-          - name
+        - entity
+        - name
       url:
         required: false
         value_ref: nv_wire_str_short
@@ -401,23 +397,22 @@ capabilities:
     description: List workspace databases from schema metadata.
     kind: query
     entity: Database
-    parameters:
-      - name: space_name
-        value_ref: nv_fibery_space_name
-        required: false
-        role: scope
+    scope:
+    - name: space_name
+      value_ref: nv_fibery_space_name
+      required: false
   schema_detail_query:
     description: Get field definitions for one database from schema metadata.
     kind: query
     entity: Field
-    parameters:
-      - name: database
-        value_ref: nv_fibery_database_name
-        required: true
-        role: scope
-      - name: input
-        value_ref: nv_fibery_command_input_json
-        required: false
+    scope:
+    - name: database
+      value_ref: nv_fibery_database_name
+      required: true
+    selection:
+    - name: input
+      value_ref: nv_fibery_command_input_json
+      required: false
   user_get_me:
     description: Get the authenticated Fibery user profile.
     kind: singleton
@@ -426,63 +421,68 @@ capabilities:
     description: Query rows in a database with Fibery query DSL.
     kind: query
     entity: Record
-    parameters:
-      - name: database
-        value_ref: nv_fibery_database_name
-        required: true
-        role: scope
-      - name: input
-        value_ref: nv_fibery_command_input_json
-        required: false
+    scope:
+    - name: database
+      value_ref: nv_fibery_database_name
+      required: true
+    selection:
+    - name: input
+      value_ref: nv_fibery_command_input_json
+      required: false
   entity_get:
     kind: get
     entity: Record
+    scope:
+    - name: database
+      value_ref: nv_fibery_database_name
+      required: true
     provides:
-      - id
-      - public_id
-      - database
-      - payload
-    parameters:
-      - name: database
-        value_ref: nv_fibery_database_name
-        required: true
-        role: scope
+    - id
+    - public_id
+    - database
+    - payload
   entity_create:
     description: Create a record in a database.
     kind: create
     entity: Record
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: database
+          value_ref: nv_fibery_database_name
+          required: true
+        - name: input
+          value_ref: nv_fibery_payload_json
+          required: true
+          sink_class: external_publish
     provides:
-      - id
-      - public_id
-      - database
-      - payload
-    parameters:
-      - name: database
-        value_ref: nv_fibery_database_name
-        required: true
-      - name: input
-        value_ref: nv_fibery_payload_json
-        required: true
-        sink_class: external_publish
+    - id
+    - public_id
+    - database
+    - payload
   entity_update:
     description: Update fields on an existing record.
     kind: update
     entity: Record
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: database
+          value_ref: nv_fibery_database_name
+          required: true
+        - name: id
+          value_ref: nv_fibery_id
+          required: true
+        - name: input
+          value_ref: nv_fibery_payload_json
+          required: true
+          sink_class: external_publish
     provides:
-      - id
-      - database
-      - payload
-    parameters:
-      - name: database
-        value_ref: nv_fibery_database_name
-        required: true
-      - name: id
-        value_ref: nv_fibery_id
-        required: true
-      - name: input
-        value_ref: nv_fibery_payload_json
-        required: true
-        sink_class: external_publish
+    - id
+    - database
+    - payload
   entity_delete:
     description: Delete a record by fibery/id.
     kind: delete
@@ -491,164 +491,191 @@ capabilities:
     description: Batch create-or-update rows with conflict resolution.
     kind: action
     entity: Record
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: database
+          value_ref: nv_fibery_database_name
+          required: true
+        - name: input
+          value_ref: nv_fibery_command_input_json
+          required: true
     output:
       type: side_effect
       description: Batch create or update records; returns per-record create, skip, or update outcomes.
-    parameters:
-      - name: database
-        value_ref: nv_fibery_database_name
-        required: true
-      - name: input
-        value_ref: nv_fibery_command_input_json
-        required: true
   entity_search:
     description: Full-text search workspace entities and viewsword.
     kind: search
     entity: SearchResult
-    parameters:
-      - name: query
-        value_ref: nv_fibery_search_query
-        required: true
-      - name: database
-        value_ref: nv_fibery_database_name
-        required: false
-      - name: limit
-        value_ref: nv_wire_int
-        required: false
-        role: response_control
+    selection:
+    - name: query
+      value_ref: nv_fibery_search_query
+      required: true
+    - name: database
+      value_ref: nv_fibery_database_name
+      required: false
+    controls:
+    - name: limit
+      value_ref: nv_wire_int
+      required: false
   search_history:
     description: Search workspace change history with filters and pagination.
     kind: query
     entity: HistoryEvent
-    parameters:
-      - name: input
-        value_ref: nv_fibery_command_input_json
-        required: false
-      - name: limit
-        value_ref: nv_wire_int
-        required: false
-        role: response_control
+    selection:
+    - name: input
+      value_ref: nv_fibery_command_input_json
+      required: false
+    controls:
+    - name: limit
+      value_ref: nv_wire_int
+      required: false
   document_get:
     description: Load rich-text document content for a collaborative document secret.
     kind: get
     entity: Record
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: secret
+          value_ref: nv_fibery_document_secret
+          required: true
+        - name: format
+          value_ref: nv_fibery_document_format
+          required: false
     provides:
-      - document
-    parameters:
-      - name: secret
-        value_ref: nv_fibery_document_secret
-        required: true
-      - name: format
-        value_ref: nv_fibery_document_format
-        required: false
+    - document
   document_set:
     description: Replace rich-text document content.
     kind: action
     entity: Record
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: secret
+          value_ref: nv_fibery_document_secret
+          required: true
+        - name: content
+          value_ref: nv_fibery_document_markdown
+          required: true
+          sink_class: external_publish
+        - name: format
+          value_ref: nv_fibery_document_format
+          required: false
     output:
       type: side_effect
       description: Overwrites the collaborative document body for the given secret.
-    parameters:
-      - name: secret
-        value_ref: nv_fibery_document_secret
-        required: true
-      - name: content
-        value_ref: nv_fibery_document_markdown
-        required: true
-        sink_class: external_publish
-      - name: format
-        value_ref: nv_fibery_document_format
-        required: false
   document_append:
     description: Append content to a rich-text document.
     kind: action
     entity: Record
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: secret
+          value_ref: nv_fibery_document_secret
+          required: true
+        - name: content
+          value_ref: nv_fibery_document_markdown
+          required: true
+          sink_class: external_publish
+        - name: format
+          value_ref: nv_fibery_document_format
+          required: false
     output:
       type: side_effect
       description: Appends markdown or HTML to the collaborative document body.
-    parameters:
-      - name: secret
-        value_ref: nv_fibery_document_secret
-        required: true
-      - name: content
-        value_ref: nv_fibery_document_markdown
-        required: true
-        sink_class: external_publish
-      - name: format
-        value_ref: nv_fibery_document_format
-        required: false
   collection_add:
     description: Add items to an entity collection field.
     kind: action
     entity: Record
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: database
+          value_ref: nv_fibery_database_name
+          required: true
+        - name: id
+          value_ref: nv_fibery_id
+          required: true
+        - name: input
+          value_ref: nv_fibery_command_input_json
+          required: true
     output:
       type: side_effect
       description: Adds related entity ids to a collection field on the target record.
-    parameters:
-      - name: database
-        value_ref: nv_fibery_database_name
-        required: true
-      - name: id
-        value_ref: nv_fibery_id
-        required: true
-      - name: input
-        value_ref: nv_fibery_command_input_json
-        required: true
   collection_remove:
     description: Remove items from an entity collection field.
     kind: action
     entity: Record
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: database
+          value_ref: nv_fibery_database_name
+          required: true
+        - name: id
+          value_ref: nv_fibery_id
+          required: true
+        - name: input
+          value_ref: nv_fibery_command_input_json
+          required: true
     output:
       type: side_effect
       description: Removes related entity ids from a collection field on the target record.
-    parameters:
-      - name: database
-        value_ref: nv_fibery_database_name
-        required: true
-      - name: id
-        value_ref: nv_fibery_id
-        required: true
-      - name: input
-        value_ref: nv_fibery_command_input_json
-        required: true
   workflow_state_set:
     description: Move a record to a workflow state.
     kind: action
     entity: Record
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: database
+          value_ref: nv_fibery_database_name
+          required: true
+        - name: id
+          value_ref: nv_fibery_id
+          required: true
+        - name: input
+          value_ref: nv_fibery_payload_json
+          required: true
     output:
       type: side_effect
       description: Updates workflow/state on the target record.
-    parameters:
-      - name: database
-        value_ref: nv_fibery_database_name
-        required: true
-      - name: id
-        value_ref: nv_fibery_id
-        required: true
-      - name: input
-        value_ref: nv_fibery_payload_json
-        required: true
   schema_batch:
     description: Run one or more schema mutation commands in a batch.
     kind: action
     entity: Database
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: input
+          value_ref: nv_fibery_command_input_json
+          required: true
     output:
       type: side_effect
       description: Applies fibery.schema/batch commands (types, fields, mixins).
-    parameters:
-      - name: input
-        value_ref: nv_fibery_command_input_json
-        required: true
   space_create:
     description: Create a new Fibery space.
     kind: create
     entity: Space
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: input
+          value_ref: nv_fibery_command_input_json
+          required: true
     provides:
-      - name
-    parameters:
-      - name: input
-        value_ref: nv_fibery_command_input_json
-        required: true
+    - name
   space_delete:
     description: Delete a Fibery space.
     kind: delete
@@ -657,26 +684,32 @@ capabilities:
     description: Create a database in a space via schema batch.
     kind: create
     entity: Database
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: input
+          value_ref: nv_fibery_command_input_json
+          required: true
     provides:
-      - qualified_name
-      - type_id
-    parameters:
-      - name: input
-        value_ref: nv_fibery_command_input_json
-        required: true
+    - qualified_name
+    - type_id
   database_rename:
     description: Rename a database (schema type).
     kind: update
     entity: Database
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: qualified_name
+          value_ref: nv_fibery_database_name
+          required: true
+        - name: input
+          value_ref: nv_fibery_command_input_json
+          required: true
     provides:
-      - qualified_name
-    parameters:
-      - name: qualified_name
-        value_ref: nv_fibery_database_name
-        required: true
-      - name: input
-        value_ref: nv_fibery_command_input_json
-        required: true
+    - qualified_name
   database_delete:
     description: Delete a database and optionally its rows.
     kind: delete
@@ -685,80 +718,95 @@ capabilities:
     description: Add a primitive field to a database.
     kind: create
     entity: Field
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: database
+          value_ref: nv_fibery_database_name
+          required: true
+        - name: input
+          value_ref: nv_fibery_command_input_json
+          required: true
     provides:
-      - id
-      - name
-      - field_type
-      - database
-    parameters:
-      - name: database
-        value_ref: nv_fibery_database_name
-        required: true
-      - name: input
-        value_ref: nv_fibery_command_input_json
-        required: true
+    - id
+    - name
+    - field_type
+    - database
   field_create_relation:
     description: Add a relation field to a database.
     kind: create
     entity: Field
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: database
+          value_ref: nv_fibery_database_name
+          required: true
+        - name: input
+          value_ref: nv_fibery_command_input_json
+          required: true
     provides:
-      - id
-      - name
-      - field_type
-      - database
-    parameters:
-      - name: database
-        value_ref: nv_fibery_database_name
-        required: true
-      - name: input
-        value_ref: nv_fibery_command_input_json
-        required: true
+    - id
+    - name
+    - field_type
+    - database
   field_create_select:
     description: Add a single- or multi-select field to a database.
     kind: create
     entity: Field
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: database
+          value_ref: nv_fibery_database_name
+          required: true
+        - name: input
+          value_ref: nv_fibery_command_input_json
+          required: true
     provides:
-      - id
-      - name
-      - field_type
-      - database
-    parameters:
-      - name: database
-        value_ref: nv_fibery_database_name
-        required: true
-      - name: input
-        value_ref: nv_fibery_command_input_json
-        required: true
+    - id
+    - name
+    - field_type
+    - database
   field_update_select:
     description: Update select field options or metadata.
     kind: update
     entity: Field
-    parameters:
-      - name: id
-        value_ref: nv_fibery_id
-        required: true
-      - name: database
-        value_ref: nv_fibery_database_name
-        required: true
-      - name: input
-        value_ref: nv_fibery_command_input_json
-        required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: id
+          value_ref: nv_fibery_id
+          required: true
+        - name: database
+          value_ref: nv_fibery_database_name
+          required: true
+        - name: input
+          value_ref: nv_fibery_command_input_json
+          required: true
   field_create_workflow:
     description: Add a workflow state field to a database.
     kind: create
     entity: Field
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: database
+          value_ref: nv_fibery_database_name
+          required: true
+        - name: input
+          value_ref: nv_fibery_command_input_json
+          required: true
     provides:
-      - id
-      - name
-      - field_type
-      - database
-    parameters:
-      - name: database
-        value_ref: nv_fibery_database_name
-        required: true
-      - name: input
-        value_ref: nv_fibery_command_input_json
-        required: true
+    - id
+    - name
+    - field_type
+    - database
   field_delete:
     description: Delete a field from a database.
     kind: delete
@@ -767,34 +815,40 @@ capabilities:
     description: List saved views with optional filters.
     kind: query
     entity: View
-    parameters:
-      - name: input
-        value_ref: nv_fibery_command_input_json
-        required: false
+    selection:
+    - name: input
+      value_ref: nv_fibery_command_input_json
+      required: false
   view_create:
     description: Create a saved view in a space.
     kind: create
     entity: View
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: input
+          value_ref: nv_fibery_command_input_json
+          required: true
     provides:
-      - id
-      - name
-      - view_type
-      - public_id
-    parameters:
-      - name: input
-        value_ref: nv_fibery_command_input_json
-        required: true
+    - id
+    - name
+    - view_type
+    - public_id
   view_update:
     description: Update view name, config, or content.
     kind: update
     entity: View
-    parameters:
-      - name: id
-        value_ref: nv_fibery_id
-        required: true
-      - name: input
-        value_ref: nv_fibery_command_input_json
-        required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: id
+          value_ref: nv_fibery_id
+          required: true
+        - name: input
+          value_ref: nv_fibery_command_input_json
+          required: true
   view_delete:
     description: Delete one or more saved views.
     kind: delete
@@ -803,16 +857,19 @@ capabilities:
     description: Execute a saved view query and return its entity rows.
     kind: action
     entity: View
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: public_id
+          value_ref: nv_fibery_public_id
+          required: true
+        - name: input
+          value_ref: nv_fibery_command_input_json
+          required: false
     provides:
-      - id
-      - public_id
-    parameters:
-      - name: public_id
-        value_ref: nv_fibery_public_id
-        required: true
-      - name: input
-        value_ref: nv_fibery_command_input_json
-        required: false
+    - id
+    - public_id
   webhook_query:
     description: List registered webhooks and recent delivery runs.
     kind: query
@@ -821,18 +878,21 @@ capabilities:
     description: Register a webhook for a database.
     kind: create
     entity: Webhook
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: url
+          value_ref: nv_fibery_webhook_url
+          required: true
+        - name: database
+          value_ref: nv_fibery_database_name
+          required: true
     provides:
-      - id
-      - url
-      - database
-      - state
-    parameters:
-      - name: url
-        value_ref: nv_fibery_webhook_url
-        required: true
-      - name: database
-        value_ref: nv_fibery_database_name
-        required: true
+    - id
+    - url
+    - database
+    - state
   webhook_delete:
     description: Delete a webhook subscription.
     kind: delete
@@ -841,114 +901,127 @@ capabilities:
     description: Import a file from a remote URL into Fibery storage.
     kind: create
     entity: File
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: url
+          value_ref: nv_fibery_file_source_url
+          required: true
+        - name: name
+          value_ref: nv_fibery_file_name
+          required: false
+        - name: input
+          value_ref: nv_fibery_command_input_json
+          required: false
     provides:
-      - id
-      - name
-      - secret
-      - content_type
-      - content_length
-    parameters:
-      - name: url
-        value_ref: nv_fibery_file_source_url
-        required: true
-      - name: name
-        value_ref: nv_fibery_file_name
-        required: false
-      - name: input
-        value_ref: nv_fibery_command_input_json
-        required: false
+    - id
+    - name
+    - secret
+    - content_type
+    - content_length
   file_download:
     description: Download file bytes by storage secret.
     kind: action
     entity: File
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: secret
+          value_ref: nv_fibery_file_secret
+          required: true
     output:
       type: side_effect
       description: Streams raw file bytes for the given fibery/secret; not mapped onto entity fields.
-    parameters:
-      - name: secret
-        value_ref: nv_fibery_file_secret
-        required: true
   file_sign_urls:
     description: Mint temporary signed download URLs for file secrets.
     kind: action
     entity: File
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: input
+          value_ref: nv_fibery_command_input_json
+          required: true
     provides:
-      - secret
-    parameters:
-      - name: input
-        value_ref: nv_fibery_command_input_json
-        required: true
+    - secret
   file_attach:
     description: Attach a file entity to a record collection field.
     kind: action
     entity: Record
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: database
+          value_ref: nv_fibery_database_name
+          required: true
+        - name: id
+          value_ref: nv_fibery_id
+          required: true
+        - name: input
+          value_ref: nv_fibery_command_input_json
+          required: true
     output:
       type: side_effect
       description: Adds file entity ids to a files collection field on the target record.
-    parameters:
-      - name: database
-        value_ref: nv_fibery_database_name
-        required: true
-      - name: id
-        value_ref: nv_fibery_id
-        required: true
-      - name: input
-        value_ref: nv_fibery_command_input_json
-        required: true
   database_context_query:
     description: Composed field schema and sample rows for one database.
     kind: query
     entity: DatabaseContext
-    parameters:
-      - name: database
-        value_ref: nv_fibery_database_name
-        required: true
-        role: scope
+    scope:
+    - name: database
+      value_ref: nv_fibery_database_name
+      required: true
   database_context_get:
     description: Get composed database context for one database.
     kind: get
     entity: DatabaseContext
-    parameters:
-      - name: database
-        value_ref: nv_fibery_database_name
-        required: true
-        role: scope
+    scope:
+    - name: database
+      value_ref: nv_fibery_database_name
+      required: true
   entity_with_document_get:
     kind: get
     entity: RecordWithDocument
-    parameters:
-      - name: database
-        value_ref: nv_fibery_database_name
-        required: true
-        role: scope
-      - name: id
-        value_ref: nv_fibery_id
-        required: true
-      - name: document_secret
-        value_ref: nv_fibery_document_secret
-        required: true
+    scope:
+    - name: database
+      value_ref: nv_fibery_database_name
+      required: true
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: id
+          value_ref: nv_fibery_id
+          required: true
+        - name: document_secret
+          value_ref: nv_fibery_document_secret
+          required: true
 views:
   database_context:
     description: Field schema and a sample of rows for one database.
     capability: database_context_query
     entity: DatabaseContext
     scope:
-      - name: database
-        value_ref: nv_fibery_database_name
-        required: true
+    - name: database
+      value_ref: nv_fibery_database_name
+      required: true
     nodes:
-      - id: fields
-        capability: schema_detail_query
-        bind:
-          database:
-            kind: scope
-            param: database
-      - id: sample
-        capability: entity_query
-        bind:
-          database:
-            kind: scope
-            param: database
+    - id: fields
+      capability: schema_detail_query
+      bind:
+        database:
+          kind: scope
+          param: database
+    - id: sample
+      capability: entity_query
+      bind:
+        database:
+          kind: scope
+          param: database
     output:
       database:
         kind: scope
@@ -964,31 +1037,31 @@ views:
     capability: entity_with_document_get
     entity: RecordWithDocument
     scope:
-      - name: database
-        value_ref: nv_fibery_database_name
-        required: true
-      - name: id
-        value_ref: nv_fibery_id
-        required: true
-      - name: document_secret
-        value_ref: nv_fibery_document_secret
-        required: true
+    - name: database
+      value_ref: nv_fibery_database_name
+      required: true
+    - name: id
+      value_ref: nv_fibery_id
+      required: true
+    - name: document_secret
+      value_ref: nv_fibery_document_secret
+      required: true
     nodes:
-      - id: entity_row
-        capability: entity_get
-        bind:
-          database:
-            kind: scope
-            param: database
-          id:
-            kind: scope
-            param: id
-      - id: document_row
-        capability: document_get
-        bind:
-          secret:
-            kind: scope
-            param: document_secret
+    - id: entity_row
+      capability: entity_get
+      bind:
+        database:
+          kind: scope
+          param: database
+        id:
+          kind: scope
+          param: id
+    - id: document_row
+      capability: document_get
+      bind:
+        secret:
+          kind: scope
+          param: document_secret
     output:
       id:
         kind: node_field
@@ -1012,15 +1085,12 @@ views:
 values:
   nv_fibery_id:
     type: string
-    string_semantics: short
     description: Fibery UUID identifier.
   nv_fibery_public_id:
     type: string
-    string_semantics: short
     description: Fibery public id (numeric string in UI).
   nv_fibery_database_name:
     type: string
-    string_semantics: short
     description: Qualified database name Space/Name.
   nv_fibery_payload_json:
     type: json
@@ -1030,94 +1100,76 @@ values:
     description: Passthrough command args or request body fragment.
   nv_fibery_space_name:
     type: string
-    string_semantics: short
     description: Fibery space (API app) name.
   nv_fibery_field_name:
     type: string
-    string_semantics: short
     description: Fibery field wire name.
   nv_fibery_field_type:
     type: string
-    string_semantics: short
     description: Fibery field type id.
   nv_fibery_user_name:
     type: string
-    string_semantics: short
     description: User display name.
   nv_fibery_user_email:
     type: string
-    string_semantics: short
     description: User email address.
   nv_fibery_file_name:
     type: string
-    string_semantics: short
     description: File display name.
   nv_fibery_file_secret:
     type: string
-    string_semantics: short
     description: File storage secret (fibery/secret).
   nv_fibery_file_content_type:
     type: string
-    string_semantics: short
     description: MIME content type.
   nv_fibery_file_content_length:
     type: integer
     description: File size in bytes.
   nv_fibery_file_source_url:
     type: string
-    string_semantics: short
     description: Remote URL to import as a Fibery file.
   nv_fibery_view_name:
     type: string
-    string_semantics: short
     description: Saved view title.
   nv_fibery_view_type:
     type: string
-    string_semantics: short
     description: View layout type (board, grid, document, etc.).
   nv_fibery_webhook_id:
     type: string
-    string_semantics: short
     description: Webhook subscription id (integer on wire, string in expressions).
   nv_fibery_webhook_url:
     type: string
-    string_semantics: short
     description: Webhook callback URL.
   nv_fibery_webhook_state:
     type: string
-    string_semantics: short
     description: Webhook lifecycle state.
   nv_fibery_search_query:
     type: string
-    string_semantics: short
     description: Full-text search query string.
   nv_fibery_search_kind:
     type: string
-    string_semantics: short
     description: Search hit kind (entity or view).
   nv_fibery_history_id:
     type: string
-    string_semantics: short
     description: History entry id.
   nv_fibery_history_action:
     type: string
-    string_semantics: short
     description: History action name.
   nv_fibery_document_secret:
     type: string
-    string_semantics: short
     description: Collaborative document secret UUID.
   nv_fibery_document_format:
-    type: select
-    allowed_values: [md, html, json]
+    type: enum
+    enum:
+    - md
+    - html
+    - json
     description: Document wire format.
   nv_fibery_document_markdown:
-    type: string
-    string_semantics: markdown
+    type: markdown
     description: Rich-text document body.
   nv_wire_str_short:
     type: string
-    string_semantics: short
   nv_wire_int:
     type: integer
   nv_wire_num:
@@ -1125,5 +1177,4 @@ values:
   nv_wire_bool:
     type: boolean
   nv_wire_date_rfc3339:
-    type: date
-    value_format: rfc3339
+    type: rfc3339

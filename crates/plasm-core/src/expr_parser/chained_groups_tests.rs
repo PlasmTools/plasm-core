@@ -5,8 +5,8 @@ use crate::cgs_federation::CgsLayer;
 use crate::schema::registry_test_util;
 use crate::symbol_tuning::{SymbolMap, SymbolSession};
 use crate::{
-    CapabilityKind, CapabilityMapping, CapabilitySchema, FieldType, NamedValueSchema,
-    ResourceSchema, CGS,
+    CapabilityInputs, CapabilityKind, CapabilityMapping, CapabilitySchema, FieldType,
+    NamedValueSchema, ResourceSchema, CGS,
 };
 use std::sync::Arc;
 
@@ -15,11 +15,11 @@ fn ticket_query_fixture_cgs() -> CGS {
     cgs.values.insert(
         "fx_str".into(),
         NamedValueSchema {
+            domain: Default::default(),
             description: String::new(),
             field_type: FieldType::String,
             value_format: None,
             allowed_values: None,
-            string_semantics: None,
             array_items: None,
             currency: None,
         },
@@ -39,6 +39,8 @@ fn ticket_query_fixture_cgs() -> CGS {
         abstract_entity: false,
         domain_projection_examples: false,
         primary_read: None,
+        primary_query: None,
+        primary_search: None,
         discovery: None,
     })
     .unwrap();
@@ -48,7 +50,8 @@ fn ticket_query_fixture_cgs() -> CGS {
         kind: CapabilityKind::Get,
         domain: "Ticket".into(),
         identity_key: None,
-        mapping: CapabilityMapping {
+        invalidates_entities: vec![],
+        mapping: Some(CapabilityMapping {
             template: serde_json::json!({
                 "method": "GET",
                 "path": [
@@ -58,8 +61,9 @@ fn ticket_query_fixture_cgs() -> CGS {
                 ]
             })
             .into(),
-        },
-        input_schema: None,
+        }),
+        derived: None,
+        inputs: CapabilityInputs::default(),
         output_schema: None,
         provides: vec![],
         scope_aggregate_key_policy: Default::default(),

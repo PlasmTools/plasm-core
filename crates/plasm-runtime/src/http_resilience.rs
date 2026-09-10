@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, Semaphore, SemaphorePermit};
-use tracing::debug;
+use tracing::{debug, Instrument};
 
 /// Retry and concurrency policy for outbound HTTP.
 #[derive(Debug, Clone)]
@@ -199,6 +199,38 @@ impl ResilientHttpTransport {
             }
         }
     }
+
+    async fn run_with_retries<F, Fut>(
+        &self,
+        url: &str,
+        method: &'static str,
+        host: &str,
+        started: Instant,
+        mut attempt_fn: F,
+    ) -> Result<(serde_json::Value, Option<String>), RuntimeError>
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = Result<HttpAttemptResult, RuntimeError>>,
+    {
+        let mut attempt = 0u32;
+        async {
+            loop {
+                attempt += 1;
+                tracing::Span::current().record("attempt", attempt);
+                let outcome = attempt_fn().await;
+                match self
+                    .process_attempt(url, method, host, attempt, started, outcome)
+                    .await
+                {
+                    Ok(Some(ok)) => break Ok(ok),
+                    Ok(None) => continue,
+                    Err(e) => break Err(e),
+                }
+            }
+        }
+        .instrument(crate::spans::http_retry())
+        .await
+    }
 }
 
 fn finalize_retryable_failure(
@@ -276,22 +308,12 @@ impl HttpTransport for ResilientHttpTransport {
         )
         .await?;
 
-        let mut attempt = 0u32;
-        let result = loop {
-            attempt += 1;
-            let outcome = self
-                .inner
-                .compiled_http_attempt(base_url, request, auth.clone())
-                .await;
-            match self
-                .process_attempt(&url, method, &host, attempt, started, outcome)
-                .await
-            {
-                Ok(Some(ok)) => break Ok(ok),
-                Ok(None) => continue,
-                Err(e) => break Err(e),
-            }
-        };
+        let result = self
+            .run_with_retries(&url, method, &host, started, || {
+                self.inner
+                    .compiled_http_attempt(base_url, request, auth.clone())
+            })
+            .await;
         let elapsed = started.elapsed();
         crate::runtime_metrics::record_outbound_http_request(method, &url, result.is_ok(), elapsed);
         crate::live_run_telemetry::record_live_http_trace(
@@ -318,19 +340,11 @@ impl HttpTransport for ResilientHttpTransport {
         )
         .await?;
 
-        let mut attempt = 0u32;
-        let result = loop {
-            attempt += 1;
-            let outcome = self.inner.absolute_get_attempt(url, auth.clone()).await;
-            match self
-                .process_attempt(url, "GET", &host, attempt, started, outcome)
-                .await
-            {
-                Ok(Some(ok)) => break Ok(ok),
-                Ok(None) => continue,
-                Err(e) => break Err(e),
-            }
-        };
+        let result = self
+            .run_with_retries(url, "GET", &host, started, || {
+                self.inner.absolute_get_attempt(url, auth.clone())
+            })
+            .await;
         let elapsed = started.elapsed();
         crate::runtime_metrics::record_outbound_http_request("GET", url, result.is_ok(), elapsed);
         crate::live_run_telemetry::record_live_http_trace(

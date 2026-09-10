@@ -1,157 +1,208 @@
-# Musixmatch API uses RPC-style paths (/artist.search, /chart.artists.get).
-# Responses are wrapped: {"message": {"header": {}, "body": {"artist_list": [...]}}}
-# The decoder will see the body directly via hermit mock (flat structure).
-
 artist_search:
   method: GET
   path:
-    - type: literal
-      value: artist.search
+  - type: literal
+    value: artist.search
   response:
     items: artist_list
   pagination:
     params:
-      page: {counter: 1}
-      page_size: {fixed: 10}
+      page:
+        counter: 1
+      page_size:
+        fixed: 10
+        role: page_size
+    strategy: page_number
   query:
     type: object
     fields:
-      - [q_artist, { type: var, name: q_artist }]
-      - - f_artist_id
-        - type: if
-          condition: { type: exists, var: f_artist_id }
-          then_expr: { type: var, name: f_artist_id }
-          else_expr: { type: const, value: null }
-
+    - - q_artist
+      - type: var
+        name: query
+    - - f_artist_id
+      - type: if
+        condition:
+          type: exists
+          var: f_artist_id
+        then_expr:
+          type: var
+          name: f_artist_id
+        else_expr:
+          type: const
+          value: null
 artist_get:
   method: GET
   path:
-    - type: literal
-      value: artist.get
+  - type: literal
+    value: artist.get
   query:
     type: object
     fields:
-      - [artist_id, { type: var, name: id }]
-
+    - - artist_id
+      - type: var
+        name: id
 chart_artists:
   method: GET
   path:
-    - type: literal
-      value: chart.artists.get
+  - type: literal
+    value: chart.artists.get
   response:
     items: artist_list
   pagination:
     params:
-      page: {counter: 1}
-      page_size: {fixed: 10}
+      page:
+        counter: 1
+      page_size:
+        fixed: 10
+        role: page_size
+    strategy: page_number
   query:
     type: object
     fields:
-      - - country
-        - type: if
-          condition: { type: exists, var: country }
-          then_expr: { type: var, name: country }
-          else_expr: { type: const, value: null }
-
-track_search:
+    - - country
+      - type: if
+        condition:
+          type: exists
+          var: country
+        then_expr:
+          type: var
+          name: country
+        else_expr:
+          type: const
+          value: null
+track_get:
   method: GET
   path:
-    - type: literal
+  - type: literal
+    value: track.get
+  query:
+    type: object
+    fields:
+    - - track_id
+      - type: var
+        name: id
+track_lyrics_get:
+  method: GET
+  path:
+  - type: literal
+    value: track.lyrics.get
+  query:
+    type: object
+    fields:
+    - - track_id
+      - type: var
+        name: id
+track_query:
+  method: GET
+  path:
+  - type: if
+    condition: &id001
+      type: equals
+      left:
+        type: var
+        name: mode
+      right:
+        type: const
+        value: chart
+    then_expr:
+      type: const
+      value: chart.tracks.get
+    else_expr:
+      type: const
       value: track.search
   response:
     items: track_list
   pagination:
     params:
-      page: {counter: 1}
-      page_size: {fixed: 10}
+      page:
+        counter: 1
+      page_size:
+        fixed: 10
+        role: page_size
+    strategy: page_number
   query:
-    type: object
-    fields:
-      - - q_track
-        - type: if
-          condition: { type: exists, var: q_track }
-          then_expr: { type: var, name: q_track }
-          else_expr: { type: const, value: null }
-      - - q_artist
-        - type: if
-          condition: { type: exists, var: q_artist }
-          then_expr: { type: var, name: q_artist }
-          else_expr: { type: const, value: null }
-      - - f_artist_id
-        - type: if
-          condition: { type: exists, var: f_artist_id }
-          then_expr: { type: var, name: f_artist_id }
-          else_expr: { type: const, value: null }
-      - - f_music_genre_id
-        - type: if
-          condition: { type: exists, var: f_music_genre_id }
-          then_expr: { type: var, name: f_music_genre_id }
-          else_expr: { type: const, value: null }
-      - - f_has_lyrics
-        - type: if
-          condition: { type: exists, var: f_has_lyrics }
-          then_expr: { type: var, name: f_has_lyrics }
-          else_expr: { type: const, value: null }
-
-track_get:
-  method: GET
-  path:
-    - type: literal
-      value: track.get
-  query:
-    type: object
-    fields:
-      - [track_id, { type: var, name: id }]
-
-chart_tracks:
-  method: GET
-  path:
-    - type: literal
-      value: chart.tracks.get
-  response:
-    items: track_list
-  pagination:
-    params:
-      page: {counter: 1}
-      page_size: {fixed: 10}
-  query:
-    type: object
-    fields:
+    type: if
+    condition: *id001
+    then_expr:
+      type: object
+      fields:
       - - country
         - type: if
-          condition: { type: exists, var: country }
-          then_expr: { type: var, name: country }
-          else_expr: { type: const, value: null }
+          condition:
+            type: exists
+            var: country
+          then_expr:
+            type: var
+            name: country
+          else_expr:
+            type: const
+            value: null
       - - f_has_lyrics
         - type: if
-          condition: { type: exists, var: f_has_lyrics }
-          then_expr: { type: var, name: f_has_lyrics }
-          else_expr: { type: const, value: null }
-
-track_get:
-  # GET /track.get?track_id={id} — fetch a single track by ID
-  method: GET
-  path:
-    - type: literal
-      value: track.get
-  query:
-    type: object
-    fields:
-      - - track_id
-        - type: var
-          name: id
-
-track_lyrics_get:
-  # GET /track.lyrics.get?track_id={id} — fetch lyrics for a track
-  # Response: {"message": {"body": {"lyrics": {lyrics_id, lyrics_body, ...}}}}
-  # The decoder finds the Lyrics entity via lyrics_id.
-  method: GET
-  path:
-    - type: literal
-      value: track.lyrics.get
-  query:
-    type: object
-    fields:
-      - - track_id
-        - type: var
-          name: id
+          condition:
+            type: exists
+            var: f_has_lyrics
+          then_expr:
+            type: var
+            name: f_has_lyrics
+          else_expr:
+            type: const
+            value: null
+    else_expr:
+      type: object
+      fields:
+      - - q_track
+        - type: if
+          condition:
+            type: exists
+            var: q_track
+          then_expr:
+            type: var
+            name: q_track
+          else_expr:
+            type: const
+            value: null
+      - - q_artist
+        - type: if
+          condition:
+            type: exists
+            var: q_artist
+          then_expr:
+            type: var
+            name: q_artist
+          else_expr:
+            type: const
+            value: null
+      - - f_artist_id
+        - type: if
+          condition:
+            type: exists
+            var: f_artist_id
+          then_expr:
+            type: var
+            name: f_artist_id
+          else_expr:
+            type: const
+            value: null
+      - - f_music_genre_id
+        - type: if
+          condition:
+            type: exists
+            var: f_music_genre_id
+          then_expr:
+            type: var
+            name: f_music_genre_id
+          else_expr:
+            type: const
+            value: null
+      - - f_has_lyrics
+        - type: if
+          condition:
+            type: exists
+            var: f_has_lyrics
+          then_expr:
+            type: var
+            name: f_has_lyrics
+          else_expr:
+            type: const
+            value: null

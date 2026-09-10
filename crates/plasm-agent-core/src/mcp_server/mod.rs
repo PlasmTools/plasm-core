@@ -22,7 +22,7 @@
 //! Do not shrink or rotate picks to “narrow” the session; that only makes sense when opening a new binding.
 //! Tenant MCP policy
 //! is enforced from `Authorization: Bearer <api_key>` (opaque key from control-plane provision) when tenant configs exist.
-//! Tool text returns **table-only** teaching TSV on fresh `plasm_context` opens (`reused: false`); repeated
+//! Tool text returns **table-only** language card on fresh `plasm_context` opens (`reused: false`); repeated
 //! opens with the same entry + capability picks omit the teaching body to avoid token churn.
 //! **Symbols:** for a fixed binding (`prompt_hash` + `session`), `e#` / `m#` / `p#` grow **append-only**
 //! when you add new picks; they do not reshuffle. A new primary catalog open or logical session starts a new
@@ -39,12 +39,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::discovery_human_format::{format_discovery_markdown_for_mcp, DiscoveryTablePolicy};
-
 use async_trait::async_trait;
 use base64::Engine as _;
-use plasm_core::discovery::{CapabilityQuery, DiscoveryError};
-use plasm_core::{CgsCatalog, CgsDiscovery};
+use plasm_core::CgsCatalog;
 use rust_mcp_sdk::mcp_server::ServerHandler;
 use rust_mcp_sdk::schema::schema_utils::CallToolError;
 use rust_mcp_sdk::schema::{
@@ -57,11 +54,9 @@ use rust_mcp_sdk::McpServer;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::execute_session::ExecuteSession;
-use crate::http_execute::{normalize_capability_seeds, CapabilitySeed, RankedCapabilitiesArg};
 use crate::incoming_auth::{IncomingAuthMode, TenantPrincipal};
 use crate::mcp_logical_ref::{format_logical_session_wire_ref, parse_logical_session_wire_ref};
 use crate::mcp_plasm_meta::PlasmMetaIndex;
-use crate::mcp_policy;
 use crate::mcp_runtime_config::McpRuntimeConfig;
 use crate::mcp_stream_identity::McpTransportIdentity;
 use crate::run_artifacts::{
@@ -77,8 +72,9 @@ mod artifact_access;
 mod artifact_resolve;
 mod call_tool_dispatch;
 mod committed_plasm_run;
-mod context_new_seeds;
-mod discover;
+#[cfg(test)]
+mod future_size_probe;
+mod host_fault;
 mod host_policy;
 mod initialize;
 mod mcp_http_dns_rebinding;
@@ -89,9 +85,12 @@ mod plasm_tool_dry_meta;
 mod plasm_tool_dry_run;
 mod plasm_tool_handler;
 mod read_run_artifact;
+mod resource_helpers;
 mod resource_read;
 mod resource_read_trace;
 mod schema;
+#[cfg(test)]
+mod stack_budget_test;
 mod stateless;
 mod teaching_prompt_reporter;
 mod tool_parse;
@@ -116,20 +115,15 @@ mod tests;
 
 // Re-exports for sibling modules (`use super::*`) and crate-internal callers.
 #[allow(unused_imports)]
-pub(crate) use discover::{
-    discovery_mcp_error, mcp_call_tool_error_class, mcp_discover_query_from_arguments, mcp_key,
-};
-#[allow(unused_imports)]
 pub(crate) use mcp_plasm_invoke::{parse_mcp_plasm_invocation, McpPlasmInvocation};
 #[allow(unused_imports)]
+pub(crate) use resource_helpers::{mcp_call_tool_error_class, mcp_key};
+#[allow(unused_imports)]
 pub(crate) use schema::{args_value, json_schema_non_empty_string_type, json_schema_string_type};
-#[cfg(test)]
-pub(crate) use tool_parse::parse_tool_seeds;
 #[allow(unused_imports)]
 pub(crate) use tool_parse::{
     comp_content_sha256_hex, parse_logical_session_ref_arg, parse_optional_principal,
-    parse_plasm_context_ranked_capabilities, parse_plasm_context_session_mode,
-    parse_tool_seeds_optional, plan_display_name_from_comp, plan_node_count_from_comp,
+    parse_plasm_context_session_mode, plan_display_name_from_comp, plan_node_count_from_comp,
 };
 pub(crate) use trace::CodePlanTraceInput;
 #[allow(unused_imports)]
@@ -520,46 +514,6 @@ impl PlasmMcpHandler {
 }
 
 impl PlasmMcpHandler {
-    #[allow(clippy::too_many_lines)]
-    async fn handle_mcp_tool_discover_capabilities(
-        &self,
-        key: &str,
-        runtime: &Arc<dyn McpServer>,
-        v: &serde_json::Value,
-    ) -> Result<CallToolResult, CallToolError> {
-        self.ensure_mcp_principal(key, runtime).await?;
-        let q = mcp_discover_query_from_arguments(v)
-            .map_err(|msg| CallToolError::invalid_arguments("discover_capabilities", Some(msg)))?;
-        let discover_span = crate::spans::mcp_tool_discover_capabilities();
-        let _discover_guard = discover_span.enter();
-        tracing::info!(
-            target: "plasm_agent::mcp",
-            tool = "discover_capabilities",
-            intent = %q.tokens.first().map(String::as_str).unwrap_or_default(),
-            "MCP tool: discover_capabilities (search)"
-        );
-        let reg = self.plasm.catalog.snapshot();
-        let mut r = reg.discover(&q).map_err(discovery_mcp_error)?;
-        drop(_discover_guard);
-        let tcfg = self.tenant_mcp_cfg(runtime).await?;
-        if let Some(cfg) = tcfg {
-            r = mcp_policy::filter_discovery_result(r, cfg.as_ref());
-        }
-        let formatted = format_discovery_markdown_for_mcp(&r, &DiscoveryTablePolicy::default());
-        let mut res =
-            CallToolResult::text_content(vec![TextContent::new(formatted.markdown, None, None)]);
-        let mut meta = serde_json::Map::new();
-        meta.insert(
-            "plasm".into(),
-            serde_json::Value::Object(crate::discovery_human_format::discovery_plasm_tool_meta(
-                &r,
-                &formatted.omission,
-            )),
-        );
-        res = res.with_meta(Some(meta));
-        Ok(res)
-    }
-
     async fn handle_mcp_tool_ui_list_catalogs(
         &self,
         key: &str,

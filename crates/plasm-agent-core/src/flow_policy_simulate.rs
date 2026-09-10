@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use crate::execute_session::ExecuteSession;
 use crate::flow_policy_repository::FlowPolicyRow;
-use crate::http_execute::{apply_capability_seeds, CapabilitySeed, RankedCapabilitiesArg};
+use crate::http_execute::{apply_capability_seeds, CapabilitySeed};
 use crate::plan_flow_policy::{FlowPolicy, FlowPolicySnapshot, PolicyRevision};
 use crate::plan_ux_reflection::{plan_ux_reflection_value, PlanUxBuildContext};
 use crate::plasm_compile::compile_plasm_expression;
@@ -107,19 +107,9 @@ pub async fn simulate_flow_policy_with_options(
     opts: SimulateOptions,
 ) -> Result<FlowPolicySimulateResult, SimulateError> {
     let snapshot = policy_snapshot_for_arm(row, arm, opts.ephemeral_policy.as_ref())?;
-    let out = apply_capability_seeds(
-        st,
-        None,
-        None,
-        seeds,
-        None,
-        None,
-        None,
-        intent,
-        RankedCapabilitiesArg::Unspecified,
-    )
-    .await
-    .map_err(|e| SimulateError::Session(e.to_string()))?;
+    let out = apply_capability_seeds(st, None, None, seeds, None, None, None, intent)
+        .await
+        .map_err(|e| SimulateError::Session(e.to_string()))?;
 
     let ph = out.prompt_hash.clone();
     let sid = out.session_id.clone();

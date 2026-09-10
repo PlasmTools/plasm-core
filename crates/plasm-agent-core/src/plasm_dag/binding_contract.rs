@@ -2,6 +2,10 @@
 
 use super::prelude::*;
 use super::types::{BindingContractSource, CompileState, DagNode, DagNodeSource};
+use crate::plasm_dag_surface_guards::{
+    content_reference_error, path_is_render_content_stitch, ContentReferenceSite,
+};
+use crate::program_binding::ContinuationCapability;
 
 pub(in crate::plasm_dag) fn binding_contract(
     state: &CompileState<'_>,
@@ -9,6 +13,32 @@ pub(in crate::plasm_dag) fn binding_contract(
 ) -> Option<ProgramBindingContract> {
     let node = state.get(label)?;
     Some(binding_contract_for_node(state, label, node))
+}
+
+/// Reject `label.content` when `label` is a scalar cell that is not a row-to-text render binding.
+pub(in crate::plasm_dag) fn reject_illegal_content_stitch(
+    state: &CompileState<'_>,
+    node: &str,
+    path: &[impl AsRef<str>],
+) -> Result<(), String> {
+    if !path_is_render_content_stitch(path) {
+        return Ok(());
+    }
+    let Some(contract) = binding_contract(state, node) else {
+        return Ok(());
+    };
+    if !matches!(
+        contract.continuation,
+        ContinuationCapability::RenderContentScalar
+    ) && contract.is_scalar_cell()
+    {
+        return Err(content_reference_error(
+            node,
+            ContentReferenceSite::Continuation,
+            contract.continuation,
+        ));
+    }
+    Ok(())
 }
 
 pub(in crate::plasm_dag) fn binding_contract_for_node(
@@ -50,6 +80,7 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
     node_expr: &str,
     source: &DagNodeSource,
 ) -> ProgramBindingContract {
+    let value_kind = binding_value_kind(source);
     match source {
         DagNodeSource::Surface {
             parsed,
@@ -58,27 +89,30 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
             result_shape,
             ..
         } => {
-            let row_cardinality =
-                if matches!(kind, PlanNodeKind::Get) || matches!(parsed.expr, Expr::Get(_)) {
-                    RowCardinalityProof::StaticSingleton
-                } else if matches!(kind, PlanNodeKind::Query | PlanNodeKind::Search) {
-                    RowCardinalityProof::StaticPlural
-                } else {
-                    RowCardinalityProof::RuntimeChecked
-                };
-            let continuation =
-                if matches!(
-                    kind,
-                    PlanNodeKind::Get | PlanNodeKind::Query | PlanNodeKind::Search
-                ) || matches!(parsed.expr, Expr::Get(_) | Expr::Query(_) | Expr::Chain(_))
-                {
-                    ContinuationCapability::RelationDot {
-                        segments: SegmentPolicy::MultiSegment,
-                        method_invoke: true,
-                    }
-                } else {
-                    ContinuationCapability::Terminal
-                };
+            // MutationResult writers decode entity rows → StaticSingleton + RelationDot (PLP-1).
+            let mutation_result =
+                matches!(result_shape, crate::plasm_plan::ResultShape::MutationResult);
+            let read_get = matches!(kind, PlanNodeKind::Get) || matches!(parsed.expr, Expr::Get(_));
+            let read_list = matches!(kind, PlanNodeKind::Query | PlanNodeKind::Search);
+            let row_surface = read_get
+                || read_list
+                || mutation_result
+                || matches!(parsed.expr, Expr::Query(_) | Expr::Chain(_));
+            let row_cardinality = if read_get || mutation_result {
+                RowCardinalityProof::StaticSingleton
+            } else if read_list {
+                RowCardinalityProof::StaticPlural
+            } else {
+                RowCardinalityProof::RuntimeChecked
+            };
+            let continuation = if row_surface {
+                ContinuationCapability::RelationDot {
+                    segments: SegmentPolicy::MultiSegment,
+                    method_invoke: true,
+                }
+            } else {
+                ContinuationCapability::Terminal
+            };
             let anchor = if matches!(&continuation, ContinuationCapability::Terminal) {
                 ContinuationAnchor::None
             } else {
@@ -89,6 +123,7 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
                 row_entity: qualified_entity.clone(),
                 result_shape: *result_shape,
                 row_cardinality,
+                value_kind,
                 continuation,
                 anchor,
             }
@@ -113,6 +148,7 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
                 row_entity: qualified_entity.clone(),
                 result_shape: *result_shape,
                 row_cardinality,
+                value_kind,
                 continuation: ContinuationCapability::RelationDot {
                     segments: SegmentPolicy::SingleSegment,
                     method_invoke: true,
@@ -141,6 +177,7 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
                 row_entity: parent.row_entity.clone(),
                 result_shape: parent.result_shape,
                 row_cardinality: parent.row_cardinality,
+                value_kind,
                 continuation: parent.continuation,
                 anchor,
             }
@@ -169,6 +206,7 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
                 } else {
                     RowCardinalityProof::StaticPlural
                 },
+                value_kind,
                 continuation: parent.continuation,
                 anchor: ContinuationAnchor::BindingLabel,
             }
@@ -184,37 +222,29 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
             },
             result_shape: crate::plasm_plan::ResultShape::Single,
             row_cardinality: RowCardinalityProof::StaticSingleton,
+            value_kind,
             continuation: ContinuationCapability::RenderContentScalar,
             anchor: ContinuationAnchor::None,
         },
         DagNodeSource::Compute { schema, .. } => synthetic_terminal_contract(label, schema),
         DagNodeSource::Data(value) => {
-            let singleton = matches!(
-                value,
-                PlanValue::Literal { value }
-                    if value.as_array().is_none_or(|items| items.len() <= 1)
-            );
+            let shape = data_literal_shape(value);
             ProgramBindingContract {
                 label: label.to_string(),
                 row_entity: QualifiedEntityKey {
                     entry_id: String::new(),
                     entity: String::new(),
                 },
-                result_shape: if singleton {
-                    crate::plasm_plan::ResultShape::Single
-                } else {
-                    crate::plasm_plan::ResultShape::List
-                },
-                row_cardinality: if singleton {
-                    RowCardinalityProof::StaticSingleton
-                } else {
-                    RowCardinalityProof::StaticPlural
-                },
+                result_shape: shape.result_shape,
+                row_cardinality: shape.row_cardinality,
+                value_kind,
                 continuation: ContinuationCapability::Terminal,
                 anchor: ContinuationAnchor::None,
             }
         }
-        DagNodeSource::Derive { .. } | DagNodeSource::ForEach { .. } => ProgramBindingContract {
+        DagNodeSource::Derive { .. }
+        | DagNodeSource::ForEach { .. }
+        | DagNodeSource::IterateUntil { .. } => ProgramBindingContract {
             label: label.to_string(),
             row_entity: QualifiedEntityKey {
                 entry_id: String::new(),
@@ -222,8 +252,78 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
             },
             result_shape: crate::plasm_plan::ResultShape::Single,
             row_cardinality: RowCardinalityProof::RuntimeChecked,
+            value_kind,
             continuation: ContinuationCapability::Terminal,
             anchor: ContinuationAnchor::None,
+        },
+        DagNodeSource::ScalarExtract { .. } => ProgramBindingContract {
+            label: label.to_string(),
+            row_entity: QualifiedEntityKey {
+                entry_id: String::new(),
+                entity: String::new(),
+            },
+            result_shape: crate::plasm_plan::ResultShape::Single,
+            row_cardinality: RowCardinalityProof::StaticSingleton,
+            value_kind,
+            continuation: ContinuationCapability::Terminal,
+            anchor: ContinuationAnchor::None,
+        },
+    }
+}
+
+/// PLP-1 table: which DAG sources denote a proven scalar cell vs an entity row.
+fn binding_value_kind(source: &DagNodeSource) -> BindingValueKind {
+    match source {
+        DagNodeSource::ScalarExtract { .. }
+        | DagNodeSource::Compute {
+            op: ComputeOp::Render { .. },
+            ..
+        } => BindingValueKind::ScalarCell,
+        DagNodeSource::Data(value) => data_literal_shape(value).value_kind,
+        _ => BindingValueKind::EntityRow,
+    }
+}
+
+struct DataLiteralShape {
+    result_shape: crate::plasm_plan::ResultShape,
+    row_cardinality: RowCardinalityProof,
+    value_kind: BindingValueKind,
+}
+
+/// Single classifier for `DagNodeSource::Data` — cardinality and value-kind stay aligned.
+fn data_literal_shape(value: &PlanValue) -> DataLiteralShape {
+    match value {
+        PlanValue::Literal { value: lit } => match lit {
+            serde_json::Value::Null
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Number(_)
+            | serde_json::Value::String(_) => DataLiteralShape {
+                result_shape: crate::plasm_plan::ResultShape::Single,
+                row_cardinality: RowCardinalityProof::StaticSingleton,
+                value_kind: BindingValueKind::ScalarCell,
+            },
+            serde_json::Value::Array(items) if items.len() <= 1 => DataLiteralShape {
+                result_shape: crate::plasm_plan::ResultShape::Single,
+                row_cardinality: RowCardinalityProof::StaticSingleton,
+                value_kind: BindingValueKind::EntityRow,
+            },
+            serde_json::Value::Array(_) => DataLiteralShape {
+                result_shape: crate::plasm_plan::ResultShape::List,
+                row_cardinality: RowCardinalityProof::StaticPlural,
+                value_kind: BindingValueKind::EntityRow,
+            },
+            // Objects are non-array literals → prior `as_array().is_none_or(…)` treated them
+            // as singleton rows, not scalar cells.
+            serde_json::Value::Object(_) => DataLiteralShape {
+                result_shape: crate::plasm_plan::ResultShape::Single,
+                row_cardinality: RowCardinalityProof::StaticSingleton,
+                value_kind: BindingValueKind::EntityRow,
+            },
+        },
+        _ => DataLiteralShape {
+            result_shape: crate::plasm_plan::ResultShape::List,
+            row_cardinality: RowCardinalityProof::StaticPlural,
+            value_kind: BindingValueKind::EntityRow,
         },
     }
 }
@@ -240,6 +340,7 @@ pub(in crate::plasm_dag) fn synthetic_row_contract(
         },
         result_shape: crate::plasm_plan::ResultShape::List,
         row_cardinality: RowCardinalityProof::RuntimeChecked,
+        value_kind: BindingValueKind::EntityRow,
         continuation: ContinuationCapability::PostfixOnly,
         anchor: ContinuationAnchor::None,
     }
@@ -257,7 +358,159 @@ pub(in crate::plasm_dag) fn synthetic_terminal_contract(
         },
         result_shape: crate::plasm_plan::ResultShape::Single,
         row_cardinality: RowCardinalityProof::RuntimeChecked,
+        value_kind: BindingValueKind::EntityRow,
         continuation: ContinuationCapability::Terminal,
         anchor: ContinuationAnchor::None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plasm_dag::types::DagNodeSource;
+    use crate::plasm_plan::{ComputeOp, SyntheticResultSchema};
+
+    #[test]
+    fn binding_value_kind_table() {
+        assert_eq!(
+            binding_value_kind(&DagNodeSource::ScalarExtract {
+                source: "peer".into(),
+                wire: "title".into(),
+            }),
+            BindingValueKind::ScalarCell
+        );
+        assert_eq!(
+            binding_value_kind(&DagNodeSource::Compute {
+                source: "src".into(),
+                op: ComputeOp::Render {
+                    columns: Vec::new(),
+                    template: String::new(),
+                    column_aliases: Default::default(),
+                    render_bindings: Vec::new(),
+                },
+                schema: SyntheticResultSchema {
+                    entity: None,
+                    fields: Vec::new(),
+                },
+                collection_alias: None,
+            }),
+            BindingValueKind::ScalarCell
+        );
+        assert_eq!(
+            binding_value_kind(&DagNodeSource::Data(PlanValue::Literal {
+                value: serde_json::json!("hi"),
+            })),
+            BindingValueKind::ScalarCell
+        );
+        assert_eq!(
+            binding_value_kind(&DagNodeSource::Data(PlanValue::Literal {
+                value: serde_json::json!({"k": 1}),
+            })),
+            BindingValueKind::EntityRow
+        );
+        assert_eq!(
+            binding_value_kind(&DagNodeSource::Derive {
+                source: "src".into(),
+                value: PlanValue::Literal {
+                    value: serde_json::json!("x"),
+                },
+                inputs: Vec::new(),
+            }),
+            BindingValueKind::EntityRow
+        );
+    }
+
+    #[test]
+    fn data_literal_shape_aligns_cardinality_and_value_kind() {
+        let s = data_literal_shape(&PlanValue::Literal {
+            value: serde_json::json!("cell"),
+        });
+        assert_eq!(s.value_kind, BindingValueKind::ScalarCell);
+        assert!(matches!(
+            s.row_cardinality,
+            RowCardinalityProof::StaticSingleton
+        ));
+
+        let arr1 = data_literal_shape(&PlanValue::Literal {
+            value: serde_json::json!([1]),
+        });
+        assert_eq!(arr1.value_kind, BindingValueKind::EntityRow);
+        assert!(matches!(
+            arr1.row_cardinality,
+            RowCardinalityProof::StaticSingleton
+        ));
+
+        let arr_many = data_literal_shape(&PlanValue::Literal {
+            value: serde_json::json!([1, 2]),
+        });
+        assert_eq!(arr_many.value_kind, BindingValueKind::EntityRow);
+        assert!(matches!(
+            arr_many.row_cardinality,
+            RowCardinalityProof::StaticPlural
+        ));
+    }
+
+    #[test]
+    fn mutation_result_surface_is_static_singleton_relation_dot() {
+        use plasm_core::expr::{CreateExpr, InvokeExpr};
+        use plasm_core::expr_parser::ParsedExpr;
+        use plasm_core::{CatalogEntryStamp, InvokeInputPayload};
+
+        let pipeline = PromptPipelineConfig::default();
+        let state = CompileState::new(&pipeline, None);
+        let qe = QualifiedEntityKey {
+            entry_id: "test".into(),
+            entity: "AuthSession".into(),
+        };
+
+        let create_parsed = ParsedExpr::from_expr(Expr::Create(CreateExpr {
+            capability: "create".into(),
+            entity: "AuthSession".into(),
+            input: InvokeInputPayload::Raw(plasm_core::Value::Object(Default::default())),
+            catalog_entry_id: CatalogEntryStamp::none(),
+            dotted_receiver: None,
+        }));
+        let create_src = DagNodeSource::Surface {
+            parsed: create_parsed,
+            kind: PlanNodeKind::Create,
+            qualified_entity: qe.clone(),
+            effect_class: EffectClass::Write,
+            result_shape: crate::plasm_plan::ResultShape::MutationResult,
+            uses_result: Vec::new(),
+        };
+        let create_c =
+            program_binding_contract_for_source(&state, "created", "e1.m1()", &create_src);
+        assert!(matches!(
+            create_c.row_cardinality,
+            RowCardinalityProof::StaticSingleton
+        ));
+        assert!(matches!(
+            create_c.continuation,
+            ContinuationCapability::RelationDot { .. }
+        ));
+
+        let ack_parsed = ParsedExpr::from_expr(Expr::Invoke(InvokeExpr {
+            capability: "logout".into(),
+            target: Ref::new("AuthSession", ""),
+            input: None,
+            catalog_entry_id: CatalogEntryStamp::none(),
+        }));
+        let ack_src = DagNodeSource::Surface {
+            parsed: ack_parsed,
+            kind: PlanNodeKind::Action,
+            qualified_entity: qe,
+            effect_class: EffectClass::SideEffect,
+            result_shape: crate::plasm_plan::ResultShape::SideEffectAck,
+            uses_result: Vec::new(),
+        };
+        let ack_c = program_binding_contract_for_source(&state, "done", "e1.m2()", &ack_src);
+        assert!(matches!(
+            ack_c.row_cardinality,
+            RowCardinalityProof::RuntimeChecked
+        ));
+        assert!(matches!(
+            ack_c.continuation,
+            ContinuationCapability::Terminal
+        ));
     }
 }

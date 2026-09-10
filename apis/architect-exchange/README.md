@@ -23,6 +23,13 @@ Vendor OpenAPI (v15.24.0), downloaded into this directory:
 
 Docs index: <https://docs.architect.exchange/llms.txt>
 
+## Tickers
+
+`ticker_query` lists the `tickers` response array from `/api/tickers`, with
+offset pagination and optional symbol ordering. `ticker_get` retrieves the single
+`ticker` object for its explicit symbol. `Instrument.ticker` is a one-to-one GET
+binding from the instrument's symbol; it does not invoke the market-wide listing.
+
 ## Auth
 
 Architect mints a JWT with `POST /api/authenticate` and JSON `{api_key, api_secret, expiration_seconds}`. This is **not** OAuth client-credentials. The catalog uses:

@@ -1,10 +1,8 @@
 //! Federate catalog rows.
 
 use super::super::super::*;
-use plasm_core::MutatorAdmit;
 
 use super::super::seeds::normalize_execute_entity_names;
-use super::exposure_replay::{apply_federate_exposure_wave, ExposureCatalogWave};
 use crate::session_coordination::ExecuteCoordKey;
 
 /// Federate materialization completed outside exposure commit gates (I/O allowed).
@@ -113,16 +111,13 @@ async fn commit_federate_wave_inner(
         .map_err(|e: &'static str| super::SessionMutateError::from(e))?;
 
     let Some(sess_arc) = st
-        .get_execute_session(prompt_hash_p.as_str(), session_id_p.as_str())
+        .try_get_execute_session(prompt_hash_p.as_str(), session_id_p.as_str())
         .await
+        .map_err(|error| error.to_string())?
     else {
         return Err("unknown or expired execute session".into());
     };
     let mut sess = (*sess_arc).clone();
-    let scope_intent = sess.context_intent.clone();
-    let ranked_names = sess.ranked_capabilities.clone();
-    let ranked_slice = ranked_names.as_deref();
-    let emit_ranked_replay_diagnostics = sess.ranked_replay_emit_diagnostics;
 
     if sess.contexts_by_entry.contains_key(&new_entry_id) {
         return Err(format!("session already includes catalog entry `{new_entry_id}`").into());
@@ -130,6 +125,10 @@ async fn commit_federate_wave_inner(
 
     sess.contexts_by_entry
         .insert(new_entry_id.clone(), ctx_arc.clone());
+    sess.compiled_catalogs_by_entry.insert(
+        new_entry_id.clone(),
+        st.catalog.compiled_catalog(&new_entry_id)?,
+    );
     sess.registry_catalog_hashes_by_entry
         .insert(new_entry_id.clone(), registry_pin);
     if let Some(b) = entry_bindings {
@@ -148,22 +147,20 @@ async fn commit_federate_wave_inner(
     let caps_before = exp.surface.capabilities.clone();
 
     let n0 = exp.entities.len();
-    apply_federate_exposure_wave(
-        &mut exp,
+    let delta = st.capability_surface_for_wave(ctx_arc.cgs.as_ref(), &new_entry_id, &names)?;
+    let refs = names.iter().map(String::as_str).collect::<Vec<_>>();
+    exp.expose_surface(
         &sess
             .contexts_by_entry
             .values()
             .map(|c| c.cgs.as_ref())
             .collect::<Vec<_>>(),
-        &sess.contexts_by_entry,
-        &ExposureCatalogWave {
-            entry_id: new_entry_id.clone(),
-            entities: names.clone(),
-            mutator_admit: MutatorAdmit::IntentOnly,
-        },
-        scope_intent.as_deref(),
-        ranked_slice,
+        ctx_arc.cgs.clone(),
+        &new_entry_id,
+        &refs,
+        delta,
     );
+
     let relation_keys = exp.relation_endpoint_keys_for_wave(new_entry_id.as_str(), &names);
     let committed = super::commit::commit_exposure_wave_delta(
         st,
@@ -176,8 +173,6 @@ async fn commit_federate_wave_inner(
             caps_before,
             entity_count_before: n0,
             relation_keys,
-            ranked_capability_names: ranked_names,
-            emit_ranked_replay_diagnostics,
         },
     )
     .await?;

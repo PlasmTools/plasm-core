@@ -6,10 +6,13 @@
 
 mod binding_continuation;
 mod binding_contract;
+mod invoke_cardinality;
+mod password_domain;
 mod plan_serialize;
-mod postfix;
 mod prelude;
 mod relation;
+mod row_suffix;
+mod scalar_extract;
 mod schema_validate;
 mod types;
 mod view_embed_proof;
@@ -22,9 +25,12 @@ mod pipeline;
 // --- crate-visible entrypoints ---
 #[allow(unused_imports)]
 pub(crate) use pipeline::{
-    compile_plasm_dag_to_plan, compile_plasm_dag_to_plan_inner, compile_plasm_expression_to_plan,
-    compile_plasm_surface_line_to_plan, is_plasm_dag_candidate, is_plasm_dag_source,
+    compile_plasm_dag_to_plan_inner, compile_plasm_surface_line_to_plan, is_plasm_dag_candidate,
+    is_plasm_dag_source,
 };
+
+#[cfg(test)]
+pub(crate) use pipeline::{compile_plasm_dag_to_plan, compile_surface_fixture_json};
 
 // --- in-module re-exports for submodules + integration tests (`use super::*`) ---
 #[allow(unused_imports)]
@@ -38,21 +44,21 @@ pub(in crate::plasm_dag) use binding_contract::binding_contract;
 #[allow(unused_imports)]
 pub(in crate::plasm_dag) use pipeline::{
     compile_node_expr, longest_matching_bound_prefix, relation_wire_names_for_source, require_node,
-    rewrite_binding_field_projection_root, split_return_list,
+    split_return_list,
 };
 #[allow(unused_imports)]
-pub(in crate::plasm_dag) use plan_serialize::{node_to_json, parse_aggregates};
+pub(in crate::plasm_dag) use plan_serialize::parse_aggregates;
 #[allow(unused_imports)]
 pub(in crate::plasm_dag) use plasm_core::expr_parser::{
     collect_program_statement_lines, split_top_level,
 };
 #[allow(unused_imports)]
-pub(in crate::plasm_dag) use postfix::postfix_op_to_compute;
-#[allow(unused_imports)]
 pub(in crate::plasm_dag) use relation::{
     lookup_relation_chain_meta, resolve_relation_segment_for_continuation,
     resolve_relation_wire_on_entity,
 };
+#[allow(unused_imports)]
+pub(in crate::plasm_dag) use row_suffix::row_suffix_to_compute;
 #[allow(unused_imports)]
 pub(in crate::plasm_dag) use types::{
     CompileState, DagNode, DagNodeSource, ExpandedProgramSurface,

@@ -2,6 +2,7 @@
 
 use crate::execution::{ExecutionEngine, ExecutionMode, StreamConsumeOpts};
 use crate::materialization::SessionMaterialization;
+use crate::value_match::value_to_match_string;
 use crate::view_plan::ViewAmbientContext;
 use crate::{CachedEntity, EntityCompleteness, RuntimeError};
 use indexmap::IndexMap;
@@ -231,7 +232,6 @@ async fn hydrate_invoke_target(
 
     let get = GetExpr {
         reference: invoke.target.clone(),
-        path_vars: None,
         catalog_entry_id: plasm_core::CatalogEntryStamp::none(),
         capability_name: None,
     };
@@ -277,7 +277,6 @@ async fn hydrate_entity_ref_param(
     let reference = ref_from_param_env(env, ent, param)?;
     let get = GetExpr {
         reference,
-        path_vars: None,
         catalog_entry_id: plasm_core::CatalogEntryStamp::none(),
         capability_name: None,
     };
@@ -492,17 +491,6 @@ fn value_at_preflight_path(env: &CmlEnv, path: &PreflightFieldPath) -> Result<Va
         };
     }
     Ok(cur)
-}
-
-fn value_to_match_string(v: &Value) -> String {
-    match v {
-        Value::String(s) => s.clone(),
-        Value::Integer(i) => i.to_string(),
-        Value::Float(f) => f.to_string(),
-        Value::Bool(b) => b.to_string(),
-        Value::Null => String::new(),
-        other => format!("{other:?}"),
-    }
 }
 
 #[allow(clippy::too_many_arguments)]

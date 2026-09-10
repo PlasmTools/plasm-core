@@ -1,3 +1,6 @@
+import { runArtefactTransform } from "./artifact-process.js";
+export { runArtefactTransform } from "./artifact-process.js";
+
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 
@@ -9,9 +12,57 @@ const readSkillInputSchema = z.object({
   name: z.string().min(1).describe("Skill name from the index"),
 });
 
+const artefactTransformInputSchema = z.object({
+  code: z
+    .string()
+    .min(1)
+    .describe(
+      "JavaScript (not TypeScript syntax) async function body or expression. " +
+        "Helpers: readText(rel), readJson(rel), writeText(rel, s), writeJson(rel, v), list(rel?). " +
+        "Workspace is the artefact dir only. Return a value or use console.log.",
+    ),
+  reasoning: z.string().optional().describe("Optional short note"),
+});
+
+export const PLASM_ARTEFACT_TRANSFORM_TOOL_DESCRIPTION = `Harness **artefact transform** (data manipulation only).
+
+Run sandboxed JavaScript against files under the task artefact workspace
+(\`PLASM_RUN_ARTIFACTS_DIR\` / agent artefact root). After \`plasm_read_run_artifact\`,
+snapshots land in \`artefacts/<run_id>.json\` and \`artefacts/latest.json\`.
+
+Allowed: read/write relative paths under the workspace; JSON/CSV/string compute.
+Forbidden: fetch/network, child_process, absolute paths outside workspace, AppWorld HTTP.
+
+Return free-form stdout / returned value. Not a Plasm language feature.`;
+
+export function createArtefactTransformTool(workspaceRoot: string): ToolSet {
+  return {
+    plasm_artefact_transform: tool({
+      description: PLASM_ARTEFACT_TRANSFORM_TOOL_DESCRIPTION,
+      inputSchema: toolInput(artefactTransformInputSchema),
+      execute: async ({ code }) => {
+        try {
+          return await runArtefactTransform(workspaceRoot, code);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          // Tool errors must stay in-band — never throw out of execute (kills the agent process).
+          return (
+            `**plasm_artefact_transform** failed: ${msg}\n` +
+            `Use a relative path under the artefact workspace (e.g. \`latest.json\` after plasm_read_run_artifact), ` +
+            `or continue with \`plasm\` / \`plasm_run\`.`
+          );
+        }
+      },
+    }),
+  };
+}
+
 export function createHarnessTools(options: {
   skills?: SkillDefinition[];
   subagents?: SubagentRegistry;
+  /** When set, always register plasm_artefact_transform against this workspace. */
+  artefactWorkspaceRoot?: string;
+  includeArtefactTransform?: boolean;
 }): ToolSet {
   const tools: ToolSet = {};
   const skillByName = new Map((options.skills ?? []).map((s) => [s.name, s]));
@@ -51,6 +102,12 @@ export function createHarnessTools(options: {
         return `${result.text}\n\n(steps: ${result.steps})`;
       },
     });
+  }
+
+  const includeTransform =
+    options.includeArtefactTransform ?? Boolean(options.artefactWorkspaceRoot);
+  if (includeTransform && options.artefactWorkspaceRoot) {
+    Object.assign(tools, createArtefactTransformTool(options.artefactWorkspaceRoot));
   }
 
   return tools;

@@ -1,7 +1,23 @@
 //! Shared teaching-table string helpers and placeholders.
 
-/// In teaching table synthetic lines, bare `$` marks a **placeholder** for the real parameter value.
-pub(crate) const TEACHING_PARAM_VALUE_PLACEHOLDER: &str = "$";
+/// Identity-get hole in teaching exemplars: `e#(<id>)` / compound `wire=<id>`.
+pub(crate) const TEACHING_ID_HOLE: &str = "<id>";
+
+/// Generic capability / filter param hole: `wire=<wire>` (never bare `$`).
+pub(crate) const TEACHING_PARAM_VALUE_PLACEHOLDER: &str = "<wire>";
+
+/// First closed-enum member as a quoted teaching exemplar (Select / MultiSelect).
+/// TSV-derivable from `NamedValueSchema.allowed_values` — not a task scalar.
+pub(crate) fn select_enum_teach_literal(nv: &crate::NamedValueSchema) -> Option<String> {
+    let raw = nv.allowed_values.as_ref()?.iter().find(|s| !s.is_empty())?;
+    if raw.contains('"') || raw.contains('<') || raw.contains('>') {
+        return None;
+    }
+    Some(format!("\"{raw}\""))
+}
+
+/// Search text hole including quotes: `e#~"<query>"`.
+pub(crate) const TEACHING_SEARCH_QUERY_LITERAL: &str = "\"<query>\"";
 
 pub(crate) fn truncate_inline_desc(s: &str, max: usize) -> String {
     let t = crate::symbol_tuning::trim_description_for_agent_gloss(s).replace('\t', " ");
@@ -32,4 +48,65 @@ pub(crate) fn strip_union_constructor_authoring_noise(raw: &str) -> String {
         };
     }
     s.trim().to_string()
+}
+
+/// Rewrite teaching angle-bracket / query holes to parseable stand-ins for validation only.
+///
+/// Emitted teaching keeps `<id>` / `<wire>` / `"<query>"`; the validator sees `$` / `"q"`.
+pub(crate) fn teaching_expr_for_validation(expr: &str) -> String {
+    if !expr.contains('<') {
+        return expr.to_string();
+    }
+    let s = expr.replace(TEACHING_SEARCH_QUERY_LITERAL, "\"q\"");
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'<' {
+            if let Some(rel) = s[i + 1..].find('>') {
+                let inner = &s[i + 1..i + 1 + rel];
+                if !inner.is_empty() && inner.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                {
+                    out.push('$');
+                    i = i + 2 + rel;
+                    continue;
+                }
+            }
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn select_enum_teach_literal_quotes_first_member() {
+        let nv = crate::NamedValueSchema {
+            domain: Default::default(),
+            description: String::new(),
+            field_type: crate::FieldType::Select,
+            value_format: None,
+            allowed_values: Some(vec!["received".into(), "sent".into()]),
+            array_items: None,
+            currency: None,
+        };
+        assert_eq!(
+            select_enum_teach_literal(&nv).as_deref(),
+            Some("\"received\"")
+        );
+    }
+
+    #[test]
+    fn validation_proxy_rewrites_angle_holes() {
+        assert_eq!(teaching_expr_for_validation(r#"e7(<id>)"#), "e7($)");
+        assert_eq!(teaching_expr_for_validation(r#"e7~"<query>""#), r#"e7~"q""#);
+        assert_eq!(
+            teaching_expr_for_validation("e1{title=<wire>}.m2(body=<wire>)"),
+            "e1{title=$}.m2(body=$)"
+        );
+    }
 }

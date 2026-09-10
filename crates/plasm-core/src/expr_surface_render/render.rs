@@ -9,7 +9,7 @@ use crate::typed_invoke::InvokeInputPayload;
 use crate::value::Value;
 
 use super::predicates::{render_predicate_wire, split_search_predicate};
-use super::values::{render_id_slot, render_surface_value};
+use super::values::{render_identity_slot, render_surface_value};
 
 pub(crate) struct RenderCtx<'a> {
     pub cgs: &'a CGS,
@@ -64,18 +64,19 @@ impl<'a> RenderCtx<'a> {
 
     fn render_query(&self, q: &QueryExpr) -> String {
         let entry_id = q.catalog_entry_id.as_deref();
-        let head = q.entity.as_str();
-        let cgs = self.cgs_for_entity(entry_id, head);
+        let entity = q.entity.as_str();
+        let head = entity.to_string();
+        let cgs = self.cgs_for_entity(entry_id, entity);
         if self.is_search_query(q, cgs) {
-            return self.render_search_query(head, q, entry_id, cgs);
+            return self.render_search_query(head.as_str(), q, entry_id, cgs);
         }
         if let Some(pred) = &q.predicate {
             return format!(
                 "{head}{{{}}}",
-                render_predicate_wire(pred, head, entry_id, None, None)
+                render_predicate_wire(pred, entity, entry_id, None, None)
             );
         }
-        head.to_string()
+        head
     }
 
     fn is_search_query(&self, q: &QueryExpr, cgs: &CGS) -> bool {
@@ -94,16 +95,16 @@ impl<'a> RenderCtx<'a> {
         cgs: &CGS,
     ) -> String {
         let cap_name = q.capability_name.as_deref().unwrap_or("");
-        let cap = cgs.get_capability(cap_name);
-        let q_field = cap
-            .and_then(|c| c.object_params())
-            .and_then(|fields| {
-                fields
-                    .iter()
-                    .find(|f| matches!(f.role, Some(crate::ParameterRole::Search)) || f.required)
-                    .map(|f| f.name.as_str())
-            })
-            .unwrap_or("q");
+        let cap = cgs
+            .get_capability(cap_name)
+            .expect("rendered search query must name a capability");
+        let q_field = cap.search_text_selection_param().unwrap_or_else(|| {
+            panic!(
+                "search capability `{}` has no free-text selection parameter",
+                cap.name
+            )
+        });
+        let q_field = q_field.name.as_str();
         let mut text = String::new();
         let mut filters = Vec::new();
         if let Some(pred) = &q.predicate {
@@ -128,38 +129,13 @@ impl<'a> RenderCtx<'a> {
     fn render_get(&self, g: &GetExpr) -> String {
         let entry_id = g.catalog_entry_id.as_deref();
         let head = g.reference.entity_type.as_str();
-        if let Some(path_vars) = &g.path_vars {
-            if !path_vars.is_empty() {
-                let cgs = self.cgs_for_entity(entry_id, head);
-                if let Some(ent) = cgs.get_entity(head) {
-                    let parts: Vec<String> = ent
-                        .key_vars
-                        .iter()
-                        .map(|k| {
-                            let val = path_vars
-                                .get(k.as_str())
-                                .map(render_surface_value)
-                                .unwrap_or_else(|| "$".to_string());
-                            format!("{k}={val}")
-                        })
-                        .collect();
-                    if !parts.is_empty() {
-                        return format!("{head}({})", parts.join(", "));
-                    }
-                }
-                let parts: Vec<String> = path_vars
-                    .iter()
-                    .map(|(k, v)| format!("{k}={}", render_surface_value(v)))
-                    .collect();
-                return format!("{head}({})", parts.join(", "));
-            }
-        }
         match &g.reference.key {
-            EntityKey::Simple(id) => {
-                if id.is_empty() {
-                    format!("{head}()")
+            EntityKey::Simple(slot) => {
+                if slot.is_empty_lit() {
+                    // Pathless singleton Get — teach/display as the seat, never `Entity()`.
+                    head.to_string()
                 } else {
-                    format!("{head}({})", render_id_slot(id.as_str()))
+                    format!("{head}({})", render_identity_slot(slot))
                 }
             }
             EntityKey::Compound(parts) => {
@@ -171,13 +147,13 @@ impl<'a> RenderCtx<'a> {
                         .filter_map(|k| {
                             parts
                                 .get(k.as_str())
-                                .map(|v| format!("{k}={}", render_id_slot(v)))
+                                .map(|v| format!("{k}={}", render_identity_slot(v)))
                         })
                         .collect()
                 } else {
                     parts
                         .iter()
-                        .map(|(k, v)| format!("{k}={}", render_id_slot(v)))
+                        .map(|(k, v)| format!("{k}={}", render_identity_slot(v)))
                         .collect()
                 };
                 format!("{head}({})", kv.join(", "))
@@ -213,14 +189,13 @@ impl<'a> RenderCtx<'a> {
         let entry_id = d.catalog_entry_id.as_deref();
         let cgs = self.cgs_for_entity(entry_id, d.target.entity_type.as_str());
         let cap = cgs.get_capability(d.capability.as_str());
-        let base = self.render_get(&GetExpr::from_ref_with_path_vars(
-            d.target.clone(),
-            d.path_vars.clone(),
-        ));
+        let base = self.render_get(&GetExpr::from_ref(d.target.clone()));
         if let Some(cap) = cap {
             let method = capability_method_label_kebab(cap);
             let args = self.render_invoke_args(
-                &InvokeInputPayload::raw(Value::Null),
+                d.input
+                    .as_ref()
+                    .unwrap_or(&InvokeInputPayload::raw(Value::Null)),
                 cap,
                 entry_id,
                 d.target.entity_type.as_str(),
@@ -238,10 +213,7 @@ impl<'a> RenderCtx<'a> {
         let entry_id = i.catalog_entry_id.as_deref();
         let cgs = self.cgs_for_entity(entry_id, i.target.entity_type.as_str());
         let cap = cgs.get_capability(i.capability.as_str());
-        let base = self.render_get(&GetExpr::from_ref_with_path_vars(
-            i.target.clone(),
-            i.path_vars.clone(),
-        ));
+        let base = self.render_get(&GetExpr::from_ref(i.target.clone()));
         if let Some(cap) = cap {
             let method = capability_method_label_kebab(cap);
             let input = i
@@ -282,7 +254,11 @@ impl<'a> RenderCtx<'a> {
             Value::Null => String::new(),
             Value::Object(map) if map.is_empty() => "()".to_string(),
             Value::Object(map) => {
-                let path_vars = path_var_names_from_mapping_json(&cap.mapping.template.0);
+                let path_vars = cap
+                    .mapping
+                    .as_ref()
+                    .map(|m| path_var_names_from_mapping_json(&m.template.0))
+                    .unwrap_or_default();
                 let parts: Vec<String> = map
                     .iter()
                     .filter(|(k, _)| !path_vars.contains(k))

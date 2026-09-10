@@ -7,6 +7,7 @@ fn main() {
 
     // Create identical requests
     let request1 = CompiledRequest {
+        credential: None,
         method: HttpMethod::Post,
         path: "/query/Account".to_string(),
         query: None,
@@ -19,6 +20,7 @@ fn main() {
     };
 
     let request2 = CompiledRequest {
+        credential: None,
         method: HttpMethod::Post,
         path: "/query/Account".to_string(),
         query: None,
@@ -32,6 +34,7 @@ fn main() {
 
     // Different request
     let request3 = CompiledRequest {
+        credential: None,
         method: HttpMethod::Post,
         path: "/query/Account".to_string(),
         query: None,

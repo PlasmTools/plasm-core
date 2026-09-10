@@ -148,15 +148,14 @@ capabilities:
     description: Batch-fetch multiple albums by their Spotify IDs.
     kind: query
     entity: Album
-    parameters:
+    selection:
     - name: ids
       value_ref: nv_wire_str_short
       required: true
-      role: filter
+    controls:
     - name: market
       value_ref: nv_wire_str_short
       required: false
-      role: response_control
   album_get:
     description: Retrieve a single album.
     kind: get
@@ -172,19 +171,16 @@ capabilities:
     description: List tracks belonging to an album.
     kind: action
     entity: Album
-    parameters:
+    controls:
     - name: market
       value_ref: nv_wire_str_short
       required: false
-      role: response_control
     - name: limit
       value_ref: nv_wire_int
       required: false
-      role: response_control
     - name: offset
       value_ref: nv_wire_int
       required: false
-      role: response_control
     output:
       type: side_effect
       description: List tracks belonging to an album.
@@ -192,11 +188,10 @@ capabilities:
     description: Batch-fetch multiple artists by their Spotify IDs.
     kind: query
     entity: Artist
-    parameters:
+    selection:
     - name: ids
       value_ref: nv_wire_str_short
       required: true
-      role: filter
   artist_get:
     description: Retrieve a single artist.
     kind: get
@@ -210,23 +205,23 @@ capabilities:
     description: List albums released by an artist.
     kind: action
     entity: Artist
-    parameters:
-    - name: include_groups
-      value_ref: nv_wire_str_short
-      required: false
-      role: filter
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: include_groups
+          value_ref: nv_wire_str_short
+          required: false
+    controls:
     - name: market
       value_ref: nv_wire_str_short
       required: false
-      role: response_control
     - name: limit
       value_ref: nv_wire_int
       required: false
-      role: response_control
     - name: offset
       value_ref: nv_wire_int
       required: false
-      role: response_control
     output:
       type: side_effect
       description: List albums released by an artist.
@@ -241,11 +236,10 @@ capabilities:
     description: Get an artist's most popular tracks.
     kind: action
     entity: Artist
-    parameters:
+    controls:
     - name: market
       value_ref: nv_wire_str_short
       required: false
-      role: response_control
     output:
       type: side_effect
       description: Get an artist's most popular tracks.
@@ -253,15 +247,14 @@ capabilities:
     description: Batch-fetch multiple tracks by their Spotify IDs.
     kind: query
     entity: Track
-    parameters:
+    selection:
     - name: ids
       value_ref: nv_wire_str_short
       required: true
-      role: filter
+    controls:
     - name: market
       value_ref: nv_wire_str_short
       required: false
-      role: response_control
   track_get:
     description: 'Retrieve a single track (catalog metadata: name, duration, explicit, popularity).'
     kind: get
@@ -273,9 +266,10 @@ capabilities:
     - explicit
     - popularity
   track_get_audio_features:
-    description: 'Retrieve audio analysis features for a track. Populates the Track entity''s audio projection fields (danceability,
-      energy, valence, tempo, key, mode, etc.) via additive merge — the catalog fields from track_get are preserved. Same
-      Spotify track ID. Pattern: GET /audio-features/{id} — disjoint field projection of the Track entity.
+    description: 'Retrieve audio analysis features for a track. Populates the Track entity''s audio projection
+      fields (danceability, energy, valence, tempo, key, mode, etc.) via additive merge — the catalog
+      fields from track_get are preserved. Same Spotify track ID. Pattern: GET /audio-features/{id} —
+      disjoint field projection of the Track entity.
 
       '
     kind: action
@@ -309,23 +303,19 @@ capabilities:
     description: List tracks contained in a playlist.
     kind: action
     entity: Playlist
-    parameters:
+    controls:
     - name: market
       value_ref: nv_wire_str_short
       required: false
-      role: response_control
     - name: limit
       value_ref: nv_wire_int
       required: false
-      role: response_control
     - name: offset
       value_ref: nv_wire_int
       required: false
-      role: response_control
     - name: fields
       value_ref: nv_wire_str_short
       required: false
-      role: response_control
     output:
       type: side_effect
       description: List tracks contained in a playlist.
@@ -333,21 +323,24 @@ capabilities:
     description: Update a playlist's metadata.
     kind: update
     entity: Playlist
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: false
-      sink_class: external_publish
-    - name: description
-      value_ref: nv_wire_str_markdown
-      required: false
-      sink_class: external_publish
-    - name: public
-      value_ref: nv_wire_bool
-      required: false
-    - name: collaborative
-      value_ref: nv_wire_bool
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: false
+          sink_class: external_publish
+        - name: description
+          value_ref: nv_wire_str_markdown
+          required: false
+          sink_class: external_publish
+        - name: public
+          value_ref: nv_wire_bool
+          required: false
+        - name: collaborative
+          value_ref: nv_wire_bool
+          required: false
   user_get:
     description: Retrieve a user profile.
     kind: get
@@ -359,13 +352,16 @@ capabilities:
     description: List playlists owned by a user.
     kind: action
     entity: User
-    parameters:
-    - name: limit
-      value_ref: nv_wire_int
-      required: false
-    - name: offset
-      value_ref: nv_wire_int
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: limit
+          value_ref: nv_wire_int
+          required: false
+        - name: offset
+          value_ref: nv_wire_int
+          required: false
     output:
       type: side_effect
       description: List playlists owned by a user.
@@ -373,21 +369,24 @@ capabilities:
     description: Create a new playlist for a user.
     kind: action
     entity: User
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: true
-      sink_class: external_publish
-    - name: description
-      value_ref: nv_wire_str_markdown
-      required: false
-      sink_class: external_publish
-    - name: public
-      value_ref: nv_wire_bool
-      required: false
-    - name: collaborative
-      value_ref: nv_wire_bool
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: true
+          sink_class: external_publish
+        - name: description
+          value_ref: nv_wire_str_markdown
+          required: false
+          sink_class: external_publish
+        - name: public
+          value_ref: nv_wire_bool
+          required: false
+        - name: collaborative
+          value_ref: nv_wire_bool
+          required: false
     output:
       type: side_effect
       description: Create a new playlist for a user.
@@ -398,37 +397,32 @@ auth:
   client_secret_env: SPOTIFY_CLIENT_SECRET
 values:
   nv_album_album_type:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - album
     - single
     - compilation
     description: Album, single, or compilation.
   nv_album_id:
     type: string
-    string_semantics: short
     description: Unique Spotify album identifier.
   nv_album_name:
     type: string
-    string_semantics: short
     description: Album title.
   nv_album_popularity:
     type: integer
     description: Popularity score from 0 to 100.
   nv_album_release_date:
     type: string
-    string_semantics: short
     description: Date the album was released.
   nv_album_total_tracks:
     type: integer
     description: Number of tracks on the album.
   nv_artist_id:
     type: string
-    string_semantics: short
     description: Unique Spotify artist identifier.
   nv_artist_name:
     type: string
-    string_semantics: short
     description: Artist or band name.
   nv_artist_popularity:
     type: integer
@@ -437,23 +431,19 @@ values:
     type: boolean
     description: Whether others can add tracks.
   nv_playlist_description:
-    type: string
-    string_semantics: markdown
+    type: markdown
     description: User-provided playlist description text.
   nv_playlist_id:
     type: string
-    string_semantics: short
     description: Unique Spotify playlist identifier.
   nv_playlist_name:
     type: string
-    string_semantics: short
     description: Playlist name.
   nv_playlist_public:
     type: boolean
     description: Whether the playlist is publicly visible.
   nv_playlist_snapshot_id:
     type: string
-    string_semantics: short
     description: Version identifier for playlist state.
   nv_track_acousticness:
     type: number
@@ -472,7 +462,6 @@ values:
     description: Whether the track has explicit lyrics.
   nv_track_id:
     type: string
-    string_semantics: short
     description: Unique Spotify track identifier.
   nv_track_instrumentalness:
     type: number
@@ -491,7 +480,6 @@ values:
     description: 'Modality: 1=major, 0=minor. Populated by track_get_audio_features.'
   nv_track_name:
     type: string
-    string_semantics: short
     description: Track title.
   nv_track_popularity:
     type: integer
@@ -510,22 +498,18 @@ values:
     description: Musical positiveness 0.0–1.0. Populated by track_get_audio_features.
   nv_user_display_name:
     type: string
-    string_semantics: short
     description: User's public display name.
   nv_user_id:
     type: string
-    string_semantics: short
     description: Unique Spotify user identifier.
   nv_wire_bool:
     type: boolean
   nv_wire_int:
     type: integer
   nv_wire_str_markdown:
-    type: string
-    string_semantics: markdown
+    type: markdown
   nv_wire_str_short:
     type: string
-    string_semantics: short
   nv_artist_genres:
     type: array
     items:

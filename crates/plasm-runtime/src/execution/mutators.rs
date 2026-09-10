@@ -18,15 +18,15 @@ impl ExecutionEngine {
                 entity: create.entity.to_string(),
             })?;
 
-        let capability_template = parse_capability_template(&capability.mapping.template)?;
+        let capability_template = compiled_capability_template(capability)?;
 
-        let payload = if let Some(schema) = &capability.input_schema {
+        let payload = if let Some(schema) = &capability.inputs.payload {
             InvokeInputPayload::lift(&create.input.to_value(), &schema.input_type, cgs)
         } else {
             create.input.clone()
         };
 
-        let input = match capability.input_schema.as_ref() {
+        let input = match capability.inputs.payload.as_ref() {
             Some(schema) => plasm_core::normalize_structured_string_inputs(
                 payload.to_value(),
                 &schema.input_type,
@@ -38,18 +38,10 @@ impl ExecutionEngine {
         let input = plasm_core::prepare_create_capability_input(capability, create, input, cgs);
 
         let mut env = CmlEnv::new();
-        merge_plasm_execute_session_share_token_env(&mut env);
-        merge_plasm_execute_session_proof_base_token_env(&mut env);
         env.insert("input".to_string(), input.clone());
         if let Value::Object(ref map) = input {
-            // Path segments: same as the historical loop.
-            for var_name in path_var_names_from_template(&capability_template) {
-                if let Some(v) = map.get(&var_name) {
-                    env.insert(var_name.clone(), v.clone());
-                }
-            }
-            // Body/query template vars: mirror invoke's input overlay so `var title` (etc.)
-            // resolves without stuffing path-only keys into `body: { type: var, name: input }`.
+            // Full input overlay: path/query/body vars resolve from the same object (no
+            // separate path-var harvest — that duplicated this loop).
             for (k, v) in map {
                 env.insert(k.clone(), v.clone());
             }
@@ -75,7 +67,7 @@ impl ExecutionEngine {
 
         match mode {
             ExecutionMode::Live => {
-                ensure_http_operation(&compiled, "create")?;
+                ensure_mutating_operation(&compiled, "create")?;
                 let http_res = with_dispatch_entity(
                     Some(create.entity.as_str()),
                     self.execute_operation_full(&compiled),
@@ -133,7 +125,10 @@ impl ExecutionEngine {
                     source: ExecutionSource::Live,
                     stats: ExecutionStats {
                         duration_ms: 0,
-                        network_requests: 1,
+                        network_requests: usize::from(!matches!(
+                            compiled,
+                            CompiledOperation::CredentialBind(_)
+                        )),
                         cache_hits: 0,
                         cache_misses: count,
                         ..Default::default()
@@ -162,20 +157,33 @@ impl ExecutionEngine {
                 entity: delete.target.entity_type.to_string(),
             })?;
 
-        let capability_template = parse_capability_template(&capability.mapping.template)?;
+        let capability_template = compiled_capability_template(capability)?;
 
         let mut env = CmlEnv::new();
-        merge_plasm_execute_session_share_token_env(&mut env);
-        merge_plasm_execute_session_proof_base_token_env(&mut env);
-        let target_ent = cgs.get_entity(delete.target.entity_type.as_str());
+        let target_ent = cgs
+            .get_entity(delete.target.entity_type.as_str())
+            .ok_or_else(|| RuntimeError::ConfigurationError {
+                message: format!(
+                    "unknown entity `{}` for delete identity-env projection",
+                    delete.target.entity_type
+                ),
+            })?;
+        let input_for_env = super::compile_preflight::targeted_call_input(delete, capability, cgs);
+        let mut overlay_map = mat.capability_params_for(&delete.target);
+        if let Some(Value::Object(input)) = &input_for_env {
+            overlay_map.extend(input.clone());
+        }
+        let session_overlay = (!overlay_map.is_empty()).then(|| Value::Object(overlay_map));
         populate_template_path_env(
             &mut env,
-            &capability_template,
+            capability,
             &delete.target,
-            target_ent,
-            delete.path_vars.as_ref(),
-            None,
-        );
+            plasm_core::IdentityProjectionCtx::Entity(target_ent),
+            session_overlay.as_ref(),
+        )?;
+        if let Some(input) = input_for_env {
+            env.insert("input".to_string(), input);
+        }
         normalize_cml_env_scope_entity_refs(&mut env, cgs, capability)?;
         plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
             RuntimeError::ConfigurationError {
@@ -189,7 +197,7 @@ impl ExecutionEngine {
 
         match mode {
             ExecutionMode::Live => {
-                ensure_http_operation(&compiled, "delete")?;
+                ensure_mutating_operation(&compiled, "delete")?;
                 let (response, _) = with_dispatch_entity(
                     Some(delete.target.entity_type.as_str()),
                     self.execute_operation_full(&compiled),
@@ -199,6 +207,7 @@ impl ExecutionEngine {
 
                 // Remove from cache if present
                 mat.remove(&delete.target);
+                mat.poison_read_caches_after_mutation();
 
                 Ok(ExecutionResult {
                     entities: vec![],
@@ -209,7 +218,10 @@ impl ExecutionEngine {
                     source: ExecutionSource::Live,
                     stats: ExecutionStats {
                         duration_ms: 0,
-                        network_requests: 1,
+                        network_requests: usize::from(!matches!(
+                            compiled,
+                            CompiledOperation::CredentialBind(_)
+                        )),
                         cache_hits: 0,
                         cache_misses: 0,
                         ..Default::default()
@@ -238,57 +250,42 @@ impl ExecutionEngine {
                 entity: invoke.target.entity_type.to_string(),
             })?;
 
-        let capability_template = parse_capability_template(&capability.mapping.template)?;
+        let capability_template = compiled_capability_template(capability)?;
 
-        let target_ent = cgs.get_entity(invoke.target.entity_type.as_str());
+        let target_ent = cgs
+            .get_entity(invoke.target.entity_type.as_str())
+            .ok_or_else(|| RuntimeError::ConfigurationError {
+                message: format!(
+                    "unknown entity `{}` for invoke identity-env projection",
+                    invoke.target.entity_type
+                ),
+            })?;
 
-        let input_for_env = {
-            let raw = match &invoke.input {
-                None => Value::Object(indexmap::IndexMap::new()),
-                Some(input) => {
-                    let payload = if let Some(schema) = &capability.input_schema {
-                        InvokeInputPayload::lift(&input.to_value(), &schema.input_type, cgs)
-                    } else {
-                        input.clone()
-                    };
-                    match capability.input_schema.as_ref() {
-                        Some(schema) => plasm_core::normalize_structured_string_inputs(
-                            payload.to_value(),
-                            &schema.input_type,
-                            cgs,
-                        ),
-                        None => payload.to_value(),
-                    }
-                }
-            };
-            let effective =
-                plasm_core::prepare_invoke_capability_input(capability, invoke, raw.clone(), cgs);
-            if invoke.input.is_none() && effective.as_object().is_some_and(|m| m.is_empty()) {
-                None
-            } else {
-                Some(effective)
-            }
-        };
+        let input_for_env = super::compile_preflight::targeted_call_input(invoke, capability, cgs);
 
         let mut env = CmlEnv::new();
-        merge_plasm_execute_session_share_token_env(&mut env);
-        merge_plasm_execute_session_proof_base_token_env(&mut env);
+        let mut overlay_map = mat.capability_params_for(&invoke.target);
+        if let Some(Value::Object(input)) = &input_for_env {
+            for (k, v) in input {
+                overlay_map.insert(k.clone(), v.clone());
+            }
+        } else if let Some(input) = &input_for_env {
+            // Non-object invoke payloads still flow via the dedicated `input` env key below.
+            let _ = input;
+        }
+        let overlay = (!overlay_map.is_empty()).then(|| Value::Object(overlay_map));
         populate_template_path_env(
             &mut env,
-            &capability_template,
+            capability,
             &invoke.target,
-            target_ent,
-            invoke.path_vars.as_ref(),
-            input_for_env.as_ref(),
-        );
+            plasm_core::IdentityProjectionCtx::Entity(target_ent),
+            overlay.as_ref(),
+        )?;
 
+        // Aggregate `input` for body: { type: var, name: input }. Object field keys were
+        // already merged into overlay above — do not splat them a second time.
         if let Some(input) = &input_for_env {
             env.insert("input".to_string(), input.clone());
-            if let Value::Object(map) = input {
-                for (k, v) in map {
-                    env.insert(k.clone(), v.clone());
-                }
-            }
         }
         normalize_cml_env_scope_entity_refs(&mut env, cgs, capability)?;
         plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
@@ -296,7 +293,7 @@ impl ExecutionEngine {
                 message: e.to_string(),
             }
         })?;
-        merge_entity_id_from_into_input_env(&mut env, target_ent, capability);
+        merge_entity_id_from_into_input_env(&mut env, Some(target_ent), capability);
 
         apply_preflight_steps(
             self,
@@ -322,7 +319,7 @@ impl ExecutionEngine {
 
         match mode {
             ExecutionMode::Live => {
-                ensure_http_operation(&compiled, "invoke")?;
+                ensure_mutating_operation(&compiled, "invoke")?;
                 let http_res = with_dispatch_entity(
                     Some(invoke.target.entity_type.as_str()),
                     self.execute_operation_full(&compiled),
@@ -365,8 +362,14 @@ impl ExecutionEngine {
                     &identity_ambient,
                     rid,
                 );
-                let decoded =
-                    decode_entities_with_cgs(&decoder, &response, Some(cgs)).unwrap_or_default();
+                let decoded = if capability.provides.is_empty() {
+                    // True side-effect Actions may return empty/opaque bodies.
+                    decode_entities_with_cgs(&decoder, &response, Some(cgs)).unwrap_or_default()
+                } else {
+                    // Action-with-`provides` must materialize catalog-qualified rows (e.g. AuthSession
+                    // access_token) for downstream hole fill / CML env — never swallow decode failure.
+                    decode_entities_with_cgs(&decoder, &response, Some(cgs))?
+                };
 
                 let timestamp = current_timestamp();
                 let entities: Vec<CachedEntity> = decoded
@@ -383,8 +386,17 @@ impl ExecutionEngine {
                     .collect();
                 let count = entities.len();
 
-                if count > 0 {
+                // Merge only when `provides` names authoritative fields. Side-effect actions
+                // often echo a projection under an empty / wrong Ref (identity lives in method
+                // params, not the invoke target); merging that ghost must not satisfy later Gets.
+                // Always invalidate + poison when `invalidates_entities` is set — even if decode
+                // yields zero rows — so composed primary_read re-fetches live.
+                if count > 0 && !capability.provides.is_empty() {
                     mat.merge(entities.clone())?;
+                }
+                if count > 0 || !capability.invalidates_entities.is_empty() {
+                    mat.apply_post_mutation_cache_effects(capability, cgs)?;
+                    mat.poison_read_caches_after_mutation();
                 }
 
                 Ok(ExecutionResult {
@@ -396,7 +408,10 @@ impl ExecutionEngine {
                     source: ExecutionSource::Live,
                     stats: ExecutionStats {
                         duration_ms: 0,
-                        network_requests: 1,
+                        network_requests: usize::from(!matches!(
+                            compiled,
+                            CompiledOperation::CredentialBind(_)
+                        )),
                         cache_hits: 0,
                         cache_misses: count,
                         ..Default::default()

@@ -52,32 +52,25 @@ capabilities:
 values:
   nv_balance_account:
     type: string
-    string_semantics: short
     description: Account address queried via balanceOf.
   nv_balance_balance:
     type: string
-    string_semantics: short
     description: Token balance as a decimal string.
   nv_transfer_event_id:
     type: string
-    string_semantics: short
     description: Stable per-log identity (<tx_hash>:<log_index>).
   nv_transfer_tx_hash:
     type: string
-    string_semantics: short
     description: Transaction hash that emitted the log.
   nv_transfer_log_index:
     type: integer
     description: Log index within the block.
   nv_transfer_from:
     type: string
-    string_semantics: short
     description: Sender address.
   nv_transfer_to:
     type: string
-    string_semantics: short
     description: Recipient address.
   nv_transfer_value:
     type: string
-    string_semantics: short
     description: Transferred amount as a decimal string.

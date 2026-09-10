@@ -8,7 +8,7 @@ cargo run -p plasm-repl -- \
   --backend https://api.open-meteo.com
 ```
 
-Example REPL program (wire names from teaching TSV; substitute session `e#` / `m#`):
+Example REPL program (wire names from language card; substitute session `e#` / `m#`):
 
 ```text
 e1.m1(latitude=40.7, longitude=-74, current_weather=true)

@@ -11,7 +11,8 @@ berry_query:
     - type: literal
       value: ""
   pagination:
+    strategy: offset
     params:
-      offset: {counter: 0}
-      limit: {fixed: 20}
+      offset: {counter: 0, step: 20}
+      limit: {fixed: 20, role: page_size}
     stop_when: {field: next, absent: true}

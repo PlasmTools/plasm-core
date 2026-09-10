@@ -63,7 +63,14 @@ export {
   summarizeSubagents,
 } from "./authoring/subagent-loader.js";
 export type { LoadedSubagent, SubagentRegistry } from "./authoring/subagent-loader.js";
-export { createHarnessTools, renderSkillIndex } from "./tools/harness-tools.js";
+export {
+  createArtefactTransformTool,
+  createHarnessTools,
+  renderSkillIndex,
+  runArtefactTransform,
+  PLASM_ARTEFACT_TRANSFORM_TOOL_DESCRIPTION,
+} from "./tools/harness-tools.js";
+export { gateArtefactTransform } from "./tools/format.js";
 export { maybeCompactMessages } from "./runtime/compaction.js";
 
 export { defineEval, isEvalDefinition } from "./evals/define-eval.js";
@@ -128,9 +135,10 @@ export type {
   LoadedCatalog,
 } from "./catalog/loader.js";
 
-export { StubPlasmEngine, NapiPlasmEngine, createEngine, isNativeEngineAvailable } from "./engine/napi-binding.js";
+export { NapiPlasmEngine, createEngine, isNativeEngineAvailable } from "./engine/napi-binding.js";
 export { createDefaultHostTransport } from "./engine/host-transport.js";
 export type { HostTransportOptions } from "./engine/host-transport.js";
+export { createFixtureMockTransport } from "./engine/fixture-mock-transport.js";
 export { createProductionHostTransport, createStubHostTransport } from "./engine/create-host-transport.js";
 export { loadAgentEnv } from "./load-env.js";
 export {
@@ -186,11 +194,20 @@ export { createPlasmTools } from "./tools/plasm-tools.js";
 export type { PlasmTools } from "./tools/plasm-tools.js";
 
 export {
+  buildDefaultSystemLiturgy,
+  loadPromptAsset,
+} from "./prompts/index.js";
+export type { PromptAssetName } from "./prompts/index.js";
+
+export {
   DISCOVER_TOOL_DESCRIPTION,
   PLASM_CONTEXT_TOOL_DESCRIPTION,
+  PLASM_READ_RUN_ARTIFACT_TOOL_DESCRIPTION,
   PLASM_RUN_TOOL_DESCRIPTION,
   PLASM_TOOL_DESCRIPTION,
 } from "./tools/descriptions.js";
+
+export type { PlasmReadRunArtifactInput } from "./runtime/agent-runtime.js";
 
 export { createOperatorRoutes, nitroOperatorHandler } from "./operator/routes.js";
 export { renderOperatorShell } from "./operator/ui-shell.js";
@@ -210,7 +227,6 @@ export type { WorkflowWorldType } from "./workflow/world-bootstrap.js";
 
 export {
   LocalArchiveStore,
-  computeRunId,
   resolveArchivePaths,
   UnimplementedBlobArchiveAdapter,
   UnimplementedKvArchiveIndexAdapter,
@@ -226,7 +242,6 @@ export type {
   KvArchiveIndexAdapter,
   PlanArchiveSnapshot,
   RunSnapshot,
-  RunIdBundle,
   TraceDetail,
   TraceRecord,
   TraceSummary,

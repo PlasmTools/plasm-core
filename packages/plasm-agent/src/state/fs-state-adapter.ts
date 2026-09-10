@@ -3,14 +3,13 @@ import path from "node:path";
 
 import type { SymbolRegistrySnapshot } from "../symbol-registry.js";
 import {
+  intentKey,
   LocalSessionStore,
   type AgentSessionState,
 } from "../session-state.js";
 import type { AgentStateStore, StateBackend } from "./define-state.js";
 
-export function intentKey(intent: string): string {
-  return Buffer.from(intent, "utf8").toString("base64url");
-}
+export { intentKey };
 
 export class FsStateAdapter implements AgentStateStore {
   private readonly sessions: LocalSessionStore;

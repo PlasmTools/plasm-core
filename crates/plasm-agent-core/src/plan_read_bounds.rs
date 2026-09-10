@@ -31,6 +31,9 @@ pub enum PushedReadBudget {
         descending: bool,
         filter: Option<Vec<PlanPredicate>>,
     },
+    /// Full-collection demand from aggregate / group / global sort / dedupe consumers.
+    /// Upstream pagination must run to an authoritative terminal condition.
+    Complete,
 }
 
 /// Shared cost gate: true when live execute should spawn async / MCP server-await.
@@ -54,7 +57,7 @@ pub fn read_execution_is_expensive(
 pub fn effective_relation_read_cap(relation: &ValidatedRelationTraversalNode) -> Option<usize> {
     relation.pushed_read_budget.as_ref().and_then(|b| match b {
         PushedReadBudget::Limit(n) | PushedReadBudget::FilterLimit { count: n, .. } => Some(*n),
-        PushedReadBudget::TopK { .. } => None,
+        PushedReadBudget::TopK { .. } | PushedReadBudget::Complete => None,
     })
 }
 
@@ -67,12 +70,20 @@ pub fn truncate_to_read_cap<T>(items: &mut Vec<T>, cap: Option<usize>) {
 
 /// Explicit `.page_size(n)` on the surface node merged with any pushed budget, else a positive default
 /// for unbounded list/page read surfaces.
+///
+/// [`PushedReadBudget::Complete`] clears the host page so pagination fetches the full collection.
 #[must_use]
 pub fn effective_host_page_size(surface: &ValidatedSurfaceNode) -> Option<usize> {
+    if matches!(
+        surface.pushed_read_budget.as_ref(),
+        Some(PushedReadBudget::Complete)
+    ) {
+        return None;
+    }
     let pushed = surface.pushed_read_budget.as_ref().and_then(|b| match b {
         PushedReadBudget::Limit(n) => Some(*n),
         PushedReadBudget::FilterLimit { count, .. } => Some(*count),
-        PushedReadBudget::TopK { .. } => None,
+        PushedReadBudget::TopK { .. } | PushedReadBudget::Complete => None,
     });
     let explicit = match (surface.page_size, pushed) {
         (Some(a), Some(b)) => Some(a.min(b)),
@@ -155,6 +166,65 @@ pub fn apply_read_budgets(plan: &mut ValidatedPlanArtifact) {
             }
         }
     }
+    apply_complete_demands(plan, &by_id, &reachable);
+}
+
+/// Aggregate/group_by/sort/dedupe over row sets — not project/filter/limit/render.
+#[must_use]
+pub(crate) fn compute_op_is_full_collection(op: &ComputeOp) -> bool {
+    matches!(
+        op,
+        ComputeOp::Aggregate { .. }
+            | ComputeOp::GroupBy { .. }
+            | ComputeOp::Sort { .. }
+            | ComputeOp::DedupeBy { .. }
+    )
+}
+
+/// Push [`PushedReadBudget::Complete`] onto query/search surfaces feeding full-collection algebra.
+fn apply_complete_demands(
+    plan: &mut ValidatedPlanArtifact,
+    by_id: &HashMap<String, usize>,
+    reachable: &HashSet<String>,
+) {
+    let complete_sources: Vec<String> = plan
+        .nodes()
+        .iter()
+        .filter(|n| reachable.contains(n.id().as_str()))
+        .filter_map(|n| {
+            let ValidatedPlanNode::Compute(c) = n else {
+                return None;
+            };
+            compute_op_is_full_collection(&c.compute.op).then(|| c.compute.source.clone())
+        })
+        .collect();
+    for source_id in complete_sources {
+        let mut current = source_id;
+        while let Some(&idx) = by_id.get(current.as_str()) {
+            match &mut plan.nodes_mut()[idx] {
+                ValidatedPlanNode::Surface(surface)
+                    if matches!(surface.kind, PlanNodeKind::Query | PlanNodeKind::Search) =>
+                {
+                    merge_budget_into_surface(surface, PushedReadBudget::Complete);
+                    break;
+                }
+                ValidatedPlanNode::Compute(c)
+                    if matches!(
+                        &c.compute.op,
+                        ComputeOp::Project { .. }
+                            | ComputeOp::Filter { .. }
+                            | ComputeOp::Limit { .. }
+                    ) =>
+                {
+                    current = c.compute.source.clone();
+                }
+                ValidatedPlanNode::Derive(d) => {
+                    current = d.source.as_str().to_string();
+                }
+                _ => break,
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -196,6 +266,7 @@ fn upstream_node_ids(node: &ValidatedPlanNode) -> Vec<String> {
         ValidatedPlanNode::Compute(c) => vec![c.compute.source.clone()],
         ValidatedPlanNode::Derive(d) => vec![d.source.as_str().to_string()],
         ValidatedPlanNode::ForEach(f) => vec![f.source.as_str().to_string()],
+        ValidatedPlanNode::IterateUntil(f) => vec![f.source.as_str().to_string()],
         ValidatedPlanNode::RelationTraversal(r) => vec![r.relation.source.as_str().to_string()],
         ValidatedPlanNode::Surface(s) => s
             .depends_on
@@ -233,6 +304,13 @@ fn merge_pushed_budget_into(slot: &mut Option<PushedReadBudget>, budget: PushedR
 
 fn merge_pushed_budget(a: PushedReadBudget, b: PushedReadBudget) -> PushedReadBudget {
     match (a, b) {
+        (PushedReadBudget::Complete, other) | (other, PushedReadBudget::Complete) => {
+            // Complete yields to an explicit bounded budget (limit/top-k); otherwise stays Complete.
+            match other {
+                PushedReadBudget::Complete => PushedReadBudget::Complete,
+                bounded => bounded,
+            }
+        }
         (PushedReadBudget::Limit(x), PushedReadBudget::Limit(y)) => {
             PushedReadBudget::Limit(x.min(y))
         }
@@ -382,7 +460,7 @@ pub fn pushed_budget_to_stream_fields(
     budget: &PushedReadBudget,
 ) -> Result<(Option<RowMatchBudget>, Option<TopKSpec>), String> {
     match budget {
-        PushedReadBudget::Limit(_) => Ok((None, None)),
+        PushedReadBudget::Limit(_) | PushedReadBudget::Complete => Ok((None, None)),
         PushedReadBudget::FilterLimit { count, predicates } => {
             let preds = lower_plan_predicates(predicates)?;
             Ok((
@@ -553,6 +631,80 @@ mod tests {
         assert_eq!(
             effective_host_page_size(surface),
             Some(DEFAULT_HOST_PAGE_SIZE)
+        );
+    }
+
+    #[test]
+    fn aggregate_consumer_pushes_complete_and_clears_host_page() {
+        let plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "name": "sum-query",
+            "nodes": [
+                {
+                    "id": "payments",
+                    "kind": "query",
+                    "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                    "expr": "Product",
+                    "ir": { "expr": { "op": "query", "entity": "Product" } },
+                    "effect_class": "read",
+                    "result_shape": "list"
+                },
+                {
+                    "id": "filtered",
+                    "kind": "compute",
+                    "effect_class": "read",
+                    "result_shape": "list",
+                    "depends_on": ["payments"],
+                    "compute": {
+                        "source": "payments",
+                        "op": {
+                            "kind": "filter",
+                            "predicates": []
+                        },
+                        "schema": {
+                            "entity": "Product",
+                            "fields": [{ "name": "id", "value_kind": "string", "source": ["id"] }]
+                        }
+                    }
+                },
+                {
+                    "id": "total",
+                    "kind": "compute",
+                    "effect_class": "read",
+                    "result_shape": "single",
+                    "depends_on": ["filtered"],
+                    "compute": {
+                        "source": "filtered",
+                        "op": {
+                            "kind": "aggregate",
+                            "aggregates": [{ "name": "n", "function": "count" }]
+                        },
+                        "schema": {
+                            "entity": "Product",
+                            "fields": [{ "name": "n", "value_kind": "number", "source": ["n"] }]
+                        }
+                    }
+                }
+            ],
+            "return": { "kind": "node", "node": "total" }
+        });
+        let mut validated =
+            crate::plasm_plan::parse_and_validate_plan_json(&plan).expect("validate");
+        apply_read_budgets(&mut validated);
+        let surface = match &validated.nodes()[0] {
+            ValidatedPlanNode::Surface(s) => s,
+            _ => panic!("expected surface"),
+        };
+        assert_eq!(
+            surface.pushed_read_budget,
+            Some(PushedReadBudget::Complete),
+            "aggregate must demand Complete collection, not a host page"
+        );
+        assert_eq!(
+            effective_host_page_size(surface),
+            None,
+            "Complete demand must clear DEFAULT_HOST_PAGE_SIZE"
         );
     }
 

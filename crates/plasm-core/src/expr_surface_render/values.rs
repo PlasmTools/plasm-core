@@ -7,6 +7,7 @@ pub(crate) fn render_surface_value(v: &Value) -> String {
         Value::Integer(i) => i.to_string(),
         Value::Float(f) => f.to_string(),
         Value::String(s) | Value::PhraseIdent(s) => render_bare_or_quoted_string(s),
+        Value::StringTemplate(value) => render_bare_or_quoted_string(value.source()),
         Value::PlasmInputRef(_) => "$".to_string(),
         Value::UnionCtor {
             ctor_label,
@@ -64,5 +65,12 @@ pub(crate) fn render_id_slot(s: &str) -> String {
         s.to_string()
     } else {
         render_surface_value(&Value::String(s.to_string()))
+    }
+}
+
+pub(crate) fn render_identity_slot(slot: &crate::IdentitySlot) -> String {
+    match slot {
+        crate::IdentitySlot::Lit(id) => render_id_slot(id.as_str()),
+        crate::IdentitySlot::Binding(_) => "$".to_string(),
     }
 }

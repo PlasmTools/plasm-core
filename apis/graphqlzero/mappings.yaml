@@ -23,11 +23,17 @@ user_query:
     items_path: [data, users, data]
   pagination:
     location: body
-    body_merge_path: [variables, o, paginate]
+    body_merge_path:
+    - variables
+    - o
+    - paginate
     params:
-      page: {counter: 1}
-      limit: {fixed: 20}
-
+      page:
+        counter: 1
+      limit:
+        fixed: 20
+        role: page_size
+    strategy: page_number
 user_get:
   transport: graphql
   method: POST
@@ -72,11 +78,17 @@ post_query:
     items_path: [data, posts, data]
   pagination:
     location: body
-    body_merge_path: [variables, o, paginate]
+    body_merge_path:
+    - variables
+    - o
+    - paginate
     params:
-      page: {counter: 1}
-      limit: {fixed: 20}
-
+      page:
+        counter: 1
+      limit:
+        fixed: 20
+        role: page_size
+    strategy: page_number
 post_get:
   transport: graphql
   method: POST
@@ -121,11 +133,17 @@ comment_query:
     items_path: [data, comments, data]
   pagination:
     location: body
-    body_merge_path: [variables, o, paginate]
+    body_merge_path:
+    - variables
+    - o
+    - paginate
     params:
-      page: {counter: 1}
-      limit: {fixed: 20}
-
+      page:
+        counter: 1
+      limit:
+        fixed: 20
+        role: page_size
+    strategy: page_number
 comment_get:
   transport: graphql
   method: POST
@@ -170,11 +188,17 @@ todo_query:
     items_path: [data, todos, data]
   pagination:
     location: body
-    body_merge_path: [variables, o, paginate]
+    body_merge_path:
+    - variables
+    - o
+    - paginate
     params:
-      page: {counter: 1}
-      limit: {fixed: 20}
-
+      page:
+        counter: 1
+      limit:
+        fixed: 20
+        role: page_size
+    strategy: page_number
 todo_get:
   transport: graphql
   method: POST
@@ -219,11 +243,17 @@ album_query:
     items_path: [data, albums, data]
   pagination:
     location: body
-    body_merge_path: [variables, o, paginate]
+    body_merge_path:
+    - variables
+    - o
+    - paginate
     params:
-      page: {counter: 1}
-      limit: {fixed: 20}
-
+      page:
+        counter: 1
+      limit:
+        fixed: 20
+        role: page_size
+    strategy: page_number
 album_get:
   transport: graphql
   method: POST
@@ -268,11 +298,17 @@ photo_query:
     items_path: [data, photos, data]
   pagination:
     location: body
-    body_merge_path: [variables, o, paginate]
+    body_merge_path:
+    - variables
+    - o
+    - paginate
     params:
-      page: {counter: 1}
-      limit: {fixed: 20}
-
+      page:
+        counter: 1
+      limit:
+        fixed: 20
+        role: page_size
+    strategy: page_number
 photo_get:
   transport: graphql
   method: POST

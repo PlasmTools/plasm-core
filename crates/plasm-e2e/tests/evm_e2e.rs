@@ -25,7 +25,7 @@ async fn evm_call_get_token_balance_works() {
             &mut cache,
             Some(ExecutionMode::Live),
             StreamConsumeOpts::default(),
-            ExecuteOptions::default(),
+            ExecuteOptions::for_catalog(&cgs).unwrap(),
         )
         .await
         .unwrap();
@@ -76,7 +76,7 @@ async fn evm_logs_query_transfer_events_works() {
                 graph_backed_result: false,
                 ..Default::default()
             },
-            ExecuteOptions::default(),
+            ExecuteOptions::for_catalog(&cgs).unwrap(),
         )
         .await
         .unwrap();
@@ -120,7 +120,7 @@ async fn evm_logs_block_range_pagination_works() {
                 graph_backed_result: false,
                 ..Default::default()
             },
-            ExecuteOptions::default(),
+            ExecuteOptions::for_catalog(&cgs).unwrap(),
         )
         .await
         .unwrap();

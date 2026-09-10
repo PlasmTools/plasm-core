@@ -1,8 +1,6 @@
-//! Row-to-text render lowering from postfix [`RenderTailParse`] into DAG compute nodes.
+//! Row-to-text render lowering from typed applicator data into DAG compute nodes.
 
 use std::collections::BTreeMap;
-
-use plasm_core::expr_parser::RenderTailParse;
 
 use crate::execute_session::ExecuteSession;
 use crate::plasm_plan::{
@@ -10,13 +8,15 @@ use crate::plasm_plan::{
 };
 use crate::plasm_plan_run::RenderColumns;
 use crate::plasm_render_compile::{
-    infer_render_column_tokens_from_template, parse_field_list_with_tokens,
-    resolve_inferred_render_columns, resolve_render_collection_alias,
-    validate_template_binding_labels,
+    infer_render_column_tokens_from_template, resolve_inferred_render_columns,
+    resolve_render_collection_alias, validate_template_binding_labels,
 };
 
-use super::pipeline::compile_surface_node;
-use super::postfix::{compile_state_with_nodes, decompose_row_suffix_stream, lower_suffix_stream};
+use super::pipeline::compile_surface_nodes;
+use super::row_suffix::{
+    compile_state_with_nodes, decompose_row_suffix_stream, lower_suffix_stream,
+};
+// compile_state_with_nodes: Arc-share base nodes; only prefix payloads are cloned once.
 use super::prelude::*;
 use super::schema_validate::{
     infer_render_columns_for_node, lookup_dag_node, resolve_qualified_entity_for_dag_source,
@@ -34,60 +34,23 @@ pub(in crate::plasm_dag) fn plan_render_content_schema() -> Result<SyntheticResu
     })
 }
 
-pub(in crate::plasm_dag) fn compile_render_from_tail(
+pub(in crate::plasm_dag) fn compile_render_from_applicator(
     session: &ExecuteSession,
     state: &CompileState<'_>,
     id: &str,
     rhs_display: &str,
-    tail: RenderTailParse,
+    sources: &[String],
+    template: String,
 ) -> Result<Vec<DagNode>, String> {
-    match tail {
-        RenderTailParse::Explicit {
-            source,
-            fields,
-            template,
-        } => {
-            let scratch = compile_state_with_nodes(state, &[]);
-            let qe =
-                resolve_qualified_entity_for_dag_source(&scratch, &[], source.trim().to_string());
-            let field_pairs = parse_field_list_with_tokens(
-                session,
-                state.cross_cache,
-                qe.as_ref(),
-                fields.trim(),
-            )?;
-            let spec = RenderColumns::from_field_pairs(&field_pairs)?;
-            compile_render_chain(
-                session,
-                state,
-                id,
-                rhs_display,
-                &[source.trim().to_string()],
-                Some(spec),
-                template,
-            )
-        }
-        RenderTailParse::Inferred { head, template } => compile_render_chain(
-            session,
-            state,
-            id,
-            rhs_display,
-            &[head.trim().to_string()],
-            None,
-            template,
-        ),
-        RenderTailParse::CrossBinding { sources, template } => {
-            for src in &sources {
-                if !state.contains(src.trim()) {
-                    return Err(format!(
-                        "Plasm program `{id}`: cross-binding render source `{src}` is not in scope"
-                    ));
-                }
-            }
-            let labels: Vec<String> = sources.iter().map(|s| s.trim().to_string()).collect();
-            compile_render_chain(session, state, id, rhs_display, &labels, None, template)
+    for src in sources {
+        if !state.contains(src.trim()) {
+            return Err(format!(
+                "Plasm program `{id}`: render source `{src}` is not in scope"
+            ));
         }
     }
+    let labels: Vec<String> = sources.iter().map(|s| s.trim().to_string()).collect();
+    compile_render_chain(session, state, id, rhs_display, &labels, template)
 }
 
 fn compile_render_chain(
@@ -96,7 +59,6 @@ fn compile_render_chain(
     id: &str,
     rhs_display: &str,
     render_sources: &[String],
-    explicit_render: Option<RenderColumns>,
     template: String,
 ) -> Result<Vec<DagNode>, String> {
     let head = render_sources
@@ -120,7 +82,7 @@ fn compile_render_chain(
         if state.contains(head_core.trim()) {
             vec![]
         } else {
-            vec![compile_surface_node(session, state, &tmp, head)?]
+            compile_surface_nodes(session, state, &tmp, head)?
         }
     } else {
         lower_suffix_stream(session, state, &tmp, head, &head_core, suffixes, None)
@@ -136,9 +98,7 @@ fn compile_render_chain(
             .ok_or_else(|| format!("Plasm program `{id}`: empty render chain"))?
     };
 
-    let spec = if let Some(explicit) = explicit_render {
-        explicit
-    } else if let Some(raw_tokens) =
+    let spec = if let Some(raw_tokens) =
         infer_render_column_tokens_from_template(&template, head_core.trim())
     {
         let scratch = compile_state_with_nodes(state, &prefix);

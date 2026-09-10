@@ -31,13 +31,7 @@ fn domain_line_cache_key(
     stripped_expr.hash(&mut h);
     map_arc.is_some().hash(&mut h);
     if let Some(arc) = map_arc {
-        let rows = arc.exposed_entity_symbol_rows();
-        rows.len().hash(&mut h);
-        for row in rows.iter().take(8) {
-            row.entry_id.hash(&mut h);
-            row.entity.hash(&mut h);
-            row.symbol.hash(&mut h);
-        }
+        arc.line_valid_cache_symbol_fingerprint(&mut h);
     }
     h.finish()
 }
@@ -84,12 +78,35 @@ fn validate_teaching_line_uncached(
     if crate::type_check_expr(&parsed.expr, cgs).is_err() {
         return None;
     }
+    // Identity braces must lower to Get — never teach a Query that is sole `id_field=`.
+    if identity_brace_survived_as_query(&parsed.expr, cgs) {
+        return None;
+    }
     let wire = if map_arc.is_some() {
         crate::expr_surface_render::render_expr_surface(&parsed.expr, cgs)
     } else {
         stripped.to_string()
     };
     Some((parsed, wire))
+}
+
+fn identity_brace_survived_as_query(expr: &crate::Expr, cgs: &CGS) -> bool {
+    let crate::Expr::Query(q) = expr else {
+        return false;
+    };
+    if q.capability_name.is_some() {
+        return false;
+    }
+    let Some(ent) = cgs.get_entity(q.entity.as_str()) else {
+        return false;
+    };
+    let Some(pred) = q.predicate.as_ref() else {
+        return false;
+    };
+    crate::expr_sugar::predicate_is_sole_field_eq(pred, ent.id_field.as_str())
+        && !cgs
+            .find_capabilities(&q.entity, crate::CapabilityKind::Get)
+            .is_empty()
 }
 
 /// Wire-only ingress (no session [`SymbolMap`]); for tests and canonical wire lines.
@@ -108,14 +125,17 @@ pub(crate) fn domain_line_validate_cached(
     cgs: &CGS,
     expr: &str,
     map_arc: Option<&Arc<SymbolMap>>,
-) -> Option<(crate::expr_parser::ParsedExpr, String)> {
+) -> Option<(Arc<crate::expr_parser::ParsedExpr>, String)> {
     let stripped = strip_prompt_expression_annotations(expr);
+    // Angle-bracket teaching holes (`<id>` / `<wire>` / `"<query>"`) are templates — validate
+    // against `$` / `"q"` stand-ins so emit stays non-literal while still typechecking.
+    let stripped = super::teaching_util::teaching_expr_for_validation(&stripped);
     let key = domain_line_cache_key(cache_seed, &stripped, map_arc);
     if let Some(entry) = cache.get(&key) {
         return match entry {
             DomainLineValidEntry::Invalid => None,
             DomainLineValidEntry::Valid { parsed, wire } => {
-                Some((parsed.as_ref().clone(), wire.clone()))
+                Some((Arc::clone(parsed), wire.clone()))
             }
         };
     }
@@ -127,9 +147,7 @@ pub(crate) fn domain_line_validate_cached(
         None => DomainLineValidEntry::Invalid,
     };
     let out = match &entry {
-        DomainLineValidEntry::Valid { parsed, wire } => {
-            Some((parsed.as_ref().clone(), wire.clone()))
-        }
+        DomainLineValidEntry::Valid { parsed, wire } => Some((Arc::clone(parsed), wire.clone())),
         DomainLineValidEntry::Invalid => None,
     };
     // Only memoize successes — a failed receiver probe for one suffix must not poison later witnesses.
@@ -159,13 +177,30 @@ mod tests {
     use crate::symbol_tuning::{teaching_exposure_session_from_focus, FocusSpec};
 
     #[test]
+    fn required_entity_reference_scope_has_executable_teaching() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/scoped_query_matrix");
+        let cgs = load_schema_dir_unvalidated(&path).unwrap();
+        let exposure = teaching_exposure_session_from_focus(&cgs, FocusSpec::All);
+        let map = exposure.symbol_map_arc();
+        for entity in ["Child", "ChildWithParent"] {
+            let expression = format!("{entity}{{parent_id=Parent(\"parent-one\")}}");
+            let mut parsed = crate::expr_parser::parse(&expression, &cgs).unwrap();
+            crate::normalize_expr_query_capabilities(&mut parsed.expr, &cgs).unwrap();
+            crate::type_check_expr(&parsed.expr, &cgs).unwrap();
+            assert!(super::super::domain_example_line_count(&cgs, entity, Some(&map)) > 0);
+        }
+        crate::loader::load_schema_dir(&path).unwrap();
+    }
+
+    #[test]
     fn proof_document_edit_v2_dotted_call_line_validates() {
         let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/proof");
         if !p.is_dir() {
             return;
         }
         let mut cgs = load_schema_dir_unvalidated(&p).expect("proof");
-        cgs.entry_id = Some("proof".to_string());
+        cgs.bind_registry_entry_id("proof");
         let missing = crate::cgs_expression_validate::uncovered_capabilities(&cgs);
         assert!(
             !missing

@@ -1,0 +1,1 @@
+Fetch full run snapshot JSON on tool-only hosts without `resources/read`. Required when a step stores a snapshot and no inline TSV is returned. Pass `logical_session_ref` plus exactly one of `run_id` or `artifact_uri` from `_meta.plasm.steps[]` — not `run_step` / `dict_ref`. Returns the same bytes as MCP `resources/read`.

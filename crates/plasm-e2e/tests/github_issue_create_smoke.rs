@@ -15,7 +15,9 @@ fn issue_create_compiled_body_uses_json_array_for_labels() {
     let cgs = github_cgs();
     plasm_compile::validate_cgs_capability_templates(&cgs).expect("capability templates");
     let cap = cgs.get_capability("issue_create").expect("issue_create");
-    let template = parse_capability_template(&cap.mapping.template.0).expect("parse template");
+    let template =
+        parse_capability_template(&cap.require_mapping().expect("cml mapping").template.0)
+            .expect("parse template");
 
     let mut env = CmlEnv::new();
     env.insert(

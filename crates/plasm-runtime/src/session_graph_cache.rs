@@ -42,6 +42,13 @@ impl MutexGraphCacheSession {
         self.inner.lock().await
     }
 
+    /// Non-blocking peek for sync dry-run / CML preflight inherit.
+    pub fn try_lock(
+        &self,
+    ) -> Result<MutexGuard<'_, SessionMaterialization>, tokio::sync::TryLockError> {
+        self.inner.try_lock()
+    }
+
     /// Deep copy for parallel batch fork-merge (each line runs against this snapshot).
     pub async fn snapshot(&self) -> SessionMaterialization {
         self.inner.lock().await.clone()

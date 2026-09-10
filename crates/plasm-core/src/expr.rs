@@ -5,7 +5,6 @@ use crate::operation_handle::OperationHandle;
 use crate::paging_handle::PagingHandle;
 use crate::typed_invoke::InvokeInputPayload;
 use crate::{Predicate, Value, CGS};
-use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -138,9 +137,6 @@ pub struct QueryExpr {
 pub struct GetExpr {
     #[serde(rename = "ref")]
     pub reference: Ref,
-    /// Optional CML path bindings overriding [`Ref::key`] for the same names.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub path_vars: Option<IndexMap<String, Value>>,
     #[serde(
         default,
         skip_serializing_if = "CatalogEntryStamp::is_none",
@@ -190,7 +186,7 @@ pub struct DeleteExpr {
     pub capability: CapabilityName,
     pub target: Ref,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub path_vars: Option<IndexMap<String, Value>>,
+    pub input: Option<InvokeInputPayload>,
     #[serde(
         default,
         skip_serializing_if = "CatalogEntryStamp::is_none",
@@ -206,8 +202,6 @@ pub struct InvokeExpr {
     pub target: Ref,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input: Option<InvokeInputPayload>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub path_vars: Option<IndexMap<String, Value>>,
     #[serde(
         default,
         skip_serializing_if = "CatalogEntryStamp::is_none",
@@ -267,16 +261,97 @@ impl ChainExpr {
     }
 }
 
-/// Structured identity for an entity row: one scalar or several named path-key parts.
+/// One identity slot on a Get/invoke/delete target — never a CML path-template inventedish key.
+///
+/// Lit and Binding share the same [`EntityKey`] shape so `Entity("x")` and `Entity(binding)` stay
+/// referentially transparent (PLP-1 / IdentitySlot cutover).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum IdentitySlot {
+    /// Concrete identity string (literal or already-resolved).
+    Lit(EntityId),
+    /// Deferred program binding (`node_input` / row binding) — resolved at execute.
+    Binding(crate::PlasmInputRef),
+}
+
+impl IdentitySlot {
+    #[must_use]
+    pub fn lit(id: impl Into<EntityId>) -> Self {
+        Self::Lit(id.into())
+    }
+
+    #[must_use]
+    pub fn binding(r: crate::PlasmInputRef) -> Self {
+        Self::Binding(r)
+    }
+
+    #[must_use]
+    pub fn as_lit_str(&self) -> Option<&str> {
+        match self {
+            Self::Lit(id) => Some(id.as_str()),
+            Self::Binding(_) => None,
+        }
+    }
+
+    #[must_use]
+    pub fn is_empty_lit(&self) -> bool {
+        matches!(self, Self::Lit(id) if id.as_str().is_empty())
+    }
+
+    #[must_use]
+    pub fn is_domain_placeholder(&self) -> bool {
+        match self {
+            Self::Lit(id) => id.as_str() == "$",
+            Self::Binding(_) => false,
+        }
+    }
+
+    /// Display / primary-slot string: Lit as-is; Binding as a stable hole marker (not wire id).
+    #[must_use]
+    pub fn display_str(&self) -> String {
+        match self {
+            Self::Lit(id) => id.to_string(),
+            Self::Binding(crate::PlasmInputRef::NodeInput { node, path }) => {
+                if path.is_empty() {
+                    format!("@{node}")
+                } else {
+                    format!("@{node}.{}", path.join("."))
+                }
+            }
+            Self::Binding(crate::PlasmInputRef::RowBinding { binding, path }) => {
+                if path.is_empty() {
+                    format!("@{binding}")
+                } else {
+                    format!("@{binding}.{}", path.join("."))
+                }
+            }
+        }
+    }
+}
+
+impl From<&str> for IdentitySlot {
+    fn from(s: &str) -> Self {
+        Self::lit(s)
+    }
+}
+
+impl From<String> for IdentitySlot {
+    fn from(s: String) -> Self {
+        Self::lit(s)
+    }
+}
+
+/// Structured identity for an entity row: one scalar or several named identity slots.
 ///
 /// `Compound` uses lexicographic key order for equality and hashing so cache keys are stable.
+/// Keys must match CGS `key_vars` / `id_field` — never invented `{entity}_id` transport names.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum EntityKey {
     /// Single-key entity (`id_field` or sole `key_vars` entry).
-    Simple(EntityId),
-    /// Multi-part path identity; keys must match CGS `key_vars` names.
-    Compound(BTreeMap<String, String>),
+    Simple(IdentitySlot),
+    /// Multi-part identity; keys must match CGS `key_vars` names.
+    Compound(BTreeMap<String, IdentitySlot>),
 }
 
 /// A stable reference to a resource instance.
@@ -356,14 +431,20 @@ impl QueryExpr {
 }
 
 impl GetExpr {
-    /// Create a new get expression (single-key entity).
+    /// Create a new get expression (single-key entity, literal identity).
     pub fn new(entity_type: impl Into<EntityName>, id: impl Into<EntityId>) -> Self {
         Self {
             reference: Ref::new(entity_type, id),
-            path_vars: None,
             catalog_entry_id: CatalogEntryStamp::none(),
             capability_name: None,
         }
+    }
+
+    /// Pathless zero-arity singleton Get (`e#` / `e#.m#()`): empty identity — no synthetic `"0"`.
+    ///
+    /// CML env population skips empty identity slots so optional id params are omitted, not wired as `0`.
+    pub fn pathless_nullary(entity_type: impl Into<EntityName>) -> Self {
+        Self::new(entity_type, "")
     }
 
     /// Attach the GET capability wire name (overrides entity default get).
@@ -372,24 +453,10 @@ impl GetExpr {
         self
     }
 
-    /// Get by reference (compound or simple).
+    /// Get by reference (compound or simple; Lit or Binding slots).
     pub fn from_ref(reference: Ref) -> Self {
         Self {
             reference,
-            path_vars: None,
-            catalog_entry_id: CatalogEntryStamp::none(),
-            capability_name: None,
-        }
-    }
-
-    /// [`from_ref`] plus optional CML path bindings (program `node_input` holes, entity-ref rows, …).
-    pub fn from_ref_with_path_vars(
-        reference: Ref,
-        path_vars: Option<IndexMap<String, Value>>,
-    ) -> Self {
-        Self {
-            reference,
-            path_vars,
             catalog_entry_id: CatalogEntryStamp::none(),
             capability_name: None,
         }
@@ -412,6 +479,44 @@ impl CreateExpr {
     }
 }
 
+/// Common input contract for operations targeting an existing entity.
+/// Sealed so a new implementation cannot silently omit supplied arguments.
+pub trait TargetedCall: targeted_call_sealed::Sealed {
+    fn capability(&self) -> &CapabilityName;
+    fn target(&self) -> &Ref;
+    fn input(&self) -> Option<&InvokeInputPayload>;
+}
+
+mod targeted_call_sealed {
+    pub trait Sealed {}
+    impl Sealed for super::DeleteExpr {}
+    impl Sealed for super::InvokeExpr {}
+}
+
+impl TargetedCall for DeleteExpr {
+    fn capability(&self) -> &CapabilityName {
+        &self.capability
+    }
+    fn target(&self) -> &Ref {
+        &self.target
+    }
+    fn input(&self) -> Option<&InvokeInputPayload> {
+        self.input.as_ref()
+    }
+}
+
+impl TargetedCall for InvokeExpr {
+    fn capability(&self) -> &CapabilityName {
+        &self.capability
+    }
+    fn target(&self) -> &Ref {
+        &self.target
+    }
+    fn input(&self) -> Option<&InvokeInputPayload> {
+        self.input.as_ref()
+    }
+}
+
 impl DeleteExpr {
     pub fn new(
         capability: impl Into<CapabilityName>,
@@ -421,8 +526,8 @@ impl DeleteExpr {
         Self {
             capability: capability.into(),
             target: Ref::new(entity_type, id),
-            path_vars: None,
             catalog_entry_id: CatalogEntryStamp::none(),
+            input: None,
         }
     }
 
@@ -431,22 +536,8 @@ impl DeleteExpr {
         Self {
             capability: capability.into(),
             target,
-            path_vars: None,
             catalog_entry_id: CatalogEntryStamp::none(),
-        }
-    }
-
-    /// Like [`with_target`], preserving CML path overlays from a source [`GetExpr`].
-    pub fn with_target_path_vars(
-        capability: impl Into<CapabilityName>,
-        target: Ref,
-        path_vars: Option<IndexMap<String, Value>>,
-    ) -> Self {
-        Self {
-            capability: capability.into(),
-            target,
-            path_vars,
-            catalog_entry_id: CatalogEntryStamp::none(),
+            input: None,
         }
     }
 }
@@ -463,7 +554,6 @@ impl InvokeExpr {
             capability: capability.into(),
             target: Ref::new(entity_type, id),
             input: input.map(InvokeInputPayload::from),
-            path_vars: None,
             catalog_entry_id: CatalogEntryStamp::none(),
         }
     }
@@ -478,53 +568,83 @@ impl InvokeExpr {
             capability: capability.into(),
             target,
             input: input.map(InvokeInputPayload::from),
-            path_vars: None,
-            catalog_entry_id: CatalogEntryStamp::none(),
-        }
-    }
-
-    /// Like [`with_target`], preserving CML path overlays from a source [`GetExpr`].
-    pub fn with_target_path_vars(
-        capability: impl Into<CapabilityName>,
-        target: Ref,
-        input: Option<Value>,
-        path_vars: Option<IndexMap<String, Value>>,
-    ) -> Self {
-        Self {
-            capability: capability.into(),
-            target,
-            input: input.map(InvokeInputPayload::from),
-            path_vars,
             catalog_entry_id: CatalogEntryStamp::none(),
         }
     }
 }
 
 impl Ref {
-    /// Single-key reference.
+    /// Single-key reference with a literal identity.
     pub fn new(entity_type: impl Into<EntityName>, id: impl Into<EntityId>) -> Self {
         Self {
             entity_type: entity_type.into(),
-            key: EntityKey::Simple(id.into()),
+            key: EntityKey::Simple(IdentitySlot::lit(id)),
         }
     }
 
-    /// Multi-part reference (`key_vars` in schema order is enforced at validation time).
+    /// Single-key reference with a deferred binding identity.
+    pub fn simple_binding(
+        entity_type: impl Into<EntityName>,
+        binding: crate::PlasmInputRef,
+    ) -> Self {
+        Self {
+            entity_type: entity_type.into(),
+            key: EntityKey::Simple(IdentitySlot::binding(binding)),
+        }
+    }
+
+    /// Multi-part reference with literal string parts (`key_vars` enforced at validation).
     pub fn compound(entity_type: impl Into<EntityName>, parts: BTreeMap<String, String>) -> Self {
+        Self {
+            entity_type: entity_type.into(),
+            key: EntityKey::Compound(
+                parts
+                    .into_iter()
+                    .map(|(k, v)| (k, IdentitySlot::lit(v)))
+                    .collect(),
+            ),
+        }
+    }
+
+    /// Multi-part reference with Lit|Binding slots.
+    pub fn compound_slots(
+        entity_type: impl Into<EntityName>,
+        parts: BTreeMap<String, IdentitySlot>,
+    ) -> Self {
         Self {
             entity_type: entity_type.into(),
             key: EntityKey::Compound(parts),
         }
     }
 
+    /// Literal simple id, if this is a Simple Lit slot.
     pub fn simple_id(&self) -> Option<&EntityId> {
         match &self.key {
-            EntityKey::Simple(id) => Some(id),
-            EntityKey::Compound(_) => None,
+            EntityKey::Simple(IdentitySlot::Lit(id)) => Some(id),
+            _ => None,
         }
     }
 
-    pub fn compound_parts(&self) -> Option<&BTreeMap<String, String>> {
+    /// Compound Lit-only parts as strings (Bindings omitted). Prefer [`compound_slots_ref`].
+    pub fn compound_parts(&self) -> Option<BTreeMap<String, String>> {
+        match &self.key {
+            EntityKey::Simple(_) => None,
+            EntityKey::Compound(m) => {
+                let mut out = BTreeMap::new();
+                for (k, slot) in m {
+                    match slot {
+                        IdentitySlot::Lit(id) => {
+                            out.insert(k.clone(), id.to_string());
+                        }
+                        IdentitySlot::Binding(_) => return None,
+                    }
+                }
+                Some(out)
+            }
+        }
+    }
+
+    pub fn compound_slots_ref(&self) -> Option<&BTreeMap<String, IdentitySlot>> {
         match &self.key {
             EntityKey::Simple(_) => None,
             EntityKey::Compound(m) => Some(m),
@@ -532,22 +652,28 @@ impl Ref {
     }
 
     /// Value bound to CML env key `id` and used where a single “primary id” string is required.
+    /// Binding slots yield their display marker (not a wire id).
     pub fn primary_slot_str(&self) -> String {
         match &self.key {
-            EntityKey::Simple(id) => id.to_string(),
+            EntityKey::Simple(slot) => slot.display_str(),
             EntityKey::Compound(m) => m
                 .iter()
-                .map(|(k, v)| format!("{k}={v}"))
+                .map(|(k, v)| format!("{k}={}", v.display_str()))
                 .collect::<Vec<_>>()
                 .join(","),
         }
     }
 
+    /// True when the primary Simple Lit identity is empty (pathless nullary Get).
+    pub fn is_pathless_nullary(&self) -> bool {
+        matches!(&self.key, EntityKey::Simple(s) if s.is_empty_lit())
+    }
+
     /// True if any identity slot is still the teaching table teaching `$` token (must not reach transport).
     pub fn contains_domain_placeholder(&self) -> bool {
         match &self.key {
-            EntityKey::Simple(id) => id.as_str() == "$",
-            EntityKey::Compound(m) => m.values().any(|v| v == "$"),
+            EntityKey::Simple(slot) => slot.is_domain_placeholder(),
+            EntityKey::Compound(m) => m.values().any(|v| v.is_domain_placeholder()),
         }
     }
 
@@ -556,7 +682,7 @@ impl Ref {
         format!("{}:{}", self.entity_type, self.primary_slot_str())
     }
 
-    /// Parse `Entity:simpleId` (single-key only).
+    /// Parse `Entity:simpleId` (single-key Lit only).
     pub fn from_string(s: &str) -> Option<Self> {
         let parts: Vec<&str> = s.splitn(2, ':').collect();
         if parts.len() == 2 {
@@ -573,7 +699,7 @@ impl std::fmt::Display for Ref {
     }
 }
 
-/// Structural wire form for `_ref` round-trip (preserves compound keys).
+/// Structural wire form for `_ref` round-trip (preserves compound keys; Lit only).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RefWire {
@@ -591,13 +717,20 @@ impl RefWire {
     #[must_use]
     pub fn from_ref(reference: &Ref) -> Self {
         match &reference.key {
-            EntityKey::Simple(id) => Self::Simple {
+            EntityKey::Simple(IdentitySlot::Lit(id)) => Self::Simple {
                 entity: reference.entity_type.to_string(),
                 id: id.to_string(),
             },
+            EntityKey::Simple(IdentitySlot::Binding(_)) => Self::Simple {
+                entity: reference.entity_type.to_string(),
+                id: reference.primary_slot_str(),
+            },
             EntityKey::Compound(parts) => Self::Compound {
                 entity: reference.entity_type.to_string(),
-                parts: parts.clone(),
+                parts: parts
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.display_str()))
+                    .collect(),
             },
         }
     }
@@ -618,7 +751,7 @@ impl RefWire {
         value
             .as_str()
             .and_then(Ref::from_string)
-            .filter(|r| matches!(r.key, EntityKey::Simple(_)))
+            .filter(|r| matches!(r.key, EntityKey::Simple(IdentitySlot::Lit(_))))
     }
 }
 
@@ -732,40 +865,54 @@ impl Expr {
     }
 }
 
-/// Replace raw invoke/create payloads with [`InvokeInputPayload::Typed`] where CGS allows lifting.
+/// Replace raw call payloads with [`InvokeInputPayload::Typed`] where CGS allows lifting.
 pub fn lift_invoke_payloads_in_expr(expr: &mut Expr, cgs: &CGS) {
     match expr {
         Expr::Query(_)
         | Expr::Get(_)
-        | Expr::Delete(_)
         | Expr::Page(_)
         | Expr::Wait(_)
         | Expr::Cancel(_)
         | Expr::TeachingValue { .. } => {}
         Expr::Create(create) => {
             if let Some(cap) = cgs.get_capability(&create.capability) {
-                if let Some(schema) = &cap.input_schema {
-                    let lifted =
-                        InvokeInputPayload::lift(&create.input.to_value(), &schema.input_type, cgs);
-                    create.input = lifted;
-                }
-            }
-        }
-        Expr::Invoke(invoke) => {
-            if let Some(cap) = cgs.get_capability(&invoke.capability) {
-                if let Some(schema) = &cap.input_schema {
-                    if let Some(inp) = &invoke.input {
-                        let lifted =
-                            InvokeInputPayload::lift(&inp.to_value(), &schema.input_type, cgs);
-                        invoke.input = Some(lifted);
+                // Dual object lanes stay Raw — Typed lift is single-schema; typecheck partitions.
+                if cap.invocation_object_schemas().count() <= 1 {
+                    if let Some(schema) = cap.primary_invocation_schema() {
+                        create.input = InvokeInputPayload::lift(
+                            &create.input.to_value(),
+                            &schema.input_type,
+                            cgs,
+                        );
                     }
                 }
             }
         }
+        Expr::Invoke(invoke) => lift_targeted_input(&invoke.capability, &mut invoke.input, cgs),
+        Expr::Delete(delete) => lift_targeted_input(&delete.capability, &mut delete.input, cgs),
         Expr::Chain(chain) => {
             lift_invoke_payloads_in_expr(chain.source.as_mut(), cgs);
             if let ChainStep::Explicit { expr: inner } = &mut chain.step {
                 lift_invoke_payloads_in_expr(inner.as_mut(), cgs);
+            }
+        }
+    }
+}
+
+fn lift_targeted_input(
+    capability: &CapabilityName,
+    input: &mut Option<InvokeInputPayload>,
+    cgs: &CGS,
+) {
+    if let Some(cap) = cgs.get_capability(capability) {
+        // Typed lifting has one schema; multi-lane inputs are partitioned by type checking.
+        if cap.invocation_object_schemas().count() <= 1 {
+            if let (Some(schema), Some(value)) = (cap.primary_invocation_schema(), input.as_ref()) {
+                *input = Some(InvokeInputPayload::lift(
+                    &value.to_value(),
+                    &schema.input_type,
+                    cgs,
+                ));
             }
         }
     }

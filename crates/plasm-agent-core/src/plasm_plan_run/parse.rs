@@ -73,7 +73,7 @@ pub fn resolve_wire_field_token(
     if plasm_core::symbol_tuning::SymbolMap::is_opaque_p_sym(t) {
         return Err(agent_program_error(
             format!("`{t}` requires a row binding context for field resolution"),
-            Some("Use wire field names from the teaching TSV on a bound row or postfix chain with a known receiver."),
+            Some("Use wire field names from the language card on a bound row or postfix chain with a known receiver."),
         ));
     }
     Ok(t.to_string())
@@ -281,7 +281,7 @@ fn enrich_phrase_ident_program_error(session: &ExecuteSession, raw: &str) -> Str
         owners.dedup();
         if owners.is_empty() {
             return format!(
-                "unknown capability `{cap}` — check ranked_capabilities or session seeds"
+                "unknown capability `{cap}` — request the required capability through session extension"
             );
         }
         if owners.len() == 1 {
@@ -452,6 +452,7 @@ pub(crate) fn propagate_row_identities(
     match op {
         ComputeOp::Limit { count } => Ok(mat.row_identities.iter().take(*count).cloned().collect()),
         ComputeOp::Project { .. } => Ok(mat.row_identities.iter().take(out_len).cloned().collect()),
+        ComputeOp::With { .. } => Ok(mat.row_identities.iter().take(out_len).cloned().collect()),
         ComputeOp::Filter { predicates } => {
             let Some(rows) = mat.row_source.inline_rows() else {
                 return Ok(Vec::new());

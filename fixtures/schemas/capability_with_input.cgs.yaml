@@ -63,15 +63,6 @@ capabilities:
           description: Optional opaque attachment bytes (fixture — interchange `blob` on input_schema).
         additional_fields: false
       validation:
-        predicates:
-        - field_path: revenue
-          operator: min_value
-          value: 0
-          error_message: Revenue must be non-negative
-        - field_path: name
-          operator: min_length
-          value: 2
-          error_message: Name must be at least 2 characters
         allow_null: false
         cross_field_rules:
         - rule_type: at_least_one

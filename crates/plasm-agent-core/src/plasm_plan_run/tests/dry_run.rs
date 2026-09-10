@@ -7,23 +7,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 #[test]
-fn cmp_json_sort_values_orders_multi_digit_numbers_numerically() {
-    use std::cmp::Ordering;
-    let n87 = serde_json::json!(87);
-    let n300 = serde_json::json!(300);
-    assert_eq!(
-        cmp_json_sort_values(Some(&n87), Some(&n300)),
-        Ordering::Less
-    );
-    let s87 = serde_json::json!("87");
-    let s300 = serde_json::json!("300");
-    assert_eq!(
-        cmp_json_sort_values(Some(&s87), Some(&s300)),
-        Ordering::Less
-    );
-}
-
-#[test]
 fn singleton_input_zero_row_error_is_actionable() {
     let err = singleton_input_row_count_error("src", "_", 0, "staged expression rendering");
     assert!(err.contains("zero rows"), "{err}");
@@ -37,40 +20,6 @@ fn singleton_input_multi_row_error_mentions_ambiguity_remedy() {
     assert!(err.contains("2 rows"), "{err}");
     assert!(err.contains("make the source unique"), "{err}");
     assert!(err.contains(".singleton()"), "{err}");
-}
-
-#[test]
-fn cmp_json_sort_values_string_collates_non_numeric_strings_lexically() {
-    use std::cmp::Ordering;
-    let apple = serde_json::json!("apple");
-    let banana = serde_json::json!("banana");
-    assert_eq!(
-        cmp_json_sort_values(Some(&apple), Some(&banana)),
-        Ordering::Less
-    );
-}
-
-/// Regression: `.sort(score)` must not stringify numbers and compare lexicographically (where
-/// `87` sorts after `300`). Keeps parity with [`eval_compute`] `ComputeOp::Sort` staging.
-#[test]
-fn plan_sort_compute_orders_integer_scores_numerically() {
-    let key = FieldPath::from_dotted("score").expect("score path");
-    let mut rows = [
-        serde_json::json!({"id": "n300", "score": 300}),
-        serde_json::json!({"id": "n87", "score": 87}),
-        serde_json::json!({"id": "n100", "score": 100}),
-    ];
-    rows.sort_by(|a, b| {
-        cmp_json_sort_values(value_at_field_path(a, &key), value_at_field_path(b, &key))
-    });
-    assert_eq!(rows[0]["id"], "n87");
-    assert_eq!(rows[1]["id"], "n100");
-    assert_eq!(rows[2]["id"], "n300");
-
-    rows.reverse();
-    assert_eq!(rows[0]["id"], "n300");
-    assert_eq!(rows[1]["id"], "n100");
-    assert_eq!(rows[2]["id"], "n87");
 }
 
 fn github_repository_commit_session() -> ExecuteSession {
@@ -95,7 +44,6 @@ fn github_repository_commit_session() -> ExecuteSession {
         Some(exp),
         None,
         cgs.catalog_cgs_hash_hex(),
-        None,
         None,
     )
 }
@@ -303,7 +251,7 @@ fn for_each_write_plan(source_node: serde_json::Value, source_id: &str) -> serde
                 "effect_template": {
                     "kind": "action",
                     "qualified_entity": { "entry_id": "acme", "entity": "Product" },
-                    "expr_template": "Product(${product.id}).label(label=\"stale\")",
+                    "expr_template": "Product({{ product.id }}).label(label=\"stale\")",
                     "ir_template": {
                         "expr": {
                             "op": "invoke",
@@ -475,7 +423,7 @@ fn plan_parses_product_query() {
     assert!(v.get("expr").is_some());
 }
 
-/// `e#` is session-local (teaching TSV); single-catalog + exposure must not parse `e1` as an entity *name*.
+/// `e#` is session-local (language card); single-catalog + exposure must not parse `e1` as an entity *name*.
 /// (`.page_size(n)` is Plasm program postfix sugar; the core line parser does not treat it as Plasm path syntax.)
 #[test]
 fn parse_resolves_e1_with_teaching_exposure() {
@@ -576,7 +524,6 @@ fn langmatrix_session() -> ExecuteSession {
         None,
         cgs.catalog_cgs_hash_hex(),
         None,
-        None,
     )
 }
 
@@ -662,16 +609,20 @@ fn dry_run_compiled_search_projection_rejects_filter_input_param() {
 rows"#;
     match compile_plasm_expression(&pipeline, None, &s, "search-proj-input", source) {
         Err(err) => {
+            let err = err.to_string();
             assert!(
                 err.contains("query/capability input")
                     || err.contains("not a row field")
-                    || err.contains("not a row symbol"),
+                    || err.contains("not a row symbol")
+                    || err.contains("legacy row projection")
+                    || err.contains("postfix projection"),
                 "{err}"
             );
         }
         Ok(bundle) => {
             let dry_err = evaluate_plasm_comp_dry(&s, &bundle)
                 .expect_err("dry must reject search input projection");
+            let dry_err = dry_err.to_string();
             assert!(
                 dry_err.contains("query/capability input")
                     || dry_err.contains("not a row field")
@@ -707,14 +658,14 @@ fn evaluate_plasm_plan_dry_materializes_data_binding_for_staged_surface() {
                 "id": "make",
                 "kind": "create",
                 "qualified_entity": { "entry_id": "acme", "entity": "Product" },
-                "expr_template": "Product.create(name=${body.name})",
+                "expr_template": "Product.create(name={{ body.name }})",
                 "ir_template": {
                     "expr": {
                         "op": "create",
                         "capability": "product_create",
                         "entity": "Product",
                         "input": {
-                            "name": "${body.name}"
+                            "name": "{{ body.name }}"
                         }
                     },
                     "input_bindings": []
@@ -1005,7 +956,7 @@ fn dry_run_text_renders_dependency_dag_snapshot() {
                     "value": {
                         "kind": "object",
                         "fields": {
-                            "title": { "kind": "template", "template": "${product.name}", "input_bindings": [{ "from": "product.name", "to": "" }] }
+                            "title": { "kind": "template", "template": "{{ product.name }}", "input_bindings": [{ "from": "product.name", "to": "" }] }
                         }
                     }
                 },
@@ -1037,12 +988,13 @@ fn dry_run_text_renders_dependency_dag_snapshot() {
     insta::assert_snapshot!(
         text,
         @"
-        plan ok · 3n 1r → returns: summary, cards · p7
+    plan review · 3n 1r → returns: summary, cards · p7
+    warn: unbounded read
 
-        01 products     query Query(Product all)
-        02 summary      project name, sku ← products
-        03 cards        derive map summary as product → {1} ← summary
-        "
+    01 products     query Query(Product all)
+    02 summary      project name, sku ← products
+    03 cards        derive map summary as product → {1} ← summary
+    "
     );
     assert!(!text.contains("node_results"));
     assert!(!text.contains("\"dry_run\""));
@@ -1135,7 +1087,7 @@ fn evaluate_plasm_plan_dry_reports_for_each_stage() {
                 "effect_template": {
                     "kind": "action",
                     "qualified_entity": { "entry_id": "acme", "entity": "Product" },
-                    "expr_template": "Product(${product.id}).label(label=\"stale\")",
+                    "expr_template": "Product({{ product.id }}).label(label=\"stale\")",
                     "ir_template": {
                         "expr": {
                             "op": "invoke",
@@ -1188,7 +1140,7 @@ fn for_each_templates_render_concrete_row_bound_plasm_calls() {
                     "effect_template": {
                         "kind": "action",
                         "qualified_entity": { "entry_id": "acme", "entity": "Product" },
-                        "expr_template": "Product(${product.id}).label(label=\"stale\")",
+                        "expr_template": "Product({{ product.id }}).label(label=\"stale\")",
                         "ir_template": {
                             "expr": {
                                 "op": "invoke",
@@ -1346,7 +1298,7 @@ fn dry_run_text_renders_staged_read_map_body() {
                 "effect_template": {
                     "kind": "get",
                     "qualified_entity": { "entry_id": "acme", "entity": "Product" },
-                    "expr_template": "Product(${product.id})",
+                    "expr_template": "Product({{ product.id }})",
                     "ir_template": {
                         "expr": {
                             "op": "get",
@@ -1369,7 +1321,7 @@ fn dry_run_text_renders_staged_read_map_body() {
     assert!(dry.execution_unsupported.is_empty());
     let text = render_plasm_plan_dry_text(&dry, None);
     assert!(
-        text.contains("for_each products as product => Product(${product.id})"),
+        text.contains("for_each products as product => Product({{ product.id }})"),
         "{text}"
     );
     assert!(!text.contains("=> {}"), "{text}");

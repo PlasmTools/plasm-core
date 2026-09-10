@@ -9,7 +9,10 @@ use plasm_core::{
     overlay_merge_step_response, overlay_pipeline_cache_suffix, resolve_overlay_row_bind,
     SchemaOverlaySpec, CGS,
 };
-use plasm_runtime::{AuthResolver, ExecutionEngine, ExecutionMode, RuntimeError, SecretProvider};
+use plasm_runtime::{
+    AuthResolver, ExecutionEngine, ExecutionMode, OverlaySourceOptions, RuntimeError,
+    SecretProvider,
+};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::env;
@@ -39,14 +42,13 @@ fn overlay_ttl() -> Duration {
 async fn fetch_overlay_source_response(
     engine: &ExecutionEngine,
     base: &CGS,
+    compiled: &plasm_compile::CompiledCatalog,
     capability: &str,
     http_base: &str,
-    auth_resolver: Option<Arc<AuthResolver>>,
-    mode: ExecutionMode,
-    bind: Option<&IndexMap<String, String>>,
+    options: OverlaySourceOptions<'_>,
 ) -> Result<JsonValue, String> {
     engine
-        .fetch_overlay_source_response(base, capability, http_base, auth_resolver, mode, bind)
+        .fetch_overlay_source_response(base, compiled, capability, http_base, options)
         .await
         .map_err(|e: RuntimeError| e.to_string())
 }
@@ -54,6 +56,7 @@ async fn fetch_overlay_source_response(
 async fn fetch_overlay_merged_response(
     engine: &ExecutionEngine,
     base: &CGS,
+    compiled: &plasm_compile::CompiledCatalog,
     spec: &SchemaOverlaySpec,
     http_base: &str,
     auth_resolver: Option<Arc<AuthResolver>>,
@@ -69,11 +72,14 @@ async fn fetch_overlay_merged_response(
         let response = fetch_overlay_source_response(
             engine,
             base,
+            compiled,
             source.capability.as_str(),
             http_base,
-            auth_resolver.clone(),
-            mode,
-            bind,
+            OverlaySourceOptions {
+                auth_resolver_override: auth_resolver.clone(),
+                mode,
+                bind,
+            },
         )
         .await?;
         let suffix = overlay_bind_cache_suffix(&source.bind);
@@ -90,11 +96,14 @@ async fn fetch_overlay_merged_response(
             let response = fetch_overlay_source_response(
                 engine,
                 base,
+                compiled,
                 step.capability.as_str(),
                 http_base,
-                auth_resolver.clone(),
-                mode,
-                None,
+                OverlaySourceOptions {
+                    auth_resolver_override: auth_resolver.clone(),
+                    mode,
+                    bind: None,
+                },
             )
             .await?;
             pipeline_responses.push(response.clone());
@@ -114,11 +123,14 @@ async fn fetch_overlay_merged_response(
             let response = fetch_overlay_source_response(
                 engine,
                 base,
+                compiled,
                 step.capability.as_str(),
                 http_base,
-                auth_resolver.clone(),
-                mode,
-                Some(&bind),
+                OverlaySourceOptions {
+                    auth_resolver_override: auth_resolver.clone(),
+                    mode,
+                    bind: Some(&bind),
+                },
             )
             .await?;
             pipeline_responses.push(response.clone());
@@ -135,6 +147,7 @@ async fn fetch_overlay_merged_response(
 /// and return a merged CGS (with optional TTL cache keyed by entry, base hash, backend, and pipeline digest).
 pub async fn resolve_schema_overlay_cgs(
     base: Arc<CGS>,
+    compiled: Arc<plasm_compile::CompiledCatalog>,
     engine: &ExecutionEngine,
     mode: ExecutionMode,
     http_base: &str,
@@ -150,6 +163,7 @@ pub async fn resolve_schema_overlay_cgs(
     let (response, cache_suffix) = fetch_overlay_merged_response(
         engine,
         base.as_ref(),
+        compiled.as_ref(),
         spec,
         http_base,
         auth_resolver.clone(),
@@ -195,6 +209,7 @@ pub async fn resolve_schema_overlay_for_host(
     mode: ExecutionMode,
     secret_provider: Arc<dyn SecretProvider>,
     base: Arc<CGS>,
+    compiled: Arc<plasm_compile::CompiledCatalog>,
     http_backend: &str,
     entry_id: &str,
 ) -> Result<Arc<CGS>, String> {
@@ -202,7 +217,7 @@ pub async fn resolve_schema_overlay_for_host(
         .auth
         .clone()
         .map(|scheme| Arc::new(AuthResolver::new(scheme, secret_provider)));
-    resolve_schema_overlay_cgs(base, engine, mode, http_backend, auth, entry_id).await
+    resolve_schema_overlay_cgs(base, compiled, engine, mode, http_backend, auth, entry_id).await
 }
 
 /// Local REPL / dev CLI path: overlay via process env secrets.
@@ -213,11 +228,15 @@ pub async fn resolve_schema_overlay_for_local(
     http_backend: &str,
     entry_id: &str,
 ) -> Result<Arc<CGS>, String> {
+    let compiled = Arc::new(
+        plasm_compile::compile_cgs_capability_templates(&base)
+            .map_err(|error| format!("compile local schema overlay recipes: {error}"))?,
+    );
     let auth = base
         .auth
         .clone()
         .map(|scheme| Arc::new(AuthResolver::from_env(scheme)));
-    resolve_schema_overlay_cgs(base, engine, mode, http_backend, auth, entry_id).await
+    resolve_schema_overlay_cgs(base, compiled, engine, mode, http_backend, auth, entry_id).await
 }
 
 /// Log merged overlay stats to stderr (REPL / local dev).
@@ -238,10 +257,14 @@ mod tests {
     fn spec_none_passes_through() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let base = Arc::new(CGS::new());
+        let compiled = Arc::new(
+            plasm_compile::compile_cgs_capability_templates(&base).expect("empty catalog"),
+        );
         let engine = ExecutionEngine::new(Default::default()).expect("engine");
         let out = rt
             .block_on(resolve_schema_overlay_cgs(
                 base.clone(),
+                compiled,
                 &engine,
                 ExecutionMode::Live,
                 "https://x.fibery.io",

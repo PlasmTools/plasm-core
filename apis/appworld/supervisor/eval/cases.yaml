@@ -1,0 +1,23 @@
+- id: supervisor_profile
+  schema: supervisor
+  goal: Show the supervisor profile including email
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Supervisor]
+
+- id: supervisor_passwords
+  schema: supervisor
+  goal: List account passwords for all apps
+  tags: [query]
+  covers: [query]
+  expect:
+    entities_any: [AccountPassword]
+
+- id: complete_task_success
+  schema: supervisor
+  goal: Mark the active task complete with status success
+  tags: [action]
+  covers: [invoke]
+  expect:
+    entities_any: [TaskCompletion]

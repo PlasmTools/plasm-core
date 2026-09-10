@@ -69,12 +69,6 @@ pub(crate) struct TeachingSynthesisSession<'a> {
     surface_filter: Option<&'a ExposureSurface>,
     entity_catalog_ids: IndexMap<(&'a str, &'a str), ()>,
     collect_meta: bool,
-    /// When true, an entity that yields **zero** teaching rows trips a debug-build invariant assert:
-    /// post-validation synthesis operates on an already-validated CGS, so an empty block "cannot
-    /// happen". Set false only for the `validate_cgs_expression_surface` probe, where an empty block
-    /// is the *intended signal* that the author declared a non-teachable entity (surfaced upward as
-    /// [`crate::error::SchemaError::EntityExpressionIncomplete`], not a panic).
-    assert_nonempty_blocks: bool,
 }
 
 impl<'a> TeachingSynthesisSession<'a> {
@@ -85,7 +79,6 @@ impl<'a> TeachingSynthesisSession<'a> {
         surface_filter: Option<&'a ExposureSurface>,
         entity_catalog_ids: IndexMap<(&'a str, &'a str), ()>,
         collect_meta: bool,
-        assert_nonempty_blocks: bool,
     ) -> Self {
         Self {
             line_valid_cache: HashMap::with_capacity(8192),
@@ -96,7 +89,6 @@ impl<'a> TeachingSynthesisSession<'a> {
             surface_filter,
             entity_catalog_ids,
             collect_meta,
-            assert_nonempty_blocks,
         }
     }
 
@@ -195,30 +187,30 @@ pub(crate) fn render_teaching_table_resolved<'b, F>(
         .map(exposure_qualified_catalog_ids)
         .unwrap_or_default();
     let surface_filter = exposure_for_ident.map(|e| &e.surface);
-    let ident_meta = match (map_arc.as_deref(), exposure_for_ident) {
-        (Some(_), Some(exposure)) => {
-            Some(exposure.ident_metadata_for_exposure_entities(full_entities))
-        }
-        (Some(_), None) => {
-            let mut acc = HashMap::new();
-            for &e in full_entities {
-                let cgs = resolve(e);
-                acc.extend(crate::symbol_tuning::build_ident_metadata(cgs, &[e]));
+    let ident_meta: Option<HashMap<crate::symbol_tuning::IdentMetaKey, IdentMetadata>> =
+        match (map_arc.as_deref(), exposure_for_ident) {
+            (Some(_), Some(exposure)) => {
+                Some(exposure.ident_metadata_for_exposure_entities(full_entities))
             }
-            Some(acc)
-        }
-        _ => None,
-    };
+            (Some(_), None) => {
+                let mut acc = HashMap::new();
+                for &e in full_entities {
+                    let cgs = resolve(e);
+                    acc.extend(crate::symbol_tuning::build_ident_metadata(cgs, &[e]));
+                }
+                Some(acc)
+            }
+            _ => None,
+        };
 
-    let mut session = TeachingSynthesisSession::new(
+    let mut session = Box::new(TeachingSynthesisSession::new(
         line_valid_cache_seed,
         map_arc,
         ident_meta,
         surface_filter,
         entity_catalog_ids,
         fill_model,
-        !validation_probe,
-    );
+    ));
 
     let render_one = |session: &mut TeachingSynthesisSession<'_>,
                       cgs: &CGS,
@@ -260,18 +252,15 @@ pub(crate) fn render_teaching_table_resolved<'b, F>(
             Some(catalog_entry_id),
         );
         if block.teaching_rows.is_empty() {
-            // Empty block is legitimate *only* during the validation probe (author declared a
-            // non-teachable entity; the caller rejects with EntityExpressionIncomplete). In every
-            // post-validation session the CGS already passed validation, so an empty block is a
-            // genuine renderer/coherence bug worth asserting in debug builds.
-            debug_assert!(
-                !session.assert_nonempty_blocks,
-                "teaching block empty for entity {ename} — CGS::validate should have rejected this via cgs_expression_validate"
-            );
+            // Validation probe: empty block is the authoring signal for EntityExpressionIncomplete.
+            // Live MCP / incremental surfaces: mute entities can appear if exposure admitted an
+            // entity seat without teachable caps — skip without panicking (request path must not
+            // abort the process). Prefer fixing exposure admission so this warn stays rare.
             tracing::warn!(
                 target: "plasm_core::prompt_render",
                 entity = ename,
-                "empty teaching block; schema should have failed CGS::validate"
+                validation_probe,
+                "empty teaching block; skipping entity"
             );
             return;
         }

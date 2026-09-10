@@ -69,6 +69,5 @@ capabilities:
 values:
   nv_wire_str_short:
     type: string
-    string_semantics: short
   nv_wire_int:
     type: integer

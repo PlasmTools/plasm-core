@@ -1,0 +1,23 @@
+- id: login_fs
+  schema: file_system
+  goal: Login to file_system with username and password to get an access token
+  tags: [action, auth]
+  covers: [invoke]
+  expect:
+    entities_any: [AuthSession]
+
+- id: list_directory
+  schema: file_system
+  goal: List files under my home directory after logging in
+  tags: [query]
+  covers: [query]
+  expect:
+    entities_any: [DirectoryEntry]
+
+- id: create_file
+  schema: file_system
+  goal: Create a file at ~/notes.txt with content hello world
+  tags: [create]
+  covers: [create]
+  expect:
+    entities_any: [File]

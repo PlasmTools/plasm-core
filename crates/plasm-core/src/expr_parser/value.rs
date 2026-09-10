@@ -10,8 +10,8 @@
 //!   `\uXXXX`, …); unknown `\x` is a parse error (use a tagged heredoc for multiline bodies). Plus **structured
 //!   heredocs** `<<TAG` … `TAG` (tagged, bash-inspired) for multiline or quote-heavy payloads without escape rules
 //!   inside the block. The opener must be `<<` immediately followed by a tag (`[A-Za-z_][A-Za-z0-9_]*`) and a
-//!   newline — not `<<` + newline alone. For CGS slots with non-`short` [`crate::schema::StringSemantics`], teaching
-//!   prompts prefer a heredoc; `string_semantics: short` scalars use normal quotes.
+//!   newline — not `<<` + newline alone. For CGS slots with presentation profiles (`markdown`, `document`, …), teaching
+//!   prompts prefer a heredoc; plain `string` scalars use normal quotes.
 //! - [`Parser::parse_predicate_value_rhs`] / [`Parser::parse_dotted_call_arg_value_rhs`]: `Entity{…}` and
 //!   dotted-call `method(k=v,…)` allow unquoted phrases (spaces) until top-level `,` or `}` / `)`.
 //!   RHS may also be an **array literal** `[v1, v2]` (comma-separated; same strict [`Parser::parse_value`]
@@ -167,11 +167,19 @@ impl<'a> Parser<'a> {
                         if self.pos < bytes.len() && bytes[self.pos] == b'\n' {
                             self.pos += 1;
                         }
-                        return Ok(Value::String(content));
+                        return Value::program_string(content).map_err(|error| {
+                            self.err(ParseErrorKind::InvalidProgramString {
+                                message: error.to_string(),
+                            })
+                        });
                     }
                     HeredocCloseLineKind::GluedSuffix => {
                         self.pos = line_start + leading_ws + tag.len();
-                        return Ok(Value::String(content));
+                        return Value::program_string(content).map_err(|error| {
+                            self.err(ParseErrorKind::InvalidProgramString {
+                                message: error.to_string(),
+                            })
+                        });
                     }
                 }
             }
@@ -243,7 +251,11 @@ impl<'a> Parser<'a> {
                         Some(c) => s.push(c),
                     }
                 }
-                Ok(Value::String(s))
+                Value::program_string(s).map_err(|error| {
+                    self.err(ParseErrorKind::InvalidProgramString {
+                        message: error.to_string(),
+                    })
+                })
             }
             Some(c) if c.is_ascii_digit() => {
                 if let Some(u) = self.try_consume_standard_uuid() {

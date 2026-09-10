@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use plasm_core::OperationHandle;
 
 use crate::operation::{OperationPhase, OperationProgress, OperationState};
-use crate::plan_dry_display::PlanDryVerdict;
 
 /// Max terminal operation rows retained in the session descriptor JSON.
 pub const MAX_TERMINAL_OPS_PERSIST: usize = 32;
@@ -137,11 +136,7 @@ pub fn descriptor_from_operation_state(
         error: op.error.clone(),
         run_artifact_id: op.run_artifact_id.clone(),
         plan_commit_ref: op.plan_commit_ref.as_ref().map(|r| r.as_str().to_string()),
-        dry_verdict: op.dry_verdict.map(|v| match v {
-            PlanDryVerdict::Ok => "ok".to_string(),
-            PlanDryVerdict::Review => "review".to_string(),
-            PlanDryVerdict::Deny => "deny".to_string(),
-        }),
+        dry_verdict: op.dry_verdict.map(|v| v.as_wire().to_string()),
         display_map: op.display_map.clone(),
         agent_seq: op.agent_emit.seq,
         agent_last_line: op.agent_emit.last_line.clone(),

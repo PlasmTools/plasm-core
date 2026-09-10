@@ -2,7 +2,6 @@
 
 use crate::execute_session::ExecuteSession;
 use crate::operation::{OperationProgress, OperationState};
-use crate::plan_dry_display::PlanDryVerdict;
 use crate::plasm_plan_run::DryPlasmPlanEvaluation;
 use plasm_trace::TraceCompWire;
 use serde_json::json;
@@ -114,14 +113,7 @@ pub fn merge_run_explorer_fields_into_plasm(
         plasm.insert("plan_ux_reflection".into(), ux);
     }
     if let Some(verdict) = op.dry_verdict {
-        plasm.insert(
-            "dry_verdict".into(),
-            json!(match verdict {
-                PlanDryVerdict::Ok => "ok",
-                PlanDryVerdict::Review => "review",
-                PlanDryVerdict::Deny => "deny",
-            }),
-        );
+        plasm.insert("dry_verdict".into(), json!(verdict.as_wire()));
     }
     if op.auto_async {
         plasm.insert("auto_async".into(), json!(true));

@@ -105,6 +105,7 @@ impl super::ExecuteSession {
                 "ok" => Some(PlanDryVerdict::Ok),
                 "review" => Some(PlanDryVerdict::Review),
                 "deny" => Some(PlanDryVerdict::Deny),
+                "needs_fix" => Some(PlanDryVerdict::NeedsFix),
                 _ => None,
             });
             let plan_commit_ref = desc
@@ -240,7 +241,6 @@ mod tests {
             None,
             "hash".into(),
             None,
-            None,
         );
         es.bind_operation_wire("sid");
         let handle = es.mint_operation_handle("l_AAAAAAAAQACAAAAAAAAAAQ");
@@ -278,7 +278,6 @@ mod tests {
             None,
             "hash".into(),
             None,
-            None,
         );
         es2.restore_persisted_operations(&snap);
         let op = es2.get_operation(&handle).expect("restored");
@@ -313,7 +312,6 @@ mod tests {
             None,
             None,
             "hash".into(),
-            None,
             None,
         );
         let mut stubs = Vec::new();
@@ -377,7 +375,6 @@ mod tests {
             None,
             "hash".into(),
             None,
-            None,
         );
         es.bind_operation_wire("sid");
         for i in 1..=40 {
@@ -392,6 +389,7 @@ mod tests {
                 &handle,
                 crate::plasm_plan_run::PlasmPlanRunResult {
                     version: serde_json::json!({}),
+                    agent_outcome: Default::default(),
                     node_results: Vec::new(),
                     graph_summary: serde_json::json!({}),
                     comp: None,

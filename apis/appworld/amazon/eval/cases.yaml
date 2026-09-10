@@ -1,0 +1,103 @@
+- id: login_amazon
+  schema: amazon
+  goal: Login to amazon and get an access token
+  tags: [action, auth]
+  covers: [invoke]
+  expect:
+    entities_any: [AuthSession]
+
+- id: search_products
+  schema: amazon
+  goal: Search products for wireless headphones
+  tags: [search]
+  covers: [search_text, query_filtered, projection]
+  expect:
+    entities_any: [Product]
+
+- id: show_cart
+  schema: amazon
+  goal: Show my amazon cart totals
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Cart]
+
+- id: list_cart_items
+  schema: amazon
+  goal: List the products currently in my amazon cart
+  tags: [query]
+  covers: [query_filtered, chain]
+  expect:
+    entities_any: [CartItem]
+
+- id: list_wish_list
+  schema: amazon
+  goal: Show everything on my amazon wish list
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [WishListItem]
+
+- id: move_cart_to_wish
+  schema: amazon
+  goal: Move a product from my cart to my wish list
+  tags: [action, multi_step]
+  covers: [invoke, multi_step]
+  expect:
+    entities_any: [Product, WishListItem]
+
+- id: list_addresses
+  schema: amazon
+  goal: List my shipping addresses
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Address]
+
+- id: list_payment_cards
+  schema: amazon
+  goal: List my saved payment cards
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [PaymentCard]
+
+- id: place_order
+  schema: amazon
+  goal: Place an order from the cart with a payment card and address
+  tags: [create]
+  covers: [create]
+  expect:
+    entities_any: [Order]
+
+- id: delete_address
+  schema: amazon
+  goal: Delete one of my shipping addresses
+  tags: [delete]
+  covers: [delete]
+  expect:
+    entities_any: [Address]
+
+- id: product_reviews
+  schema: amazon
+  goal: Show customer reviews for a product
+  tags: [search]
+  covers: [search_text, query_filtered]
+  expect:
+    entities_any: [ProductReview]
+
+- id: write_review
+  schema: amazon
+  goal: Write a five star review for a product I bought
+  tags: [create]
+  covers: [create]
+  expect:
+    entities_any: [ProductReview]
+
+- id: update_review
+  schema: amazon
+  goal: Update my product review rating and text
+  tags: [update]
+  covers: [update]
+  expect:
+    entities_any: [ProductReview]

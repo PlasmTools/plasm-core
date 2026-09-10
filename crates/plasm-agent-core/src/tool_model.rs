@@ -12,10 +12,10 @@ use plasm_core::prompt_render::{
 };
 use plasm_core::schema::{
     input_variant_body_type, AuthScheme, EntityDef, FieldSchema, InputFieldSchema, InputFieldWire,
-    InputType, OauthExtension, OutputType, RelationMaterialization, RelationSchema,
-    StringSemantics, CGS,
+    InputType, OauthExtension, OutputType, RelationMaterialization, RelationSchema, CGS,
 };
 use plasm_core::symbol_tuning::FocusSpec;
+use plasm_core::value_domain::ProfileId;
 use plasm_core::{capability_method_label_kebab, CapabilityKind, CapabilitySchema, FieldType};
 use plasm_core::{catalog_connect_profile, CatalogConnectProfile};
 use serde::Serialize;
@@ -430,22 +430,14 @@ fn format_allowed_domain(values: &[String], max_visible: usize) -> String {
     )
 }
 
-/// Returns `None` for plain short strings (default semantics).
-fn string_subtype_keyword_from_semantics(sem: StringSemantics) -> Option<&'static str> {
-    match sem {
-        StringSemantics::Short => None,
-        sem => sem.gloss_type_keyword(),
-    }
-}
-
 fn type_label_from_parts(
     field_type: &FieldType,
     allowed_values: Option<&[String]>,
-    string_semantics: StringSemantics,
+    profile: Option<ProfileId>,
     array_items: Option<&plasm_core::schema::ArrayItemsSchema>,
 ) -> String {
     match field_type {
-        FieldType::EntityRef { target } => {
+        FieldType::EntityRef { target, .. } => {
             format!("entity_ref → {target}")
         }
         FieldType::Select => {
@@ -464,9 +456,9 @@ fn type_label_from_parts(
                 "multi-select".into()
             }
         }
-        FieldType::String => match string_subtype_keyword_from_semantics(string_semantics) {
+        FieldType::String => match profile {
             None => "string".into(),
-            Some(kw) => format!("string · {kw}"),
+            Some(p) => format!("string · {}", p.type_name()),
         },
         FieldType::Blob => "blob · binary".into(),
         FieldType::Array => {
@@ -486,12 +478,7 @@ fn input_type_tool_label(ty: &InputType, _cgs: &CGS) -> String {
         InputType::Value {
             field_type,
             allowed_values,
-        } => type_label_from_parts(
-            field_type,
-            allowed_values.as_deref(),
-            StringSemantics::Short,
-            None,
-        ),
+        } => type_label_from_parts(field_type, allowed_values.as_deref(), None, None),
         InputType::Object { .. } => "object".into(),
         InputType::Array { element_type, .. } => {
             format!("array[{}]", input_type_tool_label(element_type, _cgs))
@@ -527,7 +514,7 @@ fn input_field_type_label(field: &InputFieldSchema, cgs: &CGS) -> String {
             type_label_from_parts(
                 &nv.field_type,
                 nv.allowed_values.as_deref(),
-                field.effective_string_semantics(cgs),
+                nv.domain.profile,
                 field.resolved_array_items(cgs),
             )
         }
@@ -536,7 +523,7 @@ fn input_field_type_label(field: &InputFieldSchema, cgs: &CGS) -> String {
 
 fn navigable_entity_ref_target(cgs: &CGS, field_type: &FieldType) -> Option<String> {
     match field_type {
-        FieldType::EntityRef { target } if cgs.entities.contains_key(target.as_str()) => {
+        FieldType::EntityRef { target, .. } if cgs.entities.contains_key(target.as_str()) => {
             Some(target.to_string())
         }
         _ => None,
@@ -567,7 +554,7 @@ fn field_type_compact_label(ft: &FieldType) -> String {
         FieldType::Money => "money".into(),
         FieldType::Array => "array".into(),
         FieldType::Json => "json · object".into(),
-        FieldType::EntityRef { target } => format!("entity_ref → {target}"),
+        FieldType::EntityRef { target, .. } => format!("entity_ref → {target}"),
     }
 }
 
@@ -578,7 +565,7 @@ fn schema_field_type_label(field: &FieldSchema, cgs: &CGS) -> String {
     type_label_from_parts(
         &nv.field_type,
         nv.allowed_values.as_deref(),
-        field.effective_string_semantics(cgs),
+        nv.domain.profile,
         field.resolved_array_items(cgs),
     )
 }
@@ -635,14 +622,9 @@ fn explorer_arg_from_input_field(
 }
 
 fn predicate_args_from_capability(cgs: &CGS, cap: &CapabilitySchema) -> Vec<ExplorerVerbArg> {
-    cap.object_params()
-        .map(|fields| {
-            fields
-                .iter()
-                .map(|f| explorer_arg_from_input_field(cgs, f, "predicate"))
-                .collect()
-        })
-        .unwrap_or_default()
+    cap.query_surface_fields()
+        .map(|f| explorer_arg_from_input_field(cgs, f, "predicate"))
+        .collect()
 }
 
 fn invoke_args_from_capability(
@@ -668,10 +650,8 @@ fn invoke_args_from_capability(
             cli_flag: String::new(),
         });
     }
-    if let Some(fields) = cap.object_params() {
-        for f in fields {
-            out.push(explorer_arg_from_input_field(cgs, f, "input"));
-        }
+    for f in cap.invocation_object_fields() {
+        out.push(explorer_arg_from_input_field(cgs, f, "input"));
     }
     out
 }
@@ -799,7 +779,10 @@ fn explorer_args_for_get(entity: &EntityDef, get_cap: &CapabilitySchema) -> Vec<
         cli_flag: String::new(),
     }];
 
-    let Ok(template) = parse_capability_template(&get_cap.mapping.template) else {
+    let Some(mapping) = get_cap.mapping.as_ref() else {
+        return out;
+    };
+    let Ok(template) = parse_capability_template(&mapping.template) else {
         return out;
     };
 
@@ -849,6 +832,7 @@ fn explorer_args_for_get(entity: &EntityDef, get_cap: &CapabilitySchema) -> Vec<
             path_var_names_from_request(cml)
         }
         CapabilityTemplate::View(_)
+        | CapabilityTemplate::CredentialBind(_)
         | CapabilityTemplate::EvmCall(_)
         | CapabilityTemplate::EvmLogs(_) => Vec::new(),
     };
@@ -1437,7 +1421,7 @@ fn project_entity(
         let Ok(nv) = cgs.named_value_for_slot(field_schema) else {
             continue;
         };
-        if let FieldType::EntityRef { ref target } = nv.field_type {
+        if let FieldType::EntityRef { ref target, .. } = nv.field_type {
             let kebab = field_subcommand_kebab(field_name);
             if entity.relations.contains_key(field_name.as_str()) {
                 continue;

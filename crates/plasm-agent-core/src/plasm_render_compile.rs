@@ -2,8 +2,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde_json::json;
-
 use crate::execute_session::ExecuteSession;
 use crate::plasm_plan::{OutputName, QualifiedEntityKey};
 use crate::plasm_plan_run::RenderColumns;
@@ -376,7 +374,7 @@ pub(crate) fn resolve_inferred_render_columns(
 pub(crate) fn render_plan_graph_edges(
     source: &str,
     render_bindings: &[OutputName],
-) -> (Vec<String>, Vec<serde_json::Value>) {
+) -> (Vec<String>, Vec<crate::plasm_plan::PlanResultUse>) {
     let mut depends_on = vec![source.to_string()];
     for label in render_bindings {
         let id = label.as_str();
@@ -384,11 +382,19 @@ pub(crate) fn render_plan_graph_edges(
             depends_on.push(id.to_string());
         }
     }
-    let mut uses_result = vec![serde_json::json!({ "node": source, "as": "source" })];
+    let mut uses_result = vec![crate::plasm_plan::PlanResultUse {
+        node: source.to_owned(),
+        r#as: "source".to_owned(),
+        qualified_entity: None,
+    }];
     for label in render_bindings {
         let id = label.as_str();
         if id != source {
-            uses_result.push(json!({ "node": id, "as": id }));
+            uses_result.push(crate::plasm_plan::PlanResultUse {
+                node: id.to_owned(),
+                r#as: id.to_owned(),
+                qualified_entity: None,
+            });
         }
     }
     (depends_on, uses_result)

@@ -5,10 +5,10 @@ use std::fmt::Write as _;
 
 use crate::execute_session::ExecuteSession;
 use crate::plasm_plan::{
-    AggregateFunction, AggregateSpec, ComputeOp, ComputeTemplate, EffectClass, EffectTemplate,
-    FieldPath, Plan, PlanNodeKind, PlanPredicate, PlanPredicateOp, PlanValue, ValidatedPlanExprIr,
-    ValidatedPlanExprTemplate, ValidatedPlanNode, ValidatedPlanReturn, ValidatedPlanState,
-    ValidatedSurfaceNode,
+    AggregateFunction, AggregateSpec, ComputeOp, ComputeTemplate, EffectClass, FieldPath, Plan,
+    PlanNodeKind, PlanPredicate, PlanPredicateOp, PlanValue, ValidatedEffectTemplate,
+    ValidatedPlanExprIr, ValidatedPlanExprTemplate, ValidatedPlanNode, ValidatedPlanReturn,
+    ValidatedPlanState, ValidatedSurfaceNode,
 };
 
 use serde::{Deserialize, Serialize};
@@ -19,15 +19,18 @@ pub enum PlanDryVerdict {
     Ok,
     Review,
     Deny,
+    /// Correctable program diagnostic (parse / type / preflight) — not a tool fault.
+    NeedsFix,
 }
 
 impl PlanDryVerdict {
-    /// Canonical agent/control-plane wire string (`ok` | `review` | `deny`).
+    /// Canonical agent/control-plane wire string (`ok` | `review` | `deny` | `needs_fix`).
     pub fn as_wire(self) -> &'static str {
         match self {
             Self::Ok => "ok",
             Self::Review => "review",
             Self::Deny => "deny",
+            Self::NeedsFix => "needs_fix",
         }
     }
 }
@@ -156,6 +159,9 @@ pub enum PlanDryOp {
     Dedupe {
         keys: Vec<String>,
     },
+    With {
+        columns: Vec<String>,
+    },
     Render {
         columns: Vec<String>,
         template_chars: usize,
@@ -164,6 +170,12 @@ pub enum PlanDryOp {
         source: String,
         binding: String,
         body: String,
+    },
+    IterateUntil {
+        source: String,
+        binding: String,
+        body: String,
+        take: u32,
     },
     Relation {
         relation: String,
@@ -196,6 +208,7 @@ pub fn build_plan_dry_compact_view(
             .and_then(|v| v.as_str())
             .and_then(|v| match v {
                 "denied" | "deny" => Some(PlanDryVerdict::Deny),
+                "needs_fix" => Some(PlanDryVerdict::NeedsFix),
                 "needs_review" | "review" => Some(PlanDryVerdict::Review),
                 "clean" | "ok" => Some(PlanDryVerdict::Ok),
                 _ => None,
@@ -260,15 +273,11 @@ pub fn render_plan_dry_compact_text(
     plan_handle: Option<&str>,
 ) -> String {
     let mut out = String::new();
-    let verdict = match view.verdict {
-        PlanDryVerdict::Ok => "ok",
-        PlanDryVerdict::Review => "review",
-        PlanDryVerdict::Deny => "deny",
-    };
-    let mut header = format!("plan {verdict} · {}n {}r", view.node_count, view.read_count,);
-    if view.write_count > 0 {
-        let _ = write!(header, " {}w", view.write_count);
-    }
+    let verdict = view.verdict.as_wire();
+    let mut header = format!(
+        "plan {verdict} · {}n {}r {}w",
+        view.node_count, view.read_count, view.write_count
+    );
     let _ = write!(header, " → {}", view.return_label);
     if let Some(handle) = plan_handle {
         let _ = write!(header, " · {handle}");
@@ -336,8 +345,10 @@ pub(crate) fn human_ux_headline_for_op(op: &PlanDryOp) -> String {
         PlanDryOp::Limit { count } => format!("Take first {count}"),
         PlanDryOp::Dedupe { keys } if keys.is_empty() => "Distinct rows".into(),
         PlanDryOp::Dedupe { keys } => format!("Dedupe on {}", keys.join(", ")),
+        PlanDryOp::With { columns } => format!("Add columns {}", columns.join(", ")),
         PlanDryOp::Render { .. } => "Render text".into(),
         PlanDryOp::ForEach { .. } => "For each row".into(),
+        PlanDryOp::IterateUntil { .. } => "Iterate until".into(),
         PlanDryOp::Relation { .. } => "Follow relation".into(),
         PlanDryOp::Data { .. } => "Static data".into(),
         PlanDryOp::Derive { .. } => "Derive rows".into(),
@@ -374,6 +385,7 @@ pub(crate) fn human_ux_summary_for_op(op: &PlanDryOp) -> String {
         PlanDryOp::Aggregate { .. } => "Summarize".into(),
         PlanDryOp::Dedupe { keys } if keys.is_empty() => "Distinct rows".into(),
         PlanDryOp::Dedupe { keys } => format!("Dedupe on {}", keys.join(", ")),
+        PlanDryOp::With { columns } => format!("Add {}", columns.join(", ")),
         PlanDryOp::Render { columns, .. } => format!("Render {}", columns.join(", ")),
         PlanDryOp::Relation {
             relation, target, ..
@@ -381,6 +393,12 @@ pub(crate) fn human_ux_summary_for_op(op: &PlanDryOp) -> String {
         PlanDryOp::ForEach {
             source, binding, ..
         } => format!("For each row in {source} as {binding}"),
+        PlanDryOp::IterateUntil {
+            source,
+            binding,
+            take,
+            ..
+        } => format!("Iterate {source} as {binding} until (take {take})"),
         PlanDryOp::Derive {
             source, binding, ..
         } => format!("Derive from {source} as {binding}"),
@@ -408,6 +426,7 @@ pub(crate) fn render_plan_dry_op(op: &PlanDryOp) -> String {
                 format!("dedupe {}", keys.join(", "))
             }
         }
+        PlanDryOp::With { columns } => format!("with {}", columns.join(", ")),
         PlanDryOp::Render {
             columns,
             template_chars,
@@ -418,6 +437,14 @@ pub(crate) fn render_plan_dry_op(op: &PlanDryOp) -> String {
             body,
         } => {
             format!("for_each {source} as {binding} => {body}")
+        }
+        PlanDryOp::IterateUntil {
+            source,
+            binding,
+            body,
+            take,
+        } => {
+            format!("iterate_until {source} as {binding} => {body} take {take}")
         }
         PlanDryOp::Relation {
             relation,
@@ -469,6 +496,12 @@ fn compact_op_from_node(
             binding: n.item_binding.as_str().to_string(),
             body: effect_template_body(&n.effect_template, es),
         },
+        ValidatedPlanNode::IterateUntil(n) => PlanDryOp::IterateUntil {
+            source: map_display_id(n.source.as_str(), display_map),
+            binding: n.item_binding.as_str().to_string(),
+            body: effect_template_body(&n.effect_template, es),
+            take: n.take,
+        },
     }
 }
 
@@ -499,6 +532,12 @@ fn compact_op_from_compute(
         ComputeOp::DedupeBy { keys } => PlanDryOp::Dedupe {
             keys: keys.iter().map(|k| k.dotted()).collect(),
         },
+        ComputeOp::With { columns } => PlanDryOp::With {
+            columns: columns
+                .iter()
+                .map(|c| c.name.as_str().to_string())
+                .collect(),
+        },
         ComputeOp::Render {
             columns, template, ..
         } => PlanDryOp::Render {
@@ -509,12 +548,25 @@ fn compact_op_from_compute(
 }
 
 fn surface_compact_expr(surface: &ValidatedSurfaceNode, es: Option<&ExecuteSession>) -> String {
+    // Prefer authored / taught wire surface over IR-template fallbacks. Preferring
+    // `ir_template` first hid mutators behind `<typed Plasm IR template>` even when
+    // `display_expr` carried the e#.m#(…) form the agent must reuse.
     let raw = surface
-        .ir
-        .as_ref()
-        .map(|ir| render_plan_expr_ir_for_session(ir, es))
-        .or_else(|| surface.ir_template.as_ref().map(render_plan_expr_template))
-        .or_else(|| surface.display_expr.clone())
+        .display_expr
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            surface
+                .ir
+                .as_ref()
+                .map(|ir| render_plan_expr_ir_for_session(ir, es))
+        })
+        .or_else(|| {
+            surface
+                .ir_template
+                .as_ref()
+                .map(|tmpl| render_plan_expr_template_for_session(tmpl, es))
+        })
         .unwrap_or_else(|| "<typed Plasm IR>".to_string());
     crate::plan_dry_compact::compact_agent_surface_expr(&raw)
 }
@@ -552,22 +604,38 @@ pub(crate) fn render_expr_wire_for_execute_session(
     }
 }
 
-fn render_plan_expr_template(template: &ValidatedPlanExprTemplate) -> String {
-    template
-        .display_expr
-        .clone()
-        .unwrap_or_else(|| "<typed Plasm IR template>".to_string())
+fn render_template_wire_surface(
+    display_expr: Option<&str>,
+    expr: &plasm_core::Expr,
+    es: Option<&ExecuteSession>,
+) -> String {
+    if let Some(display) = display_expr.map(str::trim).filter(|s| !s.is_empty()) {
+        return display.to_string();
+    }
+    render_expr_wire_for_execute_session(expr, es)
 }
 
-fn effect_template_body(template: &EffectTemplate, _es: Option<&ExecuteSession>) -> String {
+fn render_plan_expr_template_for_session(
+    template: &ValidatedPlanExprTemplate,
+    es: Option<&ExecuteSession>,
+) -> String {
+    render_template_wire_surface(template.display_expr.as_deref(), &template.expr, es)
+}
+
+#[allow(dead_code)]
+fn render_plan_expr_template(template: &ValidatedPlanExprTemplate) -> String {
+    render_plan_expr_template_for_session(template, None)
+}
+
+fn effect_template_body(template: &ValidatedEffectTemplate, es: Option<&ExecuteSession>) -> String {
     if !template.expr_template.trim().is_empty() {
         return template.expr_template.clone();
     }
-    template
-        .ir_template
-        .display_expr
-        .clone()
-        .unwrap_or_else(|| "<typed Plasm IR template>".to_string())
+    render_template_wire_surface(
+        template.ir_template.display_expr.as_deref(),
+        &template.ir_template.expr,
+        es,
+    )
 }
 
 fn step_upstream_labels(
@@ -588,6 +656,9 @@ fn step_upstream_labels(
                 ids.push(map_display_id(n.source.as_str(), display_map));
             }
             ValidatedPlanNode::ForEach(n) => {
+                ids.push(map_display_id(n.source.as_str(), display_map));
+            }
+            ValidatedPlanNode::IterateUntil(n) => {
                 ids.push(map_display_id(n.source.as_str(), display_map));
             }
             ValidatedPlanNode::RelationTraversal(n) => {
@@ -762,6 +833,7 @@ fn render_kind(kind: PlanNodeKind) -> &'static str {
         PlanNodeKind::Derive => "derive",
         PlanNodeKind::Compute => "compute",
         PlanNodeKind::ForEach => "for_each",
+        PlanNodeKind::IterateUntil => "iterate_until",
         PlanNodeKind::Relation => "relation",
     }
 }
@@ -853,7 +925,7 @@ fn next_synthetic_plan_label(
             counters.d += 1;
             format!("d{}", counters.d)
         }
-        ValidatedPlanNode::ForEach(_) => {
+        ValidatedPlanNode::ForEach(_) | ValidatedPlanNode::IterateUntil(_) => {
             counters.f += 1;
             format!("f{}", counters.f)
         }

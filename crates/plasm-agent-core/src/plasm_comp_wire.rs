@@ -17,6 +17,7 @@ pub fn plasm_comp_artifact_from_comp(comp: PlasmComp) -> Result<PlasmCompArtifac
         let needs_gate = match step {
             plasm_core::PlasmStepPayload::Invoke(p) => p.approval.is_some(),
             plasm_core::PlasmStepPayload::FlatMapEffect(p) => p.approval.is_some(),
+            plasm_core::PlasmStepPayload::UnfoldUntil(p) => p.approval.is_some(),
             _ => false,
         };
         if needs_gate {
@@ -174,6 +175,7 @@ fn primary_predecessor(node: &ValidatedPlanNode) -> Option<String> {
         ValidatedPlanNode::Compute(n) => Some(n.compute.source.clone()),
         ValidatedPlanNode::Derive(n) => Some(n.source.as_str().to_string()),
         ValidatedPlanNode::ForEach(n) => Some(n.source.as_str().to_string()),
+        ValidatedPlanNode::IterateUntil(n) => Some(n.source.as_str().to_string()),
         ValidatedPlanNode::RelationTraversal(n) => Some(n.relation.source.as_str().to_string()),
         ValidatedPlanNode::Surface(n) => n.uses_result.first().map(|u| u.node.clone()),
         ValidatedPlanNode::Data(_) => None,

@@ -6,19 +6,7 @@ import { resolveGatewayModel } from "../gateway-model.js";
 const DEFAULT_CONTEXT_TOKENS = 200_000;
 
 function estimateTokens(messages: ModelMessage[]): number {
-  let chars = 0;
-  for (const message of messages) {
-    if (typeof message.content === "string") {
-      chars += message.content.length;
-    } else if (Array.isArray(message.content)) {
-      for (const part of message.content) {
-        if (typeof part === "object" && part && "text" in part && typeof part.text === "string") {
-          chars += part.text.length;
-        }
-      }
-    }
-  }
-  return Math.ceil(chars / 4);
+  return Math.ceil(JSON.stringify(messages).length / 4);
 }
 
 function splitForCompaction(messages: ModelMessage[]): {
@@ -29,10 +17,10 @@ function splitForCompaction(messages: ModelMessage[]): {
     return { prefix: [], suffix: messages };
   }
   const keepRecent = Math.min(6, messages.length);
-  return {
-    prefix: messages.slice(0, messages.length - keepRecent),
-    suffix: messages.slice(messages.length - keepRecent),
-  };
+  let split = messages.length - keepRecent;
+  // Never separate a tool result from the assistant call that produced it.
+  while (split > 0 && messages[split]?.role === "tool") split -= 1;
+  return { prefix: messages.slice(0, split), suffix: messages.slice(split) };
 }
 
 /** Eve-shaped context trimming when transcript exceeds compaction threshold. */

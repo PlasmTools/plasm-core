@@ -124,7 +124,6 @@ pub struct PersistedSessionReuseKey {
     pub catalog_cgs_hash: String,
     pub entities: Vec<String>,
     pub context_intent: Option<String>,
-    pub ranked_capabilities: Option<Vec<String>>,
     pub principal: Option<String>,
     pub logical_session_id: Option<String>,
 }
@@ -137,7 +136,6 @@ impl From<&SessionReuseKey> for PersistedSessionReuseKey {
             catalog_cgs_hash: k.catalog_cgs_hash.clone(),
             entities: k.entities.clone(),
             context_intent: k.context_intent.clone(),
-            ranked_capabilities: k.ranked_capabilities.clone(),
             principal: k.principal.clone(),
             logical_session_id: k.logical_session_id.clone(),
         }
@@ -152,7 +150,6 @@ impl From<PersistedSessionReuseKey> for SessionReuseKey {
             catalog_cgs_hash: k.catalog_cgs_hash,
             entities: k.entities,
             context_intent: k.context_intent,
-            ranked_capabilities: k.ranked_capabilities,
             principal: k.principal,
             logical_session_id: k.logical_session_id,
         }
@@ -180,6 +177,8 @@ pub struct PersistedPlanCommitRecord {
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct PersistedExecuteSessionDescriptor {
+    #[serde(default)]
+    pub discovery_pin: Option<crate::discovery_store::DiscoverySessionPin>,
     pub prompt_hash: String,
     pub session_id: String,
     pub prompt_text: String,
@@ -195,7 +194,6 @@ pub struct PersistedExecuteSessionDescriptor {
     pub principal: Option<String>,
     pub catalog_cgs_hash: String,
     pub context_intent: Option<String>,
-    pub ranked_capabilities: Option<Vec<String>>,
     pub domain_revision: u32,
     pub reuse_key: PersistedSessionReuseKey,
     /// Unix seconds after which rehydrate must reject (aligned with in-memory session TTL).
@@ -219,12 +217,6 @@ pub struct PersistedExecuteSessionDescriptor {
     pub operations: Vec<super::persisted_operations::PersistedOperationDescriptor>,
     #[serde(default)]
     pub operation_handle_next: u64,
-    /// Share-link token bound via session-effect capabilities (e.g. Proof `document_share_bind`).
-    #[serde(default)]
-    pub session_share_token: Option<String>,
-    /// Proof `baseToken` from the latest successful `editor_state_get`.
-    #[serde(default)]
-    pub session_proof_base_token: Option<String>,
     /// Append-only symbol ledger (`PLSL` + postcard); required for cross-pod rehydrate.
     #[serde(default)]
     pub symbol_ledger_bytes: Vec<u8>,
@@ -244,7 +236,6 @@ impl PersistedExecuteSessionDescriptor {
         session: &ExecuteSession,
         session_id: &str,
         reuse_key: &SessionReuseKey,
-        bind_credentials: crate::execute_session::SessionBindCredentialsSnapshot,
         durable: &crate::execute_session_materialize::DurableExposureSnapshot,
     ) -> Self {
         let catalog_cgs_hashes_by_entry = crate::catalog_hash::effective_hash_map_to_strings(
@@ -272,11 +263,11 @@ impl PersistedExecuteSessionDescriptor {
             principal: session.principal.clone(),
             catalog_cgs_hash: session.catalog_cgs_hash.clone(),
             context_intent: session.context_intent.clone(),
-            ranked_capabilities: session.ranked_capabilities.clone(),
             domain_revision: session.domain_revision,
             reuse_key: PersistedSessionReuseKey::from(reuse_key),
             expires_at_unix: expires_at_from_now(),
             catalog_cgs_hashes_by_entry,
+            discovery_pin: session.discovery_pin.clone(),
             registry_catalog_hashes_by_entry: session.registry_catalog_hashes_by_entry.clone(),
             outbound_hosted_kv_by_entry,
             bindings_by_entry: session.bindings_by_entry.clone(),
@@ -284,8 +275,6 @@ impl PersistedExecuteSessionDescriptor {
             plan_commit_next: plan_snapshot.next_sequence,
             operations: op_snapshot.operations,
             operation_handle_next: op_snapshot.operation_handle_next,
-            session_share_token: bind_credentials.session_share_token,
-            session_proof_base_token: bind_credentials.session_proof_base_token,
             symbol_ledger_bytes: durable.symbol_ledger_bytes.clone(),
         }
     }
@@ -298,6 +287,86 @@ pub struct ExecuteSessionRegistry {
 }
 
 impl ExecuteSessionRegistry {
+    pub(crate) async fn commit_credential_record(
+        &self,
+        memory: &crate::session_credentials::CredentialMemory,
+        operation_key: &str,
+        reference_key: &str,
+        record: &plasm_runtime::credentials::StoredCredential,
+    ) -> Result<plasm_runtime::credentials::StoredCredential, plasm_runtime::RuntimeError> {
+        use plasm_runtime::credentials::{credential_error, StoredCredential};
+        let payload = serde_json::to_string(record)
+            .map_err(|_| credential_error("cannot serialize credential record"))?;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or_default();
+        let test = self.test_json().await;
+        let raw = if let Some(redis) = self.redis().await.filter(|_| test.is_none()) {
+            redis
+                .commit_credential_json(
+                    operation_key,
+                    reference_key,
+                    &payload,
+                    now,
+                    record.expires_at_unix.saturating_sub(now).max(1),
+                )
+                .await
+                .map_err(|_| credential_error("durable credential commit failed"))?
+        } else {
+            let storage = match test.as_ref() {
+                Some(test) => test.as_ref(),
+                None => &memory.0,
+            };
+            let mut data = storage.write().await;
+            let previous = data
+                .get(operation_key)
+                .map(|raw| {
+                    serde_json::from_str::<StoredCredential>(raw)
+                        .map_err(|_| credential_error("invalid stored credential operation"))
+                })
+                .transpose()?;
+            if let Some(previous) = previous.filter(|record| record.expires_at_unix > now) {
+                return Ok(previous);
+            }
+            data.insert(operation_key.into(), payload.clone());
+            data.insert(reference_key.into(), payload.clone());
+            payload
+        };
+        serde_json::from_str(&raw)
+            .map_err(|_| credential_error("invalid credential commit acknowledgement"))
+    }
+
+    pub(crate) async fn load_credential_record(
+        &self,
+        memory: &crate::session_credentials::CredentialMemory,
+        key: &str,
+    ) -> Result<Option<plasm_runtime::credentials::StoredCredential>, plasm_runtime::RuntimeError>
+    {
+        use plasm_runtime::credentials::credential_error;
+        let test = self.test_json().await;
+        if let Some(redis) = self.redis().await.filter(|_| test.is_none()) {
+            return redis
+                .get_json_strict(key)
+                .await
+                .map_err(|_| credential_error("durable credential lookup failed"));
+        }
+        let storage = match test.as_ref() {
+            Some(test) => test.as_ref(),
+            None => &memory.0,
+        };
+        let result = storage
+            .read()
+            .await
+            .get(key)
+            .map(|raw| {
+                serde_json::from_str(raw)
+                    .map_err(|_| credential_error("invalid stored credential record"))
+            })
+            .transpose();
+        result
+    }
+
     /// Shared in-memory JSON store for cross-pod rehydrate tests (no Redis required).
     pub fn with_test_json_store() -> (Self, TestJsonStore) {
         let map: TestJsonStore = Arc::new(RwLock::new(std::collections::HashMap::new()));
@@ -337,13 +406,8 @@ impl ExecuteSessionRegistry {
         reuse_key: &SessionReuseKey,
         durable: &crate::execute_session_materialize::DurableExposureSnapshot,
     ) -> Result<ExecuteSessionPersistOutcome, ExecuteSessionPersistError> {
-        let bind_credentials = session.snapshot_bind_credentials().await;
         let desc = PersistedExecuteSessionDescriptor::from_session_and_durable_snapshot(
-            session,
-            session_id,
-            reuse_key,
-            bind_credentials,
-            durable,
+            session, session_id, reuse_key, durable,
         );
         let key = session_key(&desc.prompt_hash, &desc.session_id);
         self.write_descriptor(&key, &desc).await
@@ -411,33 +475,6 @@ impl ExecuteSessionRegistry {
             return Ok(ExecuteSessionPersistOutcome::InMemoryOnly);
         };
         self.write_descriptor_from_session(session, session_id, &reuse_key, exposure)
-            .await
-    }
-
-    /// Patch durable bind credentials after session-effect bind or proof base-token refresh.
-    pub async fn patch_bind_credentials(
-        &self,
-        st: &PlasmHostState,
-        session: &ExecuteSession,
-        session_id: &str,
-        reuse_key_fallback: Option<&SessionReuseKey>,
-    ) -> Result<ExecuteSessionPersistOutcome, ExecuteSessionPersistError> {
-        let durable_backend = self.durable_backend_configured().await;
-        if !durable_backend {
-            return Ok(ExecuteSessionPersistOutcome::InMemoryOnly);
-        }
-        let key = session_key(&session.prompt_hash, session_id);
-        let creds = session.snapshot_bind_credentials().await;
-        if let Some(mut existing) = self.load_json(&key).await {
-            existing.session_share_token = creds.session_share_token;
-            existing.session_proof_base_token = creds.session_proof_base_token;
-            existing.expires_at_unix = expires_at_from_now();
-            return self.write_descriptor(&key, &existing).await;
-        }
-        let Some(reuse_key) = reuse_key_fallback else {
-            return Err(ExecuteSessionPersistError::MissingReuseKey);
-        };
-        self.build_exposure_and_write_descriptor(st, session, session_id, reuse_key)
             .await
     }
 
@@ -608,12 +645,6 @@ impl ExecuteSessionRegistry {
             .collect();
         session.restore_persisted_plan_commits(&plans, plan_commit_next);
         session.restore_persisted_operations(&ops);
-        session
-            .restore_bind_credentials(&crate::execute_session::SessionBindCredentialsSnapshot {
-                session_share_token: desc.session_share_token.clone(),
-                session_proof_base_token: desc.session_proof_base_token.clone(),
-            })
-            .await;
         MergeLiveOutcome::Merged
     }
 

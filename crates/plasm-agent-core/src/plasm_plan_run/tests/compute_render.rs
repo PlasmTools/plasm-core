@@ -212,6 +212,11 @@ fn render_compute_feeds_node_input_for_action_content() {
         InputAlias::new("doc".to_string()).expect("alias"),
         MaterializedInputRow {
             node: PlanNodeId::new("doc".to_string()).expect("node id"),
+            qualified_entity: crate::plasm_plan::QualifiedEntityKey {
+                entry_id: "acme".into(),
+                entity: "Doc".into(),
+            },
+            id_field: "id".into(),
             proof: crate::plasm_plan::InputCardinalityProof::StaticSingleton,
             row: input.clone(),
             rows: vec![input],
@@ -222,10 +227,11 @@ fn render_compute_feeds_node_input_for_action_content() {
     let scope = EvalScope::Root {
         row: &serde_json::Value::Null,
     };
+    let empty_coercion = BTreeMap::new();
     let env = PlanEvalEnv {
         scope,
         inputs: InputEnv { rows: &inputs },
-        wire_coercion: None,
+        wire_coercion_by_alias: &empty_coercion,
     };
     let out = eval_plan_value(&value, &env).expect("eval");
 

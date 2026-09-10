@@ -247,6 +247,7 @@ async fn resolve_schema_overlay(
         st.mode,
         st.effective_outbound_secret_provider(),
         base,
+        st.catalog.compiled_catalog(entry_id)?,
         http_base,
         entry_id,
     )
@@ -271,7 +272,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    use plasm_core::discovery::InMemoryCgsRegistry;
+    use plasm_core::discovery::CgsRegistry;
     use plasm_core::loader::load_schema_dir;
     use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 
@@ -284,7 +285,7 @@ mod tests {
             return;
         }
         let cgs = Arc::new(load_schema_dir(&dir).expect("github"));
-        let reg = Arc::new(InMemoryCgsRegistry::from_pairs(vec![(
+        let reg = Arc::new(CgsRegistry::from_pairs(vec![(
             "github".into(),
             "GitHub".into(),
             vec!["github".into()],

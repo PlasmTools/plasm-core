@@ -11,23 +11,9 @@ langitem_query:
     type: object
     fields:
     - [tags, { type: if, condition: { type: exists, var: tags },
-               then_expr: { type: var, name: tags },
-               else_expr: { type: const, value: null } }]
-
-langitem_query_owner:
-  method: GET
-  path:
-  - type: literal
-    value: language
-  - type: literal
-    value: v1
-  - type: literal
-    value: items
-  query:
-    type: object
-    fields:
-    - ["owner", { type: var, name: owner }]
-
+        then_expr: { type: var, name: tags }, else_expr: { type: const, value: null } }]
+    - [owner, { type: if, condition: { type: exists, var: owner },
+        then_expr: { type: var, name: owner }, else_expr: { type: const, value: null } }]
 langitem_search:
   method: GET
   path:
@@ -76,6 +62,12 @@ langitem_create:
     - ["title", { type: var, name: title }]
     - ["score", { type: var, name: score }]
     - ["owner", { type: var, name: owner }]
+    - [active, { type: if, condition: { type: exists, var: active },
+               then_expr: { type: var, name: active },
+               else_expr: { type: const, value: null } }]
+    - [recorded_at, { type: if, condition: { type: exists, var: recorded_at },
+               then_expr: { type: var, name: recorded_at },
+               else_expr: { type: const, value: null } }]
     - [tags, { type: if, condition: { type: exists, var: tags },
                then_expr: { type: var, name: tags },
                else_expr: { type: const, value: null } }]
@@ -97,6 +89,9 @@ langitem_update:
     - ["title", { type: var, name: title }]
     - ["score", { type: var, name: score }]
     - ["owner", { type: var, name: owner }]
+    - [active, { type: if, condition: { type: exists, var: active },
+               then_expr: { type: var, name: active },
+               else_expr: { type: const, value: null } }]
     - [tags, { type: if, condition: { type: exists, var: tags },
                then_expr: { type: var, name: tags },
                else_expr: { type: const, value: null } }]
@@ -127,6 +122,161 @@ langitem_ping:
   - type: literal
     value: ping
 
+langitem_secured_touch:
+  method: POST
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: items
+  - type: var
+    name: id
+  - type: literal
+    value: secured_touch
+  headers:
+    type: object
+    fields:
+    - - Authorization
+      - type: format
+        template: "Bearer {token}"
+        vars:
+          token:
+            type: var
+            name: access_token
+
+langitem_broadcast:
+  method: POST
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: items
+  - type: literal
+    value: broadcast
+  body:
+    type: object
+    fields:
+    - - message
+      - type: var
+        name: message
+
+langauthsession_login:
+  method: POST
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: sessions
+  - type: literal
+    value: login
+  body:
+    type: object
+    fields:
+    - - username
+      - type: var
+        name: username
+    - - password
+      - type: var
+        name: password
+
+langsecurednote_search:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: secured_notes
+  headers:
+    type: object
+    fields:
+    - - Authorization
+      - type: format
+        template: "Bearer {token}"
+        vars:
+          token:
+            type: var
+            name: access_token
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+
+langsecurednote_get:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: secured_notes
+  - type: var
+    name: note_id
+  headers:
+    type: object
+    fields:
+    - - Authorization
+      - type: format
+        template: "Bearer {token}"
+        vars:
+          token:
+            type: var
+            name: access_token
+
+langsecuredgroup_query:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: secured_groups
+  headers:
+    type: object
+    fields:
+    - - Authorization
+      - type: format
+        template: "Bearer {token}"
+        vars:
+          token:
+            type: var
+            name: access_token
+
+langsecuredgroup_get:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: secured_groups
+  - type: var
+    name: group_id
+  headers:
+    type: object
+    fields:
+    - - Authorization
+      - type: format
+        template: "Bearer {token}"
+        vars:
+          token:
+            type: var
+            name: access_token
+
 langtag_query:
   method: GET
   path:
@@ -139,22 +289,10 @@ langtag_query:
   query:
     type: object
     fields:
-    - ["item_id", { type: var, name: item_id }]
-
-langtag_by_score_query:
-  method: GET
-  path:
-  - type: literal
-    value: language
-  - type: literal
-    value: v1
-  - type: literal
-    value: tags
-  query:
-    type: object
-    fields:
-    - ["seq", { type: var, name: seq }]
-
+    - [item_id, { type: if, condition: { type: exists, var: item_id },
+        then_expr: { type: var, name: item_id }, else_expr: { type: const, value: null } }]
+    - [seq, { type: if, condition: { type: exists, var: seq },
+        then_expr: { type: var, name: seq }, else_expr: { type: const, value: null } }]
 langline_query:
   method: GET
   path:
@@ -277,3 +415,129 @@ langoffer_create:
     fields:
     - ["price", { type: var, name: price }]
     - ["quote_currency", { type: var, name: quote_currency }]
+
+queryonly_request_received_query:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: queryonly_requests
+  headers:
+    type: object
+    fields:
+    - - Authorization
+      - type: format
+        template: "Bearer {token}"
+        vars:
+          token:
+            type: var
+            name: access_token
+  query:
+    type: object
+    fields:
+    - - status
+      - type: if
+        condition: { type: exists, var: status }
+        then_expr: { type: var, name: status }
+        else_expr: { type: const, value: null }
+
+queryonly_request_approve:
+  method: POST
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: queryonly_requests
+  - type: var
+    name: request_id
+  - type: literal
+    value: approve
+  headers:
+    type: object
+    fields:
+    - - Authorization
+      - type: format
+        template: "Bearer {token}"
+        vars:
+          token:
+            type: var
+            name: access_token
+
+queryonly_request_deny:
+  method: POST
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: queryonly_requests
+  - type: var
+    name: request_id
+  - type: literal
+    value: deny
+  headers:
+    type: object
+    fields:
+    - - Authorization
+      - type: format
+        template: "Bearer {token}"
+        vars:
+          token:
+            type: var
+            name: access_token
+
+queryonly_request_remind:
+  method: POST
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: queryonly_requests
+  - type: var
+    name: request_id
+  - type: literal
+    value: remind
+  headers:
+    type: object
+    fields:
+    - - Authorization
+      - type: format
+        template: "Bearer {token}"
+        vars:
+          token:
+            type: var
+            name: access_token
+
+langcursor_get:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: cursors
+  - type: var
+    name: id
+
+langcursor_tick:
+  method: POST
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: cursors
+  - type: var
+    name: id
+  - type: literal
+    value: tick

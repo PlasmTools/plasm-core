@@ -1,0 +1,2028 @@
+version: 10
+entry_id: amazon
+auth:
+  scheme: none
+http_backend: http://127.0.0.1:9000
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  pii_payment:
+    description: Payment card digits or owner identity.
+    severity: sensitive
+  external_order:
+    description: Outbound purchase that charges a payment card.
+    severity: critical
+entities:
+  AuthSession:
+    id_field: access_token
+    description: Login session for Amazon (Bearer token).
+    discovery:
+      names:
+      - login
+      - auth
+      - access token
+    fields:
+      access_token:
+        required: true
+        value_ref: nv_access_token
+      token_type:
+        required: false
+        value_ref: nv_str
+  User:
+    id_field: email
+    description: Amazon user public profile.
+    discovery:
+      names:
+      - profile
+      - user
+      - account holder
+    fields:
+      first_name:
+        required: false
+        value_ref: nv_str
+      last_name:
+        required: false
+        value_ref: nv_str
+      email:
+        required: true
+        value_ref: nv_email
+      registered_at:
+        required: false
+        value_ref: nv_datetime
+  Product:
+    id_field: product_id
+    description: Searchable Amazon retail catalog listing.
+    discovery:
+      names:
+      - product
+      - products
+      - item
+      - product search
+      - catalog search
+      - browse products
+    fields:
+      product_id:
+        required: true
+        value_ref: nv_product_id
+      seller_id:
+        required: false
+        value_ref: nv_int
+      product_type:
+        required: false
+        value_ref: nv_str
+      name:
+        required: true
+        value_ref: nv_str
+      description:
+        required: false
+        value_ref: nv_body
+        data_class: untrusted
+      price:
+        required: false
+        value_ref: nv_number
+      delivery_days:
+        required: false
+        value_ref: nv_int
+      inventory_quantity:
+        required: false
+        value_ref: nv_int
+      color:
+        required: false
+        value_ref: nv_str
+      relative_size:
+        required: false
+        value_ref: nv_relative_size
+      rating:
+        required: false
+        value_ref: nv_number
+  Seller:
+    id_field: seller_id
+    description: Third-party seller on Amazon.
+    discovery:
+      names:
+      - seller
+      - sellers
+      - merchant
+    fields:
+      seller_id:
+        required: true
+        value_ref: nv_seller_id
+      name:
+        required: false
+        value_ref: nv_str
+      rating:
+        required: false
+        value_ref: nv_number
+  ProductType:
+    id_field: name
+    description: Product category in the retail catalog.
+    discovery:
+      names:
+      - product type
+      - product types
+      - category
+    fields:
+      name:
+        required: true
+        value_ref: nv_str
+  ProductFeatureChoices:
+    id_field: product_type
+    description: Filterable feature options for a product type.
+    discovery:
+      names:
+      - feature choices
+      - product filters
+      - colors sizes sellers
+    fields:
+      product_type:
+        required: false
+        value_ref: nv_str
+      colors:
+        required: false
+        value_ref: nv_str_list
+      relative_sizes:
+        required: false
+        value_ref: nv_relative_size_list
+    relations:
+      seller_options:
+        description: Sellers offering products of this type.
+        target: Seller
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: sellers
+          - wildcard: true
+  CartItem:
+    id_field: product_id
+    description: A product line currently in the shopping cart.
+    discovery:
+      names:
+      - cart item
+      - cart line
+      - items in cart
+    fields:
+      product_id:
+        required: true
+        value_ref: nv_product_id
+      product_name:
+        required: false
+        value_ref: nv_str
+      delivery_days:
+        required: false
+        value_ref: nv_int
+      quantity:
+        required: false
+        value_ref: nv_int
+      price:
+        required: false
+        value_ref: nv_number
+      gift_wrap_quantity:
+        required: false
+        value_ref: nv_int
+  WishListItem:
+    id_field: product_id
+    description: A product saved on the wish list.
+    discovery:
+      names:
+      - wish list
+      - wishlist
+      - wish list item
+    fields:
+      product_id:
+        required: true
+        value_ref: nv_product_id
+      product_name:
+        required: false
+        value_ref: nv_str
+      quantity:
+        required: false
+        value_ref: nv_int
+      price:
+        required: false
+        value_ref: nv_number
+  Cart:
+    id_field: total_cost
+    description: Current shopping cart.
+    discovery:
+      names:
+      - cart
+      - basket
+    fields:
+      delivery_fee:
+        required: false
+        value_ref: nv_number
+      base_cost:
+        required: false
+        value_ref: nv_number
+      tax:
+        required: false
+        value_ref: nv_number
+      gift_wrap_fee:
+        required: false
+        value_ref: nv_number
+      discount:
+        required: false
+        value_ref: nv_number
+      total_cost:
+        required: true
+        value_ref: nv_number
+      promo_code:
+        required: false
+        value_ref: nv_str
+      promo_valid:
+        required: false
+        value_ref: nv_bool
+    relations:
+      cart_items:
+        description: Line items currently in the cart.
+        target: CartItem
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: cart_items
+          - wildcard: true
+  Order:
+    id_field: order_id
+    description: Placed Amazon order.
+    discovery:
+      names:
+      - order
+      - orders
+      - purchase
+    fields:
+      order_id:
+        required: true
+        value_ref: nv_order_id
+      address_id:
+        required: false
+        value_ref: nv_address_id
+      payment_card_id:
+        required: false
+        value_ref: nv_card_id
+      name:
+        required: false
+        value_ref: nv_str
+      tax:
+        required: false
+        value_ref: nv_number
+      delivery_fee:
+        required: false
+        value_ref: nv_number
+      discount:
+        required: false
+        value_ref: nv_number
+      paid_amount:
+        required: false
+        value_ref: nv_number
+      address_text:
+        required: false
+        value_ref: nv_str
+      payment_card_digits:
+        required: false
+        value_ref: nv_str
+        data_class: pii_payment
+      created_at:
+        required: false
+        value_ref: nv_datetime
+  Address:
+    id_field: address_id
+    description: Shipping address on the account.
+    discovery:
+      names:
+      - address
+      - addresses
+      - shipping
+    fields:
+      address_id:
+        required: true
+        value_ref: nv_address_id
+      name:
+        required: false
+        value_ref: nv_str
+      street_address:
+        required: true
+        value_ref: nv_str
+      city:
+        required: true
+        value_ref: nv_str
+      state:
+        required: false
+        value_ref: nv_str
+      country:
+        required: false
+        value_ref: nv_str
+      zip_code:
+        required: false
+        value_ref: nv_int
+  PaymentCard:
+    id_field: payment_card_id
+    description: Saved payment card.
+    fields:
+      payment_card_id:
+        required: true
+        value_ref: nv_card_id
+      card_name:
+        required: false
+        value_ref: nv_str
+      owner_name:
+        required: false
+        value_ref: nv_str
+      card_number:
+        required: false
+        value_ref: nv_int
+        data_class: pii_payment
+      expiry_year:
+        required: false
+        value_ref: nv_int
+      expiry_month:
+        required: false
+        value_ref: nv_int
+  ProductReview:
+    id_field: review_id
+    description: Customer review of a product.
+    discovery:
+      names:
+      - review
+      - reviews
+      - product review
+    fields:
+      review_id:
+        required: true
+        value_ref: nv_review_id
+      product_id:
+        required: true
+        value_ref: nv_product_id
+      is_verified:
+        required: false
+        value_ref: nv_bool
+      rating:
+        required: false
+        value_ref: nv_int
+      title:
+        required: false
+        value_ref: nv_str
+      text:
+        required: false
+        value_ref: nv_body
+        data_class: untrusted
+      created_at:
+        required: false
+        value_ref: nv_datetime
+  ReturnDeliverer:
+    id_field: deliverer_id
+    description: Carrier available for product return shipments.
+    discovery:
+      names:
+      - return deliverer
+      - return carrier
+      - deliverer
+    fields:
+      deliverer_id:
+        required: true
+        value_ref: nv_deliverer_id
+      deliverer_name:
+        required: false
+        value_ref: nv_deliverer_name
+        path: name
+  ProductReturn:
+    id_field: return_id
+    description: Product return initiated for an order line.
+    discovery:
+      names:
+      - return
+      - returns
+      - product return
+    fields:
+      return_id:
+        required: true
+        value_ref: nv_return_id
+      order_id:
+        required: true
+        value_ref: nv_order_id
+      product_id:
+        required: true
+        value_ref: nv_product_id
+      product_name:
+        required: false
+        value_ref: nv_str
+      quantity:
+        required: true
+        value_ref: nv_int
+      deliverer_id:
+        required: true
+        value_ref: nv_deliverer_id
+      deliverer_name:
+        required: false
+        value_ref: nv_deliverer_name
+      refund_amount:
+        required: false
+        value_ref: nv_number
+      initiated_at:
+        required: false
+        value_ref: nv_datetime
+      returned_at:
+        required: false
+        value_ref: nv_datetime
+  ProductQuestion:
+    id_field: question_id
+    description: Customer question about a product.
+    discovery:
+      names:
+      - question
+      - questions
+      - product question
+    fields:
+      question_id:
+        required: true
+        value_ref: nv_question_id
+      product_id:
+        required: true
+        value_ref: nv_product_id
+      question:
+        required: true
+        value_ref: nv_body
+        data_class: untrusted
+      created_at:
+        required: false
+        value_ref: nv_datetime
+  ProductQuestionAnswer:
+    id_field: question_answer_id
+    description: Answer posted to a product question.
+    discovery:
+      names:
+      - question answer
+      - product answer
+      - Q&A answer
+    fields:
+      question_answer_id:
+        required: true
+        value_ref: nv_question_answer_id
+      question_id:
+        required: false
+        value_ref: nv_question_id
+      is_verified:
+        required: false
+        value_ref: nv_bool
+      answer:
+        required: false
+        value_ref: nv_body
+        data_class: untrusted
+      created_at:
+        required: false
+        value_ref: nv_datetime
+      user_name:
+        required: false
+        value_ref: nv_str
+      user_email:
+        required: false
+        value_ref: nv_email
+  PrimeSubscription:
+    id_field: prime_subscription_id
+    description: Amazon Prime subscription period.
+    discovery:
+      names:
+      - prime
+      - prime subscription
+      - subscription
+    fields:
+      prime_subscription_id:
+        required: true
+        value_ref: nv_prime_subscription_id
+      start_date:
+        required: false
+        value_ref: nv_datetime
+      end_date:
+        required: false
+        value_ref: nv_datetime
+      payment_card_digits:
+        required: false
+        value_ref: nv_str
+        data_class: pii_payment
+      paid_amount:
+        required: false
+        value_ref: nv_number
+capabilities:
+  login:
+    description: Login to Amazon; returns access_token for Bearer auth.
+    kind: action
+    entity: AuthSession
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: username
+          value_ref: nv_login_username
+          required: true
+        - name: password
+          value_ref: nv_password
+          required: true
+    provides:
+    - access_token
+    - token_type
+    output:
+      type: entity
+      entity_type: AuthSession
+  logout:
+    description: Logout and invalidate the access token.
+    kind: action
+    entity: AuthSession
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Ends the Amazon session for this token.
+  profile_get:
+    description: Show public Amazon profile by optional email.
+    kind: query
+    entity: User
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: email
+      value_ref: nv_email
+      required: false
+    provides:
+    - first_name
+    - last_name
+    - email
+    - registered_at
+  product_query:
+    description: Search the product catalog.
+    kind: query
+    entity: Product
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+    - name: product_type
+      value_ref: nv_str
+      required: false
+    - name: color
+      value_ref: nv_str
+      required: false
+    - name: relative_size
+      value_ref: nv_relative_size
+      required: false
+    - name: min_price
+      value_ref: nv_number
+      required: false
+    - name: max_price
+      value_ref: nv_number
+      required: false
+    - name: seller_id
+      value_ref: nv_int
+      required: false
+    controls:
+    - name: page_index
+      value_ref: nv_int
+      required: false
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+    provides:
+    - product_id
+    - seller_id
+    - product_type
+    - name
+    - description
+    - price
+    - delivery_days
+    - inventory_quantity
+    - color
+    - relative_size
+    - rating
+  product_get:
+    description: Show one product.
+    kind: get
+    entity: Product
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - product_id
+    - seller_id
+    - product_type
+    - name
+    - description
+    - price
+    - delivery_days
+    - inventory_quantity
+    - color
+    - relative_size
+    - rating
+  seller_query:
+    description: List or filter third-party sellers by name.
+    kind: query
+    entity: Seller
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+    controls:
+    - name: page_index
+      value_ref: nv_int
+      required: false
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+    provides:
+    - seller_id
+    - name
+    discovery:
+      operation_terms:
+      - list
+      - find
+      - search
+      target_terms:
+      - seller
+      - merchant
+  seller_get:
+    description: Show one seller with rating.
+    kind: get
+    entity: Seller
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - seller_id
+    - name
+    - rating
+  product_type_query:
+    description: List or filter product type labels used for catalog filters.
+    kind: query
+    entity: ProductType
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+    controls:
+    - name: page_index
+      value_ref: nv_int
+      required: false
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+    provides:
+    - name
+    discovery:
+      operation_terms:
+      - list
+      - find
+      - search
+      target_terms:
+      - product type
+      - category
+  product_feature_choices_query:
+    description: Show feature choices for a product type.
+    kind: query
+    entity: ProductFeatureChoices
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: product_type
+      value_ref: nv_str
+      required: false
+    provides:
+    - colors
+    - relative_sizes
+  cart_get:
+    description: Show the current shopping cart.
+    kind: get
+    entity: Cart
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - delivery_fee
+    - base_cost
+    - tax
+    - gift_wrap_fee
+    - discount
+    - total_cost
+    - promo_code
+    - promo_valid
+  cart_item_query:
+    description: List products currently in the cart.
+    kind: query
+    entity: CartItem
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - product_id
+    - product_name
+    - delivery_days
+    - quantity
+    - price
+    - gift_wrap_quantity
+  wish_list_query:
+    description: List products on the wish list.
+    kind: query
+    entity: WishListItem
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - product_id
+    - product_name
+    - quantity
+    - price
+  wish_list_add:
+    description: Add a product to the wish list.
+    kind: action
+    entity: Product
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: quantity
+          value_ref: nv_int
+          required: false
+        - name: clear_wish_list_first
+          value_ref: nv_bool
+          required: false
+    output:
+      type: side_effect
+      description: Adds this product to the wish list.
+  wish_list_update_quantity:
+    description: Update quantity of a product already on the wish list.
+    kind: action
+    entity: Product
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: quantity
+          value_ref: nv_int
+          required: true
+    output:
+      type: side_effect
+      description: Updates wish-list quantity for this product.
+  wish_list_remove:
+    description: Remove a product from the wish list.
+    kind: action
+    entity: Product
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Removes this product from the wish list.
+  wish_list_clear:
+    description: Clear the entire wish list.
+    kind: action
+    entity: WishListItem
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Empties the wish list.
+  cart_move_to_wish_list:
+    description: Move a product from the cart to the wish list.
+    kind: action
+    entity: Product
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: quantity
+          value_ref: nv_int
+          required: false
+    output:
+      type: side_effect
+      description: Moves this product from cart to wish list.
+  wish_list_move_to_cart:
+    description: Move a product from the wish list to the cart.
+    kind: action
+    entity: Product
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: quantity
+          value_ref: nv_int
+          required: false
+    output:
+      type: side_effect
+      description: Moves this product from wish list to cart.
+  cart_add_product:
+    description: Add a product to the cart.
+    kind: action
+    entity: Product
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: quantity
+          value_ref: nv_int
+          required: false
+        - name: clear_cart_first
+          value_ref: nv_bool
+          required: false
+    output:
+      type: side_effect
+      description: Adds this product to the cart.
+  cart_update_quantity:
+    description: Update quantity of a product already in the cart.
+    kind: action
+    entity: Product
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: quantity
+          value_ref: nv_int
+          required: true
+    output:
+      type: side_effect
+      description: Updates cart line quantity for this product.
+  cart_remove_product:
+    description: Remove a product from the cart.
+    kind: action
+    entity: Product
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Removes this product from the cart.
+  cart_clear:
+    description: Clear the entire cart.
+    kind: action
+    entity: Cart
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Empties the shopping cart.
+  cart_apply_promo:
+    description: Apply a promo code to the cart.
+    kind: action
+    entity: Cart
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: promo_code
+          value_ref: nv_str
+          required: true
+    output:
+      type: side_effect
+      description: Applies the promo code to cart totals.
+  cart_remove_promo:
+    description: Remove the promo code from the cart.
+    kind: action
+    entity: Cart
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Clears the applied promo code from the cart.
+  order_query:
+    description: List past orders.
+    kind: query
+    entity: Order
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+    controls:
+    - name: page_index
+      value_ref: nv_int
+      required: false
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+    provides:
+    - order_id
+    - address_id
+    - payment_card_id
+    - name
+    - tax
+    - delivery_fee
+    - discount
+    - paid_amount
+    - address_text
+    - payment_card_digits
+    - created_at
+  order_get:
+    description: Show one order.
+    kind: get
+    entity: Order
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - order_id
+    - address_id
+    - payment_card_id
+    - name
+    - tax
+    - delivery_fee
+    - discount
+    - paid_amount
+    - address_text
+    - payment_card_digits
+    - created_at
+  order_place:
+    description: Place an order from the current cart.
+    kind: create
+    entity: Order
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: payment_card_id
+          value_ref: nv_card_id
+          required: true
+          sink_class: external_order
+        - name: address_id
+          value_ref: nv_address_id
+          required: true
+    provides:
+    - order_id
+  order_receipt_download:
+    description: Download an order receipt to a file-system path.
+    kind: action
+    entity: Order
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: download_to_file_path
+          value_ref: nv_file_path
+          required: false
+        - name: overwrite
+          value_ref: nv_bool
+          required: false
+        - name: file_system_access_token
+          value_ref: nv_access_token
+          required: false
+    output:
+      type: side_effect
+      description: Writes the order receipt to the given file path.
+  address_query:
+    description: List shipping addresses.
+    kind: query
+    entity: Address
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - address_id
+    - name
+    - street_address
+    - city
+    - state
+    - country
+    - zip_code
+  address_create:
+    description: Add a shipping address.
+    kind: create
+    entity: Address
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: name
+          value_ref: nv_str
+          required: true
+        - name: street_address
+          value_ref: nv_str
+          required: true
+        - name: city
+          value_ref: nv_str
+          required: true
+        - name: state
+          value_ref: nv_str
+          required: true
+        - name: country
+          value_ref: nv_str
+          required: true
+        - name: zip_code
+          value_ref: nv_int
+          required: true
+    provides:
+    - address_id
+  address_delete:
+    description: Delete a shipping address.
+    kind: delete
+    entity: Address
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+  address_update:
+    description: Update a shipping address.
+    kind: update
+    entity: Address
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: name
+          value_ref: nv_str
+          required: false
+        - name: street_address
+          value_ref: nv_str
+          required: false
+        - name: city
+          value_ref: nv_str
+          required: false
+        - name: state
+          value_ref: nv_str
+          required: false
+        - name: country
+          value_ref: nv_str
+          required: false
+        - name: zip_code
+          value_ref: nv_int
+          required: false
+  payment_card_query:
+    description: List saved payment cards.
+    kind: query
+    entity: PaymentCard
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - payment_card_id
+    - card_name
+    - owner_name
+    - card_number
+    - expiry_year
+    - expiry_month
+  payment_card_create:
+    description: Add a saved payment card.
+    kind: create
+    entity: PaymentCard
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: card_name
+          value_ref: nv_str
+          required: true
+        - name: owner_name
+          value_ref: nv_str
+          required: true
+        - name: card_number
+          value_ref: nv_int
+          required: true
+          sink_class: external_order
+        - name: expiry_year
+          value_ref: nv_int
+          required: true
+        - name: expiry_month
+          value_ref: nv_int
+          required: true
+        - name: cvv_number
+          value_ref: nv_int
+          required: true
+          sink_class: external_order
+    provides:
+    - payment_card_id
+  payment_card_update:
+    description: Rename a saved payment card.
+    kind: update
+    entity: PaymentCard
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: card_name
+          value_ref: nv_str
+          required: true
+  payment_card_delete:
+    description: Delete a saved payment card.
+    kind: delete
+    entity: PaymentCard
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+  product_review_query:
+    description: Search reviews for a product.
+    kind: query
+    entity: ProductReview
+    selection:
+    - name: product_id
+      value_ref: nv_product_id
+      required: true
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+    - name: user_email
+      value_ref: nv_email
+      required: false
+    - name: min_rating
+      value_ref: nv_int
+      required: false
+    - name: max_rating
+      value_ref: nv_int
+      required: false
+    - name: is_verified
+      value_ref: nv_bool
+      required: false
+    controls:
+    - name: page_index
+      value_ref: nv_int
+      required: false
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+    provides:
+    - review_id
+    - product_id
+    - is_verified
+    - rating
+    - title
+    - text
+    - created_at
+  product_review_create:
+    description: Write a review for a product.
+    kind: create
+    entity: ProductReview
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: product_id
+          value_ref: nv_product_id
+          required: true
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: rating
+          value_ref: nv_int
+          required: true
+        - name: title
+          value_ref: nv_str
+          required: false
+        - name: text
+          value_ref: nv_body
+          required: false
+    provides:
+    - review_id
+  product_review_update:
+    description: Update a product review.
+    kind: update
+    entity: ProductReview
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: rating
+          value_ref: nv_int
+          required: false
+        - name: title
+          value_ref: nv_str
+          required: false
+        - name: text
+          value_ref: nv_body
+          required: false
+  product_review_delete:
+    description: Delete a product review.
+    kind: delete
+    entity: ProductReview
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+  product_return_create:
+    description: Initiate a product return for an order line.
+    kind: create
+    entity: ProductReturn
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: order_id
+          value_ref: nv_order_id
+          required: true
+        - name: product_id
+          value_ref: nv_product_id
+          required: true
+        - name: deliverer_id
+          value_ref: nv_deliverer_id
+          required: true
+        - name: quantity
+          value_ref: nv_int
+          required: true
+    provides:
+    - return_id
+  return_deliverer_query:
+    description: List carriers available for product returns.
+    kind: query
+    entity: ReturnDeliverer
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - deliverer_id
+    - deliverer_name
+  prime_subscribe:
+    description: Subscribe to Amazon Prime with a saved payment card.
+    kind: create
+    entity: PrimeSubscription
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: payment_card_id
+          value_ref: nv_card_id
+          required: true
+          sink_class: external_order
+        - name: duration
+          value_ref: nv_prime_duration
+          required: true
+    provides:
+    - prime_subscription_id
+  product_question_create:
+    description: Write a question about a product.
+    kind: create
+    entity: ProductQuestion
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: product_id
+          value_ref: nv_product_id
+          required: true
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: question
+          value_ref: nv_body
+          required: true
+    provides:
+    - question_id
+  product_question_update:
+    description: Update a product question.
+    kind: update
+    entity: ProductQuestion
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: question
+          value_ref: nv_body
+          required: false
+  product_question_delete:
+    description: Delete a product question.
+    kind: delete
+    entity: ProductQuestion
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+  product_question_answer_update:
+    description: Update a product question answer.
+    kind: update
+    entity: ProductQuestionAnswer
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: answer
+          value_ref: nv_body
+          required: false
+  product_question_answer_delete:
+    description: Delete a product question answer.
+    kind: delete
+    entity: ProductQuestionAnswer
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+values:
+  nv_str:
+    type: string
+    description: Free-form string.
+  nv_login_username:
+    type: email
+    description: Task-principal email from Supervisor — the login username for this service (not a counterparty).
+  nv_email:
+    type: email
+    description: Email address of a user or counterparty.
+  nv_password:
+    type: string
+    description: Account-holder password for this service.
+  nv_access_token:
+    type: string
+    description: Bearer access token from login.
+  nv_body:
+    type: markdown
+    description: Long text body.
+  nv_product_id:
+    type: entity_ref
+    target: Product
+    description: Product primary key.
+  nv_order_id:
+    type: integer
+    description: Order primary key.
+  nv_address_id:
+    type: integer
+    description: Address primary key.
+  nv_card_id:
+    type: integer
+    description: Payment card primary key.
+  nv_review_id:
+    type: integer
+    description: Product review primary key.
+  nv_return_id:
+    type: integer
+    description: Product return primary key.
+  nv_deliverer_id:
+    type: integer
+    description: Return deliverer primary key.
+  nv_question_id:
+    type: integer
+    description: Product question primary key.
+  nv_question_answer_id:
+    type: integer
+    description: Product question answer primary key.
+  nv_seller_id:
+    type: integer
+    description: Seller primary key.
+  nv_prime_subscription_id:
+    type: integer
+    description: Prime subscription primary key.
+  nv_prime_duration:
+    type: enum
+    description: Prime subscription billing duration.
+    enum:
+    - monthly
+    - yearly
+  nv_relative_size:
+    type: enum
+    description: Product size band (filter and product attribute).
+    enum:
+    - extra-small
+    - small
+    - medium
+    - large
+    - extra-large
+  nv_deliverer_name:
+    type: enum
+    description: Carrier that handled a return shipment.
+    enum:
+    - UPS
+    - USPS
+    - FedEx
+  nv_str_list:
+    type: array
+    items:
+      value_ref: nv_str
+    description: List of string values.
+  nv_relative_size_list:
+    type: array
+    items:
+      value_ref: nv_relative_size
+    description: List of relative size enum values.
+  nv_file_path:
+    type: string
+    description: File-system path for download or save.
+  nv_number:
+    type: number
+    description: Numeric amount or rating.
+  nv_bool:
+    type: boolean
+    description: Boolean flag.
+  nv_int:
+    type: integer
+    description: Integer.
+  nv_datetime:
+    type: rfc3339
+    description: ISO datetime string.
+  prerequisite_principal_email:
+    type: email
+    description: Account holder email.
+  prerequisite_principal_phone:
+    type: e164
+    description: Account holder phone number.
+  prerequisite_account_name:
+    type: string
+    description: Service account identifier.
+prerequisites:
+  contracts:
+    appworld.principal:
+      version: 1
+      inputs: {}
+      outputs:
+        email: prerequisite_principal_email
+        phone: prerequisite_principal_phone
+    appworld.password:
+      version: 1
+      inputs:
+        account: prerequisite_account_name
+      outputs:
+        password: nv_password
+    appworld.session:
+      version: 1
+      inputs: {}
+      outputs:
+        token: nv_access_token
+  providers:
+    session:
+      contract: appworld.session
+      capability: login
+      outputs:
+        token: access_token
+  requirements:
+    login:
+    - id: principal
+      contract: appworld.principal
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - username
+        output: email
+    - id: password
+      contract: appworld.password
+      arguments:
+        account:
+          kind: constant
+          value: amazon
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - password
+        output: password
+    logout:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    profile_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    product_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    product_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    seller_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    seller_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    product_type_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    product_feature_choices_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    cart_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    cart_item_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    wish_list_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    wish_list_add:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    wish_list_update_quantity:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    wish_list_remove:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    wish_list_clear:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    cart_move_to_wish_list:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    wish_list_move_to_cart:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    cart_add_product:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    cart_update_quantity:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    cart_remove_product:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    cart_clear:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    cart_apply_promo:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    cart_remove_promo:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    order_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    order_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    order_place:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    order_receipt_download:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+      - input:
+          lane: payload
+          path:
+          - file_system_access_token
+        output: token
+    address_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    address_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    address_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    address_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_card_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    payment_card_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_card_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_card_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    product_review_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    product_review_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    product_review_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    product_review_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    product_return_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    return_deliverer_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    prime_subscribe:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    product_question_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    product_question_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    product_question_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    product_question_answer_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    product_question_answer_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token

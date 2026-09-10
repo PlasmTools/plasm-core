@@ -11,14 +11,14 @@
 //! `m#` / `p#`); legacy compact/canonical modes affect symbol naming only, not the output format.
 //! The Plasm language grammar (composition / postfix / heredoc / row-to-text) lives **statically** in
 //! the MCP `plasm` tool description ([`PLASM_TOOL_DESCRIPTION`]); the prompt rendered here is the
-//! **table-only** teaching TSV — no grammar contract is interleaved per wave. Catalogue-specific
+//! **table-only** language card — no grammar contract is interleaved per wave. Catalogue-specific
 //! teaching rows act as many-shot semantic instantiations: they teach which concrete `e#` / `m#` /
 //! `p#` symbols, fields, methods, scoped filters, and relations are valid for this catalogue wave.
 //! The `~` search form and tagged `<<TAG` heredocs are taught unconditionally by the static grammar;
 //! per-entity teaching rows still witness the concrete search / string-valued slots for each entity.
 //!
 //! **teaching table** is **per-entity blocks** of **valid Plasm expressions only** (CGS-validated before emit).
-//! In the teaching TSV, the entity `description` is attached to the **first projection witness** for that
+//! In the language card, the entity `description` is attached to the **first projection witness** for that
 //! entity when one exists, otherwise to the **identity** get row. Rows are phased per block: **`v#` gloss**
 //! (except the deferred synthetic union summary), **`p#` gloss**, **`r#` gloss** (relation alias → wire name),
 //! **union constructor exemplars**
@@ -65,6 +65,7 @@ mod bundle_render;
 mod capability_delta;
 mod contract;
 mod entity_block;
+mod fetch_head_teaching;
 mod gloss_collect;
 mod gloss_dedup;
 mod gloss_filter;
@@ -74,6 +75,7 @@ mod invoke_teaching;
 mod line_validate;
 mod mcp_prompt_fragments;
 mod mcp_tool_descriptions;
+mod prerequisites;
 mod query_teaching;
 mod relation_teaching;
 mod row_producer;
@@ -85,6 +87,7 @@ mod teaching_gloss_emit;
 mod teaching_legend;
 mod teaching_push;
 mod teaching_util;
+pub use prerequisites::render_prerequisite_bindings;
 mod tsv_emit;
 mod types;
 
@@ -114,19 +117,17 @@ pub use capability_delta::{
     render_teaching_new_capabilities_delta_tsv_federated,
 };
 pub use contract::{
-    markdown_fence_body_inner, split_tsv_teaching_contract_and_table,
+    catalog_teaching_fence_info, markdown_fence_body_inner, split_tsv_teaching_contract_and_table,
     teaching_tsv_agent_body_from_wrapped_prompt, teaching_tsv_from_wrapped_prompt,
-    teaching_tsv_table_from_wrapped_prompt, TeachingFenceSlice, ROW_COMPUTE_EXEMPLAR_THRESHOLD,
+    teaching_tsv_table_from_wrapped_prompt, teaching_tsv_table_from_wrapped_prompt_any,
+    TeachingFenceSlice, ROW_COMPUTE_EXEMPLAR_THRESHOLD,
 };
 pub use mcp_prompt_fragments::{
-    format_ranked_replay_diagnostics, render_active_mutator_surface_recap,
-    render_compact_exposure_symbol_map, DISCOVER_DECISION_CLARIFY, DISCOVER_DECISION_MATCH,
-    DISCOVER_DECISION_NO_MATCH, DISCOVER_TSV_LANGUAGE_PREAMBLE,
+    render_active_mutator_surface_recap, render_compact_exposure_symbol_map,
 };
 pub use mcp_tool_descriptions::{
-    program_param_contract_violations, DISCOVER_TOOL_DESCRIPTION, MCP_INITIALIZE_WORKFLOW,
-    MCP_TOOL_SEQUENCING_MARKER, MCP_TOOL_SYNTAX_CONTRACT_MARKER, PLASM_CONTEXT_TOOL_DESCRIPTION,
-    PLASM_PROGRAM_PARAM_DESCRIPTION, PLASM_PROGRAM_PARAM_MAX_BYTES,
+    program_param_contract_violations, MCP_INITIALIZE_WORKFLOW, MCP_TOOL_SYNTAX_CONTRACT_MARKER,
+    PLASM_CONTEXT_TOOL_DESCRIPTION, PLASM_PROGRAM_PARAM_DESCRIPTION, PLASM_PROGRAM_PARAM_MAX_BYTES,
     PLASM_READ_RUN_ARTIFACT_TOOL_DESCRIPTION, PLASM_RUN_TOOL_ARTIFACT_RESOURCES,
     PLASM_RUN_TOOL_ARTIFACT_TOOL, PLASM_RUN_TOOL_DESCRIPTION, PLASM_RUN_TOOL_DESCRIPTION_BASE,
     PLASM_TOOL_DESCRIPTION, PLASM_TOOL_DESCRIPTION_MAX_BYTES, PLASM_TOOL_DESCRIPTION_PREFIX_BYTES,
@@ -145,10 +146,9 @@ pub(crate) use bundle_render::{
     render_prompt_tsv_for_single_catalog_exposure, render_teaching_prompt_bundle_for_validation,
 };
 pub(crate) use relation_teaching::render_relation_edge_delta_rows;
-pub(crate) use tsv_emit::{
-    is_union_ctor_teaching_surface_line, parse_trailing_projection_bracket,
-    render_prompt_tsv_from_bundle,
-};
+#[cfg(test)]
+pub(crate) use tsv_emit::parse_trailing_projection_bracket;
+pub(crate) use tsv_emit::{is_union_ctor_teaching_surface_line, render_prompt_tsv_from_bundle};
 pub(crate) use types::{TeachingRowDedupeKey, TEACHING_OPTIONAL_LEGEND_MARK};
 
 #[cfg(test)]
@@ -197,3 +197,6 @@ pub(crate) use teaching_legend::teaching_expr_line_from_layers;
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod stack_budget_test;

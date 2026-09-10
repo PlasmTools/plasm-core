@@ -20,7 +20,7 @@ use plasm_runtime::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
-use tracing::instrument;
+use tracing::Instrument;
 
 /// KV key prefix for in-flight OAuth link sessions (`{PENDING_PREFIX}{csrf_state}`).
 pub const PENDING_PREFIX: &str = "plasm:oauth_link:pending:";
@@ -308,15 +308,18 @@ impl OauthLinkSession<AwaitingIdpRedirect> {
 impl OauthLinkSession<AwaitingTokenExchange> {
     /// Run the authorization-code + PKCE token exchange, store [`OutboundOAuthKvV1`] at
     /// `core.hosted_kv_key`, and return redirect parameters for the SaaS.
-    #[instrument(
-        skip(self, redirect_uri),
-        target = "plasm_agent::oauth_link",
-        fields(
-            oauth.phase = "token_exchange",
-            entry_id = %self.core.entry_id,
-        )
-    )]
     pub async fn exchange_and_store(
+        self,
+        redirect_uri: String,
+        http_timeout: Duration,
+    ) -> Result<OauthLinkCompleted, OauthExchangeError> {
+        let span = crate::spans::oauth_link_token_exchange(&self.core.entry_id);
+        self.exchange_and_store_inner(redirect_uri, http_timeout)
+            .instrument(span)
+            .await
+    }
+
+    async fn exchange_and_store_inner(
         self,
         redirect_uri: String,
         http_timeout: Duration,

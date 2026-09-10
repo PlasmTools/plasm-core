@@ -62,6 +62,10 @@ pub enum TypeError {
         #[source]
         source: Box<TypeError>,
     },
+
+    /// Surface query failed lane-typed [`crate::ResolvedRowset`] normalization (RA-1).
+    #[error("rowset normalize: {message}")]
+    RowsetNormalize { message: String },
 }
 
 impl From<crate::money::CrossCurrencyError> for TypeError {
@@ -75,6 +79,8 @@ impl From<crate::money::CrossCurrencyError> for TypeError {
 
 #[derive(Error, Debug, Clone)]
 pub enum SchemaError {
+    #[error("invalid prerequisite declaration: {detail}")]
+    PrerequisiteInvalid { detail: String },
     #[error("Duplicate entity name: '{name}'")]
     DuplicateEntity { name: String },
 
@@ -122,6 +128,74 @@ pub enum SchemaError {
         entity: String,
         capability: String,
         kind: String,
+    },
+
+    #[error(
+        "Entity '{entity}' has multiple Get capabilities {capabilities:?} — set primary_read to the canonical Get capability id"
+    )]
+    AmbiguousPrimaryRead {
+        entity: String,
+        capabilities: Vec<String>,
+    },
+
+    #[error("Entity '{entity}' primary_query '{capability}' is not a defined capability")]
+    UnknownPrimaryQueryCapability { entity: String, capability: String },
+
+    #[error(
+        "Entity '{entity}' primary_query '{capability}' must target this entity (got domain '{domain}')"
+    )]
+    PrimaryQueryWrongDomain {
+        entity: String,
+        capability: String,
+        domain: String,
+    },
+
+    #[error(
+        "Entity '{entity}' primary_query '{capability}' must be a Query capability (got {kind})"
+    )]
+    PrimaryQueryNotQuery {
+        entity: String,
+        capability: String,
+        kind: String,
+    },
+
+    #[error(
+        "Entity '{entity}' has {count} Query capabilities {capabilities:?} — at most one kind:query per entity (compress with a selection discriminant + CML path branch, fold scoped lists into one query + relation materialize, or split entities)"
+    )]
+    TooManyQueryCapabilities {
+        entity: String,
+        count: usize,
+        capabilities: Vec<String>,
+    },
+
+    #[error("Entity '{entity}' primary_search '{capability}' is not a defined capability")]
+    UnknownPrimarySearchCapability { entity: String, capability: String },
+
+    #[error(
+        "Entity '{entity}' primary_search '{capability}' must target this entity (got domain '{domain}')"
+    )]
+    PrimarySearchWrongDomain {
+        entity: String,
+        capability: String,
+        domain: String,
+    },
+
+    #[error(
+        "Entity '{entity}' primary_search '{capability}' must be a Search capability (got {kind})"
+    )]
+    PrimarySearchNotSearch {
+        entity: String,
+        capability: String,
+        kind: String,
+    },
+
+    #[error(
+        "Entity '{entity}' has {count} Search capabilities {capabilities:?} — at most one kind:search per entity (compress with a selection discriminant + CML path branch, or split entities)"
+    )]
+    TooManySearchCapabilities {
+        entity: String,
+        count: usize,
+        capabilities: Vec<String>,
     },
 
     #[error("EntityRef target '{target}' is not a defined entity ({context})")]
@@ -184,16 +258,6 @@ pub enum SchemaError {
         "Entity '{entity}' field '{field}': `value_format` is only allowed for `Date` / `datetime` or `money` fields"
     )]
     ValueFormatOnIncompatibleField { entity: String, field: String },
-
-    #[error(
-        "Entity '{entity}' field '{field}': `string_semantics` is only allowed for `string` fields"
-    )]
-    StringSemanticsOnNonString { entity: String, field: String },
-
-    #[error(
-        "Capability '{capability}' parameter '{param}': `string_semantics` is only allowed for `string` parameters"
-    )]
-    StringSemanticsOnNonStringParam { capability: String, param: String },
 
     #[error(
         "Entity '{entity}' field '{field}': `agent_presentation` is only allowed for `string` or `blob` fields"
@@ -517,6 +581,9 @@ pub enum SchemaError {
         detail: String,
     },
 
+    #[error("Derived get '{capability}': {detail}")]
+    DerivedGetInvalid { capability: String, detail: String },
+
     #[error(
         "View '{view}': node '{node}' capability '{capability}' must be Query, Get, Search, or mutator (got {kind})"
     )]
@@ -606,6 +673,16 @@ pub enum SchemaError {
 
     #[error("{message}")]
     SchemaConstraint { message: String },
+
+    #[error(
+        "capability '{capability}' (kind: search): must declare a free-text selection param named query/q/search (or a sole selection slot) for Entity~\"…\""
+    )]
+    SearchMissingFreeText { capability: String },
+
+    #[error(
+        "capability '{capability}' (kind: search): free-text selection param '{param}' must be required: true — optional free-text list filters use kind: query (avoids barren e~\"<query>\"{{query=…}} teaching twins)"
+    )]
+    SearchOptionalFreeText { capability: String, param: String },
 
     #[error("schema_overlay: {detail}")]
     SchemaOverlayInvalid { detail: String },

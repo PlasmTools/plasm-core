@@ -80,7 +80,7 @@ pub async fn init_oauth_provider_pull_from_postgres(
         .connect(&settings.database_url)
         .await
     {
-        Ok(p) => Arc::new(p),
+        Ok(p) => Arc::new(crate::traced_pg::wrap(p)),
         Err(e) => {
             return OauthProviderPullInitOutcome::ConnectFailed {
                 error: e.to_string(),

@@ -2,7 +2,6 @@
 
 use super::super::*;
 use super::session_churn::SessionChurnAdvisory;
-use plasm_core::discovery::relation_target_deferred_mutator_wires;
 use plasm_core::{ExposureEntityKey, TeachingExposureSession};
 use std::collections::{BTreeSet, HashSet};
 
@@ -25,46 +24,6 @@ pub(crate) fn capability_seeds_from_session(sess: &ExecuteSession) -> Vec<Capabi
             entity: e.clone(),
         })
         .collect()
-}
-
-/// Mutating capabilities on **non-seeded** relation targets that match intent but are absent from
-/// the current teaching surface (e.g. before ranked replay expands exposure).
-pub(crate) fn relation_target_deferred_mutator_hint(
-    cgs: &CGS,
-    entry_id: &str,
-    intent: &str,
-    _relation_keys: &[ExposureEntityKey],
-    seeded_entities: &[String],
-    exp: &TeachingExposureSession,
-    ranked: Option<&[String]>,
-) -> Option<String> {
-    let on_surface: HashSet<(String, String, String)> = exp
-        .surface
-        .capabilities
-        .iter()
-        .map(|k| {
-            (
-                k.entry_id.clone(),
-                k.domain.to_string(),
-                k.capability.to_string(),
-            )
-        })
-        .collect();
-    let deferred = relation_target_deferred_mutator_wires(
-        cgs,
-        entry_id,
-        intent,
-        seeded_entities,
-        &on_surface,
-        ranked,
-    );
-    if deferred.is_empty() {
-        return None;
-    }
-    Some(format!(
-        "\n\n**Deferred write capabilities** (relation-target mutators not yet on the teaching surface): `{}`. Restate intent toward mutation or pass `ranked_capabilities` with the needed mutator wire name(s).\n",
-        deferred.join("`, `")
-    ))
 }
 
 /// Dedupe while preserving first-seen order (symbol numbering / exposure waves).
@@ -106,14 +65,6 @@ pub fn normalize_capability_seeds(mut seeds: Vec<CapabilitySeed>) -> Vec<Capabil
     out
 }
 
-pub(super) fn relation_endpoint_keys_for_wave(
-    exp: &plasm_core::TeachingExposureSession,
-    batch_entry_id: &str,
-    batch_names: &[String],
-) -> Vec<plasm_core::ExposureEntityKey> {
-    exp.relation_endpoint_keys_for_wave(batch_entry_id, batch_names)
-}
-
 pub(crate) fn format_exposure_entity_cheat_sheet(
     exp: &plasm_core::TeachingExposureSession,
 ) -> String {
@@ -147,10 +98,12 @@ pub(crate) async fn teaching_exposure_at(
     st: &PlasmHostState,
     prompt_hash: &str,
     session_id: &str,
-) -> Option<plasm_core::TeachingExposureSession> {
-    st.get_execute_session(prompt_hash, session_id)
+) -> Result<Option<plasm_core::TeachingExposureSession>, super::session::SessionMutateError> {
+    Ok(st
+        .try_get_execute_session(prompt_hash, session_id)
         .await
-        .and_then(|s| s.teaching_exposure.clone())
+        .map_err(|error| error.to_string())?
+        .and_then(|s| s.teaching_exposure.clone()))
 }
 
 pub(crate) fn unchanged_expand_wave(
@@ -208,25 +161,6 @@ pub(super) fn seeds_exposure_ready_for_reuse(
     }
     let relation_keys = relation_endpoint_keys_for_seeds(exp, seeds);
     exp.pending_relation_slots_among(&relation_keys).is_empty()
-}
-
-/// True when explicit `ranked_capabilities` names mutators not yet on the exposure surface.
-pub(super) fn ranked_capabilities_need_exposure_replay(
-    exp: &plasm_core::TeachingExposureSession,
-    ranked_arg: &RankedCapabilitiesArg,
-) -> bool {
-    let Some(list) = ranked_arg.names() else {
-        return false;
-    };
-    let Some(normalized) = normalize_ranked_capabilities_for_gate(Some(list.to_vec())) else {
-        return false;
-    };
-    normalized.iter().any(|name| {
-        !exp.surface
-            .capabilities
-            .iter()
-            .any(|k| k.capability.as_str() == name.as_str())
-    })
 }
 
 pub(crate) fn group_seed_entities_by_entry(
@@ -323,69 +257,6 @@ pub(crate) fn normalize_context_intent_for_domain_filter(raw: Option<&str>) -> O
     })
 }
 
-/// MCP `plasm_context` `ranked_capabilities` argument: omitted vs explicit replace/clear.
-#[derive(Clone, Debug)]
-pub enum RankedCapabilitiesArg {
-    /// Key absent — keep the session's ranked list on expand waves; no agent diagnostics.
-    Unspecified,
-    /// Key present (`null`, `[]`, or string array) — replace the session list when intent-scoped.
-    Set {
-        names: Option<Vec<String>>,
-        /// Agent-explicit this turn — exposure commit may append ranked-replay markdown.
-        emit_diagnostics: bool,
-    },
-}
-
-impl RankedCapabilitiesArg {
-    /// Agent-explicit replace (may emit ranked-replay diagnostics).
-    pub fn agent(names: Option<Vec<String>>) -> Self {
-        Self::Set {
-            names,
-            emit_diagnostics: true,
-        }
-    }
-
-    /// Host / auto-seed replace (silent).
-    pub fn host(names: Option<Vec<String>>) -> Self {
-        Self::Set {
-            names,
-            emit_diagnostics: false,
-        }
-    }
-
-    pub fn names(&self) -> Option<&[String]> {
-        match self {
-            Self::Set { names: Some(v), .. } => Some(v.as_slice()),
-            _ => None,
-        }
-    }
-
-    pub fn emit_diagnostics(&self) -> bool {
-        matches!(
-            self,
-            Self::Set {
-                emit_diagnostics: true,
-                ..
-            }
-        )
-    }
-}
-
-pub(crate) fn normalize_ranked_capabilities_for_gate(
-    raw: Option<Vec<String>>,
-) -> Option<Vec<String>> {
-    let mut v: Vec<String> = raw?
-        .into_iter()
-        .filter_map(|s| plasm_core::bare_ranked_capability_wire(&s))
-        .collect();
-    if v.is_empty() {
-        return None;
-    }
-    v.sort();
-    v.dedup();
-    Some(v)
-}
-
 pub(super) async fn apply_context_intent_session_update(
     st: &PlasmHostState,
     prompt_hash: &str,
@@ -400,8 +271,9 @@ pub(super) async fn apply_context_intent_session_update(
         .parse()
         .map_err(|e: &'static str| super::session::SessionMutateError::from(e))?;
     let Some(sess_arc) = st
-        .get_execute_session(prompt_hash_p.as_str(), session_id_p.as_str())
+        .try_get_execute_session(prompt_hash_p.as_str(), session_id_p.as_str())
         .await
+        .map_err(|error| error.to_string())?
     else {
         return Err("unknown or expired execute session".into());
     };
@@ -413,46 +285,6 @@ pub(super) async fn apply_context_intent_session_update(
             .await?;
     }
     Ok(changed)
-}
-
-pub(super) async fn apply_ranked_capabilities_session_update(
-    st: &PlasmHostState,
-    prompt_hash: &str,
-    session_id: &str,
-    ranked_arg: &RankedCapabilitiesArg,
-) -> Result<(), super::session::SessionMutateError> {
-    let prompt_hash_p: PromptHashHex = prompt_hash
-        .parse()
-        .map_err(|e: &'static str| super::session::SessionMutateError::from(e))?;
-    let session_id_p: ExecuteSessionId = session_id
-        .parse()
-        .map_err(|e: &'static str| super::session::SessionMutateError::from(e))?;
-    let Some(sess_arc) = st
-        .get_execute_session(prompt_hash_p.as_str(), session_id_p.as_str())
-        .await
-    else {
-        return Err("unknown or expired execute session".into());
-    };
-    let mut sess = (*sess_arc).clone();
-    match ranked_arg {
-        RankedCapabilitiesArg::Unspecified => {
-            sess.ranked_replay_emit_diagnostics = false;
-        }
-        RankedCapabilitiesArg::Set {
-            names,
-            emit_diagnostics,
-        } => {
-            if sess.context_intent.is_none() {
-                sess.ranked_replay_emit_diagnostics = false;
-            } else {
-                sess.ranked_capabilities = normalize_ranked_capabilities_for_gate(names.clone());
-                sess.ranked_replay_emit_diagnostics = *emit_diagnostics;
-            }
-        }
-    }
-    st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), sess)
-        .await?;
-    Ok(())
 }
 
 pub(crate) const STALE_EXECUTE_BINDING_NOTICE: &str = "**Prior Plasm symbol table is void.** The execute session for this logical handle was missing, expired, or invalidated by a catalog reload. A new `(prompt_hash, session)` was opened — **discard** any cached `e#` / `m#` / `r#` or prior teaching-table text from earlier `plasm_context` output in this chat. Re-read the teaching table from this response only. Monotonic `e#` / `m#` / `r#` apply to the **new** session.\n\n";
@@ -586,274 +418,22 @@ pub(crate) fn build_plasm_context_tool_meta(
 
 /// Wrap teaching table / incremental delta in a Markdown fenced block so MCP and other Markdown UIs
 /// preserve newlines (CommonMark collapses single newlines in ordinary paragraphs).
-pub(super) fn wrap_teaching_markdown_literal_block(
-    body: &str,
-    render_mode: PromptRenderMode,
-) -> String {
+pub(super) fn wrap_teaching_markdown_literal_block(body: &str, catalog_entry_id: &str) -> String {
     let t = body.trim_end();
-    let fence = render_mode.markdown_fence_info_string();
+    let fence = plasm_core::catalog_teaching_fence_info(catalog_entry_id);
     format!("```{fence}\n{t}\n```\n")
 }
 
 #[cfg(test)]
-mod ranked_replay_tests {
+mod tests {
     use super::*;
+    use crate::http_execute::context::exposure_fixtures::{load_matrix_cgs, matrix_exp_explicit};
     use crate::http_execute::ApplyCapabilitySeedsOutcome;
-    use plasm_core::TeachingExposureSession;
-
-    use crate::http_execute::context::ranked_replay_fixtures::{
-        github_cgs_arc, github_exp_with_intent, github_issue_repo_endpoints, load_github_cgs,
-        load_matrix_cgs, matrix_cgs_arc, matrix_exp_with_intent, matrix_langitem_endpoints,
-    };
-
-    #[test]
-    fn normalize_ranked_capabilities_strips_discovery_ids() {
-        let got = normalize_ranked_capabilities_for_gate(Some(vec![
-            "github:Issue:issue_create".into(),
-            "matrix:LangItem.langitem_create".into(),
-            "issue_update".into(),
-            "github:Issue:issue_create".into(),
-        ]))
-        .expect("non-empty");
-        assert_eq!(
-            got,
-            vec![
-                "issue_create".to_string(),
-                "issue_update".to_string(),
-                "langitem_create".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn ranked_capabilities_need_exposure_replay_when_mutator_missing_from_surface() {
-        let cgs = load_github_cgs();
-        let exp = TeachingExposureSession::new(&cgs, "github", &["Repository"]);
-        assert!(
-            ranked_capabilities_need_exposure_replay(
-                &exp,
-                &RankedCapabilitiesArg::host(Some(vec!["zzzz_mutator_not_on_surface".into()])),
-            ),
-            "unknown ranked mutator must trigger replay"
-        );
-        let on_surface = exp
-            .surface
-            .capabilities
-            .first()
-            .expect("repository surface has capabilities")
-            .capability
-            .clone();
-        assert!(
-            !ranked_capabilities_need_exposure_replay(
-                &exp,
-                &RankedCapabilitiesArg::host(Some(vec![on_surface.to_string()])),
-            ),
-            "ranked cap already on surface must not trigger replay"
-        );
-        assert!(
-            !ranked_capabilities_need_exposure_replay(&exp, &RankedCapabilitiesArg::Unspecified),
-            "unspecified ranked list must not force replay"
-        );
-    }
-
-    #[test]
-    fn always_on_seeds_admits_seeded_mutator_at_weak_intent() {
-        use plasm_core::discovery::{
-            derive_intent_exposure_surface_batch, ExposureSurfaceOptions, MutatorAdmit,
-        };
-
-        let cgs = matrix_cgs_arc();
-        let entities = ["LangItem"];
-        let endpoints = matrix_langitem_endpoints();
-        let weak_intent = "langitem browse inventory metadata";
-        let mutator = "langitem_create";
-        let delta = derive_intent_exposure_surface_batch(
-            cgs.as_ref(),
-            "matrix",
-            weak_intent,
-            &endpoints,
-            &entities
-                .iter()
-                .map(|e| (*e).to_string())
-                .collect::<Vec<_>>(),
-            None,
-            ExposureSurfaceOptions {
-                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-            },
-        );
-        let exp = TeachingExposureSession::new_with_intent_delta(
-            cgs.as_ref(),
-            "matrix",
-            &entities,
-            delta,
-        );
-        assert!(
-            exp.surface
-                .capabilities
-                .iter()
-                .any(|c| c.capability.as_str() == mutator),
-            "read-first should autosurface seeded mutators at weak intent"
-        );
-        assert!(
-            !ranked_capabilities_need_exposure_replay(
-                &exp,
-                &RankedCapabilitiesArg::host(Some(vec![mutator.into()])),
-            ),
-            "seeded mutator already on surface must not trigger ranked replay"
-        );
-    }
-
-    #[test]
-    fn relation_target_deferred_mutator_hint_surfaces_missing_relation_mutator() {
-        use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
-
-        let cgs = load_github_cgs();
-        let seeded = vec!["Issue".to_string()];
-        let endpoints = vec![
-            ExposureEntityKey {
-                entry_id: "github".into(),
-                entity: plasm_core::EntityName::from("Issue"),
-            },
-            ExposureEntityKey {
-                entry_id: "github".into(),
-                entity: plasm_core::EntityName::from("IssueComment"),
-            },
-        ];
-        let intent = "add comment body text issue thread";
-        let delta = derive_intent_exposure_surface_batch(
-            &cgs,
-            "github",
-            intent,
-            &endpoints,
-            &seeded,
-            None,
-            ExposureSurfaceOptions {
-                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-            },
-        );
-        let mut exp =
-            TeachingExposureSession::new_with_intent_delta(&cgs, "github", &["Issue"], delta);
-        exp.surface
-            .capabilities
-            .retain(|c| c.capability.as_str() != "issue_comment_create");
-        let hint = relation_target_deferred_mutator_hint(
-            &cgs, "github", intent, &endpoints, &seeded, &exp, None,
-        )
-        .expect("expected deferred relation-target mutator hint");
-        assert!(
-            hint.contains("issue_comment_create"),
-            "hint must name withheld relation-target mutator: {hint}"
-        );
-    }
-
-    #[test]
-    fn relation_target_deferred_mutator_hint_empty_when_surface_complete() {
-        let cgs = load_github_cgs();
-        let seeded = vec!["Repository".to_string(), "Issue".to_string()];
-        let endpoints = github_issue_repo_endpoints();
-        let intent = "create new issue title body repository";
-        let exp = github_exp_with_intent(intent, None, MutatorAdmit::AlwaysOnSeeds);
-        assert!(
-            relation_target_deferred_mutator_hint(
-                &cgs, "github", intent, &endpoints, &seeded, &exp, None,
-            )
-            .is_none(),
-            "complete surface must not emit deferred mutator hint"
-        );
-    }
-
-    #[test]
-    fn ranked_replay_surfaces_deferred_mutator_after_always_on_seeds_open() {
-        use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
-
-        let cgs = github_cgs_arc();
-        let seeded = vec!["Issue".to_string()];
-        let endpoints = vec![
-            ExposureEntityKey {
-                entry_id: "github".into(),
-                entity: plasm_core::EntityName::from("Issue"),
-            },
-            ExposureEntityKey {
-                entry_id: "github".into(),
-                entity: plasm_core::EntityName::from("IssueComment"),
-            },
-        ];
-        let intent = "add comment body text issue thread";
-        let mutator = "issue_comment_create";
-        let delta = derive_intent_exposure_surface_batch(
-            cgs.as_ref(),
-            "github",
-            intent,
-            &endpoints,
-            &seeded,
-            None,
-            ExposureSurfaceOptions {
-                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-            },
-        );
-        let mut exp = TeachingExposureSession::new_with_intent_delta(
-            cgs.as_ref(),
-            "github",
-            &["Issue"],
-            delta,
-        );
-        exp.surface
-            .capabilities
-            .retain(|c| c.capability.as_str() != mutator);
-        assert!(
-            ranked_capabilities_need_exposure_replay(
-                &exp,
-                &RankedCapabilitiesArg::host(Some(vec![mutator.into()])),
-            ),
-            "ranked replay gate must fire for deferred relation-target mutator"
-        );
-
-        let ranked = vec![mutator.to_string()];
-        let replay_delta = derive_intent_exposure_surface_batch(
-            cgs.as_ref(),
-            "github",
-            intent,
-            &endpoints,
-            &seeded,
-            Some(&ranked),
-            ExposureSurfaceOptions {
-                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-            },
-        );
-        exp.expose_surface(
-            &[cgs.as_ref()],
-            cgs.clone(),
-            "github",
-            &["Issue"],
-            replay_delta,
-        );
-        assert!(
-            exp.surface
-                .capabilities
-                .iter()
-                .any(|c| c.capability.as_str() == mutator),
-            "ranked replay must add deferred mutator to exposure surface"
-        );
-        let cap = cgs.get_capability(mutator).expect(mutator);
-        let method_sym =
-            exp.symbol_map_arc()
-                .method_sym_for("github", "IssueComment", cap.name.as_str());
-        assert!(
-            method_sym.starts_with('m'),
-            "{mutator} method must appear on teaching surface after replay: {method_sym}"
-        );
-    }
 
     #[test]
     fn reuse_markdown_includes_active_mutator_recap() {
-        use plasm_core::capability_method_label_kebab;
-
         let cgs = load_matrix_cgs();
-        let exp = matrix_exp_with_intent(
-            "langitem browse inventory metadata",
-            Some(&["langitem_create".to_string()]),
-            MutatorAdmit::AlwaysOnSeeds,
-        );
+        let exp = matrix_exp_explicit();
         let md = format_session_unchanged_reuse_markdown(Some(&exp));
         assert!(
             md.contains("Active mutators"),
@@ -868,114 +448,6 @@ mod ranked_replay_tests {
         assert!(
             md.contains(&method_sym),
             "reuse recap must include {method_sym}: {md}"
-        );
-    }
-
-    #[test]
-    fn ranked_replay_diagnostics_when_already_exposed() {
-        use plasm_core::prompt_render::format_ranked_replay_diagnostics;
-
-        let exp = matrix_exp_with_intent(
-            "create new langitem title",
-            Some(&["langitem_create".to_string()]),
-            MutatorAdmit::AlwaysOnSeeds,
-        );
-        let caps_before = exp.surface.capabilities.clone();
-        assert!(
-            format_ranked_replay_diagnostics(&exp, &["langitem_create".to_string()], &caps_before)
-                .is_none(),
-            "already-exposed ranked wire must not emit agent markdown"
-        );
-    }
-
-    #[test]
-    fn mcp_conformance_ranked_write_symbols_authorable_from_recap() {
-        use plasm_core::capability_method_label_kebab;
-        use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
-        use plasm_core::ExposureEntityKey;
-
-        let cgs = load_github_cgs();
-        let entities = vec!["Repository".to_string(), "Issue".to_string()];
-        let endpoints = github_issue_repo_endpoints();
-        let weak_intent = "browse repository metadata inventory";
-        let delta = derive_intent_exposure_surface_batch(
-            &cgs,
-            "github",
-            weak_intent,
-            &endpoints,
-            &entities,
-            Some(&["issue_create".to_string()]),
-            ExposureSurfaceOptions {
-                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-            },
-        );
-        assert!(
-            delta
-                .required
-                .capabilities
-                .iter()
-                .any(|c| c.capability.as_str() == "issue_create"),
-            "ranked issue_create must appear on seeded Issue"
-        );
-        let exp = TeachingExposureSession::new_with_intent_delta(
-            &cgs,
-            "github",
-            &["Repository", "Issue"],
-            delta,
-        );
-        let reuse = format_session_unchanged_reuse_markdown(Some(&exp));
-        let cap = cgs.get_capability("issue_create").expect("issue_create");
-        let map = exp.symbol_map_arc();
-        let method_sym = map.method_sym_for("github", "Issue", cap.name.as_str());
-        let labels_sym = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "labels");
-        assert!(
-            reuse.contains(&method_sym),
-            "reuse recap must expose issue_create method sym: {reuse}"
-        );
-        assert!(
-            reuse.contains(&format!("labels={labels_sym}")),
-            "reuse recap must name labels param: {reuse}"
-        );
-    }
-
-    #[test]
-    fn ranked_replay_admits_pr_create_at_zero_score_on_seeded_pull_request() {
-        use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
-        use plasm_core::ExposureEntityKey;
-
-        let cgs = load_github_cgs();
-        let entities = vec![
-            "Repository".to_string(),
-            "PullRequest".to_string(),
-            "Issue".to_string(),
-        ];
-        let endpoints = ["Repository", "PullRequest", "Issue"]
-            .iter()
-            .map(|e| ExposureEntityKey {
-                entry_id: "github".into(),
-                entity: plasm_core::EntityName::from(*e),
-            })
-            .collect::<Vec<_>>();
-        let zero_intent = "xyzzy qwerty plugh unrelated metadata browse";
-        let delta = derive_intent_exposure_surface_batch(
-            &cgs,
-            "github",
-            zero_intent,
-            &endpoints,
-            &entities,
-            Some(&["pr_create".to_string()]),
-            ExposureSurfaceOptions {
-                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-            },
-        );
-        assert!(
-            delta
-                .required
-                .capabilities
-                .iter()
-                .any(|c| c.capability.as_str() == "pr_create"),
-            "ranked pr_create must appear on seeded PullRequest at score zero: {:?}",
-            delta.required.capabilities
         );
     }
 

@@ -118,6 +118,9 @@ pub struct DecodedEntity {
     /// Fully decoded `from_parent_get` relation targets (also inserted into graph cache at parent GET).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub embedded_entities: Vec<DecodedEntity>,
+    /// Soft-fail field coerce / domain validation diagnostics (field set to null when present).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub field_diagnostics: Vec<plasm_core::DecodeFieldDiagnostic>,
 }
 
 impl PathExpr {

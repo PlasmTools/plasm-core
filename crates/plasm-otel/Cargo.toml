@@ -6,6 +6,11 @@ license = "MIT OR Apache-2.0"
 description = "Shared OpenTelemetry OTLP bootstrap (traces, metrics, logs) from standard OTEL_* env vars"
 readme = "README.md"
 
+[features]
+default = []
+# In-memory span exporter + capture helpers for span-graph tests in dependent crates.
+testing = ["opentelemetry_sdk/testing"]
+
 [dependencies]
 anyhow = { workspace = true }
 opentelemetry = { workspace = true }
@@ -17,3 +22,8 @@ http = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 tracing-opentelemetry = { workspace = true }
+axum = { workspace = true }
+
+[dev-dependencies]
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
+tokio = { workspace = true }

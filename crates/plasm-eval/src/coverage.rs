@@ -6,7 +6,7 @@ use plasm_core::expr::{ChainStep, Expr};
 use plasm_core::expr_parser;
 use plasm_core::predicate::Predicate;
 use plasm_core::schema::CapabilityKind;
-use plasm_core::{ParameterRole, Value, CGS};
+use plasm_core::{Value, CGS};
 use serde::Deserialize;
 
 type UnionCaseEntitiesResult = (HashSet<String>, HashMap<String, Vec<String>>);
@@ -93,11 +93,13 @@ pub struct CoverageOverride {
 /// True when domain-authored parameters are absent or an empty object (`parameters:` omitted
 /// or `[]`).
 fn query_has_empty_object_params(cap: &plasm_core::CapabilitySchema) -> bool {
-    cap.object_params().is_none_or(|fields| fields.is_empty())
+    cap.query_surface_fields().next().is_none()
 }
 
 fn mapping_declares_pagination(cap: &plasm_core::CapabilitySchema) -> bool {
-    cap.mapping.template.0.get("pagination").is_some()
+    cap.mapping
+        .as_ref()
+        .is_some_and(|m| m.template.0.get("pagination").is_some())
 }
 
 /// Unfiltered list query in CGS terms: no typed domain parameters **and** no cursor/pagination
@@ -112,16 +114,8 @@ fn query_has_truly_unfiltered_list_surface(cap: &plasm_core::CapabilitySchema) -
 /// True when query inputs include at least one predicate/scope/search field (not only
 /// pagination or sort plumbing).
 fn query_has_predicate_narrowing_params(cap: &plasm_core::CapabilitySchema) -> bool {
-    cap.object_params().is_some_and(|fields| {
-        fields.iter().any(|f| {
-            !matches!(
-                f.role,
-                Some(ParameterRole::ResponseControl)
-                    | Some(ParameterRole::Sort)
-                    | Some(ParameterRole::SortDirection)
-            )
-        })
-    })
+    // Scope / selection lanes narrow the backend row set; controls are pagination/sort/shape.
+    !cap.scope_params().is_empty() || !cap.selection_params().is_empty()
 }
 
 /// Derive which eval form buckets this CGS can meaningfully exercise.

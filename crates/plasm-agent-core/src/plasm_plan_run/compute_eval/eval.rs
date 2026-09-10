@@ -1,16 +1,15 @@
 use super::super::*;
 use super::super::{value_at_dotted, value_at_segments};
 use super::input_rows::materialized_result_use_inputs;
+use plasm_core::operand_binding::{BindOperands, OperandResolver};
 use std::collections::BTreeMap;
 
 pub(crate) fn instantiate_parsed_expr_plan_inputs_with_rows(
     parsed: ParsedExpr,
+    target_cgs: &CGS,
     input_rows: &BTreeMap<InputAlias, MaterializedInputRow>,
-    wire_coercion: Option<WireCoercionCtx<'_>>,
+    wire_coercion_by_alias: &BTreeMap<InputAlias, WireCoercionCtx<'_>>,
 ) -> Result<ParsedExpr, String> {
-    if input_rows.is_empty() {
-        return Ok(parsed);
-    }
     let scope = EvalScope::Root {
         row: &serde_json::Value::Null,
     };
@@ -18,24 +17,22 @@ pub(crate) fn instantiate_parsed_expr_plan_inputs_with_rows(
     let env = PlanEvalEnv {
         scope,
         inputs,
-        wire_coercion,
+        wire_coercion_by_alias,
     };
-    let expr_json = serde_json::to_value(&parsed.expr)
-        .map_err(|e| format!("serialize expr for hole instantiation: {e}"))?;
-    let expr_json = instantiate_expr_template_value(&expr_json, &env)?;
-    let expr: Expr = serde_json::from_value(expr_json)
-        .map_err(|e| format!("deserialize expr after hole instantiation: {e}"))?;
+    let expr = parsed
+        .expr
+        .bind_operands(&mut RuntimeOperands(&env, target_cgs))?;
     Ok(ParsedExpr {
         expr,
         projection: parsed.projection,
+        field_dot_extract: None,
     })
 }
 
-/// Deserialize → [`instantiate_expr_template_value`] → deserialize so predicate/CML env holes (e.g.
-/// `__plasm_hole` `node_input`) become concrete row JSON **before** HTTP compile — parity with dry-run
-/// topology checks that assumed splattable scope rows.
+/// Bind typed references to materialized inputs without serializing expression structure.
 pub(crate) fn instantiate_parsed_expr_plan_inputs(
     parsed: ParsedExpr,
+    target_cgs: &CGS,
     uses_result: &[PlanResultUse],
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
 ) -> Result<ParsedExpr, String> {
@@ -43,7 +40,8 @@ pub(crate) fn instantiate_parsed_expr_plan_inputs(
         return Ok(parsed);
     }
     let input_rows = materialized_result_use_inputs(materialized, uses_result, None)?;
-    instantiate_parsed_expr_plan_inputs_with_rows(parsed, &input_rows, None)
+    let empty = BTreeMap::new();
+    instantiate_parsed_expr_plan_inputs_with_rows(parsed, target_cgs, &input_rows, &empty)
 }
 
 pub(crate) fn wire_coercion_ctx_for_source_entity<'a>(
@@ -56,78 +54,114 @@ pub(crate) fn wire_coercion_ctx_for_source_entity<'a>(
         source_entity: ent,
     })
 }
+
+/// Build alias-specific coercion contexts from each input's [`QualifiedEntityKey`] (no first-input heuristic).
+/// Stamps each input's `id_field` from the source entity when the catalog is loaded.
+pub(crate) fn wire_coercion_by_alias_from_inputs<'a>(
+    es: &'a ExecuteSession,
+    input_rows: &mut BTreeMap<InputAlias, MaterializedInputRow>,
+) -> Result<BTreeMap<InputAlias, WireCoercionCtx<'a>>, String> {
+    let mut out = BTreeMap::new();
+    for (alias, row) in input_rows.iter_mut() {
+        let entry_id = row.qualified_entity.entry_id.as_str();
+        let entity = row.qualified_entity.entity.as_str();
+        if entry_id.is_empty() || entity.is_empty() {
+            // Synthetic / data-literal rows: row JSON only, no catalog coercion.
+            continue;
+        }
+        let cgs = es
+            .contexts_by_entry
+            .get(entry_id)
+            .map(|c| c.cgs.as_ref())
+            .ok_or_else(|| {
+                format!(
+                    "alias {:?} qualified_entity {}:{}: catalog entry not loaded in session (no primary-catalog fallback)",
+                    alias.as_str(),
+                    entry_id,
+                    entity
+                )
+            })?;
+        // Plan-computed / render synthetics have no EntityDef — skip coercion, keep row JSON fills.
+        if let Some(ctx) = wire_coercion_ctx_for_source_entity(cgs, entity) {
+            row.id_field = ctx.source_entity.id_field.to_string();
+            out.insert(alias.clone(), ctx);
+        }
+    }
+    Ok(out)
+}
 pub(crate) fn instantiate_expr_template(
     template: &ValidatedPlanExprTemplate,
     env: &PlanEvalEnv<'_>,
+    target_cgs: &CGS,
 ) -> Result<ParsedExpr, String> {
-    let expr_json = instantiate_expr_template_value(&template.expr, env)?;
-    let expr = serde_json::from_value(expr_json)
-        .map_err(|e| format!("templated Plasm IR instantiation failed: {e}"))?;
     Ok(ParsedExpr {
-        expr,
+        expr: template
+            .expr
+            .bind_operands(&mut RuntimeOperands(env, target_cgs))?,
         projection: template.projection.clone(),
+        field_dot_extract: None,
     })
 }
 
-pub(crate) fn instantiate_raw_expr_template(
-    template: &PlanExprTemplate,
-    env: &PlanEvalEnv<'_>,
-) -> Result<ParsedExpr, String> {
-    let expr_json = instantiate_expr_template_value(&template.expr, env)?;
-    let expr = serde_json::from_value(expr_json)
-        .map_err(|e| format!("templated Plasm IR instantiation failed: {e}"))?;
-    Ok(ParsedExpr {
-        expr,
-        projection: template.projection.clone(),
-    })
-}
+struct RuntimeOperands<'a, 'b>(&'a PlanEvalEnv<'b>, &'a CGS);
 
-pub(crate) fn instantiate_expr_template_value(
-    value: &serde_json::Value,
-    env: &PlanEvalEnv<'_>,
-) -> Result<serde_json::Value, String> {
-    if let Some(hole) = value
-        .as_object()
-        .and_then(|obj| obj.get("__plasm_hole"))
-        .and_then(|v| v.as_object())
-    {
-        return instantiate_ir_hole(hole, env);
+impl OperandResolver for RuntimeOperands<'_, '_> {
+    type Error = String;
+    fn resolve(
+        &mut self,
+        reference: &plasm_core::PlasmInputRef,
+    ) -> Result<plasm_core::operand_binding::ResolvedValue, String> {
+        let value = resolve_input_reference(reference, self.0)?;
+        plasm_core::operand_binding::ResolvedValue::new(json_row_to_plasm_value(&value))
+            .map_err(str::to_owned)
     }
-    match value {
-        serde_json::Value::Array(items) => items
-            .iter()
-            .map(|item| instantiate_expr_template_value(item, env))
-            .collect::<Result<Vec<_>, _>>()
-            .map(serde_json::Value::Array),
-        serde_json::Value::Object(map) => map
-            .iter()
-            .map(|(k, v)| Ok((k.clone(), instantiate_expr_template_value(v, env)?)))
-            .collect::<Result<serde_json::Map<_, _>, String>>()
-            .map(serde_json::Value::Object),
-        serde_json::Value::String(s) => {
-            if !plasm_core::contains_dollar_interpolation(s) {
-                return Ok(serde_json::Value::String(s.clone()));
-            }
-            let scope = plan_binding_scope_owned(env);
-            let out = plasm_core::interpolate_string_map(s, &scope)
-                .map_err(|e| format!("string interpolation: {e}"))?;
-            Ok(serde_json::Value::String(out))
-        }
-        other => Ok(other.clone()),
+    fn identity(
+        &mut self,
+        target: plasm_core::operand_binding::IdentityTarget<'_>,
+        reference: &plasm_core::PlasmInputRef,
+    ) -> Result<plasm_core::EntityId, String> {
+        let codec = plasm_core::operand_binding::IdentityCodec::compile(self.1, target)?;
+        codec.encode(&resolve_input_reference(reference, self.0)?)
+    }
+    fn string(
+        &mut self,
+        value: &plasm_core::program_string_template::CompiledProgramString,
+    ) -> Result<String, String> {
+        value
+            .render(&plan_binding_scope_owned(self.0))
+            .map_err(|e| format!("string interpolation: {e}"))
     }
 }
 
 pub(crate) fn plan_binding_scope_owned(
     env: &PlanEvalEnv<'_>,
 ) -> BTreeMap<String, plasm_core::Value> {
+    insert_plan_eval_scope(env, json_row_to_plasm_value)
+}
+
+fn insert_plan_eval_scope(
+    env: &PlanEvalEnv<'_>,
+    mut row_to_value: impl FnMut(&serde_json::Value) -> plasm_core::Value,
+) -> BTreeMap<String, plasm_core::Value> {
     let mut scope = BTreeMap::new();
+    // Flatten bound row fields first so `{{ title }}` works; aliases overwrite on conflict.
+    if let EvalScope::Bound { row, binding } = &env.scope {
+        let row_value = row_to_value(row);
+        if let plasm_core::Value::Object(map) = &row_value {
+            for (k, v) in map {
+                scope.insert(k.clone(), v.clone());
+            }
+        }
+        scope.insert(binding.as_str().to_string(), row_value.clone());
+        // Convention: `_` always names the row cursor when bound.
+        if binding.as_str() != "_" {
+            scope.insert("_".to_string(), row_value);
+        }
+    }
     for (alias, input) in env.inputs.rows {
-        let row_value = json_row_to_plasm_value(&input.row);
+        let row_value = row_to_value(&input.row);
         scope.insert(alias.as_str().to_string(), row_value.clone());
         scope.insert(input.node.as_str().to_string(), row_value);
-    }
-    if let EvalScope::Bound { row, binding } = &env.scope {
-        scope.insert(binding.as_str().to_string(), json_row_to_plasm_value(row));
     }
     scope
 }
@@ -186,6 +220,7 @@ pub(crate) fn coerce_node_input_json(
 
 pub(crate) fn node_input_hole_from_identity(
     ctx: Option<&WireCoercionCtx<'_>>,
+    id_field: &str,
     identity: &Option<plasm_core::RowIdentity>,
     path: &[String],
     row: &serde_json::Value,
@@ -201,14 +236,6 @@ pub(crate) fn node_input_hole_from_identity(
     }
     if path.len() == 1 {
         let key = path[0].as_str();
-        if key == "id" {
-            let slot = identity.reference.primary_slot_str();
-            return Some(coerce_node_input_json(
-                ctx,
-                path,
-                serde_json::Value::String(slot),
-            ));
-        }
         if let Some(v) = identity.ambient.get(key) {
             return Some(coerce_node_input_json(
                 ctx,
@@ -217,12 +244,21 @@ pub(crate) fn node_input_hole_from_identity(
             ));
         }
         if let plasm_core::EntityKey::Compound(parts) = &identity.reference.key {
-            if let Some(v) = parts.get(key) {
+            if let Some(v) = parts.get(key).and_then(|s| s.as_lit_str()) {
                 let raw = ctx
                     .map(|c| plasm_core::identity_slot_to_json(c.cgs, c.source_entity, key, v))
-                    .unwrap_or_else(|| serde_json::Value::String(v.clone()));
+                    .unwrap_or_else(|| serde_json::Value::String(v.to_string()));
                 return Some(coerce_node_input_json(ctx, path, raw));
             }
+        }
+        // Primary identity: CGS `id_field` (e.g. AuthSession.access_token) or legacy `"id"`.
+        if key == "id" || key == id_field {
+            let slot = identity.reference.primary_slot_str();
+            return Some(coerce_node_input_json(
+                ctx,
+                path,
+                serde_json::Value::String(slot),
+            ));
         }
     }
     value_at_segments(row, path)
@@ -230,30 +266,12 @@ pub(crate) fn node_input_hole_from_identity(
         .map(|v| coerce_node_input_json(ctx, path, v))
 }
 
-pub(crate) fn instantiate_ir_hole(
-    hole: &serde_json::Map<String, serde_json::Value>,
+pub(crate) fn resolve_input_reference(
+    reference: &plasm_core::PlasmInputRef,
     env: &PlanEvalEnv<'_>,
 ) -> Result<serde_json::Value, String> {
-    let kind = hole
-        .get("kind")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| "IR value hole is missing kind".to_string())?;
-    let path = hole
-        .get("path")
-        .and_then(|v| v.as_array())
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| item.as_str().map(str::to_string))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    match kind {
-        "binding" => {
-            let binding = hole
-                .get("binding")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| "binding IR hole is missing binding".to_string())?;
+    match reference {
+        plasm_core::PlasmInputRef::RowBinding { binding, path } => {
             let EvalScope::Bound {
                 binding: scope_binding,
                 ..
@@ -267,68 +285,93 @@ pub(crate) fn instantiate_ir_hole(
                     scope_binding.as_str()
                 ));
             }
-            Ok(value_at_segments(env.scope.row(), &path)
+            Ok(value_at_segments(env.scope.row(), path)
                 .cloned()
                 .unwrap_or(serde_json::Value::Null))
         }
-        "node_input" => {
-            let alias = hole
-                .get("alias")
-                .and_then(|v| v.as_str())
-                .or_else(|| hole.get("node").and_then(|v| v.as_str()))
-                .ok_or_else(|| "node_input IR hole is missing alias".to_string())?;
+        plasm_core::PlasmInputRef::NodeInput { node, path } => {
+            let alias = node;
             let alias = InputAlias::new(alias.to_string())?;
             let input = env.inputs.rows.get(&alias).ok_or_else(|| {
                 format!("node_input IR hole references unavailable alias {alias:?}")
             })?;
-            if !path.is_empty() && input.rows.len() > 1 {
+            let wire_ctx = env.wire_coercion_for_alias(&alias);
+            let id_field = wire_ctx
+                .map(|c| c.source_entity.id_field.as_str())
+                .unwrap_or(input.id_field.as_str());
+            if input.rows.len() > 1 && !path.is_empty() {
                 let mut values = Vec::with_capacity(input.rows.len());
                 for (row, ident) in input.rows.iter().zip(input.row_identities.iter()) {
-                    let cell = value_at_segments(row, &path)
+                    let cell = value_at_segments(row, path)
                         .cloned()
                         .or_else(|| {
-                            node_input_hole_from_identity(
-                                env.wire_coercion.as_ref(),
-                                ident,
-                                &path,
-                                row,
-                            )
+                            node_input_hole_from_identity(wire_ctx, id_field, ident, path, row)
                         })
-                        .unwrap_or(serde_json::Value::Null);
+                        .ok_or_else(|| {
+                            format!(
+                                "node_input hole {:?}.{} unresolved on catalog {}:{} (missing row field and id_field identity)",
+                                alias.as_str(),
+                                path.join("."),
+                                input.qualified_entity.entry_id,
+                                input.qualified_entity.entity
+                            )
+                        })?;
                     if !cell.is_null() {
-                        values.push(coerce_node_input_json(
-                            env.wire_coercion.as_ref(),
-                            &path,
-                            cell,
-                        ));
+                        values.push(coerce_node_input_json(wire_ctx, path, cell));
                     }
+                }
+                if values.is_empty() {
+                    return Err(format!(
+                        "node_input hole {:?}.{} produced no values from catalog {}:{}",
+                        alias.as_str(),
+                        path.join("."),
+                        input.qualified_entity.entry_id,
+                        input.qualified_entity.entity
+                    ));
                 }
                 return Ok(serde_json::Value::Array(values));
             }
-            let from_row = value_at_segments(&input.row, &path).cloned();
+            if path.is_empty() {
+                if let Some(value) = node_input_hole_from_identity(
+                    wire_ctx,
+                    id_field,
+                    &input.row_identity,
+                    path,
+                    &input.row,
+                ) {
+                    if value.as_str().is_none_or(|s| !s.is_empty()) {
+                        return Ok(value);
+                    }
+                }
+                return Ok(input.row.clone());
+            }
+            let from_row = value_at_segments(&input.row, path).cloned();
             let from_row_usable = from_row
                 .as_ref()
                 .is_some_and(|v| !v.is_null() && v.as_str().is_none_or(|s| !s.is_empty()));
             if from_row_usable {
-                return Ok(coerce_node_input_json(
-                    env.wire_coercion.as_ref(),
-                    &path,
-                    from_row.unwrap(),
-                ));
+                return Ok(coerce_node_input_json(wire_ctx, path, from_row.unwrap()));
             }
             if let Some(value) = node_input_hole_from_identity(
-                env.wire_coercion.as_ref(),
+                wire_ctx,
+                id_field,
                 &input.row_identity,
-                &path,
+                path,
                 &input.row,
             ) {
                 if value.as_str().is_none_or(|s| !s.is_empty()) {
                     return Ok(value);
                 }
             }
-            Ok(from_row.unwrap_or(serde_json::Value::Null))
+            Err(format!(
+                "node_input hole {:?}.{} unresolved on catalog {}:{} (row field empty; id_field={})",
+                alias.as_str(),
+                path.join("."),
+                input.qualified_entity.entry_id,
+                input.qualified_entity.entity,
+                id_field
+            ))
         }
-        other => Err(format!("unknown IR value hole kind {other:?}")),
     }
 }
 pub(crate) fn plan_value_to_rows(value: &PlanValue) -> Result<Vec<serde_json::Value>, String> {
@@ -337,10 +380,11 @@ pub(crate) fn plan_value_to_rows(value: &PlanValue) -> Result<Vec<serde_json::Va
         row: &serde_json::Value::Null,
     };
     let input_env = InputEnv { rows: &inputs };
+    let empty_coercion = BTreeMap::new();
     let env = PlanEvalEnv {
         scope,
         inputs: input_env,
-        wire_coercion: None,
+        wire_coercion_by_alias: &empty_coercion,
     };
     let json = eval_plan_value(value, &env)?;
     Ok(match json {
@@ -359,6 +403,7 @@ pub(crate) fn derive_node_rows(
     source_rows: &[serde_json::Value],
     input_rows: &BTreeMap<InputAlias, MaterializedInputRow>,
 ) -> Result<Vec<serde_json::Value>, String> {
+    let empty_coercion = BTreeMap::new();
     let mut rows = Vec::with_capacity(source_rows.len());
     for row in source_rows {
         let scope = EvalScope::Bound {
@@ -369,7 +414,7 @@ pub(crate) fn derive_node_rows(
         let env = PlanEvalEnv {
             scope,
             inputs,
-            wire_coercion: None,
+            wire_coercion_by_alias: &empty_coercion,
         };
         rows.push(eval_plan_value(value, &env)?);
     }
@@ -406,7 +451,14 @@ pub(crate) struct WireCoercionCtx<'a> {
 pub(crate) struct PlanEvalEnv<'a> {
     pub(crate) scope: EvalScope<'a>,
     pub(crate) inputs: InputEnv<'a>,
-    pub(crate) wire_coercion: Option<WireCoercionCtx<'a>>,
+    /// Per-alias wire coercion from each input's catalog-qualified source entity.
+    pub(crate) wire_coercion_by_alias: &'a BTreeMap<InputAlias, WireCoercionCtx<'a>>,
+}
+
+impl<'a> PlanEvalEnv<'a> {
+    fn wire_coercion_for_alias(&self, alias: &InputAlias) -> Option<&WireCoercionCtx<'a>> {
+        self.wire_coercion_by_alias.get(alias)
+    }
 }
 
 pub(crate) fn eval_plan_value(
@@ -503,8 +555,14 @@ pub(crate) fn strip_binding<'a>(path: &'a str, binding: &BindingName) -> &'a str
     path
 }
 
-pub(crate) fn render_template(template: &str, env: &PlanEvalEnv<'_>) -> Result<String, String> {
-    render_template_with(template, env, json_scalar_display)
+pub(crate) fn render_template(
+    template: &plasm_core::program_string_template::CompiledProgramString,
+    env: &PlanEvalEnv<'_>,
+) -> Result<String, String> {
+    let scope = insert_plan_eval_scope(env, |row| {
+        json_row_to_display_plasm(row, json_scalar_display)
+    });
+    template.render(&scope).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -515,42 +573,37 @@ pub(crate) fn render_expr_template(
     render_template_with(template, env, json_plasm_literal_display)
 }
 
+#[cfg(test)]
 pub(crate) fn render_template_with(
     template: &str,
     env: &PlanEvalEnv<'_>,
     render_value: fn(&serde_json::Value) -> String,
 ) -> Result<String, String> {
-    plasm_core::text::interpolate_dollar_template(
-        template,
-        |raw_path| {
-            let rendered = resolve_template_path(raw_path, env)
-                .map(render_value)
-                .ok_or_else(|| format!("template path {raw_path:?} did not resolve"))?;
-            Ok(rendered)
-        },
-        plasm_core::text::DEFAULT_MAX_INTERPOLATED_LEN,
-    )
-    .map(|t| t.into_string())
-    .map_err(|e| e.to_string())
+    // Pre-format scalar leaves for Plasm surface display, then Minijinja-expand.
+    let scope = insert_plan_eval_scope(env, |row| json_row_to_display_plasm(row, render_value));
+    plasm_core::render_program_string(template, &scope).map_err(|e| e.to_string())
 }
 
-pub(crate) fn resolve_template_path<'a>(
-    raw_path: &str,
-    env: &'a PlanEvalEnv<'_>,
-) -> Option<&'a serde_json::Value> {
-    if let EvalScope::Bound { binding, .. } = &env.scope {
-        if raw_path == binding.as_str() || raw_path.starts_with(&format!("{binding}.")) {
-            return value_at_dotted(env.scope.row(), strip_binding(raw_path, binding));
+fn json_row_to_display_plasm(
+    row: &serde_json::Value,
+    render_value: fn(&serde_json::Value) -> String,
+) -> plasm_core::Value {
+    match row {
+        serde_json::Value::Object(map) => {
+            let mut out = indexmap::IndexMap::new();
+            for (k, v) in map {
+                out.insert(k.clone(), json_row_to_display_plasm(v, render_value));
+            }
+            plasm_core::Value::Object(out)
         }
+        serde_json::Value::Array(items) => plasm_core::Value::Array(
+            items
+                .iter()
+                .map(|v| json_row_to_display_plasm(v, render_value))
+                .collect(),
+        ),
+        other => plasm_core::Value::String(render_value(other)),
     }
-    let (alias, rest) = raw_path
-        .split_once('.')
-        .map_or((raw_path, ""), |(alias, rest)| (alias, rest));
-    let alias = InputAlias::new(alias.to_string()).ok()?;
-    env.inputs
-        .rows
-        .get(&alias)
-        .and_then(|input| value_at_dotted(&input.row, rest))
 }
 
 pub(crate) use plasm_core::json_value_to_plasm_value as json_to_plasm_value;

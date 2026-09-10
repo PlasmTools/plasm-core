@@ -153,6 +153,7 @@ fn append_get_template_var_args(mut cmd: Command, template: &CapabilityTemplate)
             path_var_names_from_request(cml)
         }
         CapabilityTemplate::View(_)
+        | CapabilityTemplate::CredentialBind(_)
         | CapabilityTemplate::EvmCall(_)
         | CapabilityTemplate::EvmLogs(_) => Vec::new(),
     };
@@ -180,6 +181,7 @@ fn http_template_request(template: &serde_json::Value) -> Option<CmlRequest> {
     match parse_capability_template(template).ok()? {
         CapabilityTemplate::Http(cml) | CapabilityTemplate::GraphQl(cml) => Some(cml),
         CapabilityTemplate::View(_)
+        | CapabilityTemplate::CredentialBind(_)
         | CapabilityTemplate::EvmCall(_)
         | CapabilityTemplate::EvmLogs(_) => None,
     }
@@ -278,16 +280,18 @@ fn build_entity_command(name: &str, entity: &EntityDef, cgs: &CGS) -> Command {
     cmd = cmd.arg(Arg::new("id").help(id_help));
 
     if let Some(get_cap) = cgs.find_capability(name, CapabilityKind::Get) {
-        if let Ok(template) = parse_capability_template(&get_cap.mapping.template) {
-            let http_cml = match &template {
-                CapabilityTemplate::Http(cml) | CapabilityTemplate::GraphQl(cml) => Some(cml),
-                _ => None,
-            };
-            if let Some(cml) = http_cml {
-                cmd = append_multi_path_args(cmd, cml);
+        if let Some(mapping) = get_cap.mapping.as_ref() {
+            if let Ok(template) = parse_capability_template(&mapping.template) {
+                let http_cml = match &template {
+                    CapabilityTemplate::Http(cml) | CapabilityTemplate::GraphQl(cml) => Some(cml),
+                    _ => None,
+                };
+                if let Some(cml) = http_cml {
+                    cmd = append_multi_path_args(cmd, cml);
+                }
+                cmd = append_compound_key_vars_not_on_path(cmd, entity, http_cml);
+                cmd = append_get_template_var_args(cmd, &template);
             }
-            cmd = append_compound_key_vars_not_on_path(cmd, entity, http_cml);
-            cmd = append_get_template_var_args(cmd, &template);
         }
     }
 
@@ -411,7 +415,7 @@ fn build_entity_command(name: &str, entity: &EntityDef, cgs: &CGS) -> Command {
         let Ok(nv) = cgs.named_value_for_slot(field_schema) else {
             continue;
         };
-        if let FieldType::EntityRef { ref target } = nv.field_type {
+        if let FieldType::EntityRef { ref target, .. } = nv.field_type {
             let kebab: &'static str = leak(field_subcommand_kebab(field_name));
             if entity.relations.contains_key(field_name.as_str()) {
                 continue;
@@ -459,8 +463,10 @@ fn build_entity_command(name: &str, entity: &EntityDef, cgs: &CGS) -> Command {
             CapabilityKind::Delete => {
                 let mut del =
                     Command::new(leak(sub_kebab.clone())).about(format!("Delete a {name}"));
-                if let Some(cml) = http_template_request(&cap.mapping.template) {
-                    del = append_multi_path_args(del, &cml);
+                if let Some(mapping) = cap.mapping.as_ref() {
+                    if let Some(cml) = http_template_request(&mapping.template) {
+                        del = append_multi_path_args(del, &cml);
+                    }
                 }
                 cmd = cmd.subcommand(del);
             }
@@ -472,8 +478,10 @@ fn build_entity_command(name: &str, entity: &EntityDef, cgs: &CGS) -> Command {
                 for arg in build_invoke_args(cap, cgs) {
                     action_cmd = action_cmd.arg(arg);
                 }
-                if let Some(cml) = http_template_request(&cap.mapping.template) {
-                    action_cmd = append_multi_path_args(action_cmd, &cml);
+                if let Some(mapping) = cap.mapping.as_ref() {
+                    if let Some(cml) = http_template_request(&mapping.template) {
+                        action_cmd = append_multi_path_args(action_cmd, &cml);
+                    }
                 }
                 cmd = cmd.subcommand(action_cmd);
             }
@@ -627,85 +635,75 @@ pub fn build_app(cgs: &CGS, surface: AgentCliSurface) -> Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use plasm_core::value_domain::ValueDomain;
     use plasm_core::*;
 
     fn nv_string(cgs: &mut CGS, key: &str) {
         cgs.values.insert(
             key.into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::String,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: Some(StringSemantics::Short),
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
+                None,
+            ),
         );
     }
     fn nv_number(cgs: &mut CGS, key: &str) {
         cgs.values.insert(
             key.into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Number,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::Number, None, None, None, None),
+                None,
+            ),
         );
     }
     fn nv_select(cgs: &mut CGS, key: &str, allowed: Vec<String>) {
         cgs.values.insert(
             key.into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Select,
-                value_format: None,
-                allowed_values: Some(allowed),
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(
+                    &FieldType::Select,
+                    None,
+                    None,
+                    Some(allowed.clone()),
+                    None,
+                ),
+                None,
+            ),
         );
     }
     fn nv_integer(cgs: &mut CGS, key: &str) {
         cgs.values.insert(
             key.into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::Integer,
-                value_format: None,
-                allowed_values: None,
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(&FieldType::Integer, None, None, None, None),
+                None,
+            ),
         );
     }
     fn nv_entity_ref(cgs: &mut CGS, key: &str, target: EntityName) {
         cgs.values.insert(
             key.into(),
-            NamedValueSchema {
-                description: String::new(),
-                field_type: FieldType::EntityRef { target },
-                value_format: None,
-                allowed_values: None,
-                string_semantics: None,
-                array_items: None,
-                currency: None,
-            },
+            NamedValueSchema::from_domain(
+                String::new(),
+                ValueDomain::from_legacy(
+                    &FieldType::EntityRef {
+                        entry_id: Default::default(),
+                        target,
+                    },
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+                None,
+            ),
         );
     }
 
-    /// Build a test CGS with:
-    /// - Account entity (fields: id, name, revenue, region)
-    /// - Contact entity (fields: id, name, role)
-    /// - Account → Contact relation (contacts)
-    /// - query_accounts: paginated, declares `region` as a query filter parameter
-    /// - query_contacts: declares `role` as a query filter parameter (so relation filter works)
     fn test_cgs() -> CGS {
         let mut cgs = CGS::new();
         nv_string(&mut cgs, "cb_account_id");
@@ -806,6 +804,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -870,6 +870,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -881,7 +883,8 @@ mod tests {
             kind: CapabilityKind::Query,
             domain: "Account".into(),
             identity_key: None,
-            mapping: CapabilityMapping {
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
                     "path": [{"type": "literal", "value": "accounts"}],
@@ -899,10 +902,9 @@ mod tests {
                     }
                 })
                 .into(),
-            },
-            input_schema: Some(InputSchema {
-                input_type: InputType::Object {
-                    fields: vec![InputFieldSchema {
+            }),
+            derived: None,
+            inputs: plasm_core::CapabilityInputs { selection: plasm_core::BackendSelectionSchema(vec![InputFieldSchema {
                         name: "region".into(),
                         wire: InputFieldWire::Registry(
                             ValueDomainKey::new("cb_account_region").expect("key"),
@@ -910,17 +912,10 @@ mod tests {
                         required: false,
                         description: Some("Filter by region".into()),
                         default: None,
-                        role: None,
                         sink_class: None,
                         wire_json_path: None,
                         wire_array_element_key: None,
-                }],
-                    additional_fields: false,
-                },
-                validation: InputValidation::default(),
-                description: None,
-                examples: vec![],
-            }),
+                }]), ..Default::default() },
             output_schema: None,
             provides: vec![],
             sanitizes: vec![],
@@ -937,7 +932,8 @@ mod tests {
             kind: CapabilityKind::Query,
             domain: "Contact".into(),
             identity_key: None,
-            mapping: CapabilityMapping {
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
                     "path": [{"type": "literal", "value": "contacts"}],
@@ -949,26 +945,18 @@ mod tests {
                     }
                 })
                 .into(),
-            },
-            input_schema: Some(InputSchema {
-                input_type: InputType::Object {
-                    fields: vec![InputFieldSchema {
+            }),
+            derived: None,
+            inputs: plasm_core::CapabilityInputs { selection: plasm_core::BackendSelectionSchema(vec![InputFieldSchema {
                         name: "role".into(),
                         wire: InputFieldWire::Registry(ValueDomainKey::new("cb_contact_role").expect("key")),
                         required: false,
                         description: Some("Filter by role".into()),
                         default: None,
-                        role: None,
                         sink_class: None,
                         wire_json_path: None,
                         wire_array_element_key: None,
-                }],
-                    additional_fields: false,
-                },
-                validation: InputValidation::default(),
-                description: None,
-                examples: vec![],
-            }),
+                }]), ..Default::default() },
             output_schema: None,
             provides: vec![],
             sanitizes: vec![],
@@ -1176,6 +1164,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -1186,7 +1176,8 @@ mod tests {
             kind: CapabilityKind::Get,
             domain: "Balance".into(),
             identity_key: None,
-            mapping: CapabilityMapping {
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "transport": "evm_call",
                     "chain": 1,
@@ -1196,8 +1187,9 @@ mod tests {
                     "block": { "type": "var", "name": "block" }
                 })
                 .into(),
-            },
-            input_schema: None,
+            }),
+            derived: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             sanitizes: vec![],
@@ -1263,6 +1255,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -1310,6 +1304,8 @@ mod tests {
             abstract_entity: false,
             domain_projection_examples: false,
             primary_read: None,
+            primary_query: None,
+            primary_search: None,
             discovery: None,
         })
         .unwrap();
@@ -1320,14 +1316,16 @@ mod tests {
             kind: CapabilityKind::Get,
             domain: "Order".into(),
             identity_key: None,
-            mapping: CapabilityMapping {
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
                     "path": [{"type": "literal", "value": "store"}, {"type": "literal", "value": "order"}, {"type": "var", "name": "id"}],
                 })
                 .into(),
-            },
-            input_schema: None,
+            }),
+            derived: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             sanitizes: vec![],
@@ -1343,14 +1341,16 @@ mod tests {
             kind: CapabilityKind::Get,
             domain: "Pet".into(),
             identity_key: None,
-            mapping: CapabilityMapping {
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
                     "path": [{"type": "literal", "value": "pet"}, {"type": "var", "name": "id"}],
                 })
                 .into(),
-            },
-            input_schema: None,
+            }),
+            derived: None,
+            inputs: Default::default(),
             output_schema: None,
             provides: vec![],
             sanitizes: vec![],
@@ -1389,32 +1389,25 @@ mod tests {
             kind: CapabilityKind::Query,
             domain: "Order".into(),
             identity_key: None,
-            mapping: CapabilityMapping {
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
                 template: serde_json::json!({
                     "method": "GET",
                     "path": [{"type": "literal", "value": "store"}, {"type": "literal", "value": "order"}],
                 })
                 .into(),
-            },
-            input_schema: Some(InputSchema {
-                input_type: InputType::Object {
-                    fields: vec![InputFieldSchema {
+            }),
+            derived: None,
+            inputs: plasm_core::CapabilityInputs { selection: plasm_core::BackendSelectionSchema(vec![InputFieldSchema {
                         name: "petId".into(),
                         wire: InputFieldWire::Registry(ValueDomainKey::new("cb_order_pet_ref").expect("key")),
                         required: false,
                         description: None,
                         default: None,
-                        role: None,
                         sink_class: None,
                         wire_json_path: None,
                         wire_array_element_key: None,
-                }],
-                    additional_fields: true,
-                },
-                validation: InputValidation::default(),
-                description: None,
-                examples: vec![],
-            }),
+                }]), ..Default::default() },
             output_schema: None,
             provides: vec![],
             sanitizes: vec![],

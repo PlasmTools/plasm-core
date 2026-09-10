@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::prompt_render::{render_teaching_prompt_bundle_for_validation, TeachingPromptModel};
-use crate::schema::{CapabilityKind, InputFieldSchema, ParameterRole};
+use crate::schema::{CapabilityKind, InputFieldSchema};
 use crate::{FieldType, SchemaError, ValueWireFormat, CGS};
 
 /// Validate expression-surface invariants: entity/capability graph, scope encodability,
@@ -56,14 +56,8 @@ fn validate_query_search_scope_params_encodable(cgs: &CGS) -> Result<(), SchemaE
         if !matches!(cap.kind, CapabilityKind::Query | CapabilityKind::Search) {
             continue;
         }
-        let Some(fields) = cap.object_params() else {
-            continue;
-        };
-        for f in fields {
+        for f in cap.scope_params() {
             if !f.required {
-                continue;
-            }
-            if f.role != Some(ParameterRole::Scope) {
                 continue;
             }
             if !scope_param_encodable(cgs, f) {
@@ -183,13 +177,35 @@ fn expand_expression_family_coverage(cgs: &CGS, covered: &mut HashSet<String>) {
     }
 }
 
-/// Fetch-by-id and scoped list queries are compositional on the same row type — cover `Get` when
-/// any `Query` is taught (and symmetrically cover `Query` when any `Get` witness is present).
+/// Fetch-by-id and list/search queries are compositional on the same row type — cover `Get` when
+/// any `Query`/`Search` is taught (and symmetrically cover `Query`/`Search` when any `Get` witness
+/// is present). Context-required search lines may fail bare teaching probes; a Get witness still
+/// implies the search family is available on the typed surface.
 fn expand_query_get_domain_symmetry(cgs: &CGS, covered: &mut HashSet<String>) {
     let domains_with_query = domains_for_covered_kind(cgs, covered, CapabilityKind::Query);
+    let domains_with_search = domains_for_covered_kind(cgs, covered, CapabilityKind::Search);
     let domains_with_get = domains_for_covered_kind(cgs, covered, CapabilityKind::Get);
-    insert_all_capabilities_on_domains(cgs, covered, domains_with_query, CapabilityKind::Get);
-    insert_all_capabilities_on_domains(cgs, covered, domains_with_get, CapabilityKind::Query);
+    insert_all_capabilities_on_domains(
+        cgs,
+        covered,
+        domains_with_query.clone(),
+        CapabilityKind::Get,
+    );
+    insert_all_capabilities_on_domains(
+        cgs,
+        covered,
+        domains_with_search.clone(),
+        CapabilityKind::Get,
+    );
+    insert_all_capabilities_on_domains(
+        cgs,
+        covered,
+        domains_with_get.clone(),
+        CapabilityKind::Query,
+    );
+    insert_all_capabilities_on_domains(cgs, covered, domains_with_get, CapabilityKind::Search);
+    insert_all_capabilities_on_domains(cgs, covered, domains_with_query, CapabilityKind::Search);
+    insert_all_capabilities_on_domains(cgs, covered, domains_with_search, CapabilityKind::Query);
 }
 
 /// Query-only entities: teaching lines without a `Get` witness still imply scoped list-query coverage.
@@ -472,11 +488,11 @@ mod tests {
         );
     }
 
-    /// WS-R3′ end-to-end: a capability whose `input_schema` carries validation predicates
-    /// (`min_value` / `min_length` / `at_least_one`) must remain **teachable** — the teaching-surface
-    /// `$` placeholders and unlisted optional fields no longer trip predicate enforcement — so the
+    /// WS-R3′ end-to-end: a capability whose inputs carry `values:` constraints and cross-field rules
+    /// (`min` / `min_length` / `at_least_one`) must remain **teachable** — the teaching-surface
+    /// `$` placeholders and unlisted optional fields no longer trip scalar constraint enforcement — so the
     /// fixture validates and `account_update` is witnessed. This locks the reconciliation: the
-    /// empty-teaching-block panic was rooted in placeholder-blind predicate enforcement, not
+    /// empty-teaching-block panic was rooted in placeholder-blind constraint enforcement, not
     /// unobtainability.
     #[test]
     fn validated_input_update_is_teachable_and_covered() {
@@ -503,7 +519,7 @@ mod tests {
             return;
         }
         let mut cgs = load_schema_dir(p).expect("proof");
-        cgs.entry_id = Some("proof".to_string());
+        cgs.bind_registry_entry_id("proof");
         validate_cgs_expression_surface(&cgs).unwrap_or_else(|e| {
             panic!("validate_cgs_expression_surface(proof, entry_id=proof): {e}");
         });

@@ -8,16 +8,17 @@ import { plasmSpans } from "../telemetry/plasm-spans.js";
 
 export type HostTransportOptions = {
   bearer?: string;
+  /** Disable unscoped environment bearer injection for isolated evaluation hosts. */
+  allowGlobalBearer?: boolean;
   fetchImpl?: typeof fetch;
   /** When true (default), resolve Vercel Connect tokens after env bearer misses. */
   useConnect?: boolean;
 };
 
-function bearerFromEnv(entryId?: string): string | undefined {
+function bearerFromEnv(entryId?: string, allowGlobal = true): string | undefined {
   const keys = [
     entryId ? `PLASM_${entryId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_BEARER` : undefined,
-    "PLASM_BEARER",
-    "PLASM_AUTH_BEARER",
+    ...(allowGlobal ? ["PLASM_BEARER", "PLASM_AUTH_BEARER"] : []),
   ].filter(Boolean) as string[];
   for (const key of keys) {
     const value = process.env[key]?.trim();
@@ -48,13 +49,16 @@ export function createDefaultHostTransport(options?: HostTransportOptions): Host
       async (span) => {
         const headers = new Headers(request.headers ?? {});
         if (!headers.has("authorization")) {
-          let bearer = bearerOverride ?? bearerFromEnv(request.entryId);
+          let bearer = bearerOverride ?? bearerFromEnv(request.entryId, options?.allowGlobalBearer ?? true);
           if (!bearer && useConnect) {
             bearer = await resolveConnectBearer(request.entryId);
           }
           if (bearer) {
             headers.set("authorization", bearer.startsWith("Bearer ") ? bearer : `Bearer ${bearer}`);
           }
+        }
+        if (request.requireHostAuth && !headers.get("authorization")?.trim()) {
+          throw new Error("Scoped host authentication is not configured");
         }
         if (request.body != null && !headers.has("content-type")) {
           headers.set("content-type", "application/json; charset=utf-8");
@@ -63,6 +67,7 @@ export function createDefaultHostTransport(options?: HostTransportOptions): Host
         const init: RequestInit = {
           method: request.method,
           headers,
+          redirect: request.rejectRedirects ? "error" : "follow",
         };
         if (request.body != null && request.method !== "GET" && request.method !== "HEAD") {
           init.body = request.body;

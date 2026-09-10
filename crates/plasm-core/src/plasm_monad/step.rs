@@ -42,6 +42,8 @@ pub enum PlasmStepKind {
     Derive,
     FlatMapRelation,
     FlatMapEffect,
+    /// PLP-8 state iterator (`iterate … until … take N`).
+    UnfoldUntil,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,6 +86,14 @@ pub enum PlasmStep {
         operation: String,
         shape: ResultShape,
     },
+    UnfoldUntil {
+        id: StepId,
+        source: StepId,
+        effect: SurfaceKind,
+        operation: String,
+        shape: ResultShape,
+        take: u32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,7 +112,8 @@ impl PlasmStep {
             | Self::Map { id, .. }
             | Self::Derive { id, .. }
             | Self::FlatMapRelation { id, .. }
-            | Self::FlatMapEffect { id, .. } => id,
+            | Self::FlatMapEffect { id, .. }
+            | Self::UnfoldUntil { id, .. } => id,
         }
     }
 
@@ -114,6 +125,7 @@ impl PlasmStep {
             Self::Derive { .. } => PlasmStepKind::Derive,
             Self::FlatMapRelation { .. } => PlasmStepKind::FlatMapRelation,
             Self::FlatMapEffect { .. } => PlasmStepKind::FlatMapEffect,
+            Self::UnfoldUntil { .. } => PlasmStepKind::UnfoldUntil,
         }
     }
 
@@ -124,7 +136,7 @@ impl PlasmStep {
                 EffectClass::Write => EffectBarrier::Write,
                 EffectClass::SideEffect => EffectBarrier::SideEffect,
             },
-            Self::FlatMapEffect { .. } => EffectBarrier::Write,
+            Self::FlatMapEffect { .. } | Self::UnfoldUntil { .. } => EffectBarrier::Write,
             Self::Pure { .. }
             | Self::Map { .. }
             | Self::Derive { .. }

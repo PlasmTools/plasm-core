@@ -12,5 +12,7 @@ pub(crate) use artifacts::{
 };
 pub(crate) use create::post_create_execute_session;
 pub(crate) use run_post::post_run_execute_session;
+#[cfg(test)]
+pub(crate) use run_post::post_run_execute_session_inner;
 pub(crate) use session_get::handle_execute_session_get;
 pub(crate) use stream::get_operation_progress_stream;

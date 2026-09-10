@@ -9,10 +9,10 @@ mod tests {
     use crate::execute_session::SessionReuseKey;
     use crate::execute_session_rehydrate::rehydrate_execute_session;
     use crate::http::{build_plasm_host_state, PlasmHostBootstrap};
-    use crate::http_execute::{apply_capability_seeds, CapabilitySeed, RankedCapabilitiesArg};
+    use crate::http_execute::{apply_capability_seeds, CapabilitySeed};
     use crate::mcp_transport_store::execute_session_registry::PersistedExecuteSessionDescriptor;
     use crate::server_state::PlasmHostState;
-    use plasm_core::discovery::InMemoryCgsRegistry;
+    use plasm_core::discovery::CgsRegistry;
     use plasm_core::loader::load_schema_dir;
     use plasm_core::CgsCatalog;
     use uuid::Uuid;
@@ -27,7 +27,7 @@ mod tests {
             return None;
         }
         let cgs = Arc::new(load_schema_dir(&dir).ok()?);
-        let reg = InMemoryCgsRegistry::from_pairs(vec![(
+        let reg = CgsRegistry::from_pairs(vec![(
             "github".into(),
             "GitHub".into(),
             vec!["github".into()],
@@ -84,7 +84,6 @@ mod tests {
             None,
             Some(logical_id),
             intent,
-            RankedCapabilitiesArg::Unspecified,
         )
         .await
         .expect("open");
@@ -103,7 +102,6 @@ mod tests {
             None,
             Some(logical_id),
             intent,
-            RankedCapabilitiesArg::Unspecified,
         )
         .await
         .expect("extend");
@@ -125,7 +123,6 @@ mod tests {
             catalog_cgs_hash: es.catalog_cgs_hash.clone(),
             entities: es.entities.clone(),
             context_intent: es.context_intent.clone(),
-            ranked_capabilities: es.ranked_capabilities.clone(),
             principal: es.principal.clone(),
             logical_session_id: Some(logical_id.hyphenated().to_string()),
         };
@@ -137,7 +134,6 @@ mod tests {
             &es,
             out_extend.session_id.as_str(),
             &reuse_key,
-            es.snapshot_bind_credentials().await,
             &exposure,
         );
         desc.expires_at_unix = u64::MAX;

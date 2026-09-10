@@ -5,7 +5,7 @@ use crate::expr_parser::{ParseError, ParseErrorKind};
 use crate::query_resolve::QueryCapabilityResolveError;
 use crate::schema::{
     capability_is_zero_arity_invoke, capability_method_label_kebab, capability_path_method_segment,
-    CapabilityKind, StringSemantics, CGS,
+    CapabilityKind, CGS,
 };
 use crate::step_semantics::{append_correction_lines, StepError};
 use crate::symbol_tuning::SymbolSession;
@@ -46,17 +46,15 @@ fn feedback_predicate_ident_symbol(
     }
     for kind in [CapabilityKind::Query, CapabilityKind::Search] {
         for cap in cgs.find_capabilities(entity, kind) {
-            if let Some(fields) = cap.object_params() {
-                for f in fields {
-                    if f.name != ident {
-                        continue;
-                    }
-                    let sym = map.ident_sym_cap_param_for("", entity, cap.name.as_str(), ident);
-                    match &resolved {
-                        None => resolved = Some(sym),
-                        Some(prev) if prev == &sym => {}
-                        Some(_) => return ident.to_string(),
-                    }
+            for field in cap.selection_params() {
+                if field.name != ident {
+                    continue;
+                }
+                let sym = map.ident_sym_cap_param_for("", entity, cap.name.as_str(), ident);
+                match &resolved {
+                    None => resolved = Some(sym),
+                    Some(prev) if prev == &sym => {}
+                    Some(_) => return ident.to_string(),
                 }
             }
         }
@@ -191,6 +189,10 @@ pub fn render_query_resolve_error_for_feedback(
                         "{msg}. See the query example lines in the prompt for `{es}` for which scope and filter wire names apply.{scope_hint}"
                     )
                 }
+                QueryCapabilityResolveError::RowsetNormalize { entity, message } => {
+                    let es = map.entity_sym_for("", entity);
+                    format!("rowset normalize failed for `{es}`: {message}")
+                }
             };
             format!("{PREFIX}{body}")
         }
@@ -231,6 +233,26 @@ fn markdown_like_payload_near(work: &str, offset: usize) -> bool {
         || slice.contains("\n1. ")
 }
 
+fn looks_like_temporal_now_call(work: &str, offset: usize) -> bool {
+    let start = offset.saturating_sub(64);
+    let end = (offset + 48).min(work.len());
+    if start >= end {
+        return false;
+    }
+    let slice = work[start..end].to_ascii_lowercase();
+    slice.contains("now(")
+        || slice.contains("now ()")
+        || slice.contains("datetime(now")
+        || slice.contains("now -")
+        || slice.contains("now-")
+        || slice.contains("date_trunc(")
+        || slice.contains("date_add(")
+        || slice.contains("dateadd(")
+        || slice.contains("start_of_day(")
+        || slice.contains("end_of_day(")
+        || slice.contains("duration(")
+}
+
 fn looks_like_p_sym_token(name: &str) -> bool {
     name.len() > 1 && name.starts_with('p') && name[1..].chars().all(|c| c.is_ascii_digit())
 }
@@ -262,26 +284,26 @@ fn infer_param_lhs_name(work: &str, offset: usize) -> Option<&str> {
     }
 }
 
-fn string_semantics_for_wire_param(
+fn wire_param_is_structured_or_multiline(
     cgs: &CGS,
     full_entities: &[&str],
     wire_name: &str,
-) -> Option<StringSemantics> {
-    let slot = resolve_parameter_slot(cgs, full_entities, wire_name)?;
+) -> bool {
+    let slot = match resolve_parameter_slot(cgs, full_entities, wire_name) {
+        Some(s) => s,
+        None => return false,
+    };
     match slot {
         ParameterSlot::EntityField { entity, field } => {
-            let f = cgs
-                .get_entity(entity.as_str())?
-                .fields
-                .get(field.as_str())?;
-            let nv = f.named_value(cgs).ok()?;
-            if matches!(nv.field_type, FieldType::Blob) {
-                Some(crate::StringSemantics::Blob)
-            } else if matches!(nv.field_type, FieldType::String) {
-                Some(f.effective_string_semantics(cgs))
-            } else {
-                None
-            }
+            let f = match cgs.get_entity(entity.as_str()) {
+                Some(e) => e.fields.get(field.as_str()),
+                None => return false,
+            };
+            let f = match f {
+                Some(f) => f,
+                None => return false,
+            };
+            f.is_structured_or_multiline(cgs)
         }
         ParameterSlot::CapabilityInput {
             domain,
@@ -290,19 +312,21 @@ fn string_semantics_for_wire_param(
         } => {
             let cap = cgs.capabilities.values().find(|c| {
                 c.domain.as_str() == domain.as_str() && c.name.as_str() == capability.as_str()
-            })?;
-            let fields = cap.object_params()?;
-            let f = fields.iter().find(|p| p.name.as_str() == param.as_str())?;
-            let nv = f.named_value(cgs).ok()?;
-            if matches!(nv.field_type, FieldType::Blob) {
-                Some(crate::StringSemantics::Blob)
-            } else if matches!(nv.field_type, FieldType::String) {
-                Some(f.effective_string_semantics(cgs))
-            } else {
-                None
-            }
+            });
+            let cap = match cap {
+                Some(c) => c,
+                None => return false,
+            };
+            let f = match cap
+                .input_fields()
+                .find(|field| field.name.as_str() == param.as_str())
+            {
+                Some(f) => f,
+                None => return false,
+            };
+            f.is_structured_or_multiline(cgs)
         }
-        ParameterSlot::Relation { .. } => None,
+        ParameterSlot::Relation { .. } => false,
     }
 }
 
@@ -414,18 +438,15 @@ pub fn render_parse_error_with_feedback(
                 _ => String::new(),
             };
             format!(
-                "{head}Use a date/time format allowed for that field (ISO-8601, RFC3339, Unix ms, or GNU-style English (chrono-english): e.g. `2024-06-01T12:00:00Z`, `next friday 8pm`, `30 June 2018`)."
+                "{head}{}",
+                crate::temporal::temporal_predicate_alias_hint()
             )
         }
         ParseErrorKind::UnterminatedString | ParseErrorKind::UnterminatedEscape => {
             let prefix_end = err.offset.min(work.len());
-            let inferred_sem = infer_param_lhs_name(work, err.offset)
+            let structured_slot = infer_param_lhs_name(work, err.offset)
                 .map(|n| resolve_wire_param_name_for_feedback(n, &style))
-                .and_then(|wire| {
-                    string_semantics_for_wire_param(cgs, &full_entity_refs, wire.as_str())
-                });
-            let structured_slot = inferred_sem
-                .map(StringSemantics::is_structured_or_multiline)
+                .map(|wire| wire_param_is_structured_or_multiline(cgs, &full_entity_refs, wire.as_str()))
                 .unwrap_or(false);
             if work[..prefix_end].contains("<<") {
                 correction_unterminated_heredoc(&work[..prefix_end]).unwrap_or_else(|| {
@@ -533,13 +554,9 @@ pub fn render_parse_error_with_feedback(
                         .to_string()
                 }
             };
-            let inferred_sem = infer_param_lhs_name(work, err.offset)
+            let structured_slot = infer_param_lhs_name(work, err.offset)
                 .map(|n| resolve_wire_param_name_for_feedback(n, &style))
-                .and_then(|wire| {
-                    string_semantics_for_wire_param(cgs, &full_entity_refs, wire.as_str())
-                });
-            let structured_slot = inferred_sem
-                .map(StringSemantics::is_structured_or_multiline)
+                .map(|wire| wire_param_is_structured_or_multiline(cgs, &full_entity_refs, wire.as_str()))
                 .unwrap_or(false);
             let markdown_like = markdown_like_payload_near(work, err.offset);
             if matches!(err.kind, ParseErrorKind::ExpectedValue)
@@ -556,6 +573,15 @@ pub fn render_parse_error_with_feedback(
             } else if markdown_like && !structured_slot {
                 format!(
                     "{base} If the value contains characters that break parsing (e.g. commas or unescaped quotes), wrap it in a quoted string and escape internal double quotes with `\\\"`."
+                )
+            } else if matches!(err.kind, ParseErrorKind::ExpectedValue)
+                && looks_like_temporal_now_call(work, err.offset)
+            {
+                format!(
+                    "{base} Date/time RHS must be a literal value — not `now()`, \
+                     `date_trunc` / `date_add` / `start_of_day`, or other call \
+                     expressions. {}",
+                    crate::temporal::temporal_predicate_alias_hint()
                 )
             } else {
                 base
@@ -577,6 +603,8 @@ pub fn render_parse_error_with_feedback(
                 "This prompt does not support bare many-relation navigation to `{target}` for `{relation}`: use a list/query form from the `{target}` block in the teaching table, or the schema must declare materialization for that edge."
             ),
         },
+        ParseErrorKind::IdentityBraceGetFailed { message } => message.clone(),
+        ParseErrorKind::InvalidProgramString { message } => format!("Invalid program string template: {message}"),
         ParseErrorKind::Other { message } => message.clone(),
     };
 
@@ -838,7 +866,11 @@ fn correction_empty_get_parens(cgs: &CGS, entity: &str, style: &FeedbackStyle<'_
     let singletons: Vec<_> = get_caps
         .into_iter()
         .filter(|cap| {
-            crate::schema::path_var_names_from_mapping_json(&cap.mapping.template.0).is_empty()
+            cap.mapping
+                .as_ref()
+                .map(|m| crate::schema::path_var_names_from_mapping_json(&m.template.0))
+                .unwrap_or_default()
+                .is_empty()
                 && capability_is_zero_arity_invoke(cap)
         })
         .collect();
@@ -865,17 +897,9 @@ fn correction_empty_get_parens(cgs: &CGS, entity: &str, style: &FeedbackStyle<'_
         FeedbackStyle::SymbolicLlm { map } => {
             let es = map.entity_sym_for("", entity);
             if !singletons.is_empty() {
-                let methods: Vec<String> = singletons
-                    .iter()
-                    .map(|c| {
-                        let lab = capability_method_label_kebab(c);
-                        let ms = map.method_sym_for("", entity, lab.as_str());
-                        format!("{es}.{ms}()")
-                    })
-                    .collect();
+                // Pathless singleton Gets are taught as entity seats (`eN` / `eN[…]`), not `eN.mM()`.
                 format!(
-                    "Empty `()` after `{es}` is not valid. Use `{es}(<id>)` with an id, or a pathless singleton method shown in the prompt: {}.",
-                    methods.join(", ")
+                    "Empty `()` after `{es}` is not valid. Use `{es}(<id>)` with an id, or the pathless singleton seat from the language card: `{es}` or `{es}[…]` (never `{es}()`).",
                 )
             } else {
                 format!(
@@ -1165,7 +1189,7 @@ fn correction_unknown_entity_symbolic_llm(
         )
     } else {
         let mut msg = format!(
-            "`{bad}` is not a session entity token — use an `e#` from the teaching table ({summary})."
+            "`{bad}` is not a session entity token — copy an `e#` or a taught `e#.m#` from the teaching table ({summary}). A label from an earlier program is not in scope; re-bind in this program or pass a cell from the last observe."
         );
         if scalar_predicate_context {
             msg.push_str(&format!(
@@ -1239,7 +1263,7 @@ fn correction_predicate_field(
             let es = entity_label_for_feedback(entity, style);
             let bad = ident_label_for_feedback(field, style);
             return format!(
-                "`{bad}` is not a filter on `{es}` — use wire names from the teaching TSV query/filter columns."
+                "`{bad}` is not a filter on `{es}` — use wire names from the language card query/filter columns."
             );
         }
     }
@@ -1281,7 +1305,7 @@ fn correction_navigation_name(
             let es = entity_label_for_feedback(entity, style);
             let bad = ident_label_for_feedback(field, style);
             return format!(
-                "`{bad}` is not a field or relation on `{es}` — use wire field names or `r#` relation hops from the teaching TSV."
+                "`{bad}` is not a field or relation on `{es}` — use wire field names or `r#` relation hops from the language card."
             );
         }
     }
@@ -1402,7 +1426,7 @@ fn correction_no_entity_ref_bridge(
             let Ok(nv) = field.named_value(cgs) else {
                 continue;
             };
-            if let FieldType::EntityRef { target: t } = &nv.field_type {
+            if let FieldType::EntityRef { target: t, .. } = &nv.field_type {
                 pivots.push(match style {
                     FeedbackStyle::CanonicalDev => format!("{fname} (→ {})", t),
                     FeedbackStyle::SymbolicLlm { map } => {
@@ -1414,23 +1438,21 @@ fn correction_no_entity_ref_bridge(
             }
         }
         for cap in cgs.find_capabilities(target, CapabilityKind::Query) {
-            if let Some(fields) = cap.object_params() {
-                for f in fields {
-                    let Ok(nv) = f.named_value(cgs) else {
-                        continue;
-                    };
-                    if let FieldType::EntityRef { target: t } = &nv.field_type {
-                        pivots.push(match style {
-                            FeedbackStyle::CanonicalDev => {
-                                format!("{} (→ {})", f.name, t)
-                            }
-                            FeedbackStyle::SymbolicLlm { map } => {
-                                let ps = feedback_ident_symbol(map, f.name.as_str());
-                                let ts = map.entity_sym_for("", t.as_str());
-                                format!("{ps} (→ {ts})")
-                            }
-                        });
-                    }
+            for field in cap.scope_params().iter().chain(cap.selection_params()) {
+                let Ok(nv) = field.named_value(cgs) else {
+                    continue;
+                };
+                if let FieldType::EntityRef { target: t, .. } = &nv.field_type {
+                    pivots.push(match style {
+                        FeedbackStyle::CanonicalDev => {
+                            format!("{} (→ {})", field.name, t)
+                        }
+                        FeedbackStyle::SymbolicLlm { map } => {
+                            let ps = feedback_ident_symbol(map, field.name.as_str());
+                            let ts = map.entity_sym_for("", t.as_str());
+                            format!("{ps} (→ {ts})")
+                        }
+                    });
                 }
             }
         }
@@ -1625,10 +1647,8 @@ fn query_object_param_names(cgs: &CGS, entity: &str) -> Vec<String> {
     let mut names = Vec::new();
     for kind in [CapabilityKind::Query, CapabilityKind::Search] {
         for cap in cgs.find_capabilities(entity, kind) {
-            if let Some(fields) = cap.object_params() {
-                for f in fields {
-                    names.push(f.name.clone());
-                }
+            for field in cap.selection_params() {
+                names.push(field.name.clone());
             }
         }
     }
@@ -2164,6 +2184,10 @@ For example: `{te}(<id>)` when you already know the id, instead of relying on `{
             );
             StepError::type_correction(correction, nested)
         }
+        TypeError::RowsetNormalize { message } => {
+            let correction = format!("Fix the rowset normalize failure: {message}");
+            StepError::type_correction(correction, error)
+        }
     }
 }
 
@@ -2227,6 +2251,14 @@ mod tests {
         assert!(
             !s.contains("quoted string"),
             "entity-root unknown token must not suggest scalar quotes: {s}"
+        );
+        assert!(
+            s.contains("e#.m#") && s.contains("not a session entity token"),
+            "verb-shaped roots must point at taught methods, not only e#: {s}"
+        );
+        assert!(
+            s.contains("earlier program") && !s.contains("quoted string"),
+            "prior-program labels are out of scope; must not use the scalar-quote template: {s}"
         );
     }
 
@@ -2624,11 +2656,11 @@ mod tests {
             return;
         }
         let cgs = loader::load_schema_dir(dir).unwrap();
-        let err = expr_parser::parse("Message(1).awachment", &cgs).unwrap_err();
-        let se = render_parse_error(&err, "Message(1).awachment", &cgs);
+        let err = expr_parser::parse("Thread(1).mesages", &cgs).unwrap_err();
+        let se = render_parse_error(&err, "Thread(1).mesages", &cgs);
         assert!(
-            se.correction.contains("attachments"),
-            "expected suggestion toward attachments, got: {}",
+            se.correction.contains("messages"),
+            "expected suggestion toward messages, got: {}",
             se.correction
         );
     }

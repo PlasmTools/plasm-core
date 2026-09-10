@@ -1,0 +1,1897 @@
+version: 14
+entry_id: splitwise
+auth:
+  scheme: none
+http_backend: http://127.0.0.1:9000
+data_classes:
+  untrusted:
+    description: User-authored expense or group text.
+    severity: untrusted
+  external_settle:
+    description: Settlement payment recorded between group members.
+    severity: critical
+entities:
+  AuthSession:
+    id_field: access_token
+    description: Login session for Splitwise (Bearer token).
+    discovery:
+      names:
+      - login
+      - auth
+      - access token
+    fields:
+      access_token:
+        required: true
+        value_ref: nv_access_token
+      token_type:
+        required: false
+        value_ref: nv_str
+  Group:
+    id_field: group_id
+    description: Shared expense group.
+    discovery:
+      names:
+      - group
+      - groups
+      - trip
+      - household
+    fields:
+      group_id:
+        required: true
+        value_ref: nv_group_id
+      name:
+        required: true
+        value_ref: nv_str
+      description:
+        required: false
+        value_ref: nv_body
+        data_class: untrusted
+      created_at:
+        required: false
+        value_ref: nv_datetime
+      deleted:
+        required: false
+        value_ref: nv_bool
+      invitation_code:
+        required: false
+        value_ref: nv_str
+    relations:
+      members:
+        description: People belonging to this group.
+        target: GroupMember
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: members
+          - wildcard: true
+      expenses:
+        target: Expense
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: expense_query
+          param: group_id
+      payments:
+        target: Payment
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: payment_query
+          param: group_id
+      balances:
+        target: Balance
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: balance_query
+          param: group_id
+  GroupMember:
+    abstract: true
+    id_field: email
+    description: Member of a shared expense group.
+    discovery:
+      names:
+      - group member
+      - member
+      - members
+    fields:
+      email:
+        required: true
+        value_ref: nv_email
+      name:
+        required: false
+        value_ref: nv_str
+  Expense:
+    id_field: expense_id
+    primary_query: expense_query
+    description: Shared expense among group members.
+    discovery:
+      names:
+      - expense
+      - bill
+      - cost
+      - split
+    fields:
+      expense_id:
+        required: true
+        value_ref: nv_expense_id
+      group_id:
+        required: false
+        value_ref: nv_group_id
+      description:
+        required: true
+        value_ref: nv_body
+        data_class: untrusted
+      paid_amount:
+        required: false
+        value_ref: nv_number
+      deleted:
+        required: false
+        value_ref: nv_bool
+      created_at:
+        required: false
+        value_ref: nv_datetime
+    relations:
+      comments:
+        target: ExpenseComment
+        cardinality: many
+        description: Comments posted on this expense.
+        materialize:
+          kind: query_scoped
+          capability: expense_comment_query
+          param: expense_id
+  Payment:
+    id_field: payment_id
+    primary_query: payment_query
+    description: Settlement payment between members.
+    discovery:
+      names:
+      - payment
+      - settle
+      - repayment
+    fields:
+      payment_id:
+        required: true
+        value_ref: nv_payment_id
+      group_id:
+        required: false
+        value_ref: nv_group_id
+      description:
+        required: false
+        value_ref: nv_body
+        data_class: untrusted
+      paid_amount:
+        required: false
+        value_ref: nv_number
+      deleted:
+        required: false
+        value_ref: nv_bool
+      created_at:
+        required: false
+        value_ref: nv_datetime
+    relations:
+      comments:
+        target: PaymentComment
+        cardinality: many
+        description: Comments posted on this payment.
+        materialize:
+          kind: query_scoped
+          capability: payment_comment_query
+          param: payment_id
+  ExpenseComment:
+    id_field: expense_comment_id
+    description: Comment on a shared expense.
+    discovery:
+      names:
+      - expense comment
+      - comment on expense
+    fields:
+      expense_comment_id:
+        required: true
+        value_ref: nv_expense_comment_id
+      expense_id:
+        required: true
+        value_ref: nv_expense_id
+      comment:
+        required: true
+        value_ref: nv_comment
+        data_class: untrusted
+      created_at:
+        required: false
+        value_ref: nv_datetime
+  PaymentComment:
+    id_field: payment_comment_id
+    description: Comment on a settlement payment.
+    discovery:
+      names:
+      - payment comment
+      - comment on payment
+    fields:
+      payment_comment_id:
+        required: true
+        value_ref: nv_payment_comment_id
+      payment_id:
+        required: true
+        value_ref: nv_payment_id
+      comment:
+        required: true
+        value_ref: nv_comment
+        data_class: untrusted
+      created_at:
+        required: false
+        value_ref: nv_datetime
+  Notification:
+    id_field: notification_id
+    description: Inbox notification for the authenticated Splitwise user.
+    discovery:
+      names:
+      - notification
+      - alert
+      - inbox
+    fields:
+      notification_id:
+        required: true
+        value_ref: nv_notification_id
+      type:
+        required: false
+        value_ref: nv_notification_type
+      title:
+        required: false
+        value_ref: nv_notification_title
+      message:
+        required: false
+        value_ref: nv_notification_message
+        data_class: untrusted
+      read:
+        required: false
+        value_ref: nv_read
+      created_at:
+        required: false
+        value_ref: nv_datetime
+  Activity:
+    id_field: created_at
+    primary_query: activity_query
+    description: Combined expense and payment history for the authenticated account.
+    discovery:
+      names:
+      - activity
+      - history
+      - ledger
+    fields:
+      record_type:
+        required: true
+        value_ref: nv_activity_record_type
+      amount:
+        required: true
+        value_ref: nv_number
+      paid_by:
+        required: true
+        value_ref: nv_activity_paid_by
+      owed_by:
+        required: true
+        value_ref: nv_activity_owed_by
+      description:
+        required: false
+        value_ref: nv_body
+        data_class: untrusted
+      group_id:
+        required: false
+        value_ref: nv_group_id
+      group_name:
+        required: true
+        value_ref: nv_str
+      created_at:
+        required: true
+        value_ref: nv_datetime
+  Balance:
+    id_field: you_owe_others
+    primary_query: balance_query
+    description: Debt position for a person or group.
+    discovery:
+      names:
+      - balance
+      - owing
+      - debt
+    fields:
+      you_owe_others:
+        required: false
+        value_ref: nv_number
+      others_owe_you:
+        required: false
+        value_ref: nv_number
+      email:
+        required: false
+        value_ref: nv_email
+      name:
+        required: false
+        value_ref: nv_str
+      group_id:
+        required: false
+        value_ref: nv_group_id
+      group_name:
+        required: false
+        value_ref: nv_str
+      direction:
+        required: false
+        value_ref: nv_balance_direction
+      amount:
+        required: false
+        value_ref: nv_number
+  User:
+    id_field: email
+    description: Splitwise person with optional balance direction toward the authenticated user.
+    discovery:
+      names:
+      - user
+      - person
+      - member
+    fields:
+      email:
+        required: true
+        value_ref: nv_email
+      name:
+        required: false
+        value_ref: nv_str
+      first_name:
+        required: false
+        value_ref: nv_str
+      last_name:
+        required: false
+        value_ref: nv_str
+      registered_at:
+        required: false
+        value_ref: nv_datetime
+      direction:
+        required: false
+        value_ref: nv_balance_direction
+      amount:
+        required: false
+        value_ref: nv_number
+  Profile:
+    id_field: email
+    description: Splitwise public profile.
+    discovery:
+      names:
+      - profile
+    fields:
+      email:
+        required: true
+        value_ref: nv_email
+      first_name:
+        required: false
+        value_ref: nv_str
+      last_name:
+        required: false
+        value_ref: nv_str
+      registered_at:
+        required: false
+        value_ref: nv_datetime
+  PeerBalance:
+    id_field: you_owe_others
+    primary_query: peer_balance_query
+    description: Interpersonal balance with a counterparty.
+    discovery:
+      names:
+      - balance
+      - owing
+      - debt
+    fields:
+      you_owe_others:
+        required: false
+        value_ref: nv_number
+      others_owe_you:
+        required: false
+        value_ref: nv_number
+      email:
+        required: false
+        value_ref: nv_email
+      name:
+        required: false
+        value_ref: nv_str
+      group_id:
+        required: false
+        value_ref: nv_group_id
+      group_name:
+        required: false
+        value_ref: nv_str
+      direction:
+        required: false
+        value_ref: nv_balance_direction
+      amount:
+        required: false
+        value_ref: nv_number
+capabilities:
+  login:
+    description: Login to Splitwise; returns access_token for Bearer auth.
+    kind: action
+    entity: AuthSession
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: username
+          value_ref: nv_login_username
+          required: true
+        - name: password
+          value_ref: nv_password
+          required: true
+    provides:
+    - access_token
+    - token_type
+    output:
+      type: entity
+      entity_type: AuthSession
+  logout:
+    description: Logout and invalidate the access token.
+    kind: action
+    entity: AuthSession
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Ends the Splitwise session for this token.
+  group_query:
+    description: List expense groups.
+    kind: query
+    entity: Group
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: delete
+      value_ref: nv_bool
+      required: false
+    provides:
+    - group_id
+    - name
+    - description
+    - created_at
+    - deleted
+    - invitation_code
+  group_get:
+    description: Show one group.
+    kind: get
+    entity: Group
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - group_id
+    - name
+    - description
+    - created_at
+    - deleted
+    - invitation_code
+  group_create:
+    description: Create a group with member emails.
+    kind: create
+    entity: Group
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: name
+          value_ref: nv_str
+          required: true
+        - name: member_emails
+          value_ref: nv_email_list
+          required: true
+        - name: description
+          value_ref: nv_body
+          required: false
+    provides:
+    - group_id
+  group_update:
+    description: Rename or describe a group.
+    kind: update
+    entity: Group
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: name
+          value_ref: nv_str
+          required: false
+        - name: description
+          value_ref: nv_body
+          required: false
+    provides:
+    - group_id
+  group_delete:
+    description: Delete a group.
+    kind: delete
+    entity: Group
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+  group_add_member:
+    description: Add a member to a group by email.
+    kind: action
+    entity: Group
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: user_email
+          value_ref: nv_email
+          required: true
+    output:
+      type: side_effect
+      description: Adds the email as a group member.
+  group_remove_member:
+    description: Remove a member from a group.
+    kind: action
+    entity: Group
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: user_email
+          value_ref: nv_email
+          required: true
+    output:
+      type: side_effect
+      description: Removes the email from the group.
+  group_exit:
+    description: Exit a group you belong to.
+    kind: action
+    entity: Group
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Removes the current user from the group.
+  group_undelete:
+    description: Restore a deleted group (and its expenses/payments).
+    kind: action
+    entity: Group
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Clears the deleted flag on the group and related items.
+  group_accept_invitation:
+    description: Accept a group invitation by invitation code.
+    kind: action
+    entity: Group
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: invitation_code
+          value_ref: nv_str
+          required: true
+    output:
+      type: side_effect
+      description: Joins the current user to the invited group.
+  group_regenerate_invitation:
+    description: Regenerate a group's invitation code.
+    kind: action
+    entity: Group
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - invitation_code
+    output:
+      type: side_effect
+      description: Issues a new invitation code for the group.
+  expense_query:
+    description: List expenses — with group_id for a group, or ungrouped when omitted.
+    kind: query
+    entity: Expense
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+    - name: participant_email
+      value_ref: nv_email
+      required: false
+    - name: min_amount
+      value_ref: nv_number
+      required: false
+    - name: max_amount
+      value_ref: nv_number
+      required: false
+    controls:
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+    provides:
+    - expense_id
+    - group_id
+    - description
+    - paid_amount
+    - deleted
+    - created_at
+    scope:
+    - name: group_id
+      value_ref: nv_group_id
+      required: false
+  expense_get:
+    description: Show one expense.
+    kind: get
+    entity: Expense
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - expense_id
+    - group_id
+    - description
+    - paid_amount
+    - deleted
+    - created_at
+  expense_create:
+    description: Create a shared expense with payer and debtors.
+    kind: create
+    entity: Expense
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: description
+          value_ref: nv_body
+          required: true
+        - name: paid_amount
+          value_ref: nv_number
+          required: true
+        - name: payer_email
+          value_ref: nv_email
+          required: true
+        - name: debtor_emails
+          value_ref: nv_email_list
+          required: true
+        - name: debt_amounts
+          value_ref: nv_number_list
+          required: false
+        - name: group_id
+          value_ref: nv_group_id
+          required: false
+    provides:
+    - expense_id
+  expense_update:
+    description: Update an expense.
+    kind: update
+    entity: Expense
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: description
+          value_ref: nv_body
+          required: false
+        - name: paid_amount
+          value_ref: nv_number
+          required: false
+        - name: payer_email
+          value_ref: nv_email
+          required: false
+        - name: debtor_emails
+          value_ref: nv_email_list
+          required: false
+        - name: debt_amounts
+          value_ref: nv_number_list
+          required: false
+    provides:
+    - expense_id
+  expense_delete:
+    description: Delete an expense.
+    kind: delete
+    entity: Expense
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+  expense_undelete:
+    description: Restore a previously deleted expense.
+    kind: action
+    entity: Expense
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Clears the deleted flag on the expense.
+  expense_attach_receipt:
+    description: Attach a file-system receipt file to an expense. receipt_file_path must be absolute /home/… (or resolved ~/subpath), not a relative path.
+    kind: action
+    entity: Expense
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: receipt_file_path
+          value_ref: nv_file_path
+          required: true
+        - name: overwrite
+          value_ref: nv_bool
+          required: false
+        - name: file_system_access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Copies the file-system file onto the expense as a receipt.
+  expense_delete_receipt:
+    description: Delete the receipt file attached to an expense.
+    kind: action
+    entity: Expense
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Removes the receipt file from the expense.
+  payment_query:
+    description: List payments — with group_id for a group, or ungrouped when omitted.
+    kind: query
+    entity: Payment
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+    - name: participant_email
+      value_ref: nv_email
+      required: false
+    controls:
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+    provides:
+    - payment_id
+    - group_id
+    - description
+    - paid_amount
+    - deleted
+    - created_at
+    scope:
+    - name: group_id
+      value_ref: nv_group_id
+      required: false
+  payment_get:
+    description: Show one payment.
+    kind: get
+    entity: Payment
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - payment_id
+    - group_id
+    - description
+    - paid_amount
+    - deleted
+    - created_at
+  payment_create:
+    description: Record a payment from one member to another.
+    kind: create
+    entity: Payment
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: payer_email
+          value_ref: nv_email
+          required: true
+        - name: receiver_email
+          value_ref: nv_email
+          required: true
+        - name: amount
+          value_ref: nv_number
+          required: true
+          sink_class: external_settle
+        - name: group_id
+          value_ref: nv_group_id
+          required: false
+        - name: description
+          value_ref: nv_body
+          required: false
+          sink_class: external_settle
+    provides:
+    - payment_id
+  payment_delete:
+    description: Delete a payment.
+    kind: delete
+    entity: Payment
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+  payment_update:
+    description: Update a settlement payment.
+    kind: update
+    entity: Payment
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: amount
+          value_ref: nv_number
+          required: false
+        - name: description
+          value_ref: nv_str
+          required: false
+  payment_undelete:
+    description: Restore a previously deleted payment.
+    kind: action
+    entity: Payment
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Restores the deleted payment.
+  payment_attach_receipt:
+    description: Attach a file-system receipt file to a payment. receipt_file_path must be absolute /home/… (or resolved ~/subpath), not a relative path.
+    kind: action
+    entity: Payment
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: receipt_file_path
+          value_ref: nv_file_path
+          required: true
+        - name: overwrite
+          value_ref: nv_bool
+          required: false
+        - name: file_system_access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Copies the file-system file onto the payment as a receipt.
+  payment_delete_receipt:
+    description: Delete the receipt file attached to a payment.
+    kind: action
+    entity: Payment
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Removes the receipt file from the payment.
+  settle_up:
+    description: Settle up balances with a person (optionally within a group).
+    kind: action
+    entity: Balance
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: email
+          value_ref: nv_email
+          required: true
+        - name: group_id
+          value_ref: nv_group_id
+          required: false
+        - name: description
+          value_ref: nv_body
+          required: false
+          sink_class: external_settle
+    output:
+      type: side_effect
+      description: Creates settlement payments to zero out balances.
+  expense_comment_query:
+    description: List comments on an expense.
+    kind: query
+    entity: ExpenseComment
+    scope:
+    - name: expense_id
+      value_ref: nv_expense_id
+      required: true
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - expense_comment_id
+    - expense_id
+    - comment
+    - created_at
+  expense_comment_create:
+    description: Post a comment on an expense.
+    kind: create
+    entity: ExpenseComment
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: expense_id
+          value_ref: nv_expense_id
+          required: true
+        - name: comment
+          value_ref: nv_comment
+          required: true
+    provides:
+    - expense_comment_id
+  expense_comment_update:
+    description: Update an expense comment you posted.
+    kind: update
+    entity: ExpenseComment
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: comment
+          value_ref: nv_comment
+          required: true
+  expense_comment_delete:
+    description: Delete an expense comment you posted.
+    kind: delete
+    entity: ExpenseComment
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+  payment_comment_query:
+    description: List comments on a payment.
+    kind: query
+    entity: PaymentComment
+    scope:
+    - name: payment_id
+      value_ref: nv_payment_id
+      required: true
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - payment_comment_id
+    - payment_id
+    - comment
+    - created_at
+  payment_comment_create:
+    description: Post a comment on a payment.
+    kind: create
+    entity: PaymentComment
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: payment_id
+          value_ref: nv_payment_id
+          required: true
+        - name: comment
+          value_ref: nv_comment
+          required: true
+    provides:
+    - payment_comment_id
+  payment_comment_update:
+    description: Update a payment comment you posted.
+    kind: update
+    entity: PaymentComment
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: comment
+          value_ref: nv_comment
+          required: true
+  payment_comment_delete:
+    description: Delete a payment comment you posted.
+    kind: delete
+    entity: PaymentComment
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+  notification_query:
+    description: List Splitwise inbox notifications.
+    kind: query
+    entity: Notification
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: read
+      value_ref: nv_read
+      required: false
+    provides:
+    - notification_id
+    - type
+    - title
+    - message
+    - read
+    - created_at
+  activity_query:
+    description: List combined expense and payment activity for the account.
+    kind: query
+    entity: Activity
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: show_expenses
+      value_ref: nv_bool
+      required: false
+    - name: show_payments
+      value_ref: nv_bool
+      required: false
+    controls:
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+    provides:
+    - record_type
+    - amount
+    - paid_by
+    - owed_by
+    - description
+    - group_id
+    - group_name
+    - created_at
+  notification_delete:
+    description: Delete one notification.
+    kind: delete
+    entity: Notification
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+  notification_mark:
+    description: Mark one notification as read or unread.
+    kind: action
+    entity: Notification
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: read
+          value_ref: nv_read
+          required: true
+    output:
+      type: side_effect
+      description: Updates the read status of one notification.
+  notification_delete_all:
+    description: Delete all Splitwise notifications for the authenticated user.
+    kind: action
+    entity: Notification
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Clears the entire notification inbox.
+  notification_mark_all:
+    description: Mark all notifications as read or unread.
+    kind: action
+    entity: Notification
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: read
+          value_ref: nv_read
+          required: true
+    output:
+      type: side_effect
+      description: Updates the read status of every notification.
+  profile_get:
+    description: Show a Splitwise user's public profile (omit email for the default profile).
+    kind: query
+    entity: Profile
+    selection:
+    - name: email
+      value_ref: nv_email
+      required: false
+    provides:
+    - first_name
+    - last_name
+    - email
+    - registered_at
+  user_search:
+    description: List or filter Splitwise users.
+    kind: query
+    entity: User
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+    provides:
+    - name
+    - email
+    - direction
+    - amount
+    discovery:
+      operation_terms:
+      - list
+      - find
+      - search
+      target_terms:
+      - user
+      - member
+  balance_query:
+    description: List group balances by shelf — group | groups.
+    kind: query
+    entity: Balance
+    scope:
+    - name: group_id
+      value_ref: nv_group_id
+      required: false
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: shelf
+      value_ref: nv_balance_shelf
+      required: true
+      description: group | groups
+    - name: email
+      value_ref: nv_email
+      required: false
+    provides:
+    - amount
+    - direction
+    - email
+    - group_id
+    - group_name
+    - name
+    - others_owe_you
+    - you_owe_others
+  peer_balance_query:
+    description: List peer balances by shelf — person | people.
+    kind: query
+    entity: PeerBalance
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: shelf
+      value_ref: nv_peer_balance_shelf
+      required: true
+      description: person | people
+    - name: email
+      value_ref: nv_email
+      required: false
+    provides:
+    - amount
+    - direction
+    - email
+    - group_id
+    - group_name
+    - name
+    - others_owe_you
+    - you_owe_others
+values:
+  nv_str:
+    type: string
+    description: Free-form string.
+  nv_login_username:
+    type: email
+    description: Task-principal email from Supervisor — the login username for this service (not a counterparty).
+  nv_email:
+    type: email
+    description: Email address of a user or counterparty.
+  nv_password:
+    type: string
+    description: Account-holder password for this service.
+  nv_access_token:
+    type: string
+    description: Bearer access token from login.
+  nv_body:
+    type: markdown
+    description: Long text body.
+  nv_group_id:
+    type: integer
+    description: Group primary key.
+  nv_expense_id:
+    type: integer
+    description: Expense primary key.
+  nv_payment_id:
+    type: integer
+    description: Payment primary key.
+  nv_email_list:
+    type: array
+    items:
+      value_ref: nv_email
+    description: List of email addresses.
+  nv_number:
+    type: number
+    description: Numeric amount.
+  nv_number_list:
+    type: array
+    items:
+      value_ref: nv_number
+    description: List of numeric amounts.
+  nv_bool:
+    type: boolean
+    description: Boolean flag.
+  nv_int:
+    type: integer
+    description: Integer.
+  nv_datetime:
+    type: rfc3339
+    description: ISO datetime string.
+  nv_file_path:
+    type: string
+    description: Receipt file path for upload — absolute /home/… (or resolved ~/… with a subpath). Relative paths and bare ~ are rejected.
+  nv_expense_comment_id:
+    type: integer
+    description: Expense comment primary key.
+  nv_payment_comment_id:
+    type: integer
+    description: Payment comment primary key.
+  nv_notification_id:
+    type: integer
+    description: Notification primary key.
+  nv_comment:
+    type: string
+    description: Text body of an expense or payment comment.
+  nv_read:
+    type: boolean
+    description: Whether a notification has been read.
+  nv_balance_direction:
+    type: enum
+    description: Who owes whom for a balance entry.
+    enum:
+    - you_owe_them
+    - they_owe_you
+    - no_balance
+  nv_notification_type:
+    type: enum
+    description: Inbox notification kind from Splitwise activity.
+    enum:
+    - expense_added
+    - expense_comment_added
+    - expense_deleted
+    - expense_undeleted
+    - expense_updated
+    - group_deleted
+    - group_member_added
+    - group_member_exited
+    - group_member_joined
+    - group_member_removed
+    - group_undeleted
+    - group_updated
+    - payment_added
+    - payment_comment_added
+    - payment_deleted
+    - payment_undeleted
+    - payment_updated
+    - you_added_to_group
+  nv_notification_title:
+    type: string
+    description: Notification title.
+  nv_notification_message:
+    type: string
+    description: Notification message body.
+  nv_activity_record_type:
+    type: enum
+    description: Whether an activity entry is an expense or a payment.
+    enum:
+    - expense
+    - payment
+  nv_activity_paid_by:
+    type: json
+    description: Payer identity on an activity entry.
+  nv_activity_owed_by:
+    type: json
+    description: Debtor identities and amounts on an activity entry.
+  nv_balance_shelf:
+    type: enum
+    enum:
+    - group
+    - groups
+    description: Group balance shelf
+  nv_peer_balance_shelf:
+    type: enum
+    enum:
+    - person
+    - people
+    description: Peer balance shelf
+  prerequisite_principal_email:
+    type: email
+    description: Account holder email.
+  prerequisite_principal_phone:
+    type: e164
+    description: Account holder phone number.
+  prerequisite_account_name:
+    type: string
+    description: Service account identifier.
+prerequisites:
+  contracts:
+    appworld.principal:
+      version: 1
+      inputs: {}
+      outputs:
+        email: prerequisite_principal_email
+        phone: prerequisite_principal_phone
+    appworld.password:
+      version: 1
+      inputs:
+        account: prerequisite_account_name
+      outputs:
+        password: nv_password
+    appworld.session:
+      version: 1
+      inputs: {}
+      outputs:
+        token: nv_access_token
+  providers:
+    session:
+      contract: appworld.session
+      capability: login
+      outputs:
+        token: access_token
+  requirements:
+    login:
+    - id: principal
+      contract: appworld.principal
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - username
+        output: email
+    - id: password
+      contract: appworld.password
+      arguments:
+        account:
+          kind: constant
+          value: splitwise
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - password
+        output: password
+    logout:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    group_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    group_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    group_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    group_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    group_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    group_add_member:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    group_remove_member:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    group_exit:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    group_undelete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    group_accept_invitation:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    group_regenerate_invitation:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    expense_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    expense_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    expense_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    expense_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    expense_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    expense_undelete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    expense_attach_receipt:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+      - input:
+          lane: payload
+          path:
+          - file_system_access_token
+        output: token
+    expense_delete_receipt:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    payment_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    payment_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_undelete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_attach_receipt:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+      - input:
+          lane: payload
+          path:
+          - file_system_access_token
+        output: token
+    payment_delete_receipt:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    settle_up:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    expense_comment_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    expense_comment_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    expense_comment_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    expense_comment_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_comment_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    payment_comment_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_comment_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_comment_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    notification_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    activity_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    notification_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    notification_mark:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    notification_delete_all:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    notification_mark_all:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    user_search:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    balance_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    peer_balance_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token

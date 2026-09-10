@@ -1,7 +1,6 @@
 //! Row JSON helpers.
 
 use super::*;
-use crate::plasm_plan::FieldPath;
 
 pub(crate) fn cached_entity_row_json(entity: &CachedEntity, cgs: &CGS) -> serde_json::Value {
     entity_to_row_json(entity, Some(cgs))
@@ -16,13 +15,6 @@ pub(crate) fn value_at_segments<'a>(
         cur = cur.get(segment.as_ref())?;
     }
     Some(cur)
-}
-
-pub(crate) fn value_at_field_path<'a>(
-    row: &'a serde_json::Value,
-    path: &FieldPath,
-) -> Option<&'a serde_json::Value> {
-    value_at_segments(row, path.segments())
 }
 
 pub(crate) fn value_at_dotted<'a>(
@@ -59,16 +51,24 @@ pub(crate) fn augment_row_json_with_identity(
     let primary = identity.reference.primary_slot_str();
     obj.entry("id".to_string())
         .or_insert_with(|| serde_json::Value::String(primary.clone()));
+    // Homograph-safe primary: when ambient already names the CGS id_field (e.g. access_token),
+    // prefer that wire; otherwise still expose `id` for legacy holes.
     for (k, v) in &identity.ambient {
         obj.entry(k.clone())
             .or_insert_with(|| serde_json::Value::String(v.clone()));
     }
     if let plasm_core::EntityKey::Compound(parts) = &identity.reference.key {
         for (k, v) in parts {
-            obj.entry(k.clone())
-                .or_insert_with(|| serde_json::Value::String(v.clone()));
+            if let Some(s) = v.as_lit_str() {
+                obj.entry(k.clone())
+                    .or_insert_with(|| serde_json::Value::String(s.to_string()));
+            }
         }
     }
+    // Simple-key identity: also stamp a non-`id` primary when ambient is empty but callers
+    // look up catalog id_field via hole path (AuthSession.access_token). Without a CGS here we
+    // cannot know id_field; ambient/compound paths above cover stamped sessions. When the
+    // decoded row already carries id_field, from_row wins in hole fill.
     serde_json::Value::Object(obj)
 }
 

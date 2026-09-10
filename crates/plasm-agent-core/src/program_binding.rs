@@ -1,7 +1,8 @@
 //! Unified compile-time contract for program binding labels (`ident = …`).
 //!
-//! Single source of truth for row entity type, cardinality proof, and continuation mode —
-//! consumed by [`crate::plasm_dag`] when lowering `label.relation` / postfix chains.
+//! Single source of truth for row entity type, cardinality proof, [`BindingValueKind`]
+//! (row vs scalar cell), and continuation mode — consumed by [`crate::plasm_dag`] when
+//! lowering `label.relation` / postfix chains and gating scalar invoke params (PLP-1).
 
 use crate::plasm_plan::{
     InputCardinalityProof, QualifiedEntityKey, RelationSourceCardinality, ResultShape,
@@ -34,8 +35,22 @@ pub(crate) struct ProgramBindingContract {
     pub row_entity: QualifiedEntityKey,
     pub result_shape: ResultShape,
     pub row_cardinality: RowCardinalityProof,
+    /// Orthogonal to [`RowCardinalityProof`]: row count ≠ cell payload (PLP-1).
+    pub value_kind: BindingValueKind,
     pub continuation: ContinuationCapability,
     pub anchor: ContinuationAnchor,
+}
+
+/// Whether a bare binding label denotes an entity row or a proven scalar cell.
+///
+/// Orthogonal to [`RowCardinalityProof`]: a StaticSingleton Get is still [`EntityRow`];
+/// a [`crate::plasm_dag`] `ScalarExtract` / heredoc cell is [`ScalarCell`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BindingValueKind {
+    /// Entity / relation / projection row — bare label is a row, not a scalar cell.
+    EntityRow,
+    /// Proven scalar cell — bare label lawfully fills scalar invoke params (PLP-1 form 2).
+    ScalarCell,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,34 +102,33 @@ impl RowCardinalityProof {
         match self {
             Self::StaticSingleton => RelationSourceCardinality::Single,
             Self::StaticPlural => RelationSourceCardinality::Many,
-            Self::BoundedSingleton {
-                from_plural_source: true,
-                ..
+            // All BoundedSingleton / RuntimeChecked → runtime-checked (never silent Single).
+            Self::BoundedSingleton { .. } | Self::RuntimeChecked => {
+                RelationSourceCardinality::RuntimeCheckedSingleton
             }
-            | Self::RuntimeChecked => RelationSourceCardinality::RuntimeCheckedSingleton,
-            Self::BoundedSingleton {
-                from_plural_source: false,
-                ..
-            } => RelationSourceCardinality::Single,
         }
     }
 
-    /// Maps to [`InputCardinalityProof`] for plan-layer singleton checks (see `analyze_static_cardinality`).
-    #[allow(dead_code)]
-    pub(crate) fn to_input_cardinality_proof(self) -> InputCardinalityProof {
+    /// Auto-broadcast gate for plan inputs: Static → silent static proof; Bounded (Limit≤1) →
+    /// runtime-checked; plural / runtime-checked → reject (`None`, caller must require
+    /// `Plan.singleton(...)`).
+    pub(crate) fn try_auto_broadcast_input_proof(self) -> Option<InputCardinalityProof> {
         match self {
-            Self::StaticSingleton
-            | Self::BoundedSingleton {
-                from_plural_source: false,
-                ..
-            } => InputCardinalityProof::StaticSingleton,
-            Self::StaticPlural
-            | Self::BoundedSingleton {
-                from_plural_source: true,
-                ..
-            }
-            | Self::RuntimeChecked => InputCardinalityProof::RuntimeCheckedSingleton,
+            Self::StaticSingleton => Some(InputCardinalityProof::StaticSingleton),
+            Self::BoundedSingleton { .. } => Some(InputCardinalityProof::RuntimeCheckedSingleton),
+            Self::StaticPlural | Self::RuntimeChecked => None,
         }
+    }
+
+    /// Proven Get / fixed one-cell / Aggregate / Render — **not** Limit≤1 BoundedSingleton.
+    pub(crate) fn is_static_singleton(self) -> bool {
+        matches!(self, Self::StaticSingleton)
+    }
+
+    /// Auto may attach a broadcast input (static or bounded); plural/unknown must wrap
+    /// `Plan.singleton(...)`.
+    pub(crate) fn permits_auto_broadcast(self) -> bool {
+        self.try_auto_broadcast_input_proof().is_some()
     }
 
     /// After traversing a cardinality-one relation from this binding, what row proof does the result carry?
@@ -127,10 +141,14 @@ impl RowCardinalityProof {
     pub(crate) fn after_one_cardinality_relation(self) -> Self {
         match self {
             Self::StaticSingleton => Self::StaticSingleton,
+            // Bounded stays bounded (never promotes to proven StaticSingleton).
             Self::BoundedSingleton {
                 from_plural_source: false,
-                ..
-            } => Self::StaticSingleton,
+                kind,
+            } => Self::BoundedSingleton {
+                from_plural_source: false,
+                kind,
+            },
             // One-per-parent over a statically plural source is a 1:1 flat-map → plural result.
             Self::StaticPlural => Self::StaticPlural,
             Self::BoundedSingleton {
@@ -148,6 +166,10 @@ impl RowCardinalityProof {
 }
 
 impl ProgramBindingContract {
+    pub(crate) fn is_scalar_cell(&self) -> bool {
+        matches!(self.value_kind, BindingValueKind::ScalarCell)
+    }
+
     pub(crate) fn supports_relation_dot(&self) -> bool {
         matches!(
             self.continuation,
@@ -201,6 +223,37 @@ mod tests {
     }
 
     #[test]
+    fn bounded_from_non_plural_maps_runtime_checked() {
+        assert_eq!(
+            RowCardinalityProof::BoundedSingleton {
+                kind: BoundedSingletonKind::LimitOne,
+                from_plural_source: false,
+            }
+            .to_relation_source_cardinality(),
+            RelationSourceCardinality::RuntimeCheckedSingleton
+        );
+        assert_eq!(
+            RowCardinalityProof::BoundedSingleton {
+                kind: BoundedSingletonKind::LimitOne,
+                from_plural_source: false,
+            }
+            .try_auto_broadcast_input_proof(),
+            Some(InputCardinalityProof::RuntimeCheckedSingleton)
+        );
+        assert_eq!(
+            RowCardinalityProof::BoundedSingleton {
+                kind: BoundedSingletonKind::LimitOne,
+                from_plural_source: false,
+            }
+            .after_one_cardinality_relation(),
+            RowCardinalityProof::BoundedSingleton {
+                kind: BoundedSingletonKind::LimitOne,
+                from_plural_source: false,
+            }
+        );
+    }
+
+    #[test]
     fn bounded_from_plural_maps_runtime_checked() {
         assert_eq!(
             RowCardinalityProof::BoundedSingleton {
@@ -245,8 +298,35 @@ mod tests {
                 kind: BoundedSingletonKind::LimitOne,
                 from_plural_source: true,
             }
-            .to_input_cardinality_proof(),
-            InputCardinalityProof::RuntimeCheckedSingleton
+            .try_auto_broadcast_input_proof(),
+            Some(InputCardinalityProof::RuntimeCheckedSingleton)
         );
+    }
+
+    #[test]
+    fn auto_broadcast_rejects_plural_accepts_bounded_as_runtime() {
+        assert_eq!(
+            RowCardinalityProof::StaticSingleton.try_auto_broadcast_input_proof(),
+            Some(InputCardinalityProof::StaticSingleton)
+        );
+        assert_eq!(
+            RowCardinalityProof::BoundedSingleton {
+                kind: BoundedSingletonKind::LimitOne,
+                from_plural_source: false,
+            }
+            .try_auto_broadcast_input_proof(),
+            Some(InputCardinalityProof::RuntimeCheckedSingleton)
+        );
+        assert!(RowCardinalityProof::StaticPlural
+            .try_auto_broadcast_input_proof()
+            .is_none());
+        assert!(RowCardinalityProof::RuntimeChecked
+            .try_auto_broadcast_input_proof()
+            .is_none());
+        assert!(!RowCardinalityProof::BoundedSingleton {
+            kind: BoundedSingletonKind::LimitOne,
+            from_plural_source: true,
+        }
+        .is_static_singleton());
     }
 }

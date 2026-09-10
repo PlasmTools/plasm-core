@@ -10,7 +10,7 @@ use plasm_agent_core::http_execute::execute_routes;
 use plasm_agent_core::incoming_auth::IncomingPrincipal;
 use plasm_agent_core::run_artifacts::{RunArtifactId, RunArtifactStore};
 use plasm_agent_core::server_state::CatalogBootstrap;
-use plasm_core::discovery::InMemoryCgsRegistry;
+use plasm_core::discovery::CgsRegistry;
 use plasm_core::loader::load_schema_dir;
 use plasm_evidence::{
     ChainBuilder, DefaultChainVerifier, EvidenceAnchors, EvidenceBundle, EvidenceKind,
@@ -25,7 +25,7 @@ fn test_app(store: Arc<RunArtifactStore>) -> Router<()> {
     let dir =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix");
     let cgs = Arc::new(load_schema_dir(&dir).expect("matrix"));
-    let reg = InMemoryCgsRegistry::from_pairs(vec![(
+    let reg = CgsRegistry::from_pairs(vec![(
         "langmatrix".into(),
         "Lang Matrix".into(),
         vec!["matrix".into()],

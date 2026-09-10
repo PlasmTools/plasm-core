@@ -11,6 +11,12 @@ use sha2::{Digest, Sha256};
 use std::ops::Deref;
 use std::sync::{Arc, OnceLock};
 
+#[path = "capability_inputs.rs"]
+mod capability_inputs;
+pub use capability_inputs::{
+    BackendSelectionSchema, CapabilityInputs, InvocationControlsSchema, ParentScopeSchema,
+};
+
 /// Opaque CML mapping payload (HTTP or EVM); validated at load via `plasm_compile::parse_capability_template`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -30,54 +36,11 @@ impl From<serde_json::Value> for CapabilityTemplateJson {
     }
 }
 
-/// Entity-level seed participation default for semantic auto-seed (weak fallback when no edge `seed_nav`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DiscoverySeedClass {
-    /// Prefer as DirectCapability seed when this entity is selected.
-    Primary,
-    /// Prefer not to root a session alone for “of X” read intents (Comment, Label, …).
-    Dependent,
-    /// Weak container / locator (Repository, Project, Calendar, …).
-    Ambient,
-}
-
-impl DiscoverySeedClass {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Primary => "primary",
-            Self::Dependent => "dependent",
-            Self::Ambient => "ambient",
-        }
-    }
-}
-
-/// Relation-edge seed navigation semantics (primary lever for graph+role witness prune).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DiscoverySeedNav {
-    /// Target is a decoration/annotation of source — prefer source as seed.
-    Attach,
-    /// Source owns a collection/history of target — XOR DirectCapabilities; drop Target reads when Source also selected.
-    Own,
-    /// Source weakly situates target — drop source when target primary also selected.
-    Locate,
-}
-
-impl DiscoverySeedNav {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Attach => "attach",
-            Self::Own => "own",
-            Self::Locate => "locate",
-        }
-    }
-}
-
 /// Domain-language hints for typed discovery phrase / lexical indexes (`domain.yaml` → [`ResourceSchema`] / [`EntityDef`]).
 ///
 /// Authoring should name how humans refer to the entity (synonyms), not ranking preferences across catalogs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct DiscoveryEntityHints {
     /// Noun phrases that refer to this entity (matched case-insensitively; normalize to lowercase in authoring).
     #[serde(default)]
@@ -85,9 +48,6 @@ pub struct DiscoveryEntityHints {
     /// Tokens that often scope this entity in prepositional phrases (e.g. `type` for a subtype entity).
     #[serde(default)]
     pub qualifier_names: Vec<String>,
-    /// Optional seed participation default when this entity is selected alone / without a governing edge role.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed_class: Option<DiscoverySeedClass>,
 }
 
 /// Optional capability-level vocabulary for operation vs target wording in natural language.
@@ -101,15 +61,13 @@ pub struct DiscoveryCapabilityHints {
 
 /// Optional relation edge hints for graph-aware qualifier validation and traversal bias.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct DiscoveryRelationHints {
     #[serde(default)]
     pub qualifier_terms: Vec<String>,
     /// Optional edge weight when graph distance is used as evidence (not a cross-catalog ranking flag).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub traversal_weight: Option<f32>,
-    /// Optional seed navigation role for this edge (attach / own / locate).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed_nav: Option<DiscoverySeedNav>,
 }
 
 /// A complete schema definition for a resource/entity type.
@@ -167,11 +125,15 @@ pub struct ResourceSchema {
         skip_serializing_if = "domain_projection_examples_is_default"
     )]
     pub domain_projection_examples: bool,
-    /// Optional override: capability **id** of a **Get** on this entity that defines ordered `provides` /
-    /// default field order for teaching heading projection teaching. If the id is missing, not a Get, or targets
-    /// another entity, [`CGS::resolved_primary_get_for_projection`] falls back to [`CGS::primary_get_capability`].
+    /// Capability **id** of the canonical **Get** on this entity (required when the entity declares 2+ Gets).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub primary_read: Option<String>,
+    /// Capability **id** of the canonical **Query** (obsolete for multi-query — illegal; optional explicit pointer when a sole Query exists).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_query: Option<String>,
+    /// Capability **id** of the canonical unscoped **Search** (obsolete for multi-search — illegal; optional explicit pointer when a sole Search exists).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_search: Option<String>,
     /// Typed-discovery vocabulary for this entity (optional).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discovery: Option<DiscoveryEntityHints>,
@@ -441,19 +403,6 @@ pub enum IdFormat {
     Other,
 }
 
-/// Declared on-rails meaning of a `string` field for authoring and agent output policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum StringSemantics {
-    Short,
-    Markdown,
-    Document,
-    Html,
-    #[serde(rename = "json_text")]
-    JsonText,
-    Blob,
-}
-
 /// Optional media classification for [`FieldType::Blob`] fields (prompt/tool hints; wire shape unchanged).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -463,28 +412,6 @@ pub enum AttachmentMediaKind {
     Audio,
     Video,
     Document,
-}
-
-impl StringSemantics {
-    /// Keyword used in teaching table `p#` gloss for `string` fields/parameters when semantics are set.
-    /// [`StringSemantics::Short`] maps to the generic `str` label via [`None`].
-    pub fn gloss_type_keyword(self) -> Option<&'static str> {
-        match self {
-            StringSemantics::Short => None,
-            StringSemantics::Markdown => Some("markdown"),
-            StringSemantics::Document => Some("document"),
-            StringSemantics::Html => Some("html"),
-            StringSemantics::JsonText => Some("json_text"),
-            StringSemantics::Blob => Some("blob"),
-        }
-    }
-
-    /// True for semantics beyond plain short strings: markdown, HTML, documents, JSON text, blobs, etc.
-    /// Drives prompts and diagnostics when multiline or structured payloads are expected.
-    #[inline]
-    pub fn is_structured_or_multiline(self) -> bool {
-        !matches!(self, StringSemantics::Short)
-    }
 }
 
 /// How agents should surface a string field in summaries (table/compact); JSON bodies stay full-fidelity.
@@ -519,15 +446,16 @@ pub struct NamedValueSchema {
     /// What this value space represents (authoring / tooling; not agent teaching table vocabulary).
     #[serde(default)]
     pub description: String,
+    /// Kernel + profile + constraints (source of truth for `values:` typing).
+    #[serde(default)]
+    pub domain: crate::value_domain::ValueDomain,
     #[serde(with = "serde_yaml::with::singleton_map")]
     pub field_type: FieldType,
-    /// Required when [`Self::field_type`] is [`FieldType::Date`] or [`FieldType::Money`]: wire shape for predicates / inputs / decode.
+    /// Wire format derived from temporal / money profiles on [`Self::domain`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value_format: Option<ValueWireFormat>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed_values: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub string_semantics: Option<StringSemantics>,
     /// When [`Self::field_type`] is [`FieldType::Array`], element typing for the named array domain.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub array_items: Option<ArrayItemsSchema>,
@@ -536,10 +464,33 @@ pub struct NamedValueSchema {
     pub currency: Option<String>,
 }
 
+impl NamedValueSchema {
+    /// Build from resolved domain + array items (loader path).
+    pub fn from_domain(
+        description: String,
+        domain: crate::value_domain::ValueDomain,
+        array_items: Option<ArrayItemsSchema>,
+    ) -> Self {
+        let field_type = domain.to_field_type();
+        let value_format = domain.to_value_format();
+        let allowed_values = domain.enum_membership.as_ref().map(|m| m.tokens().to_vec());
+        let currency = domain.currency.clone();
+        Self {
+            description,
+            domain,
+            field_type,
+            value_format,
+            allowed_values,
+            array_items,
+            currency,
+        }
+    }
+}
+
 /// Definition of a single field within a resource.
 ///
 /// `field_type`, `allowed_values`, and related keys mirror [`CGS::values`][`NamedValueSchema`] for interchange;
-/// `string_semantics` / `array_items` live only on the registry row — use [`CGS::named_value_for_slot`].
+/// `array_items` live only on the registry row — use [`CGS::named_value_for_slot`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FieldSchema {
     pub name: EntityFieldName,
@@ -652,14 +603,6 @@ impl FieldSchema {
         cgs.named_value_for_slot(self)
     }
 
-    /// [`NamedValueSchema::string_semantics`] for this slot's `value_ref` (defaults to [`StringSemantics::Short`]).
-    pub fn effective_string_semantics(&self, cgs: &CGS) -> StringSemantics {
-        match cgs.named_value_for_slot(self) {
-            Ok(nv) => nv.string_semantics.unwrap_or(StringSemantics::Short),
-            Err(_) => StringSemantics::Short,
-        }
-    }
-
     /// Element typing when this slot's wire type is [`FieldType::Array`], from [`CGS::values`].
     pub fn resolved_array_items<'a>(&self, cgs: &'a CGS) -> Option<&'a ArrayItemsSchema> {
         cgs.named_value_for_slot(self)
@@ -667,8 +610,8 @@ impl FieldSchema {
             .and_then(|nv| nv.array_items.as_ref())
     }
 
-    /// When unset: [`StringSemantics::Short`] → [`AgentPresentation::Default`]; any other semantics → [`AgentPresentation::ReferenceOnly`].
-    /// [`FieldType::Blob`] defaults to [`AgentPresentation::ReferenceOnly`] (same as non-`short` strings).
+    /// When unset: plain `string` → [`AgentPresentation::Default`]; presentation profiles and blobs → [`AgentPresentation::ReferenceOnly`].
+    /// [`FieldType::Blob`] defaults to [`AgentPresentation::ReferenceOnly`].
     pub fn effective_agent_presentation(&self, cgs: &CGS) -> AgentPresentation {
         if let Some(p) = self.agent_presentation {
             return p;
@@ -676,14 +619,18 @@ impl FieldSchema {
         let Ok(nv) = cgs.named_value_for_slot(self) else {
             return AgentPresentation::Default;
         };
-        match &nv.field_type {
-            FieldType::Blob => AgentPresentation::ReferenceOnly,
-            FieldType::String => match self.effective_string_semantics(cgs) {
-                StringSemantics::Short => AgentPresentation::Default,
-                _ => AgentPresentation::ReferenceOnly,
-            },
-            _ => AgentPresentation::Default,
+        if nv.domain.is_structured_or_multiline() {
+            AgentPresentation::ReferenceOnly
+        } else {
+            AgentPresentation::Default
         }
+    }
+
+    /// Whether this slot expects structured or multiline string payloads (presentation profile or blob).
+    pub fn is_structured_or_multiline(&self, cgs: &CGS) -> bool {
+        cgs.named_value_for_slot(self)
+            .map(|nv| nv.domain.is_structured_or_multiline())
+            .unwrap_or(false)
     }
 }
 
@@ -820,10 +767,15 @@ pub struct CapabilitySchema {
     pub description: String,
     pub kind: CapabilityKind,
     pub domain: EntityName, // Entity this capability operates on
-    pub mapping: CapabilityMapping,
-    /// Input schema for invoke capabilities (optional for query/get)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub input_schema: Option<InputSchema>,
+    /// CML / view transport mapping. `None` when [`Self::derived`] is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mapping: Option<CapabilityMapping>,
+    /// List-backed keyed Get plan (`derive:`). `None` when [`Self::mapping`] is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derived: Option<crate::DerivedGetPlan>,
+    /// Structurally disjoint capability-input lanes.
+    #[serde(flatten)]
+    pub inputs: CapabilityInputs,
     /// Output schema specification (for validation and projection)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_schema: Option<OutputSchema>,
@@ -861,6 +813,10 @@ pub struct CapabilitySchema {
     /// Natural-key parameter names defining workflow identity for PLT / reconcile.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity_key: Option<Vec<String>>,
+    /// Entity types whose session graph rows and query index entries should refresh after a
+    /// successful mutating response (e.g. pay on a mutation shell updating read-model cards).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub invalidates_entities: Vec<String>,
 }
 
 /// The type of operation this capability performs.
@@ -902,34 +858,6 @@ impl std::fmt::Display for CapabilityKind {
     }
 }
 
-/// Semantic role of a capability parameter.
-///
-/// All roles produce the same HTTP transport (a query param or path segment),
-/// but carry different meaning for agents and LLM tooling:
-/// - [`Filter`]: equality/range predicate on entity field values
-/// - [`Search`]: free-text relevance query (`q`, `query`, `search`)
-/// - [`Sort`]: selects a sort field (`order_by`)
-/// - [`SortDirection`]: ascending/descending companion to Sort
-/// - [`ResponseControl`]: modifies payload shape (`embed`, `fields`, `inc`)
-/// - [`Scope`]: parent-entity pivot wired into the URL path (entity_ref, required)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum ParameterRole {
-    /// Default. Equality or range predicate on entity field values.
-    #[default]
-    Filter,
-    /// Free-text relevance query (`q`, `query`, `search`).
-    Search,
-    /// Sort field selector (`order_by`, `sort_by`).
-    Sort,
-    /// Sort direction (`sort`, `asc`/`desc`) — companion to [`Sort`].
-    SortDirection,
-    /// Payload shape control (`embed`, `fields`, `inc`, `exc`).
-    ResponseControl,
-    /// Parent-entity FK pivot wired into the URL path segment.
-    Scope,
-}
-
 /// Mapping configuration for how this capability translates to backend calls.
 /// This is a JSON object that will be interpreted by the CML compiler.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -937,64 +865,40 @@ pub struct CapabilityMapping {
     pub template: CapabilityTemplateJson,
 }
 
-/// HTTP path segment variable names from CML `path` (in order), `type: var` only.
+pub use crate::path_env::{
+    capability_template_all_var_names, graphql_operation_variable_names,
+    path_var_names_from_mapping_json,
+};
+
+/// Drop CML `path` template var keys from an object input before body-schema validate.
 ///
-/// GraphQL capabilities often have **no** `path` vars (POST `/graphql` is all literals); subject id
-/// may live under `body` — see [`template_domain_exemplar_requires_entity_anchor`] and
-/// [`template_invoke_requires_explicit_anchor_id`].
-pub fn path_var_names_from_mapping_json(template: &serde_json::Value) -> Vec<String> {
-    let mut out = Vec::new();
-    let Some(path) = template.get("path").and_then(|p| p.as_array()) else {
-        return out;
+/// Parse injects anchor path segments into the same object as body fields for CML env splat;
+/// [`crate::validate_capability_input`] must not treat those as unexpected payload/arguments keys.
+pub fn body_value_without_mapping_path_vars(
+    cap: &CapabilitySchema,
+    input: crate::Value,
+) -> crate::Value {
+    let crate::Value::Object(mut map) = input else {
+        return input;
     };
-    for seg in path {
-        if seg.get("type").and_then(|t| t.as_str()) == Some("var") {
-            if let Some(name) = seg.get("name").and_then(|n| n.as_str()) {
-                out.push(name.to_string());
-            }
-        }
+    let Some(mapping) = &cap.mapping else {
+        return crate::Value::Object(map);
+    };
+    for pv in path_var_names_from_mapping_json(&mapping.template.0) {
+        map.swap_remove(&pv);
     }
-    out
+    crate::Value::Object(map)
 }
 
-/// Same rule as `Parser::can_bind_create_path_vars`: path template binds `{anchor}_id` from `Get(anchor)`.
-pub fn can_bind_create_from_anchor(cap: &CapabilitySchema, anchor: &str) -> bool {
-    let path_vars = path_var_names_from_mapping_json(&cap.mapping.template.0);
-    if path_vars.is_empty() {
-        return false;
-    }
-    let expected = format!("{}_id", anchor.to_lowercase());
-    path_vars.iter().all(|pv| pv == &expected)
+/// True when a Create capability's CML identity-env vars project from `anchor`'s identity
+/// (including single-path-var primary alias). Used for dotted `Anchor(id).create-…` binding.
+pub fn can_bind_create_from_anchor(cap: &CapabilitySchema, anchor: &EntityDef) -> bool {
+    crate::path_env::create_binds_from_anchor_identity(cap, anchor, None)
 }
 
-fn collect_template_var_refs(template: &serde_json::Value, out: &mut Vec<String>) {
-    match template {
-        serde_json::Value::Object(map) => {
-            if map.get("type").and_then(|t| t.as_str()) == Some("var") {
-                if let Some(name) = map.get("name").and_then(|n| n.as_str()) {
-                    out.push(name.to_string());
-                }
-            }
-            for v in map.values() {
-                collect_template_var_refs(v, out);
-            }
-        }
-        serde_json::Value::Array(arr) => {
-            for e in arr {
-                collect_template_var_refs(e, out);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Every CML `type: var` / `name` in the mapping template JSON (including nested bodies).
-pub fn capability_template_all_var_names(template: &serde_json::Value) -> Vec<String> {
-    let mut out = Vec::new();
-    collect_template_var_refs(template, &mut out);
-    out.sort();
-    out.dedup();
-    out
+/// True when CML mapping uses `transport: view` (composed view DAG, no direct HTTP).
+pub fn capability_mapping_is_view_transport(template: &serde_json::Value) -> bool {
+    template.get("transport").and_then(|t| t.as_str()) == Some("view")
 }
 
 /// True when the mapping sends the whole create/invoke aggregate via `body: { type: var, name: input }`.
@@ -1003,27 +907,6 @@ pub fn mapping_body_is_whole_var_input(template: &serde_json::Value) -> bool {
         body.get("type").and_then(|t| t.as_str()) == Some("var")
             && body.get("name").and_then(|n| n.as_str()) == Some("input")
     })
-}
-
-/// `type: var` / `name` entries under GraphQL `body` → `variables` (operation variables only).
-///
-/// Used with [`path_var_names_from_mapping_json`] for zero-arity `Issue(id).get()`: the HTTP `path` is
-/// only `/graphql`, but `variables.id` still needs the anchor id — without this, the parser wrongly
-/// defaulted the target id to `"0"`.
-///
-/// We intentionally **do not** scan the whole template (login bodies, pagination, etc.).
-pub fn graphql_operation_variable_names(template: &serde_json::Value) -> Vec<String> {
-    let mut out = Vec::new();
-    if template.get("transport").and_then(|t| t.as_str()) != Some("graphql") {
-        return out;
-    }
-    let Some(body) = template.get("body") else {
-        return out;
-    };
-    graphql_find_variables_block(body, &mut out);
-    out.sort();
-    out.dedup();
-    out
 }
 
 /// True when teaching table exemplars must use `Entity($)` / an anchored receiver (`Entity($).m()`), not a
@@ -1049,37 +932,6 @@ pub fn template_domain_exemplar_requires_entity_anchor(template: &serde_json::Va
 pub fn template_invoke_requires_explicit_anchor_id(template: &serde_json::Value) -> bool {
     !path_var_names_from_mapping_json(template).is_empty()
         || !graphql_operation_variable_names(template).is_empty()
-}
-
-fn graphql_find_variables_block(v: &serde_json::Value, out: &mut Vec<String>) {
-    match v {
-        serde_json::Value::Object(map) => {
-            if let Some(fields) = map.get("fields").and_then(|f| f.as_array()) {
-                for item in fields {
-                    if let Some(pair) = item.as_array() {
-                        if pair.len() >= 2 {
-                            let key = pair[0].as_str();
-                            let val = &pair[1];
-                            if key == Some("variables") {
-                                collect_template_var_refs(val, out);
-                                return;
-                            }
-                        }
-                    }
-                    graphql_find_variables_block(item, out);
-                }
-            }
-            for val in map.values() {
-                graphql_find_variables_block(val, out);
-            }
-        }
-        serde_json::Value::Array(arr) => {
-            for e in arr {
-                graphql_find_variables_block(e, out);
-            }
-        }
-        _ => {}
-    }
 }
 
 /// Path method segment for prompts and parser matching (`team_seats` → `seats` after domain strip).
@@ -1112,23 +964,23 @@ pub fn capability_method_label_kebab(cap: &CapabilitySchema) -> String {
 /// invalid, so such a capability is **not** zero-arity even when every individual field is optional —
 /// the teaching surface must synthesize `method(field=…)`, never a bare `method()`.
 pub fn capability_is_zero_arity_invoke(cap: &CapabilitySchema) -> bool {
-    let Some(is) = &cap.input_schema else {
-        return true;
-    };
-    let no_required_field = match &is.input_type {
-        InputType::Object { fields, .. } => !fields.iter().any(|f| f.required),
-        InputType::None => true,
-        _ => false,
-    };
-    if !no_required_field {
-        return false;
-    }
-    !is.validation.cross_field_rules.iter().any(|rule| {
-        matches!(
-            rule.rule_type,
-            CrossFieldRuleType::AtLeastOne | CrossFieldRuleType::ExactlyOne
-        )
-    })
+    [cap.inputs.arguments.as_ref(), cap.inputs.payload.as_ref()]
+        .into_iter()
+        .flatten()
+        .all(|schema| {
+            let no_required_field = match &schema.input_type {
+                InputType::Object { fields, .. } => !fields.iter().any(|f| f.required),
+                InputType::None => true,
+                _ => false,
+            };
+            no_required_field
+                && !schema.validation.cross_field_rules.iter().any(|rule| {
+                    matches!(
+                        rule.rule_type,
+                        CrossFieldRuleType::AtLeastOne | CrossFieldRuleType::ExactlyOne
+                    )
+                })
+        })
 }
 
 /// Deprecated alias for [`capability_is_zero_arity_invoke`].
@@ -1281,9 +1133,6 @@ pub struct InputFieldSchema {
     pub description: Option<String>,
     /// Default value if not provided
     pub default: Option<crate::Value>,
-    /// Semantic role of this parameter. Defaults to `filter`.
-    /// Agents and LLM tooling use this to understand how the param affects results.
-    pub role: Option<ParameterRole>,
     /// Optional sink class for information-flow validation on this parameter.
     pub sink_class: Option<SinkClassName>,
     /// When set on a union variant body field: nest this field's JSON under these segments when
@@ -1295,6 +1144,7 @@ pub struct InputFieldSchema {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct InputFieldSchemaDeHelper {
     name: String,
     #[serde(default)]
@@ -1307,8 +1157,6 @@ struct InputFieldSchemaDeHelper {
     description: Option<String>,
     #[serde(default)]
     default: Option<crate::Value>,
-    #[serde(default)]
-    role: Option<ParameterRole>,
     #[serde(default)]
     sink_class: Option<SinkClassName>,
     #[serde(default)]
@@ -1342,7 +1190,6 @@ impl TryFrom<InputFieldSchemaDeHelper> for InputFieldSchema {
             required: h.required,
             description: h.description,
             default: h.default,
-            role: h.role,
             sink_class: h.sink_class,
             wire_json_path: h.wire_json_path,
             wire_array_element_key: h.wire_array_element_key,
@@ -1352,7 +1199,7 @@ impl TryFrom<InputFieldSchemaDeHelper> for InputFieldSchema {
 
 impl Serialize for InputFieldSchema {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut state = serializer.serialize_struct("InputFieldSchema", 10)?;
+        let mut state = serializer.serialize_struct("InputFieldSchema", 9)?;
         state.serialize_field("name", &self.name)?;
         match &self.wire {
             InputFieldWire::Registry(k) => state.serialize_field("value_ref", k)?,
@@ -1364,9 +1211,6 @@ impl Serialize for InputFieldSchema {
         }
         if self.default.is_some() {
             state.serialize_field("default", &self.default)?;
-        }
-        if !is_default_role(&self.role) {
-            state.serialize_field("role", &self.role)?;
         }
         if self.sink_class.is_some() {
             state.serialize_field("sink_class", &self.sink_class)?;
@@ -1388,28 +1232,6 @@ impl<'de> Deserialize<'de> for InputFieldSchema {
     }
 }
 
-fn is_default_role(r: &Option<ParameterRole>) -> bool {
-    matches!(r, None | Some(ParameterRole::Filter))
-}
-
-fn effective_string_semantics_of_input_type(ty: &InputType, cgs: &CGS) -> StringSemantics {
-    match ty {
-        InputType::None | InputType::Value { .. } => StringSemantics::Short,
-        InputType::Object { fields, .. } => fields
-            .first()
-            .map(|f| f.effective_string_semantics(cgs))
-            .unwrap_or(StringSemantics::Short),
-        InputType::Array { element_type, .. } => {
-            effective_string_semantics_of_input_type(element_type.as_ref(), cgs)
-        }
-        InputType::Union { variants } => variants
-            .first()
-            .and_then(|v| v.fields.first())
-            .map(|f| f.effective_string_semantics(cgs))
-            .unwrap_or(StringSemantics::Short),
-    }
-}
-
 /// [`InputType::Object`] view of a union variant payload (no wire discriminator in the surface form).
 #[inline]
 pub fn input_variant_body_type(v: &InputVariantSchema) -> InputType {
@@ -1425,26 +1247,38 @@ pub fn union_variant_constructor_symbol(v: &InputVariantSchema) -> Option<&str> 
     v.constructor_symbol.as_deref()
 }
 
-/// Resolve a dotted capability input path (`operations.replace_block.ref`) against `cap.input_schema`.
+/// Resolve a dotted capability input path (`operations.replace_block.ref`) against structural
+/// source lanes (`scope` / `selection` / `controls`) first, then invocation schemas.
 pub(crate) fn resolve_capability_input_param_field<'a>(
     cap: &'a CapabilitySchema,
     path: &str,
 ) -> Option<&'a InputFieldSchema> {
-    let is = cap.input_schema.as_ref()?;
     if path.is_empty() {
         return None;
     }
     let segments: Vec<&str> = path.split('.').collect();
-    match &is.input_type {
-        InputType::Object { fields, .. } => resolve_input_fields_path(fields, segments.as_slice()),
-        InputType::Union { variants } => {
-            for v in variants {
-                if let Some(f) = resolve_input_fields_path(&v.fields, segments.as_slice()) {
-                    return Some(f);
-                }
-            }
-            None
+    for fields in [
+        cap.scope_params(),
+        cap.selection_params(),
+        cap.control_params(),
+    ] {
+        if let Some(field) = resolve_input_fields_path(fields, &segments) {
+            return Some(field);
         }
+    }
+    cap.invocation_input_schemas()
+        .find_map(|schema| resolve_in_invocation_schema(schema, &segments))
+}
+
+fn resolve_in_invocation_schema<'a>(
+    schema: &'a InputSchema,
+    segments: &[&str],
+) -> Option<&'a InputFieldSchema> {
+    match &schema.input_type {
+        InputType::Object { fields, .. } => resolve_input_fields_path(fields, segments),
+        InputType::Union { variants } => variants
+            .iter()
+            .find_map(|v| resolve_input_fields_path(&v.fields, segments)),
         _ => None,
     }
 }
@@ -1538,22 +1372,37 @@ impl InputFieldSchema {
         }
     }
 
-    pub fn effective_string_semantics(&self, cgs: &CGS) -> StringSemantics {
-        match &self.wire {
-            InputFieldWire::Registry(_) => match self.named_value(cgs) {
-                Ok(nv) => nv.string_semantics.unwrap_or(StringSemantics::Short),
-                Err(_) => StringSemantics::Short,
-            },
-            InputFieldWire::Inline(ty) => {
-                effective_string_semantics_of_input_type(ty.as_ref(), cgs)
-            }
-        }
-    }
-
     pub fn resolved_array_items<'a>(&self, cgs: &'a CGS) -> Option<&'a ArrayItemsSchema> {
         self.named_value(cgs)
             .ok()
             .and_then(|nv| nv.array_items.as_ref())
+    }
+
+    /// Whether this input slot expects structured or multiline string payloads.
+    pub fn is_structured_or_multiline(&self, cgs: &CGS) -> bool {
+        match &self.wire {
+            InputFieldWire::Registry(_) => self
+                .named_value(cgs)
+                .map(|nv| nv.domain.is_structured_or_multiline())
+                .unwrap_or(false),
+            InputFieldWire::Inline(ty) => input_type_is_structured_or_multiline(ty.as_ref(), cgs),
+        }
+    }
+}
+
+fn input_type_is_structured_or_multiline(ty: &InputType, cgs: &CGS) -> bool {
+    match ty {
+        InputType::None | InputType::Value { .. } => false,
+        InputType::Object { fields, .. } => {
+            fields.iter().any(|f| f.is_structured_or_multiline(cgs))
+        }
+        InputType::Array { element_type, .. } => {
+            input_type_is_structured_or_multiline(element_type.as_ref(), cgs)
+        }
+        InputType::Union { variants } => variants
+            .iter()
+            .flat_map(|v| v.fields.iter())
+            .any(|f| f.is_structured_or_multiline(cgs)),
     }
 }
 
@@ -1571,12 +1420,11 @@ impl ValueDomainSlot for ArrayItemsSchema {
     }
 }
 
-/// Validation constraints for inputs
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+const INPUT_VALIDATION_PREDICATES_REMOVED: &str = "input_schema.validation.predicates is removed: declare scalar constraints (min, max, min_length, max_length, pattern, …) on the corresponding `values:` row via value_ref; keep only cross_field_rules and allow_null under validation";
+
+/// Cross-field validation for capability inputs (`allow_null`, `cross_field_rules` only).
+#[derive(Debug, Clone, PartialEq, Serialize, Default)]
 pub struct InputValidation {
-    /// Custom validation predicates that must be satisfied
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub predicates: Vec<ValidationPredicate>,
     /// Whether null/undefined inputs are allowed
     #[serde(default)]
     pub allow_null: bool,
@@ -1585,37 +1433,29 @@ pub struct InputValidation {
     pub cross_field_rules: Vec<CrossFieldRule>,
 }
 
-/// A validation predicate for input values
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ValidationPredicate {
-    /// Field path this predicate applies to (dot notation: "user.email")
-    pub field_path: String,
-    /// The validation operator
-    pub operator: ValidationOp,
-    /// The value to validate against
-    pub value: crate::Value,
-    /// Error message if validation fails
-    pub error_message: String,
-}
-
-/// Validation operators for input constraints
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ValidationOp {
-    /// Minimum length for strings/arrays
-    MinLength,
-    /// Maximum length for strings/arrays
-    MaxLength,
-    /// Minimum value for numbers
-    MinValue,
-    /// Maximum value for numbers
-    MaxValue,
-    /// Regular expression pattern for strings
-    Pattern,
-    /// Custom validation function reference
-    CustomFunction,
-    /// Dependency on another field
-    DependsOn,
+impl<'de> Deserialize<'de> for InputValidation {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Raw {
+            #[serde(default)]
+            predicates: Option<serde_yaml::Value>,
+            #[serde(default)]
+            allow_null: bool,
+            #[serde(default)]
+            cross_field_rules: Vec<CrossFieldRule>,
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        if raw.predicates.is_some() {
+            return Err(SerdeDeError::custom(INPUT_VALIDATION_PREDICATES_REMOVED));
+        }
+        Ok(Self {
+            allow_null: raw.allow_null,
+            cross_field_rules: raw.cross_field_rules,
+        })
+    }
 }
 
 /// Cross-field validation rules
@@ -2051,7 +1891,7 @@ impl CgsIncomingNavIndex {
                 let Ok(nv) = f.named_value(cgs) else {
                     continue;
                 };
-                if let FieldType::EntityRef { target } = &nv.field_type {
+                if let FieldType::EntityRef { target, .. } = &nv.field_type {
                     by_target
                         .entry(EntityName::from(target.as_str()))
                         .or_default()
@@ -2081,7 +1921,7 @@ impl CgsIncomingNavIndex {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CgsCapabilityIndex {
     by_domain_kind: IndexMap<(EntityName, CapabilityKind), Vec<CapabilityName>>,
-    /// Create capabilities that bind `{anchor}_id` from a path anchor entity.
+    /// Create capabilities whose CML path vars project from a path-anchor entity's identity.
     creates_by_anchor: IndexMap<EntityName, Vec<CapabilityName>>,
 }
 
@@ -2098,10 +1938,10 @@ impl CgsCapabilityIndex {
             if cap.kind != CapabilityKind::Create {
                 continue;
             }
-            for anchor in cgs.entities.keys() {
-                if can_bind_create_from_anchor(cap, anchor.as_str()) {
+            for (anchor_name, anchor_ent) in cgs.entities.iter() {
+                if can_bind_create_from_anchor(cap, anchor_ent) {
                     creates_by_anchor
-                        .entry(anchor.clone())
+                        .entry(anchor_name.clone())
                         .or_default()
                         .push(cap_name.clone());
                 }
@@ -2282,6 +2122,11 @@ pub const DEFAULT_HTTP_BACKEND: &str = "http://localhost:1080";
 /// Capability Graph Schema (CGS) - the root schema container.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CGS {
+    #[serde(
+        default,
+        skip_serializing_if = "crate::prerequisites::PrerequisiteCatalog::is_empty"
+    )]
+    pub prerequisites: crate::prerequisites::PrerequisiteCatalog,
     pub entities: IndexMap<EntityName, EntityDef>,
     pub capabilities: IndexMap<CapabilityName, CapabilitySchema>,
     /// Reusable value domains (`values:`), catalog-local (not merged across federation).
@@ -2370,6 +2215,7 @@ fn views_map_is_empty(m: &IndexMap<String, ViewDefinition>) -> bool {
 impl Clone for CGS {
     fn clone(&self) -> Self {
         Self {
+            prerequisites: self.prerequisites.clone(),
             entities: self.entities.clone(),
             capabilities: self.capabilities.clone(),
             values: self.values.clone(),
@@ -2397,7 +2243,8 @@ impl Clone for CGS {
 
 impl PartialEq for CGS {
     fn eq(&self, other: &Self) -> bool {
-        self.entities == other.entities
+        self.prerequisites == other.prerequisites
+            && self.entities == other.entities
             && self.capabilities == other.capabilities
             && self.values == other.values
             && self.data_classes == other.data_classes
@@ -2451,9 +2298,15 @@ pub struct EntityDef {
         skip_serializing_if = "domain_projection_examples_is_default"
     )]
     pub domain_projection_examples: bool,
-    /// Optional: capability **id** of a **Get** on this entity for teaching heading projection order (see [`CGS::resolved_primary_get_for_projection`]).
+    /// Capability **id** of the canonical **Get** (required when 2+ Gets).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub primary_read: Option<String>,
+    /// Capability **id** of the canonical **Query** (obsolete for multi-query — illegal; optional explicit pointer when a sole Query exists).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_query: Option<String>,
+    /// Capability **id** of the canonical unscoped **Search** (required when 2+ unscoped Searches).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_search: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discovery: Option<DiscoveryEntityHints>,
 }
@@ -2525,15 +2378,63 @@ impl ResourceSchema {
             abstract_entity: self.abstract_entity,
             domain_projection_examples: self.domain_projection_examples,
             primary_read: self.primary_read.clone(),
+            primary_query: self.primary_query.clone(),
+            primary_search: self.primary_search.clone(),
             discovery: self.discovery.clone(),
         })
     }
 }
 
+fn stamp_field_type_entity_ref(ft: &mut FieldType, eid: &crate::identity::RegistryEntryId) {
+    if let FieldType::EntityRef { entry_id, .. } = ft {
+        *entry_id = eid.clone();
+    }
+}
+
+fn stamp_kernel_entity_ref(
+    kernel: &mut crate::value_domain::KernelKind,
+    eid: &crate::identity::RegistryEntryId,
+) {
+    if let crate::value_domain::KernelKind::EntityRef { entry_id, .. } = kernel {
+        *entry_id = eid.clone();
+    }
+}
+
+fn stamp_named_value_entity_refs(
+    nv: &mut NamedValueSchema,
+    eid: &crate::identity::RegistryEntryId,
+) {
+    stamp_field_type_entity_ref(&mut nv.field_type, eid);
+    stamp_kernel_entity_ref(&mut nv.domain.kernel, eid);
+    if let Some(ai) = nv.array_items.as_mut() {
+        stamp_field_type_entity_ref(&mut ai.field_type, eid);
+    }
+}
+
 impl CGS {
+    /// Bind this graph to a registry `entry_id` and stamp every [`FieldType::EntityRef`] /
+    /// [`KernelKind::EntityRef`] with that ownership. Prefer this over assigning `entry_id`
+    /// then calling [`Self::stamp_entity_ref_catalogs`] separately.
+    pub fn bind_registry_entry_id(&mut self, id: impl Into<String>) {
+        self.entry_id = Some(id.into());
+        self.stamp_entity_ref_catalogs();
+    }
+
+    /// Stamp every [`FieldType::EntityRef`] / [`KernelKind::EntityRef`] with this catalog's
+    /// `entry_id` (empty string when unset). Intra-catalog default for homograph-safe types.
+    pub fn stamp_entity_ref_catalogs(&mut self) {
+        let eid = crate::identity::RegistryEntryId::new(
+            self.entry_id.as_deref().unwrap_or_default().to_owned(),
+        );
+        for nv in self.values.values_mut() {
+            stamp_named_value_entity_refs(nv, &eid);
+        }
+    }
+
     /// Create a new empty CGS.
     pub fn new() -> Self {
         Self {
+            prerequisites: Default::default(),
             entities: IndexMap::new(),
             capabilities: IndexMap::new(),
             values: IndexMap::new(),
@@ -2560,7 +2461,7 @@ impl CGS {
 
     /// Canonical [`NamedValueSchema`] row for a registry-backed slot (`FieldSchema`, [`InputFieldSchema`], [`ArrayItemsSchema`]).
     ///
-    /// Wire shape (`field_type`, `value_format`, `allowed_values`) and `string_semantics` / `array_items`
+    /// Wire shape (`field_type`, `value_format`, `allowed_values`) and `array_items`
     /// live on the registry row — slots carry only `value_ref` plus use-site fields.
     pub fn named_value_for_slot(
         &self,
@@ -2742,6 +2643,9 @@ impl CGS {
 
     /// Validate all cross-references in this schema (includes expression-teaching surface).
     pub fn validate(&self) -> Result<(), SchemaError> {
+        self.prerequisites
+            .validate(self)
+            .map_err(|detail| SchemaError::PrerequisiteInvalid { detail })?;
         self.validate_core()
     }
 
@@ -2772,7 +2676,15 @@ impl CGS {
                 });
             }
 
-            let template = &cap.mapping.template.0;
+            let template = &cap
+                .require_mapping()
+                .map_err(|detail| SchemaError::ViewCapabilityMappingInvalid {
+                    view: view_key.clone(),
+                    capability: view.capability.clone(),
+                    detail,
+                })?
+                .template
+                .0;
             if template.get("transport").and_then(|x| x.as_str()) != Some("view") {
                 return Err(SchemaError::ViewCapabilityMappingInvalid {
                     view: view_key.clone(),
@@ -2843,12 +2755,8 @@ impl CGS {
                     }
                 }
 
-                let mut allowed_params: HashSet<String> = HashSet::new();
-                if let Some(fields) = nc.object_params() {
-                    for f in fields {
-                        allowed_params.insert(f.name.clone());
-                    }
-                }
+                let mut allowed_params: HashSet<String> =
+                    nc.input_fields().map(|f| f.name.clone()).collect();
                 if nc.kind == CapabilityKind::Get {
                     allowed_params.insert("id".to_string());
                 }
@@ -2991,7 +2899,10 @@ impl CGS {
 
         // Every capability with `transport: view` must reference an existing view and match its entity domain.
         for (cap_name, cap) in &self.capabilities {
-            let template = &cap.mapping.template.0;
+            let Some(mapping) = &cap.mapping else {
+                continue;
+            };
+            let template = &mapping.template.0;
             if template.get("transport").and_then(|x| x.as_str()) != Some("view") {
                 continue;
             }
@@ -3023,6 +2934,16 @@ impl CGS {
         Ok(())
     }
 
+    fn validate_derived_gets(&self) -> Result<(), SchemaError> {
+        for (cap_name, cap) in &self.capabilities {
+            crate::derived_get::validate_capability_backend(cap_name.as_str(), cap)?;
+            if let Some(plan) = &cap.derived {
+                crate::derived_get::validate_derived_get(self, cap_name.as_str(), plan)?;
+            }
+        }
+        Ok(())
+    }
+
     fn validate_workflow_identity(&self) -> Result<(), SchemaError> {
         if !self.workflow_identity {
             return Ok(());
@@ -3041,12 +2962,8 @@ impl CGS {
                 });
             }
             if let Some(keys) = &cap.identity_key {
-                let params: std::collections::HashSet<String> = cap
-                    .object_params()
-                    .into_iter()
-                    .flatten()
-                    .map(|f| f.name.clone())
-                    .collect();
+                let params: std::collections::HashSet<String> =
+                    cap.input_fields().map(|f| f.name.clone()).collect();
                 for key in keys {
                     if !params.contains(key.as_str()) {
                         return Err(SchemaError::IdentityKeyUnknownParam {
@@ -3078,26 +2995,51 @@ impl CGS {
     fn validate_core(&self) -> Result<(), SchemaError> {
         for (entity_name, entity) in &self.entities {
             if let Some(ref cap_id) = entity.primary_read {
-                let Some(cap) = self.capabilities.get(cap_id.as_str()) else {
-                    return Err(SchemaError::UnknownPrimaryReadCapability {
-                        entity: entity_name.to_string(),
-                        capability: cap_id.clone(),
-                    });
-                };
-                if cap.domain != *entity_name {
-                    return Err(SchemaError::PrimaryReadWrongDomain {
-                        entity: entity_name.to_string(),
-                        capability: cap_id.clone(),
-                        domain: cap.domain.to_string(),
-                    });
-                }
-                if cap.kind != CapabilityKind::Get {
-                    return Err(SchemaError::PrimaryReadNotGet {
-                        entity: entity_name.to_string(),
-                        capability: cap_id.clone(),
-                        kind: format!("{:?}", cap.kind),
-                    });
-                }
+                Self::validate_primary_read_ref(self, entity_name.as_str(), cap_id)?;
+            }
+            if let Some(ref cap_id) = entity.primary_query {
+                Self::validate_primary_query_ref(self, entity_name.as_str(), cap_id)?;
+            }
+            if let Some(ref cap_id) = entity.primary_search {
+                Self::validate_primary_search_ref(self, entity_name.as_str(), cap_id)?;
+            }
+
+            let get_caps: Vec<_> = self
+                .find_capabilities(entity_name.as_str(), CapabilityKind::Get)
+                .into_iter()
+                .map(|c| c.name.to_string())
+                .collect();
+            if get_caps.len() > 1 && entity.primary_read.is_none() {
+                return Err(SchemaError::AmbiguousPrimaryRead {
+                    entity: entity_name.to_string(),
+                    capabilities: get_caps,
+                });
+            }
+
+            let query_caps: Vec<_> = self
+                .find_capabilities(entity_name.as_str(), CapabilityKind::Query)
+                .into_iter()
+                .map(|c| c.name.to_string())
+                .collect();
+            if query_caps.len() > 1 {
+                return Err(SchemaError::TooManyQueryCapabilities {
+                    entity: entity_name.to_string(),
+                    count: query_caps.len(),
+                    capabilities: query_caps,
+                });
+            }
+
+            let search_caps: Vec<_> = self
+                .find_capabilities(entity_name.as_str(), CapabilityKind::Search)
+                .into_iter()
+                .map(|c| c.name.to_string())
+                .collect();
+            if search_caps.len() > 1 {
+                return Err(SchemaError::TooManySearchCapabilities {
+                    entity: entity_name.to_string(),
+                    count: search_caps.len(),
+                    capabilities: search_caps,
+                });
             }
         }
 
@@ -3310,18 +3252,7 @@ impl CGS {
         for (entity_name, entity) in &self.entities {
             for (field_name, field) in &entity.fields {
                 let nv = field.named_value(self)?;
-                if matches!(nv.field_type, FieldType::Blob) && nv.string_semantics.is_some() {
-                    return Err(SchemaError::StringSemanticsOnNonString {
-                        entity: entity_name.to_string(),
-                        field: field_name.to_string(),
-                    });
-                } else if !matches!(nv.field_type, FieldType::String | FieldType::Blob) {
-                    if nv.string_semantics.is_some() {
-                        return Err(SchemaError::StringSemanticsOnNonString {
-                            entity: entity_name.to_string(),
-                            field: field_name.to_string(),
-                        });
-                    }
+                if !matches!(nv.field_type, FieldType::String | FieldType::Blob) {
                     if field.agent_presentation.is_some() {
                         return Err(SchemaError::AgentPresentationOnNonString {
                             entity: entity_name.to_string(),
@@ -3335,7 +3266,7 @@ impl CGS {
                         });
                     }
                 }
-                if let FieldType::EntityRef { target } = &nv.field_type {
+                if let FieldType::EntityRef { target, .. } = &nv.field_type {
                     if !self.entities.contains_key(target) {
                         return Err(SchemaError::EntityRefUnknownTarget {
                             target: target.to_string(),
@@ -3358,7 +3289,7 @@ impl CGS {
                     });
                 }
                 if let Some(ai) = nv.array_items.as_ref() {
-                    if let FieldType::EntityRef { target } = &ai.field_type {
+                    if let FieldType::EntityRef { target, .. } = &ai.field_type {
                         if !self.entities.contains_key(target) {
                             return Err(SchemaError::EntityRefUnknownTarget {
                                 target: target.to_string(),
@@ -3375,13 +3306,9 @@ impl CGS {
 
         // EntityRef on capability parameters, name-alignment for query capabilities
         for (cap_name, cap) in &self.capabilities {
-            let Some(fields) = cap.object_params() else {
-                continue;
-            };
-
             let domain_entity = self.entities.get(&cap.domain);
 
-            for param in fields {
+            for param in cap.input_fields() {
                 match &param.wire {
                     InputFieldWire::Inline(ty) => {
                         Self::validate_input_type_capability_param_shapes(
@@ -3441,36 +3368,16 @@ impl CGS {
         self.validate_closed_data_class_refs()?;
         self.validate_registry_denormalization()?;
         self.validate_pipeline_segment_disjointness()?;
+        self.validate_capability_input_lanes()?;
 
-        // At most one parameterless (no required params at all) query/search per entity.
-        // Multiple query caps with required params are fine — the first unscoped one
-        // becomes the `query` verb; others get named subcommands.
-        // Only flag an error if there are multiple capabilities with zero required params
-        // (ambiguous which is the "list all" endpoint).
-        //
-        // Query and Search resolution are structurally disjoint: `resolve_query_capability`
+        // At most one kind:query and at most one kind:search per entity is enforced above.
+        // Query and Search resolution remain structurally disjoint: `resolve_query_capability`
         // only considers Query caps; Search is resolved at parse time (`Entity~"text"` stamps
         // `capability_name`) or by CLI dispatch (`"search"` verb). No cross-kind fallback.
-        for entity_name in self.entities.keys() {
-            for kind in [CapabilityKind::Query, CapabilityKind::Search] {
-                let parameterless: Vec<_> = self
-                    .find_capabilities(entity_name, kind)
-                    .into_iter()
-                    .filter(|cap| !cap.has_required_scope_param() && !cap.has_any_required_param())
-                    .collect();
-                if parameterless.len() > 1 {
-                    let names: Vec<_> = parameterless.iter().map(|c| c.name.as_str()).collect();
-                    return Err(SchemaError::DuplicateCapability {
-                        entity: entity_name.to_string(),
-                        kind: format!("{:?}", kind),
-                        capabilities: names.iter().map(|s| s.to_string()).collect(),
-                    });
-                }
-            }
-        }
 
         self.validate_schema_overlay()?;
         self.validate_views()?;
+        self.validate_derived_gets()?;
         self.validate_body_var_input_param_collisions()?;
 
         if !crate::loader::plasm_cgs_fast_load_enabled() {
@@ -3519,18 +3426,105 @@ impl CGS {
         Ok(())
     }
 
+    fn validate_capability_input_lanes(&self) -> Result<(), SchemaError> {
+        for (cap_name, cap) in &self.capabilities {
+            if matches!(cap.kind, CapabilityKind::Query | CapabilityKind::Search)
+                && (cap.inputs.arguments.is_some() || cap.inputs.payload.is_some())
+            {
+                return Err(SchemaError::SchemaConstraint {
+                    message: format!(
+                        "capability '{cap_name}': query/search inputs may only use scope, selection, and controls"
+                    ),
+                });
+            }
+            if !matches!(cap.kind, CapabilityKind::Query | CapabilityKind::Search)
+                && !cap.selection_params().is_empty()
+            {
+                return Err(SchemaError::SchemaConstraint {
+                    message: format!(
+                        "capability '{cap_name}': selection is only valid on query/search capabilities"
+                    ),
+                });
+            }
+            if cap.kind == CapabilityKind::Search {
+                match cap.search_text_selection_param() {
+                    None => {
+                        return Err(SchemaError::SearchMissingFreeText {
+                            capability: cap_name.to_string(),
+                        });
+                    }
+                    Some(field) if !field.required => {
+                        return Err(SchemaError::SearchOptionalFreeText {
+                            capability: cap_name.to_string(),
+                            param: field.name.clone(),
+                        });
+                    }
+                    Some(_) => {}
+                }
+            }
+
+            let mut owners = std::collections::BTreeMap::<String, &'static str>::new();
+            let mut register = |name: &str, lane: &'static str| -> Result<(), SchemaError> {
+                if name.trim().is_empty() {
+                    return Err(SchemaError::SchemaConstraint {
+                        message: format!(
+                            "capability '{cap_name}': {lane} contains an empty input name"
+                        ),
+                    });
+                }
+                if let Some(previous) = owners.insert(name.to_string(), lane) {
+                    return Err(SchemaError::SchemaConstraint {
+                        message: format!(
+                            "capability '{cap_name}': input '{name}' appears in both {previous} and {lane}; capability input lanes must be disjoint"
+                        ),
+                    });
+                }
+                Ok(())
+            };
+
+            for field in cap.scope_params() {
+                register(&field.name, "scope")?;
+            }
+            for field in cap.selection_params() {
+                register(&field.name, "selection")?;
+            }
+            for field in cap.control_params() {
+                register(&field.name, "controls")?;
+            }
+            for field in cap
+                .inputs
+                .arguments
+                .as_ref()
+                .into_iter()
+                .flat_map(input_schema_top_level_fields)
+            {
+                register(&field.name, "arguments")?;
+            }
+            for field in cap
+                .inputs
+                .payload
+                .as_ref()
+                .into_iter()
+                .flat_map(input_schema_top_level_fields)
+            {
+                register(&field.name, "payload")?;
+            }
+        }
+        Ok(())
+    }
+
     /// Reject `body: { type: var, name: input }` when a scalar capability parameter is also named
     /// `input`. [`execute_create`](../../crates/plasm-runtime/src/execution.rs) splats each param key
     /// into the CML env after binding the aggregate, overwriting `env["input"]` with the scalar.
     fn validate_body_var_input_param_collisions(&self) -> Result<(), SchemaError> {
         for (cap_name, cap) in &self.capabilities {
-            if !mapping_body_is_whole_var_input(&cap.mapping.template.0) {
-                continue;
-            }
-            let Some(fields) = cap.object_params() else {
+            let Some(mapping) = &cap.mapping else {
                 continue;
             };
-            for param in fields {
+            if !mapping_body_is_whole_var_input(&mapping.template.0) {
+                continue;
+            }
+            for param in cap.input_fields() {
                 if param.name.as_str() != "input" {
                     continue;
                 }
@@ -3657,44 +3651,6 @@ impl CGS {
         Ok(())
     }
 
-    fn for_each_registry_input_field_in_field(
-        cgs: &CGS,
-        field: &InputFieldSchema,
-        f: &mut impl FnMut(&InputFieldSchema),
-    ) {
-        match &field.wire {
-            InputFieldWire::Inline(ty) => {
-                Self::for_each_registry_input_field_in_type(cgs, ty.as_ref(), f);
-            }
-            InputFieldWire::Registry(_) => f(field),
-        }
-    }
-
-    fn for_each_registry_input_field_in_type(
-        cgs: &CGS,
-        input_type: &InputType,
-        f: &mut impl FnMut(&InputFieldSchema),
-    ) {
-        match input_type {
-            InputType::Object { fields, .. } => {
-                for field in fields {
-                    Self::for_each_registry_input_field_in_field(cgs, field, f);
-                }
-            }
-            InputType::Array { element_type, .. } => {
-                Self::for_each_registry_input_field_in_type(cgs, element_type.as_ref(), f);
-            }
-            InputType::Union { variants } => {
-                for v in variants {
-                    for field in &v.fields {
-                        Self::for_each_registry_input_field_in_field(cgs, field, f);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
     /// Warnings for read-provided structured/multiline string fields that omit `data_class`.
     ///
     /// Only runs when the catalog declares a non-empty `data_classes:` registry (opt-in to
@@ -3736,11 +3692,10 @@ impl CGS {
             if !matches!(nv.field_type, FieldType::String) {
                 continue;
             }
-            let sem = field.effective_string_semantics(self);
-            if !sem.is_structured_or_multiline() {
+            if !field.is_structured_or_multiline(self) {
                 continue;
             }
-            let sem_label = sem.gloss_type_keyword().unwrap_or("structured");
+            let sem_label = nv.domain.gloss_type_keyword();
             out.push(format!(
                 "entity '{entity_name}', field '{field_name}': read-provided {sem_label} string has no data_class — plan-flow treats this output as unlabeled (set data_class: to a key under data_classes:)"
             ));
@@ -3748,44 +3703,59 @@ impl CGS {
         out
     }
 
-    /// Violations when a `string` entity field or capability parameter omits `string_semantics` (required at load).
-    pub fn string_semantics_violations(&self) -> Vec<String> {
+    /// Warn when an entity would teach a large multi-arity method or relation-nav surface.
+    ///
+    /// Thresholds are **warn-only** — the teaching renderer still emits every authored line.
+    /// Hard errors for competing list surfaces live on [`SchemaError::TooManyQueryCapabilities`] /
+    /// [`SchemaError::TooManySearchCapabilities`].
+    pub fn teaching_surface_fat_warnings(&self) -> Vec<String> {
+        const WARN_MULTI_ARITY_METHODS: usize = 16;
+        const WARN_REL_NAVS: usize = 4;
+
         let mut out = Vec::new();
         for (entity_name, entity) in &self.entities {
-            for (field_name, field) in &entity.fields {
-                let key = field.kind.registry_key().as_str();
-                let Some(nv) = self.values.get(key) else {
-                    continue;
-                };
-                if !matches!(nv.field_type, FieldType::String) {
+            let method_count = self
+                .capabilities
+                .values()
+                .filter(|cap| {
+                    cap.domain.as_str() == entity_name.as_str()
+                        && matches!(
+                            cap.kind,
+                            CapabilityKind::Create
+                                | CapabilityKind::Update
+                                | CapabilityKind::Delete
+                                | CapabilityKind::Action
+                        )
+                        && !capability_is_zero_arity_invoke(cap)
+                })
+                .count()
+                + self.create_caps_for_anchor(entity_name.as_str()).len();
+            if method_count > WARN_MULTI_ARITY_METHODS {
+                out.push(format!(
+                    "entity '{entity_name}': {method_count} multi-arity methods will be taught (warn threshold {WARN_MULTI_ARITY_METHODS}) — compress actions or split entities if the teaching card is too large"
+                ));
+            }
+
+            let mut nav_count = entity.relations.len();
+            let rel_names: std::collections::HashSet<&str> =
+                entity.relations.keys().map(|s| s.as_str()).collect();
+            for (fname, field) in &entity.fields {
+                if rel_names.contains(fname.as_str()) {
                     continue;
                 }
-                if nv.string_semantics.is_none() {
-                    out.push(format!(
-                        "entity '{}', field '{}': string field must declare string_semantics (short, markdown, document, html, json_text, or blob); use field_type: blob for opaque binary instead of string_semantics: blob",
-                        entity_name, field_name
-                    ));
+                if field
+                    .named_value(self)
+                    .ok()
+                    .is_some_and(|nv| matches!(nv.field_type, FieldType::EntityRef { .. }))
+                {
+                    nav_count += 1;
                 }
             }
-        }
-        for (cap_name, cap) in &self.capabilities {
-            let Some(input) = cap.input_schema.as_ref() else {
-                continue;
-            };
-            Self::for_each_registry_input_field_in_type(self, &input.input_type, &mut |param| {
-                let Ok(nv) = param.named_value(self) else {
-                    return;
-                };
-                if !matches!(nv.field_type, FieldType::String) {
-                    return;
-                }
-                if nv.string_semantics.is_none() {
-                    out.push(format!(
-                        "capability '{}', parameter '{}': string parameter must declare string_semantics (short, markdown, document, html, json_text, or blob)",
-                        cap_name, param.name
-                    ));
-                }
-            });
+            if nav_count > WARN_REL_NAVS {
+                out.push(format!(
+                    "entity '{entity_name}': {nav_count} relation/entity_ref nav slots will be taught (warn threshold {WARN_REL_NAVS}) — prefer fewer edges or a tighter seed surface if the teaching card is too large"
+                ));
+            }
         }
         out
     }
@@ -4074,13 +4044,7 @@ impl CGS {
         domain_entity: Option<&EntityDef>,
     ) -> Result<(), SchemaError> {
         let nv = param.named_value(cgs)?;
-        if !matches!(nv.field_type, FieldType::String) && nv.string_semantics.is_some() {
-            return Err(SchemaError::StringSemanticsOnNonStringParam {
-                capability: cap_name.to_string(),
-                param: param.name.clone(),
-            });
-        }
-        if let FieldType::EntityRef { target } = &nv.field_type {
+        if let FieldType::EntityRef { target, .. } = &nv.field_type {
             if !cgs.entities.contains_key(target) {
                 return Err(SchemaError::EntityRefUnknownTarget {
                     target: target.to_string(),
@@ -4103,7 +4067,7 @@ impl CGS {
             });
         }
         if let Some(ai) = nv.array_items.as_ref() {
-            if let FieldType::EntityRef { target } = &ai.field_type {
+            if let FieldType::EntityRef { target, .. } = &ai.field_type {
                 if !cgs.entities.contains_key(target) {
                     return Err(SchemaError::EntityRefUnknownTarget {
                         target: target.to_string(),
@@ -4119,6 +4083,7 @@ impl CGS {
         if cap.kind == CapabilityKind::Query {
             if let FieldType::EntityRef {
                 target: param_target,
+                ..
             } = &nv.field_type
             {
                 if let Some(ent) = domain_entity {
@@ -4126,6 +4091,7 @@ impl CGS {
                         let field_nv = entity_field.named_value(cgs)?;
                         if let FieldType::EntityRef {
                             target: field_target,
+                            ..
                         } = &field_nv.field_type
                         {
                             if param_target != field_target {
@@ -4266,7 +4232,20 @@ impl CGS {
         }
 
         for (cap_name, cap) in &self.capabilities {
-            if let Some(ref is) = cap.input_schema {
+            for field in cap
+                .scope_params()
+                .iter()
+                .chain(cap.selection_params())
+                .chain(cap.control_params())
+            {
+                Self::validate_input_field_closed_value_refs(
+                    self,
+                    field,
+                    &format!("capability '{cap_name}'"),
+                    &check_array_items,
+                )?;
+            }
+            for is in cap.invocation_input_schemas() {
                 Self::validate_input_type_closed_value_refs(
                     self,
                     &is.input_type,
@@ -4396,7 +4375,20 @@ impl CGS {
         }
 
         let mut out = Vec::new();
-        if let Some(input_schema) = cap.input_schema.as_ref() {
+        for field in cap
+            .scope_params()
+            .iter()
+            .chain(cap.selection_params())
+            .chain(cap.control_params())
+        {
+            if field.sink_class.is_some() {
+                out.push(field);
+            }
+            if let InputFieldWire::Inline(ty) = &field.wire {
+                collect_sink_params(ty.as_ref(), &mut out);
+            }
+        }
+        for input_schema in cap.invocation_input_schemas() {
             collect_sink_params(&input_schema.input_type, &mut out);
         }
         out
@@ -4465,7 +4457,20 @@ impl CGS {
         }
 
         for (cap_name, cap) in &self.capabilities {
-            if let Some(ref is) = cap.input_schema {
+            for field in cap
+                .scope_params()
+                .iter()
+                .chain(cap.selection_params())
+                .chain(cap.control_params())
+            {
+                Self::validate_input_field_registry_denormalization(
+                    self,
+                    field,
+                    &format!("capability '{cap_name}'"),
+                    &array_items_agree_with_values,
+                )?;
+            }
+            for is in cap.invocation_input_schemas() {
                 Self::validate_input_type_registry_denormalization(
                     self,
                     &is.input_type,
@@ -4530,10 +4535,17 @@ impl CGS {
         }
 
         for (cap_name, cap) in &self.capabilities {
-            let Some(input) = cap.input_schema.as_ref() else {
-                continue;
-            };
-            Self::validate_input_type_temporal_params(self, &input.input_type, cap_name, "")?;
+            for field in cap
+                .scope_params()
+                .iter()
+                .chain(cap.selection_params())
+                .chain(cap.control_params())
+            {
+                Self::validate_input_field_temporal_params(self, field, cap_name, "")?;
+            }
+            for input in cap.invocation_input_schemas() {
+                Self::validate_input_type_temporal_params(self, &input.input_type, cap_name, "")?;
+            }
         }
 
         Ok(())
@@ -4621,14 +4633,11 @@ impl CGS {
             if cap.kind != CapabilityKind::Query {
                 continue;
             }
-            let Some(fields) = cap.object_params() else {
-                continue;
-            };
-            for p in fields {
+            for p in cap.scope_params() {
                 let Ok(nv) = p.named_value(self) else {
                     continue;
                 };
-                if let FieldType::EntityRef { target } = &nv.field_type {
+                if let FieldType::EntityRef { target, .. } = &nv.field_type {
                     if target.as_str() == source_entity {
                         out.push((cap, p.name.as_str()));
                     }
@@ -4647,7 +4656,7 @@ impl CGS {
             .values()
             .filter_map(|f| {
                 let nv = f.named_value(self).ok()?;
-                if let FieldType::EntityRef { target } = &nv.field_type {
+                if let FieldType::EntityRef { target, .. } = &nv.field_type {
                     Some((f, target.as_str()))
                 } else {
                     None
@@ -4675,6 +4684,98 @@ impl CGS {
     }
 
     /// Find **all** capabilities for a given entity and kind.
+    /// Unscoped read capabilities on `entity` (`Query` or `Search` without required scope params).
+    pub fn unscoped_capabilities(
+        &self,
+        entity: &str,
+        kind: CapabilityKind,
+    ) -> Vec<&CapabilitySchema> {
+        self.find_capabilities(entity, kind)
+            .into_iter()
+            .filter(|c| !c.has_required_scope_param())
+            .collect()
+    }
+
+    fn validate_primary_read_ref(cgs: &CGS, entity: &str, cap_id: &str) -> Result<(), SchemaError> {
+        let Some(cap) = cgs.capabilities.get(cap_id) else {
+            return Err(SchemaError::UnknownPrimaryReadCapability {
+                entity: entity.to_string(),
+                capability: cap_id.to_string(),
+            });
+        };
+        if cap.domain.as_str() != entity {
+            return Err(SchemaError::PrimaryReadWrongDomain {
+                entity: entity.to_string(),
+                capability: cap_id.to_string(),
+                domain: cap.domain.to_string(),
+            });
+        }
+        if cap.kind != CapabilityKind::Get {
+            return Err(SchemaError::PrimaryReadNotGet {
+                entity: entity.to_string(),
+                capability: cap_id.to_string(),
+                kind: format!("{:?}", cap.kind),
+            });
+        }
+        Ok(())
+    }
+
+    fn validate_primary_query_ref(
+        cgs: &CGS,
+        entity: &str,
+        cap_id: &str,
+    ) -> Result<(), SchemaError> {
+        let Some(cap) = cgs.capabilities.get(cap_id) else {
+            return Err(SchemaError::UnknownPrimaryQueryCapability {
+                entity: entity.to_string(),
+                capability: cap_id.to_string(),
+            });
+        };
+        if cap.domain.as_str() != entity {
+            return Err(SchemaError::PrimaryQueryWrongDomain {
+                entity: entity.to_string(),
+                capability: cap_id.to_string(),
+                domain: cap.domain.to_string(),
+            });
+        }
+        if cap.kind != CapabilityKind::Query {
+            return Err(SchemaError::PrimaryQueryNotQuery {
+                entity: entity.to_string(),
+                capability: cap_id.to_string(),
+                kind: format!("{:?}", cap.kind),
+            });
+        }
+        Ok(())
+    }
+
+    fn validate_primary_search_ref(
+        cgs: &CGS,
+        entity: &str,
+        cap_id: &str,
+    ) -> Result<(), SchemaError> {
+        let Some(cap) = cgs.capabilities.get(cap_id) else {
+            return Err(SchemaError::UnknownPrimarySearchCapability {
+                entity: entity.to_string(),
+                capability: cap_id.to_string(),
+            });
+        };
+        if cap.domain.as_str() != entity {
+            return Err(SchemaError::PrimarySearchWrongDomain {
+                entity: entity.to_string(),
+                capability: cap_id.to_string(),
+                domain: cap.domain.to_string(),
+            });
+        }
+        if cap.kind != CapabilityKind::Search {
+            return Err(SchemaError::PrimarySearchNotSearch {
+                entity: entity.to_string(),
+                capability: cap_id.to_string(),
+                kind: format!("{:?}", cap.kind),
+            });
+        }
+        Ok(())
+    }
+
     pub fn find_capabilities(&self, entity: &str, kind: CapabilityKind) -> Vec<&CapabilitySchema> {
         self.capability_index_arc()
             .names_for_domain_kind(entity, kind)
@@ -4696,22 +4797,18 @@ impl CGS {
     /// 3. **Short error / CLI hints** — internal `error_render` projection scalars (scalar-only,
     ///    sorted, `prioritize_projection_scalars`): intentionally **not** the full teaching table projection field list.
     ///
-    /// Primary **Get** for an entity — same selection as teaching table / CLI use for the main fetch pattern.
-    ///
-    /// Picks the first Get (by capability name) that is not a trivial zero-arity pathless invoke,
-    /// or falls back to the first Get when all are trivial.
+    /// Primary **Get** for an entity — explicit [`EntityDef::primary_read`] when 2+ Gets; the sole Get when only one exists.
     pub fn primary_get_capability(&self, entity: &str) -> Option<&CapabilitySchema> {
-        let mut get_caps = self.find_capabilities(entity, CapabilityKind::Get);
-        if get_caps.is_empty() {
-            return None;
+        let get_caps = self.find_capabilities(entity, CapabilityKind::Get);
+        match get_caps.len() {
+            0 => None,
+            1 => Some(get_caps[0]),
+            _ => {
+                let ent = self.get_entity(entity)?;
+                let pid = ent.primary_read.as_deref()?;
+                self.capabilities.get(pid)
+            }
         }
-        get_caps.sort_by(|a, b| a.name.as_str().cmp(b.name.as_str()));
-        if let Some(c) = get_caps.iter().find(|c| {
-            !capability_is_zero_arity_invoke(c) || c.domain_exemplar_requires_entity_anchor()
-        }) {
-            return Some(*c);
-        }
-        Some(get_caps[0])
     }
 
     /// Ordered field names for teaching heading projection teaching: explicit `provides`, or default entity order when empty.
@@ -4745,9 +4842,7 @@ impl CGS {
 
     /// Resolve which **Get** supplies ordered `provides` / default field order for teaching heading projection.
     ///
-    /// When `primary_read` is set it must name a [`CapabilityKind::Get`] whose [`CapabilitySchema::domain`]
-    /// is this entity; otherwise falls back to [`Self::primary_get_capability`] (same anchor as the teaching table
-    /// get exemplar when multiple Gets exist).
+    /// Uses [`EntityDef::primary_read`] when set (required at load when 2+ Gets); otherwise the sole Get.
     pub fn resolved_primary_get_for_projection<'a>(
         &'a self,
         entity_name: &str,
@@ -4788,14 +4883,7 @@ impl CGS {
 
     /// Ordered wire field names for **teaching projection witness** teaching (`e#…[p#,…]`).
     ///
-    /// Same scalar set semantics as [`Self::domain_projection_heading_fields`] when a primary **Get**
-    /// exists; when there is no Get, falls back to **`effective_ordered_response_fields`** from a
-    /// representative **Query** (primary unscoped query when present, else first Query sorted by
-    /// capability name — matching scoped-only entities like zone-scoped lists), then **Search** the
-    /// same way.
-    ///
-    /// Use this for prompt synthesis only; [`Self::domain_projection_heading_fields`] stays Get-only
-    /// for callers that mean “heading bracket from fetch”.
+    /// Primary Get when present; otherwise declared primary Query, then primary Search.
     pub fn domain_projection_teaching_wire_fields(
         &self,
         entity_name: &str,
@@ -4809,27 +4897,18 @@ impl CGS {
             return (!f.is_empty()).then_some(f);
         }
 
-        let query_cap = self.primary_query_capability(entity_name).or_else(|| {
-            let mut qs: Vec<_> = self.find_capabilities(entity_name, CapabilityKind::Query);
-            qs.sort_by(|a, b| a.name.cmp(&b.name));
-            qs.into_iter().next()
-        });
-        if let Some(cap) = query_cap {
+        if let Some(cap) = self.representative_query_for_projection(entity_name) {
             let f = self.effective_ordered_response_fields(cap);
             if !f.is_empty() {
                 return Some(f);
             }
         }
 
-        let search_cap = self.primary_search_capability(entity_name).or_else(|| {
-            let mut ss: Vec<_> = self.find_capabilities(entity_name, CapabilityKind::Search);
-            ss.sort_by(|a, b| a.name.cmp(&b.name));
-            ss.into_iter().next()
-        });
-        search_cap.and_then(|cap| {
-            let f = self.effective_ordered_response_fields(cap);
-            (!f.is_empty()).then_some(f)
-        })
+        self.representative_search_for_projection(entity_name)
+            .and_then(|cap| {
+                let f = self.effective_ordered_response_fields(cap);
+                (!f.is_empty()).then_some(f)
+            })
     }
 
     /// One vector per teaching table projection teaching: the **full** ordered field list **`F`** for the
@@ -4875,39 +4954,59 @@ impl CGS {
         self.capability_index_arc().create_caps_for_anchor(anchor)
     }
 
-    /// Find the **primary** query capability for an entity.
-    ///
-    /// Priority order:
-    /// 1. The unscoped query with no required params (the "list all" endpoint)
-    /// 2. The first unscoped query (has required filter params but no scope)
-    /// 3. None (entity only has scoped sub-resource queries)
-    ///
-    /// The primary gets the `entity query` CLI verb. All others get named subcommands.
+    /// Primary **Query** — explicit [`EntityDef::primary_query`] when set; otherwise the sole Query on the entity.
+    /// Competing queries are a hard validate error ([`SchemaError::TooManyQueryCapabilities`]).
     pub fn primary_query_capability(&self, entity: &str) -> Option<&CapabilitySchema> {
-        let caps = self.find_capabilities(entity, CapabilityKind::Query);
-        let unscoped: Vec<_> = caps
-            .iter()
-            .filter(|c| !c.has_required_scope_param())
-            .collect();
-        // Prefer the parameterless one
-        if let Some(c) = unscoped.iter().find(|c| !c.has_any_required_param()) {
-            return Some(*c);
+        let unscoped = self.unscoped_capabilities(entity, CapabilityKind::Query);
+        match unscoped.len() {
+            0 => None,
+            1 => Some(unscoped[0]),
+            _ => {
+                let ent = self.get_entity(entity)?;
+                let pid = ent.primary_query.as_deref()?;
+                self.capabilities.get(pid)
+            }
         }
-        // Fallback: first unscoped with required params
-        unscoped.first().map(|c| **c)
     }
 
-    /// Find the **primary** search capability for an entity (same rules as query).
-    pub fn primary_search_capability(&self, entity: &str) -> Option<&CapabilitySchema> {
-        let caps = self.find_capabilities(entity, CapabilityKind::Search);
-        let unscoped: Vec<_> = caps
-            .iter()
-            .filter(|c| !c.has_required_scope_param())
-            .collect();
-        if let Some(c) = unscoped.iter().find(|c| !c.has_any_required_param()) {
-            return Some(*c);
+    /// Query used for projection teaching when there is no Get — includes a sole scoped-only query.
+    pub fn representative_query_for_projection(&self, entity: &str) -> Option<&CapabilitySchema> {
+        if let Some(cap) = self.primary_query_capability(entity) {
+            return Some(cap);
         }
-        unscoped.first().map(|c| **c)
+        let all = self.find_capabilities(entity, CapabilityKind::Query);
+        match all.len() {
+            0 => None,
+            1 => Some(all[0]),
+            _ => None,
+        }
+    }
+
+    /// Primary unscoped **Search** — explicit [`EntityDef::primary_search`] when ambiguous; the sole unscoped Search when only one exists.
+    pub fn primary_search_capability(&self, entity: &str) -> Option<&CapabilitySchema> {
+        let unscoped = self.unscoped_capabilities(entity, CapabilityKind::Search);
+        match unscoped.len() {
+            0 => None,
+            1 => Some(unscoped[0]),
+            _ => {
+                let ent = self.get_entity(entity)?;
+                let pid = ent.primary_search.as_deref()?;
+                self.capabilities.get(pid)
+            }
+        }
+    }
+
+    /// Search used for projection teaching when there is no Get — includes a sole scoped-only search.
+    pub fn representative_search_for_projection(&self, entity: &str) -> Option<&CapabilitySchema> {
+        if let Some(cap) = self.primary_search_capability(entity) {
+            return Some(cap);
+        }
+        let all = self.find_capabilities(entity, CapabilityKind::Search);
+        match all.len() {
+            0 => None,
+            1 => Some(all[0]),
+            _ => None,
+        }
     }
 
     /// All non-primary query/search capabilities for an entity.
@@ -5115,12 +5214,13 @@ impl CGS {
                 cap.kind
             ));
         }
-        let Some(fields) = cap.object_params() else {
+        let fields = cap.scope_params();
+        if fields.is_empty() {
             return err(
-                "capability has no object-typed input parameters; query_scoped materialization requires them"
+                "capability has no parent-scope parameters; query_scoped materialization requires them"
                     .into(),
             );
-        };
+        }
         for name in required_param_names {
             if !fields.iter().any(|f| f.name == *name) {
                 return err(format!(
@@ -5149,15 +5249,16 @@ impl CGS {
                 detail: "no such capability".into(),
             }
         })?;
-        let fields = cap.object_params().ok_or_else(|| {
-            SchemaError::RelationMaterializeCapabilityInvalid {
+        let fields = cap.scope_params();
+        if fields.is_empty() {
+            return Err(SchemaError::RelationMaterializeCapabilityInvalid {
                 entity: parent_entity.to_string(),
                 relation: relation.to_string(),
                 target: cap.domain.to_string(),
                 capability: capability.to_string(),
-                detail: "capability has no object input".into(),
-            }
-        })?;
+                detail: "capability has no parent-scope input".into(),
+            });
+        }
         for (cap_param, parent_field) in bindings {
             let Some(param_schema) = fields.iter().find(|f| cap_param.as_str() == f.name) else {
                 continue;
@@ -5231,12 +5332,13 @@ impl CGS {
         if cap.kind != CapabilityKind::Get {
             return err(format!("capability kind must be get (got {:?})", cap.kind));
         }
-        let Some(fields) = cap.object_params() else {
+        let fields = cap.scope_params();
+        if fields.is_empty() {
             return err(
-                "capability has no object-typed input parameters; get_scoped_bindings requires them"
+                "capability has no parent-scope parameters; get_scoped_bindings requires them"
                     .into(),
             );
-        };
+        }
         for name in required_param_names {
             if !fields.iter().any(|f| f.name == *name) {
                 return err(format!(
@@ -5258,8 +5360,10 @@ impl CGS {
         for kind in [CapabilityKind::Query, CapabilityKind::Search] {
             for cap in self.find_capabilities(entity, kind) {
                 if cap
-                    .object_params()
-                    .is_some_and(|fields| fields.iter().any(|f| f.name == param_name.as_str()))
+                    .scope_params()
+                    .iter()
+                    .chain(cap.selection_params())
+                    .any(|f| f.name == param_name.as_str())
                 {
                     return Some(cap);
                 }
@@ -5282,9 +5386,11 @@ impl CGS {
         let required: HashSet<&str> = param_names.iter().map(|p| p.as_str()).collect();
         for kind in [CapabilityKind::Query, CapabilityKind::Search] {
             for cap in self.find_capabilities(entity, kind) {
-                let Some(fields) = cap.object_params() else {
-                    continue;
-                };
+                let fields: Vec<_> = cap
+                    .scope_params()
+                    .iter()
+                    .chain(cap.selection_params())
+                    .collect();
                 let mut ok = true;
                 for p in &required {
                     if !fields.iter().any(|f| f.name == *p) {
@@ -5370,47 +5476,170 @@ impl CapabilitySchema {
         self.deterministic.unwrap_or(true)
     }
 
-    /// Object-typed input parameters for this capability, if any.
+    pub fn scope_params(&self) -> &[InputFieldSchema] {
+        &self.inputs.scope.0
+    }
+
+    pub fn selection_params(&self) -> &[InputFieldSchema] {
+        &self.inputs.selection.0
+    }
+
+    /// Free-text hole for `Entity~"…"` / teaching `e#~"<query>"`.
     ///
-    /// Returns `None` when there is no input schema or the input is not `InputType::Object`.
-    pub fn object_params(&self) -> Option<&[InputFieldSchema]> {
-        self.input_schema
+    /// Prefer a selection param named `query`, `q`, or `search`. Otherwise, when selection
+    /// has exactly one param, that param is the hole (legacy single-slot searches).
+    pub fn search_text_selection_param(&self) -> Option<&InputFieldSchema> {
+        const FREE_TEXT: &[&str] = &["query", "q", "search"];
+        let sel = self.selection_params();
+        if let Some(field) = sel
+            .iter()
+            .find(|f| FREE_TEXT.iter().any(|n| f.name.eq_ignore_ascii_case(n)))
+        {
+            return Some(field);
+        }
+        match sel {
+            [only] => Some(only),
+            _ => None,
+        }
+    }
+
+    pub fn control_params(&self) -> &[InputFieldSchema] {
+        &self.inputs.controls.0
+    }
+
+    pub fn invocation_input_schemas(&self) -> impl Iterator<Item = &InputSchema> {
+        [self.inputs.arguments.as_ref(), self.inputs.payload.as_ref()]
+            .into_iter()
+            .flatten()
+    }
+
+    /// Top-level **object** fields from `inputs.payload` ∪ `inputs.arguments`.
+    ///
+    /// This is the sanctified field set for parse-time body materialization: key normalize,
+    /// nested union-ctor walk, and [`crate::coerce_value_for_field_type_with_policy`] with
+    /// [`crate::ArrayFieldCoercionPolicy::InvokeArg`]. Callers must not walk only one lane —
+    /// Create/Update/Action catalogs often put body scalars under `payload` while Gets put
+    /// transport args under `arguments`.
+    ///
+    /// Union payload variants contribute no top-level object fields here (see
+    /// [`input_schema_top_level_fields`]); constructor fields use the variant path instead.
+    pub fn invocation_object_fields(&self) -> impl Iterator<Item = &InputFieldSchema> {
+        self.invocation_input_schemas()
+            .flat_map(input_schema_top_level_fields)
+    }
+
+    /// Scope + selection + control params (query/search surface braces and CLI flags).
+    pub fn query_surface_fields(&self) -> impl Iterator<Item = &InputFieldSchema> {
+        self.scope_params()
+            .iter()
+            .chain(self.selection_params().iter())
+            .chain(self.control_params().iter())
+    }
+
+    /// Preferred create/invoke body schema: `inputs.payload`, else `inputs.arguments`.
+    ///
+    /// Use for **union** constructors and single-schema lift/normalize. Object bodies with
+    /// fields on both lanes typecheck via [`crate::validate_capability_invocation_input`]
+    /// (partitioned over [`Self::invocation_object_schemas`]), matching parse coerce over
+    /// [`Self::invocation_object_fields`].
+    pub fn primary_invocation_schema(&self) -> Option<&InputSchema> {
+        self.inputs
+            .payload
             .as_ref()
-            .and_then(|input| match &input.input_type {
-                InputType::Object { fields, .. } => Some(fields.as_slice()),
-                _ => None,
-            })
+            .or(self.inputs.arguments.as_ref())
     }
 
-    /// Whether this capability has at least one required parameter with `role: scope`.
-    ///
-    /// Scoped capabilities (e.g. `GET /classes/{class_index}/spells`) use the scope
-    /// param in the URL path. In the CLI they get named subcommands (not the generic
-    /// `query` verb) because they require a parent-entity pivot.
+    /// Object-typed schemas among `payload` and `arguments` (0–2; field names are disjoint).
+    pub fn invocation_object_schemas(&self) -> impl Iterator<Item = &InputSchema> {
+        self.invocation_input_schemas()
+            .filter(|s| matches!(s.input_type, InputType::Object { .. }))
+    }
+
+    pub fn input_fields(&self) -> impl Iterator<Item = &InputFieldSchema> {
+        self.scope_params()
+            .iter()
+            .chain(self.selection_params())
+            .chain(self.control_params())
+            .chain(
+                self.invocation_input_schemas()
+                    .flat_map(input_schema_top_level_fields),
+            )
+    }
+
+    /// Whether this capability has a required typed parent-scope parameter.
     pub fn has_required_scope_param(&self) -> bool {
-        self.object_params().is_some_and(|fields| {
-            fields
-                .iter()
-                .any(|f| f.required && matches!(f.role, Some(ParameterRole::Scope)))
-        })
+        self.scope_params().iter().any(|f| f.required)
     }
 
-    /// Whether this capability has at least one required parameter (any role).
+    /// Whether this capability has at least one required parameter in any structural lane.
     pub fn has_any_required_param(&self) -> bool {
-        self.object_params()
-            .is_some_and(|fields| fields.iter().any(|f| f.required))
+        self.input_fields().any(|f| f.required)
+    }
+
+    /// CML mapping for this capability.
+    ///
+    /// Returns `Err` when this is a derived Get (`mapping` is `None`) — never panics.
+    pub fn require_mapping(&self) -> Result<&CapabilityMapping, String> {
+        self.mapping
+            .as_ref()
+            .ok_or_else(|| format!("capability '{}' has no CML mapping (derived)", self.name))
     }
 
     /// See [`template_domain_exemplar_requires_entity_anchor`].
     #[inline]
     pub fn domain_exemplar_requires_entity_anchor(&self) -> bool {
-        template_domain_exemplar_requires_entity_anchor(&self.mapping.template.0)
+        let Some(mapping) = &self.mapping else {
+            return false;
+        };
+        template_domain_exemplar_requires_entity_anchor(&mapping.template.0)
     }
 
     /// See [`template_invoke_requires_explicit_anchor_id`].
     #[inline]
     pub fn invoke_requires_explicit_anchor_id(&self) -> bool {
-        template_invoke_requires_explicit_anchor_id(&self.mapping.template.0)
+        let Some(mapping) = &self.mapping else {
+            return false;
+        };
+        template_invoke_requires_explicit_anchor_id(&mapping.template.0)
+    }
+
+    /// True when this capability's CML mapping uses `transport: view`.
+    #[inline]
+    pub fn is_view_transport(&self) -> bool {
+        self.mapping
+            .as_ref()
+            .is_some_and(|m| capability_mapping_is_view_transport(&m.template.0))
+    }
+
+    /// True when this Get must be keyed (identity / view scope / required body / derived list-pick) — not bare `e#` or `e#.m#()`.
+    pub fn get_requires_identity_anchor(&self, cgs: &CGS) -> bool {
+        if self.domain_exemplar_requires_entity_anchor() {
+            return true;
+        }
+        if !capability_is_zero_arity_invoke(self) {
+            return true;
+        }
+        if self.derived.is_some() {
+            return true;
+        }
+        if !self.is_view_transport() {
+            return false;
+        }
+        let Some(mapping) = &self.mapping else {
+            return false;
+        };
+        let Some(view_key) = mapping.template.0.get("view").and_then(|v| v.as_str()) else {
+            return false;
+        };
+        cgs.views
+            .get(view_key)
+            .is_some_and(|view| view.scope.iter().any(|s| s.required))
+    }
+
+    /// True when this Get is list-backed (derived plan or view transport) and must not hydrate recursively.
+    #[inline]
+    pub fn is_list_backed_get(&self, _cgs: &CGS) -> bool {
+        self.is_view_transport() || self.derived.is_some()
     }
 
     /// Minimal capability shell for unit tests in downstream crates.
@@ -5421,10 +5650,11 @@ impl CapabilitySchema {
             description: String::new(),
             kind: CapabilityKind::Action,
             domain: EntityName::from("TestEntity"),
-            mapping: CapabilityMapping {
+            mapping: Some(CapabilityMapping {
                 template: CapabilityTemplateJson(serde_json::json!({ "method": "POST" })),
-            },
-            input_schema: None,
+            }),
+            derived: None,
+            inputs: CapabilityInputs::default(),
             output_schema: None,
             provides: vec![],
             sanitizes: vec![],
@@ -5433,7 +5663,15 @@ impl CapabilitySchema {
             preflight: None,
             discovery: None,
             identity_key: None,
+            invalidates_entities: vec![],
         }
+    }
+}
+
+fn input_schema_top_level_fields(schema: &InputSchema) -> &[InputFieldSchema] {
+    match &schema.input_type {
+        InputType::Object { fields, .. } => fields,
+        _ => &[],
     }
 }
 
@@ -5565,7 +5803,6 @@ pub mod registry_test_util {
             required,
             description: None,
             default: None,
-            role: None,
             sink_class: None,
             wire_json_path: None,
             wire_array_element_key: None,
@@ -5849,6 +6086,189 @@ mod oauth_extension_tests {
         let cgs = crate::loader::load_schema_dir(p).expect("tavily");
         cgs.validate()
             .expect("tavily validate after research_create body fix");
+    }
+}
+
+#[cfg(test)]
+mod list_capability_cardinality_tests {
+    use super::*;
+
+    fn bare_query_cgs(entity: &str, query_names: &[&str]) -> CGS {
+        let mut cgs = CGS::new();
+        cgs.values.insert(
+            "fixture_str".into(),
+            NamedValueSchema {
+                domain: Default::default(),
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                array_items: None,
+                currency: None,
+            },
+        );
+        let id_field = FieldSchema {
+            name: "id".into(),
+            kind: FieldValueKind::Registry(ValueDomainKey::new("fixture_str").expect("key")),
+            description: String::new(),
+            required: true,
+            agent_presentation: None,
+            mime_type_hint: None,
+            attachment_media: None,
+            wire_path: None,
+            derive: None,
+            data_class: None,
+            currency_field: None,
+        };
+        cgs.add_resource(ResourceSchema {
+            name: entity.into(),
+            description: String::new(),
+            id_field: "id".into(),
+            id_format: None,
+            id_from: None,
+            fields: vec![id_field],
+            relations: vec![],
+            expression_aliases: vec![],
+            implicit_request_identity: false,
+            key_vars: vec![],
+            abstract_entity: false,
+            domain_projection_examples: false,
+            primary_read: None,
+            primary_query: None,
+            primary_search: None,
+            discovery: None,
+        })
+        .unwrap();
+        let tmpl =
+            serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "x"}]});
+        for name in query_names {
+            cgs.add_capability(CapabilitySchema {
+                name: (*name).into(),
+                description: String::new(),
+                kind: CapabilityKind::Query,
+                domain: entity.into(),
+                identity_key: None,
+                invalidates_entities: vec![],
+                mapping: Some(CapabilityMapping {
+                    template: tmpl.clone().into(),
+                }),
+                derived: None,
+                inputs: Default::default(),
+                output_schema: None,
+                provides: vec![],
+                scope_aggregate_key_policy: Default::default(),
+                preflight: None,
+                discovery: None,
+                sanitizes: vec![],
+                deterministic: None,
+            })
+            .unwrap();
+        }
+        cgs
+    }
+
+    #[test]
+    fn zero_or_one_query_validates() {
+        let mut zero = bare_query_cgs("Item", &[]);
+        zero.entities.get_mut("Item").unwrap().abstract_entity = true;
+        zero.validate().expect("abstract zero query ok");
+        bare_query_cgs("Item", &["item_query"])
+            .validate()
+            .expect("single query ok");
+    }
+
+    #[test]
+    fn two_queries_hard_error_names_entity_and_caps() {
+        let err = bare_query_cgs("Item", &["item_query", "item_other_query"])
+            .validate()
+            .expect_err("two queries must fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Item") && msg.contains("item_query") && msg.contains("item_other_query"),
+            "error must name entity and caps: {msg}"
+        );
+        assert!(
+            matches!(err, SchemaError::TooManyQueryCapabilities { .. }),
+            "expected TooManyQueryCapabilities, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn query_plus_search_still_ok() {
+        let mut cgs = bare_query_cgs("Item", &["item_query"]);
+        let tmpl =
+            serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "s"}]});
+        let q_field = InputFieldSchema {
+            name: "q".to_string(),
+            wire: InputFieldWire::Registry(ValueDomainKey::new("fixture_str").expect("key")),
+            required: true,
+            description: None,
+            default: None,
+            sink_class: None,
+            wire_json_path: None,
+            wire_array_element_key: None,
+        };
+        cgs.add_capability(CapabilitySchema {
+            name: "item_search".into(),
+            description: String::new(),
+            kind: CapabilityKind::Search,
+            domain: "Item".into(),
+            identity_key: None,
+            invalidates_entities: vec![],
+            mapping: Some(CapabilityMapping {
+                template: tmpl.into(),
+            }),
+            derived: None,
+            inputs: CapabilityInputs {
+                selection: BackendSelectionSchema(vec![q_field]),
+                ..Default::default()
+            },
+            output_schema: None,
+            provides: vec![],
+            scope_aggregate_key_policy: Default::default(),
+            preflight: None,
+            discovery: None,
+            sanitizes: vec![],
+            deterministic: None,
+        })
+        .unwrap();
+        cgs.validate()
+            .expect("one query + one search must validate");
+    }
+
+    #[test]
+    fn two_searches_hard_error() {
+        let mut cgs = bare_query_cgs("Item", &[]);
+        let tmpl =
+            serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "s"}]});
+        for name in ["item_search_a", "item_search_b"] {
+            cgs.add_capability(CapabilitySchema {
+                name: name.into(),
+                description: String::new(),
+                kind: CapabilityKind::Search,
+                domain: "Item".into(),
+                identity_key: None,
+                invalidates_entities: vec![],
+                mapping: Some(CapabilityMapping {
+                    template: tmpl.clone().into(),
+                }),
+                derived: None,
+                inputs: Default::default(),
+                output_schema: None,
+                provides: vec![],
+                scope_aggregate_key_policy: Default::default(),
+                preflight: None,
+                discovery: None,
+                sanitizes: vec![],
+                deterministic: None,
+            })
+            .unwrap();
+        }
+        let err = cgs.validate().expect_err("two searches must fail");
+        assert!(
+            matches!(err, SchemaError::TooManySearchCapabilities { .. }),
+            "expected TooManySearchCapabilities, got {err:?}"
+        );
     }
 }
 

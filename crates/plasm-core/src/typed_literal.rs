@@ -17,6 +17,7 @@ pub enum TypedLiteral {
     Integer(i64),
     Float(f64),
     String(String),
+    StringTemplate(crate::program_string_template::CompiledProgramString),
     Array(Vec<TypedLiteral>),
     /// Normalized `entity_ref` compound or atomic constructor.
     EntityRef(EntityRefPayload),
@@ -44,6 +45,7 @@ impl TypedLiteral {
             TypedLiteral::Bool(b) => Value::Bool(*b),
             TypedLiteral::Integer(i) => Value::Integer(*i),
             TypedLiteral::Float(f) => Value::Float(*f),
+            TypedLiteral::StringTemplate(value) => Value::StringTemplate(value.clone()),
             TypedLiteral::String(s) => Value::String(s.clone()),
             TypedLiteral::Array(items) => Value::Array(items.iter().map(Self::to_value).collect()),
             TypedLiteral::EntityRef(p) => p.to_value(),
@@ -61,6 +63,7 @@ impl TypedLiteral {
             Value::Bool(b) => Ok(TypedLiteral::Bool(*b)),
             Value::Integer(i) => Ok(TypedLiteral::Integer(*i)),
             Value::Float(f) => Ok(TypedLiteral::Float(*f)),
+            Value::StringTemplate(value) => Ok(TypedLiteral::StringTemplate(value.clone())),
             Value::String(s) => Ok(TypedLiteral::String(s.clone())),
             Value::PhraseIdent(_) => Err(TypedLiteralError::PhraseIdent),
             Value::Array(arr) => {

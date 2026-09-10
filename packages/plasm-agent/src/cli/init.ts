@@ -41,10 +41,10 @@ export async function createPlasmAgent() {
 }
 `;
 
-const INSTRUCTIONS_MD = `# Catalog-native Plasm agent
+const INSTRUCTIONS_MD = `# Project overlay
 
-Use **plasm_context → plasm → plasm_run** for catalog-backed work. On semantic auto-seed hosts: \`session_mode: "new"\` + intent only (do not invent seeds). Discover is secondary when auto-seed is off.
-Keep one stable \`intent\` per user goal.
+Product-specific guidance only. Framework liturgy (language card grammar +
+resource handling) is injected by \`PlasmAgent\` from plasm-core prompt assets.
 `;
 
 const DOMAIN_YAML = `version: 1

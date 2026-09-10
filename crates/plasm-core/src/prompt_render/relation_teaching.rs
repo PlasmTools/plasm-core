@@ -1,43 +1,59 @@
-//! Relation navigation teaching rows and projection witnesses.
+//! Relation navigation teaching rows and noun-card shape witnesses.
 
 use std::collections::{HashMap, HashSet};
 
 use crate::relation_nav::relation_nav_admissible;
 use crate::schema::{Cardinality, EntityDef, RelationSchema};
-use crate::symbol_tuning::{ExposureSurface, SymbolMap};
-use crate::{CapabilityKind, CapabilityName, Expr, CGS};
+#[cfg(test)]
+use crate::symbol_tuning::ExposureSurface;
+use crate::symbol_tuning::SymbolMap;
+use crate::{CapabilityKind, CGS};
 
 use super::gloss_collect::GlossScratch;
 use super::input_legend::{RowContractLegend, TeachingExprLine};
 use super::line_validate::{
-    domain_line_validate_cached, domain_line_work_valid_cached, DomainLineValidCacheKey,
-    DomainLineValidEntry,
+    domain_line_work_valid_cached, DomainLineValidCacheKey, DomainLineValidEntry,
 };
 use super::query_teaching::{
     compound_get_expr_line, query_expr_filters_only, query_expr_maximal, query_expr_scope_only,
     unary_entity_id_teaching_expr_line,
 };
+#[cfg(test)]
 use super::surface_filter::{surface_allows_relation_nav, surface_includes_exposed_entity};
-use super::symbol_tokens::{ent_sym, id_sym_entity, id_sym_rel};
+use super::symbol_tokens::id_sym_rel;
+#[cfg(test)]
+use super::symbol_tokens::{ent_sym, id_sym_entity};
 use super::teaching_push::try_push_teaching_example;
 use super::teaching_util::truncate_inline_desc;
 use super::tsv_emit::{teaching_relation_field_gloss, write_teaching_tsv_row, DomainTsvRow};
 use super::{EntityTeachingExprRow, TeachingHeading};
 
 /// Ordered receiver bases for teaching table dotted calls / relation nav on `ent` (`es` = entity symbol).
+///
+/// When `prefer_bare` is true (pathless Actions / Creates that need no identity), bare `eN` is
+/// tried before `eN(<id>)` so taught forms match executable pathless login/create-session.
 pub(crate) fn nav_receiver_candidates(
     es: &str,
     ent: &EntityDef,
     cgs: &CGS,
     map: Option<&SymbolMap>,
     catalog_entry_id: &str,
+    prefer_bare: bool,
 ) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
-    if let Some(cmp) = compound_get_expr_line(es, ent, cgs, map, catalog_entry_id) {
-        if seen.insert(cmp.clone()) {
-            out.push(cmp);
+    let push = |out: &mut Vec<String>, seen: &mut HashSet<String>, s: String| {
+        if seen.insert(s.clone()) {
+            out.push(s);
         }
+    };
+
+    if prefer_bare {
+        push(&mut out, &mut seen, es.to_string());
+    }
+
+    if let Some(cmp) = compound_get_expr_line(es, ent, cgs, map, catalog_entry_id) {
+        push(&mut out, &mut seen, cmp);
     }
     let mut query_caps: Vec<_> = cgs.find_capabilities(ent.name.as_str(), CapabilityKind::Query);
     query_caps.sort_by(|a, b| a.name.cmp(&b.name));
@@ -50,45 +66,15 @@ pub(crate) fn nav_receiver_candidates(
         .into_iter()
         .flatten()
         {
-            if seen.insert(qline.clone()) {
-                out.push(qline);
-            }
+            push(&mut out, &mut seen, qline);
         }
     }
     let unary = unary_entity_id_teaching_expr_line(es, ent, map, catalog_entry_id);
-    if seen.insert(unary.clone()) {
-        out.push(unary);
-    }
-    let bare = es.to_string();
-    if seen.insert(bare.clone()) {
-        out.push(bare);
+    push(&mut out, &mut seen, unary);
+    if !prefer_bare {
+        push(&mut out, &mut seen, es.to_string());
     }
     out
-}
-
-/// Receiver for relation nav / bare recv: must **parse and type-check alone**.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn relation_nav_anchor_expr(
-    es: &str,
-    ent: &EntityDef,
-    cgs: &CGS,
-    map: Option<&SymbolMap>,
-    catalog_entry_id: &str,
-    line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
-    line_valid_cache_seed: u64,
-    map_arc: Option<&std::sync::Arc<SymbolMap>>,
-) -> Option<String> {
-    nav_receiver_candidates(es, ent, cgs, map, catalog_entry_id)
-        .into_iter()
-        .find(|recv| {
-            domain_line_work_valid_cached(
-                line_valid_cache,
-                line_valid_cache_seed,
-                cgs,
-                recv,
-                map_arc,
-            )
-        })
 }
 
 /// First receiver such that `recv + suffix` is a valid full teaching table expression (e.g. `.m#(…)`).
@@ -103,8 +89,9 @@ pub(crate) fn receiver_for_dotted_suffix(
     line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
     line_valid_cache_seed: u64,
     map_arc: Option<&std::sync::Arc<SymbolMap>>,
+    prefer_bare: bool,
 ) -> Option<String> {
-    nav_receiver_candidates(es, ent, cgs, map, catalog_entry_id)
+    nav_receiver_candidates(es, ent, cgs, map, catalog_entry_id, prefer_bare)
         .into_iter()
         .find(|recv| {
             let full = format!("{recv}{suffix}");
@@ -118,13 +105,41 @@ pub(crate) fn receiver_for_dotted_suffix(
         })
 }
 
-pub(crate) const MAX_INCOMING_REL_NAV_PROJECTION_BASES: usize = 16;
+/// Receiver for relation nav / bare recv: must **parse and type-check alone**.
+///
+/// Test-only helper for [`incoming_relation_nav_bases_to_entity`]; production teaching uses
+/// [`receiver_for_dotted_suffix`].
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+fn relation_nav_anchor_expr(
+    es: &str,
+    ent: &EntityDef,
+    cgs: &CGS,
+    map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
+    line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
+    line_valid_cache_seed: u64,
+    map_arc: Option<&std::sync::Arc<SymbolMap>>,
+) -> Option<String> {
+    nav_receiver_candidates(es, ent, cgs, map, catalog_entry_id, false)
+        .into_iter()
+        .find(|recv| {
+            domain_line_work_valid_cached(
+                line_valid_cache,
+                line_valid_cache_seed,
+                cgs,
+                recv,
+                map_arc,
+            )
+        })
+}
 
 /// `ParentRecv.rel` expressions that type-check and return `target_ename` (incoming edges).
 ///
 /// With `surface_filter: Some`, only edges whose **parent** (`src_name`) is in
 /// [`ExposureSurface::entities`] and passes [`surface_allows_relation_nav`] for that slot are kept —
 /// symmetric with outgoing relation-nav rows on the parent entity block.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn incoming_relation_nav_bases_to_entity(
     cgs: &CGS,
@@ -201,155 +216,12 @@ pub(crate) fn incoming_relation_nav_bases_to_entity(
         ) && seen.insert(expr.clone())
         {
             out.push(expr);
-            if out.len() >= MAX_INCOMING_REL_NAV_PROJECTION_BASES {
-                return out;
-            }
         }
     }
     out
 }
 
 /// Maps parsed projection witness to a capability id for teaching table coverage (see [`covered_capabilities`]).
-pub(crate) fn projection_witness_source_capability<'a>(
-    expr: &Expr,
-    witness_cap: Option<&'a crate::CapabilitySchema>,
-    primary_get_cap: Option<&'a crate::CapabilitySchema>,
-    query_caps: &[&'a crate::CapabilitySchema],
-) -> Option<&'a CapabilityName> {
-    match expr {
-        Expr::Get(_) => primary_get_cap.map(|c| &c.name),
-        Expr::Query(_) => witness_cap
-            .map(|c| &c.name)
-            .or_else(|| query_caps.first().map(|c| &c.name)),
-        _ => None,
-    }
-}
-
-/// One validated `base[p#,…]` line teaching scalar projection for this entity type.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn try_push_projection_witness_row(
-    gloss_emit: &mut Option<GlossScratch<'_>>,
-    teaching_rows: &mut Vec<EntityTeachingExprRow>,
-    collect_meta: bool,
-    cgs: &CGS,
-    map: Option<&SymbolMap>,
-    bracket: &str,
-    ename: &str,
-    es: &str,
-    ent: &EntityDef,
-    primary_get_cap: Option<&crate::CapabilitySchema>,
-    query_caps: &[&crate::CapabilitySchema],
-    line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
-    line_valid_cache_seed: u64,
-    map_arc: Option<&std::sync::Arc<SymbolMap>>,
-    surface_filter: Option<&ExposureSurface>,
-    catalog_entry_id: &str,
-) -> bool {
-    let bracket = bracket.trim();
-    if bracket.is_empty() || !bracket.starts_with('[') {
-        return false;
-    }
-
-    let mut seen_bases: HashSet<String> = HashSet::new();
-    let mut attempts: Vec<(String, Option<&crate::CapabilitySchema>)> = Vec::new();
-
-    let bare = es.to_string();
-    if seen_bases.insert(bare.clone()) {
-        attempts.push((bare, None));
-    }
-    for cap in query_caps {
-        for qline in [
-            query_expr_maximal(cap, es, cgs, map, catalog_entry_id),
-            query_expr_scope_only(cap, es, cgs, map, catalog_entry_id),
-            query_expr_filters_only(cap, es, cgs, map, catalog_entry_id),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            if seen_bases.insert(qline.clone()) {
-                attempts.push((qline, Some(cap)));
-            }
-        }
-    }
-    if let Some(cmp) = compound_get_expr_line(es, ent, cgs, map, catalog_entry_id) {
-        if seen_bases.insert(cmp.clone()) {
-            attempts.push((cmp, primary_get_cap));
-        }
-    }
-    for rel_base in incoming_relation_nav_bases_to_entity(
-        cgs,
-        ename,
-        map,
-        surface_filter,
-        catalog_entry_id,
-        line_valid_cache,
-        line_valid_cache_seed,
-        map_arc,
-    ) {
-        if seen_bases.insert(rel_base.clone()) {
-            attempts.push((rel_base, None));
-        }
-    }
-    // Unary identity get is omitted from projection attempts when list/query exists — teach
-    // `e#{{…}}[p#,…]` instead of unary `e#(p#)[p#,…]` / `e#($)[p#,…]` (same policy as primary-get emission).
-    if query_caps.is_empty() {
-        let unary = unary_entity_id_teaching_expr_line(es, ent, map, catalog_entry_id);
-        if seen_bases.insert(unary.clone()) {
-            attempts.push((unary, primary_get_cap));
-        }
-    }
-
-    for (base, witness_cap) in attempts {
-        let full = format!("{base}{bracket}");
-        let Some((parsed, _wire)) = domain_line_validate_cached(
-            line_valid_cache,
-            line_valid_cache_seed,
-            cgs,
-            &full,
-            map_arc,
-        ) else {
-            continue;
-        };
-        let gloss_core = witness_cap
-            .and_then(|c| crate::result_gloss::result_gloss_for_capability(c, cgs, map))
-            .or_else(|| {
-                primary_get_cap
-                    .and_then(|c| crate::result_gloss::result_gloss_for_capability(c, cgs, map))
-            })
-            .unwrap_or_else(|| {
-                if base.contains('{') {
-                    crate::result_gloss::result_gloss_for_search_entity(ename, map)
-                } else {
-                    crate::result_gloss::result_gloss_for_get_entity(ename, map)
-                }
-            });
-        let gloss = format!("{gloss_core} · projection");
-        let source_cap = projection_witness_source_capability(
-            &parsed.expr,
-            witness_cap,
-            primary_get_cap,
-            query_caps,
-        );
-        return try_push_teaching_example(
-            gloss_emit,
-            teaching_rows,
-            collect_meta,
-            cgs,
-            &full,
-            Some(gloss),
-            None,
-            None,
-            source_cap,
-            false,
-            line_valid_cache,
-            line_valid_cache_seed,
-            map_arc,
-            None,
-        );
-    }
-    false
-}
-
 /// Receiver token for relation-nav teaching: symbolic leading `e#`, else canonical entity name before `(` / `{`.
 pub(crate) fn relation_receiver_teaching_hint(
     expr: &str,
@@ -377,17 +249,22 @@ pub(crate) fn relation_nav_meaning_result_gloss(
     map: Option<&SymbolMap>,
     target_gloss: String,
 ) -> String {
+    let target = target_gloss.trim();
+    // No opaque `e#` for the hop target → omit return atom (never invent a bare wire name).
+    if target.is_empty() {
+        return String::new();
+    }
     match relation_receiver_teaching_hint(expr, map) {
         Some(h) => {
             // Glyph mirrors [`ReturnArrow`]: `↣` for a collection hop (`[e#]`), `→` for a single hop.
-            let glyph = if target_gloss.trim_start().starts_with('[') {
+            let glyph = if target.starts_with('[') {
                 super::ReturnArrow::List.glyph()
             } else {
                 super::ReturnArrow::Single.glyph()
             };
-            format!("relation {h} {glyph} {target_gloss}")
+            format!("relation {h} {glyph} {target}")
         }
-        None => target_gloss,
+        None => target.to_string(),
     }
 }
 
@@ -421,6 +298,7 @@ pub(crate) fn try_build_relation_nav_exemplar(
         line_valid_cache,
         line_valid_cache_seed,
         map_arc,
+        false,
     )?;
     Some(format!("{recv}{suffix}"))
 }
@@ -461,8 +339,13 @@ pub(crate) fn try_emit_relation_nav_teaching_row(
     let cardinality_many = rel_schema
         .map(|r| r.cardinality == Cardinality::Many)
         .unwrap_or(false);
-    let target_gloss =
-        crate::result_gloss::result_gloss_for_relation_nav(target_entity, map, cardinality_many);
+    let target_gloss = crate::result_gloss::result_gloss_for_relation_nav(
+        target_entity,
+        map,
+        catalog_entry_id,
+        cardinality_many,
+    )
+    .unwrap_or_default();
     let result_gloss = relation_nav_meaning_result_gloss(&rel_expr, map, target_gloss);
     try_push_teaching_example(
         gloss_emit,
@@ -491,6 +374,7 @@ fn append_relation_nav_edge_delta_row(
     r_sym: &str,
     description: &str,
     map_arc: Option<&std::sync::Arc<SymbolMap>>,
+    catalog_entry_id: &str,
     seen_r_gloss: &mut HashSet<String>,
     empty_heading: &TeachingHeading,
 ) {
@@ -505,8 +389,10 @@ fn append_relation_nav_edge_delta_row(
     let target_gloss = crate::result_gloss::result_gloss_for_relation_nav(
         rel_schema.target_resource.as_str(),
         map_arc.map(|m| m.as_ref()),
+        catalog_entry_id,
         cardinality_many,
-    );
+    )
+    .unwrap_or_default();
     let result_type =
         relation_nav_meaning_result_gloss(plasm_expr, map_arc.map(|m| m.as_ref()), target_gloss);
     let line = TeachingExprLine::empty_legend(plasm_expr.to_string());
@@ -520,6 +406,7 @@ fn append_relation_nav_edge_delta_row(
         result_type,
         legend: line.legend,
         is_projection_teaching: false,
+        is_singleton_row_fetch: false,
         row_contract: RowContractLegend::default(),
         arrow,
     };
@@ -540,7 +427,6 @@ pub(crate) fn render_relation_edge_delta_rows(
     new_relation_slots: &[crate::symbol_tuning::ExposureSlotKey],
     map_arc: Option<&std::sync::Arc<SymbolMap>>,
 ) -> String {
-    const MAX_EDGE_DELTA_ROWS: usize = 8;
     let mut out = String::new();
     let mut seen_expr: HashSet<String> = HashSet::new();
     let mut seen_r_gloss: HashSet<String> = HashSet::new();
@@ -573,9 +459,6 @@ pub(crate) fn render_relation_edge_delta_rows(
         HashMap::new();
 
     for slot in slots {
-        if seen_expr.len() >= MAX_EDGE_DELTA_ROWS {
-            break;
-        }
         let crate::symbol_tuning::ExposureSlotKey::Relation { source, relation } = slot else {
             continue;
         };
@@ -634,6 +517,7 @@ pub(crate) fn render_relation_edge_delta_rows(
             &r_sym,
             &description,
             map_arc,
+            source.entry_id.as_str(),
             &mut seen_r_gloss,
             &empty_heading,
         );

@@ -1,9 +1,0 @@
----
-source: plasm-oss/crates/plasm/tests/plasm_cli_server_insta.rs
-expression: h.norm(&amb_out)
----
-status: exit status: 1
-stdout:
-
-stderr:
-Error: context: ambiguous capability `Issue` — qualify one of: api_a:Issue, api_b:Issue

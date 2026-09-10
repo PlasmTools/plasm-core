@@ -57,7 +57,7 @@ pub fn render_teaching_bundle(
     }
 }
 
-/// Render the teaching table as table-only teaching TSV (`plasm_expr` + `Meaning`); the grammar
+/// Render the teaching table as table-only language card (`plasm_expr` + `Meaning`); the grammar
 /// contract lives statically in [`PLASM_TOOL_DESCRIPTION`], never interleaved here.
 pub fn render_teaching_tsv(
     cgs: &CGS,
@@ -108,8 +108,7 @@ pub(crate) fn render_teaching_prompt_bundle_for_validation(cgs: &CGS) -> Teachin
         "validation config must use the symbolic exposure path"
     );
     // Validation-probe render: an entity that synthesizes zero teaching rows is an authoring fault
-    // (surfaced by `validate_cgs_expression_surface` as `EntityExpressionIncomplete`), not a
-    // post-validation invariant violation — so tolerate empty blocks instead of asserting.
+    // (surfaced by `validate_cgs_expression_surface` as `EntityExpressionIncomplete`).
     let exposure = crate::symbol_tuning::teaching_exposure_session_from_focus(cgs, config.focus);
     render_teaching_prompt_bundle_for_exposure_inner(cgs, config, &exposure, None, true)
 }
@@ -308,9 +307,9 @@ pub fn render_teaching_prompt_bundle_for_exposure(
 
 /// Backing implementation for [`render_teaching_prompt_bundle_for_exposure`].
 ///
-/// `validation_probe` is `true` only for [`render_teaching_prompt_bundle_for_validation`]: it lets an
-/// entity with zero teaching rows render an empty block *without* tripping the post-validation
-/// non-empty-block invariant assert. All post-validation callers pass `false`.
+/// `validation_probe` is `true` only for [`render_teaching_prompt_bundle_for_validation`]: empty
+/// teaching blocks are the authoring signal for `EntityExpressionIncomplete`. Live callers pass
+/// `false` and skip mute entities with a warn (never panic on the request path).
 fn render_teaching_prompt_bundle_for_exposure_inner(
     cgs: &CGS,
     config: RenderConfig<'_>,

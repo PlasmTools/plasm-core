@@ -124,8 +124,11 @@ pub(crate) fn infer_query_scoped_from_via_param(
         .collect();
     candidates.sort_by_key(|cap| cap.name.as_str());
     for cap in candidates {
-        let fields = cap.object_params()?;
-        if fields.iter().any(|f| f.name.as_str() == via_param.as_str()) {
+        if cap
+            .scope_params()
+            .iter()
+            .any(|f| f.name.as_str() == via_param.as_str())
+        {
             return Some(RelationMaterialization::QueryScoped {
                 capability: cap.name.clone(),
                 param: via_param.clone(),

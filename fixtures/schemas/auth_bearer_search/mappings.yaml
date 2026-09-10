@@ -1,0 +1,62 @@
+authsession_login:
+  method: POST
+  path:
+  - type: literal
+    value: auth
+  - type: literal
+    value: login
+  body:
+    type: object
+    fields:
+    - - username
+      - type: var
+        name: username
+    - - password
+      - type: var
+        name: password
+
+securednote_search:
+  method: GET
+  path:
+  - type: literal
+    value: secured
+  - type: literal
+    value: notes
+  headers:
+    type: object
+    fields:
+    - - Authorization
+      - type: format
+        template: "Bearer {token}"
+        vars:
+          token:
+            type: var
+            name: access_token
+  query:
+    type: object
+    fields:
+    - - query
+      - type: if
+        condition: { type: exists, var: query }
+        then_expr: { type: var, name: query }
+        else_expr: { type: const, value: null }
+
+securednote_get:
+  method: GET
+  path:
+  - type: literal
+    value: secured
+  - type: literal
+    value: notes
+  - type: var
+    name: note_id
+  headers:
+    type: object
+    fields:
+    - - Authorization
+      - type: format
+        template: "Bearer {token}"
+        vars:
+          token:
+            type: var
+            name: access_token

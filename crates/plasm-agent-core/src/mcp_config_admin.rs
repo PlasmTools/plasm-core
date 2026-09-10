@@ -7,7 +7,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use auth_framework::errors::AuthError;
-use plasm_core::discovery::{CgsCatalog, InMemoryCgsRegistry};
+use plasm_core::discovery::{CgsCatalog, CgsRegistry};
 use plasm_core::{
     catalog_connect_profile, AuthScheme, CatalogAuthCapability, CatalogConnectProfile,
     CatalogOauthCapability,
@@ -273,9 +273,9 @@ impl McpConfigAdminService {
         Ok(self.keys.revoke_one_api_key(config_id, key_id).await?)
     }
 
-    /// Merge registry [`InMemoryCgsRegistry`] metadata with DB-backed allowgraph + optional-auth flags.
+    /// Merge registry [`CgsRegistry`] metadata with DB-backed allowgraph + optional-auth flags.
     pub fn catalog_rows(
-        registry: &InMemoryCgsRegistry,
+        registry: &CgsRegistry,
         runtime: &McpRuntimeConfig,
         auth_optional: &HashSet<String>,
     ) -> Vec<McpConfigCatalogRow> {
@@ -608,10 +608,7 @@ fn summary_from_detail_json(
     })
 }
 
-fn connect_profile_for_entry(
-    registry: &InMemoryCgsRegistry,
-    entry_id: &str,
-) -> CatalogConnectProfile {
+fn connect_profile_for_entry(registry: &CgsRegistry, entry_id: &str) -> CatalogConnectProfile {
     let Ok(ctx) = registry.load_context(entry_id) else {
         return CatalogConnectProfile {
             capability: CatalogAuthCapability::Public,
@@ -628,7 +625,7 @@ fn connect_profile_for_entry(
 }
 
 fn auth_scheme_summary_for_entry(
-    registry: &InMemoryCgsRegistry,
+    registry: &CgsRegistry,
     entry_id: &str,
 ) -> (String, Option<String>) {
     let Ok(ctx) = registry.load_context(entry_id) else {

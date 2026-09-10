@@ -2,8 +2,8 @@
 
 use super::super::*;
 use crate::plasm_plan_run::symbol_map_for_plasm_surface_parse;
-use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions, MutatorAdmit};
-use plasm_core::{load_schema, CgsContext, ExposureEntityKey, TeachingExposureSession, CGS};
+
+use plasm_core::{load_schema, CgsContext, TeachingExposureSession, CGS};
 use std::path::PathBuf;
 use std::sync::{Arc, Once};
 
@@ -47,39 +47,26 @@ pub(super) fn github_issue_label_session() -> ExecuteSession {
         None,
         cgs.catalog_cgs_hash_hex(),
         None,
-        None,
     )
 }
 
 pub(super) fn github_ranked_mutator_session(
     cgs: &Arc<CGS>,
     entities: &[&str],
-    intent: &str,
-    ranked: &[&str],
+    _intent: &str,
+    _ranked: &[&str],
     mutator: &str,
 ) -> ExecuteSession {
     enable_github_fast_load_for_tests();
-    let endpoints = entities
-        .iter()
-        .map(|e| ExposureEntityKey {
-            entry_id: "github".into(),
-            entity: plasm_core::EntityName::from(*e),
-        })
-        .collect::<Vec<_>>();
-    let delta = derive_intent_exposure_surface_batch(
+    let delta = plasm_core::capability_exposure::explicit_entity_capability_surface(
         cgs.as_ref(),
         "github",
-        intent,
-        &endpoints,
         &entities
             .iter()
             .map(|e| (*e).to_string())
             .collect::<Vec<_>>(),
-        Some(&ranked.iter().map(|s| (*s).to_string()).collect::<Vec<_>>()),
-        ExposureSurfaceOptions {
-            mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-        },
-    );
+    )
+    .expect("explicit fixture capability exposure");
     assert!(
         delta
             .required
@@ -108,7 +95,6 @@ pub(super) fn github_ranked_mutator_session(
         Some(exp),
         None,
         cgs.catalog_cgs_hash_hex(),
-        None,
         None,
     )
 }

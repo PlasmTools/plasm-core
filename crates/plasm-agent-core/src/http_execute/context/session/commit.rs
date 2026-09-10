@@ -11,9 +11,6 @@ pub(crate) struct ExposureWaveSnapshot {
     pub caps_before: std::collections::BTreeSet<plasm_core::symbol_tuning::ExposureCapabilityKey>,
     pub entity_count_before: usize,
     pub relation_keys: Vec<plasm_core::ExposureEntityKey>,
-    pub ranked_capability_names: Option<Vec<String>>,
-    /// When true, append agent-facing ranked-replay diagnostics (agent-explicit `ranked_capabilities` only).
-    pub emit_ranked_replay_diagnostics: bool,
 }
 
 /// What changed during one exposure wave (after surface merge + relation admission).
@@ -35,38 +32,11 @@ impl ExposureWaveChanges {
 
 /// Outcome of committing one exposure-wave delta to an execute session.
 pub(crate) struct CommittedWaveDelta {
-    /// Rendered teaching delta wrapped for the prompt (may include ranked diagnostics only).
+    /// Rendered teaching delta wrapped for the prompt.
     pub markdown: String,
     pub relations_delta: Vec<plasm_core::ExposedRelationSymbolRow>,
     /// Exposure surface did not gain entities, relation slots, or capabilities.
     pub surface_unchanged: bool,
-}
-
-fn append_ranked_replay_diagnostics(
-    markdown: &mut String,
-    exp: &plasm_core::TeachingExposureSession,
-    ranked_names: Option<&[String]>,
-    caps_before: &std::collections::BTreeSet<plasm_core::symbol_tuning::ExposureCapabilityKey>,
-    emit: bool,
-) {
-    if !emit {
-        return;
-    }
-    let Some(names) = ranked_names.filter(|n| !n.is_empty()) else {
-        return;
-    };
-    let Some(diag) =
-        plasm_core::prompt_render::format_ranked_replay_diagnostics(exp, names, caps_before)
-    else {
-        return;
-    };
-    if markdown.trim().is_empty() {
-        *markdown = format!("{diag}\n");
-    } else {
-        markdown.push_str("\n\n");
-        markdown.push_str(&diag);
-        markdown.push('\n');
-    }
 }
 
 fn compute_exposure_wave_changes(
@@ -154,7 +124,19 @@ fn render_exposure_wave_markdown(
         String::new()
     };
 
-    wrap_teaching_markdown_literal_block(&delta, pipeline.render_mode)
+    let catalog_entry_id = changes
+        .added_entities
+        .first()
+        .map(|k| k.entry_id.as_str())
+        .or_else(|| {
+            changes
+                .new_capabilities
+                .iter()
+                .next()
+                .map(|c| c.entry_id.as_str())
+        })
+        .unwrap_or(sess.entry_id.as_str());
+    wrap_teaching_markdown_literal_block(&delta, catalog_entry_id)
 }
 
 /// Admit new relation slots, render + append the teaching delta, and persist the session.
@@ -183,38 +165,20 @@ pub(crate) async fn commit_exposure_wave_delta(
 
     let changes = compute_exposure_wave_changes(&exp, &snapshot);
     let relations_delta = exp.relations_delta_rows_for_slots(&changes.new_relation_slots);
-    let ranked_slice = snapshot.ranked_capability_names.as_deref();
 
     if changes.surface_unchanged() {
-        let mut markdown = String::new();
-        append_ranked_replay_diagnostics(
-            &mut markdown,
-            &exp,
-            ranked_slice,
-            &snapshot.caps_before,
-            snapshot.emit_ranked_replay_diagnostics,
-        );
         sess.entities = exp.entities.clone();
         sess.teaching_exposure = Some(exp);
         st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), sess)
             .await?;
         return Ok(CommittedWaveDelta {
-            markdown,
+            markdown: String::new(),
             relations_delta: Vec::new(),
             surface_unchanged: true,
         });
     }
 
     let mut wave = render_exposure_wave_markdown(st, &sess, &exp, &changes);
-    if ranked_slice.is_some_and(|n| !n.is_empty()) && changes.new_capabilities.is_empty() {
-        append_ranked_replay_diagnostics(
-            &mut wave,
-            &exp,
-            ranked_slice,
-            &snapshot.caps_before,
-            snapshot.emit_ranked_replay_diagnostics,
-        );
-    }
     let cheat = format_exposure_entity_cheat_sheet(&exp);
     if !cheat.is_empty() {
         if !wave.trim().is_empty() {
@@ -249,17 +213,12 @@ mod tests {
     use crate::run_artifacts::RunArtifactStore;
     use crate::server_state::CatalogBootstrap;
     use crate::test_support::session_fixtures::ExecuteSessionFixture;
-    use plasm_core::discovery::{
-        derive_intent_exposure_surface_batch, ExposureSurfaceOptions, InMemoryCgsRegistry,
-        MutatorAdmit,
-    };
+    use plasm_core::discovery::CgsRegistry;
     use plasm_core::TeachingExposureSession;
     use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
     use std::sync::Arc;
 
-    use crate::http_execute::context::ranked_replay_fixtures::{
-        matrix_cgs_arc, matrix_langitem_endpoints,
-    };
+    use crate::http_execute::context::exposure_fixtures::matrix_cgs_arc;
 
     fn matrix_host(cgs: Arc<plasm_core::CGS>) -> PlasmHostState {
         let engine = ExecutionEngine::new(ExecutionConfig::default()).expect("engine");
@@ -267,7 +226,7 @@ mod tests {
         let mut st = build_plasm_host_state(PlasmHostBootstrap {
             engine,
             mode: ExecutionMode::Live,
-            registry: Arc::new(InMemoryCgsRegistry::from_pairs(vec![(
+            registry: Arc::new(CgsRegistry::from_pairs(vec![(
                 "matrix".into(),
                 "Matrix".into(),
                 vec!["LangItem".into()],
@@ -284,19 +243,13 @@ mod tests {
     }
 
     #[test]
-    fn exposure_wave_changes_surface_unchanged_when_only_ranked_replay_no_op() {
-        let exp = crate::http_execute::context::ranked_replay_fixtures::matrix_exp_with_intent(
-            "create new langitem title",
-            Some(&["langitem_create".to_string()]),
-            MutatorAdmit::AlwaysOnSeeds,
-        );
+    fn exposure_wave_changes_surface_unchanged_without_new_capabilities() {
+        let exp = crate::http_execute::context::exposure_fixtures::matrix_exp_explicit();
         let snapshot = ExposureWaveSnapshot {
             slots_before: exp.surface.slots.clone(),
             caps_before: exp.surface.capabilities.clone(),
             entity_count_before: exp.entities.len(),
             relation_keys: vec![],
-            ranked_capability_names: Some(vec!["langitem_create".into()]),
-            emit_ranked_replay_diagnostics: false,
         };
         let changes = compute_exposure_wave_changes(&exp, &snapshot);
         assert!(changes.surface_unchanged());
@@ -307,61 +260,42 @@ mod tests {
     async fn commit_capability_only_delta_emits_compact_mutator_tsv() {
         let cgs = matrix_cgs_arc();
         let entities = vec!["LangItem".to_string()];
-        let endpoints = matrix_langitem_endpoints();
-        let weak_intent = "langitem browse inventory metadata";
+        let intent = "create an item";
         let mutator = "langitem_create";
-        let initial_delta = derive_intent_exposure_surface_batch(
+        let initial_delta = plasm_core::capability_exposure::selected_capability_surface(
             cgs.as_ref(),
             "matrix",
-            weak_intent,
-            &endpoints,
-            &entities,
-            None,
-            ExposureSurfaceOptions {
-                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-            },
-        );
+            &["langitem_query".into()],
+        )
+        .expect("selected query exposure");
         let mut exp = TeachingExposureSession::new_with_intent_delta(
             cgs.as_ref(),
             "matrix",
             &["LangItem"],
             initial_delta,
         );
-        // Read-first autosurfaces seeded mutators at weak intent; simulate deferred
-        // ranked replay by stripping the mutator before the commit snapshot.
-        exp.surface
-            .capabilities
-            .retain(|c| c.capability.as_str() != mutator);
-
         let snapshot = ExposureWaveSnapshot {
             slots_before: exp.surface.slots.clone(),
             caps_before: exp.surface.capabilities.clone(),
             entity_count_before: exp.entities.len(),
             relation_keys: exp.all_qualified_entities(),
-            ranked_capability_names: Some(vec![mutator.into()]),
-            emit_ranked_replay_diagnostics: true,
         };
 
-        let replay_delta = derive_intent_exposure_surface_batch(
+        let selected_delta = plasm_core::capability_exposure::selected_capability_surface(
             cgs.as_ref(),
             "matrix",
-            weak_intent,
-            &endpoints,
-            &entities,
-            Some(&[mutator.to_string()]),
-            ExposureSurfaceOptions {
-                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-            },
-        );
+            &[mutator.into()],
+        )
+        .expect("selected mutator exposure");
         exp.expose_surface(
             &[cgs.as_ref()],
             cgs.clone(),
             "matrix",
             &["LangItem"],
-            replay_delta,
+            selected_delta,
         );
 
-        let prompt_hash = PromptHashHex::from_prompt_sha256("ranked-replay-commit-test");
+        let prompt_hash = PromptHashHex::from_prompt_sha256("capability-delta-commit-test");
         let session_id = ExecuteSessionId::new_random();
         let ph = prompt_hash.as_str().to_string();
         let sid = session_id.as_str().to_string();
@@ -370,8 +304,7 @@ mod tests {
             .prompt_hash(ph.clone())
             .entry_id("matrix")
             .entities(entities.clone());
-        fixture.context_intent = Some(weak_intent.to_string());
-        fixture.ranked_capabilities = Some(vec![mutator.into()]);
+        fixture.context_intent = Some(intent.to_string());
         let mut sess = fixture.build(cgs.clone());
         sess.teaching_exposure = Some(exp.clone());
 
@@ -382,8 +315,7 @@ mod tests {
                 entry_id: "matrix".into(),
                 catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
                 entities: entities.clone(),
-                context_intent: Some(weak_intent.to_string()),
-                ranked_capabilities: Some(vec![mutator.into()]),
+                context_intent: Some(intent.to_string()),
                 principal: None,
                 logical_session_id: None,
             },
@@ -411,7 +343,7 @@ mod tests {
 
         assert!(
             !committed.surface_unchanged,
-            "ranked replay must change capability surface"
+            "selected capability must change exposure surface"
         );
         let md = committed.markdown;
         assert!(

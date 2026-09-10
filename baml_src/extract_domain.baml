@@ -32,8 +32,9 @@ function ExtractDomainModel(api_summary: string) -> DomainModel {
         - $ref in schema = direct relation. Foreign key pattern (xxxId) = inferred relation.
         - Classify capabilities: QUERY (list/filter), GET (by ID), CREATE, UPDATE, DELETE, ACTION.
         - Entities with no operations are valid (e.g. Category referenced by Pet).
-
-        {{ ctx.output_format }}
+        - Timestamps: use RFC3339 for datetime strings, ISO8601_DATE for date-only strings,
+          UNIX_MS / UNIX_SEC only when the wire is numeric epoch — never DATE or DATETIME aliases.
+        - Enums: field_type ENUM with shared_type_name when values repeat across fields/params.
 
         API SPECIFICATION:
         ---

@@ -32,6 +32,8 @@ pub(crate) fn materialized_input_row_from_mat(
     }
     Ok(MaterializedInputRow {
         node,
+        qualified_entity: mat.qualified_entity.clone(),
+        id_field: "id".to_string(),
         proof,
         row: rows[0].clone(),
         rows,
@@ -163,6 +165,8 @@ pub(crate) fn materialized_result_use_inputs_with_source_row(
             );
             MaterializedInputRow {
                 node,
+                qualified_entity: mat.qualified_entity.clone(),
+                id_field: "id".to_string(),
                 proof: crate::plasm_plan::InputCardinalityProof::RuntimeCheckedSingleton,
                 rows: vec![row.clone()],
                 row,

@@ -101,9 +101,21 @@ impl GlossDescription {
 pub(crate) struct ValueDomainStructuralKey(String);
 
 impl ValueDomainStructuralKey {
+    pub(crate) fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+
     pub(crate) fn from_registry_meta(meta: &IdentMetadata) -> Option<Self> {
-        meta.value_domain_allocation_fp()
-            .map(ValueDomainStructuralKey)
+        // Align emit identity with allocation: structural type **and** wire leaf.
+        // Type-only keys collapsed federated email wires onto one Meaning row.
+        meta.value_domain_allocation_fp()?;
+        Some(Self(
+            crate::symbol_tuning::slot_symbol_allocation_fingerprint(meta),
+        ))
+    }
+
+    pub(crate) fn from_allocation_fp(fp: impl Into<String>) -> Self {
+        Self(fp.into())
     }
 }
 
@@ -353,18 +365,21 @@ pub(crate) fn build_typed_field_meaning_from_render(
         .split_once(" · ")
         .map(|(ty, t)| (ty.trim().to_string(), t.trim().to_string()))
         .unwrap_or_else(|| (render_gloss.trim().to_string(), String::new()));
-    let is_enumish = matches!(type_label.as_str(), "select" | "multiselect");
-    let allowed_values = if is_enumish {
-        tail.clone()
-    } else {
-        meta.allowed_values()
-            .filter(|vals| !vals.is_empty())
-            .map(|vals| vals.join(", "))
-            .unwrap_or_default()
-    };
-    let description = if is_enumish && !allowed_values.is_empty() {
-        GlossDescription::from_trimmed("")
-    } else if !meta.description().trim().is_empty() {
+    // `render_gloss` maps Select/MultiSelect → teaching labels `enum` / `multi_enum`.
+    // Prefer the pre-rendered enum Meaning verbatim — do not re-split into
+    // FieldType + AllowedValues (that yields `enum · allowed: a | b`).
+    let is_enumish = matches!(type_label.as_str(), "enum" | "multi_enum");
+    if is_enumish {
+        return FieldGlossMeaning::OpaqueLegend {
+            description: render_gloss.trim().to_string(),
+        };
+    }
+    let allowed_values = meta
+        .allowed_values()
+        .filter(|vals| !vals.is_empty())
+        .map(|vals| vals.join(", "))
+        .unwrap_or_default();
+    let description = if !meta.description().trim().is_empty() {
         GlossDescription::from_trimmed(meta.description())
     } else {
         GlossDescription::from_trimmed(&tail)

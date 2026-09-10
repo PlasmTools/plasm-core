@@ -1,0 +1,2 @@
+
+**Artifact:** when **`content`** has a `plasm://…` snapshot, `(in artifact)` cells, or `result_delivery` is `snapshot_only`, call **`plasm_read_run_artifact`** with the same **`logical_session_ref`** plus `run_id` or `artifact_uri` from that step's `_meta.plasm.steps[]` (this host does not expose `resources/read`). When delivery is `inline` without those markers, rows are already in **`content`**.

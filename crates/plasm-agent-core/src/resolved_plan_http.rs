@@ -28,11 +28,13 @@ impl ResolvedPlanProtocolVersion {
         }
     }
 
+    #[cfg(test)]
     pub const fn as_u16(self) -> u16 {
         self.0
     }
 }
 
+#[cfg(test)]
 pub const RESOLVED_PLAN_CONTENT_TYPE: &str = "application/vnd.plasm.resolved-plan+json";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

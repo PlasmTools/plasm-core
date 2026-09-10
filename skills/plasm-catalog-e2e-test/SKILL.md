@@ -106,7 +106,7 @@ Inside the REPL, copy expression shapes from teaching table. Do **not** invent C
 <EntityName>                             # query-all when teaching table teaches it as bare
 <EntityName>[field1, field2]             # query + projection
 <EntityName>(<id>)                       # get by primary id when teaching is e#(<id>)
-<EntityName>{field=<value>, …}           # filtered query; use wire names from teaching TSV
+<EntityName>{field=<value>, …}           # filtered query; use wire names from language card
 <EntityName>(<id>).<relation>            # relation navigation
 ```
 

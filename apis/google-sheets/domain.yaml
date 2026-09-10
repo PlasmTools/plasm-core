@@ -52,8 +52,8 @@ entities:
     key_vars:
     - spreadsheetId
     - sheetId
-    description: A single worksheet tab within a spreadsheet. Metadata is usually read via spreadsheet_get; there is no standalone.
-      sheet GET in v4.
+    description: A single worksheet tab within a spreadsheet. Metadata is usually read via spreadsheet_get;
+      there is no standalone. sheet GET in v4.
     fields:
       spreadsheetId:
         required: true
@@ -133,125 +133,146 @@ entities:
     relations: {}
 capabilities:
   spreadsheet_get:
+    description: Load spreadsheet metadata and structure. Grid data is omitted unless requested via query
+      parameters.
     kind: get
     entity: Spreadsheet
-    description: Load spreadsheet metadata and structure. Grid data is omitted unless requested via query parameters.
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: ranges
+          value_ref: nv_spreadsheet_get_ranges
+          required: false
+        - name: includeGridData
+          value_ref: nv_wire_bool
+          required: false
+        - name: excludeTablesInBandedRanges
+          value_ref: nv_wire_bool
+          required: false
     provides:
     - spreadsheetId
     - spreadsheetUrl
     - title
     - locale
     - timeZone
-    parameters:
-    - name: ranges
-      value_ref: nv_spreadsheet_get_ranges
-      required: false
-    - name: includeGridData
-      value_ref: nv_wire_bool
-      required: false
-    - name: excludeTablesInBandedRanges
-      value_ref: nv_wire_bool
-      required: false
   spreadsheet_create:
+    description: Create a new spreadsheet. Optional title, locale, time zone, initial sheets; maps to
+      Spreadsheet.properties. and sheets on the wire.
     kind: create
     entity: Spreadsheet
-    description: Create a new spreadsheet. Optional title, locale, time zone, initial sheets; maps to Spreadsheet.properties.
-      and sheets on the wire.
-    parameters:
-    - name: title
-      value_ref: nv_spreadsheet_create_title
-      required: false
-    - name: locale
-      value_ref: nv_spreadsheet_create_locale
-      required: false
-    - name: timeZone
-      value_ref: nv_spreadsheet_create_time_zone
-      required: false
-    - name: sheets
-      value_ref: nv_spreadsheet_create_sheets
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: title
+          value_ref: nv_spreadsheet_create_title
+          required: false
+        - name: locale
+          value_ref: nv_spreadsheet_create_locale
+          required: false
+        - name: timeZone
+          value_ref: nv_spreadsheet_create_time_zone
+          required: false
+        - name: sheets
+          value_ref: nv_spreadsheet_create_sheets
+          required: false
   spreadsheet_batch_update:
+    description: Apply structured updates (add sheet, update cells, charts, etc.) via BatchUpdateSpreadsheetRequest
+      JSON body.
     kind: action
     entity: Spreadsheet
-    description: Apply structured updates (add sheet, update cells, charts, etc.) via BatchUpdateSpreadsheetRequest JSON body.
-    parameters:
-    - name: input
-      value_ref: nv_spreadsheet_batch_update_input
-      required: false
-      sink_class: external_publish
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: input
+          value_ref: nv_spreadsheet_batch_update_input
+          required: false
+          sink_class: external_publish
     output:
       type: side_effect
       description: Applies the batch update requests to the spreadsheet when the API call succeeds.
   spreadsheet_get_by_data_filter:
+    description: Load spreadsheet data selected by DataFilters.
     kind: action
     entity: Spreadsheet
-    description: Load spreadsheet data selected by DataFilters.
     output:
       type: side_effect
       description: Returns the spreadsheet projection selected by the posted data filters.
   sheet_copy_to:
+    description: Copy this sheet to another spreadsheet.
     kind: action
     entity: Sheet
-    description: Copy this sheet to another spreadsheet.
-    parameters:
-    - name: destinationSpreadsheetId
-      value_ref: nv_sheet_copy_to_destination_spreadsheet_id
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: destinationSpreadsheetId
+          value_ref: nv_sheet_copy_to_destination_spreadsheet_id
+          required: true
     output:
       type: side_effect
       description: Creates a copy of the sheet in the destination spreadsheet when the API call succeeds.
   value_range_get:
+    description: Read cell values for a single range in A1 or R1C1 notation (for example `Sheet1!A1:C10`
+      or `R1C1:R10C3`).
     kind: get
     entity: ValueRange
-    description: Read cell values for a single range in A1 or R1C1 notation (for example `Sheet1!A1:C10` or `R1C1:R10C3`).
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: majorDimension
+          value_ref: nv_wire_sel_579cc5cb5a6acde5
+          required: false
+        - name: valueRenderOption
+          value_ref: nv_wire_sel_fddbc0a3265eeefc
+          required: false
+        - name: dateTimeRenderOption
+          value_ref: nv_wire_sel_c895667a13ce733e
+          required: false
     provides:
     - range
     - majorDimension
-    parameters:
-    - name: majorDimension
-      value_ref: nv_wire_sel_579cc5cb5a6acde5
-      required: false
-    - name: valueRenderOption
-      value_ref: nv_wire_sel_fddbc0a3265eeefc
-      required: false
-    - name: dateTimeRenderOption
-      value_ref: nv_wire_sel_c895667a13ce733e
-      required: false
   spreadsheet_values_batch_get:
+    description: Read values from multiple ranges.
     kind: action
     entity: Spreadsheet
-    description: Read values from multiple ranges.
-    parameters:
-    - name: ranges
-      value_ref: nv_spreadsheet_values_batch_get_ranges
-      required: true
-    - name: majorDimension
-      value_ref: nv_wire_sel_579cc5cb5a6acde5
-      required: false
-    - name: valueRenderOption
-      value_ref: nv_wire_sel_fddbc0a3265eeefc
-      required: false
-    - name: dateTimeRenderOption
-      value_ref: nv_wire_sel_c895667a13ce733e
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: ranges
+          value_ref: nv_spreadsheet_values_batch_get_ranges
+          required: true
+        - name: majorDimension
+          value_ref: nv_wire_sel_579cc5cb5a6acde5
+          required: false
+        - name: valueRenderOption
+          value_ref: nv_wire_sel_fddbc0a3265eeefc
+          required: false
+        - name: dateTimeRenderOption
+          value_ref: nv_wire_sel_c895667a13ce733e
+          required: false
     output:
       type: side_effect
       description: Returns value data for each requested range.
   value_range_update:
+    description: Replace values in a range.
     kind: update
     entity: ValueRange
-    description: Replace values in a range.
   spreadsheet_values_batch_update:
+    description: Update values in multiple ranges.
     kind: action
     entity: Spreadsheet
-    description: Update values in multiple ranges.
     output:
       type: side_effect
       description: Writes all supplied value ranges when the API call succeeds.
   value_range_append:
+    description: Append rows after the logical table found within the specified range.
     kind: action
     entity: Spreadsheet
-    description: Append rows after the logical table found within the specified range.
     discovery:
       operation_terms:
       - append
@@ -259,76 +280,79 @@ capabilities:
       target_terms:
       - workbook
       - spreadsheet
-    parameters:
-    - name: range
-      value_ref: nv_value_range_append_range
-      required: true
-    - name: valueInputOption
-      value_ref: nv_value_range_append_value_input_option
-      required: true
-    - name: insertDataOption
-      value_ref: nv_value_range_append_insert_data_option
-      required: false
-    - name: includeValuesInResponse
-      value_ref: nv_wire_bool
-      required: false
-    - name: responseValueRenderOption
-      value_ref: nv_wire_sel_fddbc0a3265eeefc
-      required: false
-    - name: responseDateTimeRenderOption
-      value_ref: nv_wire_sel_c895667a13ce733e
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: range
+          value_ref: nv_value_range_append_range
+          required: true
+        - name: valueInputOption
+          value_ref: nv_value_range_append_value_input_option
+          required: true
+        - name: insertDataOption
+          value_ref: nv_value_range_append_insert_data_option
+          required: false
+        - name: includeValuesInResponse
+          value_ref: nv_wire_bool
+          required: false
+        - name: responseValueRenderOption
+          value_ref: nv_wire_sel_fddbc0a3265eeefc
+          required: false
+        - name: responseDateTimeRenderOption
+          value_ref: nv_wire_sel_c895667a13ce733e
+          required: false
     output:
       type: side_effect
       description: Appends values after the detected table when the API call succeeds.
   value_range_clear:
+    description: Clear values in a range while preserving other cell properties.
     kind: action
     entity: ValueRange
-    description: Clear values in a range while preserving other cell properties.
     output:
       type: side_effect
       description: Clears values in the range when the API call succeeds.
   spreadsheet_values_batch_clear:
+    description: Clear values in multiple ranges.
     kind: action
     entity: Spreadsheet
-    description: Clear values in multiple ranges.
     output:
       type: side_effect
       description: Clears all listed ranges when the API call succeeds.
   spreadsheet_values_batch_get_by_data_filter:
+    description: Read values from ranges matched by DataFilters.
     kind: action
     entity: Spreadsheet
-    description: Read values from ranges matched by DataFilters.
     output:
       type: side_effect
       description: Returns values for ranges matching the posted data filters.
   spreadsheet_values_batch_update_by_data_filter:
+    description: Update values in ranges matched by DataFilters.
     kind: action
     entity: Spreadsheet
-    description: Update values in ranges matched by DataFilters.
     output:
       type: side_effect
       description: Updates values for the matching ranges when the API call succeeds.
   spreadsheet_values_batch_clear_by_data_filter:
+    description: Clear values in ranges matched by DataFilters.
     kind: action
     entity: Spreadsheet
-    description: Clear values in ranges matched by DataFilters.
     output:
       type: side_effect
       description: Clears values for the matching ranges when the API call succeeds.
   developer_metadata_get:
+    description: Fetch a single developer metadata entry.
     kind: get
     entity: DeveloperMetadata
-    description: Fetch a single developer metadata entry.
     provides:
     - metadataId
     - metadataKey
     - metadataValue
     - visibility
   developer_metadata_search:
+    description: Search developer metadata using DataFilters (POST SearchDeveloperMetadataRequest).
     kind: action
     entity: Spreadsheet
-    description: Search developer metadata using DataFilters (POST SearchDeveloperMetadataRequest).
     output:
       type: side_effect
       description: Returns developer metadata entries matching the search request.
@@ -472,18 +496,17 @@ values:
     type: entity_ref
     target: Spreadsheet
   nv_developer_metadata_visibility:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - DEVELOPER_METADATA_VISIBILITY_UNSPECIFIED
     - DOCUMENT
     - PROJECT
   nv_sheet_copy_to_destination_spreadsheet_id:
     type: string
-    string_semantics: short
     description: Destination spreadsheet ID to receive the copied sheet.
   nv_sheet_sheet_type:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - GRID
     - OBJECT
     - DATA_SOURCE
@@ -492,42 +515,37 @@ values:
     target: Spreadsheet
   nv_spreadsheet_batch_update_input:
     type: json
-    description: POST body for spreadsheets/{spreadsheetId}:batchUpdate (BatchUpdateSpreadsheetRequest). Omitted in teaching table.
-      only for parse ergonomics; live calls must send a JSON object including a requests array (for example batch-update(input={requests=[]})
-      or a fuller payload).
+    description: POST body for spreadsheets/{spreadsheetId}:batchUpdate (BatchUpdateSpreadsheetRequest).
+      Omitted in teaching table. only for parse ergonomics; live calls must send a JSON object including
+      a requests array (for example batch-update(input={requests=[]}) or a fuller payload).
   nv_spreadsheet_create_locale:
     type: string
-    string_semantics: short
     description: BCP 47 locale (SpreadsheetProperties.locale).
   nv_spreadsheet_create_sheets_item:
     type: entity_ref
     target: Sheet
   nv_spreadsheet_create_time_zone:
     type: string
-    string_semantics: short
     description: IANA time zone (SpreadsheetProperties.timeZone).
   nv_spreadsheet_create_title:
     type: string
-    string_semantics: short
     description: Spreadsheet title (SpreadsheetProperties.title).
   nv_value_range_append_insert_data_option:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - OVERWRITE
     - INSERT_ROWS
   nv_value_range_append_range:
     type: string
-    string_semantics: short
     description: A1 range used to locate the logical table for appending (for example `Sheet1!A1:C10`).
   nv_value_range_append_value_input_option:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - INPUT_VALUE_OPTION_UNSPECIFIED
     - RAW
     - USER_ENTERED
   nv_value_range_range:
     type: string
-    string_semantics: short
     description: Range identifier (for example `Sheet1!A1:C10` or `R1C1:R10C3`).
   nv_value_range_spreadsheet_id:
     type: entity_ref
@@ -540,31 +558,30 @@ values:
   nv_wire_int:
     type: integer
   nv_wire_sel_579cc5cb5a6acde5:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - COLUMNS
     - DIMENSION_UNSPECIFIED
     - ROWS
   nv_wire_sel_c895667a13ce733e:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - FORMATTED_STRING
     - SERIAL_NUMBER
   nv_wire_sel_fddbc0a3265eeefc:
-    type: select
-    allowed_values:
+    type: enum
+    enum:
     - FORMATTED_VALUE
     - FORMULA
     - UNFORMATTED_VALUE
   nv_wire_str_short:
     type: string
-    string_semantics: short
   nv_spreadsheet_create_sheets:
     type: array
     items:
       value_ref: nv_spreadsheet_create_sheets_item
-    description: Optional initial sheet definitions (Sheets API `sheets` array); each element is a Sheet-shaped resource (e.g.
-      `properties` for tab metadata).
+    description: Optional initial sheet definitions (Sheets API `sheets` array); each element is a Sheet-shaped
+      resource (e.g. `properties` for tab metadata).
   nv_spreadsheet_get_ranges:
     type: array
     items:
