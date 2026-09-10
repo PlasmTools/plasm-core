@@ -64,6 +64,7 @@ pub(crate) fn narrow_http_graphql_response_for_entity_decode(
     response: serde_json::Value,
 ) -> Result<serde_json::Value, RuntimeError> {
     match template {
+        CapabilityTemplate::CredentialBind(_) => Ok(response),
         CapabilityTemplate::Http(cml) | CapabilityTemplate::GraphQl(cml) => {
             extract_single_entity_payload_from_response(response, cml)
         }

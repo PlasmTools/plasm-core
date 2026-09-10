@@ -29,6 +29,62 @@ impl RedisBackend {
         Ok(())
     }
 
+    /// Credential commits fail explicitly; ordinary best-effort cache helpers are unsuitable.
+    pub(crate) async fn commit_credential_json(
+        &self,
+        operation_key: &str,
+        reference_key: &str,
+        payload: &str,
+        now: u64,
+        lifetime_seconds: u64,
+    ) -> redis::RedisResult<String> {
+        let mut conn = self.conn.clone();
+        redis::cmd("EVAL")
+            .arg(
+                r#"
+            local previous = redis.call('GET', KEYS[1])
+            if previous then
+                local record = cjson.decode(previous)
+                local remaining = record.expires_at_unix - tonumber(ARGV[3])
+                if remaining > 0 then
+                    local reference_key = string.sub(KEYS[2], 1, -35) .. record.reference
+                    redis.call('SET', reference_key, previous, 'EX', remaining)
+                    return previous
+                end
+            end
+            redis.call('MSET', KEYS[1], ARGV[1], KEYS[2], ARGV[1])
+            redis.call('EXPIRE', KEYS[1], ARGV[2])
+            redis.call('EXPIRE', KEYS[2], ARGV[2])
+            return ARGV[1]
+        "#,
+            )
+            .arg(2)
+            .arg(operation_key)
+            .arg(reference_key)
+            .arg(payload)
+            .arg(lifetime_seconds)
+            .arg(now)
+            .query_async(&mut conn)
+            .await
+    }
+
+    pub(crate) async fn get_json_strict<T: serde::de::DeserializeOwned>(
+        &self,
+        key: &str,
+    ) -> redis::RedisResult<Option<T>> {
+        let mut conn = self.conn.clone();
+        let raw: Option<String> = conn.get(key).await?;
+        raw.map(|raw| {
+            serde_json::from_str(&raw).map_err(|_| {
+                redis::RedisError::from((
+                    redis::ErrorKind::TypeError,
+                    "invalid stored credential record",
+                ))
+            })
+        })
+        .transpose()
+    }
+
     pub async fn get_json<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
         let mut conn = self.conn.clone();
         let raw: Option<String> = conn.get(key).await.unwrap_or_else(|err| {

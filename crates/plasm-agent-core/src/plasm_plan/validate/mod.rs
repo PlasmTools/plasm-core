@@ -6,7 +6,6 @@ mod value;
 
 use super::*;
 use compute::*;
-use plasm_core::Expr;
 use relation::*;
 use std::collections::{BTreeMap, HashMap};
 use value::*;
@@ -50,6 +49,16 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
     }
 
     for (i, n) in plan.nodes.iter().enumerate() {
+        let mut aliases = std::collections::HashSet::new();
+        for input in &n.uses_result {
+            InputAlias::new(input.r#as.clone())?;
+            if !aliases.insert(input.r#as.as_str()) {
+                return Err(format!(
+                    "plan.nodes[{i}].uses_result duplicate alias {:?}",
+                    input.r#as
+                ));
+            }
+        }
         if n.kind.has_surface_expr() {
             if n.ir.is_none() && n.ir_template.is_none() {
                 return Err(format!(
@@ -62,14 +71,21 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
                     "plan.nodes[{i}] must not carry both ir and ir_template"
                 ));
             }
-            if let Some(expr) = &n.expr {
-                validate_no_js_object_coercion(expr, i, "expr")?;
-            }
+            let input_aliases: Vec<_> = n
+                .uses_result
+                .iter()
+                .map(|input| (input.r#as.as_str(), input.node.as_str()))
+                .collect();
+            let ctx = plasm_core::TemplateRefContext {
+                row_binding: None,
+                input_aliases: &input_aliases,
+            };
             if let Some(ir) = &n.ir {
-                validate_plan_expr_ir(ir, i, "ir")?;
+                validate_expression_operands(&ir.expr, i, &ctx)?;
             }
             if let Some(template) = &n.ir_template {
                 validate_plan_expr_template(template, i, "ir_template")?;
+                validate_expression_operands(&template.expr, i, &ctx)?;
             }
             if n.qualified_entity.is_none() && n.result_shape != ResultShape::Page {
                 return Err(format!(
@@ -209,7 +225,10 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
         }
         if n.kind == PlanNodeKind::IterateUntil {
             require_iterate_hard_bound(n, i)?;
-            if n.until.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true)
+            if n.until
+                .as_ref()
+                .map(|s| s.trim().is_empty())
+                .unwrap_or(true)
                 && n.predicates.is_empty()
             {
                 return Err(format!(
@@ -749,7 +768,7 @@ fn validate_row_effect_source_and_template<'a>(
         row_binding: Some(binding),
         input_aliases: &input_aliases,
     };
-    validate_effect_template_interpolation(template, i, &ctx)?;
+    validate_expression_operands(&template.ir_template.expr, i, &ctx)?;
     Ok((binding, template))
 }
 

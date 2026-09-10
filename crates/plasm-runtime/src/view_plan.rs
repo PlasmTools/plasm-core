@@ -241,7 +241,10 @@ pub fn scope_from_get_reference(
     let mut scope = IndexMap::new();
     match &get.reference.key {
         EntityKey::Simple(slot) => {
-            scope.insert(view_ent.id_field.to_string(), Value::String(slot.display_str()));
+            scope.insert(
+                view_ent.id_field.to_string(),
+                Value::String(slot.display_str()),
+            );
         }
         EntityKey::Compound(parts) => {
             for (k, v) in parts {

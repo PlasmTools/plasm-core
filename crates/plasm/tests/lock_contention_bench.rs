@@ -16,7 +16,6 @@ async fn bench_session_get_contention() {
         catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
         entities: vec!["Pet".into()],
         context_intent: None,
-        ranked_capabilities: None,
         principal: None,
         logical_session_id: None,
     };
@@ -38,7 +37,6 @@ async fn bench_session_get_contention() {
         None,
         None,
         "hash".into(),
-        None,
         None,
     );
     let sid_str = "d8946f9c00a4474aa1ec0d1b3d4b76b8";

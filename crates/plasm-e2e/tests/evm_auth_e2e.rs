@@ -135,7 +135,7 @@ async fn execute_balance_get(cgs: &plasm_core::CGS, base_url: &str) -> Option<St
             &mut cache,
             Some(ExecutionMode::Live),
             StreamConsumeOpts::default(),
-            ExecuteOptions::default(),
+            ExecuteOptions::for_catalog(&cgs).unwrap(),
         )
         .await
         .unwrap();

@@ -144,9 +144,11 @@ fn json_to_any(v: &serde_json::Value) -> AnyValue<'static> {
         Value::Float(f) => AnyValue::Float64(f),
         Value::String(s) | Value::PhraseIdent(s) => AnyValue::StringOwned(s.into()),
         Value::Money(m) => money_any(&m),
-        Value::Array(_) | Value::Object(_) | Value::UnionCtor { .. } | Value::PlasmInputRef(_) => {
-            AnyValue::StringOwned(v.to_string().into())
-        }
+        Value::StringTemplate(_)
+        | Value::Array(_)
+        | Value::Object(_)
+        | Value::UnionCtor { .. }
+        | Value::PlasmInputRef(_) => AnyValue::StringOwned(v.to_string().into()),
     }
 }
 

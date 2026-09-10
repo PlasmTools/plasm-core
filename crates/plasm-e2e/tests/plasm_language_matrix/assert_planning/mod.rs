@@ -17,7 +17,8 @@ pub(crate) fn assert_planning_ir(
     let computes = compute_templates(dry);
     let rel = relation_exprs(dry);
 
-    if query_pipe::assert_planning_query_pipe(row, &surfaces, &computes, &rel, dry, comp)?.is_some() {
+    if query_pipe::assert_planning_query_pipe(row, &surfaces, &computes, &rel, dry, comp)?.is_some()
+    {
         return Ok(());
     }
     if effects_program::assert_planning_effects_program(row, &surfaces, &computes, &rel, dry, comp)?
@@ -25,7 +26,8 @@ pub(crate) fn assert_planning_ir(
     {
         return Ok(());
     }
-    if federated_ra::assert_planning_federated_ra(row, &surfaces, &computes, &rel, dry, comp)?.is_some()
+    if federated_ra::assert_planning_federated_ra(row, &surfaces, &computes, &rel, dry, comp)?
+        .is_some()
     {
         return Ok(());
     }

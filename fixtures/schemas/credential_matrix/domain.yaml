@@ -1,0 +1,25 @@
+version: 1
+entry_id: credential_matrix
+http_backend: https://example.test
+auth: {scheme: none}
+values:
+  text: {type: string}
+  reference: {type: entity_ref, target: Receipt}
+entities:
+  Receipt:
+    id_field: reference
+    fields:
+      reference: {value_ref: reference, required: true}
+      record: {value_ref: text, required: true, path: resource.record}
+capabilities:
+  acquire:
+    kind: create
+    entity: Receipt
+    description: Bind the configured injection source to a record.
+    payload:
+      input_type:
+        type: object
+        fields:
+          - {name: record, value_ref: text, required: true}
+    provides: [reference, record]
+    output: {type: entity, entity_type: Receipt}

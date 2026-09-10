@@ -18,6 +18,7 @@ pub enum TypedFieldValue {
     Integer(i64),
     Float(f64),
     String(String),
+    StringTemplate(crate::program_string_template::CompiledProgramString),
     Array(Vec<TypedFieldValue>),
     Object(IndexMap<String, TypedFieldValue>),
     /// Normalized `entity_ref` payload when [`FieldType::EntityRef`] applies and the wire shape parses.
@@ -61,6 +62,7 @@ impl TypedFieldValue {
             TypedFieldValue::Bool(b) => Value::Bool(*b),
             TypedFieldValue::Integer(i) => Value::Integer(*i),
             TypedFieldValue::Float(f) => Value::Float(*f),
+            TypedFieldValue::StringTemplate(value) => Value::StringTemplate(value.clone()),
             TypedFieldValue::String(s) => Value::String(s.clone()),
             TypedFieldValue::Array(a) => Value::Array(a.iter().map(Self::to_value).collect()),
             TypedFieldValue::Object(m) => {
@@ -112,6 +114,7 @@ impl From<Value> for TypedFieldValue {
             Value::Bool(b) => TypedFieldValue::Bool(b),
             Value::Integer(i) => TypedFieldValue::Integer(i),
             Value::Float(f) => TypedFieldValue::Float(f),
+            Value::StringTemplate(value) => TypedFieldValue::StringTemplate(value),
             Value::String(s) | Value::PhraseIdent(s) => TypedFieldValue::String(s),
             Value::Array(a) => TypedFieldValue::Array(a.into_iter().map(Self::from).collect()),
             Value::Money(m) => TypedFieldValue::Money(m),

@@ -1,15 +1,8 @@
 # Simple Note — AppWorld simulated notes. Auth: login → access_token → Bearer header.
 
-_auth_header: &auth_header
-  type: object
-  fields:
-  - - Authorization
-    - type: format
-      template: "Bearer {token}"
-      vars:
-        token:
-          type: var
-          name: access_token
+_request_auth: &request_auth
+  scheme: bearer
+  token: { type: var, name: access_token }
 
 # AppWorld OpenAPI list endpoints use page_index (0-based) + page_limit (default 5, max 20).
 _appworld_page_index_limit: &appworld_page_index_limit
@@ -46,7 +39,7 @@ logout:
     value: auth
   - type: literal
     value: logout
-  headers: *auth_header
+  auth: *request_auth
 
 note_query:
   method: GET
@@ -55,7 +48,7 @@ note_query:
     value: simple_note
   - type: literal
     value: notes
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -89,7 +82,7 @@ note_get:
     value: notes
   - type: var
     name: id
-  headers: *auth_header
+  auth: *request_auth
 
 note_create:
   method: POST
@@ -98,7 +91,7 @@ note_create:
     value: simple_note
   - type: literal
     value: notes
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -124,7 +117,7 @@ note_update:
     value: notes
   - type: var
     name: id
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -160,7 +153,7 @@ note_append_content:
     name: id
   - type: var
     name: append_or_prepend
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -175,7 +168,7 @@ note_delete:
     value: notes
   - type: var
     name: id
-  headers: *auth_header
+  auth: *request_auth
 
 profile_get:
   method: GET

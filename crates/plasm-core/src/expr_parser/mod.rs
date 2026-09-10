@@ -238,6 +238,9 @@ pub enum ParseErrorKind {
     UnexpectedTrailingInput {
         tail: String,
     },
+    InvalidProgramString {
+        message: String,
+    },
     InvalidTemporalValue {
         message: String,
     },
@@ -250,6 +253,7 @@ pub enum ParseErrorKind {
 impl fmt::Display for ParseErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            ParseErrorKind::InvalidProgramString { message } => write!(f, "invalid program string: {message}"),
             ParseErrorKind::ExpectedChar { expected, got } => match got {
                 Some(g) => write!(f, "expected '{expected}', got '{g}'"),
                 None => write!(f, "expected '{expected}', got end of input"),
@@ -2009,6 +2013,18 @@ impl<'a> Parser<'a> {
                 None
             }
         })?;
+        for kind in [CapabilityKind::Query, CapabilityKind::Search] {
+            for cap in ec.find_capabilities(entity_name, kind) {
+                if let Some(f) = cap.query_surface_fields().find(|f| f.name == field) {
+                    let nv = f.named_value(ec).ok()?;
+                    return Some((
+                        nv.field_type.clone(),
+                        nv.value_format,
+                        nv.array_items.clone(),
+                    ));
+                }
+            }
+        }
         if let Some(ent) = ec.get_entity(entity_name) {
             if let Some(fs) = ent.fields.get(field) {
                 let nv = fs.named_value(ec).ok()?;
@@ -2017,18 +2033,6 @@ impl<'a> Parser<'a> {
                     nv.value_format,
                     nv.array_items.clone(),
                 ));
-            }
-        }
-        for kind in [CapabilityKind::Query, CapabilityKind::Search] {
-            for cap in ec.find_capabilities(entity_name, kind) {
-                if let Some(f) = cap.selection_params().iter().find(|f| f.name == field) {
-                    let nv = f.named_value(ec).ok()?;
-                    return Some((
-                        nv.field_type.clone(),
-                        nv.value_format,
-                        nv.array_items.clone(),
-                    ));
-                }
             }
         }
         None
@@ -2128,6 +2132,24 @@ impl<'a> Parser<'a> {
                         message: format!("internal: unknown value_ref for parameter `{}`", f.name),
                     })
                 })?;
+                // Preserve program binding diagnostics before string coercion erases the
+                // distinction between an unquoted identifier and a quoted literal.
+                if let (Some(labels), Value::PhraseIdent(ident)) = (self.program_nodes, &old) {
+                    if matches!(
+                        nv.field_type,
+                        FieldType::String | FieldType::Blob | FieldType::Uuid | FieldType::Json
+                    ) {
+                        crate::phrase_ident::validate_identifier_phrase(
+                            ident,
+                            labels,
+                            Some(&crate::phrase_ident::PhraseIdentFieldContext {
+                                field_type: &nv.field_type,
+                                allowed_values: nv.allowed_values.as_deref(),
+                            }),
+                        )
+                        .map_err(|message| self.err(ParseErrorKind::Other { message }))?;
+                    }
+                }
                 let array_ref = nv.array_items.as_ref();
                 *v = coerce_value_for_field_type_with_policy(
                     &nv.field_type,
@@ -2456,10 +2478,11 @@ impl<'a> Parser<'a> {
                     needs_explicit_anchor,
                     "delete with arguments requires Entity(id) on the left",
                 )?;
-                let _ = input;
+                let mut delete = DeleteExpr::with_target(cap_name, g.reference.clone());
+                delete.input = Some(input.into());
                 Ok(Self::stamp_session_catalog_from_source(
                     &source,
-                    Expr::Delete(DeleteExpr::with_target(cap_name, g.reference.clone())),
+                    Expr::Delete(delete),
                 ))
             }
             CapabilityKind::Update | CapabilityKind::Action => {
@@ -2570,7 +2593,7 @@ impl<'a> Parser<'a> {
         let is_query_or_search_param = [CapabilityKind::Query, CapabilityKind::Search]
             .into_iter()
             .flat_map(|kind| cgs.find_capabilities(entity_name, kind))
-            .any(|cap| cap.selection_params().iter().any(|f| f.name == pred_wire));
+            .any(|cap| cap.query_surface_fields().any(|f| f.name == pred_wire));
         if is_query_or_search_param {
             return Ok(());
         }
@@ -6797,6 +6820,51 @@ mod tests {
     }
 
     #[test]
+    fn program_parse_identity_brace_with_binding_matches_paren_get() {
+        use std::collections::BTreeSet;
+        use std::sync::Arc;
+
+        let cgs = simple_name_id_get_fixture_cgs();
+        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
+        let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
+        let stack = test_layer(&cgs);
+        let mut labels = BTreeSet::new();
+        labels.insert("sess".into());
+        let paren = parse_with_cgs_layers_program(
+            "Pet(sess.name)",
+            &stack,
+            Arc::clone(&sym_map),
+            Some(&labels),
+            false,
+        )
+        .expect("paren binding get");
+        let braced = parse_with_cgs_layers_program(
+            "Pet{name=sess.name}",
+            &stack,
+            sym_map,
+            Some(&labels),
+            false,
+        )
+        .expect("brace binding get");
+        let (Expr::Get(paren_g), Expr::Get(brace_g)) = (&paren.expr, &braced.expr) else {
+            panic!("expected Gets, got {:?} / {:?}", paren.expr, braced.expr);
+        };
+        assert_eq!(
+            paren_g.reference.key, brace_g.reference.key,
+            "e#{{id_field=path}} must lower to the same Get identity as e#(path)"
+        );
+        assert!(
+            matches!(
+                &brace_g.reference.key,
+                EntityKey::Simple(crate::IdentitySlot::Binding(PlasmInputRef::NodeInput { node, path }))
+                    if node == "sess" && path.as_slice() == ["name"]
+            ),
+            "expected Binding(sess.name), got {:?}",
+            brace_g.reference.key
+        );
+    }
+
+    #[test]
     fn program_parse_positional_get_with_binding_uses_node_input() {
         use std::collections::BTreeSet;
         use std::sync::Arc;
@@ -6906,7 +6974,10 @@ mod tests {
         };
         assert!(
             inv.target.is_pathless_nullary()
-                || inv.target.simple_id().is_some_and(|s| s.as_str().is_empty()),
+                || inv
+                    .target
+                    .simple_id()
+                    .is_some_and(|s| s.as_str().is_empty()),
             "bare pathless Action should not invent identity, got {:?}",
             inv.target
         );

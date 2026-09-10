@@ -33,7 +33,7 @@ export async function bootstrapWorkflowWorld(
     if (process.env.VERCEL_DEPLOYMENT_ID?.trim()) {
       try {
         const { getWorld } = await import("workflow/runtime");
-        await getWorld().start?.();
+        await (await getWorld()).start?.();
       } catch (err) {
         if (process.env.PLASM_WORKFLOW_STRICT === "1") throw err;
         console.warn("[plasm:workflow] vercel world start skipped:", err);
@@ -53,7 +53,7 @@ export async function bootstrapWorkflowWorld(
 
   try {
     const { getWorld } = await import("workflow/runtime");
-    const world = getWorld();
+    const world = await getWorld();
     await world.start?.();
   } catch (err) {
     if (process.env.PLASM_WORKFLOW_STRICT === "1") throw err;

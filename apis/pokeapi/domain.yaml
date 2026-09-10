@@ -13,7 +13,6 @@ entities:
       names:
       - ability
       - abilities
-      seed_class: dependent
     fields:
       id:
         required: false
@@ -36,8 +35,7 @@ entities:
         description: Pokémon that can have this ability.
         target: Pokemon
         cardinality: many
-        discovery:
-          seed_nav: locate
+        discovery: null
         materialize:
           kind: prefer_from_parent_get
           path:
@@ -718,7 +716,6 @@ entities:
       - pokémon
       - mon
       - pokedex entry
-      seed_class: primary
     fields:
       id:
         required: false
@@ -749,8 +746,7 @@ entities:
         description: Species this Pokémon belongs to.
         target: PokemonSpecies
         cardinality: one
-        discovery:
-          seed_nav: locate
+        discovery: null
         materialize:
           kind: from_parent_get
           path:
@@ -760,7 +756,6 @@ entities:
         target: PokemonForm
         cardinality: many
         discovery:
-          seed_nav: attach
           qualifier_terms:
           - form
           - forms
@@ -775,7 +770,6 @@ entities:
         target: Ability
         cardinality: many
         discovery:
-          seed_nav: attach
           qualifier_terms:
           - ability
           - abilities
@@ -790,7 +784,6 @@ entities:
         target: Type
         cardinality: many
         discovery:
-          seed_nav: attach
           qualifier_terms:
           - type
           - types
@@ -805,7 +798,6 @@ entities:
         target: Move
         cardinality: many
         discovery:
-          seed_nav: attach
           qualifier_terms:
           - move
           - moves
@@ -850,7 +842,6 @@ entities:
       - pokemon form
       - form
       - mega form
-      seed_class: dependent
     fields:
       id:
         required: false
@@ -884,8 +875,7 @@ entities:
         description: Base Pokémon for this form.
         target: Pokemon
         cardinality: one
-        discovery:
-          seed_nav: locate
+        discovery: null
       version_group:
         description: Version group this form was introduced.
         target: VersionGroup
@@ -926,7 +916,6 @@ entities:
       - species
       - pokemon species
       - pokedex species
-      seed_class: dependent
     fields:
       id:
         required: false
@@ -1595,11 +1584,10 @@ capabilities:
     description: List wild encounter areas for one Pokémon.
     kind: query
     entity: PokemonEncounter
-    parameters:
+    scope:
     - name: pokemon_id
       value_ref: nv_pokemonencounter_query_pokemon_id
       required: true
-      role: scope
   pokemon_query:
     description: List all Pokémon.
     kind: query

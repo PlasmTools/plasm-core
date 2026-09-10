@@ -427,6 +427,7 @@ fn value_short(v: &Value) -> String {
         Value::Null => "null".to_string(),
         Value::Array(a) => format!("[{} items]", a.len()),
         Value::Object(o) => format!("{{{} keys}}", o.len()),
+        Value::StringTemplate(value) => value.source().to_owned(),
         Value::Money(m) => m.display(),
     }
 }

@@ -123,8 +123,7 @@ fn compare_ordered(
     rhs: &serde_json::Value,
     op: impl Fn(f64, f64) -> bool,
 ) -> bool {
-    plasm_core::compare_unify_json_ordered_numbers(lhs, rhs)
-        .is_some_and(|(l, r)| op(l, r))
+    plasm_core::compare_unify_json_ordered_numbers(lhs, rhs).is_some_and(|(l, r)| op(l, r))
 }
 
 #[cfg(test)]

@@ -12,7 +12,7 @@ use rust_mcp_sdk::schema::schema_utils::CallToolError;
 use rust_mcp_sdk::schema::{CallToolRequestParams, CallToolResult};
 use rust_mcp_sdk::McpServer;
 
-use super::discover::mcp_call_tool_error_class;
+use super::resource_helpers::mcp_call_tool_error_class;
 use super::schema::args_value;
 use super::{mcp_key, PlasmMcpHandler};
 use tracing::Instrument;
@@ -130,24 +130,6 @@ async fn dispatch_plasm_mcp_call_tool_request_inner(
             })
             .await;
             record_tool_result("plasm_context", &res, started);
-            Ok(res)
-        }
-        "discover_capabilities" => {
-            let started = Instant::now();
-            let owned = handler.clone();
-            let key = key.clone();
-            let runtime = Arc::clone(&runtime);
-            let v = v.clone();
-            let res = on_live_plan_stack(handler, move || {
-                let owned = owned.clone();
-                async move {
-                    owned
-                        .handle_mcp_tool_discover_capabilities(key.as_str(), &runtime, &v)
-                        .await
-                }
-            })
-            .await;
-            record_tool_result("discover_capabilities", &res, started);
             Ok(res)
         }
         "plasm_ui_list_catalogs" => {

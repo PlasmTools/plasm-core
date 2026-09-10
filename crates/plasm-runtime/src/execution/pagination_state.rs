@@ -66,9 +66,11 @@ fn compiled_query_insert(
                 "query parameter pagination key '{key}' is not valid for evm_logs transport"
             ),
         }),
-        CompiledOperation::View(_) => Err(RuntimeError::ConfigurationError {
-            message: format!("pagination key '{key}' is not valid for composed view transport"),
-        }),
+        CompiledOperation::View(_) | CompiledOperation::CredentialBind(_) => {
+            Err(RuntimeError::ConfigurationError {
+                message: format!("pagination key '{key}' is not valid for composed view transport"),
+            })
+        }
     }
 }
 
@@ -95,9 +97,12 @@ fn compiled_block_range_set(
         CompiledOperation::EvmCall(_) => Err(RuntimeError::ConfigurationError {
             message: "block-range pagination is not valid for evm_call transport".to_string(),
         }),
-        CompiledOperation::View(_) => Err(RuntimeError::ConfigurationError {
-            message: "block-range pagination is not valid for composed view transport".to_string(),
-        }),
+        CompiledOperation::View(_) | CompiledOperation::CredentialBind(_) => {
+            Err(RuntimeError::ConfigurationError {
+                message: "block-range pagination is not valid for composed view transport"
+                    .to_string(),
+            })
+        }
     }
 }
 
@@ -299,7 +304,7 @@ impl PaginationLoopState {
                             .to_string(),
                     });
                 }
-                CompiledOperation::View(_) => {
+                CompiledOperation::View(_) | CompiledOperation::CredentialBind(_) => {
                     return Err(RuntimeError::ConfigurationError {
                         message: "block_range pagination is not valid for composed view transport"
                             .to_string(),
@@ -564,6 +569,7 @@ mod page_index_overlap_regressions {
 
     fn empty_http_op() -> CompiledOperation {
         CompiledOperation::Http(CompiledRequest {
+            credential: None,
             method: HttpMethod::Get,
             path: "/items".into(),
             query: None,
@@ -633,5 +639,54 @@ mod page_index_overlap_regressions {
             "Fixed page_limit must stay 20 even when host remaining budget is 5"
         );
         assert_eq!(state.last_requested_limit, 20);
+    }
+
+    #[test]
+    fn response_cursor_replaces_compiled_initial_cursor_after_first_page() {
+        let template = plasm_compile::parse_capability_template(&serde_json::json!({
+            "method": "GET", "path": [{"type": "literal", "value": "records"}],
+            "query": {"type": "object", "fields": [
+                ["cursor", {"type": "var", "name": "initial_cursor"}]
+            ]}
+        }))
+        .unwrap();
+        let env = [("initial_cursor".to_string(), Value::String("first".into()))]
+            .into_iter()
+            .collect();
+        let pconf: PaginationConfig = serde_json::from_value(serde_json::json!({
+            "strategy": "cursor", "params": {
+                "cursor": {"from_response": "next_cursor"},
+                "limit": {"fixed": 2, "role": "page_size"}
+            }
+        }))
+        .unwrap();
+        let mut state = PaginationLoopState::new(
+            &pconf,
+            &QueryPagination::default(),
+            &StreamConsumeOpts::default(),
+        )
+        .unwrap();
+        let mut first = plasm_compile::compile_operation(&template, &env).unwrap();
+        state.apply_request_params(&mut first, &pconf).unwrap();
+        let CompiledOperation::Http(first) = first else {
+            panic!("expected HTTP")
+        };
+        assert_eq!(first.to_json()["query"]["cursor"], "first");
+        assert!(state
+            .advance_after_page(
+                &pconf,
+                &serde_json::json!({"next_cursor": "second"}),
+                2,
+                2,
+                None,
+                None
+            )
+            .unwrap());
+        let mut second = plasm_compile::compile_operation(&template, &env).unwrap();
+        state.apply_request_params(&mut second, &pconf).unwrap();
+        let CompiledOperation::Http(second) = second else {
+            panic!("expected HTTP")
+        };
+        assert_eq!(second.to_json()["query"]["cursor"], "second");
     }
 }

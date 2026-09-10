@@ -35,11 +35,13 @@ tokio::task_local! {
 }
 
 tokio::task_local! {
-    /// When [`ExecuteOptions::execute_session`] is set, identity keys plus the Proof
-    /// `proof_base_token` domain precondition are merged via
-    /// [`merge_plasm_execute_session_identity_env`] and
-    /// [`merge_plasm_execute_session_proof_base_token_env`].
+    /// Execute-session identity and the scoped credential persistence adapter.
     pub(crate) static EXECUTION_EXECUTE_SESSION: Option<std::sync::Arc<ExecuteSessionMaterial>>;
+}
+
+tokio::task_local! {
+    /// Exact parsed request recipes selected before entering execution.
+    pub(crate) static EXECUTION_COMPILED_CATALOG: std::sync::Arc<plasm_compile::CompiledCatalog>;
 }
 
 tokio::task_local! {

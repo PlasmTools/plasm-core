@@ -15,7 +15,6 @@ entities:
       - customer
       - user
       - banking customer
-      seed_class: ambient
     fields:
       user_id:
         required: true
@@ -92,7 +91,6 @@ entities:
       - card account
       - Bronze Rewards Card
       - card tier
-      seed_class: primary
     fields:
       account_id:
         required: true
@@ -166,7 +164,6 @@ entities:
       - bank account
       - checking account
       - savings account
-      seed_class: primary
     fields:
       account_id:
         required: true
@@ -198,7 +195,6 @@ entities:
     discovery:
       names:
       - debit card
-      seed_class: primary
     fields:
       card_id:
         required: true
@@ -234,7 +230,6 @@ entities:
       names:
       - credit card dispute
       - transaction dispute
-      seed_class: primary
     fields:
       dispute_id:
         required: true
@@ -290,7 +285,6 @@ entities:
       qualifier_names:
       - retention history
       - why customer wants to close
-      seed_class: dependent
     fields:
       closure_reason_id:
         required: true
@@ -312,7 +306,6 @@ entities:
       - close credit card
       - pay credit card from checking
       - annual fee waiver
-      seed_class: primary
     fields:
       account_id:
         required: true
@@ -358,7 +351,6 @@ entities:
       - credit limit case
       - CLI denial
       - CLI approval
-      seed_class: primary
     fields:
       request_id:
         required: true
@@ -410,7 +402,6 @@ entities:
       - utilization threshold
       - cooldown period
       - payment history requirement
-      seed_class: dependent
     fields:
       credit_card_account_id:
         required: true
@@ -508,7 +499,6 @@ entities:
         target: CreditLimitRequest
         cardinality: many
         discovery:
-          seed_nav: attach
           qualifier_terms:
           - prior CLI requests
           - request history
@@ -521,7 +511,6 @@ entities:
         target: PaymentHistory
         cardinality: many
         discovery:
-          seed_nav: attach
           qualifier_terms:
           - payment history
           - on-time payments
@@ -555,7 +544,6 @@ entities:
       - closure blocked
       - pending dispute
       - retention protocol
-      seed_class: dependent
     fields:
       credit_card_account_id:
         required: true
@@ -603,7 +591,6 @@ entities:
       qualifier_names:
       - on-time payments
       - consecutive payment months
-      seed_class: dependent
     fields:
       payment_id:
         required: true
@@ -1939,7 +1926,7 @@ capabilities:
           value_ref: nv_int
           required: true
   referral_get:
-    description: Fetch one referral by id.
+    description: Inspect a customer's referral status and referred account type.
     kind: get
     entity: Referral
     arguments:

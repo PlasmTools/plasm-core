@@ -3,7 +3,7 @@ use crate::capability_input::{
 };
 use crate::cgs_federation::{FederationDispatch, FederationResolveError};
 use crate::scope_entity_ref_infer::{
-    prepare_create_capability_input, prepare_invoke_capability_input,
+    prepare_create_capability_input, prepare_targeted_capability_input,
 };
 use crate::{
     CapabilityKind, ChainExpr, ChainStep, CompOp, CreateExpr, DeleteExpr, EntityDef, EntityKey,
@@ -53,13 +53,13 @@ fn type_check_page(page: &PageExpr) -> Result<(), TypeError> {
     Ok(())
 }
 
-/// Union of selection parameters from every Query and Search capability on `entity`.
+/// Union of scope, selection and control inputs from Query and Search capabilities.
 fn union_query_and_search_params(cgs: &CGS, entity: &str) -> Vec<InputFieldSchema> {
     let mut seen: HashSet<String> = HashSet::new();
     let mut out = Vec::new();
     for kind in [CapabilityKind::Query, CapabilityKind::Search] {
         for cap in cgs.find_capabilities(entity, kind) {
-            for f in cap.selection_params() {
+            for f in cap.query_surface_fields() {
                 if seen.insert(f.name.clone()) {
                     out.push(f.clone());
                 }
@@ -401,7 +401,7 @@ pub fn type_check_query(query: &QueryExpr, cgs: &CGS) -> Result<(), TypeError> {
     // expose multiple scoped queries with different params, e.g. `team_id` vs `space_id`).
     let cap_params: Vec<InputFieldSchema> = if let Some(name) = query.capability_name.as_deref() {
         cgs.get_capability(name)
-            .map(|cap| cap.selection_params().to_vec())
+            .map(|cap| cap.query_surface_fields().cloned().collect())
             .unwrap_or_default()
     } else {
         union_query_and_search_params(cgs, &query.entity)
@@ -516,39 +516,36 @@ pub fn type_check_create(create: &CreateExpr, cgs: &CGS) -> Result<(), TypeError
 
 /// Type-check a delete expression.
 pub fn type_check_delete(delete: &DeleteExpr, cgs: &CGS) -> Result<(), TypeError> {
-    cgs.get_entity(&delete.target.entity_type)
-        .ok_or_else(|| TypeError::EntityNotFound {
-            entity: delete.target.entity_type.to_string(),
-        })?;
-
-    cgs.get_capability(&delete.capability)
-        .ok_or_else(|| TypeError::CapabilityNotFound {
-            capability: delete.capability.to_string(),
-        })?;
-
-    Ok(())
+    type_check_targeted_call(delete, cgs)
 }
 
 /// Type-check an invoke expression.
 pub fn type_check_invoke(invoke: &InvokeExpr, cgs: &CGS) -> Result<(), TypeError> {
+    type_check_targeted_call(invoke, cgs)
+}
+
+fn type_check_targeted_call(
+    invoke: &impl crate::expr::TargetedCall,
+    cgs: &CGS,
+) -> Result<(), TypeError> {
     // Check that the target entity exists
-    cgs.get_entity(&invoke.target.entity_type)
+    cgs.get_entity(&invoke.target().entity_type)
         .ok_or_else(|| TypeError::EntityNotFound {
-            entity: invoke.target.entity_type.to_string(),
+            entity: invoke.target().entity_type.to_string(),
         })?;
 
     // Check that the capability exists
     let capability =
-        cgs.get_capability(&invoke.capability)
+        cgs.get_capability(invoke.capability())
             .ok_or_else(|| TypeError::CapabilityNotFound {
-                capability: invoke.capability.to_string(),
+                capability: invoke.capability().to_string(),
             })?;
 
     // Validate against payload ∪ arguments object lanes (same field set as parse coerce).
     // Union constructors still require inputs.payload.
     let has_invocation_body = capability.primary_invocation_schema().is_some()
         || matches!(
-            invoke.input.as_ref(),
+            invoke.input(),
             Some(
                 crate::InvokeInputPayload::Raw(Value::UnionCtor { .. })
                     | crate::InvokeInputPayload::Typed(crate::TypedInvokeInput::Union { .. })
@@ -556,11 +553,10 @@ pub fn type_check_invoke(invoke: &InvokeExpr, cgs: &CGS) -> Result<(), TypeError
         );
     if has_invocation_body {
         let raw = invoke
-            .input
-            .as_ref()
+            .input()
             .map(|i| i.to_value())
             .unwrap_or_else(|| Value::Object(indexmap::IndexMap::new()));
-        let effective = prepare_invoke_capability_input(capability, invoke, raw, cgs);
+        let effective = prepare_targeted_capability_input(capability, invoke, raw, cgs);
         validate_capability_invocation_input_with_path_vars(capability, effective, cgs)?;
     }
 
@@ -1649,12 +1645,7 @@ mod tests {
             "expected IncompatibleValue for limit, got {err:?}"
         );
         // RA-8: numeric strings coerce to integer (compatible with coerce law).
-        let ok = type_check_predicate(
-            &Predicate::eq("limit", "10"),
-            &entity,
-            &cap_params,
-            &cgs,
-        );
+        let ok = type_check_predicate(&Predicate::eq("limit", "10"), &entity, &cap_params, &cgs);
         assert!(ok.is_ok(), "numeric string must coerce: {ok:?}");
     }
 

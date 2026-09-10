@@ -1,3 +1,4 @@
+import { sessionArchiveKey } from "./local-run-archive.js";
 import { LocalArchiveStore } from "./index.js";
 import type {
   BlobArchiveAdapter,
@@ -73,12 +74,12 @@ export class ProdArchiveStore {
 
   async writePlanArchive(snapshot: PlanArchiveSnapshot): Promise<void> {
     await this.local.writePlanArchive(snapshot);
-    await this.putJson(blobKey("plan", snapshot.plan_commit_ref), snapshot);
+    await this.putJson(blobKey("plan", sessionArchiveKey(snapshot.plan_commit_ref, snapshot.logical_session_ref)), snapshot);
   }
 
   async writeRunSnapshot(snapshot: RunSnapshot): Promise<void> {
     await this.local.writeRunSnapshot(snapshot);
-    await this.putJson(blobKey("run", snapshot.run_id), snapshot);
+    await this.putJson(blobKey("run", sessionArchiveKey(snapshot.run_id, snapshot.logical_session_ref)), snapshot);
   }
 
   async listTraces(tenantId: string, limit = 50): Promise<TraceSummary[]> {
@@ -116,6 +117,12 @@ export class ProdArchiveStore {
       return items.slice(0, limit);
     }
     return this.local.listRuns(limit);
+  }
+
+  async getRun(runId: string, logicalSessionRef: string): Promise<RunSnapshot | null> {
+    const fromBlob = await this.getJson<RunSnapshot>(blobKey("run", sessionArchiveKey(runId, logicalSessionRef)));
+    if (fromBlob) return fromBlob;
+    return this.local.getRun(runId, logicalSessionRef);
   }
 
   async listArchives(limit = 50) {

@@ -162,6 +162,7 @@ fn validate_value_phrase_idents(
         | Value::Integer(_)
         | Value::Float(_)
         | Value::String(_)
+        | Value::StringTemplate(_)
         | Value::Money(_) => Ok(()),
     }
 }
@@ -211,7 +212,10 @@ fn validate_ref_identity_slots(
     reference: &crate::Ref,
     program_labels: &BTreeSet<String>,
 ) -> Result<(), String> {
-    fn walk_slot(slot: &crate::IdentitySlot, _program_labels: &BTreeSet<String>) -> Result<(), String> {
+    fn walk_slot(
+        slot: &crate::IdentitySlot,
+        _program_labels: &BTreeSet<String>,
+    ) -> Result<(), String> {
         match slot {
             crate::IdentitySlot::Lit(_) => Ok(()),
             // Binding is [`PlasmInputRef`] — no PhraseIdent payload to validate.
@@ -341,6 +345,34 @@ fn normalize_invoke_payload(payload: &mut InvokeInputPayload) {
     }
 }
 
+fn lower_targeted_phrase_input(
+    capability: &crate::CapabilityName,
+    target: &crate::Ref,
+    input: &mut Option<InvokeInputPayload>,
+    cgs: &CGS,
+    program_labels: &BTreeSet<String>,
+    validate: bool,
+) -> Result<(), String> {
+    if validate {
+        let cap = cgs
+            .get_capability(capability.as_str())
+            .ok_or_else(|| format!("unknown capability `{capability}`"))?;
+        if let Some(input) = input.as_ref() {
+            validate_invoke_input_object(
+                &input.to_value(),
+                program_labels,
+                &cap_params_for_capability(cap),
+                cgs,
+            )?;
+        }
+        validate_ref_identity_slots(target, program_labels)?;
+    }
+    if let Some(input) = input.as_mut() {
+        normalize_invoke_payload(input);
+    }
+    Ok(())
+}
+
 fn lower_expr_phrase_idents(
     expr: &mut Expr,
     program_labels: &BTreeSet<String>,
@@ -353,25 +385,14 @@ fn lower_expr_phrase_idents(
                 inv.catalog_entry_id.as_deref(),
                 inv.target.entity_type.as_str(),
             )?;
-            if validate {
-                let cap = cgs
-                    .get_capability(inv.capability.as_str())
-                    .ok_or_else(|| format!("unknown capability `{}`", inv.capability))?;
-                let cap_params = cap_params_for_capability(cap);
-                if let Some(input) = &inv.input {
-                    validate_invoke_input_object(
-                        &input.to_value(),
-                        program_labels,
-                        &cap_params,
-                        cgs,
-                    )?;
-                }
-                validate_ref_identity_slots(&inv.target, program_labels)?;
-            }
-            if let Some(input) = &mut inv.input {
-                normalize_invoke_payload(input);
-            }
-            Ok(())
+            lower_targeted_phrase_input(
+                &inv.capability,
+                &inv.target,
+                &mut inv.input,
+                cgs,
+                program_labels,
+                validate,
+            )
         }
         Expr::Create(create) => {
             let cgs = scope.resolve_capability_cgs(
@@ -394,14 +415,18 @@ fn lower_expr_phrase_idents(
             Ok(())
         }
         Expr::Delete(del) => {
-            let _cgs = scope.resolve_capability_cgs(
+            let cgs = scope.resolve_capability_cgs(
                 del.catalog_entry_id.as_deref(),
                 del.target.entity_type.as_str(),
             )?;
-            if validate {
-                validate_ref_identity_slots(&del.target, program_labels)?;
-            }
-            Ok(())
+            lower_targeted_phrase_input(
+                &del.capability,
+                &del.target,
+                &mut del.input,
+                cgs,
+                program_labels,
+                validate,
+            )
         }
         Expr::Get(get) => {
             let _cgs = scope.resolve(

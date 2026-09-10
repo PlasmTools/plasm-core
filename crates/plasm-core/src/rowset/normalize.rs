@@ -120,7 +120,7 @@ fn collect_source_comparisons(
     match pred {
         Predicate::True => Ok(Vec::new()),
         Predicate::Comparison { field, op, value } => {
-            Ok(vec![(field.clone(), op.clone(), value.clone())])
+            Ok(vec![(field.clone(), *op, value.clone())])
         }
         Predicate::And { args } => {
             let mut out = Vec::new();

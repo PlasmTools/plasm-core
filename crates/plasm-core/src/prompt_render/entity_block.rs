@@ -37,6 +37,35 @@ use super::teaching_util::TEACHING_SEARCH_QUERY_LITERAL;
 use super::tsv_emit::relation_sym_shown_in_query_teaching_rows;
 use super::{EntityTeachingBlock, EntityTeachingExprRow, TeachingHeading};
 
+/// Query Meaning: listing is not a create when this entity exposes `kind: create`.
+fn query_existing_rows_create_peer_gloss(
+    map: Option<&SymbolMap>,
+    cgs: &CGS,
+    ename: &str,
+    catalog_entry_id: &str,
+    surface_filter: Option<&ExposureSurface>,
+) -> Option<String> {
+    let map = map?;
+    let mut creates: Vec<&crate::CapabilitySchema> = cgs
+        .find_capabilities(ename, CapabilityKind::Create)
+        .into_iter()
+        .filter(|cap| surface_allows_capability(surface_filter, catalog_entry_id, cap))
+        .collect();
+    if creates.is_empty() {
+        return None;
+    }
+    creates.sort_by(|a, b| a.name.cmp(&b.name));
+    let es = ent_sym(Some(map), catalog_entry_id, ename);
+    let peers: Vec<String> = creates
+        .iter()
+        .map(|cap| format!("{es}.{}(", met_sym(Some(map), catalog_entry_id, ename, cap)))
+        .collect();
+    Some(format!(
+        "existing rows only; new row is {}",
+        peers.join(" or ")
+    ))
+}
+
 /// Non–zero-arity invoke/create/update: `e#($).m#(p#=…)` (same rules as parser dotted-call capability resolution).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn collect_multi_arity_method_lines(
@@ -251,9 +280,8 @@ pub(crate) fn collect_entity_teaching_block(
     let mut emitted_primary_get = false;
     if primary_get_cap.is_some() && !only_singleton_gets {
         let primary_name = primary_get_cap.map(|c| &c.name);
-        let with_wires = |base: String| -> String {
-            with_projection_bracket(base, canonical_bracket)
-        };
+        let with_wires =
+            |base: String| -> String { with_projection_bracket(base, canonical_bracket) };
         if let Some(cmp) = compound_get_expr_line(&es, ent, cgs, map, catalog_entry_id) {
             if try_push_teaching_example(
                 gloss_emit,
@@ -314,14 +342,29 @@ pub(crate) fn collect_entity_teaching_block(
                         map,
                         catalog_entry_id,
                     );
-                    let cap_leg = capability_legend_with_session_gloss(
-                        map,
-                        cgs,
-                        cap,
-                        ename,
-                        ident_meta,
-                        catalog_entry_id,
-                    );
+                    let cap_leg = {
+                        let base = capability_legend_with_session_gloss(
+                            map,
+                            cgs,
+                            cap,
+                            ename,
+                            ident_meta,
+                            catalog_entry_id,
+                        );
+                        match query_existing_rows_create_peer_gloss(
+                            map,
+                            cgs,
+                            ename,
+                            catalog_entry_id,
+                            surface_filter,
+                        ) {
+                            Some(peer) => Some(match base {
+                                Some(s) if !s.is_empty() => format!("{s} · {peer}"),
+                                _ => peer,
+                            }),
+                            None => base,
+                        }
+                    };
                     let is_primary_query = primary_q_name.as_deref() == Some(cap.name.as_str());
                     let mut added = false;
                     if let Some(line) = query_expr_maximal(cap, &es, cgs, map, catalog_entry_id) {
@@ -408,8 +451,7 @@ pub(crate) fn collect_entity_teaching_block(
                                     canonical_bracket,
                                     witness_taught,
                                 )
-                            {
-                            }
+                            {}
                         }
                     }
                 }

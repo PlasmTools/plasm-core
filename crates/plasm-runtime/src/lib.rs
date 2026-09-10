@@ -28,9 +28,7 @@
 //!    - Delete/Invoke: `id` + path vars + optional `input`
 //!    - When the host sets [`ExecuteOptions::execute_session`](execution::ExecuteOptions), reserved
 //!      `plasm_execute_prompt_hash` / `plasm_execute_session_id` keys are merged before compile (see
-//!      [`merge_plasm_execute_session_env`](execution::merge_plasm_execute_session_env)). Proof's
-//!      domain precondition `proof_base_token` may also be merged as `base_token` for `/ops`
-//!      (see [`merge_plasm_execute_session_proof_base_token_env`](execution::merge_plasm_execute_session_proof_base_token_env)).
+//!      [`merge_plasm_execute_session_env`](execution::merge_plasm_execute_session_env)).
 //! 4. **Compile CML template**: evaluate the capability's mapping template against
 //!    the environment to produce a concrete HTTP request (method, path, query, body)
 //! 5. **Execute**: dispatch based on [`ExecutionMode`]
@@ -104,6 +102,7 @@ pub mod auth_resolution;
 pub mod binding_kv;
 pub mod branch_commit;
 pub mod cache;
+pub mod credentials;
 pub mod error;
 pub mod evm;
 pub mod execution;

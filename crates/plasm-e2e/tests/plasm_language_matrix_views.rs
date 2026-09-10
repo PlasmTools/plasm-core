@@ -3,6 +3,7 @@
 //! Hermit is reserved for transport/decode regressions; view wiring lives here (fast, deterministic).
 
 #[path = "common/hermit_lang_matrix.rs"]
+#[allow(dead_code)]
 mod hermit_lang_matrix;
 
 #[path = "common/language_matrix_views.rs"]
@@ -56,6 +57,7 @@ fn matrix_views_catalog_passes_static_validation() {
 #[test]
 fn matrix_views_all_preflight() {
     let cgs = matrix_views_cgs();
+    let compiled = plasm_compile::compile_cgs_capability_templates(&cgs).expect("compile CML");
     let ambient = ViewAmbientContext::default();
     for &(view_name, entity) in MATRIX_VIEW_PREFLIGHT_CASES {
         let query = matrix_view_query(entity);
@@ -63,6 +65,7 @@ fn matrix_views_all_preflight() {
             view_name,
             &query,
             &cgs,
+            &compiled,
             &ambient,
             &SessionMaterialization::new(),
         )
@@ -73,11 +76,13 @@ fn matrix_views_all_preflight() {
 #[test]
 fn matrix_views_missing_scope_preflight_errors() {
     let cgs = matrix_views_cgs();
+    let compiled = plasm_compile::compile_cgs_capability_templates(&cgs).expect("compile CML");
     let query = QueryExpr::all("LangDigest");
     let err = preflight_view_query(
         "lang_digest",
         &query,
         &cgs,
+        &compiled,
         &ViewAmbientContext::default(),
         &SessionMaterialization::new(),
     )

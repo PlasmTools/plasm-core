@@ -91,57 +91,28 @@ pub struct RunArgs {
 
 #[derive(Debug, Args)]
 pub struct ContextArgs {
-    #[arg(long, help = "New client session (fresh teaching.tsv)")]
+    #[arg(long, help = "New routed server session and local mirror")]
     pub new: bool,
 
-    #[arg(long, help = "Print full TSV exposure block")]
+    #[arg(long, help = "Print the canonical teaching returned by the server")]
     pub verbose: bool,
 
     #[arg(
         long,
         short = 'i',
         value_name = "TEXT",
-        help = "Agent intent (required with --new; else defaults to last `plasm search` intent)"
+        help = "Current business intent (required for new and extension)"
     )]
     pub intent: Option<String>,
-
-    #[arg(
-        value_name = "CATALOG:ENTITY",
-        required = true,
-        num_args = 1..,
-        help = "Registry entry_id:entity (e.g. pokeapi:Pokemon); required format with --new"
-    )]
-    pub seeds: Vec<String>,
 }
 
-/// Returns true when `seed` is a non-empty `entry_id:Entity` pair.
-pub fn is_qualified_seed(seed: &str) -> bool {
-    let seed = seed.trim();
-    match seed.split_once(':') {
-        Some((api, ent)) => !api.trim().is_empty() && !ent.trim().is_empty(),
-        None => false,
-    }
-}
-
-/// Validate context CLI args after Clap parse (`--new` rules).
 pub fn validate_context_args(args: &ContextArgs) -> Result<()> {
-    if args.new {
-        if args
-            .intent
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .is_none()
-        {
-            bail!("context --new requires --intent (-i)");
-        }
-        for seed in &args.seeds {
-            if !is_qualified_seed(seed) {
-                bail!(
-                    "context --new requires catalog:entity seeds (e.g. pokeapi:Pokemon), not `{seed}`"
-                );
-            }
-        }
+    if args
+        .intent
+        .as_deref()
+        .is_none_or(|intent| intent.trim().is_empty())
+    {
+        bail!("context requires --intent (-i)");
     }
     Ok(())
 }
@@ -186,31 +157,25 @@ pub enum Cmd {
     Login,
     #[command(about = "Profile, auth, and GET /v1/health diagnostics")]
     Doctor,
-    #[command(about = "Discover capabilities; merge into hosts/<slug>/discovery.tsv")]
+    #[command(about = "Discover capabilities and return the complete routing receipt")]
     Search {
         #[arg(
             value_name = "INTENT",
             help = "Natural-language goal for capability discovery"
         )]
         intent: String,
-        #[arg(long, help = "Maximum ranked candidates to return")]
-        limit: Option<usize>,
     },
     #[command(
-        about = "Expose entities into the client symbol space",
-        long_about = "Append teaching rows to teaching.tsv for the active client session. \
-                      Use registry entry_id:Entity seeds (e.g. pokeapi:Pokemon). \
-                      With --new, --intent and qualified seeds are required. \
-                      Without --new, unqualified entity names may resolve via `plasm search` cache when unique."
+        about = "Select capabilities and expose server-owned teaching",
+        long_about = "Use --new --intent to open a routed context, then --intent to extend the same pinned session."
     )]
     Context {
         #[command(flatten)]
         context: ContextArgs,
     },
     #[command(
-        about = "Run or plan an expanded Plasm program",
-        long_about = "Requires an active context (`plasm context`). Expands local e#/p# symbols, \
-                      POSTs resolved plan JSON to the server. Use --mode plan for dry compile only."
+        about = "Run or plan a Plasm program in the pinned server session",
+        long_about = "Requires a Ready routed context. The server parses the program using its append-only symbols and enforces reviewed execution."
     )]
     Run {
         #[command(flatten)]
@@ -279,21 +244,47 @@ mod tests {
     }
 
     #[test]
-    fn context_new_requires_qualified_seeds() {
-        let args = ContextArgs {
-            new: true,
-            verbose: false,
-            intent: Some("x".into()),
-            seeds: vec!["Pokemon".into()],
+    fn context_is_intent_only_with_explicit_continuation() {
+        let cli =
+            Cli::try_parse_from(["plasm", "context", "--new", "--intent", "read records"]).unwrap();
+        let Cmd::Context { context } = cli.cmd else {
+            panic!()
         };
-        let err = validate_context_args(&args).unwrap_err();
-        assert!(err.to_string().contains("catalog:entity"));
+        validate_context_args(&context).unwrap();
+        assert!(
+            Cli::try_parse_from(["plasm", "context", "--intent", "read", "matrix:Record"]).is_err()
+        );
+        assert!(Cli::try_parse_from([
+            "plasm",
+            "context",
+            "--intent",
+            "read",
+            "--routing-ref",
+            "receipt"
+        ])
+        .is_err());
     }
+}
 
+#[cfg(test)]
+mod sufficiency_input_tests {
+    use super::*;
     #[test]
-    fn is_qualified_seed_accepts_entry_entity() {
-        assert!(is_qualified_seed("pokeapi:Pokemon"));
-        assert!(!is_qualified_seed("Pokemon"));
-        assert!(!is_qualified_seed(":Pokemon"));
+    fn context_rejects_abolished_conversational_inputs() {
+        for option in ["--routing-ref", "--clarify-choices", "--clarify-choice"] {
+            assert!(Cli::try_parse_from([
+                "plasm",
+                "context",
+                "--intent",
+                "inspect records",
+                option,
+                "1"
+            ])
+            .is_err());
+        }
+        assert!(
+            Cli::try_parse_from(["plasm", "context", "--new", "--intent", "inspect records"])
+                .is_ok()
+        );
     }
 }

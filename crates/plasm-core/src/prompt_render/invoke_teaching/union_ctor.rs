@@ -115,7 +115,7 @@ pub(crate) fn emit_union_array_constructor_teaching_gloss(
             let vs = vsym.as_wire();
             if let Some(vg) = gs.map.value_domain_gloss_for_v_sym(&vs) {
                 let Some(v_canon) = meaning_canonical_sym_for_emit(
-                    vg,
+                    &fp,
                     &vs,
                     &mut gs.state.registry_value_gloss_canonical_v,
                     &mut gs.state.registry_v_sym_alias,

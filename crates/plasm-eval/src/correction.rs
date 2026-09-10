@@ -15,7 +15,6 @@ use plasm_core::symbol_tuning::{strip_prompt_expression_annotations, symbol_map_
 use plasm_core::type_checker::type_check_expr;
 use plasm_core::PromptPipelineConfig;
 use plasm_core::TypeError;
-use plasm_core::Value;
 use plasm_core::CGS;
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -131,27 +130,19 @@ fn expr_contains_domain_placeholder(expr: &Expr) -> bool {
                     .as_ref()
                     .is_some_and(|p| p.cursor.as_deref() == Some("$"))
         }
-        Expr::Get(g) => {
-            ref_contains_domain_placeholder(&g.reference)
-                || g.path_vars
-                    .as_ref()
-                    .is_some_and(|m| m.values().any(Value::contains_domain_placeholder_deep))
-        }
+        Expr::Get(g) => ref_contains_domain_placeholder(&g.reference),
         Expr::Create(c) => c.input.to_value().contains_domain_placeholder_deep(),
         Expr::Delete(d) => {
             ref_contains_domain_placeholder(&d.target)
-                || d.path_vars
+                || d.input
                     .as_ref()
-                    .is_some_and(|m| m.values().any(Value::contains_domain_placeholder_deep))
+                    .is_some_and(|input| input.to_value().contains_domain_placeholder_deep())
         }
         Expr::Invoke(i) => {
             ref_contains_domain_placeholder(&i.target)
                 || i.input
                     .as_ref()
                     .is_some_and(|inp| inp.to_value().contains_domain_placeholder_deep())
-                || i.path_vars
-                    .as_ref()
-                    .is_some_and(|m| m.values().any(Value::contains_domain_placeholder_deep))
         }
         Expr::Chain(ch) => {
             expr_contains_domain_placeholder(&ch.source)

@@ -2,20 +2,19 @@ use super::value::PlanInputBinding;
 use serde::{Deserialize, Serialize};
 
 /// Executable Plasm IR for a program-plan node. `display_expr` is inert provenance only.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlanExprIr {
-    pub expr: serde_json::Value,
+    pub expr: crate::Expr,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub projection: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_expr: Option<String>,
 }
 
-/// IR template with value holes. The `expr` JSON must become `crate::Expr`
-/// after holes are instantiated; strings are never reparsed as Plasm.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Structural expression with deferred operands. Serialization is a wire concern only.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlanExprTemplate {
-    pub expr: serde_json::Value,
+    pub expr: crate::Expr,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub projection: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

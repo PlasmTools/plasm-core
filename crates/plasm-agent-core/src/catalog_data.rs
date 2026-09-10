@@ -1,12 +1,10 @@
-//! Build an [`plasm_core::discovery::InMemoryCgsRegistry`] from compiled JSON catalog artifacts.
+//! Build an [`plasm_core::discovery::CgsRegistry`] from compiled JSON catalog artifacts.
 
 use plasm_core::catalog_il::{
-    is_catalog_manifest_path, load_catalog_artifact, read_catalog_manifest, CatalogManifest,
+    load_catalog_artifact, read_catalog_manifest, read_catalog_set, CatalogManifest,
 };
-use plasm_core::discovery::InMemoryCgsRegistry;
+use plasm_core::discovery::CgsRegistry;
 use plasm_core::schema::CGS;
-use plasm_core::CgsCatalog;
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -20,6 +18,7 @@ pub struct LoadedCatalogEntry {
     pub label: String,
     pub tags: Vec<String>,
     pub cgs: Arc<CGS>,
+    pub compiled: Arc<plasm_compile::CompiledCatalog>,
 }
 
 impl LoadedCatalogEntry {
@@ -28,50 +27,11 @@ impl LoadedCatalogEntry {
     }
 }
 
-/// Validate capability CML templates for every entry in a loaded registry.
-pub fn validate_registry_templates_with_progress<P: FnMut(&str)>(
-    reg: &InMemoryCgsRegistry,
-    progress: &mut P,
-) -> Result<(), String> {
-    let metas = reg.list_entries();
-    let n = metas.len();
-    progress(&format!("validating capability templates ({n} entries)…"));
-    if n <= 1 {
-        for meta in metas {
-            validate_one_entry(reg, &meta.entry_id)?;
-        }
-        return Ok(());
-    }
-
-    let workers = catalog_materialize_workers();
-    let err: Arc<std::sync::Mutex<Option<String>>> = Arc::new(std::sync::Mutex::new(None));
-
-    for chunk in metas.chunks(workers) {
-        std::thread::scope(|scope| {
-            for meta in chunk {
-                let entry_id = meta.entry_id.clone();
-                let err = Arc::clone(&err);
-                scope.spawn(move || {
-                    if err.lock().expect("err lock").is_some() {
-                        return;
-                    }
-                    if let Err(e) = validate_one_entry(reg, &entry_id) {
-                        *err.lock().expect("err lock") = Some(e);
-                    }
-                });
-            }
-        });
-        if let Some(e) = err.lock().expect("err lock").take() {
-            return Err(e);
-        }
-    }
-    Ok(())
-}
-
-fn validate_one_entry(reg: &InMemoryCgsRegistry, entry_id: &str) -> Result<(), String> {
-    let ctx = reg.load_context(entry_id).map_err(|e| e.to_string())?;
-    plasm_compile::validate_cgs_capability_templates(ctx.cgs.as_ref())
-        .map_err(|e| format!("{entry_id}: {e}"))
+/// One validated, immutable catalog generation loaded from a format-3 manifest set.
+#[derive(Clone)]
+pub struct LoadedCatalogSet {
+    pub registry: Arc<CgsRegistry>,
+    pub compiled_by_entry: Arc<HashMap<String, Arc<plasm_compile::CompiledCatalog>>>,
 }
 
 fn ingest_manifest_candidate(
@@ -82,59 +42,49 @@ fn ingest_manifest_candidate(
     let ver = manifest.version;
     let eid = manifest.entry_id.clone();
 
-    match best_by_entry.entry(eid.clone()) {
-        Entry::Vacant(v) => {
-            v.insert((ver, manifest, path.to_path_buf()));
-        }
-        Entry::Occupied(mut o) => {
-            let (best_ver, best_meta, best_path) = o.get();
-            if ver > *best_ver {
-                o.insert((ver, manifest, path.to_path_buf()));
-            } else if ver == *best_ver {
-                if best_meta.cgs_hash != manifest.cgs_hash {
-                    return Err(format!(
-                        "conflicting catalogs for entry `{eid}` v{ver}: cgs_hash {} vs {}",
-                        best_meta.cgs_hash, manifest.cgs_hash
-                    ));
-                }
-                if path < best_path.as_path() {
-                    o.insert((ver, manifest, path.to_path_buf()));
-                }
-            }
-        }
+    if best_by_entry.contains_key(&eid) {
+        return Err(format!(
+            "catalog set declares multiple revisions for entry {eid}"
+        ));
     }
+    best_by_entry.insert(eid, (ver, manifest, path.to_path_buf()));
     Ok(())
 }
 
-/// Scan `dir` for catalog manifests, select the highest `CGS.version` per `entry_id`, validate
+/// Scan `dir` for catalog manifests, load the exact declared revision per `entry_id`, validate
 /// capability templates, and build a registry. Fails on the first invalid artifact.
-pub fn load_registry_from_catalog_dir(dir: &Path) -> Result<InMemoryCgsRegistry, String> {
-    load_registry_from_catalog_dir_with_progress(dir, &mut |_: &str| {})
+pub fn load_registry_from_catalog_dir(dir: &Path) -> Result<Arc<CgsRegistry>, String> {
+    let loaded = load_catalog_set_from_dir_with_progress(dir, &mut |_: &str| {})?;
+    Ok(loaded.registry)
 }
 
 /// Like [`load_registry_from_catalog_dir`], with progress callbacks.
 pub fn load_registry_from_catalog_dir_with_progress<P: FnMut(&str)>(
     dir: &Path,
     progress: &mut P,
-) -> Result<InMemoryCgsRegistry, String> {
+) -> Result<Arc<CgsRegistry>, String> {
+    let loaded = load_catalog_set_from_dir_with_progress(dir, progress)?;
+    Ok(loaded.registry)
+}
+
+/// Load CGS and precompiled request recipes as one validated generation.
+pub fn load_catalog_set_from_dir_with_progress<P: FnMut(&str)>(
+    dir: &Path,
+    progress: &mut P,
+) -> Result<LoadedCatalogSet, String> {
     progress(&format!("scanning catalog-dir {}", dir.display()));
-    let read = std::fs::read_dir(dir).map_err(|e| format!("read {}: {e}", dir.display()))?;
+    let manifest_paths = read_catalog_set(dir)?;
 
     let mut best_by_entry: HashMap<String, (u64, CatalogManifest, PathBuf)> = HashMap::new();
     let mut manifest_count = 0usize;
 
-    for ent in read {
-        let ent = ent.map_err(|e| format!("read_dir: {e}"))?;
-        let path = ent.path();
-        if !path.is_file() || !is_catalog_manifest_path(&path) {
-            continue;
-        }
+    for path in manifest_paths {
         manifest_count += 1;
         ingest_manifest_candidate(&path, &mut best_by_entry)?;
     }
 
     progress(&format!(
-        "found {manifest_count} catalog manifest(s); {} entry id(s) after version resolution",
+        "found {manifest_count} catalog manifest(s); {} entry id(s) in the declared catalog set",
         best_by_entry.len()
     ));
 
@@ -153,18 +103,26 @@ pub fn load_registry_from_catalog_dir_with_progress<P: FnMut(&str)>(
         materialize_entries_parallel(dir, best_by_entry, &ids)?
     };
 
-    let reg = InMemoryCgsRegistry::from_pairs(
+    let compiled_by_entry = entries
+        .iter()
+        .map(|entry| (entry.entry_id.clone(), entry.compiled.clone()))
+        .collect();
+    let reg = Arc::new(CgsRegistry::from_pairs(
         entries
             .into_iter()
             .map(LoadedCatalogEntry::into_registry_pair)
             .collect(),
-    );
-    validate_registry_templates_with_progress(&reg, progress)?;
-    Ok(reg)
+    ));
+    Ok(LoadedCatalogSet {
+        registry: reg,
+        compiled_by_entry: Arc::new(compiled_by_entry),
+    })
 }
 
 fn materialize_one_entry(dir: &Path, meta: CatalogManifest) -> Result<LoadedCatalogEntry, String> {
     let cgs: CGS = load_catalog_artifact(dir, &meta)?;
+    let compiled = plasm_compile::load_compiled_catalog_artifact(dir, &meta, &cgs)
+        .map_err(|error| error.to_string())?;
     let label = if meta.label.is_empty() {
         meta.entry_id.clone()
     } else {
@@ -175,6 +133,7 @@ fn materialize_one_entry(dir: &Path, meta: CatalogManifest) -> Result<LoadedCata
         label,
         tags: meta.tags,
         cgs: Arc::new(cgs),
+        compiled: Arc::new(compiled),
     })
 }
 
@@ -258,78 +217,35 @@ mod tests {
             label: String::new(),
             tags: vec![],
             cgs_json: format!("{entry_id}.v{version}.deadbeefcafe.cgs.json"),
+            recipes_json: format!("{entry_id}.recipes.json"),
+            recipes_hash: "c".repeat(64),
+            discovery_json: format!("{entry_id}.discovery.json"),
+            discovery_hash: "b".repeat(64),
+            embedding_profile: Default::default(),
         }
     }
 
     #[test]
-    fn ingest_prefers_higher_version() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        write_manifest(
-            dir.path(),
-            "a.manifest.json",
-            &manifest("github", 1, &"a".repeat(64)),
-        );
-        write_manifest(
-            dir.path(),
-            "b.manifest.json",
-            &manifest("github", 2, &"b".repeat(64)),
-        );
-        let mut best = HashMap::new();
-        ingest_manifest_candidate(&dir.path().join("a.manifest.json"), &mut best).unwrap();
-        ingest_manifest_candidate(&dir.path().join("b.manifest.json"), &mut best).unwrap();
-        assert_eq!(best["github"].0, 2);
-        assert_eq!(best["github"].2, dir.path().join("b.manifest.json"));
-    }
-
-    #[test]
-    fn ingest_keeps_higher_version_when_seen_first() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        write_manifest(
-            dir.path(),
-            "a.manifest.json",
-            &manifest("github", 1, &"a".repeat(64)),
-        );
-        write_manifest(
-            dir.path(),
-            "b.manifest.json",
-            &manifest("github", 2, &"b".repeat(64)),
-        );
-        let mut best = HashMap::new();
-        ingest_manifest_candidate(&dir.path().join("b.manifest.json"), &mut best).unwrap();
-        ingest_manifest_candidate(&dir.path().join("a.manifest.json"), &mut best).unwrap();
-        assert_eq!(best["github"].0, 2);
-        assert_eq!(best["github"].2, dir.path().join("b.manifest.json"));
-    }
-
-    #[test]
-    fn ingest_rejects_same_version_conflicting_hash() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        write_manifest(
-            dir.path(),
-            "a.manifest.json",
-            &manifest("github", 3, &"a".repeat(64)),
-        );
-        write_manifest(
-            dir.path(),
-            "b.manifest.json",
-            &manifest("github", 3, &"b".repeat(64)),
-        );
-        let mut best = HashMap::new();
-        ingest_manifest_candidate(&dir.path().join("a.manifest.json"), &mut best).unwrap();
-        let err =
-            ingest_manifest_candidate(&dir.path().join("b.manifest.json"), &mut best).unwrap_err();
-        assert!(err.contains("conflicting catalogs"));
-    }
-
-    #[test]
-    fn ingest_same_version_same_hash_prefers_lexicographic_path() {
-        let hash = "c".repeat(64);
-        let dir = tempfile::tempdir().expect("tempdir");
-        write_manifest(dir.path(), "z.manifest.json", &manifest("github", 1, &hash));
-        write_manifest(dir.path(), "a.manifest.json", &manifest("github", 1, &hash));
-        let mut best = HashMap::new();
-        ingest_manifest_candidate(&dir.path().join("z.manifest.json"), &mut best).unwrap();
-        ingest_manifest_candidate(&dir.path().join("a.manifest.json"), &mut best).unwrap();
-        assert_eq!(best["github"].2, dir.path().join("a.manifest.json"));
+    fn catalog_set_rejects_multiple_revisions_instead_of_choosing_one() {
+        for versions in [[1, 2], [2, 1], [1, 1]] {
+            let dir = tempfile::tempdir().unwrap();
+            write_manifest(
+                dir.path(),
+                "a.manifest.json",
+                &manifest("matrix", versions[0], &"a".repeat(64)),
+            );
+            write_manifest(
+                dir.path(),
+                "b.manifest.json",
+                &manifest("matrix", versions[1], &"b".repeat(64)),
+            );
+            let mut entries = HashMap::new();
+            ingest_manifest_candidate(&dir.path().join("a.manifest.json"), &mut entries).unwrap();
+            assert!(
+                ingest_manifest_candidate(&dir.path().join("b.manifest.json"), &mut entries)
+                    .unwrap_err()
+                    .contains("multiple revisions")
+            );
+        }
     }
 }

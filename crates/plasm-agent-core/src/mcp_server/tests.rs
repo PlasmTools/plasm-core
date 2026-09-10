@@ -1,5 +1,4 @@
 use super::mcp_plasm_invoke::McpPlasmRunTarget;
-use super::*;
 
 fn default_plasm_tools() -> Vec<rust_mcp_sdk::schema::Tool> {
     super::tools::plasm_tools(
@@ -41,40 +40,6 @@ fn plasm_tools_include_ui_metadata_when_apps_enabled() {
         Some(crate::plan_ui_mcp::PLAN_REVIEW_UI_URI)
     );
     assert!(tools.iter().any(|t| t.name == "plasm_ui_read_plan"));
-}
-
-#[test]
-fn mcp_discover_maps_intent_to_capability_query() {
-    let v = serde_json::json!({
-        "intent": "Find electric type chart data for Pokemon",
-    });
-    let q = mcp_discover_query_from_arguments(&v).expect("deserialize");
-    assert_eq!(q.tokens, vec!["Find electric type chart data for Pokemon"]);
-    assert!(q.phrases.is_empty());
-    assert!(q.entity_hints.is_empty());
-    assert!(q.pick_entry.is_none());
-    assert!(q.kinds.is_empty());
-}
-
-#[test]
-fn mcp_discover_rejects_legacy_query_array() {
-    let v = serde_json::json!({
-        "query": ["github", "repository commits"],
-    });
-    let err = mcp_discover_query_from_arguments(&v).expect_err("legacy query rejected");
-    assert!(
-        err.contains("requires `intent`") && err.contains("not accepted"),
-        "unexpected: {err}"
-    );
-}
-
-#[test]
-fn mcp_discover_rejects_non_string_intent() {
-    let v = serde_json::json!({
-        "intent": ["github", "commits"],
-    });
-    let err = mcp_discover_query_from_arguments(&v).expect_err("array intent rejected");
-    assert!(err.contains("single string"), "unexpected: {err}");
 }
 
 #[test]
@@ -226,22 +191,15 @@ fn mcp_server_initialize_workflow_uses_session_mode_not_intent_key() {
     assert!(!text.contains("several discovery calls"));
     assert!(!text.contains("pass **`query`**"));
     assert!(!text.contains("syntax guide in MCP initialize"));
-    assert!(text.contains("Reuse ref"));
-    assert!(text.contains("Do NOT"));
+    assert!(text.contains("Reuse that ref"));
+    assert!(text.contains("no tool call"));
+    assert!(!text.contains("until observation matches"));
+    assert!(!text.contains("Then reply with exactly: DONE"));
     assert!(!text.contains("discover_capabilities` first only"));
-    if super::tools::mcp_discover_tool_enabled() {
-        let discover = default_plasm_tools()
-            .into_iter()
-            .find(|t| t.name == "discover_capabilities")
-            .expect("discover_capabilities");
-        let discover_desc = discover.description.as_deref().unwrap_or("");
-        assert!(
-            discover_desc.len() < 550,
-            "discover tool description too long: {} chars",
-            discover_desc.len()
-        );
-        assert!(!discover_desc.contains("query"));
-    }
+    assert!(!text.contains("routing_ref") && !text.contains("clarify_choices"));
+    assert!(text.contains("declared prerequisites"));
+    assert!(!text.contains("provider brand"));
+    assert!(!text.contains("semantic-auto-seed"));
 }
 
 #[test]
@@ -250,7 +208,6 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
     assert!(plasm_desc.contains(plasm_core::prompt_render::MCP_TOOL_SYNTAX_CONTRACT_MARKER));
     assert!(plasm_desc.contains("logical_session_ref") && plasm_desc.contains("run_ref"));
     assert!(plasm_desc.contains("<<TAG"));
-    assert!(plasm_desc.contains("Row text:"));
     assert!(plasm_desc.contains("binding.content"));
     assert!(plasm_desc.contains(plasm_core::prompt_render::TEACHING_VALID_EXPR_MARKER));
 
@@ -266,13 +223,6 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
         .contains("does NOT select the session"));
     assert!(
         plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("Call before `plasm`")
-    );
-    assert!(
-        plasm_core::prompt_render::DISCOVER_TOOL_DESCRIPTION.contains("Not the default open step")
-    );
-    assert!(plasm_core::prompt_render::DISCOVER_TOOL_DESCRIPTION.contains("plasm.program"));
-    assert!(
-        plasm_core::prompt_render::DISCOVER_TOOL_DESCRIPTION.contains("Not the default open step")
     );
     assert!(
         plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.contains("do **not** echo the program")
@@ -294,21 +244,6 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
             "{} description leaks hidden initialize dependency",
             tool.name
         );
-        if tool.name == "discover_capabilities" {
-            let v = serde_json::to_value(tool.input_schema.clone()).expect("discover schema");
-            let props = v
-                .get("properties")
-                .and_then(|p| p.as_object())
-                .expect("discover schema properties");
-            assert!(
-                !props.contains_key("typed"),
-                "discover_capabilities must not expose typed to agents"
-            );
-            assert!(
-                !props.contains_key("allowed_entry_ids"),
-                "discover_capabilities must not expose allowed_entry_ids to agents"
-            );
-        }
     }
     let tools_json = serde_json::to_string(&default_plasm_tools()).expect("serialize tools");
     assert!(!tools_json.contains("MCP initialize"));
@@ -372,11 +307,7 @@ fn mcp_tool_list_hides_internal_auth_and_registry_tools() {
     assert!(!names.iter().any(|n| n == "plasm_incoming_auth"));
     assert!(!names.iter().any(|n| n == "list_registry"));
     assert!(names.iter().any(|n| n == "plasm_context"));
-    if super::tools::mcp_discover_tool_enabled() {
-        assert!(names.iter().any(|n| n == "discover_capabilities"));
-    } else {
-        assert!(!names.iter().any(|n| n == "discover_capabilities"));
-    }
+    assert!(!names.iter().any(|n| n == "discover_capabilities"));
     let removed_init_tool = format!("plasm_{}", "session_init");
     let removed_add_tool = format!("add_{}", "capabilities");
     assert!(!names.iter().any(|n| n == &removed_init_tool));
@@ -419,7 +350,8 @@ fn plasm_context_tool_description_contract_append_vs_refresh() {
         .expect("plasm_context description");
     let workflow = plasm_core::prompt_render::MCP_INITIALIZE_WORKFLOW;
     assert!(
-        desc.contains("`extend`") && desc.contains("intent-only"),
+        desc.contains("session_mode: \"extend\"")
+            && desc.to_ascii_lowercase().contains("intent-only"),
         "expected intent-only extend guidance in plasm_context description"
     );
     assert!(
@@ -431,36 +363,9 @@ fn plasm_context_tool_description_contract_append_vs_refresh() {
         "initialize workflow must not treat intent as session key"
     );
     assert!(
-        workflow.contains("Reuse ref"),
+        workflow.contains("Reuse that ref"),
         "expected steady-state guidance in initialize workflow"
     );
-}
-
-#[test]
-fn discover_capabilities_input_schema() {
-    let tools = default_plasm_tools();
-    let discover = tools
-        .iter()
-        .find(|t| t.name == "discover_capabilities")
-        .expect("discover_capabilities tool");
-    let v = serde_json::to_value(&discover.input_schema).expect("input_schema json");
-    let required = v
-        .get("required")
-        .and_then(|x| x.as_array())
-        .expect("required array");
-    assert_eq!(required.len(), 1);
-    assert_eq!(required[0].as_str(), Some("intent"));
-    let props = v
-        .get("properties")
-        .and_then(|x| x.as_object())
-        .expect("properties object");
-    assert!(props.contains_key("intent"));
-    assert!(!props.contains_key("typed"));
-    assert!(!props.contains_key("allowed_entry_ids"));
-    assert!(!props.contains_key("query"));
-    with_insta_snapshots(|| {
-        insta::assert_json_snapshot!("discover_capabilities_input_schema", v);
-    });
 }
 
 #[test]
@@ -502,37 +407,14 @@ fn plasm_context_input_schema_requires_intent_not_seeds_on_new() {
         Some("string")
     );
     assert!(
-        props.contains_key("ranked_capabilities"),
-        "expected optional ranked_capabilities on plasm_context"
+        !props.contains_key("ranked_capabilities"),
+        "caller-supplied rankings must not bypass the capability selector"
     );
 }
 
 /// MCP hosts (e.g. Cursor) may validate `tools/call` args against the advertised JSON Schema
 /// from `tools/list`. Discovery accepts one `intent` string only; array-shaped `query` is a
 /// removed interface, not a compatibility path.
-#[test]
-fn discover_capabilities_input_schema_requires_single_intent_string() {
-    let tools = default_plasm_tools();
-    let discover = tools
-        .iter()
-        .find(|t| t.name == "discover_capabilities")
-        .expect("discover_capabilities tool");
-    let v = serde_json::to_value(&discover.input_schema).expect("input_schema json");
-    let required = v
-        .get("required")
-        .and_then(|x| x.as_array())
-        .expect("required array");
-    assert!(required.iter().any(|x| x.as_str() == Some("intent")));
-    let props = v.get("properties").and_then(|p| p.as_object()).unwrap();
-    assert!(!props.contains_key("query"));
-    assert!(!props.contains_key("utterance"));
-    let intent = v
-        .get("properties")
-        .and_then(|p| p.get("intent"))
-        .expect("intent property in input_schema");
-    assert_eq!(intent.get("type").and_then(|x| x.as_str()), Some("string"));
-    assert_eq!(intent.get("minLength").and_then(|x| x.as_u64()), Some(1));
-}
 
 #[test]
 fn plasm_input_schema_advertises_single_program_string() {
@@ -678,50 +560,6 @@ fn plasm_run_rejects_deprecated_transitional_params() {
 }
 
 #[test]
-fn mcp_discover_ignores_unknown_json_keys() {
-    let v = serde_json::json!({
-        "intent": "find x resources",
-        "kinds": ["query"],
-    });
-    let q = mcp_discover_query_from_arguments(&v).expect("deserialize");
-    assert_eq!(q.tokens, vec!["find x resources"]);
-    assert!(q.kinds.is_empty());
-}
-
-/// Reference output for `discover_capabilities` Markdown (fenced tabular block; same columns as discovery).
-#[test]
-fn discover_markdown_emits_tsv_snapshot() {
-    use plasm_core::discovery::{CapabilityQuery, DiscoveryResult, EntitySummary, RankedCandidate};
-    let r = DiscoveryResult {
-        contexts: vec![],
-        candidates: vec![RankedCandidate {
-            entry_id: "demo".into(),
-            entity: "Widget".into(),
-            capability_name: "list".into(),
-            score: 2,
-            reason_codes: vec![],
-            capability_description: "List widgets".into(),
-        }],
-        ambiguities: vec![],
-        applied_query_echo: CapabilityQuery::default(),
-        closure_stats: None,
-        schema_neighborhoods: vec![],
-        entity_summaries: vec![EntitySummary {
-            entry_id: "demo".into(),
-            name: "Widget".into(),
-            description: " A contrived \t widget \n line ".into(),
-        }],
-        catalog_route: plasm_core::CatalogRoute::default(),
-    };
-    with_insta_snapshots(|| {
-        insta::assert_snapshot!(
-            "discover_markdown_emits_tsv_snapshot",
-            crate::discovery_human_format::format_discovery_markdown(&r)
-        );
-    });
-}
-
-#[test]
 fn parse_plasm_context_session_mode_new_and_extend() {
     use super::tool_parse::parse_plasm_context_session_mode;
 
@@ -766,66 +604,20 @@ fn parse_plasm_context_session_mode_new_and_extend() {
 }
 
 #[test]
-fn plasm_context_optional_seeds_on_new() {
-    use super::tool_parse::parse_tool_seeds_optional;
-    let none = parse_tool_seeds_optional(
-        "plasm_context",
-        &serde_json::json!({ "session_mode": "new", "intent": "find threads" }),
-    )
-    .expect("optional");
-    assert!(none.is_none());
-    let some = parse_tool_seeds_optional(
-        "plasm_context",
-        &serde_json::json!({
-            "session_mode": "new",
-            "intent": "x",
-            "seeds": [{ "api": "gmail", "entity": "Thread" }]
-        }),
-    )
-    .expect("some");
-    assert_eq!(some.as_ref().map(|v| v.len()), Some(1));
-}
-
-#[test]
-fn plasm_context_requires_non_empty_seeds() {
-    let err = parse_tool_seeds("plasm_context", &serde_json::json!({ "seeds": [] }))
-        .expect_err("expected invalid seeds");
-    assert!(
-        err.to_string().contains("non-empty array"),
-        "unexpected error: {err}"
+fn context_tool_has_intent_and_typed_continuation_without_seed_selection() {
+    let tools = super::tools::plasm_tools(
+        crate::mcp_run_markdown::ArtifactAccessMode::ResourcesRead,
+        false,
     );
-}
-
-#[test]
-fn plasm_context_legacy_shape_returns_actionable_error() {
-    let err = parse_tool_seeds(
-        "plasm_context",
-        &serde_json::json!({ "entry_id": "pokeapi", "entities": ["Pokemon"] }),
-    )
-    .expect_err("expected invalid legacy shape");
-    assert!(
-        err.to_string()
-            .contains("old top-level `{entry_id, entities}`"),
-        "unexpected error: {err}"
-    );
-}
-
-#[test]
-fn plasm_context_seeds_accept_api_or_entry_id_alias() {
-    let api = parse_tool_seeds(
-        "plasm_context",
-        &serde_json::json!({ "seeds": [{ "api": "pokeapi", "entity": "Pokemon" }] }),
-    )
-    .expect("api key");
-    assert_eq!(api.len(), 1);
-    assert_eq!(api[0].entry_id, "pokeapi");
-    assert_eq!(api[0].entity, "Pokemon");
-
-    let legacy = parse_tool_seeds(
-        "plasm_context",
-        &serde_json::json!({ "seeds": [{ "entry_id": "pokeapi", "entity": "Pokemon" }] }),
-    )
-    .expect("entry_id alias");
-    assert_eq!(legacy.len(), 1);
-    assert_eq!(legacy[0].entry_id, "pokeapi");
+    let tool = tools
+        .iter()
+        .find(|tool| tool.name == "plasm_context")
+        .unwrap();
+    let schema = serde_json::to_value(&tool.input_schema).unwrap();
+    assert!(schema["properties"].get("seeds").is_none());
+    assert!(schema["properties"].get("ranked_capabilities").is_none());
+    assert!(schema["properties"].get("clarify_choices").is_none());
+    assert!(!tools
+        .iter()
+        .any(|tool| tool.name == "discover_capabilities"));
 }

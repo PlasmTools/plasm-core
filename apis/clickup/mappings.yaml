@@ -38,8 +38,12 @@ team_member_query:
         type: const
         value: list_members
     then_expr:
-      type: const
-      value: v2/list/{list_id}/member
+      type: format
+      template: v2/list/{list_id}/member
+      vars:
+        list_id:
+          type: var
+          name: list_id
     else_expr:
       type: if
       condition:
@@ -51,8 +55,12 @@ team_member_query:
           type: const
           value: task_member
       then_expr:
-        type: const
-        value: v2/task/{task_id}/member
+        type: format
+        template: v2/task/{task_id}/member
+        vars:
+          task_id:
+            type: var
+            name: task_id
       else_expr:
         type: const
         value: v2/team
@@ -60,38 +68,9 @@ team_member_query:
     type: object
     fields:
     - - team_id
-      - type: if
-        condition:
-          type: exists
-          var: team_id
-        then_expr:
-          type: var
-          name: team_id
-        else_expr:
-          type: const
-          value: null
-    - - list_id
-      - type: if
-        condition:
-          type: exists
-          var: list_id
-        then_expr:
-          type: var
-          name: list_id
-        else_expr:
-          type: const
-          value: null
-    - - task_id
-      - type: if
-        condition:
-          type: exists
-          var: task_id
-        then_expr:
-          type: var
-          name: task_id
-        else_expr:
-          type: const
-          value: null
+      - type: var
+        name: team_id
+        if: { exists: team_id }
 team_seats:
   response: single
   method: GET
@@ -261,7 +240,7 @@ team_start_time_entry:
   - type: literal
     value: team
   - type: var
-    name: team_id
+    name: id
   - type: literal
     value: time_entries
   - type: literal
@@ -278,7 +257,7 @@ team_stop_time_entry:
   - type: literal
     value: team
   - type: var
-    name: team_id
+    name: id
   - type: literal
     value: time_entries
   - type: literal
@@ -299,6 +278,13 @@ space_query:
     name: team_id
   - type: literal
     value: space
+  query:
+    type: object
+    fields:
+    - - archived
+      - type: var
+        name: archived
+        if: { exists: archived }
 space_get:
   response: single
   method: GET
@@ -377,8 +363,12 @@ space_views:
         type: const
         value: folder_views
     then_expr:
-      type: const
-      value: v2/folder/{folder_id}/view
+      type: format
+      template: v2/folder/{folder_id}/view
+      vars:
+        folder_id:
+          type: var
+          name: folder_id
     else_expr:
       type: if
       condition:
@@ -390,47 +380,22 @@ space_views:
           type: const
           value: view
       then_expr:
-        type: const
-        value: v2/team/{team_id}/view
+        type: format
+        template: v2/team/{team_id}/view
+        vars:
+          team_id:
+            type: var
+            name: team_id
       else_expr:
-        type: const
-        value: v2/space/{space_id}/view
+        type: format
+        template: v2/space/{space_id}/view
+        vars:
+          space_id:
+            type: var
+            name: space_id
   query:
     type: object
-    fields:
-    - - space_id
-      - type: if
-        condition:
-          type: exists
-          var: space_id
-        then_expr:
-          type: var
-          name: space_id
-        else_expr:
-          type: const
-          value: null
-    - - folder_id
-      - type: if
-        condition:
-          type: exists
-          var: folder_id
-        then_expr:
-          type: var
-          name: folder_id
-        else_expr:
-          type: const
-          value: null
-    - - team_id
-      - type: if
-        condition:
-          type: exists
-          var: team_id
-        then_expr:
-          type: var
-          name: team_id
-        else_expr:
-          type: const
-          value: null
+    fields: []
 space_fields:
   response:
     items: fields
@@ -446,8 +411,12 @@ space_fields:
         type: const
         value: folder_fields
     then_expr:
-      type: const
-      value: v2/folder/{folder_id}/field
+      type: format
+      template: v2/folder/{folder_id}/field
+      vars:
+        folder_id:
+          type: var
+          name: folder_id
     else_expr:
       type: if
       condition:
@@ -459,8 +428,12 @@ space_fields:
           type: const
           value: list_fields
       then_expr:
-        type: const
-        value: v2/list/{list_id}/field
+        type: format
+        template: v2/list/{list_id}/field
+        vars:
+          list_id:
+            type: var
+            name: list_id
       else_expr:
         type: if
         condition:
@@ -472,58 +445,22 @@ space_fields:
             type: const
             value: custom_field
         then_expr:
-          type: const
-          value: v2/team/{team_id}/field
+          type: format
+          template: v2/team/{team_id}/field
+          vars:
+            team_id:
+              type: var
+              name: team_id
         else_expr:
-          type: const
-          value: v2/space/{space_id}/field
+          type: format
+          template: v2/space/{space_id}/field
+          vars:
+            space_id:
+              type: var
+              name: space_id
   query:
     type: object
-    fields:
-    - - space_id
-      - type: if
-        condition:
-          type: exists
-          var: space_id
-        then_expr:
-          type: var
-          name: space_id
-        else_expr:
-          type: const
-          value: null
-    - - folder_id
-      - type: if
-        condition:
-          type: exists
-          var: folder_id
-        then_expr:
-          type: var
-          name: folder_id
-        else_expr:
-          type: const
-          value: null
-    - - list_id
-      - type: if
-        condition:
-          type: exists
-          var: list_id
-        then_expr:
-          type: var
-          name: list_id
-        else_expr:
-          type: const
-          value: null
-    - - team_id
-      - type: if
-        condition:
-          type: exists
-          var: team_id
-        then_expr:
-          type: var
-          name: team_id
-        else_expr:
-          type: const
-          value: null
+    fields: []
 folder_query:
   response:
     items: folders
@@ -537,6 +474,13 @@ folder_query:
     name: space_id
   - type: literal
     value: folder
+  query:
+    type: object
+    fields:
+    - - archived
+      - type: var
+        name: archived
+        if: { exists: archived }
 folder_get:
   response: single
   method: GET
@@ -600,36 +544,26 @@ list_query:
         type: const
         value: folder
     then_expr:
-      type: const
-      value: v2/folder/{folder_id}/list
+      type: format
+      template: v2/folder/{folder_id}/list
+      vars:
+        folder_id:
+          type: var
+          name: folder_id
     else_expr:
-      type: const
-      value: v2/space/{space_id}/list
+      type: format
+      template: v2/space/{space_id}/list
+      vars:
+        space_id:
+          type: var
+          name: space_id
   query:
     type: object
     fields:
-    - - space_id
-      - type: if
-        condition:
-          type: exists
-          var: space_id
-        then_expr:
-          type: var
-          name: space_id
-        else_expr:
-          type: const
-          value: null
-    - - folder_id
-      - type: if
-        condition:
-          type: exists
-          var: folder_id
-        then_expr:
-          type: var
-          name: folder_id
-        else_expr:
-          type: const
-          value: null
+    - - archived
+      - type: var
+        name: archived
+        if: { exists: archived }
 list_get:
   response: single
   method: GET
@@ -694,8 +628,12 @@ list_task_query:
         type: const
         value: list_task
     then_expr:
-      type: const
-      value: v2/list/{list_id}/task
+      type: format
+      template: v2/list/{list_id}/task
+      vars:
+        list_id:
+          type: var
+          name: list_id
     else_expr:
       type: if
       condition:
@@ -707,11 +645,19 @@ list_task_query:
           type: const
           value: view_tasks
       then_expr:
-        type: const
-        value: v2/view/{view_id}/task
+        type: format
+        template: v2/view/{view_id}/task
+        vars:
+          view_id:
+            type: var
+            name: view_id
       else_expr:
-        type: const
-        value: v2/team/{team_id}/task
+        type: format
+        template: v2/team/{team_id}/task
+        vars:
+          team_id:
+            type: var
+            name: team_id
   pagination:
     params:
       page:
@@ -723,105 +669,54 @@ list_task_query:
   query:
     type: object
     fields:
-    - - list_id
-      - type: if
-        condition:
-          type: exists
-          var: list_id
-        then_expr:
-          type: var
-          name: list_id
-        else_expr:
-          type: const
-          value: null
-    - - team_id
-      - type: if
-        condition:
-          type: exists
-          var: team_id
-        then_expr:
-          type: var
-          name: team_id
-        else_expr:
-          type: const
-          value: null
     - - date_created_gt
-      - type: if
-        condition:
-          type: exists
-          var: date_created_gt
-        then_expr:
-          type: var
-          name: date_created_gt
-        else_expr:
-          type: const
-          value: null
+      - type: var
+        name: date_created_gt
+        if: { exists: date_created_gt }
     - - date_created_lt
-      - type: if
-        condition:
-          type: exists
-          var: date_created_lt
-        then_expr:
-          type: var
-          name: date_created_lt
-        else_expr:
-          type: const
-          value: null
+      - type: var
+        name: date_created_lt
+        if: { exists: date_created_lt }
     - - date_updated_gt
-      - type: if
-        condition:
-          type: exists
-          var: date_updated_gt
-        then_expr:
-          type: var
-          name: date_updated_gt
-        else_expr:
-          type: const
-          value: null
+      - type: var
+        name: date_updated_gt
+        if: { exists: date_updated_gt }
     - - date_updated_lt
-      - type: if
-        condition:
-          type: exists
-          var: date_updated_lt
-        then_expr:
-          type: var
-          name: date_updated_lt
-        else_expr:
-          type: const
-          value: null
+      - type: var
+        name: date_updated_lt
+        if: { exists: date_updated_lt }
     - - due_date_gt
-      - type: if
-        condition:
-          type: exists
-          var: due_date_gt
-        then_expr:
-          type: var
-          name: due_date_gt
-        else_expr:
-          type: const
-          value: null
+      - type: var
+        name: due_date_gt
+        if: { exists: due_date_gt }
     - - due_date_lt
-      - type: if
-        condition:
-          type: exists
-          var: due_date_lt
-        then_expr:
-          type: var
-          name: due_date_lt
-        else_expr:
-          type: const
-          value: null
-    - - view_id
-      - type: if
-        condition:
-          type: exists
-          var: view_id
-        then_expr:
-          type: var
-          name: view_id
-        else_expr:
-          type: const
-          value: null
+      - type: var
+        name: due_date_lt
+        if: { exists: due_date_lt }
+    - - archived
+      - type: var
+        name: archived
+        if: { exists: archived }
+    - - include_closed
+      - type: var
+        name: include_closed
+        if: { exists: include_closed }
+    - - include_markdown_description
+      - type: var
+        name: include_markdown_description
+        if: { exists: include_markdown_description }
+    - - order_by
+      - type: var
+        name: order_by
+        if: { exists: order_by }
+    - - reverse
+      - type: var
+        name: reverse
+        if: { exists: reverse }
+    - - subtasks
+      - type: var
+        name: subtasks
+        if: { exists: subtasks }
 task_get:
   response: single
   method: GET
@@ -879,7 +774,7 @@ task_create_attachment:
   - type: literal
     value: task
   - type: var
-    name: task_id
+    name: id
   - type: literal
     value: attachment
 task_create_checklist:
@@ -891,7 +786,7 @@ task_create_checklist:
   - type: literal
     value: task
   - type: var
-    name: task_id
+    name: id
   - type: literal
     value: checklist
   body:
@@ -906,7 +801,7 @@ task_add_dependency:
   - type: literal
     value: task
   - type: var
-    name: task_id
+    name: id
   - type: literal
     value: dependency
   body:
@@ -921,9 +816,18 @@ task_remove_dependency:
   - type: literal
     value: task
   - type: var
-    name: task_id
+    name: id
   - type: literal
     value: dependency
+  query:
+    type: object
+    fields:
+    - - depends_on
+      - type: var
+        name: depends_on
+    - - dependency_of
+      - type: var
+        name: dependency_of
 task_time_in_status:
   response: single
   method: GET
@@ -978,7 +882,7 @@ task_tag_add:
   - type: literal
     value: task
   - type: var
-    name: task_id
+    name: id
   - type: literal
     value: tag
   - type: var
@@ -995,7 +899,7 @@ task_tag_remove:
   - type: literal
     value: task
   - type: var
-    name: task_id
+    name: id
   - type: literal
     value: tag
   - type: var
@@ -1157,8 +1061,12 @@ comment_query:
         type: const
         value: view_comments
     then_expr:
-      type: const
-      value: v2/view/{view_id}/comment
+      type: format
+      template: v2/view/{view_id}/comment
+      vars:
+        view_id:
+          type: var
+          name: view_id
     else_expr:
       type: if
       condition:
@@ -1170,47 +1078,22 @@ comment_query:
           type: const
           value: comment
       then_expr:
-        type: const
-        value: v2/task/{task_id}/comment
+        type: format
+        template: v2/task/{task_id}/comment
+        vars:
+          task_id:
+            type: var
+            name: task_id
       else_expr:
-        type: const
-        value: v2/list/{list_id}/comment
+        type: format
+        template: v2/list/{list_id}/comment
+        vars:
+          list_id:
+            type: var
+            name: list_id
   query:
     type: object
-    fields:
-    - - task_id
-      - type: if
-        condition:
-          type: exists
-          var: task_id
-        then_expr:
-          type: var
-          name: task_id
-        else_expr:
-          type: const
-          value: null
-    - - list_id
-      - type: if
-        condition:
-          type: exists
-          var: list_id
-        then_expr:
-          type: var
-          name: list_id
-        else_expr:
-          type: const
-          value: null
-    - - view_id
-      - type: if
-        condition:
-          type: exists
-          var: view_id
-        then_expr:
-          type: var
-          name: view_id
-        else_expr:
-          type: const
-          value: null
+    fields: []
 comment_get:
   response: single
   method: GET
@@ -1383,11 +1266,12 @@ group_query:
     value: v2
   - type: literal
     value: group
-  query_params:
-  - name: team_id
-    value:
-      type: var
-      name: team_id
+  query:
+    type: object
+    fields:
+    - - team_id
+      - type: var
+        name: team_id
 group_update:
   response: single
   method: PUT

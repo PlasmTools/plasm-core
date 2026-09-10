@@ -7,8 +7,21 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "noEmit": true,
-    "lib": ["ES2022"],
-    "types": ["node"]
+    "lib": [
+      "ES2022"
+    ],
+    "types": [
+      "node"
+    ],
+    "paths": {
+      "@plasm_lang/vercel-agent/stub-runtime": [
+        "./src/stubs/stub-runtime.ts"
+      ]
+    }
   },
-  "include": ["src/**/*.ts", "agent/**/*.ts", "scripts/**/*.ts"]
+  "include": [
+    "src/**/*.ts",
+    "agent/**/*.ts",
+    "scripts/**/*.ts"
+  ]
 }

@@ -61,10 +61,9 @@ impl<'a> TemplateRefContext<'a> {
                     }
                 }
                 RefKind::Unknown => {
-                    let dotted = paths.iter().any(|p| {
-                        p.split_once('.')
-                            .is_some_and(|(r, _)| r == root.as_str())
-                    });
+                    let dotted = paths
+                        .iter()
+                        .any(|p| p.split_once('.').is_some_and(|(r, _)| r == root.as_str()));
                     // No row cursor: every root is a cross-binding candidate.
                     // With a row cursor: bare roots are row fields; dotted roots are upstream nodes.
                     if (self.row_binding.is_none() || dotted) && seen.insert(root.clone()) {
@@ -91,10 +90,9 @@ impl<'a> TemplateRefContext<'a> {
             match self.classify_root(root.as_str()) {
                 RefKind::RowBinding | RefKind::InputAlias => {}
                 RefKind::Unknown => {
-                    let dotted = paths.iter().any(|p| {
-                        p.split_once('.')
-                            .is_some_and(|(r, _)| r == root.as_str())
-                    });
+                    let dotted = paths
+                        .iter()
+                        .any(|p| p.split_once('.').is_some_and(|(r, _)| r == root.as_str()));
                     if self.row_binding.is_some() && !dotted {
                         continue;
                     }
@@ -163,9 +161,7 @@ mod tests {
     #[test]
     fn validate_rejects_dollar() {
         let ctx = TemplateRefContext::for_row_scope("_");
-        let err = ctx
-            .validate_string_roots("${title}", |r| r)
-            .unwrap_err();
+        let err = ctx.validate_string_roots("${title}", |r| r).unwrap_err();
         assert!(err.contains("abolished"));
     }
 

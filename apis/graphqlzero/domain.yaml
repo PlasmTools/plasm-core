@@ -140,9 +140,9 @@ entities:
         description: Album containing this photo.
 capabilities:
   user_query:
+    description: List users (paginated; use --summary to skip per-user hydration).
     kind: query
     entity: User
-    description: List users (paginated; use --summary to skip per-user hydration).
     provides:
     - id
     - name
@@ -159,9 +159,9 @@ capabilities:
     - phone
     - website
   post_query:
+    description: List posts (paginated; use --summary when you only need list fields).
     kind: query
     entity: Post
-    description: List posts (paginated; use --summary when you only need list fields).
     provides:
     - id
     - title
@@ -174,9 +174,9 @@ capabilities:
     - title
     - body
   comment_query:
+    description: List comments (paginated).
     kind: query
     entity: Comment
-    description: List comments (paginated).
     provides:
     - id
     - name
@@ -191,9 +191,9 @@ capabilities:
     - email
     - body
   todo_query:
+    description: List todos (paginated).
     kind: query
     entity: Todo
-    description: List todos (paginated).
     provides:
     - id
     - title
@@ -206,9 +206,9 @@ capabilities:
     - title
     - completed
   album_query:
+    description: List albums (paginated).
     kind: query
     entity: Album
-    description: List albums (paginated).
     provides:
     - id
     - title
@@ -219,9 +219,9 @@ capabilities:
     - id
     - title
   photo_query:
+    description: List photos (paginated).
     kind: query
     entity: Photo
-    description: List photos (paginated).
     provides:
     - id
     - title
@@ -236,43 +236,49 @@ capabilities:
     - url
     - thumbnailUrl
   post_create:
+    description: Create a new post (shared demo dataset — visible to all clients).
     kind: create
     entity: Post
-    description: Create a new post (shared demo dataset — visible to all clients).
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: title
+          value_ref: nv_wire_str_short
+          required: true
+          sink_class: external_publish
+        - name: body
+          value_ref: nv_wire_str_markdown
+          required: true
+          sink_class: external_publish
     provides:
     - id
     - title
     - body
-    parameters:
-    - name: title
-      value_ref: nv_wire_str_short
-      required: true
-      sink_class: external_publish
-    - name: body
-      value_ref: nv_wire_str_markdown
-      required: true
-      sink_class: external_publish
   post_update:
+    description: Update an existing post (shared demo dataset).
     kind: update
     entity: Post
-    description: Update an existing post (shared demo dataset).
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: title
+          value_ref: nv_wire_str_short
+          required: false
+          sink_class: external_publish
+        - name: body
+          value_ref: nv_wire_str_markdown
+          required: false
+          sink_class: external_publish
     provides:
     - id
     - title
     - body
-    parameters:
-    - name: title
-      value_ref: nv_wire_str_short
-      required: false
-      sink_class: external_publish
-    - name: body
-      value_ref: nv_wire_str_markdown
-      required: false
-      sink_class: external_publish
   post_delete:
+    description: Delete a post (shared demo dataset).
     kind: delete
     entity: Post
-    description: Delete a post (shared demo dataset).
 values:
   nv_post_id:
     type: string

@@ -64,7 +64,7 @@ pub async fn execute(action: ReplayAction) -> Result<(), Box<dyn std::error::Err
                     &mut mat,
                     Some(ExecutionMode::Live),
                     StreamConsumeOpts::default(),
-                    ExecuteOptions::default(),
+                    ExecuteOptions::for_catalog(&cgs)?,
                 )
                 .await
             {

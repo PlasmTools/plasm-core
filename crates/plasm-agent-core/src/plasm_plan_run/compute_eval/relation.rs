@@ -38,14 +38,19 @@ pub(crate) async fn materialize_relation_singleton_chain(
         projection: relation.relation.ir.projection.clone(),
         field_dot_extract: None,
     };
-    let parsed = instantiate_parsed_expr_plan_inputs(pe, &relation.uses_result, materialized)?;
+    let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
+    let parsed = instantiate_parsed_expr_plan_inputs(
+        pe,
+        &scoped_es.cgs,
+        &relation.uses_result,
+        materialized,
+    )?;
     let expr_label = relation
         .relation
         .ir
         .display_expr
         .as_deref()
         .unwrap_or("<ir>");
-    let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
     let (parsed, result, artifact) = execute_plasm_parsed_expr(
         st,
         &scoped_es,
@@ -382,6 +387,7 @@ pub(crate) async fn materialize_relation_scoped_fanout(
         let wire_coercion_by_alias = wire_coercion_by_alias_from_inputs(es, &mut input_rows)?;
         let parsed = instantiate_parsed_expr_plan_inputs_with_rows(
             pe.clone(),
+            &scoped_es.cgs,
             &input_rows,
             &wire_coercion_by_alias,
         )?;

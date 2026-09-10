@@ -58,6 +58,10 @@ export class LocalArchiveStore {
     await this.runs.writeRunSnapshot(snapshot);
   }
 
+  async getRun(runId: string, logicalSessionRef: string): Promise<RunSnapshot | null> {
+    return this.runs.getRun(runId, logicalSessionRef);
+  }
+
   async listTraces(tenantId: string, limit?: number): Promise<TraceSummary[]> {
     return this.traces.listTraces(tenantId, limit);
   }
@@ -81,8 +85,6 @@ export class LocalArchiveStore {
 }
 
 export { resolveArchivePaths } from "./paths.js";
-export { computeRunId } from "./run-id.js";
-export type { RunIdBundle } from "./run-id.js";
 export {
   UnimplementedBlobArchiveAdapter,
   UnimplementedKvArchiveIndexAdapter,

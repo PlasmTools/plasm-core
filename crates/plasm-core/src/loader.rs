@@ -92,6 +92,8 @@ fn is_regular_schema_file(meta: &std::fs::Metadata) -> bool {
 /// Domain model file (domain.yaml)
 #[derive(Debug, Deserialize)]
 pub struct DomainFile {
+    #[serde(default)]
+    pub prerequisites: crate::prerequisites::PrerequisiteCatalog,
     /// Reusable value domains (`value_ref` targets); catalog-local.
     #[serde(default)]
     pub values: IndexMap<String, DomainNamedValue>,
@@ -920,6 +922,7 @@ fn assemble_cgs_core(
     cgs.workflow_identity = domain.workflow_identity;
     cgs.data_classes = domain.data_classes;
     cgs.values = compile_domain_named_values(&domain.values)?;
+    cgs.prerequisites = domain.prerequisites.clone();
 
     let mut legacy_via_param_patches: Vec<LegacyViaParamPatch> = Vec::new();
 

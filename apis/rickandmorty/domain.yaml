@@ -112,27 +112,22 @@ capabilities:
     description: Filter characters by name, status, species, type, or gender.
     kind: query
     entity: Character
-    parameters:
+    selection:
     - name: name
       value_ref: nv_wire_str_short
       required: false
-      role: filter
     - name: status
       value_ref: nv_character_query_status
       required: false
-      role: filter
     - name: species
       value_ref: nv_wire_str_short
       required: false
-      role: filter
     - name: type
       value_ref: nv_wire_str_short
       required: false
-      role: filter
     - name: gender
       value_ref: nv_character_query_gender
       required: false
-      role: filter
   character_get:
     description: Retrieve a single character.
     kind: get
@@ -151,19 +146,16 @@ capabilities:
     description: Filter locations by name, type, or dimension.
     kind: query
     entity: Location
-    parameters:
+    selection:
     - name: name
       value_ref: nv_wire_str_short
       required: false
-      role: filter
     - name: type
       value_ref: nv_wire_str_short
       required: false
-      role: filter
     - name: dimension
       value_ref: nv_wire_str_short
       required: false
-      role: filter
   location_get:
     description: Retrieve a single location.
     kind: get
@@ -179,15 +171,13 @@ capabilities:
     description: Filter episodes by name or episode code.
     kind: query
     entity: Episode
-    parameters:
+    selection:
     - name: name
       value_ref: nv_wire_str_short
       required: false
-      role: filter
     - name: episode
       value_ref: nv_wire_str_short
       required: false
-      role: filter
   episode_get:
     description: Retrieve a single episode.
     kind: get

@@ -104,7 +104,9 @@ fn compile_expr_with_session_mat(
         .graph_cache
         .try_lock()
         .map_err(|_| format!("{label}: session graph locked during CML preflight"))?;
-    preflight_compile_expr(expr, cgs, &ambient, &guard).map_err(|e| format!("{label}: {e}"))
+    let compiled = federation_es.compiled_catalog_for_cgs(cgs)?;
+    preflight_compile_expr(expr, cgs, &compiled, &ambient, &guard)
+        .map_err(|e| format!("{label}: {e}"))
 }
 
 /// Normalize, plan-kind match, and CML compile after [`PlasmPreflight::preflight_parsed_line`].

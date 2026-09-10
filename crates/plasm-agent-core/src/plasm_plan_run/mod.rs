@@ -27,11 +27,11 @@ use crate::http_execute::{
 use crate::plan_dry_display;
 pub use crate::plan_dry_display::PlanDryReview;
 use crate::plasm_plan::{
-    BindingName, ComputeOp, ComputeTemplate, EffectClass, InputAlias, Plan, PlanExprTemplate,
-    PlanNodeId, PlanNodeKind, PlanResultUse, PlanValue, QualifiedEntityKey,
-    RelationSourceCardinality, ValidatedForEachNode, ValidatedPlan, ValidatedPlanDataInput,
-    ValidatedPlanExprTemplate, ValidatedPlanNode, ValidatedPlanState,
-    ValidatedRelationTraversalNode, PLAN_RENDER_MAX_OUTPUT_CHARS, PLAN_RENDER_MAX_ROWS,
+    BindingName, ComputeOp, ComputeTemplate, EffectClass, InputAlias, Plan, PlanNodeId,
+    PlanNodeKind, PlanResultUse, PlanValue, QualifiedEntityKey, RelationSourceCardinality,
+    ValidatedForEachNode, ValidatedPlan, ValidatedPlanDataInput, ValidatedPlanExprTemplate,
+    ValidatedPlanNode, ValidatedPlanState, ValidatedRelationTraversalNode,
+    PLAN_RENDER_MAX_OUTPUT_CHARS, PLAN_RENDER_MAX_ROWS,
 };
 use crate::server_state::PlasmHostState;
 use crate::trace_hub::{CodePlanRunArtifactRef, McpPlasmTraceSink};
@@ -227,6 +227,19 @@ impl DryPlasmPlanEvaluation {
                 self.validated_plan(),
             ),
         )
+    }
+
+    /// MCP/NAPI fused execute: Proceed + Clean + no remote mutation.
+    /// Advisory unbounded lists stay on `run_ref` (`needs_review` is not Proceed).
+    #[must_use]
+    pub fn fuse_clean_read(&self) -> bool {
+        let decision = crate::plan_gate::plan_gate(
+            &self.evaluate_gate(),
+            crate::plan_gate::PlanGateContext::without_commit(false),
+        );
+        matches!(decision, crate::PlanGateDecision::Proceed(_))
+            && matches!(self.flow.verdict, crate::plan_flow::FlowVerdict::Clean)
+            && !crate::plan_flow::validated_plan_has_remote_mutation(self.validated_plan())
     }
 
     /// Mint sealed admission for plan commit registration.

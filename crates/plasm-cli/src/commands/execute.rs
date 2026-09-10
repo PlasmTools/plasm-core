@@ -80,7 +80,7 @@ pub async fn execute(
             &mut mat,
             Some(execution_mode),
             StreamConsumeOpts::default(),
-            ExecuteOptions::default(),
+            ExecuteOptions::for_catalog(&cgs)?,
         )
         .await
     {

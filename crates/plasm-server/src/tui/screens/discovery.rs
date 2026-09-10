@@ -1,4 +1,4 @@
-//! Discovery tab — semantic auto-seed settings.
+//! Discovery tab — compiled discovery settings.
 
 use super::super::*;
 
@@ -13,7 +13,7 @@ pub(crate) fn render(
     let state = crate::discovery_bootstrap::current_state();
     let mut lines: Vec<Line> = vec![
         Line::from(vec![Span::styled(
-            "Semantic auto-seed",
+            "Compiled discovery",
             Style::default().add_modifier(Modifier::BOLD),
         )]),
         Line::from(""),
@@ -36,8 +36,6 @@ pub(crate) fn render(
     } else {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
-            Span::styled("e", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(" toggle enable · "),
             Span::styled("k", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(" set OpenRouter key"),
         ]));

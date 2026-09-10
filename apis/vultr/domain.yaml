@@ -1,4 +1,4 @@
-version: 20
+version: 21
 http_backend: https://api.vultr.com
 data_classes:
   pii_email:
@@ -256,7 +256,8 @@ entities:
     relations: {}
   ApiKey:
     id_field: id
-    description: A Vultr account API key (value is always masked in list and get, except for create).
+    description: A Vultr account API key (value is always masked in list and get,
+      except for create).
     fields:
       id:
         required: true
@@ -692,7 +693,8 @@ entities:
     relations: {}
   Snapshot:
     id_field: id
-    description: A point-in-time block snapshot of a compute instance or imported image.
+    description: A point-in-time block snapshot of a compute instance or imported
+      image.
     fields:
       id:
         required: true
@@ -721,7 +723,8 @@ entities:
     relations: {}
   BlockStorage:
     id_field: id
-    description: A block volume that can be attached to a compute instance in one region.
+    description: A block volume that can be attached to a compute instance in one
+      region.
     fields:
       id:
         required: true
@@ -756,7 +759,8 @@ entities:
     relations: {}
   Iso:
     id_field: id
-    description: A private ISO image in the account, or a catalog entry used when deploying.
+    description: A private ISO image in the account, or a catalog entry used when
+      deploying.
     fields:
       id:
         required: true
@@ -779,7 +783,8 @@ entities:
     relations: {}
   StartupScript:
     id_field: id
-    description: A user-supplied script executed on first boot (payload is base64 on the wire).
+    description: A user-supplied script executed on first boot (payload is base64
+      on the wire).
     fields:
       id:
         required: true
@@ -997,7 +1002,8 @@ entities:
     relations: {}
   KubernetesCluster:
     id_field: id
-    description: A Vultr managed Kubernetes (VKE) control plane and its node pool summary.
+    description: A Vultr managed Kubernetes (VKE) control plane and its node pool
+      summary.
     fields:
       id:
         required: true
@@ -1063,7 +1069,8 @@ entities:
           param: vke_id
   BareMetal:
     id_field: id
-    description: A dedicated bare metal server (distinct from a bare metal plan catalog entry).
+    description: A dedicated bare metal server (distinct from a bare metal plan catalog
+      entry).
     fields:
       id:
         required: true
@@ -1242,7 +1249,8 @@ entities:
           param: push_zone_id
   KubernetesVersion:
     id_field: id
-    description: A Vultr-supported major Kubernetes version string offered for new VKE clusters.
+    description: A Vultr-supported major Kubernetes version string offered for new
+      VKE clusters.
     fields:
       id:
         required: true
@@ -1379,7 +1387,8 @@ entities:
     - vke_id
     - nodepool_id
     - id
-    description: A single worker node in a VKE node pool, addressable for replace or recycle operations.
+    description: A single worker node in a VKE node pool, addressable for replace
+      or recycle operations.
     fields:
       id:
         required: true
@@ -1402,8 +1411,8 @@ entities:
     relations: {}
   CdnUploadEndpoint:
     id_field: url
-    description: A time-limited upload slot for a push-zone object, including a target URL and form fields the client must.
-      submit
+    description: A time-limited upload slot for a push-zone object, including a target
+      URL and form fields the client must. submit
     fields:
       url:
         required: true
@@ -1442,7 +1451,8 @@ entities:
     relations: {}
   VkeResourceInventory:
     id_field: id
-    description: Block storage and load balancer add-ons the provider associates with a given VKE cluster.
+    description: Block storage and load balancer add-ons the provider associates with
+      a given VKE cluster.
     fields:
       id:
         required: true
@@ -1454,7 +1464,8 @@ entities:
     relations: {}
   VkeKubeconfig:
     id_field: id
-    description: The kubectl connection file (usually YAML) for a managed VKE cluster, for use with KUBECONFIG or kubectl.
+    description: The kubectl connection file (usually YAML) for a managed VKE cluster,
+      for use with KUBECONFIG or kubectl.
     fields:
       id:
         required: true
@@ -1473,7 +1484,8 @@ entities:
     key_vars:
     - vke_id
     - id
-    description: A Kubernetes version string the control plane may be upgraded to for a given cluster.
+    description: A Kubernetes version string the control plane may be upgraded to
+      for a given cluster.
     fields:
       id:
         required: true
@@ -1487,7 +1499,8 @@ entities:
     key_vars:
     - bare_metal_id
     - ip
-    description: An IPv4 address assignment on a bare metal host, including reverse-DNS when present.
+    description: An IPv4 address assignment on a bare metal host, including reverse-DNS
+      when present.
     fields:
       ip:
         required: true
@@ -1533,7 +1546,8 @@ entities:
     relations: {}
   BareMetalBandwidth:
     id_field: id
-    description: Per-day ingress and egress byte totals for a bare metal instance, keyed by local date.
+    description: Per-day ingress and egress byte totals for a bare metal instance,
+      keyed by local date.
     fields:
       id:
         required: true
@@ -1545,8 +1559,8 @@ entities:
     relations: {}
   BareMetalUserData:
     id_field: id
-    description: User data or first-boot material supplied when the bare metal instance was created, as the provider later.
-      exposes it
+    description: User data or first-boot material supplied when the bare metal instance
+      was created, as the provider later. exposes it
     fields:
       id:
         required: true
@@ -1561,7 +1575,8 @@ entities:
     relations: {}
   BareMetalUpgradeCatalog:
     id_field: id
-    description: Eligible plan, OS, and one-click application upgrades the provider offers for a bare metal instance.
+    description: Eligible plan, OS, and one-click application upgrades the provider
+      offers for a bare metal instance.
     fields:
       id:
         required: true
@@ -1596,7 +1611,8 @@ entities:
     key_vars:
     - bare_metal_id
     - id
-    description: A legacy VPC 2.0 style attachment for bare metal; new integrations should use BareMetalVpcAttachment.
+    description: A legacy VPC 2.0 style attachment for bare metal; new integrations
+      should use BareMetalVpcAttachment.
     fields:
       id:
         required: true
@@ -1633,15 +1649,13 @@ capabilities:
   plan_query:
     kind: query
     entity: Plan
-    parameters:
+    selection:
     - name: type
       value_ref: nv_wire_str_short
       required: false
-      role: filter
     - name: os
       value_ref: nv_wire_str_short
       required: false
-      role: filter
   bare_metal_plan_query:
     kind: query
     entity: BareMetalPlan
@@ -1651,7 +1665,7 @@ capabilities:
   application_query:
     kind: query
     entity: Application
-    parameters:
+    selection:
     - name: type
       value_ref: nv_application_query_type
       required: false
@@ -1673,16 +1687,19 @@ capabilities:
   apikey_create:
     kind: create
     entity: ApiKey
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: true
-    - name: expire
-      value_ref: nv_wire_bool
-      required: false
-    - name: date_expire
-      value_ref: nv_wire_date_rfc3339
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: true
+        - name: expire
+          value_ref: nv_wire_bool
+          required: false
+        - name: date_expire
+          value_ref: nv_wire_date_rfc3339
+          required: false
   apikey_delete:
     kind: delete
     entity: ApiKey
@@ -1695,54 +1712,60 @@ capabilities:
   user_create:
     kind: create
     entity: User
-    parameters:
-    - name: email
-      value_ref: nv_wire_str_short
-      required: true
-    - name: first_name
-      value_ref: nv_wire_str_short
-      required: true
-    - name: last_name
-      value_ref: nv_wire_str_short
-      required: true
-    - name: password
-      value_ref: nv_wire_str_short
-      required: true
-      sink_class: credentials
-    - name: api_enabled
-      value_ref: nv_wire_bool
-      required: false
-    - name: service_user
-      value_ref: nv_wire_bool
-      required: false
-    - name: acls
-      value_ref: nv_user_create_acls
-      required: false
-      sink_class: permission_grant
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: email
+          value_ref: nv_wire_str_short
+          required: true
+        - name: first_name
+          value_ref: nv_wire_str_short
+          required: true
+        - name: last_name
+          value_ref: nv_wire_str_short
+          required: true
+        - name: password
+          value_ref: nv_wire_str_short
+          required: true
+          sink_class: credentials
+        - name: api_enabled
+          value_ref: nv_wire_bool
+          required: false
+        - name: service_user
+          value_ref: nv_wire_bool
+          required: false
+        - name: acls
+          value_ref: nv_user_create_acls
+          required: false
+          sink_class: permission_grant
   user_update:
     kind: update
     entity: User
-    parameters:
-    - name: email
-      value_ref: nv_wire_str_short
-      required: false
-    - name: first_name
-      value_ref: nv_wire_str_short
-      required: false
-    - name: last_name
-      value_ref: nv_wire_str_short
-      required: false
-    - name: password
-      value_ref: nv_wire_str_short
-      required: false
-      sink_class: credentials
-    - name: api_enabled
-      value_ref: nv_wire_bool
-      required: false
-    - name: acls
-      value_ref: nv_user_update_acls
-      sink_class: permission_grant
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: email
+          value_ref: nv_wire_str_short
+          required: false
+        - name: first_name
+          value_ref: nv_wire_str_short
+          required: false
+        - name: last_name
+          value_ref: nv_wire_str_short
+          required: false
+        - name: password
+          value_ref: nv_wire_str_short
+          required: false
+          sink_class: credentials
+        - name: api_enabled
+          value_ref: nv_wire_bool
+          required: false
+        - name: acls
+          value_ref: nv_user_update_acls
+          sink_class: permission_grant
+          required: false
   user_delete:
     kind: delete
     entity: User
@@ -1755,23 +1778,29 @@ capabilities:
   sshkey_create:
     kind: create
     entity: SshKey
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: true
-    - name: key_material
-      value_ref: nv_wire_str_short
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: true
+        - name: key_material
+          value_ref: nv_wire_str_short
+          required: true
   sshkey_update:
     kind: update
     entity: SshKey
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: false
-    - name: key_material
-      value_ref: nv_wire_str_short
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: false
+        - name: key_material
+          value_ref: nv_wire_str_short
+          required: false
   sshkey_delete:
     kind: delete
     entity: SshKey
@@ -1802,26 +1831,32 @@ capabilities:
   vpc_create:
     kind: create
     entity: Vpc
-    parameters:
-    - name: region
-      value_ref: nv_vpc_create_region
-      required: true
-    - name: description
-      value_ref: nv_wire_str_short
-      required: true
-    - name: v4_subnet
-      value_ref: nv_wire_str_short
-      required: true
-    - name: v4_subnet_mask
-      value_ref: nv_wire_int
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: region
+          value_ref: nv_vpc_create_region
+          required: true
+        - name: description
+          value_ref: nv_wire_str_short
+          required: true
+        - name: v4_subnet
+          value_ref: nv_wire_str_short
+          required: true
+        - name: v4_subnet_mask
+          value_ref: nv_wire_int
+          required: true
   vpc_update:
     kind: update
     entity: Vpc
-    parameters:
-    - name: description
-      value_ref: nv_wire_str_short
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: description
+          value_ref: nv_wire_str_short
+          required: true
   vpc_delete:
     kind: delete
     entity: Vpc
@@ -1834,90 +1869,96 @@ capabilities:
   firewallgroup_create:
     kind: create
     entity: FirewallGroup
-    parameters:
-    - name: description
-      value_ref: nv_wire_str_short
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: description
+          value_ref: nv_wire_str_short
+          required: true
   firewallgroup_update:
     kind: update
     entity: FirewallGroup
-    parameters:
-    - name: description
-      value_ref: nv_wire_str_short
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: description
+          value_ref: nv_wire_str_short
+          required: true
   firewallgroup_delete:
     kind: delete
     entity: FirewallGroup
   instance_query:
     kind: query
     entity: Instance
-    parameters:
+    selection:
     - name: tag
       value_ref: nv_wire_str_short
       required: false
-      role: filter
     - name: label
       value_ref: nv_wire_str_short
       required: false
-      role: filter
     - name: main_ip
       value_ref: nv_wire_str_short
       required: false
-      role: filter
-    - name: region
-      value_ref: nv_instance_query_region
-      required: false
-      role: filter
     - name: hostname
       value_ref: nv_wire_str_short
-      required: false
-      role: filter
-    - name: firewall_group_id
-      value_ref: nv_instance_query_firewall_group_id
       required: false
     - name: show_pending_charges
       value_ref: nv_wire_bool
       required: false
-    selection: []
-    scope: []
+    scope:
+    - name: region
+      value_ref: nv_instance_query_region
+      required: false
+    - name: firewall_group_id
+      value_ref: nv_instance_query_firewall_group_id
+      required: false
   instance_get:
     kind: get
     entity: Instance
   instance_create:
     kind: create
     entity: Instance
-    parameters:
-    - name: region
-      value_ref: nv_instance_create_region
-      required: true
-    - name: plan
-      value_ref: nv_instance_create_plan
-      required: true
-    - name: os_id
-      value_ref: nv_instance_create_os_id
-      required: true
-    - name: label
-      value_ref: nv_wire_str_short
-      required: false
-    - name: hostname
-      value_ref: nv_wire_str_short
-      required: false
-    - name: enable_ipv6
-      value_ref: nv_wire_bool
-      required: false
-    - name: firewall_group_id
-      value_ref: nv_instance_create_firewall_group_id
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: region
+          value_ref: nv_instance_create_region
+          required: true
+        - name: plan
+          value_ref: nv_instance_create_plan
+          required: true
+        - name: os_id
+          value_ref: nv_instance_create_os_id
+          required: true
+        - name: label
+          value_ref: nv_wire_str_short
+          required: false
+        - name: hostname
+          value_ref: nv_wire_str_short
+          required: false
+        - name: enable_ipv6
+          value_ref: nv_wire_bool
+          required: false
+        - name: firewall_group_id
+          value_ref: nv_instance_create_firewall_group_id
+          required: false
   instance_update:
     kind: update
     entity: Instance
-    parameters:
-    - name: label
-      value_ref: nv_wire_str_short
-      required: false
-    - name: hostname
-      value_ref: nv_wire_str_short
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: label
+          value_ref: nv_wire_str_short
+          required: false
+        - name: hostname
+          value_ref: nv_wire_str_short
+          required: false
   instance_delete:
     kind: delete
     entity: Instance
@@ -1938,7 +1979,8 @@ capabilities:
     entity: Instance
     output:
       type: side_effect
-      description: Stops the instance so it no longer incurs full compute use (may still have storage charges).
+      description: Stops the instance so it no longer incurs full compute use (may
+        still have storage charges).
   reservedip_query:
     kind: query
     entity: ReservedIp
@@ -1948,23 +1990,29 @@ capabilities:
   reservedip_create:
     kind: create
     entity: ReservedIp
-    parameters:
-    - name: region
-      value_ref: nv_reservedip_create_region
-      required: true
-    - name: ip_type
-      value_ref: nv_wire_sel_3165a4e18b8315ed
-      required: true
-    - name: label
-      value_ref: nv_wire_str_short
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: region
+          value_ref: nv_reservedip_create_region
+          required: true
+        - name: ip_type
+          value_ref: nv_wire_sel_3165a4e18b8315ed
+          required: true
+        - name: label
+          value_ref: nv_wire_str_short
+          required: false
   reservedip_update:
     kind: update
     entity: ReservedIp
-    parameters:
-    - name: label
-      value_ref: nv_wire_str_short
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: label
+          value_ref: nv_wire_str_short
+          required: true
   reservedip_delete:
     kind: delete
     entity: ReservedIp
@@ -1977,112 +2025,118 @@ capabilities:
   loadbalancer_create:
     kind: create
     entity: LoadBalancer
-    parameters:
-    - name: region
-      value_ref: nv_loadbalancer_create_region
-      required: true
-    - name: label
-      value_ref: nv_wire_str_short
-      required: true
-    - name: nodes
-      value_ref: nv_wire_int
-      required: false
-    - name: ssl_redirect
-      value_ref: nv_wire_bool
-      required: false
-    - name: http2
-      value_ref: nv_wire_bool
-      required: false
-    - name: http3
-      value_ref: nv_wire_bool
-      required: false
-    - name: proxy_protocol
-      value_ref: nv_wire_bool
-      required: false
-    - name: timeout
-      value_ref: nv_wire_int
-      required: false
-    - name: balancing_algorithm
-      value_ref: nv_wire_str_short
-      required: false
-    - name: vpc
-      value_ref: nv_loadbalancer_create_vpc
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: region
+          value_ref: nv_loadbalancer_create_region
+          required: true
+        - name: label
+          value_ref: nv_wire_str_short
+          required: true
+        - name: nodes
+          value_ref: nv_wire_int
+          required: false
+        - name: ssl_redirect
+          value_ref: nv_wire_bool
+          required: false
+        - name: http2
+          value_ref: nv_wire_bool
+          required: false
+        - name: http3
+          value_ref: nv_wire_bool
+          required: false
+        - name: proxy_protocol
+          value_ref: nv_wire_bool
+          required: false
+        - name: timeout
+          value_ref: nv_wire_int
+          required: false
+        - name: balancing_algorithm
+          value_ref: nv_wire_str_short
+          required: false
+        - name: vpc
+          value_ref: nv_loadbalancer_create_vpc
+          required: false
   loadbalancer_update:
     kind: update
     entity: LoadBalancer
-    parameters:
-    - name: label
-      value_ref: nv_wire_str_short
-      required: false
-    - name: nodes
-      value_ref: nv_wire_int
-      required: false
-    - name: ssl_redirect
-      value_ref: nv_wire_bool
-      required: false
-    - name: http2
-      value_ref: nv_wire_bool
-      required: false
-    - name: http3
-      value_ref: nv_wire_bool
-      required: false
-    - name: proxy_protocol
-      value_ref: nv_wire_bool
-      required: false
-    - name: timeout
-      value_ref: nv_wire_int
-      required: false
-    - name: balancing_algorithm
-      value_ref: nv_wire_str_short
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: label
+          value_ref: nv_wire_str_short
+          required: false
+        - name: nodes
+          value_ref: nv_wire_int
+          required: false
+        - name: ssl_redirect
+          value_ref: nv_wire_bool
+          required: false
+        - name: http2
+          value_ref: nv_wire_bool
+          required: false
+        - name: http3
+          value_ref: nv_wire_bool
+          required: false
+        - name: proxy_protocol
+          value_ref: nv_wire_bool
+          required: false
+        - name: timeout
+          value_ref: nv_wire_int
+          required: false
+        - name: balancing_algorithm
+          value_ref: nv_wire_str_short
+          required: false
   loadbalancer_delete:
     kind: delete
     entity: LoadBalancer
   firewallrule_query:
     kind: query
     entity: FirewallRule
-    parameters:
+    scope:
     - name: firewall_group_id
       value_ref: nv_firewallrule_query_firewall_group_id
       required: true
-      role: scope
-    selection: []
-    scope: []
   firewallrule_get:
     kind: get
     entity: FirewallRule
   firewallrule_create:
     kind: create
     entity: FirewallRule
-    parameters:
-    - name: firewall_group_id
-      value_ref: nv_firewallrule_create_firewall_group_id
-      required: true
-    - name: ip_type
-      value_ref: nv_wire_sel_3165a4e18b8315ed
-      required: true
-    - name: protocol
-      value_ref: nv_wire_sel_3fe4d4fac1a8e87f
-      required: true
-    - name: subnet
-      value_ref: nv_wire_str_short
-      required: true
-      sink_class: permission_grant
-    - name: subnet_size
-      value_ref: nv_wire_int
-      required: true
-    - name: port
-      value_ref: nv_wire_str_short
-      required: false
-      sink_class: permission_grant
-    - name: source
-      value_ref: nv_wire_str_short
-      required: false
-      sink_class: permission_grant
-    - name: notes
-      value_ref: nv_wire_str_short
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: firewall_group_id
+          value_ref: nv_firewallrule_create_firewall_group_id
+          required: true
+        - name: ip_type
+          value_ref: nv_wire_sel_3165a4e18b8315ed
+          required: true
+        - name: protocol
+          value_ref: nv_wire_sel_3fe4d4fac1a8e87f
+          required: true
+        - name: subnet
+          value_ref: nv_wire_str_short
+          required: true
+          sink_class: permission_grant
+        - name: subnet_size
+          value_ref: nv_wire_int
+          required: true
+        - name: port
+          value_ref: nv_wire_str_short
+          required: false
+          sink_class: permission_grant
+        - name: source
+          value_ref: nv_wire_str_short
+          required: false
+          sink_class: permission_grant
+        - name: notes
+          value_ref: nv_wire_str_short
+          required: false
   firewallrule_delete:
     kind: delete
     entity: FirewallRule
@@ -2095,26 +2149,32 @@ capabilities:
   snapshot_create:
     kind: create
     entity: Snapshot
-    parameters:
-    - name: instance_id
-      value_ref: nv_snapshot_create_instance_id
-      required: true
-    - name: description
-      value_ref: nv_wire_str_short
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: instance_id
+          value_ref: nv_snapshot_create_instance_id
+          required: true
+        - name: description
+          value_ref: nv_wire_str_short
+          required: false
   snapshot_create_from_url:
     kind: create
     entity: Snapshot
-    parameters:
-    - name: url
-      value_ref: nv_wire_str_short
-      required: true
-    - name: description
-      value_ref: nv_wire_str_short
-      required: false
-    - name: uefi
-      value_ref: nv_wire_bool
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: url
+          value_ref: nv_wire_str_short
+          required: true
+        - name: description
+          value_ref: nv_wire_str_short
+          required: false
+        - name: uefi
+          value_ref: nv_wire_bool
+          required: false
   snapshot_delete:
     kind: delete
     entity: Snapshot
@@ -2127,61 +2187,75 @@ capabilities:
   block_create:
     kind: create
     entity: BlockStorage
-    parameters:
-    - name: region
-      value_ref: nv_block_create_region
-      required: true
-    - name: size_gb
-      value_ref: nv_wire_int
-      required: true
-    - name: label
-      value_ref: nv_wire_str_short
-      required: true
-    - name: block_type
-      value_ref: nv_wire_sel_72fd39fb1f8b8f2f
-      required: false
-    - name: snapshot_id
-      value_ref: nv_block_create_snapshot_id
-      required: false
-    - name: bootable
-      value_ref: nv_wire_bool
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: region
+          value_ref: nv_block_create_region
+          required: true
+        - name: size_gb
+          value_ref: nv_wire_int
+          required: true
+        - name: label
+          value_ref: nv_wire_str_short
+          required: true
+        - name: block_type
+          value_ref: nv_wire_sel_72fd39fb1f8b8f2f
+          required: false
+        - name: snapshot_id
+          value_ref: nv_block_create_snapshot_id
+          required: false
+        - name: bootable
+          value_ref: nv_wire_bool
+          required: false
   block_update:
     kind: update
     entity: BlockStorage
-    parameters:
-    - name: label
-      value_ref: nv_wire_str_short
-      required: false
-    - name: size_gb
-      value_ref: nv_wire_int
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: label
+          value_ref: nv_wire_str_short
+          required: false
+        - name: size_gb
+          value_ref: nv_wire_int
+          required: false
   block_delete:
     kind: delete
     entity: BlockStorage
   block_attach:
     kind: action
     entity: BlockStorage
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: instance_id
+          value_ref: nv_block_attach_instance_id
+          required: true
+        - name: live
+          value_ref: nv_wire_bool
+          required: false
     output:
       type: side_effect
-      description: Attaches this block volume to an instance, with optional live attach to avoid reboot.
-    parameters:
-    - name: instance_id
-      value_ref: nv_block_attach_instance_id
-      required: true
-    - name: live
-      value_ref: nv_wire_bool
-      required: false
+      description: Attaches this block volume to an instance, with optional live attach
+        to avoid reboot.
   block_detach:
     kind: action
     entity: BlockStorage
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: live
+          value_ref: nv_wire_bool
+          required: false
     output:
       type: side_effect
-      description: Detaches this block volume, with optional live detach to avoid reboot.
-    parameters:
-    - name: live
-      value_ref: nv_wire_bool
-      required: false
+      description: Detaches this block volume, with optional live detach to avoid
+        reboot.
   iso_query:
     kind: query
     entity: Iso
@@ -2191,10 +2265,13 @@ capabilities:
   iso_create:
     kind: create
     entity: Iso
-    parameters:
-    - name: url
-      value_ref: nv_wire_str_short
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: url
+          value_ref: nv_wire_str_short
+          required: true
   iso_delete:
     kind: delete
     entity: Iso
@@ -2207,26 +2284,32 @@ capabilities:
   startupscript_create:
     kind: create
     entity: StartupScript
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: true
-    - name: type
-      value_ref: nv_wire_sel_529cf443139f2286
-      required: true
-    - name: script
-      value_ref: nv_startupscript_create_script
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: true
+        - name: type
+          value_ref: nv_wire_sel_529cf443139f2286
+          required: true
+        - name: script
+          value_ref: nv_startupscript_create_script
+          required: true
   startupscript_update:
     kind: update
     entity: StartupScript
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: false
-    - name: script
-      value_ref: nv_startupscript_update_script
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: false
+        - name: script
+          value_ref: nv_startupscript_update_script
+          required: false
   startupscript_delete:
     kind: delete
     entity: StartupScript
@@ -2245,70 +2328,76 @@ capabilities:
   dnsdomain_create:
     kind: create
     entity: DnsDomain
-    parameters:
-    - name: domain
-      value_ref: nv_wire_str_short
-      required: true
-    - name: ip
-      value_ref: nv_wire_str_short
-      required: false
-    - name: dns_sec
-      value_ref: nv_wire_str_short
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: domain
+          value_ref: nv_wire_str_short
+          required: true
+        - name: ip
+          value_ref: nv_wire_str_short
+          required: false
+        - name: dns_sec
+          value_ref: nv_wire_str_short
+          required: false
   dnsdomain_delete:
     kind: delete
     entity: DnsDomain
   dnsrecord_query:
     kind: query
     entity: DnsRecord
-    parameters:
+    scope:
     - name: domain
       value_ref: nv_dnsrecord_query_domain
       required: true
-      role: scope
-    selection: []
-    scope: []
   dnsrecord_get:
     kind: get
     entity: DnsRecord
   dnsrecord_create:
     kind: create
     entity: DnsRecord
-    parameters:
-    - name: domain
-      value_ref: nv_dnsrecord_create_domain
-      required: true
-    - name: name
-      value_ref: nv_wire_str_short
-      required: true
-    - name: type
-      value_ref: nv_wire_sel_c7fc16b95f0ae0a7
-      required: true
-    - name: data
-      value_ref: nv_wire_str_short
-      required: true
-    - name: ttl
-      value_ref: nv_wire_int
-      required: true
-    - name: priority
-      value_ref: nv_wire_int
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: domain
+          value_ref: nv_dnsrecord_create_domain
+          required: true
+        - name: name
+          value_ref: nv_wire_str_short
+          required: true
+        - name: type
+          value_ref: nv_wire_sel_c7fc16b95f0ae0a7
+          required: true
+        - name: data
+          value_ref: nv_wire_str_short
+          required: true
+        - name: ttl
+          value_ref: nv_wire_int
+          required: true
+        - name: priority
+          value_ref: nv_wire_int
+          required: false
   dnsrecord_update:
     kind: update
     entity: DnsRecord
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: false
-    - name: data
-      value_ref: nv_wire_str_short
-      required: false
-    - name: ttl
-      value_ref: nv_wire_int
-      required: false
-    - name: priority
-      value_ref: nv_wire_int
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: false
+        - name: data
+          value_ref: nv_wire_str_short
+          required: false
+        - name: ttl
+          value_ref: nv_wire_int
+          required: false
+        - name: priority
+          value_ref: nv_wire_int
+          required: false
   dnsrecord_delete:
     kind: delete
     entity: DnsRecord
@@ -2321,23 +2410,29 @@ capabilities:
   objectstorage_create:
     kind: create
     entity: ObjectStorage
-    parameters:
-    - name: cluster_id
-      value_ref: nv_wire_int
-      required: true
-    - name: tier_id
-      value_ref: nv_wire_int
-      required: true
-    - name: label
-      value_ref: nv_wire_str_short
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: cluster_id
+          value_ref: nv_wire_int
+          required: true
+        - name: tier_id
+          value_ref: nv_wire_int
+          required: true
+        - name: label
+          value_ref: nv_wire_str_short
+          required: true
   objectstorage_update:
     kind: update
     entity: ObjectStorage
-    parameters:
-    - name: label
-      value_ref: nv_wire_str_short
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: label
+          value_ref: nv_wire_str_short
+          required: true
   objectstorage_delete:
     kind: delete
     entity: ObjectStorage
@@ -2350,53 +2445,59 @@ capabilities:
   manageddatabase_create:
     kind: create
     entity: ManagedDatabase
-    parameters:
-    - name: database_engine
-      value_ref: nv_wire_str_short
-      required: true
-    - name: database_engine_version
-      value_ref: nv_wire_int
-      required: true
-    - name: region
-      value_ref: nv_manageddatabase_create_region
-      required: true
-    - name: plan
-      value_ref: nv_wire_str_short
-      required: true
-    - name: label
-      value_ref: nv_wire_str_short
-      required: true
-    - name: tag
-      value_ref: nv_wire_str_short
-      required: false
-    - name: vpc_id
-      value_ref: nv_manageddatabase_create_vpc_id
-      required: false
-    - name: maintenance_dow
-      value_ref: nv_wire_sel_0780285c9fcb6c03
-      required: false
-    - name: maintenance_time
-      value_ref: nv_wire_str_short
-      required: false
-    - name: backup_hour
-      value_ref: nv_wire_str_short
-      required: false
-    - name: backup_minute
-      value_ref: nv_wire_str_short
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: database_engine
+          value_ref: nv_wire_str_short
+          required: true
+        - name: database_engine_version
+          value_ref: nv_wire_int
+          required: true
+        - name: region
+          value_ref: nv_manageddatabase_create_region
+          required: true
+        - name: plan
+          value_ref: nv_wire_str_short
+          required: true
+        - name: label
+          value_ref: nv_wire_str_short
+          required: true
+        - name: tag
+          value_ref: nv_wire_str_short
+          required: false
+        - name: vpc_id
+          value_ref: nv_manageddatabase_create_vpc_id
+          required: false
+        - name: maintenance_dow
+          value_ref: nv_wire_sel_0780285c9fcb6c03
+          required: false
+        - name: maintenance_time
+          value_ref: nv_wire_str_short
+          required: false
+        - name: backup_hour
+          value_ref: nv_wire_str_short
+          required: false
+        - name: backup_minute
+          value_ref: nv_wire_str_short
+          required: false
   manageddatabase_update:
     kind: update
     entity: ManagedDatabase
-    parameters:
-    - name: plan
-      value_ref: nv_wire_str_short
-      required: false
-    - name: label
-      value_ref: nv_wire_str_short
-      required: false
-    - name: tag
-      value_ref: nv_wire_str_short
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: plan
+          value_ref: nv_wire_str_short
+          required: false
+        - name: label
+          value_ref: nv_wire_str_short
+          required: false
+        - name: tag
+          value_ref: nv_wire_str_short
+          required: false
   manageddatabase_delete:
     kind: delete
     entity: ManagedDatabase
@@ -2409,25 +2510,32 @@ capabilities:
   kubernetescluster_create:
     kind: create
     entity: KubernetesCluster
-    parameters:
-    - name: input
-      value_ref: nv_kubernetescluster_create_input
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: input
+          value_ref: nv_kubernetescluster_create_input
+          required: true
   kubernetescluster_update:
     kind: update
     entity: KubernetesCluster
-    parameters:
-    - name: input
-      value_ref: nv_kubernetescluster_update_input
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: input
+          value_ref: nv_kubernetescluster_update_input
+          required: true
   kubernetescluster_delete:
     kind: delete
     entity: KubernetesCluster
   vkekubeconfig_get:
+    description: Fetches the raw kubeconfig document for a cluster; the control plane
+      typically returns YAML bytes (non-JSON). which the client treats as a downloadable
+      file.
     kind: get
     entity: VkeKubeconfig
-    description: Fetches the raw kubeconfig document for a cluster; the control plane typically returns YAML bytes (non-JSON).
-      which the client treats as a downloadable file.
     provides:
     - id
     - content
@@ -2437,23 +2545,24 @@ capabilities:
   vkeavailableupgrade_query:
     kind: query
     entity: VkeAvailableUpgrade
-    parameters:
+    scope:
     - name: vke_id
       value_ref: nv_vkeavailableupgrade_query_vke_id
       required: true
-      role: scope
-    selection: []
-    scope: []
   kubernetescluster_start_upgrade:
     kind: action
     entity: KubernetesCluster
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: upgrade_version
+          value_ref: nv_wire_str_short
+          required: true
     output:
       type: side_effect
-      description: Enqueues a control plane upgrade to a target available Kubernetes version for this cluster.
-    parameters:
-    - name: upgrade_version
-      value_ref: nv_wire_str_short
-      required: true
+      description: Enqueues a control plane upgrade to a target available Kubernetes
+        version for this cluster.
   kubernetescluster_delete_with_linked_resources:
     kind: delete
     entity: KubernetesCluster
@@ -2466,23 +2575,29 @@ capabilities:
   baremetal_create:
     kind: create
     entity: BareMetal
-    parameters:
-    - name: input
-      value_ref: nv_baremetal_create_input
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: input
+          value_ref: nv_baremetal_create_input
+          required: true
   baremetal_update:
     kind: update
     entity: BareMetal
-    parameters:
-    - name: label
-      value_ref: nv_wire_str_short
-      required: false
-    - name: tags
-      value_ref: nv_baremetal_update_tags
-      required: false
-    - name: user_data
-      value_ref: nv_wire_str_short
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: label
+          value_ref: nv_wire_str_short
+          required: false
+        - name: tags
+          value_ref: nv_baremetal_update_tags
+          required: false
+        - name: user_data
+          value_ref: nv_wire_str_short
+          required: false
   baremetal_delete:
     kind: delete
     entity: BareMetal
@@ -2507,99 +2622,116 @@ capabilities:
   baremetals_bulk_halt:
     kind: action
     entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: bare_metal_ids
+          value_ref: nv_baremetals_bulk_halt_bare_metal_ids
+          required: true
     output:
       type: side_effect
       description: Powers off every server whose id is listed, in one request.
-    parameters:
-    - name: bare_metal_ids
-      value_ref: nv_baremetals_bulk_halt_bare_metal_ids
-      required: true
   baremetals_bulk_reboot:
     kind: action
     entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: bare_metal_ids
+          value_ref: nv_baremetals_bulk_reboot_bare_metal_ids
+          required: true
     output:
       type: side_effect
       description: Reboots every server whose id is listed, in one request.
-    parameters:
-    - name: bare_metal_ids
-      value_ref: nv_baremetals_bulk_reboot_bare_metal_ids
-      required: true
   baremetals_bulk_start:
     kind: action
     entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: bare_metal_ids
+          value_ref: nv_baremetals_bulk_start_bare_metal_ids
+          required: true
     output:
       type: side_effect
       description: Powers on every server whose id is listed, in one request.
-    parameters:
-    - name: bare_metal_ids
-      value_ref: nv_baremetals_bulk_start_bare_metal_ids
-      required: true
   baremetalipv4_query:
     kind: query
     entity: BareMetalIpV4
-    parameters:
+    scope:
     - name: bare_metal_id
       value_ref: nv_baremetalipv4_query_bare_metal_id
       required: true
-      role: scope
-    selection: []
-    scope: []
   baremetalipv6_query:
     kind: query
     entity: BareMetalIpV6
-    parameters:
+    scope:
     - name: bare_metal_id
       value_ref: nv_baremetalipv6_query_bare_metal_id
       required: true
-      role: scope
-    selection: []
-    scope: []
   baremetal_set_ipv4_reverse:
     kind: action
     entity: BareMetal
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: ip
+          value_ref: nv_wire_str_short
+          required: true
+        - name: reverse
+          value_ref: nv_wire_str_short
+          required: true
     output:
       type: side_effect
-      description: Publishes or updates reverse DNS (PTR) for a specific IPv4 address on this server.
-    parameters:
-    - name: ip
-      value_ref: nv_wire_str_short
-      required: true
-    - name: reverse
-      value_ref: nv_wire_str_short
-      required: true
+      description: Publishes or updates reverse DNS (PTR) for a specific IPv4 address
+        on this server.
   baremetal_set_ipv6_reverse:
     kind: action
     entity: BareMetal
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: ip
+          value_ref: nv_wire_str_short
+          required: true
+        - name: reverse
+          value_ref: nv_wire_str_short
+          required: true
     output:
       type: side_effect
-      description: Publishes or updates reverse DNS (PTR) for a specific full-length IPv6 address on this server.
-    parameters:
-    - name: ip
-      value_ref: nv_wire_str_short
-      required: true
-    - name: reverse
-      value_ref: nv_wire_str_short
-      required: true
+      description: Publishes or updates reverse DNS (PTR) for a specific full-length
+        IPv6 address on this server.
   baremetal_set_ipv4_default_reverse:
     kind: action
     entity: BareMetal
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: ip
+          value_ref: nv_wire_str_short
+          required: true
     output:
       type: side_effect
       description: Restores default Vultr reverse DNS for a given primary IPv4 address.
-    parameters:
-    - name: ip
-      value_ref: nv_wire_str_short
-      required: true
   baremetal_delete_ipv6_reverse:
     kind: action
     entity: BareMetal
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: ip
+          value_ref: nv_wire_str_short
+          required: true
     output:
       type: side_effect
       description: Clears a user-defined reverse record for a specific IPv6 address.
-    parameters:
-    - name: ip
-      value_ref: nv_wire_str_short
-      required: true
   baremetalbandwidth_get:
     kind: get
     entity: BareMetalBandwidth
@@ -2609,55 +2741,57 @@ capabilities:
   baremetalupgradecatalog_get:
     kind: get
     entity: BareMetalUpgradeCatalog
-    parameters:
-    - name: type
-      value_ref: nv_baremetalupgradecatalog_get_type
-      required: false
-      role: filter
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: type
+          value_ref: nv_baremetalupgradecatalog_get_type
+          required: false
   baremetalvpc_query:
     kind: query
     entity: BareMetalVpcAttachment
-    parameters:
+    scope:
     - name: bare_metal_id
       value_ref: nv_baremetalvpc_query_bare_metal_id
       required: true
-      role: scope
-    selection: []
-    scope: []
   baremetalvpc2_query:
     kind: query
     entity: BareMetalVpc2Attachment
-    parameters:
+    scope:
     - name: bare_metal_id
       value_ref: nv_baremetalvpc2_query_bare_metal_id
       required: true
-      role: scope
-    selection: []
-    scope: []
   baremetal_vpc2_attach:
     kind: action
     entity: BareMetal
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: vpc_id
+          value_ref: nv_baremetal_vpc2_attach_vpc_id
+          required: true
+        - name: ip_address
+          value_ref: nv_wire_str_short
+          required: true
     output:
       type: side_effect
-      description: Connects a legacy-style VPC 2.0 network with a chosen private address; new integrations should use the.
-        current VPC attach flow instead.
-    parameters:
-    - name: vpc_id
-      value_ref: nv_baremetal_vpc2_attach_vpc_id
-      required: true
-    - name: ip_address
-      value_ref: nv_wire_str_short
-      required: true
+      description: Connects a legacy-style VPC 2.0 network with a chosen private address;
+        new integrations should use the. current VPC attach flow instead.
   baremetal_vpc2_detach:
     kind: action
     entity: BareMetal
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: vpc_id
+          value_ref: nv_baremetal_vpc2_detach_vpc_id
+          required: true
     output:
       type: side_effect
       description: Removes a previously attached legacy VPC 2.0 network from the server.
-    parameters:
-    - name: vpc_id
-      value_ref: nv_baremetal_vpc2_detach_vpc_id
-      required: true
   cdnpullzone_query:
     kind: query
     entity: CdnPullZone
@@ -2667,17 +2801,23 @@ capabilities:
   cdnpullzone_create:
     kind: create
     entity: CdnPullZone
-    parameters:
-    - name: input
-      value_ref: nv_cdnpullzone_create_input
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: input
+          value_ref: nv_cdnpullzone_create_input
+          required: true
   cdnpullzone_update:
     kind: update
     entity: CdnPullZone
-    parameters:
-    - name: input
-      value_ref: nv_cdnpullzone_update_input
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: input
+          value_ref: nv_cdnpullzone_update_input
+          required: true
   cdnpullzone_delete:
     kind: delete
     entity: CdnPullZone
@@ -2686,7 +2826,8 @@ capabilities:
     entity: CdnPullZone
     output:
       type: side_effect
-      description: Invalidates cached content for the pull zone so the next fetches revalidate from the origin.
+      description: Invalidates cached content for the pull zone so the next fetches
+        revalidate from the origin.
   cdnpushzone_query:
     kind: query
     entity: CdnPushZone
@@ -2696,17 +2837,23 @@ capabilities:
   cdnpushzone_create:
     kind: create
     entity: CdnPushZone
-    parameters:
-    - name: input
-      value_ref: nv_cdnpushzone_create_input
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: input
+          value_ref: nv_cdnpushzone_create_input
+          required: true
   cdnpushzone_update:
     kind: update
     entity: CdnPushZone
-    parameters:
-    - name: input
-      value_ref: nv_cdnpushzone_update_input
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: input
+          value_ref: nv_cdnpushzone_update_input
+          required: true
   cdnpushzone_delete:
     kind: delete
     entity: CdnPushZone
@@ -2716,108 +2863,109 @@ capabilities:
   kubernetesnodepool_query:
     kind: query
     entity: KubernetesNodePool
-    parameters:
+    scope:
     - name: vke_id
       value_ref: nv_kubernetesnodepool_query_vke_id
       required: true
-      role: scope
-    selection: []
-    scope: []
   kubernetesnodepool_get:
     kind: get
     entity: KubernetesNodePool
   kubernetesnodepool_create:
     kind: create
     entity: KubernetesNodePool
-    parameters:
-    - name: vke_id
-      value_ref: nv_kubernetesnodepool_create_vke_id
-      required: true
-    - name: input
-      value_ref: nv_kubernetesnodepool_create_input
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: vke_id
+          value_ref: nv_kubernetesnodepool_create_vke_id
+          required: true
+        - name: input
+          value_ref: nv_kubernetesnodepool_create_input
+          required: true
   kubernetesnodepool_update:
     kind: update
     entity: KubernetesNodePool
-    parameters:
-    - name: input
-      value_ref: nv_kubernetesnodepool_update_input
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: input
+          value_ref: nv_kubernetesnodepool_update_input
+          required: true
   kubernetesnodepool_delete:
     kind: delete
     entity: KubernetesNodePool
   kubernetesnodepoollabel_query:
     kind: query
     entity: KubernetesNodePoolLabel
-    parameters:
+    scope:
     - name: vke_id
       value_ref: nv_kubernetesnodepoollabel_query_vke_id
       required: true
-      role: scope
     - name: nodepool_id
       value_ref: nv_wire_str_short
       required: true
-      role: scope
-    selection: []
-    scope: []
   kubernetesnodepoollabel_get:
     kind: get
     entity: KubernetesNodePoolLabel
   kubernetesnodepoollabel_create:
     kind: create
     entity: KubernetesNodePoolLabel
-    parameters:
-    - name: vke_id
-      value_ref: nv_kubernetesnodepoollabel_create_vke_id
-      required: true
-    - name: nodepool_id
-      value_ref: nv_wire_str_short
-      required: true
-    - name: key
-      value_ref: nv_wire_str_short
-      required: true
-    - name: value
-      value_ref: nv_wire_str_short
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: vke_id
+          value_ref: nv_kubernetesnodepoollabel_create_vke_id
+          required: true
+        - name: nodepool_id
+          value_ref: nv_wire_str_short
+          required: true
+        - name: key
+          value_ref: nv_wire_str_short
+          required: true
+        - name: value
+          value_ref: nv_wire_str_short
+          required: true
   kubernetesnodepoollabel_delete:
     kind: delete
     entity: KubernetesNodePoolLabel
   kubernetesnodepooltaint_query:
     kind: query
     entity: KubernetesNodePoolTaint
-    parameters:
+    scope:
     - name: vke_id
       value_ref: nv_kubernetesnodepooltaint_query_vke_id
       required: true
-      role: scope
     - name: nodepool_id
       value_ref: nv_wire_str_short
       required: true
-      role: scope
-    selection: []
-    scope: []
   kubernetesnodepooltaint_get:
     kind: get
     entity: KubernetesNodePoolTaint
   kubernetesnodepooltaint_create:
     kind: create
     entity: KubernetesNodePoolTaint
-    parameters:
-    - name: vke_id
-      value_ref: nv_kubernetesnodepooltaint_create_vke_id
-      required: true
-    - name: nodepool_id
-      value_ref: nv_wire_str_short
-      required: true
-    - name: key
-      value_ref: nv_wire_str_short
-      required: true
-    - name: value
-      value_ref: nv_wire_str_short
-      required: true
-    - name: effect
-      value_ref: nv_wire_str_short
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: vke_id
+          value_ref: nv_kubernetesnodepooltaint_create_vke_id
+          required: true
+        - name: nodepool_id
+          value_ref: nv_wire_str_short
+          required: true
+        - name: key
+          value_ref: nv_wire_str_short
+          required: true
+        - name: value
+          value_ref: nv_wire_str_short
+          required: true
+        - name: effect
+          value_ref: nv_wire_str_short
+          required: true
   kubernetesnodepooltaint_delete:
     kind: delete
     entity: KubernetesNodePoolTaint
@@ -2829,17 +2977,15 @@ capabilities:
     entity: KubernetesNodePoolNode
     output:
       type: side_effect
-      description: Recycles a single worker node, replacing the underlying instance while preserving pool membership.
+      description: Recycles a single worker node, replacing the underlying instance
+        while preserving pool membership.
   cdnpushzonefile_query:
     kind: query
     entity: CdnPushZoneFile
-    parameters:
+    scope:
     - name: push_zone_id
       value_ref: nv_cdnpushzonefile_query_push_zone_id
       required: true
-      role: scope
-    selection: []
-    scope: []
   cdnpushzonefile_get:
     kind: get
     entity: CdnPushZoneFile
@@ -2849,19 +2995,29 @@ capabilities:
   cdnpushzonefile_request_upload:
     kind: create
     entity: CdnUploadEndpoint
-    parameters:
-    - name: push_zone_id
-      value_ref: nv_cdnpushzonefile_request_upload_push_zone_id
-      required: true
-    - name: name
-      value_ref: nv_wire_str_short
-      required: true
-    - name: size
-      value_ref: nv_wire_int
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: push_zone_id
+          value_ref: nv_cdnpushzonefile_request_upload_push_zone_id
+          required: true
+        - name: name
+          value_ref: nv_wire_str_short
+          required: true
+        - name: size
+          value_ref: nv_wire_int
+          required: true
   baremetal_reinstall:
     kind: action
     entity: BareMetal
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: hostname
+          value_ref: nv_wire_str_short
+          required: true
     provides:
     - id
     - status
@@ -2872,10 +3028,6 @@ capabilities:
     - os
     - hostname
     - date_created
-    parameters:
-    - name: hostname
-      value_ref: nv_wire_str_short
-      required: true
   baremetal_vnc:
     kind: action
     entity: BareMetal
@@ -2884,23 +3036,29 @@ capabilities:
   baremetal_vpc_attach:
     kind: action
     entity: BareMetal
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: vpc_id
+          value_ref: nv_baremetal_vpc_attach_vpc_id
+          required: true
     output:
       type: side_effect
       description: Joins this server to a VPC for private network traffic.
-    parameters:
-    - name: vpc_id
-      value_ref: nv_baremetal_vpc_attach_vpc_id
-      required: true
   baremetal_vpc_detach:
     kind: action
     entity: BareMetal
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: vpc_id
+          value_ref: nv_baremetal_vpc_detach_vpc_id
+          required: true
     output:
       type: side_effect
       description: Removes this server from a previously attached VPC.
-    parameters:
-    - name: vpc_id
-      value_ref: nv_baremetal_vpc_detach_vpc_id
-      required: true
 auth:
   scheme: bearer_token
   env: VULTR_API_KEY

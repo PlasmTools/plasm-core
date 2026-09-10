@@ -30,7 +30,10 @@ pub(crate) async fn get_operation_progress_stream(
                 .with_detail(e.to_string()),
             )
         })?;
-    let Some(sess) = st.get_execute_session(ph.as_str(), sid.as_str()).await else {
+    let Some(sess) = (match st.try_get_execute_session(ph.as_str(), sid.as_str()).await {
+        Ok(session) => session,
+        Err(error) => return Err(crate::http_execute::session_lookup_unavailable(error)),
+    }) else {
         return Err(problem_response(
             Problem::custom(
                 ProblemStatus::NOT_FOUND,

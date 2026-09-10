@@ -3,7 +3,6 @@
 use super::*;
 use crate::evidence_chain::{active_chain, attach_evidence_meta, persist_evidence_sidecars};
 use crate::http_execute::run_seal_record_for_handle;
-use crate::plasm_comp_lift::ExecutablePlasmComp;
 use crate::plasm_plan_run::step_materialize::{
     apply_step_materialize_outcomes, materialize_executable_plan_step, PlanStepMaterializeCtx,
 };
@@ -53,7 +52,6 @@ pub async fn run_plasm_comp(
         st,
         prompt_hash,
         session_id,
-        bundle.executable(),
         dry,
         mcp_tool_hooks,
         execution_scope,
@@ -69,7 +67,6 @@ pub(crate) async fn run_plasm_comp_scoped(
     st: &PlasmHostState,
     prompt_hash: &str,
     session_id: &str,
-    executable: &ExecutablePlasmComp,
     dry: DryPlasmPlanEvaluation,
     mcp_tool_hooks: Option<PlanRunTraceHooks>,
     execution_scope: Option<&crate::operation::ExecutionScope>,
@@ -81,7 +78,6 @@ pub(crate) async fn run_plasm_comp_scoped(
             st,
             prompt_hash,
             session_id,
-            executable,
             dry,
             mcp_tool_hooks,
             execution_scope,
@@ -189,12 +185,12 @@ pub(crate) async fn run_executable_plan_phased(
     st: &PlasmHostState,
     prompt_hash: &str,
     session_id: &str,
-    executable: &ExecutablePlasmComp,
     mut dry: DryPlasmPlanEvaluation,
     mcp_tool_hooks: Option<PlanRunTraceHooks>,
     execution_scope: Option<&crate::operation::ExecutionScope>,
     mcp_result_policy: Option<crate::mcp_run_markdown::McpResultTransportPolicy>,
 ) -> Result<PlasmPlanRunResult, String> {
+    let executable = dry.executable.clone();
     if let Some(evidence) = active_chain(es, execution_scope) {
         evidence
             .record_comp_committed(&dry.artifact().comp)
@@ -218,10 +214,18 @@ pub(crate) async fn run_executable_plan_phased(
         sink = Some(hooks.sink);
     }
     let step_total = executable.steps_topo.len() as u32;
-    let prepared_budgets =
-        crate::plan_prepare::prepared_surface_budget_lookup(dry.validated_plan());
-    let prepared_relation_budgets =
-        crate::plan_prepare::prepared_relation_budget_lookup(dry.validated_plan());
+    let prepared_nodes: HashMap<StepId, ValidatedPlanNode> = dry
+        .validated_plan()
+        .nodes
+        .iter()
+        .cloned()
+        .map(|node| {
+            (
+                StepId::new(node.id().as_str().to_string()).expect("validated step id"),
+                node,
+            )
+        })
+        .collect();
     let mut evidence_steps = Vec::with_capacity(step_total as usize);
     let step_topo_index: HashMap<StepId, usize> = executable
         .steps_topo
@@ -257,8 +261,6 @@ pub(crate) async fn run_executable_plan_phased(
         st,
         session_id,
         plan_shared: &plan_shared,
-        prepared_budgets: &prepared_budgets,
-        prepared_relation_budgets: &prepared_relation_budgets,
         approval_policy: &approval_policy,
         flow: &flow,
         trace: trace.as_ref(),
@@ -291,30 +293,25 @@ pub(crate) async fn run_executable_plan_phased(
             let st = st.clone();
             let session_id = session_id.to_string();
             let plan_shared = Arc::clone(&plan_shared);
-            let prepared_budgets = prepared_budgets.clone();
-            let prepared_relation_budgets = prepared_relation_budgets.clone();
+            let prepared_nodes = Arc::new(prepared_nodes.clone());
             let approval_policy = approval_policy.clone();
             let trace_ctx = trace.clone();
             let sink = sink.clone();
-            let bind = Arc::new(executable.bind.clone());
             let execution_scope_parallel = execution_scope.cloned();
             let mut joins = Vec::with_capacity(layer.len());
             for step_id in &layer {
                 let step_idx = step_topo_index[step_id];
-                let payload = payload_by_step[step_id].clone();
+                let node = prepared_nodes[step_id].clone();
                 let step_id = step_id.clone();
                 let es = es.clone();
                 let st = st.clone();
                 let session_id = session_id.clone();
                 let materialized_snap = materialized_snap.clone();
                 let plan_shared = Arc::clone(&plan_shared);
-                let prepared_budgets = prepared_budgets.clone();
-                let prepared_relation_budgets = prepared_relation_budgets.clone();
                 let approval_policy = approval_policy.clone();
                 let flow = flow.clone();
                 let trace_ctx = trace_ctx.clone();
                 let sink = sink.clone();
-                let bind = Arc::clone(&bind);
                 let rows_progress_step = rows_progress_parallel.clone();
                 let execution_scope_step = execution_scope_parallel.clone();
                 let parent_span = tracing::Span::current();
@@ -326,8 +323,6 @@ pub(crate) async fn run_executable_plan_phased(
                         st: &st,
                         session_id: session_id.as_str(),
                         plan_shared: &plan_shared,
-                        prepared_budgets: &prepared_budgets,
-                        prepared_relation_budgets: &prepared_relation_budgets,
                         approval_policy: &approval_policy,
                         flow: &flow,
                         trace: trace_ctx.as_ref(),
@@ -339,8 +334,7 @@ pub(crate) async fn run_executable_plan_phased(
                         &mat_ctx,
                         step_idx,
                         &step_id,
-                        &payload,
-                        bind.as_ref(),
+                        node,
                         &materialized_snap,
                     ))
                     .instrument(step_span)
@@ -366,15 +360,15 @@ pub(crate) async fn run_executable_plan_phased(
                         Some(step_id.as_str().to_string()),
                     );
                 }
-                let payload = payload_by_step
+                let node = prepared_nodes
                     .get(step_id)
-                    .ok_or_else(|| format!("missing payload for step {step_id}"))?;
+                    .ok_or_else(|| format!("missing prepared node for step {step_id}"))?
+                    .clone();
                 let outcome = Box::pin(materialize_executable_plan_step(
                     &mat_ctx,
                     step_idx,
                     step_id,
-                    payload,
-                    &executable.bind,
+                    node,
                     &materialized,
                 ))
                 .await?;

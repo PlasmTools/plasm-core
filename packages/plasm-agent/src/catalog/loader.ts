@@ -1,18 +1,36 @@
-import { access, readFile, readdir, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
-
 import { z } from "zod";
 
+const digest = z.string().regex(/^[a-f0-9]{64}$/);
+const basename = z.string().min(1).refine((name) => path.basename(name) === name && name !== "." && name !== "..");
 export const CatalogManifestSchema = z.object({
-  entryId: z.string(),
+  format_version: z.literal(3),
+  entry_id: z.string().min(1),
+  version: z.number().int().positive(),
+  cgs_hash: digest,
   label: z.string().optional(),
-  cgsHash: z.string().optional(),
-});
+  tags: z.array(z.string()).default([]),
+  cgs_json: basename,
+  discovery_json: basename,
+  discovery_hash: digest,
+  embedding_profile: z.object({
+    model: z.literal("openai/text-embedding-3-small"),
+    dimensions: z.literal(1536),
+    encoding_format: z.literal("float"),
+  }).strict(),
+}).strict();
 
-export type CatalogManifest = z.infer<typeof CatalogManifestSchema>;
+export interface CatalogManifest {
+  entryId: string;
+  label?: string;
+  cgsHash: string;
+}
 
 export interface LoadedCatalog {
   rootDir: string;
+  manifestPath: string;
   manifest: CatalogManifest;
 }
 
@@ -20,52 +38,34 @@ export interface CatalogLoader {
   discover(agentRoot: string): Promise<LoadedCatalog[]>;
 }
 
-async function pathExists(p: string): Promise<boolean> {
-  try {
-    await access(p);
-    return true;
-  } catch {
-    return false;
+/** Both artifact digests are checked here; Rust validates their full typed content on load. */
+export async function loadPackedCatalog(manifestPath: string): Promise<LoadedCatalog> {
+  if (!manifestPath.endsWith(".manifest.json")) {
+    throw new Error("Catalog loading requires a format-3 packed manifest; repack raw YAML first");
   }
-}
-
-async function readEntryId(catalogDir: string): Promise<string> {
-  const domainPath = path.join(catalogDir, "domain.yaml");
-  const raw = await readFile(domainPath, "utf8");
-  const match = raw.match(/^entry_id:\s*["']?([^"'\n]+)["']?/m);
-  if (match?.[1]) return match[1].trim();
-  return path.basename(catalogDir);
+  const absolute = path.resolve(manifestPath);
+  const rootDir = path.dirname(absolute);
+  const manifest = CatalogManifestSchema.parse(JSON.parse(await readFile(absolute, "utf8")));
+  for (const [name, expected] of [[manifest.cgs_json, manifest.cgs_hash], [manifest.discovery_json, manifest.discovery_hash]]) {
+    const bytes = await readFile(path.join(rootDir, name!));
+    if (createHash("sha256").update(bytes).digest("hex") !== expected) {
+      throw new Error(`Catalog artifact digest mismatch: ${name}`);
+    }
+  }
+  return { rootDir, manifestPath: absolute, manifest: { entryId: manifest.entry_id, label: manifest.label, cgsHash: manifest.cgs_hash } };
 }
 
 export class FilesystemCatalogLoader implements CatalogLoader {
   async discover(agentRoot: string): Promise<LoadedCatalog[]> {
     const catalogsDir = path.join(agentRoot, "catalogs");
-    if (!(await pathExists(catalogsDir))) {
-      return [];
+    const set = z.object({ format_version: z.literal(3), manifests: z.array(basename).min(1) }).strict()
+      .parse(JSON.parse(await readFile(path.join(catalogsDir, "catalog-set.json"), "utf8")));
+    const loaded = await Promise.all(set.manifests.map((name) => loadPackedCatalog(path.join(catalogsDir, name))));
+    const ids = new Set<string>();
+    for (const catalog of loaded) {
+      if (ids.has(catalog.manifest.entryId)) throw new Error(`Duplicate catalog revision: ${catalog.manifest.entryId}`);
+      ids.add(catalog.manifest.entryId);
     }
-    const entries = await readdir(catalogsDir, { withFileTypes: true });
-    const loaded: LoadedCatalog[] = [];
-    for (const entry of entries) {
-      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
-      const rootDir = path.join(catalogsDir, entry.name);
-      try {
-        const info = await stat(rootDir);
-        if (!info.isDirectory()) continue;
-      } catch {
-        continue;
-      }
-      const domainYaml = path.join(rootDir, "domain.yaml");
-      const mappingsYaml = path.join(rootDir, "mappings.yaml");
-      if (!(await pathExists(domainYaml)) || !(await pathExists(mappingsYaml))) {
-        continue;
-      }
-      const entryId = await readEntryId(rootDir);
-      loaded.push({
-        rootDir,
-        manifest: { entryId, label: entry.name },
-      });
-    }
-    loaded.sort((a, b) => a.manifest.entryId.localeCompare(b.manifest.entryId));
-    return loaded;
+    return loaded.sort((a, b) => a.manifest.entryId.localeCompare(b.manifest.entryId));
   }
 }

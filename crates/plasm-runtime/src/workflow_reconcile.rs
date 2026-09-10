@@ -6,15 +6,16 @@ use plasm_core::preflight::PLASM_EXISTENCE_SKIP_WRITE_ENV;
 use plasm_core::schema::{CapabilityKind, CapabilitySchema};
 use plasm_core::TypedFieldValue;
 use plasm_core::{
-    conflict_rules_from_mapping_template, CompOp, Predicate, QueryExpr, ReconcileBindSource, Value,
-    WorkflowConflict, WorkflowConflictKind, WriteOutcome, CGS,
+    CompOp, Predicate, QueryExpr, ReconcileBindSource, Value, WorkflowConflict,
+    WorkflowConflictKind, WriteOutcome, CGS,
 };
 use serde_json::Value as JsonValue;
 
+#[cfg(test)]
 use crate::api_error_detail::workflow_conflict_from_http;
 use crate::execution::{
-    synthesized_get, CapabilityParamEnv, ExecutionEngine, ExecutionMode, ExecutionResult,
-    StreamConsumeOpts,
+    compiled_conflict_rules, synthesized_get, CapabilityParamEnv, ExecutionEngine, ExecutionMode,
+    ExecutionResult, StreamConsumeOpts,
 };
 use crate::materialization::SessionMaterialization;
 use crate::RuntimeError;
@@ -25,15 +26,11 @@ pub fn map_capability_http_error(
     body: &serde_json::Value,
     fallback_message: String,
 ) -> RuntimeError {
-    let Ok(mapping) = capability.require_mapping() else {
-        return RuntimeError::RequestError {
-            message: fallback_message,
-            attempts: 1,
-            status: Some(status),
-            body: Some(body.clone()),
-        };
+    let rules = match compiled_conflict_rules(capability) {
+        Ok(rules) => rules,
+        Err(error) => return error,
     };
-    if let Some(conflict) = workflow_conflict_from_http(&mapping.template.0, status, body) {
+    if let Some(conflict) = plasm_core::match_conflict_rule(&rules, status, body) {
         let md = conflict.markdown_block();
         return RuntimeError::WorkflowConflict {
             conflict: Box::new(conflict),
@@ -87,13 +84,7 @@ impl ExecutionEngine {
             Some(parts) => parts,
             None => return Err(err),
         };
-        let rules = conflict_rules_from_mapping_template(
-            &capability
-                .require_mapping()
-                .map_err(|message| RuntimeError::ConfigurationError { message })?
-                .template
-                .0,
-        );
+        let rules = compiled_conflict_rules(capability)?;
         let Some(conflict) = plasm_core::match_conflict_rule(&rules, status, &body) else {
             return Err(err);
         };
@@ -141,16 +132,14 @@ fn map_request_to_conflict_or_return(
         ..
     } = &err
     {
-        if let Ok(mapping) = capability.require_mapping() {
-            if let Some(conflict) = workflow_conflict_from_http(&mapping.template.0, *status, body)
-            {
-                let md = conflict.markdown_block();
-                return Err(RuntimeError::WorkflowConflict {
-                    conflict: Box::new(conflict.clone()),
-                    message: format!("{message}\n\n{md}"),
-                    attempts: 1,
-                });
-            }
+        let rules = compiled_conflict_rules(capability)?;
+        if let Some(conflict) = plasm_core::match_conflict_rule(&rules, *status, body) {
+            let md = conflict.markdown_block();
+            return Err(RuntimeError::WorkflowConflict {
+                conflict: Box::new(conflict.clone()),
+                message: format!("{message}\n\n{md}"),
+                attempts: 1,
+            });
         }
     }
     Err(err)

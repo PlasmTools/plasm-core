@@ -57,7 +57,7 @@ mod tests {
     use plasm_core::value_domain::ValueDomain;
     use plasm_core::{
         CapabilityKind, CapabilityMapping, CompOp, FieldType, InputFieldSchema, InputFieldWire,
-        InputSchema, InputType, InputValidation, NamedValueSchema, Value, ValueDomainKey, CGS,
+        NamedValueSchema, Value, ValueDomainKey, CGS,
     };
 
     fn query_test_cgs() -> CGS {

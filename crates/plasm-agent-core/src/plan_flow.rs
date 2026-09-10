@@ -255,7 +255,7 @@ struct MutationFlowCtx<'a> {
     kind: PlanNodeKind,
     effect_class: EffectClass,
     capability_name: &'a str,
-    template_expr: Option<&'a serde_json::Value>,
+    template_expr: Option<&'a plasm_core::Expr>,
     expr_template: Option<&'a str>,
     uses_result: &'a [PlanResultUse],
     author_label: Option<&'a str>,
@@ -605,7 +605,7 @@ impl<'a, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, P> {
 
     fn incoming_facts_from_template(
         &self,
-        expr: &serde_json::Value,
+        expr: &plasm_core::Expr,
         uses_result: &[PlanResultUse],
     ) -> FlowFacts {
         let holes = NodeInputHoleIndex::from_template_expr(expr);

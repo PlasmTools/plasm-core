@@ -200,10 +200,7 @@ fn apply_complete_demands(
         .collect();
     for source_id in complete_sources {
         let mut current = source_id;
-        loop {
-            let Some(&idx) = by_id.get(current.as_str()) else {
-                break;
-            };
+        while let Some(&idx) = by_id.get(current.as_str()) {
             match &mut plan.nodes_mut()[idx] {
                 ValidatedPlanNode::Surface(surface)
                     if matches!(surface.kind, PlanNodeKind::Query | PlanNodeKind::Search) =>

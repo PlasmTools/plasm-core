@@ -63,14 +63,6 @@ ruleset_query:
     - { type: literal, value: rulesets }
   response:
     items: result
-  query:
-    type: object
-    fields:
-      - - per_page
-        - type: if
-          condition: { type: exists, var: per_page }
-          then_expr: { type: var, name: per_page }
-          else_expr: { type: const, value: null }
   pagination:
     params:
       cursor:

@@ -82,10 +82,11 @@
 
 pub mod array_field_policy;
 pub mod bind_wire_validate;
+pub mod capability_exposure;
+pub mod catalog_discovery;
 pub mod catalog_id;
 pub mod catalog_il;
 pub mod catalog_ownership;
-pub mod catalog_search_index;
 pub mod cgs_context;
 pub mod cgs_expression_validate;
 pub mod cgs_federation;
@@ -94,20 +95,6 @@ pub mod connect_profile;
 pub mod cross_entity;
 pub mod derived_get;
 pub mod discovery;
-pub mod discovery_auto_seed;
-pub mod discovery_candidate_graph;
-pub mod discovery_controlled_lexicon;
-pub mod discovery_coverage;
-pub mod discovery_intent_class;
-pub mod discovery_intent_signals;
-pub mod discovery_presentation;
-pub mod discovery_seed_baml;
-pub mod discovery_seed_bundle;
-pub mod discovery_seed_catalog;
-pub mod discovery_seed_pipeline;
-pub mod discovery_seed_select;
-pub mod discovery_seed_symbol_map;
-pub mod discovery_seed_witness;
 pub mod domain_lexicon;
 pub mod entity_ref_value;
 pub mod enum_teaching_meaning;
@@ -124,18 +111,20 @@ pub mod loader;
 pub mod money;
 pub mod normalizer;
 pub mod paging_handle;
+pub mod path_env;
 pub mod phrase_ident;
 pub mod plasm_monad;
 pub mod plp;
 pub mod predicate;
 pub mod preflight;
+pub mod prerequisites;
+pub mod program_string_template;
 pub mod prompt_pipeline;
 pub mod prompt_render;
 pub mod query_resolve;
 pub mod relation_nav;
 pub mod relation_segment;
 pub mod relation_validation_expr;
-pub mod path_env;
 pub mod resolved_identity;
 pub mod result_gloss;
 pub mod row_composition;
@@ -151,7 +140,6 @@ pub mod string_unescape;
 pub mod summary_render;
 pub mod symbol_tuning;
 pub mod teaching_term;
-pub mod program_string_template;
 pub mod template_ref;
 pub mod temporal;
 pub mod tests;
@@ -194,7 +182,6 @@ pub use catalog_ownership::{
     CatalogOwnershipContext, CatalogOwnershipError, InvokeCatalogResolutionContext,
     FEDERATED_RELATION_MISSING_OWNERSHIP,
 };
-pub use catalog_search_index::{CatalogSearchHit, CatalogSearchIndex};
 pub use cgs_context::{CgsContext, Prefix};
 pub use cgs_federation::{
     cgs_layer_stack, cgs_layer_stack_from_contexts, lookup_capability_in_layer_stack,
@@ -205,14 +192,7 @@ pub use connect_profile::{
     catalog_connect_profile, CatalogAuthCapability, CatalogConnectProfile, CatalogOauthCapability,
 };
 pub use derived_get::DerivedGetPlan;
-pub use discovery::{
-    derive_intent_exposure_surface_batch, relation_target_deferred_mutator_wires, Ambiguity,
-    CapabilityQuery, CatalogEntryMeta, CgsCatalog, CgsDiscovery, ClosureStats,
-    DiscoveryContextJson, DiscoveryError, DiscoveryResult, DiscoverySchemaNeighborhood,
-    EntitySummary, ExposureSurfaceOptions, InMemoryCgsRegistry, MutatorAdmit, RankedCandidate,
-    RegistryEntryPair,
-};
-pub use discovery_presentation::{CatalogRoute, DiscoveryDecision};
+pub use discovery::{CatalogEntryMeta, CgsCatalog, CgsRegistry, DiscoveryError, RegistryEntryPair};
 pub use entity_ref_value::{
     normalize_entity_ref_value_for_target, try_narrow_entity_row_to_entity_ref_value,
     EntityRefAtom, EntityRefPayload, EntityRefValueError, ScopeEntityRefNormalizeError,
@@ -239,6 +219,14 @@ pub use normalizer::{is_normalized, normalize};
 pub use operation_handle::{OperationHandle, OperationHandleParseError};
 pub use paging_handle::{
     is_valid_logical_session_ref_segment, PagingHandle, PagingHandleParseError,
+};
+pub use path_env::{
+    capability_declared_input_names, classify_path_var, create_binds_from_anchor_identity,
+    graphql_operation_variable_names, identity_env_var_names, identity_wire_names,
+    is_identity_projectable, path_var_names_from_mapping_json, project_capability_identity_env,
+    project_identity_onto_vars, prove_path_env_coverage, prove_path_env_coverage_in_cgs,
+    CapabilityIdentityProjection, CmlIdentityEnv, IdentityEnvVars, IdentityNameMatch,
+    IdentityWireNames, PathEnvProjectionError, PathEnvProofError, SoleAliasPolicy,
 };
 pub use phrase_ident::{
     is_identifier_phrase, lower_program_phrase_idents_in_expr,
@@ -288,14 +276,6 @@ pub use query_resolve::{
     required_scope_param_names, resolve_query_capability, sole_nullary_singleton_get,
     sole_nullary_singleton_get_for_bare_query, QueryCapabilityResolveError,
 };
-pub use path_env::{
-    capability_declared_input_names, classify_path_var, create_binds_from_anchor_identity,
-    graphql_operation_variable_names, identity_env_var_names, identity_wire_names,
-    is_identity_projectable, path_var_names_from_mapping_json, project_capability_identity_env,
-    project_identity_onto_vars, prove_path_env_coverage, prove_path_env_coverage_in_cgs,
-    CapabilityIdentityProjection, CmlIdentityEnv, IdentityEnvVars, IdentityNameMatch,
-    IdentityWireNames, PathEnvProjectionError, PathEnvProofError, SoleAliasPolicy,
-};
 pub use resolved_identity::{IdentityProjectionCtx, ResolvedIdentity};
 pub use row_composition::{
     resolve_relation_target_id, row_identity_from_parts, row_identity_from_ref, IdEncoding,
@@ -344,6 +324,13 @@ pub use money::{
     json_amount_to_value, CrossCurrencyError, MoneyDecodeSpec, MoneyError, MoneyValue,
     MoneyWireFormat,
 };
+pub use program_string_template::{
+    contains_dollar_interpolation, contains_minijinja_markers,
+    find_dollar_interpolation_in_minijinja_body, for_each_interpolation_path, interpolation_paths,
+    interpolation_roots, register_shared_minijinja_filters, reject_dollar_interpolation,
+    render_program_string, validate_interpolation_syntax, ProgramStringError,
+    DEFAULT_MAX_INTERPOLATED_LEN,
+};
 pub use relation_materialize::{
     extract_from_parent_get_value, flatten_from_parent_get_source_rows,
     from_parent_get_embed_edges, partition_prefer_resolutions, prefer_hydrate_embed_path,
@@ -364,17 +351,16 @@ pub use schema::{
     AttachmentMediaKind, AuthScheme, BackendSelectionSchema, CapabilityInputs, CapabilityKind,
     CapabilityManifest, CapabilityMapping, CapabilitySchema, CapabilityTemplateJson, Cardinality,
     CgsCapabilityIndex, CrossFieldRule, CrossFieldRuleType, DataClassDimension, DataClassName,
-    DataClassSchema, DataClassSeverity, DiscoveryCapabilityHints, DiscoveryCoSeedWith,
-    DiscoveryEntityHints, DiscoveryRelationHints, DiscoverySeedClass, DiscoverySeedNav,
-    EmbedOnMissPolicy, EntityDef, FieldDeriveRule, FieldSchema, FieldValueKind, IdFormat,
-    InputFieldSchema, InputFieldWire, InputSchema, InputType, InputValidation, InputVariantSchema,
-    InvocationControlsSchema, JsonPathSegment, NamedValueSchema, OauthDefaultScopeSet,
-    OauthExtension, OauthRequirements, OauthScopeEntry, OutputSchema, OutputType,
-    ParentScopeSchema, RelationMaterialization, RelationSchema, RelationScopedFallback,
-    ResourceSchema, ScopeAggregateKeyPolicy, ScopeRequirement, SinkClassName, ValueDomainKey,
-    ValueDomainSlot, ViewDefinition, ViewNodeSpec, ViewOutputBinding, ViewParamBinding,
-    ViewRelationBinding, ViewRelationOutputSpec, ViewScopeInject, ViewScopeParam,
-    WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
+    DataClassSchema, DataClassSeverity, DiscoveryCapabilityHints, DiscoveryEntityHints,
+    DiscoveryRelationHints, EmbedOnMissPolicy, EntityDef, FieldDeriveRule, FieldSchema,
+    FieldValueKind, IdFormat, InputFieldSchema, InputFieldWire, InputSchema, InputType,
+    InputValidation, InputVariantSchema, InvocationControlsSchema, JsonPathSegment,
+    NamedValueSchema, OauthDefaultScopeSet, OauthExtension, OauthRequirements, OauthScopeEntry,
+    OutputSchema, OutputType, ParentScopeSchema, RelationMaterialization, RelationSchema,
+    RelationScopedFallback, ResourceSchema, ScopeAggregateKeyPolicy, ScopeRequirement,
+    SinkClassName, ValueDomainKey, ValueDomainSlot, ViewDefinition, ViewNodeSpec,
+    ViewOutputBinding, ViewParamBinding, ViewRelationBinding, ViewRelationOutputSpec,
+    ViewScopeInject, ViewScopeParam, WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
 };
 pub use schema_overlay::{
     build_decode_scope_key, build_schema_overlay, overlay_bind_cache_suffix, overlay_collect_rows,
@@ -382,7 +368,7 @@ pub use schema_overlay::{
     resolve_overlay_row_bind, walk_json_path, SchemaOverlay, SchemaOverlaySpec,
 };
 pub use scope_entity_ref_infer::{
-    effective_capability_input, prepare_create_capability_input, prepare_invoke_capability_input,
+    effective_capability_input, prepare_create_capability_input, prepare_targeted_capability_input,
     should_omit_invoke_teaching_arg,
 };
 pub use scope_entity_ref_splat::apply_entity_ref_scope_splat;
@@ -393,9 +379,9 @@ pub use summary_render::{
     render_intent_with_projection, render_intent_with_projection_federated, render_outcome,
 };
 pub use symbol_tuning::{
-    bare_ranked_capability_wire, catalog_cgs_hashes_from_session, catalog_pins_match,
-    entity_slices_for_render, first_opaque_m_sym_in_expr, method_syms_in_expr,
-    relation_endpoint_keys, resolve_prompt_surface_entities, strip_prompt_expression_annotations,
+    catalog_cgs_hashes_from_session, catalog_pins_match, entity_slices_for_render,
+    first_opaque_m_sym_in_expr, method_syms_in_expr, relation_endpoint_keys,
+    resolve_prompt_surface_entities, strip_prompt_expression_annotations,
     symbol_map_cache_key_federated, symbol_map_cache_key_single_catalog,
     symbol_map_fingerprint_hex, symbol_map_for_prompt, wire_surface_for_parse,
     wire_surface_for_teaching_session, CatalogScope, ExposedEntitySymbolRow,
@@ -404,12 +390,6 @@ pub use symbol_tuning::{
     SymbolAllocate, SymbolMap, SymbolMapCacheKey, SymbolMapCrossRequestCache, SymbolRender,
     SymbolResolve, SymbolResolveError, SymbolSession, TeachingExposureSession,
     PERSISTED_SYMBOL_LEDGER_VERSION,
-};
-pub use program_string_template::{
-    contains_dollar_interpolation, contains_minijinja_markers, find_dollar_interpolation_in_minijinja_body,
-    for_each_interpolation_path, interpolation_paths, interpolation_roots,
-    reject_dollar_interpolation, render_program_string, register_shared_minijinja_filters,
-    validate_interpolation_syntax, ProgramStringError, DEFAULT_MAX_INTERPOLATED_LEN,
 };
 pub use template_ref::{RefKind, TemplateRefContext};
 pub use temporal::{
@@ -441,3 +421,5 @@ pub use workflow_identity::{
     ConflictRuleWhen, ReconcileBindSource, ReconcileSpec, ViewNodeCondition, ViewNodeWhen,
     WorkflowConflict, WorkflowConflictKind, WriteOutcome,
 };
+
+pub mod operand_binding;

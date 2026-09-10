@@ -4,6 +4,9 @@ use std::collections::HashMap;
 #[napi(object)]
 #[derive(Clone, Debug)]
 pub struct JsTransportRequest {
+    /// Scoped credentials require the callback to reject HTTP redirects.
+    pub reject_redirects: bool,
+    pub require_host_auth: bool,
     pub method: String,
     pub url: String,
     pub headers: Option<HashMap<String, String>>,

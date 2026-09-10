@@ -28,7 +28,6 @@ async function main(): Promise<void> {
 
   const contextMd = await agent.runtime.plasmContext({
     intent: INTENT,
-    seeds: [{ api: "execute_tiny", entity: "Product" }],
   });
   const logicalSessionRef = extractLogicalSessionRef(contextMd);
   console.log("--- plasm_context ---");

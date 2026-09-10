@@ -832,6 +832,7 @@ fn explorer_args_for_get(entity: &EntityDef, get_cap: &CapabilitySchema) -> Vec<
             path_var_names_from_request(cml)
         }
         CapabilityTemplate::View(_)
+        | CapabilityTemplate::CredentialBind(_)
         | CapabilityTemplate::EvmCall(_)
         | CapabilityTemplate::EvmLogs(_) => Vec::new(),
     };

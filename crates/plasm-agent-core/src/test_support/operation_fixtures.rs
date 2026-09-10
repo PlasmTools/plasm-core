@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use plasm_core::discovery::InMemoryCgsRegistry;
+use plasm_core::discovery::CgsRegistry;
 use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 
 use crate::http::{build_plasm_host_state, PlasmHostBootstrap};
@@ -15,7 +15,7 @@ pub fn minimal_host() -> Arc<PlasmHostState> {
     Arc::new(build_plasm_host_state(PlasmHostBootstrap {
         engine,
         mode: ExecutionMode::Live,
-        registry: Arc::new(InMemoryCgsRegistry::from_pairs(Vec::new())),
+        registry: Arc::new(CgsRegistry::from_pairs(Vec::new())),
         catalog_bootstrap: CatalogBootstrap::Fixed,
         incoming_auth: None,
         run_artifacts: Arc::new(RunArtifactStore::memory()),

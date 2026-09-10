@@ -68,8 +68,8 @@ fn session_slot_unallocated_when_disabled() {
             None,
             "line",
             &ParsedExpr::from_expr(Expr::TeachingValue {
-                    value: Value::String("x".into()),
-                }),
+                value: Value::String("x".into()),
+            }),
             &[],
         )
         .expect("noop");
@@ -107,8 +107,8 @@ fn record_step_executed_accepts_synthetic_fingerprint() {
             None,
             "plan.compute(compute_step)",
             &ParsedExpr::from_expr(Expr::TeachingValue {
-                    value: Value::String("x".into()),
-                }),
+                value: Value::String("x".into()),
+            }),
             &["plan-compute:deadbeef".into()],
         )
         .expect("synthetic fingerprint accepted");
@@ -130,8 +130,8 @@ fn batch_record_steps_single_lock() {
         .expect("scope");
     chain.record_comp_committed(&minimal_comp()).expect("comp");
     let parsed = ParsedExpr::from_expr(Expr::TeachingValue {
-            value: Value::String("x".into()),
-        });
+        value: Value::String("x".into()),
+    });
     chain
         .record_steps_executed(&[
             StepExecutedRecord {
@@ -171,8 +171,8 @@ fn record_run_sealed_rejects_run_id_wire_mismatch() {
         ))
         .expect("scope");
     let parsed = ParsedExpr::from_expr(Expr::TeachingValue {
-            value: Value::String("x".into()),
-        });
+        value: Value::String("x".into()),
+    });
     let err = chain
         .record_run_sealed(&RunSealRecord {
             expected_run_id_wire: format!("{}00", "pr".to_string() + &"ab".repeat(32)),
@@ -261,7 +261,6 @@ fn minimal_execute_session() -> ExecuteSession {
         Some(exp),
         None,
         cgs.catalog_cgs_hash_hex(),
-        None,
         None,
     )
 }

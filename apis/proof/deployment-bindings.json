@@ -1,0 +1,94 @@
+{
+  "bindings": [
+    {
+      "consumer": {
+        "catalog": "proof",
+        "capability": "annotation_comment_add"
+      },
+      "requirement": "current_state",
+      "provider_catalog": "proof",
+      "provider": "editor_state"
+    },
+    {
+      "consumer": {
+        "catalog": "proof",
+        "capability": "annotation_comment_reply"
+      },
+      "requirement": "current_state",
+      "provider_catalog": "proof",
+      "provider": "editor_state"
+    },
+    {
+      "consumer": {
+        "catalog": "proof",
+        "capability": "annotation_comment_resolve"
+      },
+      "requirement": "current_state",
+      "provider_catalog": "proof",
+      "provider": "editor_state"
+    },
+    {
+      "consumer": {
+        "catalog": "proof",
+        "capability": "annotation_comment_unresolve"
+      },
+      "requirement": "current_state",
+      "provider_catalog": "proof",
+      "provider": "editor_state"
+    },
+    {
+      "consumer": {
+        "catalog": "proof",
+        "capability": "annotation_suggestion_insert"
+      },
+      "requirement": "current_state",
+      "provider_catalog": "proof",
+      "provider": "editor_state"
+    },
+    {
+      "consumer": {
+        "catalog": "proof",
+        "capability": "annotation_suggestion_delete"
+      },
+      "requirement": "current_state",
+      "provider_catalog": "proof",
+      "provider": "editor_state"
+    },
+    {
+      "consumer": {
+        "catalog": "proof",
+        "capability": "annotation_suggestion_replace"
+      },
+      "requirement": "current_state",
+      "provider_catalog": "proof",
+      "provider": "editor_state"
+    },
+    {
+      "consumer": {
+        "catalog": "proof",
+        "capability": "annotation_suggestion_accept"
+      },
+      "requirement": "current_state",
+      "provider_catalog": "proof",
+      "provider": "editor_state"
+    },
+    {
+      "consumer": {
+        "catalog": "proof",
+        "capability": "annotation_suggestion_reject"
+      },
+      "requirement": "current_state",
+      "provider_catalog": "proof",
+      "provider": "editor_state"
+    },
+    {
+      "consumer": {
+        "catalog": "proof",
+        "capability": "annotation_comment_batch_apply"
+      },
+      "requirement": "current_state",
+      "provider_catalog": "proof",
+      "provider": "editor_state"
+    }
+  ]
+}

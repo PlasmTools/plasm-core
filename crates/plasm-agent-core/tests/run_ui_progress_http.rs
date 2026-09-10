@@ -11,7 +11,7 @@ use plasm_agent_core::execute_session::{ExecuteSession, SessionReuseKey};
 use plasm_agent_core::http::{build_plasm_host_state, health_public_routes, PlasmHostBootstrap};
 use plasm_agent_core::mcp_logical_ref::parse_logical_session_wire_ref;
 use plasm_agent_core::server_state::CatalogBootstrap;
-use plasm_core::discovery::InMemoryCgsRegistry;
+use plasm_core::discovery::CgsRegistry;
 use plasm_core::CGS;
 use plasm_runtime::{ExecutionEngine, ExecutionMode};
 use tower::ServiceExt;
@@ -25,7 +25,7 @@ async fn seeded_host_with_running_op() -> (plasm_agent_core::server_state::Plasm
     let st = build_plasm_host_state(PlasmHostBootstrap {
         engine: ExecutionEngine::new(Default::default()).expect("engine"),
         mode: ExecutionMode::Live,
-        registry: Arc::new(InMemoryCgsRegistry::from_pairs(vec![(
+        registry: Arc::new(CgsRegistry::from_pairs(vec![(
             "default".into(),
             "Default".into(),
             vec!["default".into()],
@@ -56,7 +56,6 @@ async fn seeded_host_with_running_op() -> (plasm_agent_core::server_state::Plasm
         None,
         cgs.catalog_cgs_hash_hex(),
         None,
-        None,
     );
     let handle = sess.mint_operation_handle(ref_str);
     sess.try_begin_async_operation(
@@ -72,7 +71,6 @@ async fn seeded_host_with_running_op() -> (plasm_agent_core::server_state::Plasm
         catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
         entities: vec!["Pet".into()],
         context_intent: None,
-        ranked_capabilities: None,
         principal: None,
         logical_session_id: Some(logical_id.as_uuid().to_string()),
     };

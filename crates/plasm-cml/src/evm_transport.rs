@@ -251,7 +251,7 @@ pub fn compile_evm_logs(
 
 pub fn coerce_dyn_value(value: &Value, ty: &DynSolType) -> Result<DynSolValue, CmlError> {
     match value {
-        Value::PlasmInputRef(_) => Err(CmlError::TypeError {
+        Value::PlasmInputRef(_) | Value::StringTemplate(_) => Err(CmlError::TypeError {
             message: format!(
                 "Plasm compile-time input references cannot be coerced to solidity type '{ty}'"
             ),

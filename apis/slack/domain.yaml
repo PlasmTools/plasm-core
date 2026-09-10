@@ -26,7 +26,6 @@ entities:
       - conversation
       - channel history
       - message history
-      seed_class: primary
     fields:
       id:
         required: true
@@ -79,7 +78,6 @@ entities:
         target: Message
         cardinality: many
         discovery:
-          seed_nav: own
         materialize:
           kind: query_scoped
           capability: channel_history
@@ -97,7 +95,6 @@ entities:
         target: Pin
         cardinality: many
         discovery:
-          seed_nav: attach
         materialize:
           kind: query_scoped
           capability: pin_list
@@ -126,7 +123,6 @@ entities:
       names:
       - message
       - chat message
-      seed_class: primary
     fields:
       ts:
         required: true
@@ -335,7 +331,6 @@ entities:
       - pinned message
       - pinned item
       - channel pin
-      seed_class: dependent
     fields:
       id:
         required: true

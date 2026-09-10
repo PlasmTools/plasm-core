@@ -106,4 +106,3 @@ report"#
         _ => row.program.to_string(),
     }
 }
-

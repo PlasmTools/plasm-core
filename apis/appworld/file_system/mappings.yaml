@@ -1,15 +1,8 @@
 # File System — AppWorld. Auth: login → access_token → Bearer header.
 
-_auth_header: &auth_header
-  type: object
-  fields:
-  - - Authorization
-    - type: format
-      template: "Bearer {token}"
-      vars:
-        token:
-          type: var
-          name: access_token
+_request_auth: &request_auth
+  scheme: bearer
+  token: { type: var, name: access_token }
 
 login:
   method: POST
@@ -30,14 +23,14 @@ logout:
   - { type: literal, value: file_system }
   - { type: literal, value: auth }
   - { type: literal, value: logout }
-  headers: *auth_header
+  auth: *request_auth
 
 directory_query:
   method: GET
   path:
   - { type: literal, value: file_system }
   - { type: literal, value: directory }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -67,7 +60,7 @@ directory_create:
   path:
   - { type: literal, value: file_system }
   - { type: literal, value: directory }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -83,7 +76,7 @@ directory_delete:
   path:
   - { type: literal, value: file_system }
   - { type: literal, value: directory }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -95,7 +88,7 @@ directory_exists:
   - { type: literal, value: file_system }
   - { type: literal, value: directory }
   - { type: literal, value: exists }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -107,7 +100,7 @@ directory_copy:
   - { type: literal, value: file_system }
   - { type: literal, value: directory }
   - { type: literal, value: copy }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -120,7 +113,7 @@ directory_move:
   - { type: literal, value: file_system }
   - { type: literal, value: directory }
   - { type: literal, value: move }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -133,7 +126,7 @@ directory_compress:
   - { type: literal, value: file_system }
   - { type: literal, value: directory }
   - { type: literal, value: compress }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -159,7 +152,7 @@ file_get:
   path:
   - { type: literal, value: file_system }
   - { type: literal, value: file }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -170,7 +163,7 @@ file_create:
   path:
   - { type: literal, value: file_system }
   - { type: literal, value: file }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -187,7 +180,7 @@ file_update:
   path:
   - { type: literal, value: file_system }
   - { type: literal, value: file }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -199,7 +192,7 @@ file_delete:
   path:
   - { type: literal, value: file_system }
   - { type: literal, value: file }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -211,7 +204,7 @@ file_exists:
   - { type: literal, value: file_system }
   - { type: literal, value: file }
   - { type: literal, value: exists }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -223,7 +216,7 @@ file_copy:
   - { type: literal, value: file_system }
   - { type: literal, value: file }
   - { type: literal, value: copy }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -236,7 +229,7 @@ file_move:
   - { type: literal, value: file_system }
   - { type: literal, value: file }
   - { type: literal, value: move }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -249,7 +242,7 @@ file_decompress:
   - { type: literal, value: file_system }
   - { type: literal, value: file }
   - { type: literal, value: decompress }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:

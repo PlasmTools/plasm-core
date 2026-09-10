@@ -16,10 +16,8 @@ members = [
     "crates/plasm-sdk-transport",
     "crates/plasm-trace-sink",
     "crates/plasm-otel",
-    "crates/plasm-discovery",
     "crates/plasm-discovery-eval",
     "crates/plasm-eval-common",
-    "crates/plasm-semantic-seed",
     "crates/plasm-server",
     "crates/plasm-workflow-codegen",
     "crates/plasm-node",
@@ -37,7 +35,6 @@ description = "Typed capability graph (CGS), CML mappings, and path language for
 
 [workspace.dependencies]
 # In-memory Okapi BM25 + DefaultTokenizer (unicode-segmentation / Snowball / stopwords).
-bm25 = "2.3"
 # Core serialization and typing
 serde = { version = "1.0", features = ["derive"] }
 postcard = { version = "1.1", features = ["alloc"] }

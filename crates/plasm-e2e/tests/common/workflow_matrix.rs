@@ -9,7 +9,7 @@ use plasm_agent::{
     run_artifacts::RunArtifactStore,
     server_state::CatalogBootstrap,
 };
-use plasm_core::discovery::InMemoryCgsRegistry;
+use plasm_core::discovery::CgsRegistry;
 use plasm_core::{CgsContext, TeachingExposureSession};
 use plasm_runtime::{ExecutionEngine, ExecutionMode};
 
@@ -48,7 +48,7 @@ pub fn workflow_federated_host_state(
     engine: ExecutionEngine,
     cgs: Arc<plasm_core::CGS>,
 ) -> plasm_agent::server_state::PlasmHostState {
-    let registry = Arc::new(InMemoryCgsRegistry::from_pairs(vec![
+    let registry = Arc::new(CgsRegistry::from_pairs(vec![
         (
             CATALOG_A.into(),
             "Catalog A (workflow matrix)".into(),
@@ -103,7 +103,6 @@ pub fn workflow_federated_session(
         Some(exp),
         None,
         cgs.catalog_cgs_hash_hex(),
-        None,
         None,
     )
 }

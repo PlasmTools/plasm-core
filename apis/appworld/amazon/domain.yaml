@@ -1,4 +1,4 @@
-version: 8
+version: 10
 entry_id: amazon
 auth:
   scheme: none
@@ -22,8 +22,6 @@ entities:
       - login
       - auth
       - access token
-      seed_class: primary
-      co_seed_with: catalog_primary
     fields:
       access_token:
         required: true
@@ -39,7 +37,6 @@ entities:
       - profile
       - user
       - account holder
-      seed_class: ambient
     fields:
       first_name:
         required: false
@@ -64,7 +61,6 @@ entities:
       - product search
       - catalog search
       - browse products
-      seed_class: primary
     fields:
       product_id:
         required: true
@@ -108,7 +104,6 @@ entities:
       - seller
       - sellers
       - merchant
-      seed_class: ambient
     fields:
       seller_id:
         required: true
@@ -127,7 +122,6 @@ entities:
       - product type
       - product types
       - category
-      seed_class: ambient
     fields:
       name:
         required: true
@@ -140,7 +134,6 @@ entities:
       - feature choices
       - product filters
       - colors sizes sellers
-      seed_class: ambient
     fields:
       product_type:
         required: false
@@ -169,7 +162,6 @@ entities:
       - cart item
       - cart line
       - items in cart
-      seed_class: dependent
     fields:
       product_id:
         required: true
@@ -197,7 +189,6 @@ entities:
       - wish list
       - wishlist
       - wish list item
-      seed_class: primary
     fields:
       product_id:
         required: true
@@ -218,7 +209,6 @@ entities:
       names:
       - cart
       - basket
-      seed_class: primary
     fields:
       delivery_fee:
         required: false
@@ -262,7 +252,6 @@ entities:
       - order
       - orders
       - purchase
-      seed_class: primary
     fields:
       order_id:
         required: true
@@ -306,7 +295,6 @@ entities:
       - address
       - addresses
       - shipping
-      seed_class: primary
     fields:
       address_id:
         required: true
@@ -360,7 +348,6 @@ entities:
       - review
       - reviews
       - product review
-      seed_class: primary
     fields:
       review_id:
         required: true
@@ -392,7 +379,6 @@ entities:
       - return deliverer
       - return carrier
       - deliverer
-      seed_class: ambient
     fields:
       deliverer_id:
         required: true
@@ -409,7 +395,6 @@ entities:
       - return
       - returns
       - product return
-      seed_class: dependent
     fields:
       return_id:
         required: true
@@ -449,7 +434,6 @@ entities:
       - question
       - questions
       - product question
-      seed_class: dependent
     fields:
       question_id:
         required: true
@@ -472,7 +456,6 @@ entities:
       - question answer
       - product answer
       - Q&A answer
-      seed_class: dependent
     fields:
       question_answer_id:
         required: true
@@ -504,7 +487,6 @@ entities:
       - prime
       - prime subscription
       - subscription
-      seed_class: dependent
     fields:
       prime_subscription_id:
         required: true
@@ -541,8 +523,8 @@ capabilities:
     - access_token
     - token_type
     output:
-      type: side_effect
-      description: Creates an authenticated Amazon session.
+      type: entity
+      entity_type: AuthSession
   logout:
     description: Logout and invalidate the access token.
     kind: action
@@ -1560,3 +1542,487 @@ values:
   nv_datetime:
     type: rfc3339
     description: ISO datetime string.
+  prerequisite_principal_email:
+    type: email
+    description: Account holder email.
+  prerequisite_principal_phone:
+    type: e164
+    description: Account holder phone number.
+  prerequisite_account_name:
+    type: string
+    description: Service account identifier.
+prerequisites:
+  contracts:
+    appworld.principal:
+      version: 1
+      inputs: {}
+      outputs:
+        email: prerequisite_principal_email
+        phone: prerequisite_principal_phone
+    appworld.password:
+      version: 1
+      inputs:
+        account: prerequisite_account_name
+      outputs:
+        password: nv_password
+    appworld.session:
+      version: 1
+      inputs: {}
+      outputs:
+        token: nv_access_token
+  providers:
+    session:
+      contract: appworld.session
+      capability: login
+      outputs:
+        token: access_token
+  requirements:
+    login:
+    - id: principal
+      contract: appworld.principal
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - username
+        output: email
+    - id: password
+      contract: appworld.password
+      arguments:
+        account:
+          kind: constant
+          value: amazon
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - password
+        output: password
+    logout:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    profile_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    product_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    product_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    seller_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    seller_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    product_type_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    product_feature_choices_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    cart_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    cart_item_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    wish_list_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    wish_list_add:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    wish_list_update_quantity:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    wish_list_remove:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    wish_list_clear:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    cart_move_to_wish_list:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    wish_list_move_to_cart:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    cart_add_product:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    cart_update_quantity:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    cart_remove_product:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    cart_clear:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    cart_apply_promo:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    cart_remove_promo:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    order_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    order_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    order_place:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    order_receipt_download:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+      - input:
+          lane: payload
+          path:
+          - file_system_access_token
+        output: token
+    address_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    address_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    address_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    address_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_card_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    payment_card_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_card_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_card_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    product_review_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    product_review_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    product_review_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    product_review_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    product_return_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    return_deliverer_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    prime_subscribe:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    product_question_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    product_question_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    product_question_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    product_question_answer_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    product_question_answer_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token

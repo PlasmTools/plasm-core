@@ -4,9 +4,7 @@ use super::super::ir_helpers::*;
 use super::super::row::MatrixRow;
 use plasm_agent::plasm_plan::{AggregateFunction, ComputeOp, ComputeTemplate, PlanValue};
 use plasm_agent::plasm_plan_run::DryPlasmPlanEvaluation;
-use plasm_core::{
-    Expr, InvokeExpr,
-};
+use plasm_core::{Expr, InvokeExpr};
 
 pub(crate) fn assert_planning_effects_program(
     row: &MatrixRow,
@@ -59,7 +57,7 @@ pub(crate) fn assert_planning_effects_program(
             if !saw_literal {
                 return Err("expected data node carrying hello-matrix payload".into());
             }
-            let q = first_query(&surfaces)?;
+            let q = first_query(surfaces)?;
             if q.entity != "LangItem" {
                 return Err(format!(
                     "expected LangItem query binding, got {:?}",
@@ -178,7 +176,7 @@ pub(crate) fn assert_planning_effects_program(
             if !saw_map_object {
                 return Err("expected derive map object with field t".into());
             }
-            let q = first_query(&surfaces)?;
+            let q = first_query(surfaces)?;
             if q.capability_name.as_ref().map(|c| c.as_str()) != Some("langitem_search") {
                 return Err(format!(
                     "expected search capability on hits root, got {:?}",
@@ -270,7 +268,7 @@ pub(crate) fn assert_planning_effects_program(
                     "expected prefer_from_parent_get materialize on tags relation, got {rel:?}"
                 ));
             }
-            let q = first_query(&surfaces)?;
+            let q = first_query(surfaces)?;
             if q.entity != "LangItem" {
                 return Err(format!("expected LangItem query, got {:?}", q.entity));
             }

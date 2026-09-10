@@ -12,8 +12,7 @@ use axum::extract::Extension;
 use axum::routing::get;
 use axum::Router;
 use dashmap::DashMap;
-use plasm_core::discovery::InMemoryCgsRegistry;
-use plasm_discovery::CatalogIndexCache;
+use plasm_core::discovery::CgsRegistry;
 use plasm_runtime::{ExecutionEngine, ExecutionMode};
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
@@ -63,7 +62,7 @@ fn trace_sink_http_client() -> Client {
 pub struct PlasmHostBootstrap {
     pub engine: ExecutionEngine,
     pub mode: ExecutionMode,
-    pub registry: Arc<InMemoryCgsRegistry>,
+    pub registry: Arc<CgsRegistry>,
     pub catalog_bootstrap: CatalogBootstrap,
     pub incoming_auth: Option<Arc<IncomingAuthVerifier>>,
     pub run_artifacts: Arc<RunArtifactStore>,
@@ -126,6 +125,7 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
             engine: Arc::new(engine),
             mode,
             catalog,
+            discovery_route: None,
             sessions,
             logical_sessions: Arc::new(LogicalSessionRegistry::new()),
             logical_execute_bindings: LogicalExecuteBindingRegistry::new_in_memory(),
@@ -150,7 +150,6 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
             auth_storage: None,
             oauth_link_catalog: None,
             outbound_secret_provider: None,
-            discovery_index_cache: Arc::new(CatalogIndexCache::new()),
             workflows,
             redis_backend: None,
             live_plan_pool,
@@ -159,7 +158,6 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
             catalog_reload_lock,
             session_coordination: Arc::new(crate::session_coordination::SessionCoordination::new()),
             mcp_http_user_agents: Arc::new(DashMap::new()),
-            pending_clarify: Arc::new(crate::pending_clarify::PendingClarifyRegistry::new()),
         },
         saas: None,
     }

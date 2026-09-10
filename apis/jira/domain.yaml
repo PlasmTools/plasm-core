@@ -108,7 +108,6 @@ entities:
       - issue
       - ticket
       - jira issue
-      seed_class: primary
     fields:
       key:
         required: true
@@ -199,7 +198,6 @@ entities:
         target: Comment
         cardinality: many
         discovery:
-          seed_nav: attach
           qualifier_terms:
           - comment
           - issue comment
@@ -225,7 +223,6 @@ entities:
         target: RemoteLink
         cardinality: many
         discovery:
-          seed_nav: attach
         materialize:
           kind: query_scoped
           capability: remotelink_query
@@ -234,7 +231,6 @@ entities:
         target: IssueBrowseLink
         cardinality: one
         discovery:
-          seed_nav: attach
           qualifier_terms:
           - browse link
           - browse url
@@ -262,7 +258,6 @@ entities:
       names:
       - project
       - jira project
-      seed_class: ambient
     fields:
       key:
         required: true
@@ -332,7 +327,6 @@ entities:
       - comment
       - issue comment
       - jira comment
-      seed_class: dependent
     fields:
       id:
         required: true
@@ -471,7 +465,6 @@ entities:
     id_field: id
     description: An external web link attached to a Jira issue.
     discovery:
-      seed_class: dependent
       names:
       - remote link
       - issue link
@@ -805,7 +798,6 @@ entities:
       names:
       - browse link
       - browse url
-      seed_class: dependent
     fields:
       issue_key:
         required: true
@@ -832,7 +824,6 @@ entities:
       - sprint board
       - board snapshot
       - sprint snapshot
-      seed_class: ambient
     fields:
       sprint_id:
         required: true
@@ -1532,7 +1523,7 @@ capabilities:
     - endDate
     - issue_count
   remote_link_get:
-    description: Get RemoteLink by id.
+    description: Inspect an external web link attached to a Jira issue.
     kind: get
     entity: RemoteLink
     arguments:
@@ -1543,7 +1534,7 @@ capabilities:
           value_ref: nv_wire_str_short
           required: true
   transition_get:
-    description: Get Transition by id.
+    description: Inspect an available workflow transition for a Jira issue.
     kind: get
     entity: Transition
     arguments:
@@ -1554,7 +1545,7 @@ capabilities:
           value_ref: nv_wire_str_short
           required: true
   version_get:
-    description: Get a project version by id.
+    description: Inspect a project version's release and archive state.
     kind: get
     entity: Version
     arguments:

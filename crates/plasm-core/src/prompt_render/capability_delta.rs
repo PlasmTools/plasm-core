@@ -1,4 +1,4 @@
-//! Filtered teaching-table synthesis for newly exposed mutators (ranked replay compact delta).
+//! Filtered teaching-table synthesis for newly exposed mutators (capability selection compact delta).
 
 use std::collections::{BTreeSet, HashSet};
 
@@ -392,9 +392,7 @@ pub(crate) fn render_mutator_recap_lines_for_caps(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::discovery::{
-        derive_intent_exposure_surface_batch, ExposureSurfaceOptions, MutatorAdmit,
-    };
+
     use crate::loader::load_schema_dir;
     use crate::symbol_tuning::exposed_mutator_capability_keys;
     use std::path::PathBuf;
@@ -404,24 +402,10 @@ mod tests {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let cgs = load_schema_dir(&root.join("../../apis/github")).expect("github");
         let entities = vec!["Repository".to_string(), "Issue".to_string()];
-        let endpoints = entities
-            .iter()
-            .map(|e| ExposureEntityKey {
-                entry_id: "github".into(),
-                entity: crate::EntityName::from(e.as_str()),
-            })
-            .collect::<Vec<_>>();
-        let delta = derive_intent_exposure_surface_batch(
-            &cgs,
-            "github",
-            "create issue with labels in repository",
-            &endpoints,
-            &entities,
-            Some(&["issue_create".to_string()]),
-            ExposureSurfaceOptions {
-                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-            },
-        );
+        let delta = crate::capability_exposure::explicit_entity_capability_surface(
+            &cgs, "github", &entities,
+        )
+        .expect("explicit fixture capability exposure");
         let exp = TeachingExposureSession::new_with_intent_delta(
             &cgs,
             "github",
@@ -468,24 +452,12 @@ mod tests {
         let cgs = load_schema_dir(&root.join("../../fixtures/schemas/plasm_language_matrix"))
             .expect("matrix");
         let entities = vec!["LangItem".to_string()];
-        let endpoints = entities
-            .iter()
-            .map(|e| ExposureEntityKey {
-                entry_id: "langmatrix".into(),
-                entity: crate::EntityName::from(e.as_str()),
-            })
-            .collect::<Vec<_>>();
-        let delta = derive_intent_exposure_surface_batch(
+        let delta = crate::capability_exposure::explicit_entity_capability_surface(
             &cgs,
             "langmatrix",
-            "create and query lang items with tags filter",
-            &endpoints,
             &entities,
-            Some(&["langitem_create".to_string(), "langitem_query".to_string()]),
-            ExposureSurfaceOptions {
-                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-            },
-        );
+        )
+        .expect("explicit fixture capability exposure");
         let exp = TeachingExposureSession::new_with_intent_delta(
             &cgs,
             "langmatrix",
@@ -514,24 +486,12 @@ mod tests {
         let cgs = load_schema_dir(&root.join("../../fixtures/schemas/plasm_language_matrix"))
             .expect("matrix");
         let entities = vec!["LangItem".to_string()];
-        let endpoints = entities
-            .iter()
-            .map(|e| ExposureEntityKey {
-                entry_id: "langmatrix".into(),
-                entity: crate::EntityName::from(e.as_str()),
-            })
-            .collect::<Vec<_>>();
-        let delta = derive_intent_exposure_surface_batch(
+        let delta = crate::capability_exposure::explicit_entity_capability_surface(
             &cgs,
             "langmatrix",
-            "create langitem with title",
-            &endpoints,
             &entities,
-            Some(&["langitem_create".to_string()]),
-            ExposureSurfaceOptions {
-                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-            },
-        );
+        )
+        .expect("explicit fixture capability exposure");
         let exp = TeachingExposureSession::new_with_intent_delta(
             &cgs,
             "langmatrix",

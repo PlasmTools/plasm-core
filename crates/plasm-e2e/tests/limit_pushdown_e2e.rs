@@ -15,7 +15,7 @@ use plasm_agent::{
     run_artifacts::RunArtifactStore,
     server_state::CatalogBootstrap,
 };
-use plasm_core::{discovery::InMemoryCgsRegistry, CgsContext, PromptPipelineConfig, CGS};
+use plasm_core::{discovery::CgsRegistry, CgsContext, PromptPipelineConfig, CGS};
 
 use common::hermit;
 
@@ -57,7 +57,6 @@ fn pokeapi_session(cgs: Arc<CGS>) -> ExecuteSession {
         None,
         cgs.catalog_cgs_hash_hex(),
         None,
-        None,
     )
 }
 
@@ -80,7 +79,7 @@ fn limit_pushdown_bounds_paginated_berry_query() {
 async fn limit_pushdown_bounds_paginated_berry_query_async() {
     let _base = hermit::pokeapi_hermit_base_url().await.clone();
     let cgs = load_pokeapi_mini_cgs();
-    let registry = Arc::new(InMemoryCgsRegistry::from_pairs(vec![(
+    let registry = Arc::new(CgsRegistry::from_pairs(vec![(
         ENTRY_ID.into(),
         "PokeAPI Mini".into(),
         vec!["test".into()],

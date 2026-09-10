@@ -82,8 +82,8 @@ fn run_artifact_wire_accepts_uppercase_hex() {
 fn plan_bundle_digest_stable_and_fingerprint_sensitive() {
     use plasm_core::{Expr, Value};
     let p = ParsedExpr::from_expr(Expr::TeachingValue {
-            value: Value::String("probe".into()),
-        });
+        value: Value::String("probe".into()),
+    });
     let a = RunArtifactId::from_plan_bundle_inputs(
         "h",
         0,
@@ -104,8 +104,8 @@ fn plan_bundle_digest_stable_and_fingerprint_sensitive() {
 
 fn sample_parsed_preimage() -> ParsedExpr {
     ParsedExpr::from_expr(Expr::TeachingValue {
-            value: Value::String("probe".into()),
-        })
+        value: Value::String("probe".into()),
+    })
 }
 
 #[tokio::test]

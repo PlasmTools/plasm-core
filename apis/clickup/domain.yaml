@@ -1,4 +1,4 @@
-version: 13
+version: 14
 http_backend: https://api.clickup.com/api
 data_classes:
   untrusted:
@@ -122,7 +122,8 @@ entities:
   WorkspacePlan:
     id_field: id
     implicit_request_identity: true
-    description: Workspace billing plan from the plan subresource (body has no plan id; id is the team_id from the path).
+    description: Workspace billing plan from the plan subresource (body has no plan
+      id; id is the team_id from the path).
     fields:
       id:
         required: true
@@ -156,7 +157,6 @@ entities:
       names:
       - clickup space
       - workspace space
-      seed_class: ambient
     fields:
       id:
         required: true
@@ -175,8 +175,7 @@ entities:
         description: Folders within this space.
         target: Folder
         cardinality: many
-        discovery:
-          seed_nav: locate
+        discovery: null
         materialize:
           kind: query_scoped
           capability: folder_query
@@ -185,8 +184,7 @@ entities:
         description: Folderless lists in this space.
         target: List
         cardinality: many
-        discovery:
-          seed_nav: locate
+        discovery: null
         materialize:
           kind: query_scoped
           capability: list_query
@@ -198,7 +196,6 @@ entities:
       names:
       - clickup folder
       - folder
-      seed_class: ambient
     fields:
       id:
         required: true
@@ -211,8 +208,7 @@ entities:
         description: Lists within this folder.
         target: List
         cardinality: many
-        discovery:
-          seed_nav: locate
+        discovery: null
         materialize:
           kind: query_scoped
           capability: list_query
@@ -225,7 +221,6 @@ entities:
       names:
       - clickup list
       - list folder
-      seed_class: ambient
     fields:
       id:
         required: true
@@ -241,8 +236,7 @@ entities:
         description: Tasks within this list.
         target: Task
         cardinality: many
-        discovery:
-          seed_nav: own
+        discovery: null
         materialize:
           kind: query_scoped
           capability: list_task_query
@@ -258,7 +252,6 @@ entities:
       qualifier_names:
       - list
       - workspace
-      seed_class: primary
     fields:
       id:
         required: true
@@ -309,8 +302,7 @@ entities:
         description: Comments on this task.
         target: Comment
         cardinality: many
-        discovery:
-          seed_nav: attach
+        discovery: null
         materialize:
           kind: query_scoped
           capability: comment_query
@@ -390,7 +382,6 @@ entities:
       - goal
       - clickup goal
       - okr goal
-      seed_class: ambient
     fields:
       id:
         required: true
@@ -415,7 +406,6 @@ entities:
       names:
       - key result
       - okr
-      seed_class: ambient
     fields:
       id:
         required: true
@@ -453,7 +443,6 @@ entities:
       names:
       - comment
       - task comment
-      seed_class: dependent
     fields:
       id:
         required: true
@@ -501,7 +490,6 @@ entities:
       names:
       - member
       - workspace member
-      seed_class: ambient
     fields:
       id:
         required: true
@@ -665,6 +653,13 @@ capabilities:
         - name: features
           value_ref: nv_team_create_space_features
           required: false
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: team_id
+          value_ref: nv_team_id
+          required: true
   team_create_goal:
     description: Create a new goal in the workspace.
     kind: create
@@ -682,6 +677,13 @@ capabilities:
         - name: description
           value_ref: nv_wire_str_markdown
           required: false
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: team_id
+          value_ref: nv_team_id
+          required: true
   team_create_group:
     description: Create a user group in the workspace.
     kind: create
@@ -707,6 +709,13 @@ capabilities:
         - name: endpoint
           value_ref: nv_wire_str_short
           required: true
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: team_id
+          value_ref: nv_team_id
+          required: true
   team_create_view:
     description: Create a view at workspace level.
     kind: create
@@ -717,6 +726,13 @@ capabilities:
         fields:
         - name: name
           value_ref: nv_wire_str_short
+          required: true
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: team_id
+          value_ref: nv_team_id
           required: true
   team_create_time_entry:
     description: Create a manual time entry.
@@ -735,6 +751,13 @@ capabilities:
         - name: stop
           value_ref: nv_team_create_time_entry_stop
           required: false
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: team_id
+          value_ref: nv_team_id
+          required: true
   team_start_time_entry:
     description: Start a running time entry.
     kind: action
@@ -753,11 +776,11 @@ capabilities:
     description: List spaces in a workspace.
     kind: query
     entity: Space
-    selection: []
-    controls:
+    selection:
     - name: archived
       value_ref: nv_wire_bool
       required: false
+    controls: []
     scope:
     - name: team_id
       value_ref: nv_space_query_team_id
@@ -802,6 +825,13 @@ capabilities:
         - name: name
           value_ref: nv_wire_str_short
           required: true
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: space_id
+          value_ref: nv_space_id
+          required: true
   space_create_list:
     description: Create a folderless list in the space.
     kind: create
@@ -812,6 +842,13 @@ capabilities:
         fields:
         - name: name
           value_ref: nv_wire_str_short
+          required: true
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: space_id
+          value_ref: nv_space_id
           required: true
   space_views:
     description: List View by shelf (space_views | folder_views | view).
@@ -834,7 +871,8 @@ capabilities:
     scope: []
     controls: []
   space_fields:
-    description: List CustomField by shelf (space_fields | folder_fields | list_fields | custom_field).
+    description: List CustomField by shelf (space_fields | folder_fields | list_fields
+      | custom_field).
     kind: query
     entity: CustomField
     selection:
@@ -860,11 +898,11 @@ capabilities:
     description: List folders in a space.
     kind: query
     entity: Folder
-    selection: []
-    controls:
+    selection:
     - name: archived
       value_ref: nv_wire_bool
       required: false
+    controls: []
     scope:
     - name: space_id
       value_ref: nv_folder_query_space_id
@@ -901,6 +939,13 @@ capabilities:
         - name: name
           value_ref: nv_wire_str_short
           required: true
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: folder_id
+          value_ref: nv_folder_id
+          required: true
   list_query:
     description: List List by shelf (list | folder).
     kind: query
@@ -910,10 +955,10 @@ capabilities:
       value_ref: nv_list_query_shelf
       required: true
       description: list | folder
-    controls:
     - name: archived
       value_ref: nv_wire_bool
       required: false
+    controls: []
     scope:
     - name: space_id
       value_ref: nv_list_query_space_id
@@ -983,6 +1028,15 @@ capabilities:
     - name: view_id
       value_ref: nv_view_tasks_view_id
       required: false
+    - name: subtasks
+      value_ref: nv_wire_bool
+      required: false
+    - name: include_closed
+      value_ref: nv_wire_bool
+      required: false
+    - name: archived
+      value_ref: nv_wire_bool
+      required: false
     controls:
     - name: order_by
       value_ref: nv_wire_sel_3ccc56c1be864adb
@@ -990,16 +1044,7 @@ capabilities:
     - name: reverse
       value_ref: nv_wire_bool
       required: false
-    - name: subtasks
-      value_ref: nv_wire_bool
-      required: false
-    - name: include_closed
-      value_ref: nv_wire_bool
-      required: false
     - name: include_markdown_description
-      value_ref: nv_wire_bool
-      required: false
-    - name: archived
       value_ref: nv_wire_bool
       required: false
     scope:
@@ -1091,6 +1136,13 @@ capabilities:
         - name: due_date
           value_ref: nv_list_create_task_due_date
           required: false
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: list_id
+          value_ref: nv_list_id
+          required: true
   task_delete:
     description: Delete a task.
     kind: delete
@@ -1107,6 +1159,13 @@ capabilities:
           value_ref: nv_wire_str_short
           required: true
           sink_class: external_publish
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: task_id
+          value_ref: nv_task_id
+          required: true
   task_create_attachment:
     description: Upload an attachment to a task.
     kind: action
@@ -1149,7 +1208,7 @@ capabilities:
     output:
       type: side_effect
       description: Remove a dependency from a task.
-    payload:
+    arguments:
       input_type:
         type: object
         fields:
@@ -1189,6 +1248,13 @@ capabilities:
         - name: end
           value_ref: nv_task_create_interval_end
           required: false
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: task_id
+          value_ref: nv_task_id
+          required: true
   task_tag_add:
     description: Add a tag to a task.
     kind: action
@@ -1251,6 +1317,13 @@ capabilities:
           value_ref: nv_wire_str_short
           required: true
           sink_class: external_publish
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: view_id
+          value_ref: nv_view_id
+          required: true
   goal_query:
     description: List goals in a workspace.
     kind: query
@@ -1304,6 +1377,13 @@ capabilities:
         - name: type
           value_ref: nv_wire_str_short
           required: false
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: goal_id
+          value_ref: nv_goal_id
+          required: true
   key_result_get:
     kind: get
     entity: KeyResult
@@ -1579,7 +1659,8 @@ values:
     description: Optional notes.
   nv_list_create_task_due_date:
     type: unix_ms
-    description: Due date/time only (same rules as `task_update.due_date`); not for status or notes.
+    description: Due date/time only (same rules as `task_update.due_date`); not for
+      status or notes.
   nv_list_create_task_status:
     type: string
     description: Initial status name if the list uses custom statuses.
@@ -1670,18 +1751,20 @@ values:
     description: Task description (plain text or markdown).
   nv_task_due_date:
     type: unix_ms
-    description: Due date/time as Unix ms on the wire. For updates, this is not for status labels or progress notes—use the.
-      `status` and `description` fields instead.
+    description: Due date/time as Unix ms on the wire. For updates, this is not for
+      status labels or progress notes—use the. `status` and `description` fields instead.
   nv_task_id:
     type: string
-    description: ClickUp task id (string). Use the exact value from the API, task URL, or list response—alphanumeric custom.
-      ids (e.g. 86abc1234). Do not invent or paraphrase ids; a mistyped id yields 404 or failed requests.
+    description: ClickUp task id (string). Use the exact value from the API, task
+      URL, or list response—alphanumeric custom. ids (e.g. 86abc1234). Do not invent
+      or paraphrase ids; a mistyped id yields 404 or failed requests.
   nv_task_intervals_task_id:
     type: entity_ref
     target: Task
   nv_task_markdown_description:
     type: markdown
-    description: Task description rendered as markdown. Populated by task_get with include_markdown_description=true.
+    description: Task description rendered as markdown. Populated by task_get with
+      include_markdown_description=true.
   nv_task_member_query_task_id:
     type: entity_ref
     target: Task
@@ -1730,11 +1813,12 @@ values:
     description: Historical status intervals.
   nv_task_update_archived:
     type: boolean
-    description: Only `true` or `false` to archive or restore. Never pass status sentences, notes, or markdown here.
+    description: Only `true` or `false` to archive or restore. Never pass status sentences,
+      notes, or markdown here.
   nv_task_update_description:
     type: markdown
-    description: Longer notes, checklists, bracketed context, and commentary. Use this instead of stuffing prose into `due_date`.
-      or `archived`.
+    description: Longer notes, checklists, bracketed context, and commentary. Use
+      this instead of stuffing prose into `due_date`. or `archived`.
   nv_task_update_due_date:
     type: unix_ms
     description: 'Due date/time only: RFC 3339, or other supported date forms.'
@@ -1744,17 +1828,20 @@ values:
   nv_task_update_parent:
     type: entity_ref
     target: Task
-    description: Parent task id if this should be a subtask—must be a valid `Task` id string, not prose.
+    description: Parent task id if this should be a subtask—must be a valid `Task`
+      id string, not prose.
   nv_task_update_priority:
     type: integer
     description: 1=urgent, 2=high, 3=normal, 4=low; omit for none.
   nv_task_update_start_date:
     type: unix_ms
-    description: Start date/time in the same accepted formats as `due_date` (date slot, not status text).
+    description: Start date/time in the same accepted formats as `due_date` (date
+      slot, not status text).
   nv_task_update_status:
     type: string
-    description: Workflow status name as defined in the list/space (e.g. "To do", "In progress", "Done"). Use this for state.
-      labels—not the `due_date` or `archived` fields.
+    description: Workflow status name as defined in the list/space (e.g. "To do",
+      "In progress", "Done"). Use this for state. labels—not the `due_date` or `archived`
+      fields.
   nv_task_update_time_estimate:
     type: integer
     description: Estimate in milliseconds (ClickUp `time_estimate`).

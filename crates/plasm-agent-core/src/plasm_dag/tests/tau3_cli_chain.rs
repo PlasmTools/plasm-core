@@ -9,9 +9,8 @@ use std::sync::Arc;
 
 fn tau3_session() -> ExecuteSession {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let cgs = Arc::new(
-        load_schema(&root.join("../../apis/tau3_banking")).expect("load tau3_banking"),
-    );
+    let cgs =
+        Arc::new(load_schema(&root.join("../../apis/tau3_banking")).expect("load tau3_banking"));
     let entities = [
         "CreditLimitRequest",
         "CreditLimitEligibility",
@@ -36,7 +35,6 @@ fn tau3_session() -> ExecuteSession {
         Some(exp),
         None,
         cgs.catalog_cgs_hash_hex(),
-        None,
         None,
     )
 }

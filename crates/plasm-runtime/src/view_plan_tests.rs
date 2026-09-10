@@ -109,6 +109,7 @@ fn preflight_proof_matches_fixture_runner_on_lang_digest() {
         "lang_digest",
         scope.clone(),
         &cgs,
+        &plasm_compile::compile_cgs_capability_templates(&cgs).unwrap(),
         &ambient,
         &crate::SessionMaterialization::new(),
     )

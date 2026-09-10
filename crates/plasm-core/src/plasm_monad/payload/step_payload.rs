@@ -7,7 +7,7 @@ use super::value::{PlanPredicate, PlasmDataValue};
 use crate::plasm_monad::step::{EffectClass, PlasmStepKind, ResultShape, SurfaceKind};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InvokePayload {
     pub plan_kind: SurfaceKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -30,21 +30,21 @@ pub struct InvokePayload {
     pub result_shape: ResultShape,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PurePayload {
     pub data: PlasmDataValue,
     pub effect_class: EffectClass,
     pub result_shape: ResultShape,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MapPayload {
     pub compute: ComputeTemplate,
     pub effect_class: EffectClass,
     pub result_shape: ResultShape,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DerivePayload {
     pub derive: DeriveTemplate,
     pub effect_class: EffectClass,
@@ -58,7 +58,7 @@ pub struct FlatMapRelationPayload {
     pub result_shape: ResultShape,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FlatMapEffectPayload {
     pub source: String,
     pub item_binding: super::atoms::BindingName,
@@ -74,7 +74,7 @@ pub struct FlatMapEffectPayload {
 }
 
 /// PLP-8 state iterator (`iterate … step … until … take N`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UnfoldUntilPayload {
     pub source: String,
     pub item_binding: super::atoms::BindingName,

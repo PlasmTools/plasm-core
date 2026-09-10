@@ -17,7 +17,7 @@ use plasm_agent::oauth_link_catalog::OauthLinkCatalog;
 use plasm_agent::outbound_secret_provider::AgentOutboundSecretProvider;
 use plasm_agent::server_state::CatalogBootstrap;
 use plasm_agent::server_state::PlasmSaaSHostExtension;
-use plasm_core::discovery::InMemoryCgsRegistry;
+use plasm_core::discovery::CgsRegistry;
 use plasm_core::loader::load_schema;
 use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode, SecretProvider};
 use serde::{Deserialize, Serialize};
@@ -41,10 +41,10 @@ async fn oauth_test_postgres_url() -> Option<(Option<ContainerDrop>, String)> {
         .map(|(k, url)| (Some(ContainerDrop(k)), url))
 }
 
-fn dnd5e_registry() -> Arc<InMemoryCgsRegistry> {
+fn dnd5e_registry() -> Arc<CgsRegistry> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/dnd5e");
     let cgs = Arc::new(load_schema(&dir).expect("dnd5e schema"));
-    Arc::new(InMemoryCgsRegistry::from_pairs(vec![(
+    Arc::new(CgsRegistry::from_pairs(vec![(
         "dnd5e".into(),
         "D&D 5e".into(),
         vec!["demo".into()],

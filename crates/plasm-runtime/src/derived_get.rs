@@ -1,7 +1,6 @@
 //! List-backed keyed Gets (`derive:` on `kind: get`).
 
 use indexmap::IndexMap;
-use plasm_core::schema::CapabilitySchema;
 use plasm_core::{
     CatalogEntryStamp, DerivedGetPlan, GetExpr, QueryExpr, Ref, TypedFieldValue, Value, CGS,
 };
@@ -19,7 +18,6 @@ use crate::RuntimeError;
 pub(crate) async fn execute_derived_get(
     engine: &ExecutionEngine,
     plan: &DerivedGetPlan,
-    get_cap: &CapabilitySchema,
     get: &GetExpr,
     cgs: &CGS,
     cache: &mut SessionMaterialization,
@@ -95,7 +93,7 @@ pub(crate) async fn execute_derived_get(
         projected.insert(plan.identity_field.clone(), needle);
     }
 
-    let reference = Ref::new(get_cap.domain.clone(), identity);
+    let reference = Ref::new(get.reference.entity_type.clone(), identity);
     let timestamp = current_timestamp();
     let cached = CachedEntity::from_decoded(
         reference,

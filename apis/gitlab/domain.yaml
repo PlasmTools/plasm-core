@@ -15,7 +15,6 @@ entities:
       names:
       - project
       - gitlab project
-      seed_class: ambient
     fields:
       id:
         required: true
@@ -67,7 +66,6 @@ entities:
         target: Issue
         cardinality: many
         discovery:
-          seed_nav: own
         materialize:
           kind: query_scoped
           capability: issue_for_project_query
@@ -76,7 +74,6 @@ entities:
         target: MergeRequest
         cardinality: many
         discovery:
-          seed_nav: own
         materialize:
           kind: query_scoped
           capability: merge_request_for_project_query
@@ -93,7 +90,6 @@ entities:
       - issue
       - gitlab issue
       - ticket
-      seed_class: primary
     fields:
       id:
         required: true
@@ -153,7 +149,6 @@ entities:
         target: IssueNote
         cardinality: many
         discovery:
-          seed_nav: attach
           qualifier_terms:
           - note
           - comment
@@ -176,7 +171,6 @@ entities:
       - merge request
       - mr
       - gitlab merge request
-      seed_class: primary
     fields:
       id:
         required: true
@@ -242,7 +236,6 @@ entities:
         target: MergeRequestNote
         cardinality: many
         discovery:
-          seed_nav: attach
           qualifier_terms:
           - note
           - comment
@@ -265,7 +258,6 @@ entities:
       - note
       - issue note
       - comment
-      seed_class: dependent
     fields:
       project_id:
         required: true
@@ -301,7 +293,6 @@ entities:
       - note
       - merge request note
       - comment
-      seed_class: dependent
     fields:
       project_id:
         required: true

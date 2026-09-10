@@ -13,7 +13,6 @@ entities:
       - web search
       - search result
       - search
-      seed_class: primary
     fields:
       url:
         required: true

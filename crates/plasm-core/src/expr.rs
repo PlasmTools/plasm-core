@@ -185,6 +185,8 @@ impl CreateExpr {
 pub struct DeleteExpr {
     pub capability: CapabilityName,
     pub target: Ref,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<InvokeInputPayload>,
     #[serde(
         default,
         skip_serializing_if = "CatalogEntryStamp::is_none",
@@ -477,6 +479,44 @@ impl CreateExpr {
     }
 }
 
+/// Common input contract for operations targeting an existing entity.
+/// Sealed so a new implementation cannot silently omit supplied arguments.
+pub trait TargetedCall: targeted_call_sealed::Sealed {
+    fn capability(&self) -> &CapabilityName;
+    fn target(&self) -> &Ref;
+    fn input(&self) -> Option<&InvokeInputPayload>;
+}
+
+mod targeted_call_sealed {
+    pub trait Sealed {}
+    impl Sealed for super::DeleteExpr {}
+    impl Sealed for super::InvokeExpr {}
+}
+
+impl TargetedCall for DeleteExpr {
+    fn capability(&self) -> &CapabilityName {
+        &self.capability
+    }
+    fn target(&self) -> &Ref {
+        &self.target
+    }
+    fn input(&self) -> Option<&InvokeInputPayload> {
+        self.input.as_ref()
+    }
+}
+
+impl TargetedCall for InvokeExpr {
+    fn capability(&self) -> &CapabilityName {
+        &self.capability
+    }
+    fn target(&self) -> &Ref {
+        &self.target
+    }
+    fn input(&self) -> Option<&InvokeInputPayload> {
+        self.input.as_ref()
+    }
+}
+
 impl DeleteExpr {
     pub fn new(
         capability: impl Into<CapabilityName>,
@@ -487,6 +527,7 @@ impl DeleteExpr {
             capability: capability.into(),
             target: Ref::new(entity_type, id),
             catalog_entry_id: CatalogEntryStamp::none(),
+            input: None,
         }
     }
 
@@ -496,6 +537,7 @@ impl DeleteExpr {
             capability: capability.into(),
             target,
             catalog_entry_id: CatalogEntryStamp::none(),
+            input: None,
         }
     }
 }
@@ -541,7 +583,10 @@ impl Ref {
     }
 
     /// Single-key reference with a deferred binding identity.
-    pub fn simple_binding(entity_type: impl Into<EntityName>, binding: crate::PlasmInputRef) -> Self {
+    pub fn simple_binding(
+        entity_type: impl Into<EntityName>,
+        binding: crate::PlasmInputRef,
+    ) -> Self {
         Self {
             entity_type: entity_type.into(),
             key: EntityKey::Simple(IdentitySlot::binding(binding)),
@@ -820,12 +865,11 @@ impl Expr {
     }
 }
 
-/// Replace raw invoke/create payloads with [`InvokeInputPayload::Typed`] where CGS allows lifting.
+/// Replace raw call payloads with [`InvokeInputPayload::Typed`] where CGS allows lifting.
 pub fn lift_invoke_payloads_in_expr(expr: &mut Expr, cgs: &CGS) {
     match expr {
         Expr::Query(_)
         | Expr::Get(_)
-        | Expr::Delete(_)
         | Expr::Page(_)
         | Expr::Wait(_)
         | Expr::Cancel(_)
@@ -844,26 +888,31 @@ pub fn lift_invoke_payloads_in_expr(expr: &mut Expr, cgs: &CGS) {
                 }
             }
         }
-        Expr::Invoke(invoke) => {
-            if let Some(cap) = cgs.get_capability(&invoke.capability) {
-                // Dual object lanes stay Raw — Typed lift is single-schema; typecheck partitions.
-                if cap.invocation_object_schemas().count() <= 1 {
-                    if let (Some(schema), Some(inp)) =
-                        (cap.primary_invocation_schema(), invoke.input.as_ref())
-                    {
-                        invoke.input = Some(InvokeInputPayload::lift(
-                            &inp.to_value(),
-                            &schema.input_type,
-                            cgs,
-                        ));
-                    }
-                }
-            }
-        }
+        Expr::Invoke(invoke) => lift_targeted_input(&invoke.capability, &mut invoke.input, cgs),
+        Expr::Delete(delete) => lift_targeted_input(&delete.capability, &mut delete.input, cgs),
         Expr::Chain(chain) => {
             lift_invoke_payloads_in_expr(chain.source.as_mut(), cgs);
             if let ChainStep::Explicit { expr: inner } = &mut chain.step {
                 lift_invoke_payloads_in_expr(inner.as_mut(), cgs);
+            }
+        }
+    }
+}
+
+fn lift_targeted_input(
+    capability: &CapabilityName,
+    input: &mut Option<InvokeInputPayload>,
+    cgs: &CGS,
+) {
+    if let Some(cap) = cgs.get_capability(capability) {
+        // Typed lifting has one schema; multi-lane inputs are partitioned by type checking.
+        if cap.invocation_object_schemas().count() <= 1 {
+            if let (Some(schema), Some(value)) = (cap.primary_invocation_schema(), input.as_ref()) {
+                *input = Some(InvokeInputPayload::lift(
+                    &value.to_value(),
+                    &schema.input_type,
+                    cgs,
+                ));
             }
         }
     }

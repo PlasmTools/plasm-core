@@ -81,7 +81,7 @@ async function plasmNitroHandlers(
       handlers.push({
         route: "/internal/workflow/dispatch",
         handler: dispatchHandler,
-        method: "post",
+        method: "POST",
       });
     }
   }

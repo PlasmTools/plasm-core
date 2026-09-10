@@ -29,9 +29,15 @@ pub struct CapabilityIdentityProjection {
 /// Projection failures when a required var cannot be filled from identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PathEnvProjectionError {
-    MissingPathVar { capability: String, var: String },
+    MissingPathVar {
+        capability: String,
+        var: String,
+    },
     /// Var is neither identity-projectable nor declared — invent / body-splat heresy at project time.
-    UncoveredPathVar { capability: String, var: String },
+    UncoveredPathVar {
+        capability: String,
+        var: String,
+    },
 }
 
 impl std::fmt::Display for PathEnvProjectionError {

@@ -12,9 +12,7 @@ use rust_mcp_sdk::McpServer;
 use serde_json::json;
 use tracing::Instrument;
 
-use crate::http_execute::{
-    apply_capability_seeds, normalize_capability_seeds, CapabilitySeed, RankedCapabilitiesArg,
-};
+use crate::http_execute::{apply_capability_seeds, normalize_capability_seeds, CapabilitySeed};
 use crate::incoming_auth::tenant_scope;
 use crate::mcp_logical_ref::format_logical_session_wire_ref;
 use crate::mcp_server::{
@@ -254,7 +252,6 @@ impl PlasmMcpHandler {
             tcfg.clone(),
             Some(logical_uuid),
             intent,
-            RankedCapabilitiesArg::Unspecified,
         )
         .instrument(context_span)
         .await

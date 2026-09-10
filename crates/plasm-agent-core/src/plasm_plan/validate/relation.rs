@@ -19,7 +19,19 @@ pub(super) fn validate_relation_traversal(
             "plan.nodes[{node_index}].relation.target must include non-empty entry_id and entity"
         ));
     }
-    validate_plan_expr_ir(&relation.ir, node_index, "relation.ir")?;
+    let input_aliases: Vec<_> = plan.nodes[node_index]
+        .uses_result
+        .iter()
+        .map(|input| (input.r#as.as_str(), input.node.as_str()))
+        .collect();
+    validate_expression_operands(
+        &relation.ir.expr,
+        node_index,
+        &plasm_core::TemplateRefContext {
+            row_binding: None,
+            input_aliases: &input_aliases,
+        },
+    )?;
     // A one-cardinality relation over a *plural* source is a valid 1:1 flat-map (one target per
     // parent → a list aligned with the parents); it lowers to per-row fanout exactly like the
     // many-relation case. `Plan.singleton(...)` is a narrowing assertion, never a prerequisite for
@@ -112,7 +124,9 @@ fn plan_node_reaches_view_producer(
                 .as_ref()
                 .and_then(|d| d.source.clone())
                 .unwrap_or_default(),
-            PlanNodeKind::ForEach | PlanNodeKind::IterateUntil => node.source.clone().unwrap_or_default(),
+            PlanNodeKind::ForEach | PlanNodeKind::IterateUntil => {
+                node.source.clone().unwrap_or_default()
+            }
             PlanNodeKind::Data => return Ok(false),
             _ => return Ok(false),
         };

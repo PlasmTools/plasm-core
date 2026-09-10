@@ -1,5 +1,5 @@
 use super::super::*;
-use super::eval::{instantiate_raw_expr_template, wire_coercion_by_alias_from_inputs};
+use super::eval::{instantiate_expr_template, wire_coercion_by_alias_from_inputs};
 use super::materialized_result_use_inputs;
 
 pub(crate) fn for_each_cross_uses(for_each: &ValidatedForEachNode) -> Vec<PlanResultUse> {
@@ -80,6 +80,8 @@ pub(crate) async fn materialize_for_each_node(
     sink: Option<&McpPlasmTraceSink>,
     plan_shared: Option<Arc<crate::plan_execute_shared::PlanLineExecuteShared>>,
 ) -> Result<MaterializedNode, String> {
+    let scoped_es =
+        entry_scoped_execute_session(es, Some(&for_each.effect_template.qualified_entity))?;
     let source_rows = materialized_rows(es, st, session_id, materialized, &for_each.source).await?;
     let mut input_rows =
         materialized_result_use_inputs(materialized, &for_each_cross_uses(for_each), None)?;
@@ -88,12 +90,11 @@ pub(crate) async fn materialize_for_each_node(
     let mut expressions = Vec::with_capacity(source_rows.len());
     for row in &source_rows {
         let env = for_each_plan_eval_env(for_each, row, &input_rows, &wire_coercion_by_alias);
-        let parsed = instantiate_raw_expr_template(&for_each.effect_template.ir_template, &env)?;
+        let parsed =
+            instantiate_expr_template(&for_each.effect_template.ir_template, &env, &scoped_es.cgs)?;
         expressions.push(crate::expr_display::expr_display(&parsed.expr));
         parsed_steps.push(parsed);
     }
-    let scoped_es =
-        entry_scoped_execute_session(es, Some(&for_each.effect_template.qualified_entity))?;
 
     let parallel_reads = !crate::plasm_plan_run::for_each_body_mutates_remote(
         for_each.effect_template.kind,

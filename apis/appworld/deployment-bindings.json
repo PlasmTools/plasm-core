@@ -1,0 +1,2902 @@
+{
+  "bindings": [
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "logout"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "profile_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "product_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "product_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "seller_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "seller_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "product_type_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "product_feature_choices_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "cart_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "cart_item_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "wish_list_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "wish_list_add"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "wish_list_update_quantity"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "wish_list_remove"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "wish_list_clear"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "cart_move_to_wish_list"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "wish_list_move_to_cart"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "cart_add_product"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "cart_update_quantity"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "cart_remove_product"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "cart_clear"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "cart_apply_promo"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "cart_remove_promo"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "order_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "order_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "order_place"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "order_receipt_download"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "address_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "address_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "address_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "address_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "payment_card_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "payment_card_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "payment_card_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "payment_card_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "product_review_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "product_review_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "product_review_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "product_review_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "product_return_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "return_deliverer_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "prime_subscribe"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "product_question_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "product_question_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "product_question_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "product_question_answer_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "product_question_answer_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "login"
+      },
+      "requirement": "principal",
+      "provider_catalog": "supervisor",
+      "provider": "principal"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "login"
+      },
+      "requirement": "password",
+      "provider_catalog": "supervisor",
+      "provider": "password"
+    },
+    {
+      "consumer": {
+        "catalog": "file_system",
+        "capability": "logout"
+      },
+      "requirement": "session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "file_system",
+        "capability": "directory_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "file_system",
+        "capability": "directory_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "file_system",
+        "capability": "directory_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "file_system",
+        "capability": "directory_exists"
+      },
+      "requirement": "session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "file_system",
+        "capability": "directory_copy"
+      },
+      "requirement": "session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "file_system",
+        "capability": "directory_move"
+      },
+      "requirement": "session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "file_system",
+        "capability": "directory_compress"
+      },
+      "requirement": "session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "file_system",
+        "capability": "file_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "file_system",
+        "capability": "file_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "file_system",
+        "capability": "file_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "file_system",
+        "capability": "file_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "file_system",
+        "capability": "file_exists"
+      },
+      "requirement": "session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "file_system",
+        "capability": "file_copy"
+      },
+      "requirement": "session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "file_system",
+        "capability": "file_move"
+      },
+      "requirement": "session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "file_system",
+        "capability": "file_decompress"
+      },
+      "requirement": "session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "file_system",
+        "capability": "login"
+      },
+      "requirement": "principal",
+      "provider_catalog": "supervisor",
+      "provider": "principal"
+    },
+    {
+      "consumer": {
+        "catalog": "file_system",
+        "capability": "login"
+      },
+      "requirement": "password",
+      "provider_catalog": "supervisor",
+      "provider": "password"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "logout"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "email_thread_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "email_thread_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "email_thread_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "email_thread_mark_read"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "email_thread_mark_unread"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "email_thread_star"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "email_thread_unstar"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "email_thread_archive"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "email_thread_unarchive"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "email_thread_snooze"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "email_thread_unsnooze"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "email_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "email_send"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "email_reply"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "email_delete_in_thread"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "draft_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "draft_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "draft_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "draft_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "draft_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "draft_send"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "category_sizes_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "email_thread_label"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "email_thread_unlabel"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "email_thread_mark_spam"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "email_thread_mark_not_spam"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "email_forward"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "email_thread_forward"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "attachment_download"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "draft_attachment_upload"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "draft_attachment_remove"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "login"
+      },
+      "requirement": "principal",
+      "provider_catalog": "supervisor",
+      "provider": "principal"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "login"
+      },
+      "requirement": "password",
+      "provider_catalog": "supervisor",
+      "provider": "password"
+    },
+    {
+      "consumer": {
+        "catalog": "phone",
+        "capability": "logout"
+      },
+      "requirement": "session",
+      "provider_catalog": "phone",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "phone",
+        "capability": "contact_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "phone",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "phone",
+        "capability": "contact_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "phone",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "phone",
+        "capability": "contact_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "phone",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "phone",
+        "capability": "contact_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "phone",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "phone",
+        "capability": "alarm_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "phone",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "phone",
+        "capability": "alarm_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "phone",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "phone",
+        "capability": "alarm_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "phone",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "phone",
+        "capability": "alarm_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "phone",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "phone",
+        "capability": "alarm_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "phone",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "phone",
+        "capability": "text_message_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "phone",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "phone",
+        "capability": "text_message_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "phone",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "phone",
+        "capability": "text_message_send"
+      },
+      "requirement": "session",
+      "provider_catalog": "phone",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "phone",
+        "capability": "text_message_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "phone",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "phone",
+        "capability": "voice_message_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "phone",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "phone",
+        "capability": "voice_message_send"
+      },
+      "requirement": "session",
+      "provider_catalog": "phone",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "phone",
+        "capability": "voice_message_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "phone",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "phone",
+        "capability": "date_time_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "phone",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "phone",
+        "capability": "contact_relationship_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "phone",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "phone",
+        "capability": "login"
+      },
+      "requirement": "principal",
+      "provider_catalog": "supervisor",
+      "provider": "principal"
+    },
+    {
+      "consumer": {
+        "catalog": "phone",
+        "capability": "login"
+      },
+      "requirement": "password",
+      "provider_catalog": "supervisor",
+      "provider": "password"
+    },
+    {
+      "consumer": {
+        "catalog": "simple_note",
+        "capability": "logout"
+      },
+      "requirement": "session",
+      "provider_catalog": "simple_note",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "simple_note",
+        "capability": "note_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "simple_note",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "simple_note",
+        "capability": "note_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "simple_note",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "simple_note",
+        "capability": "note_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "simple_note",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "simple_note",
+        "capability": "note_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "simple_note",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "simple_note",
+        "capability": "note_append_content"
+      },
+      "requirement": "session",
+      "provider_catalog": "simple_note",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "simple_note",
+        "capability": "note_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "simple_note",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "simple_note",
+        "capability": "login"
+      },
+      "requirement": "principal",
+      "provider_catalog": "supervisor",
+      "provider": "principal"
+    },
+    {
+      "consumer": {
+        "catalog": "simple_note",
+        "capability": "login"
+      },
+      "requirement": "password",
+      "provider_catalog": "supervisor",
+      "provider": "password"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "logout"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "group_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "group_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "group_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "group_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "group_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "group_add_member"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "group_remove_member"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "group_exit"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "group_undelete"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "group_accept_invitation"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "group_regenerate_invitation"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "expense_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "expense_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "expense_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "expense_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "expense_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "expense_undelete"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "expense_attach_receipt"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "expense_delete_receipt"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "payment_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "payment_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "payment_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "payment_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "payment_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "payment_undelete"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "payment_attach_receipt"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "payment_delete_receipt"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "settle_up"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "expense_comment_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "expense_comment_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "expense_comment_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "expense_comment_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "payment_comment_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "payment_comment_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "payment_comment_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "payment_comment_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "notification_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "activity_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "notification_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "notification_mark"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "notification_delete_all"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "notification_mark_all"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "user_search"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "balance_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "peer_balance_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "login"
+      },
+      "requirement": "principal",
+      "provider_catalog": "supervisor",
+      "provider": "principal"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "login"
+      },
+      "requirement": "password",
+      "provider_catalog": "supervisor",
+      "provider": "password"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "logout"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "song_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "song_like"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "song_unlike"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "downloaded_song_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "song_download"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "song_undownload"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "album_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "album_like"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "album_unlike"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "artist_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "artist_follow"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "artist_unfollow"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "playlist_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "playlist_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "playlist_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "playlist_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "playlist_add_song"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "playlist_remove_song"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "playlist_like"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "playlist_unlike"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "player_current_wire"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "player_current"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "player_play"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "player_pause"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "player_previous"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "player_next"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "player_queue"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "player_queue_add"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "player_queue_clear"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "player_queue_remove"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "player_move_song"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "player_seek"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "player_loop"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "player_shuffle"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "player_volume_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "player_volume_set"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "liked_song_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "liked_song_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "song_library_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "song_library_add"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "song_library_remove"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "album_library_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "album_library_add"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "album_library_remove"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "playlist_library_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "liked_playlist_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "liked_album_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "following_artist_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "song_review_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "song_review_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "song_review_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "album_review_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "album_review_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "album_review_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "playlist_review_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "playlist_review_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "playlist_review_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "payment_card_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "payment_card_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "payment_card_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "payment_card_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "premium_subscription_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "premium_subscribe"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "premium_subscription_receipt"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "login"
+      },
+      "requirement": "principal",
+      "provider_catalog": "supervisor",
+      "provider": "principal"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "login"
+      },
+      "requirement": "password",
+      "provider_catalog": "supervisor",
+      "provider": "password"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "logout"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "project_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "project_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "project_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "project_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "project_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "task_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "task_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "task_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "task_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "task_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "task_assign"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "label_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "label_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "label_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "task_add_label"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "task_remove_label"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "section_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "section_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "section_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "task_comment_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "task_comment_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "task_comment_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "task_comment_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "task_comment_upload_attachment"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "task_comment_delete_attachment"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "sub_task_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "sub_task_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "sub_task_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "user_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "project_invite_accept"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "project_invite_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "notification_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "notification_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "notification_mark"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "notification_delete_all"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "notification_mark_all"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "login"
+      },
+      "requirement": "principal",
+      "provider_catalog": "supervisor",
+      "provider": "principal"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "login"
+      },
+      "requirement": "password",
+      "provider_catalog": "supervisor",
+      "provider": "password"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "logout"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "user_search"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "user_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "friend_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "friend_add"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "friend_remove"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "balance_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "balance_add"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "balance_withdraw"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "bank_transfer_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "transaction_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "transaction_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "transaction_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "payment_request_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "payment_request_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "payment_request_approve"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "payment_request_deny"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "payment_request_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "payment_request_remind"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "payment_request_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "transaction_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "transaction_like"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "transaction_unlike"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "transaction_comment_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "transaction_comment_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "transaction_comment_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "payment_card_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "payment_card_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "payment_card_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "payment_card_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "notification_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "notification_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "notification_mark"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "notification_delete_all"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "notification_mark_all"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "login"
+      },
+      "requirement": "principal",
+      "provider_catalog": "supervisor",
+      "provider": "principal"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "login"
+      },
+      "requirement": "password",
+      "provider_catalog": "supervisor",
+      "provider": "password"
+    }
+  ]
+}

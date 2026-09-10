@@ -1,3 +1,4 @@
+import { FilesystemCatalogLoader, loadPackedCatalog } from "../catalog/loader.js";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -269,18 +270,11 @@ export async function generateStubForCatalog(
   outDir: string,
   engine?: PlasmEngine,
 ): Promise<StubGenerationResult> {
-  const fallbackEntryId = path.basename(catalogDir);
-  const domainYaml = await readFile(path.join(catalogDir, "domain.yaml"), "utf8");
-  const domainMeta = parseCgsDomain(domainYaml, fallbackEntryId);
+  const packed = await loadPackedCatalog(catalogDir);
   const generatedAt = new Date().toISOString();
-
   const activeEngine = engine ?? createEngine();
-  await activeEngine.loadCatalog({
-    rootDir: catalogDir,
-    manifest: { entryId: domainMeta.entryId, label: fallbackEntryId },
-  });
-
-  const raw = await activeEngine.introspectCatalog(domainMeta.entryId);
+  await activeEngine.loadCatalog(packed);
+  const raw = await activeEngine.introspectCatalog(packed.manifest.entryId);
   const catalog = parseCatalogIntrospection(raw);
   const bindings = assignCapabilityBindings(catalog);
   const source = renderStubModule(catalog, generatedAt, bindings);
@@ -301,40 +295,19 @@ export async function generateAllStubs(
   agentRoot: string,
   options?: { engine?: PlasmEngine },
 ): Promise<StubGenerationResult[]> {
-  const catalogsDir = path.join(agentRoot, "catalogs");
   const outDir = path.join(agentRoot, ".plasm", "stubs");
-  const { access, readdir, stat } = await import("node:fs/promises");
-
   await writeStubRuntimeShim(outDir);
-
   const engine = options?.engine ?? createEngine();
-
-  let entries;
-  try {
-    entries = await readdir(catalogsDir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-
+  const catalogs = await new FilesystemCatalogLoader().discover(agentRoot);
   const results: StubGenerationResult[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
-    const rootDir = path.join(catalogsDir, entry.name);
-    try {
-      const info = await stat(rootDir);
-      if (!info.isDirectory()) continue;
-      await access(path.join(rootDir, "domain.yaml"));
-      await access(path.join(rootDir, "mappings.yaml"));
-    } catch {
-      continue;
-    }
-    results.push(await generateStubForCatalog(rootDir, outDir, engine));
+  for (const catalog of catalogs) {
+    results.push(await generateStubForCatalog(catalog.manifestPath, outDir, engine));
   }
   results.sort((a, b) => a.entryId.localeCompare(b.entryId));
   return results;
 }
 
-/** Generate stub from an arbitrary catalog directory (fixtures / matrix smoke). */
+/** Generate a stub from a packed catalog manifest (including abstract fixtures). */
 export async function generateStubFromCatalogDir(
   catalogDir: string,
   outDir: string,

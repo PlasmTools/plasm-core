@@ -67,7 +67,7 @@ pub async fn dispatch<E: ExprExecutor>(
             cache,
             Some(mode),
             consume,
-            ExecuteOptions::default(),
+            ExecuteOptions::for_catalog(cgs)?,
         )
         .instrument(cli_span)
         .await?;
@@ -183,7 +183,11 @@ fn build_expr(
         if let Some(field_key) = resolve_entity_ref_field(entity, sub_name, cgs) {
             let get = GetExpr::from_ref(node_ref.clone());
             let chain = ChainExpr::auto_get(Expr::Get(get), field_key);
-            return Ok((Expr::Chain(chain), StreamConsumeOpts::default(), IndexMap::new()));
+            return Ok((
+                Expr::Chain(chain),
+                StreamConsumeOpts::default(),
+                IndexMap::new(),
+            ));
         }
 
         // Reverse traversal: `pet 10 orders` → query(Order, petId=10)
@@ -271,8 +275,7 @@ fn build_expr(
         })?;
     let node_ref = cli_entity_node_ref(entity_name, entity, entity_matches, id.as_str(), cgs)?;
     let get = GetExpr::from_ref(node_ref);
-    let stamp =
-        cli_capability_params_for_cap(get_cap, id.as_str(), entity_matches, None, entity)?;
+    let stamp = cli_capability_params_for_cap(get_cap, id.as_str(), entity_matches, None, entity)?;
     Ok((Expr::Get(get), StreamConsumeOpts::default(), stamp))
 }
 
@@ -384,7 +387,11 @@ fn build_relation_expr(
             })?;
             let reference = ref_from_get_materialize_bindings(target_ent, &bound)?;
             let get = GetExpr::from_ref(reference);
-            return Ok((Expr::Get(get), StreamConsumeOpts::default(), IndexMap::new()));
+            return Ok((
+                Expr::Get(get),
+                StreamConsumeOpts::default(),
+                IndexMap::new(),
+            ));
         }
         _ => {}
     }
@@ -591,6 +598,7 @@ fn collect_template_string_bindings(
             path_var_names_from_request(cml)
         }
         CapabilityTemplate::View(_)
+        | CapabilityTemplate::CredentialBind(_)
         | CapabilityTemplate::EvmCall(_)
         | CapabilityTemplate::EvmLogs(_) => Vec::new(),
     };
@@ -661,8 +669,12 @@ fn cli_capability_params_for_cap(
     let Some(mapping) = cap.mapping.as_ref() else {
         return Ok(IndexMap::new());
     };
-    let Some(all) =
-        path_vars_for_cml(&mapping.template, positional_id, entity_matches, cap_matches)?
+    let Some(all) = path_vars_for_cml(
+        &mapping.template,
+        positional_id,
+        entity_matches,
+        cap_matches,
+    )?
     else {
         return Ok(IndexMap::new());
     };
@@ -776,16 +788,13 @@ fn relation_binding_field_value(
 ) -> String {
     let pf = parent_field.as_str();
     match &source_ref.key {
-        EntityKey::Compound(parts) => parts
-            .get(pf)
-            .map(|s| s.display_str())
-            .unwrap_or_else(|| {
-                if pf == entity.id_field.as_str() {
-                    relation_scope_string(entity, source_ref)
-                } else {
-                    String::new()
-                }
-            }),
+        EntityKey::Compound(parts) => parts.get(pf).map(|s| s.display_str()).unwrap_or_else(|| {
+            if pf == entity.id_field.as_str() {
+                relation_scope_string(entity, source_ref)
+            } else {
+                String::new()
+            }
+        }),
         EntityKey::Simple(_) => {
             if pf == entity.id_field.as_str() {
                 relation_scope_string(entity, source_ref)

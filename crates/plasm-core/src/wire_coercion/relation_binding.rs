@@ -275,4 +275,3 @@ pub fn parent_entity_field_type(
         entity.name
     ))
 }
-

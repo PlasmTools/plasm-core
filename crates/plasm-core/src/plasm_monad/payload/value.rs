@@ -31,7 +31,8 @@ pub enum PlasmDataValue {
         path: String,
     },
     Template {
-        template: String,
+        #[serde(with = "crate::program_string_template::source_wire")]
+        template: crate::program_string_template::CompiledProgramString,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         input_bindings: Vec<PlanInputBinding>,
     },

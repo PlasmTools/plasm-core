@@ -116,7 +116,7 @@ plasm --schema apis/gmail --backend https://gmail.googleapis.com \
 
 The same pattern applies to threads: `thread_list` / `thread_search` declare only `{id, historyId}` so rows are **summary** objects; Plasm hydrates with `threads.get` per row by default (N HTTP GETs for N threads — use `thread query --summary` to skip). `thread_get` fills `snippet` and decodes nested `messages` into the `Thread.messages` relation.
 
-**Sending mail:** `message_send` requires a pre-built base64url **`raw`** (full RFC 2822). Prefer **`message_send_simple`** when the agent should pass **from / to / subject / plain body** only; Plasm builds MIME and `raw` via the CML `gmail_rfc5322_send_body` expression (same `POST …/messages/send`). Optional **`threadId`** / **`inReplyTo`** / **`references`** support replies. Use **`message_reply`** (action on a **`Message`** row) to reply with only **`from`** and **`plainBody`**; runtime **`preflight`** runs **`message_get`** on the target id and merges **`parent_*`** fields, then CML **`gmail_rfc5322_reply_send_body`** builds `raw` (same POST).
+**Sending mail:** `message_send` requires a pre-built base64url **`raw`** (full RFC 2822). Prefer **`message_send_simple`** when the agent should pass **from / to / subject / plain body** only; Plasm builds MIME and `raw` via the generic CML `mail_message` codec and explicit base64url encoding (same `POST …/messages/send`). Optional **`threadId`** / **`inReplyTo`** / **`references`** support replies. Use **`message_reply`** (action on a **`Message`** row) to reply with only **`from`** and **`plainBody`**; runtime **`preflight`** runs **`message_get`** on the target id and merges **`parent_*`** fields, then CML explicitly maps those fields into **`mail_reply_headers`**, then serializes and encodes `raw` (same POST).
 
 ### Gmail search query syntax
 
@@ -194,7 +194,7 @@ The runtime cache key becomes `Attachment:<messageId>/<id>`. When fetching an at
 | `message_get`     | get    | `message <id>`                | `GET /gmail/v1/users/me/messages/{id}`                                                  |
 | `message_send`    | create | `message send --raw <base64>` | `POST /gmail/v1/users/me/messages/send`                                                 |
 | `message_send_simple` | create | `message send-simple …` (from, to, subject, plain body; optional threadId / inReplyTo / references) | Same POST as `message_send` — CML builds RFC 5322 + base64url `raw` |
-| `message_reply` | action | `message reply …` on a message id (from, plainBody; optional to / subject) | Same POST — preflight GET + `gmail_rfc5322_reply_send_body` |
+| `message_reply` | action | `message reply …` on a message id (from, plainBody; optional to / subject) | Same POST — preflight GET + explicit parent header mapping + mail codecs |
 | `message_trash`   | action | `message <id> trash`          | `POST /gmail/v1/users/me/messages/{id}/trash`                                           |
 | `message_untrash` | action | `message <id> untrash`        | `POST /gmail/v1/users/me/messages/{id}/untrash`                                         |
 | `message_delete`  | delete | `message <id> delete`         | `DELETE /gmail/v1/users/me/messages/{id}`                                               |
@@ -381,3 +381,4 @@ plasm --schema apis/gmail --backend https://gmail.googleapis.com \
 **Nested messages on threads** — `GET /gmail/v1/users/me/threads/{id}` returns `messages: [...]` on the thread object. The CGS exposes this as the **`Thread.messages`** relation (`from_parent_get`), materialized when you fetch a thread via `thread_get` (including default hydration after `thread_list` / `thread_search`).
 
 **No multi-account support** — All paths hardcode `userId=me`. Supporting multiple Google accounts would require parameterizing the userId, building per-account auth resolvers, and potentially routing to different base URLs.
+Mail serialization is deterministic: it adds no local clock-derived Date or Message-ID. Explicitly supplied headers are preserved. This follows the [Google send example](https://developers.google.com/workspace/gmail/api/guides/sending), whose Python message supplies From, To, Subject and content.

@@ -1,0 +1,17 @@
+parent_get:
+  method: GET
+  path:
+    - {type: literal, value: parents}
+    - {type: var, name: id}
+child_query:
+  method: GET
+  path:
+    - {type: literal, value: parents}
+    - {type: var, name: parent_id}
+    - {type: literal, value: children}
+child_with_parent_query:
+  method: GET
+  path:
+    - {type: literal, value: parents}
+    - {type: var, name: parent_id}
+    - {type: literal, value: children}

@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use indexmap::IndexMap;
 use plasm_core::discovery::CgsCatalog;
 use plasm_core::discovery::DiscoveryError;
-use plasm_core::InMemoryCgsRegistry;
+use plasm_core::CgsRegistry;
 use std::sync::Arc;
 
 use crate::catalog_hash::RegistryCatalogHash;
@@ -34,6 +34,7 @@ pub enum RehydrateError {
     /// Pinned catalog digests in the ledger no longer match live materialized CGS.
     SymbolSpaceResetRequired,
     SymbolLedgerDecode(String),
+    CatalogRecipes(String),
     Discovery(String),
 }
 
@@ -66,6 +67,7 @@ impl std::fmt::Display for RehydrateError {
                 "symbol ledger catalog pins no longer match live catalogs — call plasm_context with session_mode: \"new\""
             ),
             Self::SymbolLedgerDecode(e) => write!(f, "symbol ledger decode failed: {e}"),
+            Self::CatalogRecipes(e) => write!(f, "compiled catalog recipes unavailable: {e}"),
             Self::Discovery(e) => write!(f, "{e}"),
         }
     }
@@ -131,7 +133,7 @@ impl RegistryCatalogPins {
 }
 
 pub(crate) fn registry_catalog_pins_from_registry(
-    reg: &InMemoryCgsRegistry,
+    reg: &CgsRegistry,
     entry_ids: &[String],
 ) -> Result<HashMap<String, String>, RehydrateError> {
     let pins = registry_catalog_pins_typed(reg, entry_ids)?;
@@ -141,7 +143,7 @@ pub(crate) fn registry_catalog_pins_from_registry(
 }
 
 pub(crate) fn registry_catalog_pins_typed(
-    reg: &InMemoryCgsRegistry,
+    reg: &CgsRegistry,
     entry_ids: &[String],
 ) -> Result<RegistryCatalogPins, RehydrateError> {
     let mut registry_hash_by_entry = HashMap::new();
@@ -164,7 +166,7 @@ pub(crate) fn registry_catalog_pins_typed(
 }
 
 pub(crate) fn registry_pins_match_live(
-    reg: &InMemoryCgsRegistry,
+    reg: &CgsRegistry,
     pins: &RegistryCatalogPins,
 ) -> Result<(), RehydrateError> {
     if pins.registry_hash_by_entry.is_empty() {
@@ -252,6 +254,7 @@ pub fn should_discard_persisted_execute_on_rehydrate_error(err: &RehydrateError)
             | RehydrateError::SymbolLedgerNotFound
             | RehydrateError::SymbolSpaceResetRequired
             | RehydrateError::SymbolLedgerDecode(_)
+            | RehydrateError::CatalogRecipes(_)
     )
 }
 
@@ -311,6 +314,15 @@ pub async fn rehydrate_execute_session(
         });
     }
     let teaching_exposure = hydrate_teaching_exposure_from_descriptor(desc, &contexts_by_entry)?;
+    let compiled_catalogs_by_entry = contexts_by_entry
+        .keys()
+        .map(|entry_id| {
+            st.catalog
+                .compiled_catalog(entry_id)
+                .map(|compiled| (entry_id.clone(), compiled))
+                .map_err(RehydrateError::CatalogRecipes)
+        })
+        .collect::<Result<IndexMap<_, _>, _>>()?;
 
     let mut session = ExecuteSession::new_with_bindings(
         desc.prompt_hash.clone(),
@@ -326,9 +338,10 @@ pub async fn rehydrate_execute_session(
         desc.principal.clone(),
         desc.catalog_cgs_hash.clone(),
         desc.context_intent.clone(),
-        desc.ranked_capabilities.clone(),
         desc.bindings_by_entry.clone(),
+        compiled_catalogs_by_entry,
     );
+    session.discovery_pin = desc.discovery_pin.clone();
     session.registry_catalog_hashes_by_entry = desc.registry_catalog_hashes_by_entry.clone();
     session.materialized_outbound_hosted_kv_by_entry = desc.outbound_hosted_kv_by_entry.clone();
     session.domain_revision = desc.domain_revision;
@@ -337,12 +350,6 @@ pub async fn rehydrate_execute_session(
         operations: desc.operations.clone(),
         operation_handle_next: desc.operation_handle_next,
     });
-    session
-        .restore_bind_credentials(&crate::execute_session::SessionBindCredentialsSnapshot {
-            session_share_token: desc.session_share_token.clone(),
-            session_proof_base_token: desc.session_proof_base_token.clone(),
-        })
-        .await;
 
     Ok(session)
 }
@@ -352,7 +359,7 @@ mod tests {
     use std::path::Path;
     use std::sync::Arc;
 
-    use plasm_core::discovery::InMemoryCgsRegistry;
+    use plasm_core::discovery::CgsRegistry;
     use plasm_core::loader::load_schema_dir;
 
     use super::*;
@@ -366,6 +373,22 @@ mod tests {
     };
     use indexmap::IndexMap;
 
+    fn compiled_for(
+        contexts: &IndexMap<String, Arc<plasm_core::CgsContext>>,
+    ) -> IndexMap<String, Arc<plasm_compile::CompiledCatalog>> {
+        contexts
+            .iter()
+            .map(|(entry_id, context)| {
+                (
+                    entry_id.clone(),
+                    Arc::new(
+                        plasm_compile::compile_cgs_capability_templates(&context.cgs).unwrap(),
+                    ),
+                )
+            })
+            .collect()
+    }
+
     async fn descriptor_from_live_session(
         st: &PlasmHostState,
         session: &ExecuteSession,
@@ -377,19 +400,15 @@ mod tests {
                 .await
                 .expect("durable exposure snapshot");
         PersistedExecuteSessionDescriptor::from_session_and_durable_snapshot(
-            session,
-            session_id,
-            reuse_key,
-            session.snapshot_bind_credentials().await,
-            &exposure,
+            session, session_id, reuse_key, &exposure,
         )
     }
 
-    fn overshow_registry() -> InMemoryCgsRegistry {
+    fn overshow_registry() -> CgsRegistry {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
         let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
-        InMemoryCgsRegistry::from_pairs(vec![(
+        CgsRegistry::from_pairs(vec![(
             "overshow".into(),
             "Overshow".into(),
             vec!["demo".into()],
@@ -413,7 +432,6 @@ mod tests {
             principal: None,
             catalog_cgs_hash: "h".into(),
             context_intent: None,
-            ranked_capabilities: None,
             domain_revision: 0,
             reuse_key: PersistedSessionReuseKey {
                 tenant_scope: "t".into(),
@@ -421,12 +439,12 @@ mod tests {
                 catalog_cgs_hash: "h".into(),
                 entities: vec!["x".into()],
                 context_intent: None,
-                ranked_capabilities: None,
                 principal: None,
                 logical_session_id: None,
             },
             expires_at_unix: 1,
             catalog_cgs_hashes_by_entry: Default::default(),
+            discovery_pin: None,
             registry_catalog_hashes_by_entry: Default::default(),
             outbound_hosted_kv_by_entry: Default::default(),
             bindings_by_entry: Default::default(),
@@ -434,8 +452,6 @@ mod tests {
             plan_commit_next: 0,
             operations: Vec::new(),
             operation_handle_next: 0,
-            session_share_token: None,
-            session_proof_base_token: None,
             symbol_ledger_bytes: Vec::new(),
         };
         assert!(descriptor_expired(&desc));
@@ -471,7 +487,7 @@ mod tests {
         let matrix_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = Arc::new(load_schema_dir(&matrix_dir).expect("matrix"));
-        let reg = Arc::new(InMemoryCgsRegistry::from_pairs(vec![
+        let reg = Arc::new(CgsRegistry::from_pairs(vec![
             (
                 "github".into(),
                 "GitHub".into(),
@@ -511,7 +527,6 @@ mod tests {
             principal: None,
             catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
             context_intent: None,
-            ranked_capabilities: None,
             domain_revision: 0,
             reuse_key: PersistedSessionReuseKey {
                 tenant_scope: String::new(),
@@ -519,12 +534,12 @@ mod tests {
                 catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
                 entities: vec!["LangItem".into(), "LangItem".into()],
                 context_intent: None,
-                ranked_capabilities: None,
                 principal: None,
                 logical_session_id: None,
             },
             expires_at_unix: u64::MAX,
             catalog_cgs_hashes_by_entry: Default::default(),
+            discovery_pin: None,
             registry_catalog_hashes_by_entry: Default::default(),
             outbound_hosted_kv_by_entry: Default::default(),
             bindings_by_entry: Default::default(),
@@ -532,8 +547,6 @@ mod tests {
             plan_commit_next: 0,
             operations: Vec::new(),
             operation_handle_next: 0,
-            session_share_token: None,
-            session_proof_base_token: None,
             symbol_ledger_bytes: Vec::new(),
         };
         let err = match rehydrate_execute_session(&host, &desc).await {
@@ -562,7 +575,6 @@ mod tests {
             principal: None,
             catalog_cgs_hash: "deadbeef".into(),
             context_intent: None,
-            ranked_capabilities: None,
             domain_revision: 0,
             reuse_key: PersistedSessionReuseKey {
                 tenant_scope: "t".into(),
@@ -570,12 +582,12 @@ mod tests {
                 catalog_cgs_hash: "deadbeef".into(),
                 entities: vec!["demo".into()],
                 context_intent: None,
-                ranked_capabilities: None,
                 principal: None,
                 logical_session_id: None,
             },
             expires_at_unix: u64::MAX,
             catalog_cgs_hashes_by_entry: Default::default(),
+            discovery_pin: None,
             registry_catalog_hashes_by_entry: Default::default(),
             outbound_hosted_kv_by_entry: Default::default(),
             bindings_by_entry: Default::default(),
@@ -583,8 +595,6 @@ mod tests {
             plan_commit_next: 0,
             operations: Vec::new(),
             operation_handle_next: 0,
-            session_share_token: None,
-            session_proof_base_token: None,
             symbol_ledger_bytes: Vec::new(),
         };
         let pins = legacy_descriptor_pins::PinnedCatalogHashes::from_descriptor(&desc);
@@ -659,7 +669,6 @@ mod tests {
             principal: None,
             catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
             context_intent: None,
-            ranked_capabilities: None,
             domain_revision: 0,
             reuse_key: PersistedSessionReuseKey {
                 tenant_scope: String::new(),
@@ -667,12 +676,12 @@ mod tests {
                 catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
                 entities: vec!["LangItem".into(), "LangItem".into()],
                 context_intent: None,
-                ranked_capabilities: None,
                 principal: None,
                 logical_session_id: None,
             },
             expires_at_unix: u64::MAX,
             catalog_cgs_hashes_by_entry: Default::default(),
+            discovery_pin: None,
             registry_catalog_hashes_by_entry: Default::default(),
             outbound_hosted_kv_by_entry: Default::default(),
             bindings_by_entry: Default::default(),
@@ -680,16 +689,12 @@ mod tests {
             plan_commit_next: 0,
             operations: Vec::new(),
             operation_handle_next: 0,
-            session_share_token: None,
-            session_proof_base_token: None,
             symbol_ledger_bytes: Vec::new(),
         };
         let exp = replay_teaching_exposure_waves(
             &contexts,
             &desc.entities,
             &desc.entity_catalog_entry_ids,
-            desc.context_intent.as_deref(),
-            desc.ranked_capabilities.as_deref(),
         );
         assert_eq!(exp.entity_catalog_entry_ids, vec!["github", "linear"]);
         let (map, _): (Arc<plasm_core::SymbolMap>, _) = exp.symbol_map_arc_cross(None, None);
@@ -720,8 +725,8 @@ mod tests {
                 None,
                 fixture.cgs.catalog_cgs_hash_hex(),
                 None,
-                None,
                 IndexMap::new(),
+                compiled_for(&fixture.contexts),
             ),
             "sid",
             &SessionReuseKey {
@@ -730,7 +735,6 @@ mod tests {
                 catalog_cgs_hash: fixture.cgs.catalog_cgs_hash_hex(),
                 entities: fixture.live.entities.clone(),
                 context_intent: None,
-                ranked_capabilities: None,
                 principal: None,
                 logical_session_id: None,
             },
@@ -782,8 +786,8 @@ mod tests {
             None,
             fixture.cgs.catalog_cgs_hash_hex(),
             None,
-            None,
             IndexMap::new(),
+            compiled_for(&fixture.contexts),
         );
 
         let reuse_key = SessionReuseKey {
@@ -792,7 +796,6 @@ mod tests {
             catalog_cgs_hash: session.catalog_cgs_hash.clone(),
             entities: session.entities.clone(),
             context_intent: None,
-            ranked_capabilities: None,
             principal: None,
             logical_session_id: None,
         };

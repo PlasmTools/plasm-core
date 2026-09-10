@@ -197,11 +197,7 @@ impl SessionMaterialization {
 
     /// Stamp non-identity capability params (CLI flags, session inherit) onto a row ref.
     /// Path env is projected from [`Ref`] identity; these bindings overlay at CML populate.
-    pub fn stamp_capability_params(
-        &mut self,
-        reference: &Ref,
-        params: IndexMap<String, Value>,
-    ) {
+    pub fn stamp_capability_params(&mut self, reference: &Ref, params: IndexMap<String, Value>) {
         if params.is_empty() {
             return;
         }
@@ -435,7 +431,7 @@ impl ExecutionCacheConsult {
 fn client_side_predicate_matches_entity(
     entity: &CachedEntity,
     pred: &plasm_core::Predicate,
-    entity_def: &plasm_core::EntityDef,
+    _entity_def: &plasm_core::EntityDef,
 ) -> bool {
     use plasm_core::Predicate;
     match pred {
@@ -449,7 +445,7 @@ fn client_side_predicate_matches_entity(
             .unwrap_or(false),
         Predicate::And { args } => args
             .iter()
-            .all(|c| client_side_predicate_matches_entity(entity, c, entity_def)),
+            .all(|c| client_side_predicate_matches_entity(entity, c, _entity_def)),
         _ => false,
     }
 }
@@ -549,8 +545,7 @@ mod tests {
             .insert(key.clone(), vec![Ref::new("CreditCardAccount", "cc1")]);
 
         // Type-wide eviction ignores mutator echo identity; only invalidates_entities matters.
-        mat.apply_post_mutation_cache_effects(&cap, &cgs)
-            .unwrap();
+        mat.apply_post_mutation_cache_effects(&cap, &cgs).unwrap();
 
         assert!(mat.get(&Ref::new("CreditCardAccount", "cc1")).is_none());
         assert!(mat.query_index.get(&key).is_none());
@@ -608,10 +603,11 @@ mod tests {
 
         // Former surgical-by-echo-id path would miss this seed when the mutator decoded
         // under an empty Ref; type-wide eviction clears the whole entity type.
-        mat.apply_post_mutation_cache_effects(&cap, &cgs)
-            .unwrap();
+        mat.apply_post_mutation_cache_effects(&cap, &cgs).unwrap();
 
-        assert!(mat.get(&Ref::new("CreditCardAccount", "jwt-or-seed-id")).is_none());
+        assert!(mat
+            .get(&Ref::new("CreditCardAccount", "jwt-or-seed-id"))
+            .is_none());
     }
 
     #[test]

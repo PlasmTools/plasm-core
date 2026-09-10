@@ -2,7 +2,6 @@
 
 use super::*;
 use crate::plasm_comp_lift::ExecutablePlasmComp;
-use crate::plasm_step_convert::step_payload_to_validated_node;
 use plasm_core::PlasmCompArtifact;
 
 #[path = "dry_render.rs"]
@@ -34,11 +33,11 @@ pub fn evaluate_executable_comp_dry(
     let mut out = Vec::new();
     let mut staged_nodes = Vec::new();
     let execution_unsupported = Vec::new();
-    for (step_idx, (step_id, payload)) in executable.steps_topo.iter().enumerate() {
-        let n = step_payload_to_validated_node(step_id, payload, &executable.bind)
-            .map_err(ProgramStageError::plan)?;
-        ensure_node_dispatchable(es, &n, step_idx).map_err(ProgramStageError::plan)?;
-        if let ValidatedPlanNode::RelationTraversal(relation) = &n {
+    let prepared = crate::plan_prepare::prepare_executable_plan_for_session(es, comp, executable)
+        .map_err(ProgramStageError::plan)?;
+    for (step_idx, n) in prepared.validated.artifact().nodes.iter().enumerate() {
+        ensure_node_dispatchable(es, n, step_idx).map_err(ProgramStageError::plan)?;
+        if let ValidatedPlanNode::RelationTraversal(relation) = n {
             let pe = ParsedExpr {
                 expr: relation.relation.ir.expr.clone(),
                 projection: relation.relation.ir.projection.clone(),
@@ -51,6 +50,23 @@ pub fn evaluate_executable_comp_dry(
             })?;
             ensure_relation_expr_matches_plan(es, relation, &pe, step_idx)
                 .map_err(ProgramStageError::plan)?;
+        }
+        let nested_effect = match n {
+            ValidatedPlanNode::ForEach(node) => Some(&node.effect_template),
+            ValidatedPlanNode::IterateUntil(node) => Some(&node.effect_template),
+            _ => None,
+        };
+        if let Some(effect) = nested_effect {
+            let scoped = entry_scoped_execute_session(es, Some(&effect.qualified_entity))
+                .map_err(ProgramStageError::plan)?;
+            let parsed = ParsedExpr {
+                expr: effect.ir_template.expr.clone(),
+                projection: effect.ir_template.projection.clone(),
+                field_dot_extract: None,
+            };
+            crate::execute_pipeline::PlasmPreflight::preflight_template_surface(
+                es, &scoped, &parsed, step_idx,
+            )?;
         }
         if let Some(surface) = n.as_surface() {
             match surface_parsed_expr(surface, step_idx) {
@@ -105,7 +121,7 @@ pub fn evaluate_executable_comp_dry(
                         "id": n.id().as_str(),
                         "kind": n.kind(),
                         "operation": crate::plan_dry_compact::compact_agent_surface_expr(
-                            &render_node_operation(&n),
+                            &render_node_operation(n),
                         ),
                         "qualified_entity": surface.qualified_entity,
                         "effect_class": n.effect_class(),
@@ -139,10 +155,8 @@ pub fn evaluate_executable_comp_dry(
         }
 
         staged_nodes.push(format!("{} ({:?})", n.id(), n.kind()));
-        out.push(dry_stage_result(step_idx, &n));
+        out.push(dry_stage_result(step_idx, n));
     }
-    let prepared = crate::plan_prepare::prepare_executable_plan_for_session(es, comp, executable)
-        .map_err(ProgramStageError::plan)?;
     dry_validate_render_nodes(es, prepared.validated.artifact())
         .map_err(ProgramStageError::plan)?;
     dry_validate_staged_surfaces(es, prepared.validated.artifact())
@@ -747,7 +761,7 @@ fn compute_parallel_root_surfaces_only(plan: &Plan<ValidatedPlanState>) -> bool 
 
 fn surface_parsed_expr(
     surface: &crate::plasm_plan::ValidatedSurfaceNode,
-    step_idx: usize,
+    _step_idx: usize,
 ) -> Result<Option<ParsedExpr>, String> {
     if let Some(ir) = &surface.ir {
         return Ok(Some(ParsedExpr {
@@ -757,9 +771,7 @@ fn surface_parsed_expr(
         }));
     }
     if let Some(template) = &surface.ir_template {
-        let expr: Expr = serde_json::from_value(template.expr.clone()).map_err(|e| {
-            format!("plan.nodes[{step_idx}].ir_template.expr must deserialize to Plasm IR: {e}")
-        })?;
+        let expr = template.expr.clone();
         return Ok(Some(ParsedExpr {
             expr,
             projection: template.projection.clone(),

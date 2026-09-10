@@ -9,16 +9,9 @@ _appworld_page_index_limit: &appworld_page_index_limit
       fixed: 20
       role: page_size
   strategy: page_number
-_auth_header: &auth_header
-  type: object
-  fields:
-  - - Authorization
-    - type: format
-      template: "Bearer {token}"
-      vars:
-        token:
-          type: var
-          name: access_token
+_request_auth: &request_auth
+  scheme: bearer
+  token: { type: var, name: access_token }
 
 login:
   method: POST
@@ -39,7 +32,7 @@ logout:
   - { type: literal, value: gmail }
   - { type: literal, value: auth }
   - { type: literal, value: logout }
-  headers: *auth_header
+  auth: *request_auth
 
 email_thread_query:
   method: GET
@@ -48,7 +41,7 @@ email_thread_query:
   - { type: literal, value: email_threads }
   - { type: literal, value: category }
   - { type: var, name: mailbox }
-  headers: *auth_header
+  auth: *request_auth
   query: &thread_search_query
     type: object
     fields:
@@ -69,7 +62,7 @@ email_thread_get:
   - { type: literal, value: gmail }
   - { type: literal, value: email_threads }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 email_thread_delete:
   method: DELETE
@@ -77,7 +70,7 @@ email_thread_delete:
   - { type: literal, value: gmail }
   - { type: literal, value: email_threads }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 email_thread_mark_read:
   method: POST
@@ -86,7 +79,7 @@ email_thread_mark_read:
   - { type: literal, value: email_threads }
   - { type: var, name: id }
   - { type: literal, value: read }
-  headers: *auth_header
+  auth: *request_auth
 
 email_thread_mark_unread:
   method: POST
@@ -95,7 +88,7 @@ email_thread_mark_unread:
   - { type: literal, value: email_threads }
   - { type: var, name: id }
   - { type: literal, value: unread }
-  headers: *auth_header
+  auth: *request_auth
 
 email_thread_star:
   method: POST
@@ -104,7 +97,7 @@ email_thread_star:
   - { type: literal, value: email_threads }
   - { type: var, name: id }
   - { type: literal, value: starred }
-  headers: *auth_header
+  auth: *request_auth
 
 email_thread_unstar:
   method: POST
@@ -113,7 +106,7 @@ email_thread_unstar:
   - { type: literal, value: email_threads }
   - { type: var, name: id }
   - { type: literal, value: unstarred }
-  headers: *auth_header
+  auth: *request_auth
 
 email_thread_archive:
   method: POST
@@ -122,7 +115,7 @@ email_thread_archive:
   - { type: literal, value: email_threads }
   - { type: var, name: id }
   - { type: literal, value: archived }
-  headers: *auth_header
+  auth: *request_auth
 
 email_thread_unarchive:
   method: POST
@@ -131,7 +124,7 @@ email_thread_unarchive:
   - { type: literal, value: email_threads }
   - { type: var, name: id }
   - { type: literal, value: unarchived }
-  headers: *auth_header
+  auth: *request_auth
 
 email_thread_snooze:
   method: POST
@@ -140,7 +133,7 @@ email_thread_snooze:
   - { type: literal, value: email_threads }
   - { type: var, name: id }
   - { type: literal, value: snooze }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -153,7 +146,7 @@ email_thread_unsnooze:
   - { type: literal, value: email_threads }
   - { type: var, name: id }
   - { type: literal, value: unsnooze }
-  headers: *auth_header
+  auth: *request_auth
 
 email_get:
   method: GET
@@ -161,14 +154,14 @@ email_get:
   - { type: literal, value: gmail }
   - { type: literal, value: emails }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 email_send:
   method: POST
   path:
   - { type: literal, value: gmail }
   - { type: literal, value: emails }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -185,7 +178,7 @@ email_reply:
   - { type: literal, value: emails }
   - { type: var, name: id }
   - { type: literal, value: reply }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -204,14 +197,14 @@ email_delete_in_thread:
   - { type: var, name: email_thread_id }
   - { type: literal, value: emails }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 draft_query:
   method: GET
   path:
   - { type: literal, value: gmail }
   - { type: literal, value: drafts }
-  headers: *auth_header
+  auth: *request_auth
   pagination: *appworld_page_index_limit
 
 draft_get:
@@ -220,14 +213,14 @@ draft_get:
   - { type: literal, value: gmail }
   - { type: literal, value: drafts }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 draft_create:
   method: POST
   path:
   - { type: literal, value: gmail }
   - { type: literal, value: drafts }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -268,7 +261,7 @@ draft_update:
   - { type: literal, value: gmail }
   - { type: literal, value: drafts }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -299,7 +292,7 @@ draft_delete:
   - { type: literal, value: gmail }
   - { type: literal, value: drafts }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 draft_send:
   method: POST
@@ -308,7 +301,7 @@ draft_send:
   - { type: literal, value: drafts }
   - { type: var, name: id }
   - { type: literal, value: send }
-  headers: *auth_header
+  auth: *request_auth
 
 profile_get:
   method: GET
@@ -340,7 +333,7 @@ category_sizes_get:
   path:
   - { type: literal, value: gmail }
   - { type: literal, value: category_sizes }
-  headers: *auth_header
+  auth: *request_auth
 
 email_thread_label:
   method: POST
@@ -349,7 +342,7 @@ email_thread_label:
   - { type: literal, value: email_threads }
   - { type: var, name: id }
   - { type: literal, value: label }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -362,7 +355,7 @@ email_thread_unlabel:
   - { type: literal, value: email_threads }
   - { type: var, name: id }
   - { type: literal, value: unlabel }
-  headers: *auth_header
+  auth: *request_auth
 
 email_thread_mark_spam:
   method: POST
@@ -371,7 +364,7 @@ email_thread_mark_spam:
   - { type: literal, value: email_threads }
   - { type: var, name: id }
   - { type: literal, value: spam }
-  headers: *auth_header
+  auth: *request_auth
 
 email_thread_mark_not_spam:
   method: POST
@@ -380,7 +373,7 @@ email_thread_mark_not_spam:
   - { type: literal, value: email_threads }
   - { type: var, name: id }
   - { type: literal, value: not_spam }
-  headers: *auth_header
+  auth: *request_auth
 
 email_forward:
   method: POST
@@ -391,7 +384,7 @@ email_forward:
   - { type: literal, value: emails }
   - { type: var, name: id }
   - { type: literal, value: forward }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -409,7 +402,7 @@ email_thread_forward:
   - { type: literal, value: email_threads }
   - { type: var, name: id }
   - { type: literal, value: forward }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -426,7 +419,7 @@ attachment_download:
   - { type: literal, value: gmail }
   - { type: literal, value: attachments }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -449,7 +442,7 @@ draft_attachment_upload:
   - { type: literal, value: drafts }
   - { type: var, name: draft_id }
   - { type: literal, value: attachments }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -469,4 +462,4 @@ draft_attachment_remove:
   - { type: var, name: draft_id }
   - { type: literal, value: attachments }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth

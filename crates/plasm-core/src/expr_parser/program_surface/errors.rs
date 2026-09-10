@@ -59,4 +59,3 @@ pub fn program_duplicate_return_node_error() -> String {
     "Program has multiple return expressions — bind each step (`filtered = e# | where …`), then one final return line."
         .to_string()
 }
-

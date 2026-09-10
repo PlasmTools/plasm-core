@@ -251,6 +251,7 @@ pub fn summarize_text_error_body(bytes: &[u8], _content_type: Option<&str>) -> S
 }
 
 /// Map catalog `conflict_rules` from a capability mapping template to a portable conflict.
+#[cfg(test)]
 pub fn workflow_conflict_from_http(
     mapping_template: &serde_json::Value,
     status: u16,

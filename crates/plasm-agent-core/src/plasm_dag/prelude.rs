@@ -32,8 +32,8 @@ pub(in crate::plasm_dag) use plasm_core::query_resolve;
 pub(in crate::plasm_dag) use plasm_core::row_composition::RowSuffix;
 pub(in crate::plasm_dag) use plasm_core::schema::{CapabilitySchema, EntityDef};
 pub(in crate::plasm_dag) use plasm_core::{
-    CapabilityKind, ChainExpr, ChainStep, Expr, GetExpr, PlasmInputRef, Predicate,
-    PromptPipelineConfig, Ref, SymbolMapCrossRequestCache, Value,
+    CapabilityKind, ChainExpr, Expr, GetExpr, PlasmInputRef, PromptPipelineConfig, Ref,
+    SymbolMapCrossRequestCache,
 };
 pub(in crate::plasm_dag) use serde_json::json;
 pub(in crate::plasm_dag) use std::cell::RefCell;

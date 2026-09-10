@@ -132,9 +132,6 @@ pub struct AuthResolver {
     provider: Arc<dyn SecretProvider>,
     /// Cached OAuth2 access token (populated lazily, refreshed on expiry).
     token_cache: RwLock<Option<CachedToken>>,
-    /// When non-empty after trim, HTTP [`Self::resolve`] returns this Bearer **before** resolving `scheme`
-    /// (session-bound share / instance credential). Empty / whitespace-only values are ignored.
-    session_bearer_override: Option<String>,
 }
 
 impl AuthResolver {
@@ -144,14 +141,7 @@ impl AuthResolver {
             scheme,
             provider,
             token_cache: RwLock::new(None),
-            session_bearer_override: None,
         }
-    }
-
-    /// Session-bound Bearer override for outbound HTTP (wins over catalog [`AuthScheme`] resolution).
-    pub fn with_session_bearer_override(mut self, token: Option<String>) -> Self {
-        self.session_bearer_override = token;
-        self
     }
 
     /// Create a resolver backed by the default [`EnvSecretProvider`].
@@ -166,15 +156,6 @@ impl AuthResolver {
     /// - For `Oauth2ClientCredentials`: returns the cached token if valid, otherwise
     ///   exchanges client credentials for a fresh token, caches it, then returns it.
     pub async fn resolve(&self) -> Result<ResolvedAuth, RuntimeError> {
-        if let Some(ref t) = self.session_bearer_override {
-            let trimmed = t.trim();
-            if !trimmed.is_empty() {
-                return Ok(ResolvedAuth {
-                    headers: vec![("Authorization".to_string(), format!("Bearer {}", trimmed))],
-                    query_params: vec![],
-                });
-            }
-        }
         match &self.scheme {
             AuthScheme::None => Ok(ResolvedAuth {
                 headers: vec![],
@@ -544,21 +525,5 @@ mod hosted_bearer_resolution_tests {
         let auth = r.resolve().await.expect("resolve");
         assert!(auth.headers.is_empty());
         assert!(auth.query_params.is_empty());
-    }
-
-    #[tokio::test]
-    async fn session_bearer_override_wins_when_catalog_optional_env_has_no_secret() {
-        let scheme = AuthScheme::BearerToken {
-            env: None,
-            hosted_kv: None,
-            optional_env: true,
-        };
-        let r = AuthResolver::new(scheme, Arc::new(EnvSecretProvider))
-            .with_session_bearer_override(Some("share-session-token".into()));
-        let auth = r.resolve().await.expect("resolve");
-        assert_eq!(
-            auth.headers,
-            vec![("Authorization".into(), "Bearer share-session-token".into())]
-        );
     }
 }

@@ -4,7 +4,7 @@ use super::value::{PlanDataInput, PlasmDataValue};
 use crate::plasm_monad::step::{EffectClass, ResultShape, SurfaceKind};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EffectTemplate {
     pub kind: SurfaceKind,
     pub qualified_entity: PlanQualifiedEntityKey,
@@ -18,7 +18,7 @@ pub struct EffectTemplate {
     pub input_bindings: Vec<super::value::PlanInputBinding>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeriveTemplate {
     pub kind: DeriveKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -30,7 +30,7 @@ pub struct DeriveTemplate {
     pub value: PlasmDataValue,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeriveKind {
     Map,

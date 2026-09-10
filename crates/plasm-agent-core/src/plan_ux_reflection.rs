@@ -356,7 +356,8 @@ fn widget_for_node(
         return match op {
             crate::plan_dry_display::PlanDryOp::Relation { .. } => PlanUxWidgetKind::RelationHop,
             crate::plan_dry_display::PlanDryOp::Render { .. } => PlanUxWidgetKind::RenderTemplate,
-            crate::plan_dry_display::PlanDryOp::ForEach { .. } | crate::plan_dry_display::PlanDryOp::IterateUntil { .. } => PlanUxWidgetKind::ForEach,
+            crate::plan_dry_display::PlanDryOp::ForEach { .. }
+            | crate::plan_dry_display::PlanDryOp::IterateUntil { .. } => PlanUxWidgetKind::ForEach,
             crate::plan_dry_display::PlanDryOp::Derive { .. } => PlanUxWidgetKind::Derive,
             crate::plan_dry_display::PlanDryOp::Data { .. } => PlanUxWidgetKind::Data,
             crate::plan_dry_display::PlanDryOp::Surface { kind, .. } => match kind {
@@ -381,7 +382,9 @@ fn widget_for_node(
             PlanUxWidgetKind::RenderTemplate
         }
         ValidatedPlanNode::Compute(_) => PlanUxWidgetKind::Compute,
-        ValidatedPlanNode::ForEach(_) | ValidatedPlanNode::IterateUntil(_) => PlanUxWidgetKind::ForEach,
+        ValidatedPlanNode::ForEach(_) | ValidatedPlanNode::IterateUntil(_) => {
+            PlanUxWidgetKind::ForEach
+        }
         ValidatedPlanNode::Derive(_) => PlanUxWidgetKind::Derive,
         ValidatedPlanNode::Data(_) => PlanUxWidgetKind::Data,
     }

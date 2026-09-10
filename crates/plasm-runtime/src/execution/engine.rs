@@ -12,6 +12,8 @@ use tracing::Instrument;
 
 #[derive(Clone, Default)]
 pub struct ExecuteOptions {
+    /// Exact request recipes compiled before execution begins.
+    pub compiled_catalog: Option<Arc<plasm_compile::CompiledCatalog>>,
     /// When set, each successful compiled HTTP/EVM operation appends [`crate::RequestFingerprint::to_hex`] (see [`ExecutionResult::request_fingerprints`]).
     pub request_fingerprint_sink: Option<std::sync::Arc<std::sync::Mutex<Vec<String>>>>,
     /// When set (non-empty after trim), HTTP(S) requests use this origin instead of [`ExecutionConfig::base_url`].
@@ -25,8 +27,7 @@ pub struct ExecuteOptions {
     /// When set, agent-core preflight already type-checked and placeholder-gated this expression.
     pub preflight: Option<plasm_core::PreflightToken>,
     /// When set, CML compilation for outbound HTTP sees reserved `plasm_execute_*` env keys
-    /// ([`merge_plasm_execute_session_env`]) plus Proof `proof_base_token` as `base_token`
-    /// ([`merge_plasm_execute_session_proof_base_token_env`]).
+    /// ([`merge_plasm_execute_session_env`]); scoped credentials resolve only at dispatch.
     pub execute_session: Option<std::sync::Arc<ExecuteSessionMaterial>>,
     /// Cooperative cancellation checked between pagination/hydration batches.
     pub cancel: Option<CancelSignal>,
@@ -36,9 +37,16 @@ pub struct ExecuteOptions {
     pub rows_progress: Option<RowsProgressFn>,
 }
 
+pub struct OverlaySourceOptions<'a> {
+    pub auth_resolver_override: Option<Arc<AuthResolver>>,
+    pub mode: ExecutionMode,
+    pub bind: Option<&'a IndexMap<String, String>>,
+}
+
 impl std::fmt::Debug for ExecuteOptions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ExecuteOptions")
+            .field("compiled_catalog", &self.compiled_catalog.is_some())
             .field(
                 "request_fingerprint_sink",
                 &self.request_fingerprint_sink.is_some(),
@@ -58,12 +66,36 @@ impl std::fmt::Debug for ExecuteOptions {
 }
 
 impl ExecuteOptions {
+    pub fn for_catalog(cgs: &CGS) -> Result<Self, RuntimeError> {
+        Ok(Self {
+            compiled_catalog: Some(Arc::new(plasm_compile::compile_cgs_capability_templates(
+                cgs,
+            )?)),
+            ..Self::default()
+        })
+    }
+
     /// View scope injection context derived from this execute call's session material / HTTP base.
     pub fn view_ambient(&self) -> ViewAmbientContext {
         if let Some(material) = self.execute_session.as_ref() {
             return ViewAmbientContext::from_execute_material(material.as_ref());
         }
         ViewAmbientContext::from_http_backend(self.http_base_url_override.as_deref())
+    }
+
+    pub(crate) fn required_compiled_catalog(
+        &self,
+    ) -> Result<Arc<plasm_compile::CompiledCatalog>, RuntimeError> {
+        self.compiled_catalog
+            .clone()
+            .or_else(|| {
+                self.execute_session
+                    .as_ref()
+                    .map(|material| material.compiled_catalog.clone())
+            })
+            .ok_or_else(|| RuntimeError::ConfigurationError {
+                message: "execution requires an explicitly compiled catalog".into(),
+            })
     }
 }
 
@@ -99,6 +131,7 @@ impl ExecutionEngine {
         request_fingerprint_sink: Option<std::sync::Arc<std::sync::Mutex<Vec<String>>>>,
         federation: Option<std::sync::Arc<plasm_core::FederationDispatch>>,
         execute_session: Option<std::sync::Arc<ExecuteSessionMaterial>>,
+        compiled_catalog: Arc<plasm_compile::CompiledCatalog>,
         cancel: Option<CancelSignal>,
         rows_progress: Option<RowsProgressFn>,
         fut: Fut,
@@ -107,19 +140,25 @@ impl ExecutionEngine {
         Fut: std::future::Future<Output = T> + Send,
         T: Send,
     {
-        EXECUTION_EXECUTE_SESSION
-            .scope(execute_session, async move {
-                EXECUTION_FEDERATION
-                    .scope(federation, async move {
-                        EXECUTION_FINGERPRINT_SINK
-                            .scope(request_fingerprint_sink, async move {
-                                EXECUTION_AUTH_RESOLVER
-                                    .scope(auth_override, async move {
-                                        EXECUTION_CANCEL
-                                            .scope(cancel, async move {
-                                                EXECUTION_ROWS_PROGRESS
-                                                    .scope(rows_progress, async move {
-                                                        EXECUTION_HTTP_BASE.scope(base, fut).await
+        EXECUTION_COMPILED_CATALOG
+            .scope(compiled_catalog, async move {
+                EXECUTION_EXECUTE_SESSION
+                    .scope(execute_session, async move {
+                        EXECUTION_FEDERATION
+                            .scope(federation, async move {
+                                EXECUTION_FINGERPRINT_SINK
+                                    .scope(request_fingerprint_sink, async move {
+                                        EXECUTION_AUTH_RESOLVER
+                                            .scope(auth_override, async move {
+                                                EXECUTION_CANCEL
+                                                    .scope(cancel, async move {
+                                                        EXECUTION_ROWS_PROGRESS
+                                                            .scope(rows_progress, async move {
+                                                                EXECUTION_HTTP_BASE
+                                                                    .scope(base, fut)
+                                                                    .await
+                                                            })
+                                                            .await
                                                     })
                                                     .await
                                             })
@@ -189,32 +228,36 @@ impl ExecutionEngine {
     ) -> Result<Self, RuntimeError> {
         // GitHub and several other APIs reject requests without User-Agent (often HTML 403 → JSON parse errors).
         let per_host = config.per_host_max_inflight.max(1);
-        let mut builder = reqwest::Client::builder()
-            .user_agent(concat!(
-                "plasm-runtime/",
-                env!("CARGO_PKG_VERSION"),
-                " (+https://github.com)"
-            ))
-            .timeout(std::time::Duration::from_secs(config.timeout_seconds))
-            .pool_max_idle_per_host(per_host);
-        // Opt out of macOS SCDynamicStore / system proxy probes (and env proxies).
-        // Tests and locked-down agents set `PLASM_HTTP_NO_SYSTEM_PROXY=1`.
-        if std::env::var_os("PLASM_HTTP_NO_SYSTEM_PROXY").is_some_and(|v| {
-            matches!(
-                v.to_str().unwrap_or(""),
-                "1" | "true" | "TRUE" | "yes" | "YES"
-            )
-        }) {
-            builder = builder.no_proxy();
-        }
-        let client = builder.build().map_err(|e| RuntimeError::RequestError {
-            message: format!("Failed to create HTTP client: {e}"),
-            attempts: 1,
-            status: None,
-            body: None,
-        })?;
-
-        let inner = ReqwestHttpTransport::new(client);
+        let build_client = |redirects| {
+            let mut builder = reqwest::Client::builder()
+                .user_agent(concat!(
+                    "plasm-runtime/",
+                    env!("CARGO_PKG_VERSION"),
+                    " (+https://github.com)"
+                ))
+                .timeout(std::time::Duration::from_secs(config.timeout_seconds))
+                .pool_max_idle_per_host(per_host)
+                .redirect(redirects);
+            // Opt out of macOS SCDynamicStore / system proxy probes (and env proxies).
+            // Tests and locked-down agents set `PLASM_HTTP_NO_SYSTEM_PROXY=1`.
+            if std::env::var_os("PLASM_HTTP_NO_SYSTEM_PROXY").is_some_and(|v| {
+                matches!(
+                    v.to_str().unwrap_or(""),
+                    "1" | "true" | "TRUE" | "yes" | "YES"
+                )
+            }) {
+                builder = builder.no_proxy();
+            }
+            builder.build().map_err(|e| RuntimeError::RequestError {
+                message: format!("Failed to create HTTP client: {e}"),
+                attempts: 1,
+                status: None,
+                body: None,
+            })
+        };
+        let client = build_client(reqwest::redirect::Policy::default())?;
+        let scoped_client = build_client(reqwest::redirect::Policy::none())?;
+        let inner = ReqwestHttpTransport::new(client).with_scoped_client(scoped_client);
         let policy = HttpResiliencePolicy::from(&config);
         let transport = ResilientHttpTransport::new(inner, policy);
 
@@ -244,11 +287,10 @@ impl ExecutionEngine {
     pub async fn fetch_overlay_source_response(
         &self,
         cgs: &CGS,
+        compiled_catalog: &plasm_compile::CompiledCatalog,
         capability_name: &str,
         http_base: &str,
-        auth_resolver_override: Option<Arc<AuthResolver>>,
-        mode: ExecutionMode,
-        bind: Option<&IndexMap<String, String>>,
+        options: OverlaySourceOptions<'_>,
     ) -> Result<serde_json::Value, RuntimeError> {
         use plasm_core::value::Value;
         use plasm_core::CapabilityKind;
@@ -268,21 +310,9 @@ impl ExecutionEngine {
                 ),
             });
         }
-        let mapping = cap
-            .mapping
-            .as_ref()
-            .ok_or_else(|| RuntimeError::ConfigurationError {
-                message: format!(
-                    "schema overlay source capability '{capability_name}' has no CML mapping"
-                ),
-            })?;
-        let template = parse_capability_template(&mapping.template.0).map_err(|e| {
-            RuntimeError::ConfigurationError {
-                message: format!("schema overlay source template: {e}"),
-            }
-        })?;
+        let template = compiled_catalog.capability(capability_name)?.clone();
         let mut env = CmlEnv::new();
-        if let Some(bind) = bind {
+        if let Some(bind) = options.bind {
             for (key, value) in bind {
                 env.insert(key.clone(), Value::String(value.clone()));
             }
@@ -292,14 +322,15 @@ impl ExecutionEngine {
         let base = http_base.trim().trim_end_matches('/').to_string();
         Self::run_in_execute_task_scopes(
             base.into(),
-            auth_resolver_override,
+            options.auth_resolver_override,
             None,
             None,
             None,
+            Arc::new(compiled_catalog.clone()),
             None,
             None,
             async move {
-                self.execute_with_replay(&compiled, mode, None)
+                self.execute_with_replay(&compiled, options.mode, None)
                     .await
                     .map(|(j, _)| j)
             },
@@ -328,6 +359,31 @@ impl ExecutionEngine {
         mode: ExecutionMode,
         mat: Option<&mut SessionMaterialization>,
     ) -> Result<(serde_json::Value, Option<String>, ExecutionSource), RuntimeError> {
+        if matches!(compiled, CompiledOperation::CredentialBind(_)) {
+            if mode != ExecutionMode::Live {
+                return Err(crate::credentials::credential_error(
+                    "credential effects require live reviewed execution",
+                ));
+            }
+            let (response, link) = self.execute_operation_full(compiled).await?;
+            return Ok((response, link, ExecutionSource::Live));
+        }
+        if let CompiledOperation::Http(request) | CompiledOperation::GraphQl(request) = compiled {
+            if request.credential.is_some() {
+                // A cached response never grants authority after a reference expires or changes scope.
+                self.resolve_compiled_http_auth(request).await?;
+                if self.transport.injects_host_auth() {
+                    // Delegated injection is validated at dispatch, so a cache cannot bypass it.
+                    if mode != ExecutionMode::Live {
+                        return Err(crate::credentials::credential_error(
+                            "scoped delegated authentication requires live dispatch",
+                        ));
+                    }
+                    let (response, link) = self.execute_operation_full(compiled).await?;
+                    return Ok((response, link, ExecutionSource::Live));
+                }
+            }
+        }
         let fingerprint = crate::RequestFingerprint::from_operation(compiled);
         let mut consult = CacheTelemetry::default();
 
@@ -411,6 +467,30 @@ impl ExecutionEngine {
     ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
         let fp = crate::RequestFingerprint::from_operation(operation);
         let out = match operation {
+            CompiledOperation::CredentialBind(binding) => {
+                let base = self.effective_http_base_for_request();
+                let (store, scope) = super::http_exec::credential_scope(
+                    &binding.slot,
+                    &binding.resource,
+                    base.as_ref(),
+                )?;
+                if scope.origin != binding.origin {
+                    return Err(crate::credentials::credential_error(
+                        "credential binding origin does not match the executing catalog origin",
+                    ));
+                }
+                let reference = store
+                    .bind(scope, binding.source, binding.lifetime_seconds)
+                    .await?;
+                append_request_fingerprint(
+                    crate::RequestFingerprint::from_credential_reference(reference.as_str())
+                        .to_hex(),
+                );
+                return Ok((
+                    serde_json::json!({"reference": reference.as_str(), "resource": binding.resource}),
+                    None,
+                ));
+            }
             CompiledOperation::Http(request) => self.execute_http_request_full(request).await,
             CompiledOperation::GraphQl(request) => self.execute_http_request_full(request).await,
             CompiledOperation::EvmCall(request) => {
@@ -487,6 +567,7 @@ impl ExecutionEngine {
             let fp_sink = opts.request_fingerprint_sink.clone();
             let federation = opts.federation.clone();
             let execute_session = opts.execute_session.clone();
+            let compiled_catalog = opts.required_compiled_catalog()?;
             let cancel = opts.cancel.clone();
             let rows_progress = opts.rows_progress.clone();
             let mut result = Self::run_in_execute_task_scopes(
@@ -495,6 +576,7 @@ impl ExecutionEngine {
                 fp_sink.clone(),
                 federation,
                 execute_session,
+                compiled_catalog,
                 cancel,
                 rows_progress,
                 async move {

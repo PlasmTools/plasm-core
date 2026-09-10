@@ -78,11 +78,6 @@ pub fn execute_cli_expression(entity_cli_name: &str) -> Span {
 // --- MCP ---------------------------------------------------------------------
 
 #[inline]
-pub(crate) fn mcp_tool_discover_capabilities() -> Span {
-    tracing::info_span!("plasm_agent.mcp.tool.discover_capabilities")
-}
-
-#[inline]
 pub(crate) fn mcp_tool_plasm_context(logical_session_ref: &str) -> Span {
     tracing::info_span!(
         "plasm_agent.mcp.tool.plasm_context",
@@ -304,11 +299,6 @@ pub(crate) fn session_load_binding(parent: &Span, entry_id: &str) -> Span {
 #[inline]
 pub(crate) fn execute_run_post() -> Span {
     tracing::info_span!("plasm_agent.execute.run_post")
-}
-
-#[inline]
-pub(crate) fn discover_query() -> Span {
-    tracing::info_span!("plasm_agent.discover.query")
 }
 
 #[inline]

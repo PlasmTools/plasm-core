@@ -13,13 +13,12 @@ data_classes:
 entities:
   Team:
     id_field: id
-    description: 'A collaboration team in Microsoft Teams: a shared space for channels, apps, and members in the signed-in
-      user’s organization.'
+    description: 'A collaboration team in Microsoft Teams: a shared space for channels, apps, and members
+      in the signed-in user’s organization.'
     discovery:
       names:
       - team
       - teams team
-      seed_class: ambient
     fields:
       id:
         required: true
@@ -43,8 +42,7 @@ entities:
       channels:
         target: Channel
         cardinality: many
-        discovery:
-          seed_nav: locate
+        discovery: null
         materialize:
           kind: query_scoped_bindings
           capability: channel_query
@@ -60,7 +58,6 @@ entities:
       - team channel
       - channel history
       - message history
-      seed_class: primary
     fields:
       id:
         required: true
@@ -90,8 +87,7 @@ entities:
       messages:
         target: ChannelMessage
         cardinality: many
-        discovery:
-          seed_nav: own
+        discovery: null
         materialize:
           kind: query_scoped_bindings
           capability: channel_message_query
@@ -123,8 +119,7 @@ entities:
       messages:
         target: ChatMessage
         cardinality: many
-        discovery:
-          seed_nav: own
+        discovery: null
         materialize:
           kind: query_scoped_bindings
           capability: chat_message_query
@@ -183,7 +178,6 @@ entities:
       names:
       - message
       - team message
-      seed_class: primary
     fields:
       id:
         required: true
@@ -235,7 +229,8 @@ capabilities:
     - webUrl
     - isArchived
   team_get:
-    description: Full team record for a known team identifier, including archive state when the service returns it.
+    description: Full team record for a known team identifier, including archive state when the service
+      returns it.
     kind: get
     entity: Team
     provides:
@@ -249,6 +244,10 @@ capabilities:
     description: List channels in a team.
     kind: query
     entity: Channel
+    scope:
+    - name: teamId
+      value_ref: nv_channel_query_team_id
+      required: true
     provides:
     - id
     - displayName
@@ -258,17 +257,14 @@ capabilities:
     - membershipType
     - isFavoriteByDefault
     - createdDateTime
-    parameters:
-    - name: teamId
-      value_ref: nv_channel_query_team_id
-      required: true
-      role: scope
-    selection: []
-    scope: []
   channel_get:
     description: Get a channel in a team when both team and channel identifiers are known.
     kind: get
     entity: Channel
+    scope:
+    - name: teamId
+      value_ref: nv_channel_get_team_id
+      required: true
     provides:
     - id
     - displayName
@@ -278,11 +274,6 @@ capabilities:
     - membershipType
     - isFavoriteByDefault
     - createdDateTime
-    parameters:
-    - name: teamId
-      value_ref: nv_channel_get_team_id
-      required: true
-      role: scope
   chat_query:
     description: List chats the signed-in user participates in.
     kind: query
@@ -313,6 +304,10 @@ capabilities:
       target_terms:
       - chat message
       - conversation
+    scope:
+    - name: chatId
+      value_ref: nv_chat_message_query_chat_id
+      required: true
     provides:
     - id
     - bodyContent
@@ -324,17 +319,14 @@ capabilities:
     - importance
     - messageType
     - webUrl
-    parameters:
-    - name: chatId
-      value_ref: nv_chat_message_query_chat_id
-      required: true
-      role: scope
-    selection: []
-    scope: []
   chat_message_get:
     description: Get a message in a chat when both chat and message identifiers are known.
     kind: get
     entity: ChatMessage
+    scope:
+    - name: chatId
+      value_ref: nv_chat_message_get_chat_id
+      required: true
     provides:
     - id
     - bodyContent
@@ -346,11 +338,6 @@ capabilities:
     - importance
     - messageType
     - webUrl
-    parameters:
-    - name: chatId
-      value_ref: nv_chat_message_get_chat_id
-      required: true
-      role: scope
   channel_message_query:
     description: List channel messages in channel history (materialize for Channel.messages).
     kind: query
@@ -358,6 +345,13 @@ capabilities:
     discovery:
       target_terms:
       - team message
+    scope:
+    - name: teamId
+      value_ref: nv_channel_message_query_team_id
+      required: true
+    - name: channelId
+      value_ref: nv_channel_message_query_channel_id
+      required: true
     provides:
     - id
     - bodyContent
@@ -369,21 +363,17 @@ capabilities:
     - importance
     - messageType
     - webUrl
-    parameters:
-    - name: teamId
-      value_ref: nv_channel_message_query_team_id
-      required: true
-      role: scope
-    - name: channelId
-      value_ref: nv_channel_message_query_channel_id
-      required: true
-      role: scope
-    selection: []
-    scope: []
   channel_message_get:
     description: Get a channel message when team, channel, and message identifiers are known.
     kind: get
     entity: ChannelMessage
+    scope:
+    - name: teamId
+      value_ref: nv_channel_message_get_team_id
+      required: true
+    - name: channelId
+      value_ref: nv_channel_message_get_channel_id
+      required: true
     provides:
     - id
     - bodyContent
@@ -395,35 +385,28 @@ capabilities:
     - importance
     - messageType
     - webUrl
-    parameters:
-    - name: teamId
-      value_ref: nv_channel_message_get_team_id
-      required: true
-      role: scope
-    - name: channelId
-      value_ref: nv_channel_message_get_channel_id
-      required: true
-      role: scope
   channel_message_send:
     description: Post a message into a team channel.
     kind: action
     entity: ChannelMessage
-    parameters:
+    scope:
     - name: teamId
       value_ref: nv_channel_message_send_team_id
       required: true
-      role: scope
     - name: channelId
       value_ref: nv_channel_message_send_channel_id
       required: true
-      role: scope
-    - name: bodyContent
-      value_ref: nv_channel_message_send_body_content
-      required: true
-      sink_class: external_send
-    - name: bodyContentType
-      value_ref: nv_channel_message_send_body_content_type
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: bodyContent
+          value_ref: nv_channel_message_send_body_content
+          required: true
+          sink_class: external_send
+        - name: bodyContentType
+          value_ref: nv_channel_message_send_body_content_type
+          required: false
     output:
       type: side_effect
       description: Posts a new message into the team channel conversation.
@@ -431,18 +414,21 @@ capabilities:
     description: Send a message into a chat conversation.
     kind: action
     entity: ChatMessage
-    parameters:
+    scope:
     - name: chatId
       value_ref: nv_chat_message_send_chat_id
       required: true
-      role: scope
-    - name: bodyContent
-      value_ref: nv_chat_message_send_body_content
-      required: true
-      sink_class: external_send
-    - name: bodyContentType
-      value_ref: nv_chat_message_send_body_content_type
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: bodyContent
+          value_ref: nv_chat_message_send_body_content
+          required: true
+          sink_class: external_send
+        - name: bodyContentType
+          value_ref: nv_chat_message_send_body_content_type
+          required: false
     output:
       type: side_effect
       description: Sends a new message into the chat conversation.

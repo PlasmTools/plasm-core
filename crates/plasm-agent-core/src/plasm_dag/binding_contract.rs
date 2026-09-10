@@ -92,8 +92,7 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
             // MutationResult writers decode entity rows → StaticSingleton + RelationDot (PLP-1).
             let mutation_result =
                 matches!(result_shape, crate::plasm_plan::ResultShape::MutationResult);
-            let read_get =
-                matches!(kind, PlanNodeKind::Get) || matches!(parsed.expr, Expr::Get(_));
+            let read_get = matches!(kind, PlanNodeKind::Get) || matches!(parsed.expr, Expr::Get(_));
             let read_list = matches!(kind, PlanNodeKind::Query | PlanNodeKind::Search);
             let row_surface = read_get
                 || read_list
@@ -243,7 +242,9 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
                 anchor: ContinuationAnchor::None,
             }
         }
-        DagNodeSource::Derive { .. } | DagNodeSource::ForEach { .. } | DagNodeSource::IterateUntil { .. } => ProgramBindingContract {
+        DagNodeSource::Derive { .. }
+        | DagNodeSource::ForEach { .. }
+        | DagNodeSource::IterateUntil { .. } => ProgramBindingContract {
             label: label.to_string(),
             row_entity: QualifiedEntityKey {
                 entry_id: String::new(),
@@ -465,7 +466,7 @@ mod tests {
         let create_parsed = ParsedExpr::from_expr(Expr::Create(CreateExpr {
             capability: "create".into(),
             entity: "AuthSession".into(),
-            input: InvokeInputPayload::Raw(Value::Object(Default::default())),
+            input: InvokeInputPayload::Raw(plasm_core::Value::Object(Default::default())),
             catalog_entry_id: CatalogEntryStamp::none(),
             dotted_receiver: None,
         }));
@@ -477,7 +478,8 @@ mod tests {
             result_shape: crate::plasm_plan::ResultShape::MutationResult,
             uses_result: Vec::new(),
         };
-        let create_c = program_binding_contract_for_source(&state, "created", "e1.m1()", &create_src);
+        let create_c =
+            program_binding_contract_for_source(&state, "created", "e1.m1()", &create_src);
         assert!(matches!(
             create_c.row_cardinality,
             RowCardinalityProof::StaticSingleton

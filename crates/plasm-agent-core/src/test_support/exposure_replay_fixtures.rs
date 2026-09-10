@@ -4,9 +4,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use indexmap::IndexMap;
-use plasm_core::discovery::InMemoryCgsRegistry;
+use plasm_core::discovery::CgsRegistry;
 use plasm_core::loader::load_schema_dir;
-use plasm_core::MutatorAdmit;
 use plasm_core::{CgsContext, SymbolMap, TeachingExposureSession, CGS};
 use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 
@@ -24,8 +23,8 @@ pub fn matrix_language_matrix_cgs() -> Arc<CGS> {
     Arc::new(load_schema_dir(&matrix_language_matrix_dir()).expect("plasm_language_matrix"))
 }
 
-pub fn matrix_federated_registry(cgs: Arc<CGS>) -> Arc<InMemoryCgsRegistry> {
-    Arc::new(InMemoryCgsRegistry::from_pairs(vec![
+pub fn matrix_federated_registry(cgs: Arc<CGS>) -> Arc<CgsRegistry> {
+    Arc::new(CgsRegistry::from_pairs(vec![
         (
             "linear".into(),
             "Linear".into(),
@@ -41,7 +40,7 @@ pub fn matrix_federated_registry(cgs: Arc<CGS>) -> Arc<InMemoryCgsRegistry> {
     ]))
 }
 
-pub fn matrix_federated_host(cgs: Arc<CGS>) -> (PlasmHostState, Arc<InMemoryCgsRegistry>) {
+pub fn matrix_federated_host(cgs: Arc<CGS>) -> (PlasmHostState, Arc<CgsRegistry>) {
     let reg = matrix_federated_registry(cgs);
     let engine = ExecutionEngine::new(ExecutionConfig::default()).expect("engine");
     let host = build_plasm_host_state(PlasmHostBootstrap {
@@ -99,10 +98,7 @@ pub fn interleaved_federated_matrix_fixture() -> InterleavedFederatedFixture {
         &ExposureCatalogWave {
             entry_id: "linear".to_string(),
             entities: vec!["LangItem".to_string()],
-            mutator_admit: MutatorAdmit::IntentOnly,
         },
-        None,
-        None,
     );
     apply_federate_exposure_wave(
         &mut live,
@@ -111,10 +107,7 @@ pub fn interleaved_federated_matrix_fixture() -> InterleavedFederatedFixture {
         &ExposureCatalogWave {
             entry_id: "github".to_string(),
             entities: vec!["LangDetail".to_string()],
-            mutator_admit: MutatorAdmit::IntentOnly,
         },
-        None,
-        None,
     );
     apply_federate_exposure_wave(
         &mut live,
@@ -123,10 +116,7 @@ pub fn interleaved_federated_matrix_fixture() -> InterleavedFederatedFixture {
         &ExposureCatalogWave {
             entry_id: "linear".to_string(),
             entities: vec!["LangTag".to_string()],
-            mutator_admit: MutatorAdmit::IntentOnly,
         },
-        None,
-        None,
     );
 
     InterleavedFederatedFixture {

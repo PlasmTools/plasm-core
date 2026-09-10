@@ -17,7 +17,6 @@ entities:
       - front page
       - hacker news story
       - story
-      seed_class: primary
     fields:
       id:
         required: true

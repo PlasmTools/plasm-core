@@ -268,8 +268,10 @@ fn for_each_plan_eval_env_interpolates_row_and_cross_binding_strings() {
         inputs,
         wire_coercion_by_alias: &empty_coercion,
     };
-    let out =
-        instantiate_expr_template_value(&serde_json::json!("{{ _.title }} / {{ report.content }}"), &env)
-            .expect("interpolate");
-    assert_eq!(out, serde_json::json!("Bolt / STATS"));
+    let out = plasm_core::render_program_string(
+        "{{ _.title }} / {{ report.content }}",
+        &plan_binding_scope_owned(&env),
+    )
+    .expect("interpolate");
+    assert_eq!(out, "Bolt / STATS");
 }

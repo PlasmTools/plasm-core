@@ -177,6 +177,23 @@ mod tests {
     use crate::symbol_tuning::{teaching_exposure_session_from_focus, FocusSpec};
 
     #[test]
+    fn required_entity_reference_scope_has_executable_teaching() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/scoped_query_matrix");
+        let cgs = load_schema_dir_unvalidated(&path).unwrap();
+        let exposure = teaching_exposure_session_from_focus(&cgs, FocusSpec::All);
+        let map = exposure.symbol_map_arc();
+        for entity in ["Child", "ChildWithParent"] {
+            let expression = format!("{entity}{{parent_id=Parent(\"parent-one\")}}");
+            let mut parsed = crate::expr_parser::parse(&expression, &cgs).unwrap();
+            crate::normalize_expr_query_capabilities(&mut parsed.expr, &cgs).unwrap();
+            crate::type_check_expr(&parsed.expr, &cgs).unwrap();
+            assert!(super::super::domain_example_line_count(&cgs, entity, Some(&map)) > 0);
+        }
+        crate::loader::load_schema_dir(&path).unwrap();
+    }
+
+    #[test]
     fn proof_document_edit_v2_dotted_call_line_validates() {
         let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/proof");
         if !p.is_dir() {

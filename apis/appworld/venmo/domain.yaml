@@ -1,4 +1,4 @@
-version: 11
+version: 17
 entry_id: venmo
 data_classes:
   untrusted:
@@ -19,12 +19,12 @@ values:
     description: OAuth token type from login.
     enum:
     - bearer
-  nv_login_username:
-    type: email
-    description: Task-principal email from Supervisor — account-holder login username, not a payment counterparty.
   nv_email:
     type: email
-    description: Email of a Venmo user (profile or counterparty).
+    description: Venmo user email (directory profile or payment counterparty) — not the account-holder login username.
+  nv_login_username:
+    type: email
+    description: Account-holder login username (task-principal email from Supervisor) — not a payment counterparty.
   nv_password:
     type: string
     description: Account-holder password for this service.
@@ -42,7 +42,10 @@ values:
     enum:
     - received
     - sent
-    description: Whether to list payment requests received by you or sent by you.
+    description: >-
+      List shelf for payment requests: received = inbound asks for you to pay;
+      sent = asks you created for someone else to pay you. Not transaction
+      direction and not a synonym for outgoing.
   nv_transaction_shelf:
     type: enum
     enum:
@@ -145,6 +148,15 @@ values:
   nv_filter_date:
     type: iso8601_date
     description: Calendar date filter for min/max created_at (YYYY-MM-DD).
+  prerequisite_principal_email:
+    type: email
+    description: Account holder email.
+  prerequisite_principal_phone:
+    type: e164
+    description: Account holder phone number.
+  prerequisite_account_name:
+    type: string
+    description: Service account identifier.
 entities:
   AuthSession:
     id_field: access_token
@@ -155,8 +167,6 @@ entities:
       - logout
       - authentication
       - access token
-      seed_class: primary
-      co_seed_with: catalog_primary
     fields:
       access_token:
         value_ref: nv_access_token
@@ -170,13 +180,8 @@ entities:
       names:
       - user
       - person
-      - profile
-      - recipient
-      - counterparty
-      - who to pay
-      - who to request from
-      seed_class: primary
-      co_seed_with: catalog_primary
+      - directory
+      - recipient profile
     fields:
       email:
         value_ref: nv_email
@@ -199,7 +204,9 @@ entities:
           param: user_email
   Friend:
     id_field: email
-    description: Venmo friends list — resolve friends before paying or requesting money.
+    description: >-
+      Venmo friendship — peer identity for payees and payment-request counterparties
+      (email is the counterparty key used as `user_email` on send/request creates).
     discovery:
       names:
       - friend
@@ -212,12 +219,14 @@ entities:
       - from my friend
       - named friend
       - friend named
-      seed_class: primary
-      co_seed_with: catalog_primary
+      - counterparty
+      - who to pay
+      - who to request from
     fields:
       email:
         value_ref: nv_email
         required: true
+        description: Friend peer email — the counterparty identity bound as `user_email` on pay/request creates.
       first_name:
         value_ref: nv_person_name
       last_name:
@@ -237,7 +246,6 @@ entities:
       - withdraw
       - deposit
       - cash out
-      seed_class: primary
     fields:
       venmo_balance:
         value_ref: nv_amount
@@ -245,8 +253,7 @@ entities:
   BankTransfer:
     id_field: bank_transfer_id
     primary_query: bank_transfer_query
-    description: History of money moved between a linked payment card and Venmo balance (deposits and cash-outs) — not peer-to-peer
-      payments (use Transaction).
+    description: History of money moved between a linked payment card and Venmo balance (deposits and cash-outs) — not peer-to-peer payments.
     discovery:
       names:
       - bank transfer
@@ -255,7 +262,6 @@ entities:
       - cash out history
       - card to venmo
       - venmo to card
-      seed_class: primary
     fields:
       bank_transfer_id:
         value_ref: nv_bank_transfer_id
@@ -280,10 +286,10 @@ entities:
     discovery:
       names:
       - transaction
-      - payment
-      - transfer
-      - pay
-      seed_class: primary
+      - completed transfer
+      - peer transfer
+      - send money
+      - pay someone
     fields:
       transaction_id:
         value_ref: nv_transaction_id
@@ -333,8 +339,9 @@ entities:
         - name
   PaymentRequest:
     id_field: payment_request_id
-    primary_query: payment_request_received_query
-    description: Payment requests you received (others asking you to pay). Not completed transfers (use Transaction) or card↔balance moves (use Balance).
+    primary_query: payment_request_query
+    description: >-
+      An ask that one Venmo user pay another, not a completed transfer.
     discovery:
       names:
       - payment request
@@ -347,7 +354,6 @@ entities:
       - charge someone
       - approve request
       - pending request
-      seed_class: primary
     fields:
       payment_request_id:
         value_ref: nv_payment_request_id
@@ -368,6 +374,30 @@ entities:
         value_ref: nv_timestamp
       private:
         value_ref: nv_private
+      sender_email:
+        value_ref: nv_email
+        required: false
+        path:
+        - sender
+        - email
+      sender_name:
+        value_ref: nv_person_name
+        required: false
+        path:
+        - sender
+        - name
+      receiver_email:
+        value_ref: nv_email
+        required: false
+        path:
+        - receiver
+        - email
+      receiver_name:
+        value_ref: nv_person_name
+        required: false
+        path:
+        - receiver
+        - name
   PaymentCard:
     id_field: payment_card_id
     description: A linked payment card used to fund balance moves and approve payment requests.
@@ -378,7 +408,6 @@ entities:
       - funding source
       - card ending
       - last four
-      seed_class: primary
     fields:
       payment_card_id:
         value_ref: nv_payment_card_id
@@ -404,7 +433,6 @@ entities:
       names:
       - transaction comment
       - comment
-      seed_class: dependent
     fields:
       comment_id:
         value_ref: nv_comment_id
@@ -427,7 +455,6 @@ entities:
       - notification
       - alert
       - inbox
-      seed_class: ambient
     fields:
       notification_id:
         value_ref: nv_notification_id
@@ -462,8 +489,8 @@ capabilities:
     - access_token
     - token_type
     output:
-      type: side_effect
-      description: Creates an authenticated Venmo session.
+      type: entity
+      entity_type: AuthSession
   logout:
     description: Invalidate an authenticated Venmo session.
     kind: action
@@ -479,7 +506,7 @@ capabilities:
       type: side_effect
       description: Ends the Venmo session represented by the access token.
   user_search:
-    description: Search Venmo users by name or email. Results are fuzzy — before treating someone as on Venmo, confirm an exact email match on a returned row.
+    description: Search Venmo users by name or email. Results are fuzzy — before treating someone as on Venmo, confirm an exact email match on a returned candidate.
     kind: search
     entity: User
     selection:
@@ -513,7 +540,9 @@ capabilities:
     - registered_at
     - friends_since
   friend_query:
-    description: Search friends or list another user's friends.
+    description: >-
+      Search or list Venmo friends (fuzzy `query` may return several peers).
+      Each row's `email` is the counterparty identity for pay/request `user_email`.
     kind: query
     entity: Friend
     discovery:
@@ -751,11 +780,10 @@ capabilities:
           value_ref: nv_private
     provides:
     - transaction_id
-  payment_request_received_query:
-    description: 'List payment requests by polarity — received (money others asked you to pay) or sent (money you asked others
-      to pay). Filter by status when needed.
-
-      '
+  payment_request_query:
+    description: >-
+      List existing payment-request rows (inbound asks versus asks you created).
+      Optional status filter.
     kind: query
     entity: PaymentRequest
     discovery:
@@ -767,9 +795,6 @@ capabilities:
       - pending
       target_terms:
       - payment request
-      - requested money
-      - charge
-      - money request
     selection:
     - name: access_token
       value_ref: nv_access_token
@@ -777,7 +802,9 @@ capabilities:
     - name: polarity
       value_ref: nv_payment_request_polarity
       required: true
-      description: received | sent
+      description: >-
+        received = inbound (others asked you to pay); sent = outbound asks you created.
+        Wire members are exactly received and sent, not outgoing or incoming.
     - name: status
       value_ref: nv_status
     provides:
@@ -789,6 +816,10 @@ capabilities:
     - approved_at
     - denied_at
     - private
+    - sender_email
+    - sender_name
+    - receiver_email
+    - receiver_name
   payment_request_create:
     description: Ask another Venmo user to pay you (create a sent payment request).
     kind: create
@@ -814,6 +845,9 @@ capabilities:
         - name: user_email
           value_ref: nv_email
           required: true
+          description: >-
+            Counterparty Venmo email — who you ask to pay you (friend/directory peer,
+            never the account-holder login username).
         - name: amount
           value_ref: nv_amount
           required: true
@@ -1144,3 +1178,365 @@ capabilities:
 auth:
   scheme: none
 http_backend: http://127.0.0.1:9000
+prerequisites:
+  contracts:
+    appworld.principal:
+      version: 1
+      inputs: {}
+      outputs:
+        email: prerequisite_principal_email
+        phone: prerequisite_principal_phone
+    appworld.password:
+      version: 1
+      inputs:
+        account: prerequisite_account_name
+      outputs:
+        password: nv_password
+    appworld.session:
+      version: 1
+      inputs: {}
+      outputs:
+        token: nv_access_token
+  providers:
+    session:
+      contract: appworld.session
+      capability: login
+      outputs:
+        token: access_token
+  requirements:
+    login:
+    - id: principal
+      contract: appworld.principal
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - username
+        output: email
+    - id: password
+      contract: appworld.password
+      arguments:
+        account:
+          kind: constant
+          value: venmo
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - password
+        output: password
+    logout:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    user_search:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    user_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    friend_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    friend_add:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    friend_remove:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    balance_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    balance_add:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    balance_withdraw:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    bank_transfer_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    transaction_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    transaction_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    transaction_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_request_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    payment_request_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_request_approve:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_request_deny:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_request_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_request_remind:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_request_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    transaction_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    transaction_like:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    transaction_unlike:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    transaction_comment_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    transaction_comment_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    transaction_comment_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_card_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    payment_card_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_card_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_card_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    notification_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    notification_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    notification_mark:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    notification_delete_all:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    notification_mark_all:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token

@@ -10,7 +10,7 @@ use serde_json::Map;
 use crate::mcp_delivery::McpDeliveryProfile;
 use crate::mcp_run_markdown::ArtifactAccessMode;
 use plasm_core::prompt_render::{
-    DISCOVER_TOOL_DESCRIPTION, PLASM_CONTEXT_TOOL_DESCRIPTION, PLASM_PROGRAM_PARAM_DESCRIPTION,
+    PLASM_CONTEXT_TOOL_DESCRIPTION, PLASM_PROGRAM_PARAM_DESCRIPTION,
     PLASM_READ_RUN_ARTIFACT_TOOL_DESCRIPTION, PLASM_RUN_TOOL_ARTIFACT_RESOURCES,
     PLASM_RUN_TOOL_ARTIFACT_TOOL, PLASM_RUN_TOOL_DESCRIPTION_BASE, PLASM_TOOL_DESCRIPTION,
 };
@@ -29,30 +29,6 @@ fn workflow_mcp_tools_enabled() -> bool {
     std::env::var("PLASM_MCP_WORKFLOW_TOOLS")
         .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
         .unwrap_or(false)
-}
-
-pub(crate) fn mcp_discover_tool_enabled() -> bool {
-    !mcp_semantic_auto_seed_enabled()
-}
-
-/// Runtime gate shared with [`mcp_discover_tool_enabled`] / plasm_context seeds schema.
-pub(crate) fn mcp_semantic_auto_seed_enabled() -> bool {
-    #[cfg(feature = "semantic-auto-seed")]
-    {
-        crate::discovery_seed_select::semantic_auto_seed_enabled()
-    }
-    #[cfg(not(feature = "semantic-auto-seed"))]
-    {
-        false
-    }
-}
-
-fn plasm_context_seeds_schema_description() -> &'static str {
-    if mcp_semantic_auto_seed_enabled() {
-        "Omit on both \"new\" and \"extend\" when semantic auto-seed is enabled (intent-only; rejected if passed). Host selects capabilities from `intent`. Manual `{api, entity}` / `{entry_id, entity}` seeds are only for hosts with auto-seed off."
-    } else {
-        "Required non-empty on session_mode \"new\" and \"extend\". Each object is `{api, entity}` (or `{entry_id, entity}`); entity names resolve case-insensitively to catalog keys."
-    }
 }
 
 pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: bool) -> Vec<Tool> {
@@ -80,59 +56,6 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
         }))
         .expect("logical_session_ref schema"),
     );
-    context_props.insert(
-        "seeds".into(),
-        serde_json::from_value(serde_json::json!({
-            "type": ["array", "null"],
-            "items": {
-                "type": "object",
-                "properties": {
-                    "api": { "type": "string" },
-                    "entry_id": { "type": "string" },
-                    "entity": { "type": "string" }
-                },
-                "required": ["entity"],
-                "anyOf": [
-                    { "required": ["api"] },
-                    { "required": ["entry_id"] }
-                ]
-            },
-            "description": plasm_context_seeds_schema_description()
-        }))
-        .expect("seeds schema"),
-    );
-    context_props.insert(
-            "ranked_capabilities".into(),
-            serde_json::from_value(serde_json::json!({
-                "type": ["array", "null"],
-                "items": { "type": "string" },
-                "description": "Optional capability **wire names**. When non-empty, **non-seeded** mutators must appear in this list and score against **`intent`**. Seeded entities always teach **query/search/get** (and `primary_read`); **create/update/delete/action** require intent overlap or this list. Omit on expand to keep the session list; send **`null`** or **`[]`** to clear."
-            }))
-            .expect("ranked_capabilities schema"),
-        );
-    context_props.insert(
-        "routing_ref".into(),
-        serde_json::from_value(serde_json::json!({
-            "type": ["string", "null"],
-            "description": "Optional clarify receipt (`rc_…`) from a prior clarify breakout. Requires `clarify_choice`. Deterministically continues without re-running semantic routing."
-        }))
-        .expect("routing_ref schema"),
-    );
-    context_props.insert(
-        "clarify_choice".into(),
-        serde_json::from_value(serde_json::json!({
-            "type": ["string", "number", "null"],
-            "description": "With `routing_ref`: 1-based alternative index or a `catalog:entity` id from the clarify breakout."
-        }))
-        .expect("clarify_choice schema"),
-    );
-    let mut discover_props = BTreeMap::new();
-    discover_props.insert(
-            "intent".into(),
-            json_schema_non_empty_string_type(
-                "One plain-language task description for the whole user goal. Returns catalog `api`/`entity` picks — not program symbols. Pass picks to plasm_context with session_mode new or extend.",
-            ),
-        );
     let mut plasm_program_props = BTreeMap::new();
     plasm_program_props.insert(
             "logical_session_ref".into(),
@@ -157,24 +80,6 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
             ),
         );
 
-    let discover_tool = Tool {
-        name: "discover_capabilities".into(),
-        title: Some("Browse capabilities (recovery)".into()),
-        description: Some(DISCOVER_TOOL_DESCRIPTION.into()),
-        input_schema: ToolInputSchema::new(vec!["intent".into()], Some(discover_props), None),
-        annotations: Some(ToolAnnotations {
-            read_only_hint: Some(true),
-            open_world_hint: Some(true),
-            ..Default::default()
-        }),
-        execution: Some(ToolExecution {
-            task_support: Some(ToolExecutionTaskSupport::Forbidden),
-        }),
-        icons: vec![],
-        meta: None,
-        output_schema: None,
-    };
-
     let mut tools = vec![Tool {
         name: "plasm_context".into(),
         title: Some("Open or extend Plasm context".into()),
@@ -196,11 +101,6 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
         meta: None,
         output_schema: None,
     }];
-
-    let include_discover_tool = mcp_discover_tool_enabled();
-    if include_discover_tool {
-        tools.push(discover_tool);
-    }
 
     tools.push(Tool {
         name: "plasm".into(),

@@ -1,15 +1,8 @@
 # Phone — AppWorld. Auth: login → access_token → Bearer header.
 
-_auth_header: &auth_header
-  type: object
-  fields:
-  - - Authorization
-    - type: format
-      template: "Bearer {token}"
-      vars:
-        token:
-          type: var
-          name: access_token
+_request_auth: &request_auth
+  scheme: bearer
+  token: { type: var, name: access_token }
 
 # AppWorld OpenAPI list endpoints use page_index (0-based) + page_limit (default 5, max 20).
 _appworld_page_index_limit: &appworld_page_index_limit
@@ -40,14 +33,14 @@ logout:
   - { type: literal, value: phone }
   - { type: literal, value: auth }
   - { type: literal, value: logout }
-  headers: *auth_header
+  auth: *request_auth
 
 contact_query:
   method: GET
   path:
   - { type: literal, value: phone }
   - { type: literal, value: contacts }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -67,7 +60,7 @@ contact_create:
   path:
   - { type: literal, value: phone }
   - { type: literal, value: contacts }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -110,7 +103,7 @@ contact_update:
   - { type: literal, value: phone }
   - { type: literal, value: contacts }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -161,14 +154,14 @@ contact_delete:
   - { type: literal, value: phone }
   - { type: literal, value: contacts }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 alarm_query:
   method: GET
   path:
   - { type: literal, value: phone }
   - { type: literal, value: alarms }
-  headers: *auth_header
+  auth: *request_auth
   pagination: *appworld_page_index_limit
 
 alarm_get:
@@ -177,14 +170,14 @@ alarm_get:
   - { type: literal, value: phone }
   - { type: literal, value: alarms }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 alarm_create:
   method: POST
   path:
   - { type: literal, value: phone }
   - { type: literal, value: alarms }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -221,7 +214,7 @@ alarm_update:
   - { type: literal, value: phone }
   - { type: literal, value: alarms }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -262,7 +255,7 @@ alarm_delete:
   - { type: literal, value: phone }
   - { type: literal, value: alarms }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 text_message_query:
   method: GET
@@ -276,7 +269,7 @@ text_message_query:
       right: { type: const, value: window }
     then_expr: { type: const, value: text/window }
     else_expr: { type: const, value: text }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -323,7 +316,7 @@ text_message_get:
   - { type: literal, value: messages }
   - { type: literal, value: text }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 text_message_send:
   method: POST
@@ -332,7 +325,7 @@ text_message_send:
   - { type: literal, value: messages }
   - { type: literal, value: text }
   - { type: var, name: phone_number }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -345,7 +338,7 @@ text_message_delete:
   - { type: literal, value: messages }
   - { type: literal, value: text }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 voice_message_query:
   method: GET
@@ -359,7 +352,7 @@ voice_message_query:
       right: { type: const, value: window }
     then_expr: { type: const, value: voice/window }
     else_expr: { type: const, value: voice }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -406,7 +399,7 @@ voice_message_send:
   - { type: literal, value: messages }
   - { type: literal, value: voice }
   - { type: var, name: phone_number }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -419,7 +412,7 @@ voice_message_delete:
   - { type: literal, value: messages }
   - { type: literal, value: voice }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 profile_get:
   method: GET
@@ -436,13 +429,13 @@ date_time_get:
   path:
   - { type: literal, value: phone }
   - { type: literal, value: date_time }
-  headers: *auth_header
+  auth: *request_auth
 
 contact_relationship_query:
   method: GET
   path:
   - { type: literal, value: phone }
   - { type: literal, value: contact_relationships }
-  headers: *auth_header
+  auth: *request_auth
   response:
     items: results

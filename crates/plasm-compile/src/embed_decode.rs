@@ -113,7 +113,7 @@ struct DecodedEntityCore {
 
 fn value_to_key_slot(v: &Value) -> Option<String> {
     match v {
-        Value::PlasmInputRef(_) => None,
+        Value::PlasmInputRef(_) | Value::StringTemplate(_) => None,
         Value::String(s) | Value::PhraseIdent(s) => Some(s.clone()),
         Value::Integer(i) => Some(i.to_string()),
         Value::Float(f) => {

@@ -1,15 +1,8 @@
 # Amazon — AppWorld. Auth: login → access_token → Bearer header.
 
-_auth_header: &auth_header
-  type: object
-  fields:
-  - - Authorization
-    - type: format
-      template: "Bearer {token}"
-      vars:
-        token:
-          type: var
-          name: access_token
+_request_auth: &request_auth
+  scheme: bearer
+  token: { type: var, name: access_token }
 
 # AppWorld OpenAPI list endpoints use page_index (0-based) + page_limit (default 5, max 20).
 _appworld_page_index_limit: &appworld_page_index_limit
@@ -39,14 +32,14 @@ logout:
   - { type: literal, value: amazon }
   - { type: literal, value: auth }
   - { type: literal, value: logout }
-  headers: *auth_header
+  auth: *request_auth
 
 profile_get:
   method: GET
   path:
   - { type: literal, value: amazon }
   - { type: literal, value: profile }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -62,7 +55,7 @@ product_query:
   path:
   - { type: literal, value: amazon }
   - { type: literal, value: products }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -114,14 +107,14 @@ product_get:
   - { type: literal, value: amazon }
   - { type: literal, value: products }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 seller_query:
   method: GET
   path:
   - { type: literal, value: amazon }
   - { type: literal, value: sellers }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -138,14 +131,14 @@ seller_get:
   - { type: literal, value: amazon }
   - { type: literal, value: sellers }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 product_type_query:
   method: GET
   path:
   - { type: literal, value: amazon }
   - { type: literal, value: product_types }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -162,7 +155,7 @@ product_feature_choices_query:
   path:
   - { type: literal, value: amazon }
   - { type: literal, value: product_feature_choices }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -178,7 +171,7 @@ cart_get:
   path:
   - { type: literal, value: amazon }
   - { type: literal, value: cart }
-  headers: *auth_header
+  auth: *request_auth
   response: single
 
 cart_item_query:
@@ -186,7 +179,7 @@ cart_item_query:
   path:
   - { type: literal, value: amazon }
   - { type: literal, value: cart }
-  headers: *auth_header
+  auth: *request_auth
   response:
     items_path: [cart_items]
 
@@ -195,7 +188,7 @@ wish_list_query:
   path:
   - { type: literal, value: amazon }
   - { type: literal, value: wish_list }
-  headers: *auth_header
+  auth: *request_auth
   response: bare_list
 
 wish_list_add:
@@ -204,7 +197,7 @@ wish_list_add:
   - { type: literal, value: amazon }
   - { type: literal, value: wish_list }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -225,7 +218,7 @@ wish_list_update_quantity:
   - { type: literal, value: amazon }
   - { type: literal, value: wish_lists }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -237,14 +230,14 @@ wish_list_remove:
   - { type: literal, value: amazon }
   - { type: literal, value: wish_list }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 wish_list_clear:
   method: DELETE
   path:
   - { type: literal, value: amazon }
   - { type: literal, value: wish_list }
-  headers: *auth_header
+  auth: *request_auth
 
 cart_move_to_wish_list:
   method: POST
@@ -252,7 +245,7 @@ cart_move_to_wish_list:
   - { type: literal, value: amazon }
   - { type: literal, value: cart_to_wish_list }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -268,7 +261,7 @@ wish_list_move_to_cart:
   - { type: literal, value: amazon }
   - { type: literal, value: wish_list_to_cart }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -284,7 +277,7 @@ cart_add_product:
   - { type: literal, value: amazon }
   - { type: literal, value: cart }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -305,7 +298,7 @@ cart_update_quantity:
   - { type: literal, value: amazon }
   - { type: literal, value: cart }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -317,21 +310,21 @@ cart_remove_product:
   - { type: literal, value: amazon }
   - { type: literal, value: cart }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 cart_clear:
   method: DELETE
   path:
   - { type: literal, value: amazon }
   - { type: literal, value: cart }
-  headers: *auth_header
+  auth: *request_auth
 
 cart_apply_promo:
   method: POST
   path:
   - { type: literal, value: amazon }
   - { type: literal, value: cart_promos }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -342,14 +335,14 @@ cart_remove_promo:
   path:
   - { type: literal, value: amazon }
   - { type: literal, value: cart_promos }
-  headers: *auth_header
+  auth: *request_auth
 
 order_query:
   method: GET
   path:
   - { type: literal, value: amazon }
   - { type: literal, value: orders }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -371,14 +364,14 @@ order_get:
   - { type: literal, value: amazon }
   - { type: literal, value: order }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 order_place:
   method: POST
   path:
   - { type: literal, value: amazon }
   - { type: literal, value: orders }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -391,7 +384,7 @@ order_receipt_download:
   - { type: literal, value: amazon }
   - { type: literal, value: order_receipt }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -416,14 +409,14 @@ address_query:
   path:
   - { type: literal, value: amazon }
   - { type: literal, value: addresses }
-  headers: *auth_header
+  auth: *request_auth
 
 address_create:
   method: POST
   path:
   - { type: literal, value: amazon }
   - { type: literal, value: addresses }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -440,7 +433,7 @@ address_delete:
   - { type: literal, value: amazon }
   - { type: literal, value: addresses }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 address_update:
   method: PATCH
@@ -448,7 +441,7 @@ address_update:
   - { type: literal, value: amazon }
   - { type: literal, value: addresses }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -488,14 +481,14 @@ payment_card_query:
   path:
   - { type: literal, value: amazon }
   - { type: literal, value: payment_cards }
-  headers: *auth_header
+  auth: *request_auth
 
 payment_card_create:
   method: POST
   path:
   - { type: literal, value: amazon }
   - { type: literal, value: payment_cards }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -512,7 +505,7 @@ payment_card_update:
   - { type: literal, value: amazon }
   - { type: literal, value: payment_cards }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -524,7 +517,7 @@ payment_card_delete:
   - { type: literal, value: amazon }
   - { type: literal, value: payment_cards }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 product_review_query:
   method: GET
@@ -533,7 +526,7 @@ product_review_query:
   - { type: literal, value: products }
   - { type: var, name: product_id }
   - { type: literal, value: reviews }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -576,7 +569,7 @@ product_review_create:
   - { type: literal, value: products }
   - { type: var, name: product_id }
   - { type: literal, value: reviews }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -598,7 +591,7 @@ product_review_update:
   - { type: literal, value: amazon }
   - { type: literal, value: reviews }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -624,14 +617,14 @@ product_review_delete:
   - { type: literal, value: amazon }
   - { type: literal, value: reviews }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 product_return_create:
   method: POST
   path:
   - { type: literal, value: amazon }
   - { type: literal, value: returns }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -645,7 +638,7 @@ return_deliverer_query:
   path:
   - { type: literal, value: amazon }
   - { type: literal, value: return_deliverers }
-  headers: *auth_header
+  auth: *request_auth
   response: bare_list
 
 prime_subscribe:
@@ -654,7 +647,7 @@ prime_subscribe:
   - { type: literal, value: amazon }
   - { type: literal, value: prime }
   - { type: literal, value: subscriptions }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -668,7 +661,7 @@ product_question_create:
   - { type: literal, value: products }
   - { type: var, name: product_id }
   - { type: literal, value: questions }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -680,7 +673,7 @@ product_question_update:
   - { type: literal, value: amazon }
   - { type: literal, value: questions }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -696,7 +689,7 @@ product_question_delete:
   - { type: literal, value: amazon }
   - { type: literal, value: questions }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 product_question_answer_update:
   method: PATCH
@@ -704,7 +697,7 @@ product_question_answer_update:
   - { type: literal, value: amazon }
   - { type: literal, value: question_answers }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -720,4 +713,4 @@ product_question_answer_delete:
   - { type: literal, value: amazon }
   - { type: literal, value: question_answers }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth

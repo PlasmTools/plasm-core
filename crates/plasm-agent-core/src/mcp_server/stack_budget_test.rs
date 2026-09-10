@@ -11,7 +11,7 @@ use serde_json::json;
 use crate::http::{build_plasm_host_state, PlasmHostBootstrap};
 use crate::mcp_server::call_tool_dispatch;
 use crate::mcp_server::PlasmMcpHandler;
-use plasm_core::discovery::InMemoryCgsRegistry;
+use plasm_core::discovery::CgsRegistry;
 use plasm_core::loader::load_schema_dir;
 use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 
@@ -33,7 +33,7 @@ fn host_from_schema_dir(
         unsafe { std::env::set_var("PLASM_HTTP_NO_SYSTEM_PROXY", "1") };
     }
     let cgs = Arc::new(load_schema_dir(dir).expect("schema"));
-    let reg = InMemoryCgsRegistry::from_pairs(vec![(
+    let reg = CgsRegistry::from_pairs(vec![(
         entry_id.into(),
         title.into(),
         vec![entry_id.into()],

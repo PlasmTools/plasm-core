@@ -513,7 +513,7 @@ async fn test_type_check_before_execution() {
             &mut cache,
             None,
             StreamConsumeOpts::default(),
-            ExecuteOptions::default(),
+            ExecuteOptions::for_catalog(&cgs).unwrap(),
         )
         .await;
     assert!(result.is_err());
@@ -536,7 +536,7 @@ async fn test_execute_get_rejects_domain_placeholder_id() {
             &mut cache,
             None,
             StreamConsumeOpts::default(),
-            ExecuteOptions::default(),
+            ExecuteOptions::for_catalog(&cgs).unwrap(),
         )
         .await;
     let err = res.expect_err("expected placeholder rejection");
@@ -921,6 +921,9 @@ async fn execute_http_respects_base_url_override() {
             None,
             StreamConsumeOpts::default(),
             ExecuteOptions {
+                compiled_catalog: Some(Arc::new(
+                    plasm_compile::compile_cgs_capability_templates(&cgs).unwrap(),
+                )),
                 http_base_url_override: Some("http://right-host".to_string()),
                 ..Default::default()
             },
@@ -984,7 +987,7 @@ fn execute_operation_parents_http_compiled_request_on_live_get() {
                     &mut cache,
                     None,
                     StreamConsumeOpts::default(),
-                    ExecuteOptions::default(),
+                    ExecuteOptions::for_catalog(&cgs).unwrap(),
                 )
                 .await;
         });
@@ -1008,12 +1011,15 @@ fn execute_operation_parents_http_compiled_request_on_live_get() {
 }
 
 #[tokio::test]
-async fn session_bearer_is_not_merged_into_cml_env() {
+async fn session_identity_does_not_inject_business_inputs() {
+    let cgs = create_test_cgs();
+    let compiled_catalog = Arc::new(plasm_compile::compile_cgs_capability_templates(&cgs).unwrap());
     let material = Arc::new(ExecuteSessionMaterial {
+        catalog_revision: "test-revision".into(),
+        compiled_catalog: compiled_catalog.clone(),
+        credential_store: None,
         prompt_hash: "a".repeat(64),
         session_id: "b".repeat(32),
-        share_token: Some("transport-secret".into()),
-        proof_base_token: Some("domain-precondition".into()),
         transport_origin: None,
         ui_origin: None,
         catalog_bind: None,
@@ -1025,100 +1031,21 @@ async fn session_bearer_is_not_merged_into_cml_env() {
         None,
         None,
         Some(material),
+        compiled_catalog,
         None,
         None,
         async {
             let mut env = CmlEnv::new();
-            merge_plasm_execute_session_proof_base_token_env(&mut env);
             merge_plasm_execute_session_env(&mut env);
 
             assert!(
                 !env.contains_key("share_token"),
                 "transport bearer must never enter CML env"
             );
-            assert_eq!(
-                env.get("base_token"),
-                Some(&Value::String("domain-precondition".into()))
-            );
+            assert!(!env.contains_key("base_token"));
         },
     )
     .await;
-}
-
-#[tokio::test]
-async fn empty_cml_env_still_sends_resolver_bearer() {
-    use crate::auth::ResolvedAuth;
-    use crate::http_transport::HttpTransport;
-    use async_trait::async_trait;
-    use plasm_compile::{CompiledRequest, HttpBodyFormat, HttpMethod};
-    use plasm_core::AuthScheme;
-    use std::sync::{Arc, Mutex};
-
-    struct RecordingTransport {
-        last_auth: Arc<Mutex<Option<ResolvedAuth>>>,
-    }
-
-    #[async_trait]
-    impl HttpTransport for RecordingTransport {
-        async fn send_compiled_http(
-            &self,
-            _base_url: &str,
-            _request: &CompiledRequest,
-            auth: Option<ResolvedAuth>,
-        ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
-            *self.last_auth.lock().unwrap() = auth;
-            Ok((serde_json::json!({}), None))
-        }
-
-        async fn get_json_absolute(
-            &self,
-            _url: &str,
-            _auth: Option<ResolvedAuth>,
-        ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
-            Ok((serde_json::json!({}), None))
-        }
-    }
-
-    let last = Arc::new(Mutex::new(None));
-    let resolver = crate::AuthResolver::new(
-        AuthScheme::BearerToken {
-            env: None,
-            hosted_kv: None,
-            optional_env: true,
-        },
-        Arc::new(crate::EnvSecretProvider),
-    )
-    .with_session_bearer_override(Some("resolver-secret".into()));
-    let engine = ExecutionEngine::new_with_transport(
-        ExecutionConfig {
-            base_url: Some("https://api.example.test".into()),
-            ..ExecutionConfig::default()
-        },
-        Arc::new(RecordingTransport {
-            last_auth: last.clone(),
-        }),
-        Some(resolver),
-    );
-    let request = CompiledRequest {
-        method: HttpMethod::Get,
-        path: "/v1/items".into(),
-        query: None,
-        body: None,
-        body_format: HttpBodyFormat::Json,
-        multipart: None,
-        headers: None,
-    };
-
-    engine
-        .execute_operation_full(&CompiledOperation::Http(request))
-        .await
-        .expect("HTTP execution");
-
-    let resolved = last.lock().unwrap().clone().expect("resolved auth");
-    assert_eq!(
-        resolved.headers,
-        vec![("Authorization".into(), "Bearer resolver-secret".into())]
-    );
 }
 
 #[tokio::test]
@@ -1182,6 +1109,9 @@ async fn execute_http_uses_session_auth_resolver_override_when_engine_has_none()
             None,
             StreamConsumeOpts::default(),
             ExecuteOptions {
+                compiled_catalog: Some(Arc::new(
+                    plasm_compile::compile_cgs_capability_templates(&cgs).unwrap(),
+                )),
                 auth_resolver_override: Some(override_resolver),
                 ..Default::default()
             },
@@ -1882,14 +1812,17 @@ fn graphql_mutation_success_true_decodes_normally() {
 }
 
 #[test]
-fn github_issue_query_decoder_includes_embedded_labels_relation() {
+fn collection_decoder_includes_preferred_embedded_relation() {
     use plasm_compile::decode_entities;
     use plasm_compile::DecodedRelation;
     use plasm_core::loader::load_schema_dir;
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/github");
-    let cgs = load_schema_dir(&dir).expect("load github catalog");
-    let cap = cgs.get_capability("issue_query").expect("issue_query");
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/plasm_language_matrix");
+    let cgs = load_schema_dir(&dir).expect("load language matrix");
+    let cap = cgs
+        .get_capability("langitem_query")
+        .expect("langitem_query");
     let capability_template =
         parse_capability_template(&cap.require_mapping().expect("cml mapping").template)
             .expect("parse template");
@@ -1898,45 +1831,40 @@ fn github_issue_query_decoder_includes_embedded_labels_relation() {
         _ => panic!("expected HTTP template"),
     };
     let decoder = create_entity_decoder_for_capability(
-        "Issue",
+        "LangItem",
         &cgs,
-        Some("issue_query"),
+        Some("langitem_query"),
         Some(http_collection_source(cml)),
         None,
         None,
     );
     assert!(
-        decoder.relations.iter().any(|r| r.relation == "labels"),
-        "Issue.labels prefer/from_parent_get must emit a relation decoder on issue_query"
+        decoder.relations.iter().any(|r| r.relation == "tags"),
+        "preferred embedded relations must have a decoder on collection queries"
     );
 
     let row = serde_json::json!({
-        "id": 42,
-        "number": 7,
-        "repository_url": "https://api.github.com/repos/acme/demo",
-        "title": "Bug",
-        "state": "open",
-        "labels": [
+        "id": "i1",
+        "title": "Item",
+        "tags": [
             {
-                "id": 1,
-                "name": "bug",
-                "color": "f29513",
-                "description": "label",
-                "default": false
+                "id": "t1",
+                "item_id": "i1",
+                "label": "Tag"
             }
         ]
     });
     let body = serde_json::json!([row]);
     let normalized =
         normalize_collection_response(body, response_bare_array_wrap_key(cml).as_str());
-    let decoded = decode_entities(&decoder, &normalized).expect("decode issues");
+    let decoded = decode_entities(&decoder, &normalized).expect("decode items");
     assert_eq!(decoded.len(), 1);
-    match decoded[0].relations.get("labels") {
+    match decoded[0].relations.get("tags") {
         Some(DecodedRelation::Specified(refs)) => {
             assert_eq!(refs.len(), 1);
             assert!(!decoded[0].embedded_entities.is_empty());
         }
-        other => panic!("expected Specified labels relation, got {other:?}"),
+        other => panic!("expected Specified tags relation, got {other:?}"),
     }
 }
 

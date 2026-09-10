@@ -232,7 +232,7 @@ fn for_each_write_template_does_not_trust_agent_authored_approval() {
 }
 
 #[test]
-fn reject_js_object_coercion_in_surface_and_templates() {
+fn display_is_inert_while_value_templates_validate() {
     let bad_surface = serde_json::json!({
         "version": 1,
         "kind": "program",
@@ -247,8 +247,7 @@ fn reject_js_object_coercion_in_surface_and_templates() {
         }],
         "return": { "kind": "node", "node": "n1" }
     });
-    let err = validate_plan_value(&bad_surface).expect_err("object coercion rejected");
-    assert!(err.contains("[object Object]"), "{err}");
+    validate_plan_value(&bad_surface).expect("display text is inert");
 
     let bad_template = serde_json::json!({
         "version": 1,
@@ -847,7 +846,7 @@ fn for_each_effect_template_rejects_undeclared_interpolation_alias() {
                             "op": "create",
                             "capability": "product_create",
                             "entity": "Product",
-                            "input": { "title": "<<T\n{{ missing.content }}\nT\n" }
+                            "input": { "title": {"__plasm_string_template": "{{ missing.content }}"} }
                         },
                         "input_bindings": []
                     },
@@ -909,4 +908,52 @@ fn render_template_rejects_dollar_interpolation_with_actionable_copy() {
     let err = validate_plan_artifact(&plan).expect_err("dollar interpolation rejected");
     assert!(err.contains("abolished") || err.contains("${"), "{err}");
     assert!(err.contains("Minijinja"), "{err}");
+}
+
+#[test]
+fn typed_operand_scope_is_checked_before_plan_admission() {
+    let mut plan: Plan = serde_json::from_value(serde_json::json!({
+        "version": 1, "kind": "program",
+        "nodes": [{
+            "id": "n1", "kind": "get",
+            "qualified_entity": {"entry_id": "matrix", "entity": "Item"},
+            "ir": {"expr": {"op": "get", "ref": {"entity_type": "Item", "key": "fixed"}}},
+            "effect_class": "read", "result_shape": "single"
+        }], "return": {"kind": "node", "node": "n1"}
+    }))
+    .unwrap();
+    for reference in [
+        plasm_core::PlasmInputRef::node_output("missing", vec!["id".into()]),
+        plasm_core::PlasmInputRef::row_binding("_", vec!["id".into()]),
+    ] {
+        let plasm_core::Expr::Get(get) = &mut plan.nodes[0].ir.as_mut().unwrap().expr else {
+            panic!("get")
+        };
+        get.reference.key =
+            plasm_core::EntityKey::Simple(plasm_core::IdentitySlot::binding(reference));
+        let error = validate_plan_artifact(&plan).expect_err("unbound operand rejected");
+        assert!(
+            error.contains("undeclared input alias") || error.contains("outside its scope"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn display_text_does_not_affect_executable_admission() {
+    let mut plan: Plan = serde_json::from_value(serde_json::json!({
+        "version": 1, "kind": "program",
+        "nodes": [{
+            "id": "n1", "kind": "query",
+            "qualified_entity": {"entry_id": "matrix", "entity": "Item"},
+            "ir": {"expr": {"op": "query", "entity": "Item"}},
+            "effect_class": "read", "result_shape": "list"
+        }], "return": {"kind": "node", "node": "n1"}
+    }))
+    .unwrap();
+    for display in ["Item", "[object Object]", "{{ missing }}", ""] {
+        plan.nodes[0].expr = Some(display.into());
+        plan.nodes[0].ir.as_mut().unwrap().display_expr = Some(display.into());
+        validate_plan_artifact(&plan).expect("display is inert");
+    }
 }

@@ -20,7 +20,6 @@ pub struct ExecuteSessionFixture {
     pub principal: Option<String>,
     pub catalog_cgs_hash: Option<String>,
     pub context_intent: Option<String>,
-    pub ranked_capabilities: Option<Vec<String>>,
 }
 
 impl ExecuteSessionFixture {
@@ -36,7 +35,6 @@ impl ExecuteSessionFixture {
             principal: None,
             catalog_cgs_hash: None,
             context_intent: None,
-            ranked_capabilities: None,
         }
     }
 
@@ -70,12 +68,16 @@ impl ExecuteSessionFixture {
         let catalog_cgs_hash = self
             .catalog_cgs_hash
             .unwrap_or_else(|| cgs.catalog_cgs_hash_hex());
-        ExecuteSession::new(
+        let compiled = Arc::new(
+            plasm_compile::compile_cgs_capability_templates(&cgs)
+                .expect("test catalog must compile"),
+        );
+        ExecuteSession::new_with_bindings(
             self.prompt_hash,
             self.prompt_text,
             cgs,
             contexts,
-            entry_id,
+            entry_id.clone(),
             self.tenant_scope,
             self.principal_subject,
             self.http_backend,
@@ -84,7 +86,8 @@ impl ExecuteSessionFixture {
             self.principal,
             catalog_cgs_hash,
             self.context_intent,
-            self.ranked_capabilities,
+            IndexMap::new(),
+            IndexMap::from([(entry_id, compiled)]),
         )
     }
 }

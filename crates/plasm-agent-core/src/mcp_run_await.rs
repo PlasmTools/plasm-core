@@ -234,7 +234,6 @@ mod tests {
             None,
             "hash".into(),
             None,
-            None,
         ));
         let handle = es.mint_operation_handle_plain();
         es.try_begin_async_operation(
@@ -297,7 +296,6 @@ mod tests {
             None,
             "hash".into(),
             None,
-            None,
         ));
         let handle = es.mint_operation_handle_plain();
         es.try_begin_async_operation(
@@ -336,7 +334,6 @@ mod tests {
             None,
             None,
             "hash".into(),
-            None,
             None,
         ));
         let handle = es.mint_operation_handle_plain();

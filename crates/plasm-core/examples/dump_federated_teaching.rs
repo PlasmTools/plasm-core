@@ -78,6 +78,28 @@ fn main() {
         pipeline.render_teaching_first_wave_for_session_federated(&by_entry, &exp, None);
     write(&out.join("production_federated.tsv"), &production);
 
+    // Live AppWorld first-wave arrival: Venmo primary + supervisor creds (not gmail).
+    let supervisor = load_bound("supervisor");
+    let supervisor_arc = Arc::new(supervisor);
+    let venmo_arrival = ["PaymentRequest", "AuthSession", "Friend"];
+    let supervisor_arrival = ["AccountPassword", "Supervisor"];
+    let mut arrival_exp = TeachingExposureSession::new(venmo_arc.as_ref(), "venmo", &venmo_arrival);
+    arrival_exp.expose_entities(
+        &[venmo_arc.as_ref(), supervisor_arc.as_ref()],
+        supervisor_arc.clone(),
+        "supervisor",
+        &supervisor_arrival,
+    );
+    let mut arrival_by_entry: IndexMap<String, &CGS> = IndexMap::new();
+    arrival_by_entry.insert("venmo".into(), venmo_arc.as_ref());
+    arrival_by_entry.insert("supervisor".into(), supervisor_arc.as_ref());
+    let arrival = pipeline.render_teaching_first_wave_for_session_federated(
+        &arrival_by_entry,
+        &arrival_exp,
+        None,
+    );
+    write(&out.join("venmo_supervisor_arrival.tsv"), &arrival);
+
     let inventory = derive_inventory(&production);
     write(&out.join("inventory.tsv"), &inventory);
 
@@ -143,10 +165,10 @@ fn derive_inventory(tsv: &str) -> String {
                 && !e.contains('['));
         let is_entity_banner =
             e.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && meaning.contains('·');
-        if is_gloss || (e.starts_with('e') && e.chars().skip(1).all(|c| c.is_ascii_digit())) {
-            out.push_str(line);
-            out.push('\n');
-        } else if is_entity_banner && !e.contains('(') {
+        if is_gloss
+            || (e.starts_with('e') && e.chars().skip(1).all(|c| c.is_ascii_digit()))
+            || (is_entity_banner && !e.contains('('))
+        {
             out.push_str(line);
             out.push('\n');
         }

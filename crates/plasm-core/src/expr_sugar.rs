@@ -1,7 +1,7 @@
 //! Agent-ergonomics rewrites on parsed [`Expr`] trees.
 
 use crate::cgs_federation::CgsLayer;
-use crate::expr::{Expr, GetExpr, QueryExpr, Ref};
+use crate::expr::{EntityKey, Expr, GetExpr, IdentitySlot, QueryExpr, Ref};
 use crate::predicate::Predicate;
 use crate::schema::{CapabilityKind, CGS};
 use crate::typed_literal::TypedComparisonValue;
@@ -46,7 +46,8 @@ impl std::error::Error for IdentityLoweringError {}
 /// - Exact identity but **no** Get → left as Query (id_field may be a selection slot)
 /// - Non-identity braces → left as Query (RA-2 applies later)
 pub fn lower_id_field_brace_to_get(expr: Expr, cgs: &CGS) -> Result<Expr, IdentityLoweringError> {
-    lower_id_field_brace_to_get_federated(expr, &[CgsLayer::unset(cgs)])
+    let layer = CgsLayer::new(cgs.entry_id.as_deref().unwrap_or_default(), cgs);
+    lower_id_field_brace_to_get_federated(expr, &[layer])
 }
 
 /// Federated lowering: resolve owning CGS from stamp / unique entity across layers.
@@ -147,14 +148,17 @@ fn try_brace_query_to_get(
         });
     }
 
-    let id_str = predicate_value_to_string(&value).ok_or_else(|| {
+    let slot = identity_slot_from_predicate_value(&value).ok_or_else(|| {
         IdentityLoweringError::InvalidIdentity {
             entity: q.entity.to_string(),
             detail: "identity value must be a scalar".into(),
         }
     })?;
 
-    let mut get = GetExpr::from_ref(Ref::new(q.entity.clone(), id_str));
+    let mut get = GetExpr::from_ref(Ref {
+        entity_type: q.entity.clone(),
+        key: EntityKey::Simple(slot),
+    });
     get.catalog_entry_id = q.catalog_entry_id.clone();
     if let Some(pid) = ent.primary_read.as_ref() {
         get.capability_name = Some(crate::identity::CapabilityName::from(pid.as_str()));
@@ -189,12 +193,13 @@ fn typed_to_value(v: &TypedComparisonValue) -> Value {
     v.to_value()
 }
 
-fn predicate_value_to_string(v: &Value) -> Option<String> {
+fn identity_slot_from_predicate_value(v: &Value) -> Option<IdentitySlot> {
     match v {
-        Value::String(s) => Some(s.clone()),
-        Value::Integer(i) => Some(i.to_string()),
-        Value::Bool(b) => Some(b.to_string()),
-        Value::Float(f) => Some(f.to_string()),
+        Value::String(s) => Some(IdentitySlot::lit(s.clone())),
+        Value::Integer(i) => Some(IdentitySlot::lit(i.to_string())),
+        Value::Bool(b) => Some(IdentitySlot::lit(b.to_string())),
+        Value::Float(f) => Some(IdentitySlot::lit(f.to_string())),
+        Value::PlasmInputRef(r) => Some(IdentitySlot::binding(r.clone())),
         _ => None,
     }
 }
@@ -205,6 +210,20 @@ mod tests {
     use crate::cgs_federation::CgsLayer;
     use crate::loader::load_schema_dir;
     use crate::CatalogEntryStamp;
+
+    #[test]
+    fn single_catalog_parse_preserves_bound_catalog_for_brace_lowering() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix_views");
+        let mut cgs = load_schema_dir(&dir).unwrap();
+        cgs.bind_registry_entry_id("bound-matrix");
+        let parsed = crate::expr_parser::parse(r#"LangKeyPick{key="k1"}"#, &cgs).unwrap();
+        let Expr::Get(get) = parsed.expr else {
+            panic!("expected Get")
+        };
+        assert_eq!(get.reference.primary_slot_str(), "k1");
+        assert_eq!(get.catalog_entry_id.as_deref(), Some("bound-matrix"));
+    }
 
     #[test]
     fn rewrite_issue_identifier_brace_to_get() {
@@ -314,6 +333,35 @@ mod tests {
         q.catalog_entry_id = CatalogEntryStamp::from_opt_str(Some("layer1"));
         let expr = lower_id_field_brace_to_get_federated(Expr::Query(q), &layers).unwrap();
         assert!(matches!(expr, Expr::Get(_)));
+    }
+
+    #[test]
+    fn identity_brace_field_path_lowers_to_binding_get() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix_views");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let hole = crate::PlasmInputRef::node_output("sess", vec!["key".into()]);
+        let q = QueryExpr::filtered(
+            "LangKeyPick",
+            Predicate::eq("key", Value::PlasmInputRef(hole.clone())),
+        );
+        let expr = lower_id_field_brace_to_get(Expr::Query(q), &cgs).unwrap();
+        match expr {
+            Expr::Get(g) => {
+                assert!(
+                    matches!(
+                        &g.reference.key,
+                        EntityKey::Simple(IdentitySlot::Binding(crate::PlasmInputRef::NodeInput { node, path }))
+                            if node == "sess" && path.as_slice() == ["key"]
+                    ),
+                    "named identity brace with a field path must be Get Binding, got {:?}",
+                    g.reference.key
+                );
+            }
+            other => panic!("expected Get, got {other:?}"),
+        }
     }
 
     #[test]

@@ -166,6 +166,7 @@ fn explicit_embedded_opt_out() -> bool {
 fn postgres_env_urls_skip_embedded_autostart() -> bool {
     for key in [
         "DATABASE_URL",
+        "PLASM_DISCOVERY_DATABASE_URL",
         "PLASM_MCP_CONFIG_DATABASE_URL",
         "PLASM_AUTH_STORAGE_URL",
     ] {
@@ -513,6 +514,7 @@ impl EmbeddedPostgresGuard {
             }
             for key in [
                 "DATABASE_URL",
+                "PLASM_DISCOVERY_DATABASE_URL",
                 "PLASM_MCP_CONFIG_DATABASE_URL",
                 "PLASM_AUTH_STORAGE_URL",
             ] {

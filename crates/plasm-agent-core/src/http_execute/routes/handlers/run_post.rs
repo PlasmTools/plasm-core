@@ -31,10 +31,13 @@ pub(crate) async fn post_run_execute_session_inner(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let Some(sess) = st
-        .get_execute_session(prompt_hash.as_str(), session_id.as_str())
+    let Some(sess) = (match st
+        .try_get_execute_session(prompt_hash.as_str(), session_id.as_str())
         .await
-    else {
+    {
+        Ok(session) => session,
+        Err(error) => return crate::http_execute::session_lookup_unavailable(error),
+    }) else {
         let _miss = crate::spans::execute_session_lookup_miss().entered();
         tracing::debug!(
             prompt_hash = %prompt_hash,

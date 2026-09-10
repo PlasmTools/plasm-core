@@ -1,4 +1,4 @@
-version: 12
+version: 14
 entry_id: splitwise
 auth:
   scheme: none
@@ -19,8 +19,6 @@ entities:
       - login
       - auth
       - access token
-      seed_class: primary
-      co_seed_with: catalog_primary
     fields:
       access_token:
         required: true
@@ -37,7 +35,6 @@ entities:
       - groups
       - trip
       - household
-      seed_class: primary
     fields:
       group_id:
         required: true
@@ -98,7 +95,6 @@ entities:
       - group member
       - member
       - members
-      seed_class: dependent
     fields:
       email:
         required: true
@@ -116,7 +112,6 @@ entities:
       - bill
       - cost
       - split
-      seed_class: primary
     fields:
       expense_id:
         required: true
@@ -155,7 +150,6 @@ entities:
       - payment
       - settle
       - repayment
-      seed_class: primary
     fields:
       payment_id:
         required: true
@@ -192,7 +186,6 @@ entities:
       names:
       - expense comment
       - comment on expense
-      seed_class: dependent
     fields:
       expense_comment_id:
         required: true
@@ -214,7 +207,6 @@ entities:
       names:
       - payment comment
       - comment on payment
-      seed_class: dependent
     fields:
       payment_comment_id:
         required: true
@@ -237,7 +229,6 @@ entities:
       - notification
       - alert
       - inbox
-      seed_class: ambient
     fields:
       notification_id:
         required: true
@@ -267,7 +258,6 @@ entities:
       - activity
       - history
       - ledger
-      seed_class: ambient
     fields:
       record_type:
         required: true
@@ -303,7 +293,6 @@ entities:
       - balance
       - owing
       - debt
-      seed_class: primary
     fields:
       you_owe_others:
         required: false
@@ -337,7 +326,6 @@ entities:
       - user
       - person
       - member
-      seed_class: ambient
     fields:
       email:
         required: true
@@ -366,7 +354,6 @@ entities:
     discovery:
       names:
       - profile
-      seed_class: ambient
     fields:
       email:
         required: true
@@ -389,7 +376,6 @@ entities:
       - balance
       - owing
       - debt
-      seed_class: primary
     fields:
       you_owe_others:
         required: false
@@ -434,8 +420,8 @@ capabilities:
     - access_token
     - token_type
     output:
-      type: side_effect
-      description: Creates an authenticated Splitwise session.
+      type: entity
+      entity_type: AuthSession
   logout:
     description: Logout and invalidate the access token.
     kind: action
@@ -1429,3 +1415,483 @@ values:
     - person
     - people
     description: Peer balance shelf
+  prerequisite_principal_email:
+    type: email
+    description: Account holder email.
+  prerequisite_principal_phone:
+    type: e164
+    description: Account holder phone number.
+  prerequisite_account_name:
+    type: string
+    description: Service account identifier.
+prerequisites:
+  contracts:
+    appworld.principal:
+      version: 1
+      inputs: {}
+      outputs:
+        email: prerequisite_principal_email
+        phone: prerequisite_principal_phone
+    appworld.password:
+      version: 1
+      inputs:
+        account: prerequisite_account_name
+      outputs:
+        password: nv_password
+    appworld.session:
+      version: 1
+      inputs: {}
+      outputs:
+        token: nv_access_token
+  providers:
+    session:
+      contract: appworld.session
+      capability: login
+      outputs:
+        token: access_token
+  requirements:
+    login:
+    - id: principal
+      contract: appworld.principal
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - username
+        output: email
+    - id: password
+      contract: appworld.password
+      arguments:
+        account:
+          kind: constant
+          value: splitwise
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - password
+        output: password
+    logout:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    group_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    group_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    group_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    group_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    group_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    group_add_member:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    group_remove_member:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    group_exit:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    group_undelete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    group_accept_invitation:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    group_regenerate_invitation:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    expense_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    expense_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    expense_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    expense_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    expense_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    expense_undelete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    expense_attach_receipt:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+      - input:
+          lane: payload
+          path:
+          - file_system_access_token
+        output: token
+    expense_delete_receipt:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    payment_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    payment_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_undelete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_attach_receipt:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+      - input:
+          lane: payload
+          path:
+          - file_system_access_token
+        output: token
+    payment_delete_receipt:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    settle_up:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    expense_comment_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    expense_comment_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    expense_comment_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    expense_comment_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_comment_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    payment_comment_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_comment_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_comment_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    notification_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    activity_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    notification_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    notification_mark:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    notification_delete_all:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    notification_mark_all:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    user_search:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    balance_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    peer_balance_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token

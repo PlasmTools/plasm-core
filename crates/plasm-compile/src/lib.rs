@@ -19,11 +19,11 @@ pub use plasm_cml::{
     compile_operation, compile_request, eval_cml, eval_cond, parse_capability_template,
     path_var_names_from_request, template_pagination, template_var_names, AuxiliaryHttpMerge,
     CapabilityTemplate, CmlCond, CmlEnv, CmlExpr, CmlRequest, CmlType, CompiledMultipartBody,
-    CompiledMultipartPart, CompiledOperation, CompiledRequest, HttpBodyFormat, HttpMethod,
-    HttpResponseDecode, MultipartBodySpec, MultipartPartSpec, PaginationConfig, PaginationLocation,
-    PaginationParam, PaginationParamRole, PaginationStop, PaginationStrategyKind,
-    PathSegment as CmlPathSegment, ResponsePreprocess, ValidatedPagination, ViewCompiled,
-    ViewTemplate,
+    CompiledMultipartPart, CompiledOperation, CompiledRequest, CredentialSource, HttpBodyFormat,
+    HttpMethod, HttpResponseDecode, MultipartBodySpec, MultipartPartSpec, PaginationConfig,
+    PaginationLocation, PaginationParam, PaginationParamRole, PaginationStop,
+    PaginationStrategyKind, PathSegment as CmlPathSegment, ResponsePreprocess, ValidatedPagination,
+    ViewCompiled, ViewTemplate,
 };
 
 #[cfg(feature = "evm")]
@@ -57,5 +57,7 @@ pub type CompileQueryHook =
 
 pub mod validate_templates;
 pub use validate_templates::{
+    compile_cgs_capability_templates, load_compiled_catalog_artifact,
     pagination_config_for_capability, validate_cgs_capability_templates, validate_cgs_views,
+    CompiledCatalog,
 };

@@ -1668,7 +1668,7 @@ org_user_role_assign:
   - type: literal
     value: users
   - type: var
-    name: user_id
+    name: userId
   - type: literal
     value: roles
   body:
@@ -1696,7 +1696,7 @@ org_user_roles_set:
   - type: literal
     value: users
   - type: var
-    name: user_id
+    name: userId
   - type: literal
     value: roles
   body:
@@ -1724,11 +1724,25 @@ org_user_role_revoke:
   - type: literal
     value: users
   - type: var
-    name: user_id
+    name: userId
   - type: literal
     value: roles
   - type: var
     name: role_uid
+  query:
+    type: object
+    fields:
+    - - global
+      - type: if
+        condition:
+          type: exists
+          var: global
+        then_expr:
+          type: var
+          name: global
+        else_expr:
+          type: const
+          value: null
 team_role_assign:
   method: POST
   path:
@@ -1737,7 +1751,7 @@ team_role_assign:
   - type: literal
     value: teams
   - type: var
-    name: team_id
+    name: id
   - type: literal
     value: roles
   body:
@@ -1746,17 +1760,6 @@ team_role_assign:
     - - roleUid
       - type: var
         name: role_uid
-    - - global
-      - type: if
-        condition:
-          type: exists
-          var: global
-        then_expr:
-          type: var
-          name: global
-        else_expr:
-          type: const
-          value: null
 team_roles_set:
   method: PUT
   path:
@@ -1765,7 +1768,7 @@ team_roles_set:
   - type: literal
     value: teams
   - type: var
-    name: team_id
+    name: id
   - type: literal
     value: roles
   body:
@@ -1774,17 +1777,6 @@ team_roles_set:
     - - roleUids
       - type: var
         name: role_uids
-    - - global
-      - type: if
-        condition:
-          type: exists
-          var: global
-        then_expr:
-          type: var
-          name: global
-        else_expr:
-          type: const
-          value: null
 team_role_revoke:
   method: DELETE
   path:
@@ -1793,7 +1785,7 @@ team_role_revoke:
   - type: literal
     value: teams
   - type: var
-    name: team_id
+    name: id
   - type: literal
     value: roles
   - type: var
@@ -2262,8 +2254,9 @@ datasource_clickhouse_table_query:
                   name: id
           - - rawSql
             - type: const
-              value: SELECT database, name, engine, total_rows, total_bytes FROM system.tables WHERE database NOT IN ('system',
-                'INFORMATION_SCHEMA', 'information_schema') ORDER BY database, name LIMIT 500
+              value: SELECT database, name, engine, total_rows, total_bytes FROM system.tables
+                WHERE database NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema')
+                ORDER BY database, name LIMIT 500
           - - format
             - type: const
               value: 1
@@ -2298,8 +2291,9 @@ datasource_clickhouse_column_query:
                   name: id
           - - rawSql
             - type: format
-              template: SELECT name, type, default_kind AS default_type, comment FROM system.columns WHERE database = coalesce(nullIf('{database}',
-                ''), 'default') AND table = '{table}' ORDER BY position LIMIT 1000
+              template: SELECT name, type, default_kind AS default_type, comment FROM
+                system.columns WHERE database = coalesce(nullIf('{database}', ''),
+                'default') AND table = '{table}' ORDER BY position LIMIT 1000
               vars:
                 database:
                   type: if

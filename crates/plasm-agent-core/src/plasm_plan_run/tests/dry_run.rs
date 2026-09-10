@@ -45,7 +45,6 @@ fn github_repository_commit_session() -> ExecuteSession {
         None,
         cgs.catalog_cgs_hash_hex(),
         None,
-        None,
     )
 }
 
@@ -524,7 +523,6 @@ fn langmatrix_session() -> ExecuteSession {
         Some(exp),
         None,
         cgs.catalog_cgs_hash_hex(),
-        None,
         None,
     )
 }

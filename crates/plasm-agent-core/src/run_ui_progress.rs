@@ -168,7 +168,7 @@ mod tests {
         use crate::execute_session::{ExecuteSession, SessionReuseKey};
         use crate::http::{build_plasm_host_state, PlasmHostBootstrap};
         use crate::mcp_logical_ref::parse_logical_session_wire_ref;
-        use plasm_core::discovery::InMemoryCgsRegistry;
+        use plasm_core::discovery::CgsRegistry;
         use plasm_core::CGS;
         use plasm_runtime::{ExecutionEngine, ExecutionMode};
 
@@ -176,7 +176,7 @@ mod tests {
         let st = Arc::new(build_plasm_host_state(PlasmHostBootstrap {
             engine: ExecutionEngine::new(Default::default()).expect("engine"),
             mode: ExecutionMode::Live,
-            registry: Arc::new(InMemoryCgsRegistry::from_pairs(vec![(
+            registry: Arc::new(CgsRegistry::from_pairs(vec![(
                 "default".into(),
                 "Default".into(),
                 vec!["default".into()],
@@ -207,7 +207,6 @@ mod tests {
             None,
             cgs.catalog_cgs_hash_hex(),
             None,
-            None,
         );
         let handle = sess.mint_operation_handle(ref_str);
         sess.try_begin_async_operation(
@@ -223,7 +222,6 @@ mod tests {
             catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
             entities: vec!["Pet".into()],
             context_intent: None,
-            ranked_capabilities: None,
             principal: None,
             logical_session_id: Some(logical_id.as_uuid().to_string()),
         };

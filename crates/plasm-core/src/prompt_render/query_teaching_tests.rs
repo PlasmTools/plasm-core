@@ -391,28 +391,18 @@ fn prompt_matrix_full_tsv_size_within_baseline() {
 
 #[test]
 fn seeded_pokemon_teaching_includes_bare_query_row() {
-    use crate::discovery::{
-        derive_intent_exposure_surface_batch, ExposureSurfaceOptions, MutatorAdmit,
-    };
-
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
     if !dir.is_dir() {
         return;
     }
     let mut cgs = load_schema_dir(&dir).expect("pokeapi");
     cgs.bind_registry_entry_id("pokeapi");
-    let endpoints = crate::relation_endpoint_keys("pokeapi", &["Pokemon".to_string()]);
-    let delta = derive_intent_exposure_surface_batch(
+    let delta = crate::capability_exposure::explicit_entity_capability_surface(
         &cgs,
         "pokeapi",
-        "electric type pokemon chart",
-        &endpoints,
         &["Pokemon".to_string()],
-        None,
-        ExposureSurfaceOptions {
-            mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-        },
-    );
+    )
+    .expect("explicit fixture capability exposure");
     assert!(
         delta
             .required

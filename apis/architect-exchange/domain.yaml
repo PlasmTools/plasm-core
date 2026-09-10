@@ -1,4 +1,4 @@
-version: 11
+version: 12
 http_backend: https://gateway.architect.exchange
 data_classes:
   untrusted:
@@ -34,7 +34,6 @@ entities:
       - user
       - whoami
       - me
-      seed_class: primary
     fields:
       id:
         required: true
@@ -71,7 +70,6 @@ entities:
         target: Account
         cardinality: many
         discovery:
-          seed_nav: own
           qualifier_terms:
           - accounts
           - trading accounts
@@ -87,7 +85,6 @@ entities:
       names:
       - account
       - trading account
-      seed_class: primary
     fields:
       id:
         required: true
@@ -124,7 +121,6 @@ entities:
         target: Balance
         cardinality: many
         discovery:
-          seed_nav: own
           qualifier_terms:
           - balances
           - collateral
@@ -136,7 +132,6 @@ entities:
         target: Position
         cardinality: many
         discovery:
-          seed_nav: own
           qualifier_terms:
           - positions
           - exposure
@@ -148,7 +143,6 @@ entities:
         target: RiskSnapshot
         cardinality: many
         discovery:
-          seed_nav: own
           qualifier_terms:
           - risk
           - margin
@@ -161,7 +155,6 @@ entities:
         target: Order
         cardinality: many
         discovery:
-          seed_nav: own
           qualifier_terms:
           - open orders
           - working orders
@@ -173,7 +166,6 @@ entities:
         target: Fill
         cardinality: many
         discovery:
-          seed_nav: own
           qualifier_terms:
           - fills
           - executions
@@ -189,7 +181,6 @@ entities:
       names:
       - customer
       - kyc
-      seed_class: dependent
     fields:
       business_name:
         required: false
@@ -206,7 +197,6 @@ entities:
       names:
       - api key
       - credential
-      seed_class: dependent
     fields:
       api_key:
         required: true
@@ -255,7 +245,6 @@ entities:
       names:
       - balance
       - collateral
-      seed_class: dependent
     fields:
       account_id:
         required: true
@@ -271,13 +260,13 @@ entities:
     id_from:
     - account_id
     - symbol
-    description: Signed derivative exposure for one instrument in an account. Ad-hoc ranking and money sums of fetched positions
-      use program postfix, not extra catalog entities.
+    description: Signed derivative exposure for one instrument in an account. Ad-hoc
+      ranking and money sums of fetched positions use program postfix, not extra catalog
+      entities.
     discovery:
       names:
       - position
       - exposure
-      seed_class: dependent
     fields:
       account_id:
         required: true
@@ -305,7 +294,6 @@ entities:
       - risk snapshot
       - margin
       - equity
-      seed_class: dependent
     fields:
       account_id:
         required: true
@@ -352,7 +340,6 @@ entities:
     discovery:
       names:
       - equity history
-      seed_class: dependent
     fields:
       t:
         required: true
@@ -366,7 +353,6 @@ entities:
     discovery:
       names:
       - deposit address
-      seed_class: dependent
     fields:
       blockchain:
         required: true
@@ -386,7 +372,6 @@ entities:
       - contract
       - symbol
       - perpetual
-      seed_class: primary
     fields:
       symbol:
         required: true
@@ -441,21 +426,20 @@ entities:
     relations:
       ticker:
         target: Ticker
-        cardinality: many
+        cardinality: one
         discovery:
-          seed_nav: locate
           qualifier_terms:
           - ticker
           - mark
         materialize:
-          kind: query_scoped
-          capability: ticker_for_symbol_query
-          param: symbol
+          kind: get_scoped_bindings
+          capability: ticker_get
+          bindings:
+            symbol: symbol
       book:
         target: OrderBook
         cardinality: many
         discovery:
-          seed_nav: locate
           qualifier_terms:
           - order book
           - depth
@@ -467,7 +451,6 @@ entities:
         target: Candle
         cardinality: many
         discovery:
-          seed_nav: locate
           qualifier_terms:
           - candles
           - ohlc
@@ -479,7 +462,6 @@ entities:
         target: Trade
         cardinality: many
         discovery:
-          seed_nav: locate
           qualifier_terms:
           - public trades
           - tape
@@ -491,7 +473,6 @@ entities:
         target: FundingRate
         cardinality: many
         discovery:
-          seed_nav: locate
           qualifier_terms:
           - funding
           - funding rate
@@ -501,7 +482,7 @@ entities:
           param: symbol
   Ticker:
     id_field: symbol
-    primary_query: ticker_for_symbol_query
+    primary_query: ticker_query
     id_from:
     - s
     description: Low-frequency mark, last, and session stats for one symbol.
@@ -509,7 +490,6 @@ entities:
       names:
       - ticker
       - mark price
-      seed_class: dependent
     fields:
       symbol:
         required: true
@@ -585,7 +565,6 @@ entities:
       - order book
       - book
       - depth
-      seed_class: dependent
     fields:
       symbol:
         required: true
@@ -623,7 +602,6 @@ entities:
       names:
       - public trade
       - tape
-      seed_class: dependent
     fields:
       symbol:
         required: true
@@ -661,7 +639,6 @@ entities:
       names:
       - candle
       - ohlc
-      seed_class: dependent
     fields:
       symbol:
         required: true
@@ -705,7 +682,6 @@ entities:
       names:
       - bbo candle
       - mid candle
-      seed_class: dependent
     fields:
       symbol:
         required: true
@@ -761,7 +737,6 @@ entities:
     discovery:
       names:
       - funding rate
-      seed_class: dependent
     fields:
       symbol:
         required: true
@@ -787,7 +762,6 @@ entities:
     discovery:
       names:
       - estimated funding
-      seed_class: dependent
     fields:
       symbol:
         required: true
@@ -823,7 +797,6 @@ entities:
       names:
       - funding slots
       - funding schedule
-      seed_class: dependent
     fields:
       symbol:
         required: true
@@ -863,7 +836,6 @@ entities:
       names:
       - underlying price
       - index price
-      seed_class: dependent
     fields:
       symbol:
         required: true
@@ -883,7 +855,6 @@ entities:
     discovery:
       names:
       - special settlement
-      seed_class: dependent
     fields:
       symbol:
         required: true
@@ -903,7 +874,6 @@ entities:
       names:
       - aggressive limit preview
       - market impact
-      seed_class: dependent
     fields:
       symbol:
         required: false
@@ -923,13 +893,13 @@ entities:
   Fill:
     id_field: trade_id
     primary_query: fill_query
-    description: Private execution against an account, including fees and side. Ad-hoc rollups (fees by symbol, notional)
-      use program postfix on fetched rows, not extra catalog entities.
+    description: Private execution against an account, including fees and side. Ad-hoc
+      rollups (fees by symbol, notional) use program postfix on fetched rows, not
+      extra catalog entities.
     discovery:
       names:
       - fill
       - execution
-      seed_class: dependent
     fields:
       trade_id:
         required: true
@@ -977,7 +947,6 @@ entities:
       names:
       - transaction
       - ledger
-      seed_class: dependent
     fields:
       event_id:
         required: true
@@ -1009,7 +978,6 @@ entities:
     discovery:
       names:
       - funding transaction
-      seed_class: dependent
     fields:
       event_id:
         required: true
@@ -1060,7 +1028,6 @@ entities:
     discovery:
       names:
       - liquidation
-      seed_class: dependent
     fields:
       trade_id:
         required: true
@@ -1104,7 +1071,6 @@ entities:
       names:
       - volume
       - volume stats
-      seed_class: dependent
     fields:
       volume:
         required: true
@@ -1118,7 +1084,6 @@ entities:
     discovery:
       names:
       - order
-      seed_class: primary
     fields:
       order_id:
         required: true
@@ -1196,7 +1161,6 @@ entities:
         target: Fill
         cardinality: many
         discovery:
-          seed_nav: own
           qualifier_terms:
           - order fills
         materialize:
@@ -1212,7 +1176,6 @@ entities:
       names:
       - order preview
       - margin preview
-      seed_class: dependent
     fields:
       symbol:
         required: false
@@ -1240,7 +1203,6 @@ entities:
     discovery:
       names:
       - initial margin
-      seed_class: dependent
     fields:
       im_pct:
         required: true
@@ -1260,7 +1222,6 @@ entities:
     discovery:
       names:
       - order status
-      seed_class: dependent
     fields:
       order_id:
         required: true
@@ -1295,7 +1256,6 @@ entities:
       names:
       - portfolio
       - portfolio snapshot
-      seed_class: primary
     fields:
       account_id:
         required: true
@@ -1340,7 +1300,6 @@ entities:
     discovery:
       names:
       - instrument context
-      seed_class: primary
     fields:
       symbol:
         required: true
@@ -1372,7 +1331,6 @@ entities:
     discovery:
       names:
       - order context
-      seed_class: primary
     fields:
       order_id:
         required: true
@@ -1618,23 +1576,6 @@ capabilities:
     - estimated_funding_supported
     - contract_mark_price
     - contract_size
-  ticker_for_symbol_query:
-    kind: query
-    entity: Ticker
-    description: List Ticker by shelf (ticker | ticker_for_symbol).
-    selection:
-    - name: shelf
-      value_ref: nv_ticker_query_shelf
-      required: true
-      description: ticker | ticker_for_symbol
-    scope:
-    - name: symbol
-      value_ref: nv_instrument_symbol
-      required: false
-    controls:
-    - name: sort
-      value_ref: nv_wire_str_short
-      required: false
   ticker_get:
     kind: get
     entity: Ticker
@@ -1654,6 +1595,10 @@ capabilities:
     - last_settlement_price
     - last_settlement_time
     - instrument_state
+    scope:
+    - name: symbol
+      value_ref: nv_instrument_symbol
+      required: true
   order_book_for_symbol_query:
     kind: query
     entity: OrderBook
@@ -1797,7 +1742,8 @@ capabilities:
   aggressive_limit_preview:
     kind: action
     entity: AggressiveLimitPreview
-    description: Preview how an aggressive limit would sweep the book without placing it.
+    description: Preview how an aggressive limit would sweep the book without placing
+      it.
     discovery:
       operation_terms:
       - preview aggressive
@@ -2206,6 +2152,14 @@ capabilities:
     - name: order_id
       value_ref: nv_order_id
       required: true
+  ticker_query:
+    kind: query
+    entity: Ticker
+    description: List market tickers, ordered by symbol.
+    selection:
+    - name: sort
+      value_ref: nv_wire_str_short
+      required: false
 views:
   portfolio_snapshot:
     description: Authenticated user plus balances, positions, and risk for one account.
@@ -2296,7 +2250,7 @@ views:
     - id: ticker_row
       capability: ticker_get
       bind:
-        id:
+        symbol:
           kind: scope
           param: symbol
     - id: book_row
@@ -2645,12 +2599,6 @@ values:
     type: integer
   nv_book_level:
     type: integer
-  nv_ticker_query_shelf:
-    type: enum
-    enum:
-    - ticker
-    - ticker_for_symbol
-    description: Ticker query shelf
   nv_candle_query_shelf:
     type: enum
     enum:

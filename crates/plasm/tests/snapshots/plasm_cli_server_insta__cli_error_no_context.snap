@@ -1,9 +1,0 @@
----
-source: crates/plasm/tests/plasm_cli_server_insta.rs
-expression: h.norm(&combined_output(&run_no_ctx))
----
-status: exit status: 1
-stdout:
-
-stderr:
-Error: No active plasm context for $SERVER. Run `plasm context -i "…" api:Entity …` first.

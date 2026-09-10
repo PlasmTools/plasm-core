@@ -44,6 +44,7 @@ Batch reads aggressively. After a write use **`label.wire`** from that binding �
 **Composition:**
 - After `label = source => <<TAG`, string params take **`label.content`** (or `{{ label.content }}`). Plain `body = <<TAG` is already a string — **`param=body`**, never `body.content`. Fanout args: `title=<<T\n{{ name }} — {{ code }}\nT`.
 - Plural write (prefer bind): `done = rows => e#.m#(…, _.f)` then include `done` among the final return roots. Bare `rows => e#.m#…` only when it is the program’s **sole** return root. Bare create: `e#.m#(param=…)` (long strings: inline heredoc or `body = <<TAG` then `param=body`).
+- **State iterate** (feedback loop; not foreach): `done = iterate seed step e#.m#(…, _.f) until field = value take N` — **`take N` required** (`N≥1`); re-observes seed after each step; bound exhaustion without predicate is an error. No unbounded `while`.
 - Quote scalars in `{…}` and string params.
 
 **Apply vs return:** A bare line `lhs => rhs` (no `label =`) is itself a return root. When more steps follow, bind it (`done = rows => e#.m#(…)`) and keep a single final return line of roots.

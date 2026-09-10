@@ -1,9 +1,16 @@
 //! Template-ref collection for plan `uses_result` / `ir_template`.
 
 use super::super::prelude::*;
+use crate::plasm_plan::{Plan, PlanDataInput, PlanResultUse};
 
-pub(in crate::plasm_dag) fn collect_template_uses_from_expr(expr: &Expr) -> Vec<serde_json::Value> {
-    let ctx = plasm_core::TemplateRefContext::for_row_scope("_");
+pub(in crate::plasm_dag) fn collect_template_uses_from_expr(
+    expr: &Expr,
+    row_binding: Option<&str>,
+) -> Vec<PlanResultUse> {
+    let ctx = plasm_core::TemplateRefContext {
+        row_binding,
+        input_aliases: &[],
+    };
     let mut acc = Vec::new();
     collect_expr_for_template_uses(&mut acc, expr, &ctx);
     dedupe_uses(acc)
@@ -13,19 +20,16 @@ pub(in crate::plasm_dag) fn collect_template_uses_from_expr(expr: &Expr) -> Vec<
 pub(in crate::plasm_dag) fn relation_plan_uses_result(
     source_label: &str,
     parsed: &plasm_core::expr_parser::ParsedExpr,
-) -> Vec<serde_json::Value> {
-    let mut uses = vec![serde_json::json!({
-        "node": source_label,
-        "as": "source",
-    })];
-    for u in collect_template_uses_from_expr(&parsed.expr) {
-        let node = u.get("node").and_then(|v| v.as_str()).unwrap_or("");
-        let alias = u.get("as").and_then(|v| v.as_str()).unwrap_or(node);
+) -> Vec<PlanResultUse> {
+    let mut uses = vec![result_use(source_label, "source")];
+    for u in collect_template_uses_from_expr(&parsed.expr, None) {
+        let node = u.node.as_str();
+        let alias = u.r#as.as_str();
         if node == source_label || (node == "source" && alias == "source") {
             continue;
         }
         uses.push(if node == "source" {
-            serde_json::json!({ "node": source_label, "as": alias })
+            result_use(source_label, alias)
         } else {
             u
         });
@@ -40,241 +44,97 @@ pub(in crate::plasm_dag) fn relation_plan_uses_result(
 /// recurse into objects/arrays). [`Expr::Get`] compound identity literals and Binding slots live on
 /// `reference` ([`IdentitySlot`]). [`PlasmInputRef::RowBinding`] is skipped on purpose (`for_each` row scope).
 pub(in crate::plasm_dag) fn collect_expr_for_template_uses(
-    acc: &mut Vec<serde_json::Value>,
+    acc: &mut Vec<PlanResultUse>,
     expr: &Expr,
     ctx: &plasm_core::TemplateRefContext<'_>,
 ) {
-    match expr {
-        Expr::Query(q) => {
-            if let Some(pred) = &q.predicate {
-                collect_predicate_for_template_uses(acc, pred, ctx);
-            }
-        }
-        Expr::Get(g) => {
-            collect_ref_identity_for_template_uses(acc, &g.reference, ctx);
-        }
-        Expr::Create(c) => {
-            let v = c.input.to_value();
-            collect_value_for_template_uses(acc, &v, ctx);
-        }
-        Expr::Delete(d) => {
-            collect_ref_identity_for_template_uses(acc, &d.target, ctx);
-        }
-        Expr::Invoke(i) => {
-            if let Some(input) = &i.input {
-                let v = input.to_value();
-                collect_value_for_template_uses(acc, &v, ctx);
-            }
-            collect_ref_identity_for_template_uses(acc, &i.target, ctx);
-        }
-        Expr::Chain(ch) => {
-            collect_expr_for_template_uses(acc, &ch.source, ctx);
-            if let ChainStep::Explicit { expr } = &ch.step {
-                collect_expr_for_template_uses(acc, expr.as_ref(), ctx);
-            }
-        }
-        Expr::Page(_) | Expr::Wait(_) | Expr::Cancel(_) => {}
-        Expr::TeachingValue { value } => {
-            collect_value_for_template_uses(acc, value, ctx);
-        }
-    }
+    collect_operands(acc, expr, ctx);
 }
 
-fn collect_ref_identity_for_template_uses(
-    acc: &mut Vec<serde_json::Value>,
-    reference: &plasm_core::Ref,
+fn collect_operands<T: plasm_core::operand_binding::BindOperands>(
+    acc: &mut Vec<PlanResultUse>,
+    value: &T,
     ctx: &plasm_core::TemplateRefContext<'_>,
 ) {
-    match &reference.key {
-        plasm_core::EntityKey::Simple(slot) => {
-            if let plasm_core::IdentitySlot::Binding(r) = slot {
-                collect_value_for_template_uses(acc, &Value::PlasmInputRef(r.clone()), ctx);
+    use plasm_core::operand_binding::{OperandResolver, ResolvedValue};
+    struct Collect<'a, 'b> {
+        acc: &'a mut Vec<PlanResultUse>,
+        ctx: &'a plasm_core::TemplateRefContext<'b>,
+    }
+    impl OperandResolver for Collect<'_, '_> {
+        type Error = std::convert::Infallible;
+        fn resolve(&mut self, reference: &PlasmInputRef) -> Result<ResolvedValue, Self::Error> {
+            if let PlasmInputRef::NodeInput { node, .. } = reference {
+                self.acc.push(result_use(node, node));
             }
+            Ok(ResolvedValue::null())
         }
-        plasm_core::EntityKey::Compound(parts) => {
-            for slot in parts.values() {
-                if let plasm_core::IdentitySlot::Binding(r) = slot {
-                    collect_value_for_template_uses(acc, &Value::PlasmInputRef(r.clone()), ctx);
+        fn identity(
+            &mut self,
+            _target: plasm_core::operand_binding::IdentityTarget<'_>,
+            reference: &PlasmInputRef,
+        ) -> Result<plasm_core::EntityId, Self::Error> {
+            self.resolve(reference)?;
+            Ok(plasm_core::EntityId::from("reference-inspection"))
+        }
+        fn string(
+            &mut self,
+            value: &plasm_core::program_string_template::CompiledProgramString,
+        ) -> Result<String, Self::Error> {
+            for root in value.roots() {
+                if self.ctx.row_binding == Some(root.as_str()) {
+                    continue;
+                }
+                let dotted = value
+                    .paths()
+                    .iter()
+                    .any(|path| path.len() > 1 && path.first() == Some(root));
+                if self.ctx.row_binding.is_none() || dotted {
+                    self.acc.push(result_use(root, root));
                 }
             }
+            Ok(value.source().to_owned())
         }
+    }
+    let Ok(_) = value.bind_operands(&mut Collect { acc, ctx });
+}
+
+pub(in crate::plasm_dag) fn result_use(node: &str, alias: &str) -> PlanResultUse {
+    PlanResultUse {
+        node: node.to_owned(),
+        r#as: alias.to_owned(),
+        qualified_entity: None,
     }
 }
 
-pub(in crate::plasm_dag) fn collect_predicate_for_template_uses(
-    acc: &mut Vec<serde_json::Value>,
-    pred: &Predicate,
-    ctx: &plasm_core::TemplateRefContext<'_>,
-) {
-    match pred {
-        Predicate::Comparison { value, .. } => {
-            let v = value.to_value();
-            collect_value_for_template_uses(acc, &v, ctx);
-        }
-        Predicate::And { args } | Predicate::Or { args } => {
-            for a in args {
-                collect_predicate_for_template_uses(acc, a, ctx);
-            }
-        }
-        Predicate::Not { predicate } => {
-            collect_predicate_for_template_uses(acc, predicate.as_ref(), ctx)
-        }
-        Predicate::ExistsRelation { predicate, .. } => {
-            if let Some(inner) = predicate {
-                collect_predicate_for_template_uses(acc, inner.as_ref(), ctx);
-            }
-        }
-        Predicate::True | Predicate::False => {}
-    }
-}
-
-pub(in crate::plasm_dag) fn collect_value_for_template_uses(
-    acc: &mut Vec<serde_json::Value>,
-    v: &Value,
-    ctx: &plasm_core::TemplateRefContext<'_>,
-) {
-    match v {
-        Value::PlasmInputRef(PlasmInputRef::NodeInput { node, .. }) => {
-            acc.push(json!({
-                "node": node,
-                "as": node,
-            }));
-        }
-        Value::PlasmInputRef(PlasmInputRef::RowBinding { .. }) => {}
-        Value::Object(m) => {
-            for x in m.values() {
-                collect_value_for_template_uses(acc, x, ctx);
-            }
-        }
-        Value::Array(a) => {
-            for x in a {
-                collect_value_for_template_uses(acc, x, ctx);
-            }
-        }
-        Value::String(s) => {
-            for (node, alias) in ctx.plan_node_roots_from_string(s) {
-                acc.push(json!({
-                    "node": node,
-                    "as": alias,
-                }));
-            }
-        }
-        _ => {}
-    }
-}
-
-pub(in crate::plasm_dag) fn dedupe_uses(uses: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+pub(in crate::plasm_dag) fn dedupe_uses(uses: Vec<PlanResultUse>) -> Vec<PlanResultUse> {
     let mut seen = BTreeSet::new();
     uses.into_iter()
-        .filter(|u| {
-            let key = format!(
-                "{}:{}",
-                u.get("node").and_then(|v| v.as_str()).unwrap_or_default(),
-                u.get("as").and_then(|v| v.as_str()).unwrap_or_default()
-            );
-            seen.insert(key)
-        })
+        .filter(|u| seen.insert((u.node.clone(), u.r#as.clone())))
         .collect()
 }
 
-pub(in crate::plasm_dag) fn dedupe_inputs(
-    inputs: Vec<serde_json::Value>,
-) -> Vec<serde_json::Value> {
+pub(in crate::plasm_dag) fn dedupe_inputs(inputs: Vec<PlanDataInput>) -> Vec<PlanDataInput> {
     let mut seen = BTreeSet::new();
     inputs
         .into_iter()
-        .filter(|u| {
-            let key = format!(
-                "{}:{}",
-                u.get("node").and_then(|v| v.as_str()).unwrap_or_default(),
-                u.get("alias").and_then(|v| v.as_str()).unwrap_or_default()
-            );
-            seen.insert(key)
-        })
+        .filter(|u| seen.insert((u.node.clone(), u.alias.clone())))
         .collect()
 }
 
-/// Stamp each `uses_result` edge with the source node's `qualified_entity` (or relation target).
-/// Asserts edge/source agreement when an edge already carries provenance. Full cutover: no
-/// primary-catalog fallback for missing catalog-backed sources.
+/// Resolve dependency provenance from typed source nodes before artifact serialization.
 pub(in crate::plasm_dag) fn stamp_plan_uses_result_qualified_entities(
-    plan: &mut serde_json::Value,
+    plan: &mut Plan,
 ) -> Result<(), String> {
-    let nodes = plan
-        .get("nodes")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-    let by_id: BTreeMap<String, serde_json::Value> = nodes
+    let uses = plan
+        .nodes
         .iter()
-        .filter_map(|n| {
-            n.get("id")
-                .and_then(|v| v.as_str())
-                .map(|id| (id.to_string(), n.clone()))
+        .map(|node| {
+            crate::plasm_plan::enrich_uses_result_provenance(&node.uses_result, plan, &node.id)
         })
-        .collect();
-
-    let Some(nodes_mut) = plan.get_mut("nodes").and_then(|v| v.as_array_mut()) else {
-        return Ok(());
-    };
-    for node in nodes_mut.iter_mut() {
-        let consumer = node
-            .get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("<unknown>")
-            .to_string();
-        let Some(uses) = node.get_mut("uses_result").and_then(|v| v.as_array_mut()) else {
-            continue;
-        };
-        for use_edge in uses.iter_mut() {
-            let source_id = use_edge
-                .get("node")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| format!("plan node {consumer:?} uses_result entry missing node id"))?
-                .to_string();
-            let Some(source) = by_id.get(&source_id) else {
-                return Err(format!(
-                    "plan node {consumer:?} uses_result references unknown node {source_id:?}"
-                ));
-            };
-            let resolved = source_node_qualified_entity_json(source);
-            if let Some(existing) = use_edge.get("qualified_entity") {
-                if !existing.is_null() {
-                    if let Some(resolved) = &resolved {
-                        if existing != resolved {
-                            return Err(format!(
-                                "plan node {consumer:?} uses_result[{source_id:?}] contradictory qualified_entity"
-                            ));
-                        }
-                    }
-                    continue;
-                }
-            }
-            if let Some(qe) = resolved {
-                use_edge
-                    .as_object_mut()
-                    .ok_or_else(|| "uses_result entry must be object".to_string())?
-                    .insert("qualified_entity".to_string(), qe);
-            }
-        }
+        .collect::<Result<Vec<_>, _>>()?;
+    for (node, uses) in plan.nodes.iter_mut().zip(uses) {
+        node.uses_result = uses;
     }
     Ok(())
-}
-
-fn source_node_qualified_entity_json(source: &serde_json::Value) -> Option<serde_json::Value> {
-    if source.get("kind").and_then(|v| v.as_str()) == Some("data") {
-        return None;
-    }
-    if let Some(qe) = source.get("qualified_entity") {
-        if !qe.is_null() {
-            return Some(qe.clone());
-        }
-    }
-    if let Some(target) = source.get("relation").and_then(|r| r.get("target")) {
-        return Some(target.clone());
-    }
-    source
-        .get("effect_template")
-        .and_then(|t| t.get("qualified_entity"))
-        .cloned()
 }

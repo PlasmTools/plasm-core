@@ -409,10 +409,7 @@ fn unify_compare_sides(
 ) -> PolarsResult<(Expr, Expr)> {
     let ordered = matches!(
         op,
-        PlanPredicateOp::Lt
-            | PlanPredicateOp::Lte
-            | PlanPredicateOp::Gt
-            | PlanPredicateOp::Gte
+        PlanPredicateOp::Lt | PlanPredicateOp::Lte | PlanPredicateOp::Gt | PlanPredicateOp::Gte
     );
     let eq_like = matches!(op, PlanPredicateOp::Eq | PlanPredicateOp::Ne);
     if !ordered && !eq_like {
@@ -420,9 +417,7 @@ fn unify_compare_sides(
     }
     let target = match field_kind {
         Some(ColKind::Int | ColKind::Float) => field_kind,
-        Some(ColKind::Str)
-            if ordered && matches!(rhs_kind, ColKind::Int | ColKind::Float) =>
-        {
+        Some(ColKind::Str) if ordered && matches!(rhs_kind, ColKind::Int | ColKind::Float) => {
             // Residual wire/stub string vs numeric literal — unify toward number.
             Some(if rhs_kind == ColKind::Float {
                 ColKind::Float

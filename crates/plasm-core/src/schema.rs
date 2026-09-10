@@ -36,88 +36,11 @@ impl From<serde_json::Value> for CapabilityTemplateJson {
     }
 }
 
-/// Entity-level seed participation default for semantic auto-seed (weak fallback when no edge `seed_nav`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DiscoverySeedClass {
-    /// Prefer as DirectCapability seed when this entity is selected.
-    Primary,
-    /// Prefer not to root a session alone for “of X” read intents (Comment, Label, …).
-    Dependent,
-    /// Weak container / locator (Repository, Project, Calendar, …).
-    Ambient,
-}
-
-impl DiscoverySeedClass {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Primary => "primary",
-            Self::Dependent => "dependent",
-            Self::Ambient => "ambient",
-        }
-    }
-}
-
-/// Force-admit this entity into the seed set when peer primaries are already selected.
-///
-/// Catalog-authored only — the core never keys off entity or entry English names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DiscoveryCoSeedWith {
-    /// Admit when any other primary DirectCapability in the **same catalog** is selected
-    /// (selected seats that themselves declare `catalog_primary` do not count as triggers).
-    CatalogPrimary,
-    /// Admit when any primary DirectCapability in a **different catalog** is selected
-    /// (selected seats that declare `federated_primary` / `session_primary` do not count).
-    FederatedPrimary,
-    /// `catalog_primary` ∪ `federated_primary`.
-    SessionPrimary,
-}
-
-impl DiscoveryCoSeedWith {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::CatalogPrimary => "catalog_primary",
-            Self::FederatedPrimary => "federated_primary",
-            Self::SessionPrimary => "session_primary",
-        }
-    }
-
-    pub fn admits_on_catalog_primary(self) -> bool {
-        matches!(self, Self::CatalogPrimary | Self::SessionPrimary)
-    }
-
-    pub fn admits_on_federated_primary(self) -> bool {
-        matches!(self, Self::FederatedPrimary | Self::SessionPrimary)
-    }
-}
-
-/// Relation-edge seed navigation semantics (primary lever for graph+role witness prune).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DiscoverySeedNav {
-    /// Target is a decoration/annotation of source — prefer source as seed.
-    Attach,
-    /// Source owns a collection/history of target — XOR DirectCapabilities; drop Target reads when Source also selected.
-    Own,
-    /// Source weakly situates target — drop source when target primary also selected.
-    Locate,
-}
-
-impl DiscoverySeedNav {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Attach => "attach",
-            Self::Own => "own",
-            Self::Locate => "locate",
-        }
-    }
-}
-
 /// Domain-language hints for typed discovery phrase / lexical indexes (`domain.yaml` → [`ResourceSchema`] / [`EntityDef`]).
 ///
 /// Authoring should name how humans refer to the entity (synonyms), not ranking preferences across catalogs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct DiscoveryEntityHints {
     /// Noun phrases that refer to this entity (matched case-insensitively; normalize to lowercase in authoring).
     #[serde(default)]
@@ -125,12 +48,6 @@ pub struct DiscoveryEntityHints {
     /// Tokens that often scope this entity in prepositional phrases (e.g. `type` for a subtype entity).
     #[serde(default)]
     pub qualifier_names: Vec<String>,
-    /// Optional seed participation default when this entity is selected alone / without a governing edge role.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed_class: Option<DiscoverySeedClass>,
-    /// Optional force-admit when peer primaries are selected (login gates, shared credential stores, …).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub co_seed_with: Option<DiscoveryCoSeedWith>,
 }
 
 /// Optional capability-level vocabulary for operation vs target wording in natural language.
@@ -144,15 +61,13 @@ pub struct DiscoveryCapabilityHints {
 
 /// Optional relation edge hints for graph-aware qualifier validation and traversal bias.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct DiscoveryRelationHints {
     #[serde(default)]
     pub qualifier_terms: Vec<String>,
     /// Optional edge weight when graph distance is used as evidence (not a cross-catalog ranking flag).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub traversal_weight: Option<f32>,
-    /// Optional seed navigation role for this edge (attach / own / locate).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed_nav: Option<DiscoverySeedNav>,
 }
 
 /// A complete schema definition for a resource/entity type.
@@ -2207,6 +2122,11 @@ pub const DEFAULT_HTTP_BACKEND: &str = "http://localhost:1080";
 /// Capability Graph Schema (CGS) - the root schema container.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CGS {
+    #[serde(
+        default,
+        skip_serializing_if = "crate::prerequisites::PrerequisiteCatalog::is_empty"
+    )]
+    pub prerequisites: crate::prerequisites::PrerequisiteCatalog,
     pub entities: IndexMap<EntityName, EntityDef>,
     pub capabilities: IndexMap<CapabilityName, CapabilitySchema>,
     /// Reusable value domains (`values:`), catalog-local (not merged across federation).
@@ -2295,6 +2215,7 @@ fn views_map_is_empty(m: &IndexMap<String, ViewDefinition>) -> bool {
 impl Clone for CGS {
     fn clone(&self) -> Self {
         Self {
+            prerequisites: self.prerequisites.clone(),
             entities: self.entities.clone(),
             capabilities: self.capabilities.clone(),
             values: self.values.clone(),
@@ -2322,7 +2243,8 @@ impl Clone for CGS {
 
 impl PartialEq for CGS {
     fn eq(&self, other: &Self) -> bool {
-        self.entities == other.entities
+        self.prerequisites == other.prerequisites
+            && self.entities == other.entities
             && self.capabilities == other.capabilities
             && self.values == other.values
             && self.data_classes == other.data_classes
@@ -2512,6 +2434,7 @@ impl CGS {
     /// Create a new empty CGS.
     pub fn new() -> Self {
         Self {
+            prerequisites: Default::default(),
             entities: IndexMap::new(),
             capabilities: IndexMap::new(),
             values: IndexMap::new(),
@@ -2720,6 +2643,9 @@ impl CGS {
 
     /// Validate all cross-references in this schema (includes expression-teaching surface).
     pub fn validate(&self) -> Result<(), SchemaError> {
+        self.prerequisites
+            .validate(self)
+            .map_err(|detail| SchemaError::PrerequisiteInvalid { detail })?;
         self.validate_core()
     }
 
@@ -6293,10 +6219,9 @@ mod list_capability_cardinality_tests {
                 template: tmpl.into(),
             }),
             derived: None,
-            inputs: {
-                let mut inputs = CapabilityInputs::default();
-                inputs.selection = BackendSelectionSchema(vec![q_field]);
-                inputs
+            inputs: CapabilityInputs {
+                selection: BackendSelectionSchema(vec![q_field]),
+                ..Default::default()
             },
             output_schema: None,
             provides: vec![],
@@ -6362,4 +6287,3 @@ mod view_bind_validation_tests {
             .expect("validate views fixture with node binds");
     }
 }
-

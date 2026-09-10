@@ -1,5 +1,5 @@
 import type { SymbolRegistrySnapshot } from "../symbol-registry.js";
-import type { AgentSessionState } from "../session-state.js";
+import { intentKey, type AgentSessionState } from "../session-state.js";
 import type { AgentStateStore, StateBackend } from "./define-state.js";
 
 function postgresUrl(): string {
@@ -42,10 +42,6 @@ async function pool(): Promise<PgPool> {
   sharedPool = new Pool({ connectionString: url }) as PgPool;
   await sharedPool.query(SCHEMA_SQL);
   return sharedPool;
-}
-
-function intentKey(intent: string): string {
-  return Buffer.from(intent, "utf8").toString("base64url");
 }
 
 export class PostgresStateAdapter implements AgentStateStore {

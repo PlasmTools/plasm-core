@@ -131,6 +131,8 @@ impl JsCallbackHttpTransport {
             headers.insert("content-type".into(), ct.into());
         }
         JsTransportRequest {
+            reject_redirects: false,
+            require_host_auth: false,
             method: method.to_string(),
             url,
             headers: if headers.is_empty() {
@@ -204,16 +206,16 @@ fn encode_outbound_body(
                 return Ok(None);
             };
             let encoded = plasm_value_to_form_urlencoded(body)?;
-            Ok(Some((
-                encoded,
-                "application/x-www-form-urlencoded",
-            )))
+            Ok(Some((encoded, "application/x-www-form-urlencoded")))
         }
     }
 }
 
 #[async_trait]
 impl HttpTransport for JsCallbackHttpTransport {
+    fn injects_host_auth(&self) -> bool {
+        true
+    }
     async fn send_compiled_http(
         &self,
         base_url: &str,
@@ -227,7 +229,16 @@ impl HttpTransport for JsCallbackHttpTransport {
             None => (None, None),
         };
         let template_headers = compiled_template_headers(request, auth.as_ref())?;
-        let req = self.build_request(method, url, auth, body, content_type, template_headers);
+        let require_host_auth = request.credential.is_some()
+            && !auth.as_ref().is_some_and(|auth| {
+                auth.headers
+                    .iter()
+                    .chain(&auth.query_params)
+                    .any(|(_, value)| !value.trim().is_empty())
+            });
+        let mut req = self.build_request(method, url, auth, body, content_type, template_headers);
+        req.reject_redirects = request.credential.is_some();
+        req.require_host_auth = require_host_auth;
         let resp = self.invoke(req).await?;
         Self::parse_response(resp)
     }
@@ -252,6 +263,7 @@ mod tests {
 
     fn base_request(format: HttpBodyFormat, body: Option<Value>) -> CompiledRequest {
         CompiledRequest {
+            credential: None,
             method: HttpMethod::Post,
             path: "/auth/token".into(),
             query: None,
@@ -270,7 +282,10 @@ mod tests {
         let req = base_request(HttpBodyFormat::FormUrlencoded, Some(Value::Object(fields)));
         let (body, ct) = encode_outbound_body(&req).expect("encode").expect("body");
         assert_eq!(ct, "application/x-www-form-urlencoded");
-        assert!(!body.starts_with('{'), "must not JSON-encode form body: {body}");
+        assert!(
+            !body.starts_with('{'),
+            "must not JSON-encode form body: {body}"
+        );
         assert!(body.contains("username=joyce"), "{body}");
         assert!(body.contains("password=s3cret"), "{body}");
     }
@@ -282,6 +297,9 @@ mod tests {
         let req = base_request(HttpBodyFormat::Json, Some(Value::Object(fields)));
         let (body, ct) = encode_outbound_body(&req).expect("encode").expect("body");
         assert_eq!(ct, "application/json; charset=utf-8");
-        assert!(body.contains("\"ok\":true") || body.contains("\"ok\": true"), "{body}");
+        assert!(
+            body.contains("\"ok\":true") || body.contains("\"ok\": true"),
+            "{body}"
+        );
     }
 }

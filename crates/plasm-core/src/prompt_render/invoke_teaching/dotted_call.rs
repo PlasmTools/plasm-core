@@ -10,9 +10,9 @@ use crate::{CapabilityKind, FieldType, InputType, ValueWireFormat, CGS};
 use super::super::line_validate::{DomainLineValidCacheKey, DomainLineValidEntry};
 use super::super::query_teaching::{entity_ref_id_example, scope_param_slot};
 use super::super::relation_teaching::receiver_for_dotted_suffix;
-use super::path_vars_empty;
 use super::super::symbol_tokens::{id_sym_cap, met_sym};
-use super::super::teaching_util::TEACHING_PARAM_VALUE_PLACEHOLDER;
+use super::super::teaching_util::{select_enum_teach_literal, TEACHING_PARAM_VALUE_PLACEHOLDER};
+use super::path_vars_empty;
 use super::union_ctor::{
     format_root_union_constructor_invoke_example, format_union_constructor_invoke_example,
     union_variants_teachable,
@@ -89,7 +89,16 @@ pub(crate) fn invoke_dotted_call_arg_example(
         | FieldType::Integer
         | FieldType::Number
         | FieldType::Money => Some(format!("{n}={p}")),
-        FieldType::Select | FieldType::MultiSelect => Some(format!("{n}={p}")),
+        FieldType::Select => Some(
+            select_enum_teach_literal(nv)
+                .map(|lit| format!("{n}={lit}"))
+                .unwrap_or_else(|| format!("{n}={p}")),
+        ),
+        FieldType::MultiSelect => Some(
+            select_enum_teach_literal(nv)
+                .map(|lit| format!("{n}=[{lit}]"))
+                .unwrap_or_else(|| format!("{n}={p}")),
+        ),
         FieldType::EntityRef { target, .. } => Some(format!(
             "{n}={}",
             entity_ref_id_example(cgs, catalog_entry_id, target, map)

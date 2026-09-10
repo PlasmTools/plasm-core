@@ -397,34 +397,25 @@ written"#,
     evaluate_plasm_plan_dry(&session, &plan).expect("repo_content_create dry-run");
 }
 
-/// Read-first Repository seed admits all mutators (including repo_content_create) without ranked_capabilities.
+/// Explicit Repository exposure admits its mutators, including repo_content_create.
 #[test]
 fn always_on_seeds_repository_exposes_repo_content_create_m_sym() {
-    use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions, MutatorAdmit};
-    use plasm_core::{ExposureEntityKey, SymbolMap, TeachingExposureSession};
+    use plasm_core::{SymbolMap, TeachingExposureSession};
 
     let cgs = github_cgs();
-    let delta = derive_intent_exposure_surface_batch(
+    let delta = plasm_core::capability_exposure::explicit_entity_capability_surface(
         cgs.as_ref(),
         "github",
-        "label documentation",
-        &[ExposureEntityKey {
-            entry_id: "github".into(),
-            entity: plasm_core::EntityName::from("Repository"),
-        }],
         &["Repository".to_string()],
-        None,
-        ExposureSurfaceOptions {
-            mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-        },
-    );
+    )
+    .expect("explicit fixture capability exposure");
     assert!(
         delta
             .required
             .capabilities
             .iter()
             .any(|c| c.capability.as_str() == "repo_content_create"),
-        "read-first Repository seed must expose repo_content_create without ranked_capabilities"
+        "explicit Repository exposure must include repo_content_create"
     );
     let exp = TeachingExposureSession::new_with_intent_delta(
         cgs.as_ref(),
@@ -486,7 +477,6 @@ fn session_from_exp(cgs: &Arc<plasm_core::CGS>, exp: TeachingExposureSession) ->
         Some(exp),
         None,
         cgs.catalog_cgs_hash_hex(),
-        None,
         None,
     )
 }
@@ -622,38 +612,23 @@ created"#,
 #[test]
 fn cross_wave_github_incremental_exposure_symbol_stability() {
     use crate::plasm_dag::ExecuteSession;
-    use plasm_core::discovery::{
-        derive_intent_exposure_surface_batch, ExposureSurfaceOptions, MutatorAdmit,
-    };
-    use plasm_core::{CgsContext, ExposureEntityKey, TeachingExposureSession};
+
+    use plasm_core::{CgsContext, TeachingExposureSession};
     use std::sync::Arc;
 
     let cgs = github_cgs();
-    let intent = "document all repository labels: open an issue, apply labels, branch, PR, comment";
     let layers: Vec<&plasm_core::CGS> = vec![cgs.as_ref()];
 
-    let mk_delta = |entities: &[&str], ranked: &[&str]| {
-        let endpoints = entities
-            .iter()
-            .map(|e| ExposureEntityKey {
-                entry_id: "github".into(),
-                entity: plasm_core::EntityName::from(*e),
-            })
-            .collect::<Vec<_>>();
-        derive_intent_exposure_surface_batch(
+    let mk_delta = |entities: &[&str], _ranked: &[&str]| {
+        plasm_core::capability_exposure::explicit_entity_capability_surface(
             cgs.as_ref(),
             "github",
-            intent,
-            &endpoints,
             &entities
                 .iter()
                 .map(|e| (*e).to_string())
                 .collect::<Vec<_>>(),
-            Some(&ranked.iter().map(|s| (*s).to_string()).collect::<Vec<_>>()),
-            ExposureSurfaceOptions {
-                mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-            },
         )
+        .expect("explicit fixture capability exposure")
     };
 
     // Wave 1: open with Repository + Issue, ranked toward issue_create.
@@ -679,44 +654,13 @@ fn cross_wave_github_incremental_exposure_symbol_stability() {
 
     // Wave 2: expand exactly as commit_expand_wave does — relation_keys = ALL prior + new entities,
     // ranked = the session's (re-ranked) list including the Issue mutators, normalized new seeds.
-    let all_endpoints: Vec<ExposureEntityKey> = [
-        "Repository",
-        "Issue",
-        "Branch",
-        "IssueComment",
-        "Label",
-        "PullRequest",
-    ]
-    .iter()
-    .map(|e| ExposureEntityKey {
-        entry_id: "github".into(),
-        entity: plasm_core::EntityName::from(*e),
-    })
-    .collect();
-    let session_ranked = [
-        "issue_create",
-        "issue_update",
-        "repo_branch_create",
-        "repo_content_create",
-        "repo_content_update",
-        "pr_create",
-        "issue_comment_create",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect::<Vec<_>>();
     let new_seeds = ["Branch", "IssueComment", "Label", "PullRequest"];
-    let w2 = derive_intent_exposure_surface_batch(
+    let w2 = plasm_core::capability_exposure::explicit_entity_capability_surface(
         cgs.as_ref(),
         "github",
-        intent,
-        &all_endpoints,
         &new_seeds.iter().map(|e| e.to_string()).collect::<Vec<_>>(),
-        Some(&session_ranked),
-        ExposureSurfaceOptions {
-            mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-        },
-    );
+    )
+    .expect("explicit fixture capability exposure");
     exp.expose_surface(&layers, cgs.clone(), "github", &new_seeds, w2);
 
     let map = exp.symbol_map_arc();
@@ -755,7 +699,6 @@ fn cross_wave_github_incremental_exposure_symbol_stability() {
         Some(exp),
         None,
         cgs.catalog_cgs_hash_hex(),
-        None,
         None,
     );
 

@@ -6,6 +6,16 @@ pub(crate) const TEACHING_ID_HOLE: &str = "<id>";
 /// Generic capability / filter param hole: `wire=<wire>` (never bare `$`).
 pub(crate) const TEACHING_PARAM_VALUE_PLACEHOLDER: &str = "<wire>";
 
+/// First closed-enum member as a quoted teaching exemplar (Select / MultiSelect).
+/// TSV-derivable from `NamedValueSchema.allowed_values` — not a task scalar.
+pub(crate) fn select_enum_teach_literal(nv: &crate::NamedValueSchema) -> Option<String> {
+    let raw = nv.allowed_values.as_ref()?.iter().find(|s| !s.is_empty())?;
+    if raw.contains('"') || raw.contains('<') || raw.contains('>') {
+        return None;
+    }
+    Some(format!("\"{raw}\""))
+}
+
 /// Search text hole including quotes: `e#~"<query>"`.
 pub(crate) const TEACHING_SEARCH_QUERY_LITERAL: &str = "\"<query>\"";
 
@@ -72,6 +82,23 @@ pub(crate) fn teaching_expr_for_validation(expr: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn select_enum_teach_literal_quotes_first_member() {
+        let nv = crate::NamedValueSchema {
+            domain: Default::default(),
+            description: String::new(),
+            field_type: crate::FieldType::Select,
+            value_format: None,
+            allowed_values: Some(vec!["received".into(), "sent".into()]),
+            array_items: None,
+            currency: None,
+        };
+        assert_eq!(
+            select_enum_teach_literal(&nv).as_deref(),
+            Some("\"received\"")
+        );
+    }
 
     #[test]
     fn validation_proxy_rewrites_angle_holes() {

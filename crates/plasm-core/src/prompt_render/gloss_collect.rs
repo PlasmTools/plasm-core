@@ -214,8 +214,10 @@ fn try_emit_value_domain_gloss(
     let Some(key) = ValueDomainStructuralKey::from_registry_meta(meta) else {
         return false;
     };
+    // Deduplicate by allocation identity (type+wire), not by gloss prose — federated
+    // catalogs can share type labels while still needing distinct Meaning rows.
     let Some(v_canon) = meaning_canonical_sym_for_emit(
-        vg,
+        key.as_str(),
         vs,
         &mut ctx.state.registry_value_gloss_canonical_v,
         &mut ctx.state.registry_v_sym_alias,

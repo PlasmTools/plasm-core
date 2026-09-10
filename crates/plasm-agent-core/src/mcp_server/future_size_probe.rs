@@ -4,8 +4,8 @@ use std::future::Future;
 use std::sync::Arc;
 
 use crate::http::{build_plasm_host_state, PlasmHostBootstrap};
-use crate::http_execute::{apply_capability_seeds, CapabilitySeed, RankedCapabilitiesArg};
-use plasm_core::discovery::InMemoryCgsRegistry;
+use crate::http_execute::{apply_capability_seeds, CapabilitySeed};
+use plasm_core::discovery::CgsRegistry;
 use plasm_core::loader::load_schema_dir;
 use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 
@@ -23,7 +23,7 @@ fn matrix_host() -> crate::server_state::PlasmHostState {
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/schemas/plasm_language_matrix");
     let cgs = Arc::new(load_schema_dir(&dir).expect("plasm_language_matrix"));
-    let reg = InMemoryCgsRegistry::from_pairs(vec![(
+    let reg = CgsRegistry::from_pairs(vec![(
         "github".into(),
         "GitHub".into(),
         vec!["github".into()],
@@ -60,17 +60,8 @@ fn mcp_apply_capability_seeds_future_size() {
                 entry_id: "github".into(),
                 entity: "LangItem".into(),
             }];
-            let fut = apply_capability_seeds(
-                &st,
-                None,
-                None,
-                seeds,
-                None,
-                None,
-                None,
-                "size probe",
-                RankedCapabilitiesArg::Unspecified,
-            );
+            let fut =
+                apply_capability_seeds(&st, None, None, seeds, None, None, None, "size probe");
             let n = size_of_future(fut);
             eprintln!(
                 "apply_capability_seeds future: {n} bytes ({:.1} KiB)",

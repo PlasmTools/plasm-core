@@ -6,7 +6,7 @@
 use indexmap::IndexMap;
 
 use crate::entity_ref_value::normalize_entity_ref_value_for_target;
-use crate::expr::{CreateExpr, EntityKey, Expr, InvokeExpr, Ref};
+use crate::expr::{CreateExpr, EntityKey, Expr, Ref};
 use crate::schema::{CapabilitySchema, EntityDef, InputFieldSchema};
 use crate::value::Value;
 use crate::{FieldType, CGS};
@@ -167,16 +167,16 @@ pub fn effective_capability_input(
 
 /// Lift + normalize + same-entity scope inference for invoke (type-check, preflight, live).
 #[must_use]
-pub fn prepare_invoke_capability_input(
+pub fn prepare_targeted_capability_input(
     cap: &CapabilitySchema,
-    invoke: &InvokeExpr,
+    invoke: &impl crate::expr::TargetedCall,
     input: Value,
     cgs: &CGS,
 ) -> Value {
-    let Some(receiver_ent) = cgs.get_entity(&invoke.target.entity_type) else {
+    let Some(receiver_ent) = cgs.get_entity(&invoke.target().entity_type) else {
         return input;
     };
-    effective_capability_input(cap, receiver_ent, &invoke.target, input, cgs)
+    effective_capability_input(cap, receiver_ent, invoke.target(), input, cgs)
 }
 
 /// Lift + normalize + same-entity scope inference for create with dotted `Get` receiver.

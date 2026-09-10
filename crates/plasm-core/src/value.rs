@@ -128,6 +128,7 @@ impl<'de> Deserialize<'de> for PlasmInputRef {
 pub enum Value {
     /// Program / template compile-time reference (see [`PlasmInputRef`]).
     PlasmInputRef(PlasmInputRef),
+    StringTemplate(crate::program_string_template::CompiledProgramString),
     Null,
     Bool(bool),
     /// Whole-number integer (maps to `FieldType::Integer` and JSON integer literals).
@@ -187,6 +188,19 @@ pub fn parse_json_subtree_str(s: &str) -> Option<Value> {
 }
 
 impl Value {
+    /// Parse explicit source string syntax once, retaining literals as data.
+    pub fn program_string(
+        source: String,
+    ) -> Result<Self, crate::program_string_template::ProgramStringError> {
+        crate::program_string_template::reject_dollar_interpolation(&source)?;
+        if crate::program_string_template::contains_minijinja_markers(&source) {
+            crate::program_string_template::CompiledProgramString::compile(source)
+                .map(Self::StringTemplate)
+        } else {
+            Ok(Self::String(source))
+        }
+    }
+
     /// Parse this value as a normalized [`crate::entity_ref_value::EntityRefPayload`] when it is
     /// shaped as an `entity_ref` constructor (atomic or compound tree).
     #[inline]
@@ -229,6 +243,7 @@ impl Value {
             | Value::Bool(_)
             | Value::Integer(_)
             | Value::Float(_)
+            | Value::StringTemplate(_)
             | Value::String(_)
             | Value::Money(_) => {}
         }
@@ -254,7 +269,7 @@ impl Value {
     pub fn contains_domain_placeholder_deep(&self) -> bool {
         match self {
             Value::String(s) if s == "$" => true,
-            Value::String(_) | Value::PhraseIdent(_) => false,
+            Value::StringTemplate(_) | Value::String(_) | Value::PhraseIdent(_) => false,
             Value::UnionCtor { ctor_fields, .. } => ctor_fields
                 .values()
                 .any(Self::contains_domain_placeholder_deep),
@@ -277,7 +292,7 @@ impl Value {
             Value::Bool(_) => "boolean",
             Value::Integer(_) => "integer",
             Value::Float(_) => "float",
-            Value::String(_) | Value::PhraseIdent(_) => "string",
+            Value::StringTemplate(_) | Value::String(_) | Value::PhraseIdent(_) => "string",
             Value::Array(_) => "array",
             Value::UnionCtor { .. } => "union_ctor",
             Value::Money(_) => "money",
@@ -378,6 +393,7 @@ impl Value {
 
     fn format_table_cell_inner(v: &Value, budget: &ValueTableCellBudget, depth: u8) -> String {
         match v {
+            Value::StringTemplate(value) => value.source().to_owned(),
             Value::PlasmInputRef(r) => match r {
                 PlasmInputRef::NodeInput { node, path } if path.is_empty() => {
                     format!("@{node}")

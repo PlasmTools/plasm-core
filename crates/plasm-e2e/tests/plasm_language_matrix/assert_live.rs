@@ -17,7 +17,6 @@ pub(crate) fn assert_comp_witness(dry: &DryPlasmPlanEvaluation) -> Result<(), St
     Ok(())
 }
 
-
 pub(crate) fn assert_row(row: &MatrixRow, out: &PlasmPlanRunResult) -> Result<(), String> {
     if out.node_results.len() < row.min_node_results {
         return Err(format!(
@@ -125,4 +124,3 @@ pub(crate) fn assert_row(row: &MatrixRow, out: &PlasmPlanRunResult) -> Result<()
     }
     Ok(())
 }
-

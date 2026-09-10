@@ -1,11 +1,8 @@
 //! Dry-plan IR extraction helpers for matrix planning asserts.
 
-use plasm_agent::plasm_plan::{ComputeTemplate};
+use plasm_agent::plasm_plan::ComputeTemplate;
 use plasm_agent::plasm_plan_run::DryPlasmPlanEvaluation;
-use plasm_core::{
-    ChainStep, EntityKey, Expr, GetExpr, QueryExpr,
-    TypedComparisonValue, Value,
-};
+use plasm_core::{ChainStep, EntityKey, Expr, GetExpr, QueryExpr, TypedComparisonValue, Value};
 
 pub(crate) fn surface_exprs(dry: &DryPlasmPlanEvaluation) -> Vec<Expr> {
     dry.node_results
@@ -126,7 +123,9 @@ pub(crate) fn comp_steps_values(comp: &serde_json::Value) -> Vec<&serde_json::Va
         .unwrap_or_default()
 }
 
-pub(crate) fn comp_first_invoke_qualified_entity(comp: &serde_json::Value) -> Option<&serde_json::Value> {
+pub(crate) fn comp_first_invoke_qualified_entity(
+    comp: &serde_json::Value,
+) -> Option<&serde_json::Value> {
     comp_steps_values(comp)
         .into_iter()
         .find(|s| s.get("kind").and_then(|k| k.as_str()) == Some("invoke"))
@@ -164,7 +163,6 @@ pub(crate) fn assert_for_each_action_node(
 }
 
 #[allow(clippy::too_many_lines)]
-
 pub(crate) fn expr_chain_selects_lines(e: &Expr) -> bool {
     chain_selector_matches(e, "lines")
 }
@@ -217,4 +215,3 @@ pub(crate) fn expr_mentions_langline(e: &Expr) -> bool {
         _ => false,
     }
 }
-

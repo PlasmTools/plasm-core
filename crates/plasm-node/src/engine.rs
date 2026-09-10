@@ -2,12 +2,7 @@
 
 use anyhow::{anyhow, Result};
 use indexmap::IndexMap;
-use plasm_agent_core::discovery_human_format::{
-    format_discovery_markdown_for_mcp, DiscoveryTablePolicy,
-};
-use plasm_agent_core::discovery_routing::{
-    build_auto_seed_breakout_markdown, discover_preview_markdown, AutoSeedRouteOutcome,
-};
+use plasm_agent_core::discovery_store::DiscoverySessionPin;
 use plasm_agent_core::execute_session::ExecuteSession;
 use plasm_agent_core::http::{build_plasm_host_state, PlasmHostBootstrap};
 use plasm_agent_core::http_execute::CapabilitySeed;
@@ -23,18 +18,12 @@ use plasm_agent_core::plasm_plan_run::{
 use plasm_agent_core::run_artifacts::RunArtifactStore;
 use plasm_agent_core::server_state::CatalogBootstrap;
 use plasm_agent_core::PlasmCompBundle;
-use plasm_core::discovery::{
-    derive_intent_exposure_surface_batch, CapabilityQuery, ExposureSurfaceOptions,
-    InMemoryCgsRegistry, RegistryEntryPair,
-};
+use plasm_core::discovery::{CgsRegistry, RegistryEntryPair};
 use plasm_core::prompt_render::{teaching_tsv_from_wrapped_prompt, TeachingFenceSlice};
-use plasm_core::relation_endpoint_keys;
-use plasm_core::CgsDiscovery;
 use plasm_core::PlanCommitRef;
 use plasm_core::{
-    capability_method_label_kebab, load_schema, load_schema_dir, ExposureEntityKey, InputSchema,
-    NamedValueSchema, OutputSchema, PromptPipelineConfig, SymbolMapCrossRequestCache,
-    TeachingExposureSession, CGS,
+    capability_method_label_kebab, ExposureEntityKey, InputSchema, NamedValueSchema, OutputSchema,
+    PromptPipelineConfig, SymbolMapCrossRequestCache, TeachingExposureSession, CGS,
 };
 use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode, HttpTransport};
 use std::path::Path;
@@ -43,7 +32,6 @@ use std::time::Instant;
 
 /// Stable execute-session wire ids for in-process agent runs (run artifact store keys).
 const AGENT_PROMPT_HASH: &str = "plasm_node";
-const AGENT_SESSION_ID: &str = "agent";
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct EntityFieldIntrospection {
@@ -96,23 +84,8 @@ pub struct DryRunResult {
     pub plan_commit_ref: String,
     pub summary: String,
     pub comp_json: serde_json::Value,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct DiscoverResult {
-    pub markdown: String,
-}
-
-/// Semantic auto-seed outcome for intent-only `plasm_context` (same spine as MCP host).
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct AutoSeedResult {
-    /// `ready` | `noop` | `clarify` | `hard_miss` | `routing_error`
-    pub decision: String,
-    /// Workflow seeds + teaching satellites (co_seed / identity_pair), ready only.
-    pub seeds: Vec<(String, String)>,
-    /// Breakout markdown when not ready; empty on ready.
-    pub markdown: String,
-    pub reasoning: Option<String>,
+    /// Same predicate as MCP `plasm` fused execute (clean 0-write plans).
+    pub fused_clean_read: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -121,6 +94,7 @@ pub struct RunPlanResult {
     pub message: String,
     pub rows_json: Option<String>,
     pub meta_json: Option<String>,
+    pub artifacts_json: Option<String>,
 }
 
 fn live_run_rows_json(
@@ -154,9 +128,13 @@ fn live_run_meta_json(
 
 /// Agent-global engine state: one monotonic symbol registry per agent catalog universe.
 pub struct AgentEngine {
+    session_id: String,
+    discovery_pin: Option<DiscoverySessionPin>,
     intent: String,
+    manifest_paths: Vec<std::path::PathBuf>,
     capabilities: Vec<(String, String)>,
     catalogs: IndexMap<String, Arc<CGS>>,
+    compiled_catalogs: IndexMap<String, Arc<plasm_compile::CompiledCatalog>>,
     catalog_digests: IndexMap<String, String>,
     exposure: Option<TeachingExposureSession>,
     pipeline: PromptPipelineConfig,
@@ -174,9 +152,15 @@ impl Default for AgentEngine {
 impl AgentEngine {
     pub fn new() -> Self {
         Self {
+            session_id: plasm_agent_core::session_identity::LogicalSessionId::new_v4()
+                .as_uuid()
+                .to_string(),
+            discovery_pin: None,
             intent: String::new(),
+            manifest_paths: Vec::new(),
             capabilities: Vec::new(),
             catalogs: IndexMap::new(),
+            compiled_catalogs: IndexMap::new(),
             catalog_digests: IndexMap::new(),
             exposure: None,
             pipeline: PromptPipelineConfig::default(),
@@ -254,26 +238,29 @@ impl AgentEngine {
     }
 
     pub fn load_catalog(&mut self, catalog_path: &Path) -> Result<CatalogInfo> {
-        let mut cgs = if catalog_path.is_file() {
-            load_schema(catalog_path).map_err(|e| anyhow!("{e}"))?
-        } else {
-            load_schema_dir(catalog_path).map_err(|e| anyhow!("{e}"))?
-        };
-        let entry_id = cgs
-            .entry_id
-            .clone()
-            .filter(|s: &String| !s.is_empty())
-            .unwrap_or_else(|| {
-                catalog_path
-                    .file_stem()
-                    .and_then(|n| n.to_str())
-                    .map(|s| s.strip_suffix(".cgs").unwrap_or(s))
-                    .or_else(|| catalog_path.file_name().and_then(|n| n.to_str()))
-                    .unwrap_or("default")
-                    .to_string()
-            });
-        // Federated teaching / surface keys require CGS.entry_id == registry map key.
-        cgs.bind_registry_entry_id(&entry_id);
+        if !plasm_core::catalog_il::is_catalog_manifest_path(catalog_path) {
+            return Err(anyhow!(
+                "loadCatalog requires a format-3 packed manifest; repack raw YAML first"
+            ));
+        }
+        let manifest = plasm_core::catalog_il::read_catalog_manifest(catalog_path)
+            .map_err(anyhow::Error::msg)?;
+        let cgs = plasm_core::catalog_il::load_catalog_artifact(
+            catalog_path
+                .parent()
+                .ok_or_else(|| anyhow!("manifest directory missing"))?,
+            &manifest,
+        )
+        .map_err(anyhow::Error::msg)?;
+        let compiled = plasm_compile::load_compiled_catalog_artifact(
+            catalog_path
+                .parent()
+                .ok_or_else(|| anyhow!("manifest directory missing"))?,
+            &manifest,
+            &cgs,
+        )
+        .map_err(anyhow::Error::msg)?;
+        let entry_id = manifest.entry_id;
         let digest = cgs.catalog_cgs_hash_hex();
         if let Some(existing) = self.catalog_digests.get(&entry_id) {
             if existing != &digest {
@@ -286,8 +273,11 @@ impl AgentEngine {
                 catalog_cgs_hash: digest,
             });
         }
+        self.manifest_paths.push(catalog_path.to_path_buf());
         self.catalog_digests
             .insert(entry_id.clone(), digest.clone());
+        self.compiled_catalogs
+            .insert(entry_id.clone(), Arc::new(compiled));
         self.catalogs.insert(entry_id.clone(), Arc::new(cgs));
         self.invalidate_execute_session();
         Ok(CatalogInfo {
@@ -296,150 +286,184 @@ impl AgentEngine {
         })
     }
 
+    pub fn packed_manifests(&self) -> Vec<std::path::PathBuf> {
+        self.manifest_paths.clone()
+    }
+
+    pub fn allowed_catalogs(&self) -> std::collections::BTreeSet<String> {
+        self.catalogs.keys().cloned().collect()
+    }
+
+    pub fn from_generation(
+        catalogs: std::collections::BTreeMap<String, CGS>,
+        compiled_catalogs: std::collections::BTreeMap<String, Arc<plasm_compile::CompiledCatalog>>,
+        session_id: String,
+    ) -> Self {
+        let mut engine = Self::new();
+        engine.session_id = session_id;
+        for (id, cgs) in catalogs {
+            engine
+                .catalog_digests
+                .insert(id.clone(), cgs.catalog_cgs_hash_hex());
+            engine.catalogs.insert(id, Arc::new(cgs));
+        }
+        engine.compiled_catalogs.extend(compiled_catalogs);
+        engine
+    }
+
+    pub fn from_pinned_generation(
+        catalogs: std::collections::BTreeMap<String, CGS>,
+        compiled_catalogs: std::collections::BTreeMap<String, Arc<plasm_compile::CompiledCatalog>>,
+        pin: DiscoverySessionPin,
+    ) -> Self {
+        let mut engine = Self::from_generation(catalogs, compiled_catalogs, pin.pin_id.clone());
+        engine.discovery_pin = Some(pin);
+        engine
+    }
+
+    pub fn discovery_pin(&self) -> Option<&DiscoverySessionPin> {
+        self.discovery_pin.as_ref()
+    }
+
+    pub fn exposed_capabilities(&self) -> Vec<plasm_core::prerequisites::CapabilityRef> {
+        self.exposure
+            .as_ref()
+            .map(|e| {
+                e.surface
+                    .capabilities
+                    .iter()
+                    .map(|c| plasm_core::prerequisites::CapabilityRef {
+                        catalog: c.entry_id.clone(),
+                        capability: c.capability.to_string(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn expose_routing(
+        &mut self,
+        intent: &str,
+        closure: &plasm_core::prerequisites::PrerequisiteClosure,
+    ) -> Result<TeachingExposureResult> {
+        if !self.intent.is_empty() {
+            self.intent.push('\n');
+        }
+        self.intent.push_str(intent);
+        let mut grouped = std::collections::BTreeMap::<String, Vec<String>>::new();
+        for reference in closure.business.iter().chain(&closure.prerequisites) {
+            grouped
+                .entry(reference.catalog.clone())
+                .or_default()
+                .push(reference.capability.clone());
+        }
+        let mut touched = Vec::new();
+        for (entry, capabilities) in grouped {
+            let cgs = self
+                .catalogs
+                .get(&entry)
+                .ok_or_else(|| anyhow!("missing pinned catalog {entry}"))?
+                .clone();
+            let delta = plasm_core::capability_exposure::selected_capability_surface(
+                &cgs,
+                &entry,
+                &capabilities,
+            )
+            .map_err(anyhow::Error::msg)?;
+            let entities: Vec<_> = delta
+                .required
+                .entities
+                .iter()
+                .map(|e| e.entity.to_string())
+                .collect();
+            for entity in &entities {
+                if !self.has_capability(&entry, entity) {
+                    self.capabilities.push((entry.clone(), entity.clone()));
+                }
+            }
+            touched.extend(delta.required.entities.iter().cloned());
+            let refs = entities.iter().map(String::as_str).collect::<Vec<_>>();
+            if let Some(exposure) = &mut self.exposure {
+                let layers = self.catalogs.values().map(Arc::as_ref).collect::<Vec<_>>();
+                exposure.expose_surface(&layers, cgs, &entry, &refs, delta);
+            } else {
+                self.exposure = Some(TeachingExposureSession::new_with_intent_delta(
+                    &cgs, &entry, &refs, delta,
+                ));
+            }
+        }
+        let exposure = self
+            .exposure
+            .as_ref()
+            .ok_or_else(|| anyhow!("ready routing has no teaching exposure"))?;
+        if let Some(session) = &mut self.execute_session {
+            // Keep graph state and reviewed plans while appending symbols.
+            session.entities = exposure.entities.clone();
+            session.teaching_exposure = Some(exposure.clone());
+            session.context_intent = Some(self.intent.clone());
+            session.domain_revision += 1;
+        }
+        let mut tsv = self.render_teaching_delta(&touched)?;
+        let catalogs = self
+            .catalogs
+            .iter()
+            .map(|(id, cgs)| (id.clone(), cgs.as_ref()))
+            .collect();
+        let symbols = exposure.to_symbol_map();
+        let guidance = plasm_core::prompt_render::render_prerequisite_bindings(
+            closure,
+            &catalogs,
+            symbols.as_ref(),
+        )
+        .map_err(anyhow::Error::msg)?;
+        if !guidance.is_empty() {
+            tsv.push_str("\n\n");
+            tsv.push_str(&guidance);
+        }
+        Ok(TeachingExposureResult {
+            tsv,
+            delta_refs: touched
+                .iter()
+                .map(|e| format!("{}:{}", e.entry_id, e.entity))
+                .collect(),
+        })
+    }
+
+    /// Explicit local execution may expose a caller-named entity without discovery.
+    /// Every capability is selected by exact ownership; intent never controls admission.
     pub fn expose_seeds(
         &mut self,
         intent: impl Into<String>,
         seeds: &[CapabilitySeed],
     ) -> Result<TeachingExposureResult> {
-        self.intent = intent.into();
-        let mut newly_added: Vec<CapabilitySeed> = Vec::new();
-        for s in seeds {
-            if !self.has_capability(&s.entry_id, &s.entity) {
-                newly_added.push(s.clone());
-                self.capabilities
-                    .push((s.entry_id.clone(), s.entity.clone()));
-            }
-        }
-        if newly_added.is_empty() {
-            return Ok(TeachingExposureResult {
-                tsv: String::new(),
-                delta_refs: Vec::new(),
-            });
-        }
-        self.invalidate_execute_session();
-
-        let mut grouped: IndexMap<String, Vec<String>> = IndexMap::new();
-        for s in &newly_added {
-            grouped
-                .entry(s.entry_id.clone())
-                .or_default()
-                .push(s.entity.clone());
-        }
-        for entities in grouped.values_mut() {
-            entities.sort_unstable();
-            entities.dedup();
-        }
-
-        let mut all_new_qualified: Vec<ExposureEntityKey> = Vec::new();
-        let intent_s = self.intent.clone();
-        let use_intent = !intent_s.trim().is_empty();
-        let intent_ref = intent_s.trim();
-
-        let mut process_order: Vec<String> = grouped.keys().cloned().collect();
-        process_order.sort();
-
-        for entry_id in &process_order {
-            let Some(entities) = grouped.get(entry_id) else {
-                continue;
-            };
+        let mut business = Vec::new();
+        for seed in seeds {
             let cgs = self
                 .catalogs
-                .get(entry_id)
-                .ok_or_else(|| anyhow!("missing catalog `{entry_id}` — call loadCatalog first"))?;
-            let refs: Vec<&str> = entities.iter().map(|s| s.as_str()).collect();
-            let n0 = self
-                .exposure
-                .as_ref()
-                .map(|e| e.entities.len())
-                .unwrap_or(0);
-
-            self.apply_exposure_wave(
-                cgs.clone(),
-                entry_id,
-                &refs,
-                entities,
-                use_intent,
-                intent_ref,
-            )?;
-
-            let exp = self
-                .exposure
-                .as_ref()
-                .ok_or_else(|| anyhow!("exposure missing after expose"))?;
-            all_new_qualified.extend(exp.qualified_entities_since(n0));
+                .get(&seed.entry_id)
+                .ok_or_else(|| anyhow!("unknown catalog {}", seed.entry_id))?;
+            if !cgs.entities.contains_key(seed.entity.as_str()) {
+                return Err(anyhow!("unknown entity {}", seed.entity));
+            }
+            business.extend(
+                cgs.capabilities
+                    .values()
+                    .filter(|cap| cap.domain.as_str() == seed.entity)
+                    .map(|cap| plasm_core::prerequisites::CapabilityRef {
+                        catalog: seed.entry_id.clone(),
+                        capability: cap.name.to_string(),
+                    }),
+            );
         }
-
-        if all_new_qualified.is_empty() {
-            return Ok(TeachingExposureResult {
-                tsv: String::new(),
-                delta_refs: Vec::new(),
-            });
-        }
-
-        let tsv = self.render_teaching_delta(&all_new_qualified)?;
-        let delta_refs: Vec<String> = all_new_qualified
-            .iter()
-            .map(|k| format!("{}:{}", k.entry_id, k.entity))
-            .collect();
-        Ok(TeachingExposureResult { tsv, delta_refs })
-    }
-
-    pub fn discover(&self, intent: &str) -> Result<DiscoverResult> {
-        let intent = intent.trim();
-        if intent.is_empty() {
-            return Err(anyhow!(
-                "discover_capabilities `intent` must be a non-empty string"
-            ));
-        }
-        let registry = self.registry()?;
-        let query = CapabilityQuery {
-            tokens: vec![intent.to_string()],
-            ..CapabilityQuery::default()
-        };
-        let result = registry.discover(&query).map_err(|e| anyhow!("{e}"))?;
-        let formatted =
-            format_discovery_markdown_for_mcp(&result, &DiscoveryTablePolicy::default());
-        Ok(DiscoverResult {
-            markdown: formatted.markdown,
-        })
-    }
-
-    /// Intent → FO seeds + teaching satellites (`admit_co_seed` / identity pair).
-    /// Lexicon browse (`discover`) is not used for session minting.
-    pub async fn select_auto_seeds(&self, intent: &str) -> Result<AutoSeedResult> {
-        let registry = self.registry()?;
-        Self::select_auto_seeds_on(&registry, intent).await
-    }
-
-    /// FO routing on an already-cloned registry (NAPI holds the engine mutex only while cloning).
-    pub async fn select_auto_seeds_on(
-        registry: &InMemoryCgsRegistry,
-        intent: &str,
-    ) -> Result<AutoSeedResult> {
-        let intent = intent.trim();
-        if intent.is_empty() {
-            return Err(anyhow!(
-                "select_auto_seeds `intent` must be a non-empty string"
-            ));
-        }
-        let outcome =
-            plasm_agent_core::discovery_seed_select::route_intent_to_seeds(
-                registry, intent, None, None,
-            )
-            .await;
-        Ok(map_auto_seed_outcome(registry, intent, outcome))
-    }
-
-    pub(crate) fn registry(&self) -> Result<InMemoryCgsRegistry> {
-        let pairs: Vec<RegistryEntryPair> = self
-            .catalogs
-            .iter()
-            .map(|(id, cgs)| (id.clone(), id.clone(), Vec::new(), cgs.clone()))
-            .collect();
-        if pairs.is_empty() {
-            return Err(anyhow!("no catalogs loaded — call loadCatalog first"));
-        }
-        Ok(InMemoryCgsRegistry::from_pairs(pairs))
+        self.expose_routing(
+            &intent.into(),
+            &plasm_core::prerequisites::PrerequisiteClosure {
+                business,
+                prerequisites: vec![],
+                acquisitions: vec![],
+                edges: vec![],
+            },
+        )
     }
 
     pub fn dry_run(&mut self, program: &str) -> Result<DryRunResult> {
@@ -457,6 +481,7 @@ impl AgentEngine {
         )
         .map_err(|e| anyhow!("{e}"))?;
         let dry = evaluate_plasm_comp_dry(&es, &bundle).map_err(|e| anyhow!("{e}"))?;
+        let fused_clean_read = dry.fuse_clean_read();
         let summary = render_plasm_plan_dry_text_for_session(&dry, None, Some(&es));
         let compact = plan_dry_compact_view(&dry, Some(&es));
         let commit_ref = es.mint_plan_commit_ref();
@@ -482,6 +507,7 @@ impl AgentEngine {
             plan_commit_ref: commit_ref.as_str().to_string(),
             summary,
             comp_json: serde_json::to_value(&bundle.artifact().comp)?,
+            fused_clean_read,
         })
     }
 
@@ -504,6 +530,7 @@ impl AgentEngine {
             message: format!("Plan `{trimmed}` validated. Pass a HostTransportFn to execute live."),
             rows_json: None,
             meta_json: None,
+            artifacts_json: None,
         })
     }
 
@@ -536,7 +563,7 @@ impl AgentEngine {
             &es,
             &host,
             AGENT_PROMPT_HASH,
-            AGENT_SESSION_ID,
+            &self.session_id,
             &bundle,
             true,
             None,
@@ -551,11 +578,27 @@ impl AgentEngine {
             .run_markdown
             .clone()
             .unwrap_or_else(|| format!("Live run completed for `{trimmed}`."));
+        let mut artifacts = Vec::new();
+        for artifact in &live.code_plan_run_artifacts {
+            let id = plasm_agent_core::run_artifacts::RunArtifactId::from_wire(&artifact.run_id)
+                .ok_or_else(|| anyhow!("invalid canonical run id"))?;
+            let payload = host
+                .run_artifacts
+                .get_payload_result(AGENT_PROMPT_HASH, &self.session_id, id)
+                .await
+                .map_err(|error| anyhow!("reading canonical run artifact: {error}"))?
+                .ok_or_else(|| anyhow!("canonical run artifact missing"))?;
+            artifacts.push(serde_json::json!({
+                "run_id": artifact.run_id,
+                "snapshot": serde_json::from_slice::<serde_json::Value>(&payload.bytes)?,
+            }));
+        }
         Ok(RunPlanResult {
             ok: true,
             message,
             rows_json: live_run_rows_json(&live),
             meta_json: live_run_meta_json(&live),
+            artifacts_json: Some(serde_json::to_string(&artifacts)?),
         })
     }
 
@@ -571,7 +614,7 @@ impl AgentEngine {
         if pairs.is_empty() {
             return Err(anyhow!("no catalogs loaded — call loadCatalog first"));
         }
-        let registry = InMemoryCgsRegistry::from_pairs(pairs);
+        let registry = CgsRegistry::from_pairs(pairs);
         let base_url = self
             .primary_entry_id()
             .and_then(|id| self.catalogs.get(&id))
@@ -622,77 +665,6 @@ impl AgentEngine {
             .iter()
             .map(|(k, v)| (k.clone(), v.as_ref()))
             .collect()
-    }
-
-    fn apply_exposure_wave(
-        &mut self,
-        cgs: Arc<CGS>,
-        entry_id: &str,
-        refs: &[&str],
-        entities: &[String],
-        use_intent: bool,
-        intent_s: &str,
-    ) -> Result<()> {
-        if self.exposure.is_none() && self.catalogs.len() == 1 {
-            if use_intent {
-                let relation_keys = relation_endpoint_keys(entry_id, entities);
-                let delta = derive_intent_exposure_surface_batch(
-                    cgs.as_ref(),
-                    entry_id,
-                    intent_s,
-                    &relation_keys,
-                    entities,
-                    None,
-                    ExposureSurfaceOptions::default(),
-                );
-                self.exposure = Some(TeachingExposureSession::new_with_intent_delta(
-                    cgs.as_ref(),
-                    entry_id,
-                    refs,
-                    delta,
-                ));
-            } else {
-                self.exposure = Some(TeachingExposureSession::new(cgs.as_ref(), entry_id, refs));
-            }
-        } else if self.exposure.is_some() {
-            let layer_refs: Vec<&CGS> = self.catalogs.values().map(|a| a.as_ref()).collect();
-            let exp = self.exposure.as_mut().expect("exposure");
-            if use_intent {
-                let relation_keys = exp.relation_endpoint_keys_for_wave(entry_id, entities);
-                let delta = derive_intent_exposure_surface_batch(
-                    cgs.as_ref(),
-                    entry_id,
-                    intent_s,
-                    &relation_keys,
-                    entities,
-                    None,
-                    ExposureSurfaceOptions::default(),
-                );
-                exp.expose_surface(&layer_refs, cgs, entry_id, refs, delta);
-            } else {
-                exp.expose_entities(&layer_refs, cgs, entry_id, refs);
-            }
-        } else if use_intent {
-            let relation_keys = relation_endpoint_keys(entry_id, entities);
-            let delta = derive_intent_exposure_surface_batch(
-                cgs.as_ref(),
-                entry_id,
-                intent_s,
-                &relation_keys,
-                entities,
-                None,
-                ExposureSurfaceOptions::default(),
-            );
-            self.exposure = Some(TeachingExposureSession::new_with_intent_delta(
-                cgs.as_ref(),
-                entry_id,
-                refs,
-                delta,
-            ));
-        } else {
-            self.exposure = Some(TeachingExposureSession::new(cgs.as_ref(), entry_id, refs));
-        }
-        Ok(())
     }
 
     fn render_teaching_delta(&self, all_new_qualified: &[ExposureEntityKey]) -> Result<String> {
@@ -769,9 +741,9 @@ impl AgentEngine {
             .ok_or_else(|| anyhow!("no symbol exposure — call exposeSeeds first"))?;
         let entities = exposure.entities.clone();
         let catalog_cgs_hash = cgs.catalog_cgs_hash_hex();
-        Ok(ExecuteSession::new(
+        let mut session = ExecuteSession::new_with_bindings(
             AGENT_PROMPT_HASH.into(),
-            AGENT_SESSION_ID.into(),
+            self.session_id.clone(),
             cgs,
             contexts_by_entry,
             primary_api,
@@ -787,8 +759,11 @@ impl AgentEngine {
             } else {
                 Some(self.intent.clone())
             },
-            None,
-        ))
+            IndexMap::new(),
+            self.compiled_catalogs.clone(),
+        );
+        session.discovery_pin = self.discovery_pin.clone();
+        Ok(session)
     }
 
     fn ensure_execute_session(&mut self) -> Result<ExecuteSession> {
@@ -806,69 +781,6 @@ fn primary_entry_id_from_seeds(seeds: &[CapabilitySeed]) -> Option<String> {
     ids.sort();
     ids.dedup();
     ids.into_iter().next()
-}
-
-fn map_auto_seed_outcome(
-    registry: &InMemoryCgsRegistry,
-    intent: &str,
-    outcome: AutoSeedRouteOutcome,
-) -> AutoSeedResult {
-    match outcome {
-        AutoSeedRouteOutcome::Ready {
-            seeds,
-            teaching_satellites,
-            reasoning,
-            ..
-        } => {
-            let mut merged = seeds;
-            for (entry_id, entity) in teaching_satellites {
-                if merged
-                    .iter()
-                    .any(|(e, n)| e == &entry_id && n.eq_ignore_ascii_case(&entity))
-                {
-                    continue;
-                }
-                merged.push((entry_id, entity));
-            }
-            AutoSeedResult {
-                decision: "ready".into(),
-                seeds: merged,
-                markdown: String::new(),
-                reasoning: Some(reasoning),
-            }
-        }
-        AutoSeedRouteOutcome::Noop { reasoning, .. } => AutoSeedResult {
-            decision: "noop".into(),
-            seeds: Vec::new(),
-            markdown: String::new(),
-            reasoning: Some(reasoning),
-        },
-        abstain @ (AutoSeedRouteOutcome::Clarify { .. }
-        | AutoSeedRouteOutcome::HardMiss { .. }
-        | AutoSeedRouteOutcome::RoutingError { .. }) => {
-            let decision = match &abstain {
-                AutoSeedRouteOutcome::Clarify { .. } => "clarify",
-                AutoSeedRouteOutcome::HardMiss { .. } => "hard_miss",
-                AutoSeedRouteOutcome::RoutingError { .. } => "routing_error",
-                _ => unreachable!(),
-            };
-            let reasoning = match &abstain {
-                AutoSeedRouteOutcome::Clarify { reasoning, .. }
-                | AutoSeedRouteOutcome::HardMiss { reasoning, .. } => Some(reasoning.clone()),
-                AutoSeedRouteOutcome::RoutingError { message, .. } => Some(message.clone()),
-                _ => None,
-            };
-            let preview = discover_preview_markdown(registry, intent, None);
-            let markdown =
-                build_auto_seed_breakout_markdown(&abstain, intent, preview.as_deref());
-            AutoSeedResult {
-                decision: decision.into(),
-                seeds: Vec::new(),
-                markdown,
-                reasoning,
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -944,12 +856,27 @@ mod tests {
         }
     }
 
+    fn tiny_engine() -> (AgentEngine, CatalogInfo) {
+        let mut cgs = plasm_core::load_schema_dir(&execute_tiny_dir()).unwrap();
+        cgs.bind_registry_entry_id("matrix");
+        let info = CatalogInfo {
+            entry_id: "matrix".into(),
+            catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
+        };
+        let compiled = Arc::new(plasm_compile::compile_cgs_capability_templates(&cgs).unwrap());
+        (
+            AgentEngine::from_generation(
+                [("matrix".into(), cgs)].into(),
+                [("matrix".into(), compiled)].into(),
+                "matrix-session".into(),
+            ),
+            info,
+        )
+    }
+
     #[test]
     fn load_expose_and_dry_run_execute_tiny() {
-        let mut engine = AgentEngine::new();
-        let info = engine
-            .load_catalog(&execute_tiny_dir())
-            .expect("load catalog");
+        let (mut engine, info) = tiny_engine();
         assert!(!info.catalog_cgs_hash.is_empty());
         let teaching = engine
             .expose_seeds(
@@ -964,6 +891,11 @@ mod tests {
         let dry = engine.dry_run("e1").expect("dry run");
         assert!(dry.plan_commit_ref.starts_with("pc"));
         assert!(!dry.summary.is_empty());
+        assert!(
+            !dry.fused_clean_read,
+            "unbounded Product list must stay on run_ref: {}",
+            dry.summary
+        );
     }
 
     #[test]
@@ -1024,10 +956,7 @@ mod tests {
 
     #[tokio::test]
     async fn live_run_execute_tiny_returns_rows_json() {
-        let mut engine = AgentEngine::new();
-        let info = engine
-            .load_catalog(&execute_tiny_dir())
-            .expect("load catalog");
+        let (mut engine, info) = tiny_engine();
         engine
             .expose_seeds(
                 "list products",
@@ -1052,73 +981,110 @@ mod tests {
         let arr = parsed.as_array().expect("entity rows array");
         assert!(!arr.is_empty());
         assert_eq!(arr[0]["id"], "p1");
+        let artifacts: serde_json::Value =
+            serde_json::from_str(live.artifacts_json.as_deref().expect("canonical artifacts"))
+                .expect("artifact JSON");
+        let artifacts = artifacts.as_array().expect("artifact array");
+        assert!(!artifacts.is_empty());
+        for artifact in artifacts {
+            let run_id = artifact["run_id"].as_str().expect("native run id");
+            assert!(plasm_agent_core::run_artifacts::RunArtifactId::from_wire(run_id).is_some());
+            assert!(artifact["snapshot"].is_object());
+        }
     }
 
     #[test]
-    fn expose_seeds_federated_supervisor_venmo_teaches_methods() {
-        use plasm_core::load_schema_dir;
-        use plasm_core::prompt_pipeline::PromptPipelineConfig;
-        use plasm_core::symbol_tuning::TeachingExposureSession;
-        use plasm_core::CGS;
-        use std::sync::Arc;
-
-        let apis = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/appworld");
-        if !apis.is_dir() {
-            return;
-        }
-        let mut supervisor = load_schema_dir(&apis.join("supervisor")).unwrap();
-        supervisor.bind_registry_entry_id("supervisor");
-        let mut venmo = load_schema_dir(&apis.join("venmo")).unwrap();
-        venmo.bind_registry_entry_id("venmo");
-
-        let mut exp =
-            TeachingExposureSession::new(&supervisor, "supervisor", &["Supervisor"]);
-        let layers = [&supervisor as &CGS, &venmo as &CGS];
-        exp.expose_entities(&layers, Arc::new(venmo.clone()), "venmo", &["PaymentRequest"]);
-        let by_entry: IndexMap<String, &CGS> = [
-            ("supervisor".into(), &supervisor),
-            ("venmo".into(), &venmo),
-        ]
-        .into_iter()
-        .collect();
-        let control = PromptPipelineConfig::default().render_teaching_exposure_delta_federated(
-            &by_entry,
-            &exp,
-            &exp.qualified_entities_since(0),
-            None,
+    fn routed_extension_preserves_symbols_and_reviewed_plans() {
+        use plasm_core::prerequisites::{CapabilityRef, PrerequisiteClosure};
+        let (mut engine, _) = tiny_engine();
+        let pin = DiscoverySessionPin {
+            authorization: plasm_agent_core::discovery_store::DiscoveryAuthorization::catalogs(
+                ["matrix".into()].into(),
+            ),
+            generation: "generation-one".into(),
+            pin_id: engine.session_id.clone(),
+        };
+        let catalogs = engine
+            .catalogs
+            .iter()
+            .map(|(id, cgs)| (id.clone(), cgs.as_ref().clone()))
+            .collect();
+        let compiled_catalogs = engine.compiled_catalogs.clone().into_iter().collect();
+        engine = AgentEngine::from_pinned_generation(catalogs, compiled_catalogs, pin.clone());
+        let route = |name: &str| PrerequisiteClosure {
+            business: vec![CapabilityRef {
+                catalog: "matrix".into(),
+                capability: name.into(),
+            }],
+            prerequisites: vec![],
+            acquisitions: vec![],
+            edges: vec![],
+        };
+        engine
+            .expose_routing("list products", &route("product_list"))
+            .unwrap();
+        assert_eq!(
+            engine.exposed_capabilities(),
+            route("product_list").business
         );
-
-        let mut engine = AgentEngine::new();
-        for name in ["supervisor", "venmo"] {
+        let initial_entities = engine.exposure.as_ref().unwrap().entities.clone();
+        let dry = engine.dry_run("e1").unwrap();
+        assert_eq!(
             engine
-                .load_catalog(&apis.join(name))
-                .expect("load");
-        }
-        let seeds = vec![
-            CapabilitySeed {
-                entry_id: "venmo".into(),
-                entity: "PaymentRequest".into(),
-            },
-            CapabilitySeed {
-                entry_id: "supervisor".into(),
-                entity: "Supervisor".into(),
-            },
-        ];
-        let teach = engine.expose_seeds("", &seeds).expect("expose");
-        assert!(
-            control.len() > 800,
-            "control itself truncated — env/catalog issue"
+                .execute_session
+                .as_ref()
+                .unwrap()
+                .discovery_pin
+                .as_ref(),
+            Some(&pin)
         );
-        assert!(
-            teach.tsv.len() > 800,
-            "federated teach truncated: {} (control={})",
-            teach.tsv.len(),
-            control.len()
+        engine
+            .expose_routing("fetch category", &route("category_get"))
+            .unwrap();
+        assert!(engine
+            .exposure
+            .as_ref()
+            .unwrap()
+            .entities
+            .starts_with(&initial_entities));
+        let refs = engine.exposed_capabilities();
+        let before_empty = engine.exposure.as_ref().unwrap().entities.clone();
+        let empty = PrerequisiteClosure {
+            business: vec![],
+            prerequisites: vec![],
+            acquisitions: vec![],
+            edges: vec![],
+        };
+        let unchanged = engine
+            .expose_routing("continue using existing capabilities", &empty)
+            .unwrap();
+        assert!(unchanged.delta_refs.is_empty());
+        assert_eq!(engine.exposed_capabilities(), refs);
+        assert_eq!(engine.exposure.as_ref().unwrap().entities, before_empty);
+        assert_eq!(refs.len(), 2);
+        assert!(!refs.iter().any(|c| c.capability == "product_search"));
+        assert_eq!(engine.discovery_pin(), Some(&pin));
+        assert_eq!(
+            engine
+                .execute_session
+                .as_ref()
+                .unwrap()
+                .discovery_pin
+                .as_ref(),
+            Some(&pin)
         );
-        assert!(
-            teach.tsv.contains("e2.") || teach.tsv.contains("Ask another"),
-            "missing PaymentRequest methods"
-        );
+        assert!(engine
+            .run_plan(&dry.plan_commit_ref)
+            .unwrap()
+            .message
+            .contains("validated"));
+    }
+
+    #[test]
+    fn runtime_loader_rejects_raw_authoring_schema() {
+        assert!(AgentEngine::new()
+            .load_catalog(&execute_tiny_dir())
+            .is_err());
     }
 
     /// Same acquisition pattern as NAPI `PlasmEngine` (async Mutex, no blocking_lock).
@@ -1127,8 +1093,7 @@ mod tests {
         use std::time::{Duration, Instant};
         use tokio::sync::Mutex;
 
-        let mut boot = AgentEngine::new();
-        let info = boot.load_catalog(&execute_tiny_dir()).expect("load");
+        let (mut boot, info) = tiny_engine();
         boot.expose_seeds(
             "concurrent dry",
             &[CapabilitySeed {
@@ -1153,7 +1118,11 @@ mod tests {
                 .await
                 .expect("join")
                 .unwrap_or_else(|e| panic!("dry_run[{i}]: {e}"));
-            assert!(dry.plan_commit_ref.starts_with("pc"), "{}", dry.plan_commit_ref);
+            assert!(
+                dry.plan_commit_ref.starts_with("pc"),
+                "{}",
+                dry.plan_commit_ref
+            );
         }
         assert!(
             started.elapsed() < Duration::from_secs(30),

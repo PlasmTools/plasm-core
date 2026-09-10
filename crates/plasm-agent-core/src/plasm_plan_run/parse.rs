@@ -281,7 +281,7 @@ fn enrich_phrase_ident_program_error(session: &ExecuteSession, raw: &str) -> Str
         owners.dedup();
         if owners.is_empty() {
             return format!(
-                "unknown capability `{cap}` — check ranked_capabilities or session seeds"
+                "unknown capability `{cap}` — request the required capability through session extension"
             );
         }
         if owners.len() == 1 {

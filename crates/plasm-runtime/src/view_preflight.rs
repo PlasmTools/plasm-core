@@ -21,6 +21,7 @@ pub fn preflight_view_query(
     view_name: &str,
     query: &QueryExpr,
     cgs: &CGS,
+    compiled: &plasm_compile::CompiledCatalog,
     ambient: &ViewAmbientContext,
     mat: &SessionMaterialization,
 ) -> Result<(), RuntimeError> {
@@ -28,6 +29,7 @@ pub fn preflight_view_query(
         view_name,
         derive_view_query_scope(view_name, query, cgs)?,
         cgs,
+        compiled,
         ambient,
         mat,
     )
@@ -39,6 +41,7 @@ pub fn preflight_view_get(
     view_name: &str,
     get: &GetExpr,
     cgs: &CGS,
+    compiled: &plasm_compile::CompiledCatalog,
     ambient: &ViewAmbientContext,
     mat: &SessionMaterialization,
 ) -> Result<(), RuntimeError> {
@@ -46,6 +49,7 @@ pub fn preflight_view_get(
         view_name,
         derive_view_get_scope(view_name, get, cgs)?,
         cgs,
+        compiled,
         ambient,
         mat,
     )
@@ -57,15 +61,22 @@ pub fn preflight_view_scoped_with_proof(
     view_name: &str,
     scope: IndexMap<String, Value>,
     cgs: &CGS,
+    compiled: &plasm_compile::CompiledCatalog,
     ambient: &ViewAmbientContext,
     mat: &SessionMaterialization,
 ) -> Result<ViewRunProof, RuntimeError> {
-    let runner = PreflightViewNodeRunner { cgs, ambient, mat };
+    let runner = PreflightViewNodeRunner {
+        cgs,
+        compiled,
+        ambient,
+        mat,
+    };
     run_view_dag_sync(&runner, view_name, scope, cgs, ambient).map(|(proof, _)| proof)
 }
 
 pub(crate) struct PreflightViewNodeRunner<'a> {
     pub(crate) cgs: &'a CGS,
+    pub(crate) compiled: &'a plasm_compile::CompiledCatalog,
     pub(crate) ambient: &'a ViewAmbientContext,
     pub(crate) mat: &'a SessionMaterialization,
 }
@@ -83,6 +94,7 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
         preflight_compile_expr(
             &plasm_core::Expr::Query(q),
             self.cgs,
+            self.compiled,
             self.ambient,
             self.mat,
         )
@@ -113,6 +125,7 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
         preflight_compile_expr(
             &plasm_core::Expr::Get(get.clone()),
             self.cgs,
+            self.compiled,
             self.ambient,
             self.mat,
         )
@@ -135,6 +148,7 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
         preflight_compile_expr(
             &plasm_core::Expr::Create(create.clone()),
             self.cgs,
+            self.compiled,
             self.ambient,
             self.mat,
         )

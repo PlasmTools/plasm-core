@@ -17,6 +17,12 @@ OAuth 2.0 bearer token with Drive scopes appropriate to the capabilities you cal
 
 ## Validation
 
+`changes_list` requires `startPageToken` as its initial source cursor. CML sends
+that value as `pageToken`; continuation replaces it with `nextPageToken` from the
+previous response. Page sizes and continuation tokens are owned by the pagination
+mapping. File permissions, comments, revisions and comment replies declare their
+parent identifiers in `scope` for relation materialization.
+
 ```bash
 cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/google-drive/
 cargo run -p plasm-eval -- coverage --schema apis/google-drive --cases apis/google-drive/eval/cases.yaml

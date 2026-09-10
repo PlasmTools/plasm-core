@@ -5,10 +5,10 @@ use std::fmt::Write as _;
 
 use crate::execute_session::ExecuteSession;
 use crate::plasm_plan::{
-    AggregateFunction, AggregateSpec, ComputeOp, ComputeTemplate, EffectClass, EffectTemplate,
-    FieldPath, Plan, PlanNodeKind, PlanPredicate, PlanPredicateOp, PlanValue, ValidatedPlanExprIr,
-    ValidatedPlanExprTemplate, ValidatedPlanNode, ValidatedPlanReturn, ValidatedPlanState,
-    ValidatedSurfaceNode,
+    AggregateFunction, AggregateSpec, ComputeOp, ComputeTemplate, EffectClass, FieldPath, Plan,
+    PlanNodeKind, PlanPredicate, PlanPredicateOp, PlanValue, ValidatedEffectTemplate,
+    ValidatedPlanExprIr, ValidatedPlanExprTemplate, ValidatedPlanNode, ValidatedPlanReturn,
+    ValidatedPlanState, ValidatedSurfaceNode,
 };
 
 use serde::{Deserialize, Serialize};
@@ -274,10 +274,10 @@ pub fn render_plan_dry_compact_text(
 ) -> String {
     let mut out = String::new();
     let verdict = view.verdict.as_wire();
-    let mut header = format!("plan {verdict} · {}n {}r", view.node_count, view.read_count,);
-    if view.write_count > 0 {
-        let _ = write!(header, " {}w", view.write_count);
-    }
+    let mut header = format!(
+        "plan {verdict} · {}n {}r {}w",
+        view.node_count, view.read_count, view.write_count
+    );
     let _ = write!(header, " → {}", view.return_label);
     if let Some(handle) = plan_handle {
         let _ = write!(header, " · {handle}");
@@ -548,12 +548,25 @@ fn compact_op_from_compute(
 }
 
 fn surface_compact_expr(surface: &ValidatedSurfaceNode, es: Option<&ExecuteSession>) -> String {
+    // Prefer authored / taught wire surface over IR-template fallbacks. Preferring
+    // `ir_template` first hid mutators behind `<typed Plasm IR template>` even when
+    // `display_expr` carried the e#.m#(…) form the agent must reuse.
     let raw = surface
-        .ir
-        .as_ref()
-        .map(|ir| render_plan_expr_ir_for_session(ir, es))
-        .or_else(|| surface.ir_template.as_ref().map(render_plan_expr_template))
-        .or_else(|| surface.display_expr.clone())
+        .display_expr
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            surface
+                .ir
+                .as_ref()
+                .map(|ir| render_plan_expr_ir_for_session(ir, es))
+        })
+        .or_else(|| {
+            surface
+                .ir_template
+                .as_ref()
+                .map(|tmpl| render_plan_expr_template_for_session(tmpl, es))
+        })
         .unwrap_or_else(|| "<typed Plasm IR>".to_string());
     crate::plan_dry_compact::compact_agent_surface_expr(&raw)
 }
@@ -591,22 +604,38 @@ pub(crate) fn render_expr_wire_for_execute_session(
     }
 }
 
-fn render_plan_expr_template(template: &ValidatedPlanExprTemplate) -> String {
-    template
-        .display_expr
-        .clone()
-        .unwrap_or_else(|| "<typed Plasm IR template>".to_string())
+fn render_template_wire_surface(
+    display_expr: Option<&str>,
+    expr: &plasm_core::Expr,
+    es: Option<&ExecuteSession>,
+) -> String {
+    if let Some(display) = display_expr.map(str::trim).filter(|s| !s.is_empty()) {
+        return display.to_string();
+    }
+    render_expr_wire_for_execute_session(expr, es)
 }
 
-fn effect_template_body(template: &EffectTemplate, _es: Option<&ExecuteSession>) -> String {
+fn render_plan_expr_template_for_session(
+    template: &ValidatedPlanExprTemplate,
+    es: Option<&ExecuteSession>,
+) -> String {
+    render_template_wire_surface(template.display_expr.as_deref(), &template.expr, es)
+}
+
+#[allow(dead_code)]
+fn render_plan_expr_template(template: &ValidatedPlanExprTemplate) -> String {
+    render_plan_expr_template_for_session(template, None)
+}
+
+fn effect_template_body(template: &ValidatedEffectTemplate, es: Option<&ExecuteSession>) -> String {
     if !template.expr_template.trim().is_empty() {
         return template.expr_template.clone();
     }
-    template
-        .ir_template
-        .display_expr
-        .clone()
-        .unwrap_or_else(|| "<typed Plasm IR template>".to_string())
+    render_template_wire_surface(
+        template.ir_template.display_expr.as_deref(),
+        &template.ir_template.expr,
+        es,
+    )
 }
 
 fn step_upstream_labels(

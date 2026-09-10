@@ -101,9 +101,17 @@ impl GlossDescription {
 pub(crate) struct ValueDomainStructuralKey(String);
 
 impl ValueDomainStructuralKey {
+    pub(crate) fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+
     pub(crate) fn from_registry_meta(meta: &IdentMetadata) -> Option<Self> {
-        meta.value_domain_allocation_fp()
-            .map(ValueDomainStructuralKey)
+        // Align emit identity with allocation: structural type **and** wire leaf.
+        // Type-only keys collapsed federated email wires onto one Meaning row.
+        meta.value_domain_allocation_fp()?;
+        Some(Self(
+            crate::symbol_tuning::slot_symbol_allocation_fingerprint(meta),
+        ))
     }
 
     pub(crate) fn from_allocation_fp(fp: impl Into<String>) -> Self {

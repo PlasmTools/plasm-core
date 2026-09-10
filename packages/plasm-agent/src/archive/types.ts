@@ -29,7 +29,7 @@ export interface TraceRecord {
 export interface PlanArchiveSnapshot {
   plan_commit_ref: string;
   program: string;
-  catalog_cgs_hash: string;
+  catalog_cgs_hash?: string;
   entry_id?: string;
   logical_session_ref?: string;
   intent?: string;
@@ -38,9 +38,10 @@ export interface PlanArchiveSnapshot {
 }
 
 export interface RunSnapshot {
+  native_snapshot?: unknown;
   run_id: string;
   plan_commit_ref: string;
-  catalog_cgs_hash: string;
+  catalog_cgs_hash?: string;
   entry_id?: string;
   logical_session_ref?: string;
   intent?: string;

@@ -10,24 +10,20 @@ use tracing::Instrument;
 
 use crate::http_execute::{
     apply_capability_seeds, build_plasm_context_agent_markdown, build_plasm_context_tool_meta,
-    ApplyCapabilitySeedsOutcome, PlasmContextToolMetaParams, RankedCapabilitiesArg,
+    ApplyCapabilitySeedsOutcome, PlasmContextToolMetaParams,
 };
 use crate::incoming_auth::tenant_scope;
 use crate::mcp_logical_ref::format_logical_session_wire_ref;
 use crate::session_identity::{
-    accumulated_intent_meta_preview, LogicalSessionId, LogicalSessionRecord,
-    PlasmContextSessionMode,
+    accumulated_intent_meta_preview, LogicalSessionId, PlasmContextSessionMode,
 };
 use crate::trace_hub::PlasmContextTrace;
 
-use super::context_new_seeds::{self, ContextPhase, ContextRouteDecision, SeedsPolicy};
-use super::tool_parse::{
-    parse_optional_principal, parse_plasm_context_clarify_choice,
-    parse_plasm_context_ranked_capabilities, parse_plasm_context_routing_ref,
-    parse_plasm_context_session_mode, parse_tool_seeds_optional,
-};
+use super::tool_parse::{parse_optional_principal, parse_plasm_context_session_mode};
 use super::transport::PlasmExecBinding;
 use super::{PlasmMcpHandler, MAX_MCP_EXEC_BINDINGS};
+use crate::discovery_service::{DiscoveryService, RouteTurn};
+use plasm_core::discovery::CgsCatalog;
 
 impl PlasmMcpHandler {
     pub(crate) async fn handle_mcp_tool_plasm_context(
@@ -42,185 +38,200 @@ impl PlasmMcpHandler {
             CallToolError::invalid_arguments(tname, Some("missing `intent`".into()))
         })?;
         let (session_mode, extend_ref) = parse_plasm_context_session_mode(tname, v)?;
-        let ranked_capabilities_arg = parse_plasm_context_ranked_capabilities(tname, v)?;
-        let routing_ref_arg = parse_plasm_context_routing_ref(tname, v)?;
-        let clarify_choice_arg = parse_plasm_context_clarify_choice(tname, v)?;
+        if v.get("seeds").is_some() || v.get("ranked_capabilities").is_some() {
+            return Err(CallToolError::invalid_arguments(tname, Some("plasm_context accepts intent and continuation fields; explicit seed selection has been removed".into())));
+        }
         let principal = parse_optional_principal(v);
         let tcfg = self.tenant_mcp_cfg(runtime).await?;
-        let allowed_ids: Option<Vec<String>> = tcfg.as_ref().map(|cfg| {
-            let mut ids: Vec<String> = cfg.allowed_entry_ids.iter().cloned().collect();
-            ids.sort();
-            ids
-        });
         let scope = tenant_scope(principal_incoming.as_ref());
-        let optional_seeds = parse_tool_seeds_optional(tname, v)?;
-
-        // --- Route-before-commit: resolve seeds first; mint/append only on Expand/Noop ---
-        let (rec, seeds, auto_ranked_from_selector) = match session_mode {
-            PlasmContextSessionMode::New => {
-                let decision = self
-                    .route_context_turn(RouteContextTurn {
-                        tool: tname,
-                        intent,
-                        phase: ContextPhase::New,
-                        allowed_ids: allowed_ids.clone(),
-                        optional_seeds,
-                        logical_session_ref: None,
-                        logical_session_id: None,
-                        routing_ref: routing_ref_arg.as_deref(),
-                        clarify_choice: clarify_choice_arg.as_deref(),
-                    })
-                    .await?;
-                let (seeds, auto_ranked) = match decision {
-                    #[cfg(feature = "semantic-auto-seed")]
-                    ContextRouteDecision::Abstain(plan) => {
-                        return Ok(context_new_seeds::present_abstain(plan, intent));
-                    }
-                    #[cfg(feature = "semantic-auto-seed")]
-                    ContextRouteDecision::Noop => {
-                        return Err(CallToolError::from_message(
-                            "internal: delta_noop is only valid for session_mode extend",
-                        ));
-                    }
-                    expand @ ContextRouteDecision::Expand { .. } => expand.into_expand(),
-                };
-                let rec = self
-                    .plasm
-                    .logical_sessions
-                    .mint_session(&scope, intent)
-                    .await;
-                (rec, seeds, auto_ranked)
+        let existing = if session_mode == PlasmContextSessionMode::Extend {
+            let wire = extend_ref.as_deref().expect("validated extend ref");
+            let id = LogicalSessionId(self.resolve_logical_session_ref_to_uuid(tname, wire)?);
+            if !self.plasm.logical_sessions.verify_tenant(id, &scope).await {
+                return Err(CallToolError::from_message(
+                    "logical_session_ref is unknown or belongs to another tenant",
+                ));
             }
-            PlasmContextSessionMode::Extend => {
-                let wire = extend_ref
-                    .as_deref()
-                    .expect("extend ref validated in parse");
-                let logical_uuid = self.resolve_logical_session_ref_to_uuid(tname, wire)?;
-                if !self
-                    .plasm
+            Some(
+                self.plasm
                     .logical_sessions
-                    .verify_tenant(LogicalSessionId(logical_uuid), &scope)
+                    .get(id)
                     .await
-                {
-                    return Err(CallToolError::from_message(
-                        "logical_session_ref is unknown or does not belong to this tenant scope",
-                    ));
-                }
-                let id = LogicalSessionId(logical_uuid);
-                let Some(existing) = self.plasm.logical_sessions.get(id).await else {
-                    return Err(CallToolError::from_message(
-                        "logical_session_ref is unknown or expired: use session_mode \"new\" to start a fresh session",
-                    ));
-                };
-                let logical_session_ref =
-                    format_logical_session_wire_ref(existing.logical_session_id);
-
-                let binding = self.resolve_binding_for_logical(key, logical_uuid).await;
-                let live_es = {
-                    let mut found = None;
-                    if let Some(b) = &binding {
-                        found = self
-                            .plasm
-                            .get_execute_session(&b.prompt_hash, &b.session_id)
-                            .await;
-                    }
-                    if found.is_none() {
-                        if let Some(pair) =
-                            self.plasm.logical_execute_bindings.get(&logical_uuid).await
-                        {
-                            found = self.plasm.get_execute_session(&pair.0, &pair.1).await;
-                        }
-                    }
-                    found
-                };
-                if live_es.is_none() {
-                    return Err(CallToolError::from_message(
-                        "session_mode \"extend\" requires a live execute session for this logical_session_ref — use session_mode \"new\" or reopen after expiry",
-                    ));
-                }
-                let exposed: Vec<(String, String)> = live_es
-                    .as_ref()
-                    .and_then(|es| es.teaching_exposure.as_ref())
-                    .map(|exp| {
-                        exp.all_qualified_entities()
-                            .into_iter()
-                            .map(|k| (k.entry_id, k.entity.to_string()))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                let decision = self
-                    .route_context_turn(RouteContextTurn {
-                        tool: tname,
-                        intent,
-                        phase: ContextPhase::Extend {
-                            exposed: exposed.as_slice(),
-                        },
-                        allowed_ids: allowed_ids.clone(),
-                        optional_seeds,
-                        logical_session_ref: Some(logical_session_ref.as_str()),
-                        logical_session_id: Some(logical_uuid),
-                        routing_ref: routing_ref_arg.as_deref(),
-                        clarify_choice: clarify_choice_arg.as_deref(),
-                    })
-                    .await?;
-
-                match decision {
-                    #[cfg(feature = "semantic-auto-seed")]
-                    ContextRouteDecision::Abstain(plan) => {
-                        return Ok(context_new_seeds::present_abstain(plan, intent));
-                    }
-                    #[cfg(feature = "semantic-auto-seed")]
-                    ContextRouteDecision::Noop => {
-                        let Some(rec) = self
-                            .plasm
-                            .logical_sessions
-                            .append_intent_turn(id, intent)
-                            .await
-                        else {
-                            return Err(CallToolError::from_message(
-                                "logical_session_ref is unknown or expired: use session_mode \"new\" to start a fresh session",
-                            ));
-                        };
-                        return Ok(present_delta_noop(&rec, &logical_session_ref));
-                    }
-                    expand @ ContextRouteDecision::Expand { .. } => {
-                        let (seeds, auto_ranked) = expand.into_expand();
-                        let Some(rec) = self
-                            .plasm
-                            .logical_sessions
-                            .append_intent_turn(id, intent)
-                            .await
-                        else {
-                            return Err(CallToolError::from_message(
-                                "logical_session_ref is unknown or expired: use session_mode \"new\" to start a fresh session",
-                            ));
-                        };
-                        if seeds.is_empty() {
-                            return Ok(present_delta_noop(&rec, &logical_session_ref));
-                        }
-                        (rec, seeds, auto_ranked)
-                    }
-                }
-            }
+                    .ok_or_else(|| CallToolError::from_message("logical session expired"))?,
+            )
+        } else {
+            None
         };
+        let logical_id = existing
+            .as_ref()
+            .map(|rec| rec.logical_session_id.as_uuid().to_string());
+        let mut exposed = Vec::new();
+        let mut session_pin = None;
+        if let Some(rec) = &existing {
+            let id = rec.logical_session_id.as_uuid();
+            let binding = self.resolve_binding_for_logical(key, id).await;
+            let pair = match binding {
+                Some(b) => Some((b.prompt_hash, b.session_id)),
+                None => self.plasm.logical_execute_bindings.get(&id).await,
+            }
+            .ok_or_else(|| {
+                CallToolError::from_message("extension requires a live execute session")
+            })?;
+            let session = self
+                .plasm
+                .get_execute_session(&pair.0, &pair.1)
+                .await
+                .ok_or_else(|| {
+                    CallToolError::from_message(
+                        "execute session expired or its pinned generation is unavailable",
+                    )
+                })?;
+            session_pin = Some(session.discovery_pin.clone().ok_or_else(|| {
+                CallToolError::from_message("intent extension requires a routed execute session")
+            })?);
+            if let Some(exposure) = &session.teaching_exposure {
+                exposed.extend(exposure.surface.capabilities.iter().map(|cap| {
+                    plasm_core::prerequisites::CapabilityRef {
+                        catalog: cap.entry_id.clone(),
+                        capability: cap.capability.to_string(),
+                    }
+                }));
+            }
+        }
+        let generation = match &session_pin {
+            Some(pin) => Arc::new(pin.generation.clone()),
+            None => self
+                .plasm
+                .catalog
+                .discovery_generation()
+                .map_err(|e| CallToolError::from_message(e.to_string()))?,
+        };
+        let current = self
+            .plasm
+            .catalog
+            .pinned_view(&generation)
+            .await
+            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+        let allowed = tcfg
+            .as_ref()
+            .map(|cfg| cfg.allowed_entry_ids.iter().cloned().collect())
+            .unwrap_or_else(|| {
+                current
+                    .snapshot()
+                    .list_entries()
+                    .into_iter()
+                    .map(|entry| entry.entry_id)
+                    .collect::<std::collections::BTreeSet<_>>()
+            });
+        let mut allowed = crate::discovery_store::DiscoveryAuthorization::catalogs(allowed);
+        if let Some(cfg) = &tcfg {
+            allowed.capabilities = cfg
+                .capabilities_by_entry
+                .iter()
+                .filter(|(_, capabilities)| !capabilities.is_empty())
+                .map(|(entry, capabilities)| {
+                    (entry.clone(), capabilities.iter().cloned().collect())
+                })
+                .collect();
+        }
+        if let Some(pin) = &session_pin {
+            allowed = pin.authorization.intersection(&allowed);
+        }
+        if ["routing_ref", "clarify_choices", "clarify_choice"]
+            .iter()
+            .any(|key| v.get(*key).is_some())
+        {
+            return Err(CallToolError::invalid_arguments(
+                tname,
+                Some("Discovery accepts intent; conversational choices belong to the agent".into()),
+            ));
+        }
+        let store = self
+            .plasm
+            .catalog
+            .discovery_store()
+            .await
+            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+        let service = DiscoveryService::from_env(store.clone())
+            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+        let receipt = service
+            .route_turn(RouteTurn {
+                new_generation: &generation,
+                intent,
+                logical_session: logical_id.as_deref(),
+                allowed: &allowed,
+                exposed: &exposed,
+                expires_at: std::time::SystemTime::now()
+                    + std::time::Duration::from_secs(24 * 3600),
+            })
+            .await
+            .map_err(|e| CallToolError::from_message(format!("routing error: {e}")))?;
+        if receipt.closure.is_none() {
+            let mut lines = vec![format!("**plasm_context:** {:?}", receipt.selection.status)];
+            lines.extend(receipt.selection.explanation_lines());
+            let mut meta = serde_json::Map::new();
+            meta.insert(
+                "routing".into(),
+                serde_json::to_value(&receipt)
+                    .map_err(|e| CallToolError::from_message(e.to_string()))?,
+            );
+            return Ok(crate::mcp_ui_payload::DualLaneToolResult {
+                content: lines.join("\n\n"),
+                plasm_meta: meta,
+                profile: crate::mcp_delivery::McpDeliveryProfile::ContentOnly,
+                inline_plan_ui: None,
+            }
+            .into_call_tool_result());
+        }
+        let logical_uuid = uuid::Uuid::parse_str(&receipt.pin_id)
+            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+        let rec = if existing.is_some() {
+            self.plasm
+                .logical_sessions
+                .append_intent_turn(LogicalSessionId(logical_uuid), &receipt.intent)
+                .await
+                .ok_or_else(|| CallToolError::from_message("logical session expired"))?
+        } else {
+            self.plasm
+                .logical_sessions
+                .register_routed_session(LogicalSessionId(logical_uuid), &scope, &receipt.intent)
+                .await
+                .map_err(CallToolError::from_message)?
+        };
+        let routed_host = self
+            .plasm
+            .with_discovery_route(receipt)
+            .await
+            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+        let route = routed_host
+            .discovery_route
+            .as_ref()
+            .expect("validated route");
+        let closure = route
+            .closure
+            .as_ref()
+            .expect("validated capability closure");
+        let registry = routed_host.catalog.snapshot();
+        let mut seeds = Vec::new();
+        for reference in closure.business.iter().chain(&closure.prerequisites) {
+            let ctx = registry
+                .load_context(&reference.catalog)
+                .map_err(|e| CallToolError::from_message(e.to_string()))?;
+            let cap = ctx
+                .cgs
+                .capabilities
+                .get(reference.capability.as_str())
+                .ok_or_else(|| {
+                    CallToolError::from_message("selected capability absent from pinned catalog")
+                })?;
+            seeds.push(crate::http_execute::CapabilitySeed {
+                entry_id: reference.catalog.clone(),
+                entity: cap.domain.to_string(),
+            });
+        }
         let logical_session_ref = format_logical_session_wire_ref(rec.logical_session_id);
-        let logical_uuid = rec.logical_session_id.as_uuid();
         let ls_key = logical_uuid.to_string();
         let accumulated_intent = rec.accumulated_intent.as_str();
-
-        // Agent-explicit ranked (emit) always wins; host auto-seed only fills when unspecified.
-        let ranked_capabilities = match (ranked_capabilities_arg, auto_ranked_from_selector) {
-            (arg, _) if arg.emit_diagnostics() => arg,
-            (_, Some(auto)) => RankedCapabilitiesArg::host(Some(auto)),
-            (other, None) => other,
-        };
-        let seeds = crate::http_execute::resolve_capability_seeds(
-            seeds,
-            self.plasm.catalog.snapshot().as_ref(),
-            allowed_ids.as_deref(),
-        )
-        .map_err(CallToolError::from_message)?;
         let distinct_entries: Vec<String> = {
             let mut seen = std::collections::HashSet::new();
             let mut out = Vec::new();
@@ -267,7 +278,7 @@ impl PlasmMcpHandler {
             }
         }
         let out: ApplyCapabilitySeedsOutcome = apply_capability_seeds(
-            self.plasm.as_ref(),
+            &routed_host,
             principal_incoming.as_ref(),
             binding
                 .as_ref()
@@ -277,7 +288,6 @@ impl PlasmMcpHandler {
             tcfg.clone(),
             Some(logical_uuid),
             accumulated_intent,
-            ranked_capabilities,
         )
         .instrument(context_span)
         .await
@@ -355,12 +365,39 @@ impl PlasmMcpHandler {
             wave_count = out.waves.len(),
             "MCP plasm_context response telemetry"
         );
-        let text = build_plasm_context_agent_markdown(
+        let mut text = build_plasm_context_agent_markdown(
             logical_session_ref.as_str(),
             &out.waves,
             out.symbol_space_reset,
             churn_advisory.as_str(),
         );
+        if let Some(session) = routed_host
+            .get_execute_session(&out.prompt_hash, &out.session_id)
+            .await
+        {
+            if let Some(exposure) = &session.teaching_exposure {
+                let catalogs = session
+                    .contexts_by_entry
+                    .iter()
+                    .map(|(id, ctx)| (id.clone(), ctx.cgs.as_ref()))
+                    .collect();
+                let symbols = exposure.to_symbol_map();
+                let guidance = plasm_core::prompt_render::render_prerequisite_bindings(
+                    closure,
+                    &catalogs,
+                    symbols.as_ref(),
+                )
+                .map_err(CallToolError::from_message)?;
+                if !guidance.is_empty() {
+                    text.push_str("\n\n");
+                    text.push_str(&guidance);
+                }
+            }
+        }
+        for explanation in route.selection.explanation_lines() {
+            text.push_str("\n\n");
+            text.push_str(&explanation);
+        }
         for wave in &out.waves {
             if wave.teaching_prompt_chars_added > 0 {
                 let ls = self.logical_mutex(key, &ls_key).await;
@@ -421,7 +458,7 @@ impl PlasmMcpHandler {
                 Some(json!(deltas))
             }
         };
-        let plasm = build_plasm_context_tool_meta(
+        let mut plasm = build_plasm_context_tool_meta(
             &out,
             PlasmContextToolMetaParams {
                 logical_session_ref: logical_session_ref.as_str(),
@@ -438,6 +475,11 @@ impl PlasmMcpHandler {
                 relations_delta,
                 session_churn: session_churn.as_ref(),
             },
+        );
+        plasm.insert(
+            "routing".into(),
+            serde_json::to_value(route.as_ref())
+                .map_err(|e| CallToolError::from_message(e.to_string()))?,
         );
         let text = crate::mcp_agent_present::AgentContent::context(
             &crate::mcp_agent_present::ContextTokenRefs {
@@ -460,98 +502,4 @@ impl PlasmMcpHandler {
         self.persist_transport_state(key).await;
         Ok(res)
     }
-
-    /// Route seeds for the current turn (no mint/append).
-    async fn route_context_turn(
-        &self,
-        args: RouteContextTurn<'_>,
-    ) -> Result<ContextRouteDecision, CallToolError> {
-        let catalog = self.plasm.catalog.snapshot();
-        let policy = if context_new_seeds::semantic_auto_seed_on() {
-            #[cfg(feature = "semantic-auto-seed")]
-            {
-                let _ = args.optional_seeds;
-                SeedsPolicy::Auto(context_new_seeds::AutoSeedRouteArgs {
-                    tool: args.tool,
-                    intent: args.intent,
-                    logical_session_ref: args.logical_session_ref,
-                    logical_session_id: args.logical_session_id,
-                    allowed_entry_ids: args.allowed_ids.clone(),
-                    pending_clarify: self.plasm.pending_clarify.as_ref(),
-                    routing_ref: args.routing_ref,
-                    clarify_choice: args.clarify_choice,
-                })
-            }
-            #[cfg(not(feature = "semantic-auto-seed"))]
-            {
-                let _ = (
-                    args.logical_session_ref,
-                    args.logical_session_id,
-                    args.routing_ref,
-                    args.clarify_choice,
-                );
-                SeedsPolicy::Explicit(args.optional_seeds)
-            }
-        } else {
-            let _ = (
-                args.logical_session_ref,
-                args.logical_session_id,
-                args.routing_ref,
-                args.clarify_choice,
-            );
-            SeedsPolicy::Explicit(args.optional_seeds)
-        };
-        context_new_seeds::resolve_context_seeds(
-            args.tool,
-            catalog.as_ref(),
-            args.intent,
-            args.allowed_ids,
-            args.phase,
-            policy,
-        )
-        .await
-    }
-}
-
-struct RouteContextTurn<'a> {
-    tool: &'a str,
-    intent: &'a str,
-    phase: ContextPhase<'a>,
-    allowed_ids: Option<Vec<String>>,
-    optional_seeds: Option<Vec<crate::http_execute::CapabilitySeed>>,
-    logical_session_ref: Option<&'a str>,
-    logical_session_id: Option<uuid::Uuid>,
-    routing_ref: Option<&'a str>,
-    clarify_choice: Option<&'a str>,
-}
-
-fn present_delta_noop(rec: &LogicalSessionRecord, logical_session_ref: &str) -> CallToolResult {
-    let text = format!(
-        "Session already exposes the requested surface — no teaching delta.\n\n`logical_session_ref`: `{logical_session_ref}`\n\nReuse this ref for `plasm` / `plasm_run`, or `extend` again with a new catalog/entity intent."
-    );
-    let mut plasm = serde_json::Map::new();
-    plasm.insert(
-        "logical_session_ref".into(),
-        serde_json::json!(logical_session_ref),
-    );
-    plasm.insert("session_mode".into(), serde_json::json!("extend"));
-    plasm.insert(
-        "intent_turns".into(),
-        serde_json::json!(rec.intent_turns.len()),
-    );
-    plasm.insert("delta_noop".into(), serde_json::json!(true));
-    let text = crate::mcp_agent_present::AgentContent::context(
-        &crate::mcp_agent_present::ContextTokenRefs {
-            logical_session_ref,
-        },
-        &text,
-    )
-    .render();
-    crate::mcp_ui_payload::DualLaneToolResult {
-        content: text,
-        plasm_meta: plasm,
-        profile: crate::mcp_delivery::McpDeliveryProfile::ContentOnly,
-        inline_plan_ui: None,
-    }
-    .into_call_tool_result()
 }

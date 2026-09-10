@@ -63,4 +63,3 @@ pub fn validate_program_label(label: &str) -> Result<(), String> {
     }
     Ok(())
 }
-

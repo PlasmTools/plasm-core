@@ -22,10 +22,43 @@ impl ExecutionEngine {
         request: &CompiledRequest,
     ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
         let base_url = self.effective_http_base_for_request();
-        let auth = self.resolve_auth_http().await?;
+        let auth = self.resolve_compiled_http_auth(request).await?;
         self.transport
             .send_compiled_http(base_url.as_ref(), request, auth)
             .await
+    }
+
+    pub(super) async fn resolve_compiled_http_auth(
+        &self,
+        request: &CompiledRequest,
+    ) -> Result<Option<crate::auth::ResolvedAuth>, RuntimeError> {
+        let base_url = self.effective_http_base_for_request();
+        match &request.credential {
+            Some(credential) => {
+                let (store, scope) = credential_scope(&credential.slot, &credential.resource, base_url.as_ref())?;
+                let destination = crate::http_transport::compiled_http_url(base_url.as_ref(), request);
+                let destination = url::Url::parse(&destination).map_err(|_| crate::credentials::credential_error("invalid credential request destination"))?;
+                if destination.origin().ascii_serialization() != scope.origin || !destination.username().is_empty() || destination.password().is_some() {
+                    return Err(crate::credentials::credential_error("credential request destination is outside its scope"));
+                }
+                let reference = crate::credentials::CredentialReference::parse(&credential.reference)?;
+                match store.resolve(&reference, &scope).await? {
+                    plasm_compile::CredentialSource::Host {} => {
+                        let auth = self.resolve_auth_http().await?;
+                        if !self.transport.injects_host_auth()
+                            && !auth.as_ref().is_some_and(|auth| {
+                                auth.headers.iter().chain(&auth.query_params).any(|(_, value)| !value.trim().is_empty())
+                            })
+                        {
+                            return Err(crate::credentials::credential_error("scoped host authentication is not configured"));
+                        }
+                        Ok(auth)
+                    }
+                }
+            }
+            None if request.headers.as_ref().is_some_and(|headers| matches!(headers, plasm_core::Value::Object(fields) if fields.keys().any(|key| key.eq_ignore_ascii_case("Authorization")))) => Ok(None),
+            None => self.resolve_auth_http().await,
+        }
     }
 
     /// GET absolute URL (used for `link_header` continuation pages).
@@ -45,4 +78,39 @@ impl ExecutionEngine {
         let auth = self.resolve_auth_http().await?;
         self.transport.get_json_absolute(url, auth).await
     }
+}
+
+pub(super) fn credential_scope(
+    slot: &str,
+    resource: &serde_json::Value,
+    base: &str,
+) -> Result<
+    (
+        Arc<dyn crate::credentials::SessionCredentialStore>,
+        crate::credentials::CredentialScope,
+    ),
+    RuntimeError,
+> {
+    let material = super::session::try_current_execute_session_material().ok_or_else(|| {
+        crate::credentials::credential_error("credential effects require an execute session")
+    })?;
+    let store = material.credential_store.clone().ok_or_else(|| {
+        crate::credentials::credential_error(
+            "execute session has no credential persistence adapter",
+        )
+    })?;
+    let origin = url::Url::parse(base)
+        .map_err(|_| crate::credentials::credential_error("invalid credential transport origin"))?
+        .origin()
+        .ascii_serialization();
+    Ok((
+        store,
+        crate::credentials::CredentialScope {
+            session: format!("{}:{}", material.prompt_hash, material.session_id),
+            catalog_revision: material.catalog_revision.clone(),
+            origin,
+            slot: slot.into(),
+            resource: resource.clone(),
+        },
+    ))
 }

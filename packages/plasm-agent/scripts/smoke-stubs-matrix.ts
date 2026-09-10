@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { loadPackedCatalog } from "../src/catalog/loader.js";
 /**
  * Smoke: shape-driven stub programs dry-run against plasm_language_matrix + capability_with_input.
  *
@@ -19,15 +20,17 @@ import { createProgramBuilder } from "../src/stubs/program-builder.js";
 
 const packageRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const repoRoot = path.resolve(packageRoot, "../../..");
-const matrixDir = path.join(repoRoot, "plasm-oss/fixtures/schemas/plasm_language_matrix");
-const capabilityInputDir = path.join(repoRoot, "plasm-oss/fixtures/schemas/capability_with_input");
+function requiredManifest(variable: string): string {
+  const value = process.env[variable];
+  if (!value) throw new Error(`${variable} must identify the packed abstract fixture manifest`);
+  return value;
+}
+const matrixDir = requiredManifest("PLASM_MATRIX_MANIFEST");
+const capabilityInputDir = requiredManifest("PLASM_CAPABILITY_INPUT_MANIFEST");
 
 async function dryRunMatrixPrograms(): Promise<void> {
   const engine = createEngine();
-  await engine.loadCatalog({
-    rootDir: matrixDir,
-    manifest: { entryId: "plasm_language_matrix", label: "plasm_language_matrix" },
-  });
+  await engine.loadCatalog(await loadPackedCatalog(matrixDir));
 
   const catalog = parseCatalogIntrospection(
     await engine.introspectCatalog("plasm_language_matrix"),

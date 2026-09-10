@@ -48,11 +48,10 @@ pub use session_bindings::{EntityBinding, MethodBinding, RelationBinding};
 pub use symbol_traits::{SymbolAllocate, SymbolRender, SymbolResolve, SymbolSession};
 
 pub use capability_surface_params::{
-    bare_ranked_capability_wire, capability_exposure_param_pairs,
-    capability_exposure_param_triples, capability_optional_legend_param_pairs,
-    compact_mutator_param_marker, exposed_mutator_capability_keys, input_field_is_array,
-    loaded_catalog_entry_ids, optional_legend_param_syms, resolve_ranked_wire_candidates,
-    seeded_ranked_wire_candidates, CapabilityParamSurfaceFilter,
+    capability_exposure_param_pairs, capability_exposure_param_triples,
+    capability_optional_legend_param_pairs, compact_mutator_param_marker,
+    exposed_mutator_capability_keys, input_field_is_array, loaded_catalog_entry_ids,
+    optional_legend_param_syms, CapabilityParamSurfaceFilter,
 };
 pub use persisted_ledger::{
     catalog_cgs_hashes_from_session, catalog_pins_match, PersistedSymbolLedger,
@@ -4261,14 +4260,28 @@ mod tests {
         let numbering = |m: &SymbolMap| m.tables.clone();
         let same_numbering = numbering(&map_a) == numbering(&map_b);
 
-        // The cache key must agree with the actual numbering — never coarser. A coarser key (the bug)
-        // would leave `key_a == key_b` while `same_numbering == false`, letting the LRU cross-serve.
-        assert_eq!(
-            key_a == key_b,
-            same_numbering,
+        // Different exposure metadata may safely produce distinct keys for identical numbering.
+        // The forbidden direction is a shared key for different numbering.
+        assert!(
+            key_a != key_b || same_numbering,
             "SymbolMapCacheKey must encode opaque-symbol numbering so the cross-request LRU never \
              serves a differently-numbered SymbolMap under a colliding key"
         );
+
+        let exp_c = TeachingExposureSession::new(cgs.as_ref(), "linear", &["LangLine", "LangItem"]);
+        let key_c = symbol_map_cache_key_federated(&layers, &exp_c);
+        let map_c = exp_c.build_symbol_map_snapshot();
+        assert_ne!(numbering(&map_a), numbering(&map_c));
+        assert_ne!(
+            key_a, key_c,
+            "different entity numbering must not share a cache entry"
+        );
+        let cache = SymbolMapCrossRequestCache::new(8);
+        let (_, first_hit) = exp_a.symbol_map_arc_cross(Some(&cache), Some(key_a));
+        let (cached_c, reversed_hit) = exp_c.symbol_map_arc_cross(Some(&cache), Some(key_c));
+        assert_eq!(first_hit, Some(false));
+        assert_eq!(reversed_hit, Some(false));
+        assert_eq!(cached_c.tables, map_c.tables);
     }
 
     #[test]
@@ -4909,17 +4922,12 @@ mod tests {
         }
         let cgs = load_schema_dir(dir).unwrap();
         let legacy = TeachingExposureSession::new(&cgs, "overshow", &["Profile", "Meeting"]);
-        let endpoints =
-            relation_endpoint_keys("overshow", &["Profile".to_string(), "Meeting".to_string()]);
-        let delta = crate::discovery::derive_intent_exposure_surface_batch(
+        let delta = crate::capability_exposure::explicit_entity_capability_surface(
             &cgs,
             "overshow",
-            "organisation project profile metadata list",
-            &endpoints,
             &["Profile".to_string()],
-            None,
-            crate::discovery::ExposureSurfaceOptions::default(),
-        );
+        )
+        .expect("explicit fixture capability exposure");
         let filtered =
             TeachingExposureSession::new_with_intent_delta(&cgs, "overshow", &["Profile"], delta);
         assert!(
@@ -5007,34 +5015,22 @@ mod tests {
         let cgs = load_schema_dir(&root).expect("plasm_language_matrix");
         let cgs_arc = std::sync::Arc::new(cgs.clone());
         let layers = [&cgs];
-        let intent = "lang items and their summaries";
-        let relation_keys = crate::relation_endpoint_keys("matrix", &["LangItem".to_string()]);
-        let delta = crate::discovery::derive_intent_exposure_surface_batch(
+        let delta = crate::capability_exposure::explicit_entity_capability_surface(
             &cgs,
             "matrix",
-            intent,
-            &relation_keys,
             &["LangItem".to_string()],
-            None,
-            crate::discovery::ExposureSurfaceOptions {
-                mutator_admit: crate::MutatorAdmit::AlwaysOnSeeds,
-            },
-        );
+        )
+        .expect("explicit fixture capability exposure");
         let mut exp =
             TeachingExposureSession::new_with_intent_delta(&cgs, "matrix", &["LangItem"], delta);
         let slots_before = exp.surface.slots.clone();
         let n0 = exp.entities.len();
-        let summary_delta = crate::discovery::derive_intent_exposure_surface_batch(
+        let summary_delta = crate::capability_exposure::explicit_entity_capability_surface(
             &cgs,
             "matrix",
-            intent,
-            &exp.relation_endpoint_keys_for_wave("matrix", &["LangSummary".to_string()]),
             &["LangSummary".to_string()],
-            None,
-            crate::discovery::ExposureSurfaceOptions {
-                mutator_admit: crate::MutatorAdmit::AlwaysOnSeeds,
-            },
-        );
+        )
+        .expect("explicit fixture capability exposure");
         exp.expose_surface(
             &layers,
             cgs_arc.clone(),

@@ -2,13 +2,15 @@
 
 use super::*;
 
-pub(crate) fn ensure_http_operation(
+pub(crate) fn ensure_mutating_operation(
     operation: &CompiledOperation,
     action: &str,
 ) -> Result<(), RuntimeError> {
     if matches!(
         operation,
-        CompiledOperation::Http(_) | CompiledOperation::GraphQl(_)
+        CompiledOperation::Http(_)
+            | CompiledOperation::GraphQl(_)
+            | CompiledOperation::CredentialBind(_)
     ) {
         return Ok(());
     }
@@ -28,11 +30,12 @@ pub(crate) fn populate_template_path_env(
     ctx: plasm_core::IdentityProjectionCtx<'_>,
     input_overlay: Option<&Value>,
 ) -> Result<(), RuntimeError> {
-    let projected = plasm_core::project_capability_identity_env(cap, reference, ctx).map_err(
-        |e| RuntimeError::ConfigurationError {
-            message: e.to_string(),
-        },
-    )?;
+    let projected =
+        plasm_core::project_capability_identity_env(cap, reference, ctx).map_err(|e| {
+            RuntimeError::ConfigurationError {
+                message: e.to_string(),
+            }
+        })?;
     for (k, v) in &projected.identity.slots {
         env.insert(k.clone(), v.clone());
     }

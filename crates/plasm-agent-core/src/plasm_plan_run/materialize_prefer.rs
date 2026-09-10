@@ -248,6 +248,7 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
         let wire_coercion_by_alias = wire_coercion_by_alias_from_inputs(es, &mut input_rows)?;
         let parsed = instantiate_parsed_expr_plan_inputs_with_rows(
             pe.clone(),
+            &scoped_es.cgs,
             &input_rows,
             &wire_coercion_by_alias,
         )?;

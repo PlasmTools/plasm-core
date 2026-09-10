@@ -1,16 +1,13 @@
 //! Apply capability seeds.
 
 use super::super::super::*;
-use plasm_core::MutatorAdmit;
 
 use super::super::backend::tenant_outbound_hosted_kv_for_entries;
 use super::super::seeds::{
-    apply_context_intent_session_update, apply_ranked_capabilities_session_update,
-    build_capability_exposure_plan, format_session_unchanged_reuse_markdown,
-    group_seed_entities_by_entry, normalize_ranked_capabilities_for_gate,
-    primary_entry_id_for_grouped, ranked_capabilities_need_exposure_replay,
-    seeds_exposure_ready_for_reuse, teaching_exposure_at, unchanged_expand_wave,
-    wrap_teaching_markdown_literal_block, RankedCapabilitiesArg, STALE_EXECUTE_BINDING_NOTICE,
+    apply_context_intent_session_update, build_capability_exposure_plan,
+    format_session_unchanged_reuse_markdown, group_seed_entities_by_entry,
+    primary_entry_id_for_grouped, seeds_exposure_ready_for_reuse, teaching_exposure_at,
+    unchanged_expand_wave, wrap_teaching_markdown_literal_block, STALE_EXECUTE_BINDING_NOTICE,
 };
 use super::expand::expand_execute_teaching_session;
 use super::federate::{commit_federate_wave, prepare_federate_wave, PreparedFederateWave};
@@ -34,20 +31,26 @@ struct ResolvedExecuteBinding {
 
 /// Resolve the execute binding to reuse. An MCP `PlasmExecBinding` can outlive the in-memory
 /// [`ExecuteSessionStore`] row (idle expiry / catalog reload), so a missing session is treated as
-/// absent (open fresh) instead of failing federate/expand; a `logical_session_id` may also
-/// re-hydrate a live binding. Gate-free: only async session lookups, no coordination locks.
+/// absent for explicit non-routed workflows; routed explicit bindings must keep their exact
+/// coordinates. A logical session may rehydrate a binding. Operational lookup errors propagate.
+/// Gate-free: only async session lookups, no coordination locks.
 async fn resolve_execute_binding(
     st: &PlasmHostState,
     binding: Option<(&str, &str)>,
     logical_session_id: Option<Uuid>,
-) -> ResolvedExecuteBinding {
+) -> Result<ResolvedExecuteBinding, super::SessionMutateError> {
     let had_binding = binding.is_some();
     let mut stale_execute_binding_recovered = false;
     let mut stale_binding_previous: Option<(String, String)> = None;
     let mut resolved: Option<(String, String)> = match binding {
         None => None,
         Some((ph, sid)) => {
-            if st.get_execute_session(ph, sid).await.is_some() {
+            if st
+                .try_get_execute_session(ph, sid)
+                .await
+                .map_err(|error| error.to_string())?
+                .is_some()
+            {
                 Some((ph.to_string(), sid.to_string()))
             } else {
                 stale_execute_binding_recovered = true;
@@ -56,7 +59,7 @@ async fn resolve_execute_binding(
                     target: "plasm_agent::http_execute",
                     prompt_hash = %ph,
                     session_id = %sid,
-                    "apply_capability_seeds: MCP execute binding stale (session missing, expired, or catalog reload); opening fresh execute session"
+                    "apply_capability_seeds: execute binding unavailable; resolving logical binding before applying routing rules"
                 );
                 None
             }
@@ -67,7 +70,12 @@ async fn resolve_execute_binding(
     if resolved.is_none() {
         if let Some(uuid) = logical_session_id {
             if let Some(pair) = st.logical_execute_bindings.get(&uuid).await {
-                if st.get_execute_session(&pair.0, &pair.1).await.is_some() {
+                if st
+                    .try_get_execute_session(&pair.0, &pair.1)
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .is_some()
+                {
                     resolved = Some(pair);
                     hydrated = true;
                 }
@@ -75,13 +83,22 @@ async fn resolve_execute_binding(
         }
     }
 
-    ResolvedExecuteBinding {
+    if st.discovery_route.is_some()
+        && had_binding
+        && resolved
+            .as_ref()
+            .map(|(ph, sid)| (ph.as_str(), sid.as_str()))
+            != binding
+    {
+        return Err("routed execute binding is unavailable; open a new context explicitly".into());
+    }
+    Ok(ResolvedExecuteBinding {
         binding: resolved,
         had_binding,
         hydrated,
         stale_execute_binding_recovered,
         stale_binding_previous,
-    }
+    })
 }
 
 /// outcomes to append. Two passes preserve the lock-light design: all federate network I/O
@@ -179,9 +196,8 @@ pub async fn apply_capability_seeds(
     tenant_mcp_cfg: Option<Arc<crate::mcp_runtime_config::McpRuntimeConfig>>,
     logical_session_id: Option<Uuid>,
     plasm_context_intent: &str,
-    ranked_capabilities: RankedCapabilitiesArg,
 ) -> Result<ApplyCapabilitySeedsOutcome, super::SessionMutateError> {
-    let mut seeds = normalize_capability_seeds(seeds);
+    let seeds = normalize_capability_seeds(seeds);
 
     let ResolvedExecuteBinding {
         binding,
@@ -189,28 +205,53 @@ pub async fn apply_capability_seeds(
         hydrated,
         stale_execute_binding_recovered,
         stale_binding_previous,
-    } = resolve_execute_binding(st, binding, logical_session_id).await;
+    } = resolve_execute_binding(st, binding, logical_session_id).await?;
 
-    if seeds.is_empty() {
-        if ranked_capabilities
-            .names()
-            .is_some_and(|list| !list.is_empty())
-        {
-            if let Some((ph, sid)) = &binding {
-                if let Some(sess_arc) = st.get_execute_session(ph, sid).await {
-                    seeds = super::super::seeds::capability_seeds_from_session(sess_arc.as_ref());
-                }
-            }
-        }
-        if seeds.is_empty() {
-            return Err(
-                "`seeds` must be non-empty when opening a new symbol space. To surface write \
-                 capabilities via `ranked_capabilities`, reuse the same logical session binding \
-                 from a prior `plasm_context` call (same seeds) or pass `seeds` again."
-                    .into(),
-            );
-        }
+    if seeds.is_empty() && st.discovery_route.is_some() {
+        let (prompt_hash, session_id) = binding
+            .as_ref()
+            .ok_or_else(|| "routing selected no capabilities for a new context".to_string())?;
+        let coord_key = ExecuteCoordKey {
+            prompt_hash: prompt_hash.clone(),
+            session_id: session_id.clone(),
+        };
+        return st
+            .session_coordination
+            .with_exposure_commit(&coord_key, || async {
+                apply_context_intent_session_update(
+                    st,
+                    prompt_hash,
+                    session_id,
+                    plasm_context_intent,
+                )
+                .await?;
+                let session = st
+                    .try_get_execute_session(prompt_hash, session_id)
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .ok_or_else(|| "routed execution session expired".to_string())?;
+                let exposure = session.teaching_exposure.as_ref().ok_or_else(|| {
+                    "routed execution session has no teaching exposure".to_string()
+                })?;
+                Ok(ApplyCapabilitySeedsOutcome {
+                    prompt_hash: prompt_hash.clone(),
+                    session_id: session_id.clone(),
+                    primary_entry_id: session.entry_id.clone(),
+                    principal: session.principal.clone(),
+                    waves: vec![unchanged_expand_wave(
+                        session.entry_id.clone(),
+                        Some(exposure),
+                    )],
+                    binding_updated: false,
+                    new_symbol_space: false,
+                    stale_execute_binding_recovered: false,
+                    stale_binding_previous: None,
+                    symbol_space_reset: false,
+                })
+            })
+            .await;
     }
+
     let seeds = resolve_capability_seeds(seeds, &st.catalog.snapshot(), None)?;
 
     let plan = build_capability_exposure_plan(&seeds)
@@ -281,9 +322,6 @@ pub async fn apply_capability_seeds(
             principal: principal.clone(),
             logical_session_id,
             context_intent: normalize_context_intent_for_domain_filter(Some(plasm_context_intent)),
-            ranked_capabilities: ranked_capabilities.names().map(|s| s.to_vec()),
-            // Intent (and optional ranked_capabilities) admit mutators — not blanket first-wave expansion.
-            mutator_admit: MutatorAdmit::IntentOnly,
         };
         let primary_entities = open_body.entities.clone();
         let (restored_exposure, ledger_reset) =
@@ -295,7 +333,11 @@ pub async fn apply_capability_seeds(
             st.session_coordination
                 .with_logical_open(uuid, || async {
                     if let Some(pair) = st.logical_execute_bindings.get(&uuid).await {
-                        if let Some(sess_arc) = st.get_execute_session(&pair.0, &pair.1).await {
+                        if let Some(sess_arc) = st
+                            .try_get_execute_session(&pair.0, &pair.1)
+                            .await
+                            .map_err(|error| error.to_string())?
+                        {
                             return Ok::<CreateExecuteSessionResponse, super::SessionMutateError>(
                                 CreateExecuteSessionResponse {
                                     prompt_hash: pair.0,
@@ -353,7 +395,7 @@ pub async fn apply_capability_seeds(
         if created.reused {
             let exposure =
                 teaching_exposure_at(st, created.prompt_hash.as_str(), created.session.as_str())
-                    .await;
+                    .await?;
             open_md.push_str(&format_session_unchanged_reuse_markdown(exposure.as_ref()));
         } else {
             let mode = st.engine.prompt_pipeline().render_mode;
@@ -382,32 +424,6 @@ pub async fn apply_capability_seeds(
             } else {
                 open_md.push_str(&created.prompt);
             }
-            if let Some(exp) =
-                teaching_exposure_at(st, created.prompt_hash.as_str(), created.session.as_str())
-                    .await
-            {
-                if let Ok(ctx) = st.catalog.snapshot().load_context(&primary_entry_id) {
-                    let entities = plan
-                        .seeds_by_entry
-                        .get(&primary_entry_id)
-                        .cloned()
-                        .unwrap_or_default();
-                    if let Some(hint) = super::super::seeds::relation_target_deferred_mutator_hint(
-                        ctx.cgs.as_ref(),
-                        primary_entry_id.as_str(),
-                        plasm_context_intent,
-                        &exp.all_qualified_entities(),
-                        &entities,
-                        &exp,
-                        match &ranked_capabilities {
-                            RankedCapabilitiesArg::Unspecified => None,
-                            RankedCapabilitiesArg::Set { names, .. } => names.as_deref(),
-                        },
-                    ) {
-                        open_md.push_str(&hint);
-                    }
-                }
-            }
         }
         let teaching_prompt_chars_added = if created.reused {
             0
@@ -435,13 +451,6 @@ pub async fn apply_capability_seeds(
         let unchanged = st
             .session_coordination
             .with_exposure_commit(&coord_key, || async {
-                apply_ranked_capabilities_session_update(
-                    st,
-                    prompt_hash.as_str(),
-                    session_id.as_str(),
-                    &ranked_capabilities,
-                )
-                .await?;
                 let intent_changed = apply_context_intent_session_update(
                     st,
                     prompt_hash.as_str(),
@@ -449,15 +458,19 @@ pub async fn apply_capability_seeds(
                     plasm_context_intent,
                 )
                 .await?;
-                if let Some(sess_arc) = st.get_execute_session(&prompt_hash, &session_id).await {
+                if let Some(sess_arc) = st
+                    .try_get_execute_session(&prompt_hash, &session_id)
+                    .await
+                    .map_err(|error| error.to_string())?
+                {
                     if let Some(ref exp) = sess_arc.teaching_exposure {
                         let catalogs_ready = plan
                             .process_order
                             .iter()
                             .all(|eid| sess_arc.contexts_by_entry.contains_key(eid));
-                        if catalogs_ready
+                        if st.discovery_route.is_none()
+                            && catalogs_ready
                             && seeds_exposure_ready_for_reuse(exp, &seeds)
-                            && !ranked_capabilities_need_exposure_replay(exp, &ranked_capabilities)
                             && !intent_changed
                         {
                             return Ok::<
@@ -484,14 +497,6 @@ pub async fn apply_capability_seeds(
                 symbol_space_reset: false,
             });
         }
-    } else {
-        apply_ranked_capabilities_session_update(
-            st,
-            prompt_hash.as_str(),
-            session_id.as_str(),
-            &ranked_capabilities,
-        )
-        .await?;
     }
 
     let skip_primary_open = binding.is_none() && waves.iter().any(|w| w.mode == "open");
@@ -516,7 +521,7 @@ pub async fn apply_capability_seeds(
                 && w.relations_delta.is_empty()
         })
     {
-        let exposure = teaching_exposure_at(st, prompt_hash.as_str(), session_id.as_str()).await;
+        let exposure = teaching_exposure_at(st, prompt_hash.as_str(), session_id.as_str()).await?;
         waves = vec![unchanged_expand_wave(
             primary_entry_id.clone(),
             exposure.as_ref(),
@@ -535,4 +540,134 @@ pub async fn apply_capability_seeds(
         stale_binding_previous,
         symbol_space_reset,
     })
+}
+
+#[cfg(test)]
+mod sufficiency_tests {
+    use super::*;
+    use crate::discovery_service::{CapabilitySelection, RoutingReceipt, SelectionStatus};
+    use crate::discovery_store::{DiscoveryAuthorization, RetrievalReceipt};
+    use crate::http::{build_plasm_host_state, PlasmHostBootstrap};
+    use crate::server_state::CatalogBootstrap;
+    use plasm_core::discovery::CgsRegistry;
+
+    #[tokio::test]
+    async fn empty_routed_extension_preserves_session_and_symbols() {
+        check_empty_extension(SelectionStatus::Ready).await;
+        check_empty_extension(SelectionStatus::Insufficient).await;
+    }
+
+    async fn check_empty_extension(status: SelectionStatus) {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = Arc::new(plasm_core::loader::load_schema_dir(&path).unwrap());
+        let registry =
+            CgsRegistry::from_pairs(vec![("matrix".into(), "Matrix".into(), vec![], cgs)]);
+        let mut host = build_plasm_host_state(PlasmHostBootstrap {
+            engine: plasm_runtime::ExecutionEngine::new(plasm_runtime::ExecutionConfig::default())
+                .unwrap(),
+            mode: plasm_runtime::ExecutionMode::Live,
+            registry: Arc::new(registry),
+            catalog_bootstrap: CatalogBootstrap::Fixed,
+            incoming_auth: None,
+            run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
+            session_graph_persistence: None,
+            oss_local_filesystem_defaults: false,
+        });
+        let logical = Uuid::new_v4();
+        let opened = apply_capability_seeds(
+            &host,
+            None,
+            None,
+            vec![CapabilitySeed {
+                entry_id: "matrix".into(),
+                entity: "LangItem".into(),
+            }],
+            None,
+            None,
+            Some(logical),
+            "inspect records",
+        )
+        .await
+        .unwrap();
+        let before = host
+            .try_get_execute_session(&opened.prompt_hash, &opened.session_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let before_symbols = before.teaching_exposure.as_ref().unwrap().entities.clone();
+        host.oss.discovery_route = Some(Arc::new(RoutingReceipt {
+            authorization: DiscoveryAuthorization::catalogs(["matrix".into()].into()),
+            intent: "continue with existing tools".into(),
+            pin_id: logical.to_string(),
+            retrieval: RetrievalReceipt {
+                generation: "matrix".into(),
+                candidates: vec![],
+                lexical_count: 0,
+                vector_count: 0,
+                lexical_truncated: false,
+                vector_truncated: false,
+                fusion_truncated: 0,
+                relation_truncated: 0,
+            },
+            selection: CapabilitySelection {
+                status,
+                additional_capability_ids: vec![],
+                unsupported: if status == SelectionStatus::Insufficient {
+                    vec![crate::discovery_service::UnsupportedWork {
+                        intent_quote: "continue".into(),
+                        reason: "Missing presented functionality".into(),
+                    }]
+                } else {
+                    vec![]
+                },
+            },
+            closure: Some(plasm_core::prerequisites::PrerequisiteClosure {
+                business: vec![],
+                prerequisites: vec![],
+                acquisitions: vec![],
+                edges: vec![],
+            }),
+        }));
+        let unchanged = apply_capability_seeds(
+            &host,
+            None,
+            Some((&opened.prompt_hash, &opened.session_id)),
+            vec![],
+            None,
+            None,
+            Some(logical),
+            "continue with existing tools",
+        )
+        .await
+        .unwrap();
+        assert_eq!(unchanged.prompt_hash, opened.prompt_hash);
+        assert_eq!(unchanged.session_id, opened.session_id);
+        assert!(
+            !unchanged.new_symbol_space
+                && !unchanged.binding_updated
+                && !unchanged.symbol_space_reset
+        );
+        let after = host
+            .try_get_execute_session(&opened.prompt_hash, &opened.session_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            after.teaching_exposure.as_ref().unwrap().entities,
+            before_symbols
+        );
+        assert!(apply_capability_seeds(
+            &host,
+            None,
+            None,
+            vec![],
+            None,
+            None,
+            Some(Uuid::new_v4()),
+            "new empty request"
+        )
+        .await
+        .is_err());
+    }
 }

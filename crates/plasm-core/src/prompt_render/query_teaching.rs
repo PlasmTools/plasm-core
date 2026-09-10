@@ -107,7 +107,10 @@ fn query_param_slot_example(
         }
         FieldType::String | FieldType::Blob | FieldType::Uuid => format!("{n}={p}"),
         FieldType::Date => format!("{n}={p}"),
-        FieldType::Select | FieldType::MultiSelect => format!("{n}={p}"),
+        // Query/search Select holes stay `<wire>`. Meaning lists members.
+        // First-member literals on this plane steer inbox copies (T_enum_query_hole).
+        FieldType::Select => format!("{n}={p}"),
+        FieldType::MultiSelect => format!("{n}=[{p}]"),
         FieldType::EntityRef { target, .. } => {
             format!(
                 "{n}={}",
@@ -256,9 +259,9 @@ pub(crate) fn query_expr_filters_only(
     Some(format!("{es}{{{}}}", inner.join(", ")))
 }
 
-fn search_non_text_selection<'a>(
-    cap: &'a crate::CapabilitySchema,
-) -> impl Iterator<Item = &'a InputFieldSchema> {
+fn search_non_text_selection(
+    cap: &crate::CapabilitySchema,
+) -> impl Iterator<Item = &InputFieldSchema> {
     let text_name = cap
         .search_text_selection_param()
         .map(|f| f.name.as_str())

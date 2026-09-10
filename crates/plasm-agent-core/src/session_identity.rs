@@ -80,7 +80,7 @@ pub struct LogicalSessionRecord {
     pub tenant_scope: String,
     /// Append-only per `plasm_context` turn (`new` seeds the first turn).
     pub intent_turns: Vec<String>,
-    /// Derived join of [`Self::intent_turns`] for read-first / ranked scoring.
+    /// Derived join of [`Self::intent_turns`] for session intent history.
     pub accumulated_intent: String,
 }
 
@@ -270,6 +270,30 @@ impl LogicalSessionRegistry {
         };
         self.persist_record(&rec).await;
         rec
+    }
+
+    /// Commit the identity already pinned by successful discovery. Identical retries are idempotent.
+    pub async fn register_routed_session(
+        &self,
+        id: LogicalSessionId,
+        tenant_scope: &str,
+        intent: &str,
+    ) -> Result<LogicalSessionRecord, String> {
+        if let Some(existing) = self.get(id).await {
+            if existing.tenant_scope != tenant_scope {
+                return Err("routing session belongs to another scope".into());
+            }
+            return Ok(existing);
+        }
+        let intent_turns = vec![normalize_intent_turn(intent).ok_or("routing intent is empty")?];
+        let rec = LogicalSessionRecord {
+            logical_session_id: id,
+            tenant_scope: tenant_scope.to_owned(),
+            accumulated_intent: normalize_accumulated_intent(&intent_turns),
+            intent_turns,
+        };
+        self.persist_record(&rec).await;
+        Ok(rec)
     }
 
     /// Append an intent turn on extend; updates accumulated intent and persists.

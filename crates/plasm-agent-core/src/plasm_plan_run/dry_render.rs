@@ -48,11 +48,11 @@ pub(crate) fn render_surface_operation(node: &ValidatedSurfaceNode) -> String {
         .map(|q| format!("{}.{}", q.entry_id, q.entity))
         .unwrap_or_else(|| "<unqualified>".to_string());
     let expr = node
-        .ir
-        .as_ref()
-        .map(render_plan_expr_ir)
+        .display_expr
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| node.ir.as_ref().map(render_plan_expr_ir))
         .or_else(|| node.ir_template.as_ref().map(render_plan_expr_template))
-        .or_else(|| node.display_expr.clone())
         .unwrap_or_else(|| "<typed Plasm IR>".to_string());
     format!("{} {} <= {}", render_kind(node.kind), entity, expr)
 }
@@ -72,7 +72,9 @@ pub(crate) fn render_plan_expr_template(
         .unwrap_or_else(|| "<typed Plasm IR template>".to_string())
 }
 
-pub(crate) fn render_effect_template_expr(template: &crate::plasm_plan::EffectTemplate) -> String {
+pub(crate) fn render_effect_template_expr(
+    template: &crate::plasm_plan::ValidatedEffectTemplate,
+) -> String {
     if !template.expr_template.trim().is_empty() {
         template.expr_template.clone()
     } else {
@@ -268,7 +270,7 @@ pub(crate) fn render_plan_value(value: &PlanValue) -> String {
             };
             format!("{{{{ {alias}{suffix} }}}}")
         }
-        PlanValue::Template { template, .. } => format!("template`{template}`"),
+        PlanValue::Template { template, .. } => format!("template`{}`", template.source()),
         PlanValue::EntityRefKey { key, .. } => render_plan_value(key),
         PlanValue::Array { items } => {
             if items.is_empty() {

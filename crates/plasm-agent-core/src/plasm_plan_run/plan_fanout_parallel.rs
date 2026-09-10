@@ -444,9 +444,9 @@ mod tests {
             expr_label: id.into(),
             trace_line_index: index,
             parsed: ParsedExpr::from_expr(plasm_core::Expr::get(plasm_core::GetExpr::new(
-                    plasm_core::EntityName::new("E".to_string()),
-                    id,
-                ))),
+                plasm_core::EntityName::new("E".to_string()),
+                id,
+            ))),
             result: ExecutionResult {
                 count: 1,
                 entities: vec![test_entity(id)],
@@ -495,9 +495,9 @@ mod tests {
                 expr_label: "a".into(),
                 trace_line_index: 0,
                 parsed: ParsedExpr::from_expr(plasm_core::Expr::get(plasm_core::GetExpr::new(
-                        plasm_core::EntityName::new("E".to_string()),
-                        "1",
-                    ))),
+                    plasm_core::EntityName::new("E".to_string()),
+                    "1",
+                ))),
                 result: ExecutionResult {
                     count: 1,
                     entities: vec![CachedEntity {
@@ -521,9 +521,9 @@ mod tests {
                 expr_label: "b".into(),
                 trace_line_index: 1,
                 parsed: ParsedExpr::from_expr(plasm_core::Expr::get(plasm_core::GetExpr::new(
-                        plasm_core::EntityName::new("E".to_string()),
-                        "2",
-                    ))),
+                    plasm_core::EntityName::new("E".to_string()),
+                    "2",
+                ))),
                 result: ExecutionResult {
                     count: 1,
                     entities: vec![CachedEntity {

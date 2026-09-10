@@ -130,4 +130,3 @@ pub fn split_token_top_level<'a>(
     }
     Ok(None)
 }
-

@@ -1,4 +1,4 @@
-version: 2
+version: 3
 http_backend: https://api.nytimes.com
 entities:
   Article:
@@ -31,34 +31,29 @@ entities:
         value_ref: nv_article_document_type
 capabilities:
   article_search:
-    description: Full-text search across NYT article archive.
-    kind: search
+    description: List articles from the NYT archive, optionally filtered by text, date range, or archive fields.
+    kind: query
     entity: Article
-    parameters:
+    selection:
     - name: q
       value_ref: nv_wire_str_short
       required: false
-      role: search
     - name: fq
       value_ref: nv_wire_str_short
       required: false
-      role: filter
     - name: begin_date
       value_ref: nv_wire_str_short
       required: false
-      role: filter
     - name: end_date
       value_ref: nv_wire_str_short
       required: false
-      role: filter
+    controls:
     - name: sort
       value_ref: nv_article_search_sort
       required: false
-      role: sort
     - name: fl
       value_ref: nv_wire_str_short
       required: false
-      role: response_control
 auth:
   scheme: api_key_query
   param: api-key

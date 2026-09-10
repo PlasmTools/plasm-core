@@ -223,7 +223,6 @@ comments_list:
     type: object
     fields:
       - [includeDeleted, { type: if, condition: { type: exists, var: includeDeleted }, then_expr: { type: var, name: includeDeleted }, else_expr: { type: const, value: null } }]
-      - [pageSize, { type: if, condition: { type: exists, var: pageSize }, then_expr: { type: var, name: pageSize }, else_expr: { type: const, value: null } }]
       - [startModifiedTime, { type: if, condition: { type: exists, var: startModifiedTime }, then_expr: { type: var, name: startModifiedTime }, else_expr: { type: const, value: null } }]
   response:
     items: comments
@@ -297,7 +296,6 @@ replies_list:
     type: object
     fields:
       - [includeDeleted, { type: if, condition: { type: exists, var: includeDeleted }, then_expr: { type: var, name: includeDeleted }, else_expr: { type: const, value: null } }]
-      - [pageSize, { type: if, condition: { type: exists, var: pageSize }, then_expr: { type: var, name: pageSize }, else_expr: { type: const, value: null } }]
   response:
     items: replies
   pagination:
@@ -373,8 +371,7 @@ revisions_list:
     - { type: literal, value: revisions }
   query:
     type: object
-    fields:
-      - [pageSize, { type: if, condition: { type: exists, var: pageSize }, then_expr: { type: var, name: pageSize }, else_expr: { type: const, value: null } }]
+    fields: []
   response:
     items: revisions
   pagination:
@@ -424,7 +421,6 @@ drives_list:
     type: object
     fields:
       - [q, { type: if, condition: { type: exists, var: q }, then_expr: { type: var, name: q }, else_expr: { type: const, value: null } }]
-      - [pageSize, { type: if, condition: { type: exists, var: pageSize }, then_expr: { type: var, name: pageSize }, else_expr: { type: const, value: null } }]
       - [useDomainAdminAccess, { type: if, condition: { type: exists, var: useDomainAdminAccess }, then_expr: { type: var, name: useDomainAdminAccess }, else_expr: { type: const, value: null } }]
   response:
     items: drives
@@ -520,7 +516,7 @@ changes_list:
   query:
     type: object
     fields:
-      - [startPageToken, { type: var, name: startPageToken }]
+      - [pageToken, { type: var, name: startPageToken }]
       - [driveId, { type: if, condition: { type: exists, var: driveId }, then_expr: { type: var, name: driveId }, else_expr: { type: const, value: null } }]
       - [includeCorpusRemovals, { type: if, condition: { type: exists, var: includeCorpusRemovals }, then_expr: { type: var, name: includeCorpusRemovals }, else_expr: { type: const, value: null } }]
       - [includeItemsFromAllDrives, { type: if, condition: { type: exists, var: includeItemsFromAllDrives }, then_expr: { type: var, name: includeItemsFromAllDrives }, else_expr: { type: const, value: null } }]
@@ -530,7 +526,6 @@ changes_list:
       - [spaces, { type: if, condition: { type: exists, var: spaces }, then_expr: { type: var, name: spaces }, else_expr: { type: const, value: null } }]
       - [supportsAllDrives, { type: if, condition: { type: exists, var: supportsAllDrives }, then_expr: { type: var, name: supportsAllDrives }, else_expr: { type: const, value: null } }]
       - [teamDriveId, { type: if, condition: { type: exists, var: teamDriveId }, then_expr: { type: var, name: teamDriveId }, else_expr: { type: const, value: null } }]
-      - [pageToken, { type: if, condition: { type: exists, var: pageToken }, then_expr: { type: var, name: pageToken }, else_expr: { type: const, value: null } }]
   response:
     items: changes
   pagination:
@@ -566,7 +561,6 @@ teamdrives_list:
     type: object
     fields:
       - [q, { type: if, condition: { type: exists, var: q }, then_expr: { type: var, name: q }, else_expr: { type: const, value: null } }]
-      - [pageSize, { type: if, condition: { type: exists, var: pageSize }, then_expr: { type: var, name: pageSize }, else_expr: { type: const, value: null } }]
       - [useDomainAdminAccess, { type: if, condition: { type: exists, var: useDomainAdminAccess }, then_expr: { type: var, name: useDomainAdminAccess }, else_expr: { type: const, value: null } }]
   response:
     items: teamDrives

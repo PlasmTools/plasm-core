@@ -1,7 +1,7 @@
 //! Unit tests for program_surface.
 
-use super::*;
 use super::physical_lines::plp2_unterminated_heredoc_message;
+use super::*;
 
 #[test]
 fn split_top_level_keeps_commas_inside_tagged_heredoc() {
@@ -154,8 +154,7 @@ fn split_flattened_program_line_preserves_for_each_effect_binding() {
 
 #[test]
 fn split_flattened_program_line_bindings_and_primary_return() {
-    let split =
-        split_flattened_program_line("issues = e1{p1=open} labels = issues.labels labels");
+    let split = split_flattened_program_line("issues = e1{p1=open} labels = issues.labels labels");
     assert_eq!(split.statements.len(), 3);
     assert!(split.statements[0].starts_with("issues = "));
     assert!(split.statements[1].starts_with("labels = "));
@@ -247,9 +246,8 @@ fn split_flattened_line_keeps_postfix_projection_on_in_scope_binding() {
 
 #[test]
 fn split_flattened_line_keeps_projection_on_first_binding() {
-    let split = split_flattened_program_line(
-        "issue = e2(p4=\"PLA-1\") comments = issue.r2 issue[p4,p19]",
-    );
+    let split =
+        split_flattened_program_line("issue = e2(p4=\"PLA-1\") comments = issue.r2 issue[p4,p19]");
     assert_eq!(
         split.statements.last().map(String::as_str),
         Some("issue[p4,p19]")
@@ -259,9 +257,8 @@ fn split_flattened_line_keeps_projection_on_first_binding() {
 
 #[test]
 fn split_flattened_line_fresh_trailing_query_still_coerces() {
-    let split = split_flattened_program_line(
-        "item = LangItem(\"i1\") LangItem.sort(score, desc).limit(2)",
-    );
+    let split =
+        split_flattened_program_line("item = LangItem(\"i1\") LangItem.sort(score, desc).limit(2)");
     assert_eq!(split.statements.last().map(String::as_str), Some("item"));
     assert_eq!(split.coerced_default_return.as_deref(), Some("item"));
 }

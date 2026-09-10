@@ -1,4 +1,4 @@
-version: 7
+version: 8
 http_backend: http://localhost:3000/api
 data_classes:
   untrusted:
@@ -11,7 +11,8 @@ data_classes:
     description: Person name treated as personally identifiable.
     severity: sensitive
   credentials:
-    description: Secret token, webhook URL, or key material embedded in integration settings.
+    description: Secret token, webhook URL, or key material embedded in integration
+      settings.
     severity: critical
   external_publish:
     description: Dashboard-visible annotation or incident content change.
@@ -176,7 +177,8 @@ values:
 entities:
   Dashboard:
     id_field: uid
-    description: Observability dashboard — search when the title is unknown, then get for panel layout and queries.
+    description: Observability dashboard — search when the title is unknown, then
+      get for panel layout and queries.
     primary_read: dashboard_get
     fields:
       uid:
@@ -230,10 +232,11 @@ entities:
         value_ref: nv_grafana_url
   Datasource:
     id_field: uid
-    description: Configured metrics, logs, traces, or profiles backend reachable through Grafana.
+    description: Configured metrics, logs, traces, or profiles backend reachable through
+      Grafana.
     primary_read: datasource_get
     discovery:
-      qualifier_terms:
+      qualifier_names:
       - datasource
       - prometheus
       - loki
@@ -386,7 +389,8 @@ entities:
         value_ref: nv_grafana_json_text
   MuteTiming:
     id_field: name
-    description: Recurring mute window referenced by notification policies and alert rules.
+    description: Recurring mute window referenced by notification policies and alert
+      rules.
     primary_read: mute_timing_get
     fields:
       name:
@@ -894,9 +898,9 @@ entities:
         path: createdAt
 capabilities:
   dashboard_query:
+    description: Full-text search for dashboards by title, tags, or folder scope.
     kind: search
     entity: Dashboard
-    description: Full-text search for dashboards by title, tags, or folder scope.
     selection:
     - name: query
       value_ref: nv_wire_str_short
@@ -909,9 +913,16 @@ capabilities:
     - name: limit
       value_ref: nv_wire_int
   dashboard_get:
+    description: Load a dashboard by uid, including panel and variable JSON.
     kind: get
     entity: Dashboard
-    description: Load a dashboard by uid, including panel and variable JSON.
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: uid
+          value_ref: nv_grafana_dashboard_uid
+          required: true
     provides:
     - uid
     - title
@@ -922,20 +933,10 @@ capabilities:
     - version
     - schema_version
     - dashboard_json
-    arguments:
-      input_type:
-        type: object
-        fields:
-        - name: uid
-          value_ref: nv_grafana_dashboard_uid
-          required: true
   dashboard_save:
+    description: Create or update a dashboard in the organization.
     kind: action
     entity: Dashboard
-    description: Create or update a dashboard in the organization.
-    output:
-      type: side_effect
-      description: Persists dashboard JSON and returns the saved uid and version.
     payload:
       input_type:
         type: object
@@ -949,14 +950,17 @@ capabilities:
           value_ref: nv_wire_bool
         - name: message
           value_ref: nv_wire_str_short
+    output:
+      type: side_effect
+      description: Persists dashboard JSON and returns the saved uid and version.
   dashboard_delete:
+    description: Permanently delete a dashboard by uid.
     kind: delete
     entity: Dashboard
-    description: Permanently delete a dashboard by uid.
   dashboard_summary_query:
+    description: Load a compact dashboard summary without full panel JSON.
     kind: query
     entity: DashboardSummary
-    description: Load a compact dashboard summary without full panel JSON.
     selection:
     - name: dashboard_uid
       value_ref: nv_grafana_dashboard_uid
@@ -981,9 +985,9 @@ capabilities:
     - version
     - schema_version
   folder_query:
+    description: List all folders in the organization.
     kind: query
     entity: Folder
-    description: List all folders in the organization.
   folder_get:
     kind: get
     entity: Folder
@@ -992,9 +996,9 @@ capabilities:
     - title
     - url
   folder_create:
+    description: Create a folder with a title and optional uid.
     kind: create
     entity: Folder
-    description: Create a folder with a title and optional uid.
     payload:
       input_type:
         type: object
@@ -1005,9 +1009,9 @@ capabilities:
         - name: uid
           value_ref: nv_grafana_uid
   folder_update:
+    description: Rename a folder or change its uid.
     kind: update
     entity: Folder
-    description: Rename a folder or change its uid.
     payload:
       input_type:
         type: object
@@ -1019,13 +1023,13 @@ capabilities:
         - name: overwrite
           value_ref: nv_wire_bool
   folder_delete:
+    description: Delete a folder and optionally its dashboards.
     kind: delete
     entity: Folder
-    description: Delete a folder and optionally its dashboards.
   datasource_query:
+    description: List configured datasources (Prometheus, Loki, Tempo, and others).
     kind: query
     entity: Datasource
-    description: List configured datasources (Prometheus, Loki, Tempo, and others).
   datasource_get:
     kind: get
     entity: Datasource
@@ -1037,9 +1041,9 @@ capabilities:
     - is_default
     - access
   datasource_create:
+    description: Create a datasource configuration.
     kind: create
     entity: Datasource
-    description: Create a datasource configuration.
     payload:
       input_type:
         type: object
@@ -1061,9 +1065,9 @@ capabilities:
         - name: secure_json_data
           value_ref: nv_grafana_json_text
   datasource_update:
+    description: Replace datasource settings for an existing uid.
     kind: update
     entity: Datasource
-    description: Replace datasource settings for an existing uid.
     payload:
       input_type:
         type: object
@@ -1085,20 +1089,14 @@ capabilities:
         - name: secure_json_data
           value_ref: nv_grafana_json_text
   datasource_delete:
+    description: Remove a datasource configuration.
     kind: delete
     entity: Datasource
-    description: Remove a datasource configuration.
   datasource_query_run:
+    description: Run PromQL, LogQL, or other queries through the unified datasource
+      query path.
     kind: action
     entity: Datasource
-    description: Run PromQL, LogQL, or other queries through the unified datasource query path.
-    preflight:
-    - kind: hydrate_invoke_target
-      get: datasource_get
-      prefix: ds
-    provides:
-    - uid
-    - query_results
     payload:
       input_type:
         type: object
@@ -1114,10 +1112,17 @@ capabilities:
           value_ref: nv_grafana_time_range
         - name: to
           value_ref: nv_grafana_time_range
+    provides:
+    - uid
+    - query_results
+    preflight:
+    - kind: hydrate_invoke_target
+      get: datasource_get
+      prefix: ds
   annotation_query:
+    description: Fetch annotations filtered by time range, dashboard, or tags.
     kind: query
     entity: Annotation
-    description: Fetch annotations filtered by time range, dashboard, or tags.
     selection:
     - name: from
       value_ref: nv_wire_int
@@ -1142,9 +1147,9 @@ capabilities:
     - text
     - tags
   annotation_create:
+    description: Create a dashboard or global annotation.
     kind: create
     entity: Annotation
-    description: Create a dashboard or global annotation.
     payload:
       input_type:
         type: object
@@ -1164,9 +1169,9 @@ capabilities:
         - name: tags
           value_ref: nv_grafana_tags
   annotation_update:
+    description: Patch annotation text, time, or tags.
     kind: update
     entity: Annotation
-    description: Patch annotation text, time, or tags.
     payload:
       input_type:
         type: object
@@ -1184,9 +1189,9 @@ capabilities:
     kind: delete
     entity: Annotation
   annotation_tag_query:
+    description: List annotation tags and usage counts.
     kind: query
     entity: AnnotationTag
-    description: List annotation tags and usage counts.
     selection:
     - name: tag
       value_ref: nv_wire_str_short
@@ -1194,9 +1199,9 @@ capabilities:
     - tag
     - count
   alert_rule_query:
+    description: List provisioned alert rules.
     kind: query
     entity: AlertRule
-    description: List provisioned alert rules.
   alert_rule_get:
     kind: get
     entity: AlertRule
@@ -1211,9 +1216,9 @@ capabilities:
     - no_data_state
     - exec_err_state
   alert_rule_create:
+    description: Create a provisioned alert rule.
     kind: create
     entity: AlertRule
-    description: Create a provisioned alert rule.
     payload:
       input_type:
         type: object
@@ -1240,9 +1245,9 @@ capabilities:
         - name: execErrState
           value_ref: nv_grafana_alert_state
   alert_rule_update:
+    description: Replace a provisioned alert rule configuration.
     kind: update
     entity: AlertRule
-    description: Replace a provisioned alert rule configuration.
     payload:
       input_type:
         type: object
@@ -1272,9 +1277,9 @@ capabilities:
     kind: delete
     entity: AlertRule
   contact_point_query:
+    description: List provisioned contact points.
     kind: query
     entity: ContactPoint
-    description: List provisioned contact points.
     provides:
     - uid
     - name
@@ -1290,9 +1295,9 @@ capabilities:
     - disable_resolve_message
     - provenance
   contact_point_create:
+    description: Create a provisioned contact point.
     kind: create
     entity: ContactPoint
-    description: Create a provisioned contact point.
     payload:
       input_type:
         type: object
@@ -1312,9 +1317,9 @@ capabilities:
         - name: uid
           value_ref: nv_grafana_uid
   contact_point_update:
+    description: Replace a provisioned contact point.
     kind: update
     entity: ContactPoint
-    description: Replace a provisioned contact point.
     payload:
       input_type:
         type: object
@@ -1335,18 +1340,18 @@ capabilities:
     kind: delete
     entity: ContactPoint
   notification_policy_get:
+    description: Fetch the root notification policy tree.
     kind: get
     entity: NotificationPolicy
-    description: Fetch the root notification policy tree.
     provides:
     - receiver
     - group_by
     - routes_json
     - policy_json
   notification_policy_update:
+    description: Replace the root notification policy tree.
     kind: update
     entity: NotificationPolicy
-    description: Replace the root notification policy tree.
     payload:
       input_type:
         type: object
@@ -1360,13 +1365,13 @@ capabilities:
         - name: routes
           value_ref: nv_grafana_json_value
   notification_policy_reset:
+    description: Reset notification policies to Grafana defaults.
     kind: delete
     entity: NotificationPolicy
-    description: Reset notification policies to Grafana defaults.
   mute_timing_query:
+    description: List provisioned mute timings.
     kind: query
     entity: MuteTiming
-    description: List provisioned mute timings.
     provides:
     - name
     - version
@@ -1378,9 +1383,9 @@ capabilities:
     - time_intervals_json
     - version
   mute_timing_create:
+    description: Create a provisioned mute timing window.
     kind: create
     entity: MuteTiming
-    description: Create a provisioned mute timing window.
     payload:
       input_type:
         type: object
@@ -1392,9 +1397,9 @@ capabilities:
           value_ref: nv_grafana_json_value
           required: true
   mute_timing_update:
+    description: Replace a provisioned mute timing window.
     kind: update
     entity: MuteTiming
-    description: Replace a provisioned mute timing window.
     payload:
       input_type:
         type: object
@@ -1409,9 +1414,9 @@ capabilities:
     kind: delete
     entity: MuteTiming
   silence_query:
+    description: List active and pending alert silences.
     kind: query
     entity: Silence
-    description: List active and pending alert silences.
     provides:
     - id
     - starts_at
@@ -1430,9 +1435,9 @@ capabilities:
     - created_by
     - comment
   silence_create:
+    description: Create an alertmanager silence.
     kind: create
     entity: Silence
-    description: Create an alertmanager silence.
     payload:
       input_type:
         type: object
@@ -1453,26 +1458,26 @@ capabilities:
           value_ref: nv_grafana_annotation_text
           required: true
   silence_delete:
+    description: Expire an alertmanager silence.
     kind: delete
     entity: Silence
-    description: Expire an alertmanager silence.
   team_query:
+    description: Search organization teams by name.
     kind: query
     entity: Team
-    description: Search organization teams by name.
     selection:
     - name: query
       value_ref: nv_wire_str_short
     - name: perpage
+      value_ref: nv_wire_int
+    controls:
+    - name: page
       value_ref: nv_wire_int
     provides:
     - id
     - uid
     - name
     - email
-    controls:
-    - name: page
-      value_ref: nv_wire_int
   team_get:
     kind: get
     entity: Team
@@ -1483,9 +1488,9 @@ capabilities:
     - email
     - avatar_url
   team_create:
+    description: Create an organization team.
     kind: create
     entity: Team
-    description: Create an organization team.
     payload:
       input_type:
         type: object
@@ -1496,9 +1501,9 @@ capabilities:
         - name: email
           value_ref: nv_grafana_email
   team_update:
+    description: Update team name or email.
     kind: update
     entity: Team
-    description: Update team name or email.
     payload:
       input_type:
         type: object
@@ -1511,9 +1516,9 @@ capabilities:
     kind: delete
     entity: Team
   org_user_query:
+    description: List users in the current organization.
     kind: query
     entity: OrgUser
-    description: List users in the current organization.
     provides:
     - userId
     - uid
@@ -1521,9 +1526,9 @@ capabilities:
     - email
     - role
   org_user_update:
+    description: Change a user's organization role.
     kind: update
     entity: OrgUser
-    description: Change a user's organization role.
     payload:
       input_type:
         type: object
@@ -1532,13 +1537,13 @@ capabilities:
           value_ref: nv_grafana_org_role
           required: true
   org_user_delete:
+    description: Remove a user from the organization.
     kind: delete
     entity: OrgUser
-    description: Remove a user from the organization.
   library_element_query:
+    description: Search library panels and variables.
     kind: query
     entity: LibraryElement
-    description: Search library panels and variables.
     selection:
     - name: searchString
       value_ref: nv_wire_str_short
@@ -1566,9 +1571,9 @@ capabilities:
     - folder_uid
     - model_json
   library_element_create:
+    description: Create a library panel or variable element.
     kind: create
     entity: LibraryElement
-    description: Create a library panel or variable element.
     payload:
       input_type:
         type: object
@@ -1585,9 +1590,9 @@ capabilities:
         - name: folderUid
           value_ref: nv_grafana_folder_uid
   library_element_update:
+    description: Update library element metadata or model JSON.
     kind: update
     entity: LibraryElement
-    description: Update library element metadata or model JSON.
     payload:
       input_type:
         type: object
@@ -1607,9 +1612,10 @@ capabilities:
     kind: delete
     entity: LibraryElement
   rbac_role_query:
+    description: List RbacRole by shelf (rbac_role | org_user_rbac_role | team_rbac_role).
     kind: query
     entity: RbacRole
-    description: List RbacRole by shelf (rbac_role | org_user_rbac_role | team_rbac_role).
+    scope: []
     selection:
     - name: shelf
       value_ref: nv_rbacrole_query_shelf
@@ -1623,12 +1629,11 @@ capabilities:
     - name: team_id
       value_ref: nv_grafana_team_ref
       required: false
+    controls: []
     provides:
     - uid
     - name
     - description
-    scope: []
-    controls: []
   rbac_role_get:
     kind: get
     entity: RbacRole
@@ -1640,9 +1645,9 @@ capabilities:
     - global
     - permissions_json
   rbac_role_create:
+    description: Create a custom RBAC role with permissions.
     kind: create
     entity: RbacRole
-    description: Create a custom RBAC role with permissions.
     payload:
       input_type:
         type: object
@@ -1660,9 +1665,9 @@ capabilities:
           value_ref: nv_grafana_json_value
           required: true
   rbac_role_update:
+    description: Replace permissions on an RBAC role (increment version).
     kind: update
     entity: RbacRole
-    description: Replace permissions on an RBAC role (increment version).
     payload:
       input_type:
         type: object
@@ -1680,9 +1685,9 @@ capabilities:
           value_ref: nv_grafana_json_value
           required: true
   rbac_role_delete:
+    description: Delete an RBAC role; optional force drops existing assignments.
     kind: delete
     entity: RbacRole
-    description: Delete an RBAC role; optional force drops existing assignments.
     arguments:
       input_type:
         type: object
@@ -1690,52 +1695,52 @@ capabilities:
         - name: force
           value_ref: nv_wire_bool
   rbac_role_assignment_get:
+    description: List users, teams, and service accounts assigned to a role.
     kind: get
     entity: RbacRoleAssignment
-    description: List users, teams, and service accounts assigned to a role.
     provides:
     - role_uid
     - users_json
     - teams_json
     - service_accounts_json
   org_user_role_assign:
+    description: Assign one RBAC role to an org user.
     kind: action
     entity: OrgUser
-    description: Assign one RBAC role to an org user.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: role_uid
+          value_ref: nv_grafana_role_ref
+          required: true
+          sink_class: permission_grant
+        - name: global
+          value_ref: nv_wire_bool
     output:
       type: side_effect
       description: Adds the RBAC role assignment for the org user.
+  org_user_roles_set:
+    description: Replace the org user's RBAC role set with the given role UIDs.
+    kind: update
+    entity: OrgUser
     payload:
       input_type:
         type: object
         fields:
-        - name: role_uid
-          value_ref: nv_grafana_role_ref
+        - name: role_uids
+          value_ref: nv_grafana_tags
           required: true
           sink_class: permission_grant
         - name: global
           value_ref: nv_wire_bool
-  org_user_roles_set:
-    kind: update
-    entity: OrgUser
-    description: Replace the org user's RBAC role set with the given role UIDs.
     output:
       type: side_effect
       description: Synchronizes RBAC role assignments for the org user.
-    payload:
-      input_type:
-        type: object
-        fields:
-        - name: role_uids
-          value_ref: nv_grafana_tags
-          required: true
-          sink_class: permission_grant
-        - name: global
-          value_ref: nv_wire_bool
   org_user_role_revoke:
-    kind: delete
-    entity: OrgUser
     description: Revoke one RBAC role from an org user.
+    kind: action
+    entity: OrgUser
     arguments:
       input_type:
         type: object
@@ -1745,30 +1750,28 @@ capabilities:
           required: true
         - name: global
           value_ref: nv_wire_bool
+    output:
+      type: side_effect
+      description: Removes the specified role assignment from the user; the user remains.
   team_role_assign:
+    description: Assign one RBAC role to a team.
     kind: action
     entity: Team
-    description: Assign one RBAC role to a team.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: role_uid
+          value_ref: nv_grafana_role_ref
+          required: true
+          sink_class: permission_grant
     output:
       type: side_effect
       description: Adds the RBAC role assignment for the team.
-    payload:
-      input_type:
-        type: object
-        fields:
-        - name: role_uid
-          value_ref: nv_grafana_role_ref
-          required: true
-          sink_class: permission_grant
-        - name: global
-          value_ref: nv_wire_bool
   team_roles_set:
+    description: Replace the team's RBAC role set with the given role UIDs.
     kind: update
     entity: Team
-    description: Replace the team's RBAC role set with the given role UIDs.
-    output:
-      type: side_effect
-      description: Synchronizes RBAC role assignments for the team.
     payload:
       input_type:
         type: object
@@ -1777,12 +1780,13 @@ capabilities:
           value_ref: nv_grafana_tags
           required: true
           sink_class: permission_grant
-        - name: global
-          value_ref: nv_wire_bool
+    output:
+      type: side_effect
+      description: Synchronizes RBAC role assignments for the team.
   team_role_revoke:
-    kind: delete
-    entity: Team
     description: Revoke one RBAC role from a team.
+    kind: action
+    entity: Team
     arguments:
       input_type:
         type: object
@@ -1790,12 +1794,13 @@ capabilities:
         - name: role_uid
           value_ref: nv_grafana_role_ref
           required: true
-        - name: global
-          value_ref: nv_wire_bool
+    output:
+      type: side_effect
+      description: Removes the specified role assignment from the team; the team remains.
   resource_permission_query:
+    description: List permissions on a dashboard, folder, or datasource.
     kind: query
     entity: ResourcePermission
-    description: List permissions on a dashboard, folder, or datasource.
     selection:
     - name: resource
       value_ref: nv_grafana_resource_type
@@ -1809,13 +1814,9 @@ capabilities:
     - user_id
     - team_id
   resource_type_description_get:
+    description: Describe assignable actions and scopes for a resource type.
     kind: get
     entity: ResourceTypeMeta
-    description: Describe assignable actions and scopes for a resource type.
-    provides:
-    - resource
-    - actions_json
-    - scopes_json
     arguments:
       input_type:
         type: object
@@ -1823,17 +1824,14 @@ capabilities:
         - name: resource
           value_ref: nv_grafana_resource_type
           required: true
+    provides:
+    - resource
+    - actions_json
+    - scopes_json
   datasource_prometheus_label_names_query:
+    description: List Prometheus label names through the datasource discovery proxy.
     kind: action
     entity: Datasource
-    description: List Prometheus label names through the datasource discovery proxy.
-    preflight:
-    - kind: hydrate_invoke_target
-      get: datasource_get
-      prefix: ds
-    provides:
-    - uid
-    - discovery_data
     payload:
       input_type:
         type: object
@@ -1842,17 +1840,17 @@ capabilities:
           value_ref: nv_grafana_time_range
         - name: to
           value_ref: nv_grafana_time_range
-  datasource_prometheus_label_values_query:
-    kind: action
-    entity: Datasource
-    description: List values for one Prometheus label name.
+    provides:
+    - uid
+    - discovery_data
     preflight:
     - kind: hydrate_invoke_target
       get: datasource_get
       prefix: ds
-    provides:
-    - uid
-    - discovery_data
+  datasource_prometheus_label_values_query:
+    description: List values for one Prometheus label name.
+    kind: action
+    entity: Datasource
     payload:
       input_type:
         type: object
@@ -1864,17 +1862,17 @@ capabilities:
           value_ref: nv_grafana_time_range
         - name: to
           value_ref: nv_grafana_time_range
-  datasource_prometheus_metric_names_query:
-    kind: action
-    entity: Datasource
-    description: List Prometheus metric names (__name__ label values).
+    provides:
+    - uid
+    - discovery_data
     preflight:
     - kind: hydrate_invoke_target
       get: datasource_get
       prefix: ds
-    provides:
-    - uid
-    - discovery_data
+  datasource_prometheus_metric_names_query:
+    description: List Prometheus metric names (__name__ label values).
+    kind: action
+    entity: Datasource
     payload:
       input_type:
         type: object
@@ -1885,17 +1883,17 @@ capabilities:
           value_ref: nv_grafana_time_range
         - name: regex
           value_ref: nv_wire_str_short
-  datasource_loki_label_names_query:
-    kind: action
-    entity: Datasource
-    description: List Loki label names through the datasource discovery proxy.
+    provides:
+    - uid
+    - discovery_data
     preflight:
     - kind: hydrate_invoke_target
       get: datasource_get
       prefix: ds
-    provides:
-    - uid
-    - discovery_data
+  datasource_loki_label_names_query:
+    description: List Loki label names through the datasource discovery proxy.
+    kind: action
+    entity: Datasource
     payload:
       input_type:
         type: object
@@ -1904,17 +1902,17 @@ capabilities:
           value_ref: nv_grafana_time_range
         - name: to
           value_ref: nv_grafana_time_range
-  datasource_loki_label_values_query:
-    kind: action
-    entity: Datasource
-    description: List Loki values for one label name.
+    provides:
+    - uid
+    - discovery_data
     preflight:
     - kind: hydrate_invoke_target
       get: datasource_get
       prefix: ds
-    provides:
-    - uid
-    - discovery_data
+  datasource_loki_label_values_query:
+    description: List Loki values for one label name.
+    kind: action
+    entity: Datasource
     payload:
       input_type:
         type: object
@@ -1926,17 +1924,17 @@ capabilities:
           value_ref: nv_grafana_time_range
         - name: to
           value_ref: nv_grafana_time_range
-  datasource_loki_patterns_query:
-    kind: action
-    entity: Datasource
-    description: Detect log patterns for a Loki stream selector.
+    provides:
+    - uid
+    - discovery_data
     preflight:
     - kind: hydrate_invoke_target
       get: datasource_get
       prefix: ds
-    provides:
-    - uid
-    - discovery_data
+  datasource_loki_patterns_query:
+    description: Detect log patterns for a Loki stream selector.
+    kind: action
+    entity: Datasource
     payload:
       input_type:
         type: object
@@ -1950,17 +1948,17 @@ capabilities:
           value_ref: nv_grafana_time_range
         - name: step
           value_ref: nv_grafana_duration
-  datasource_loki_stats_query:
-    kind: action
-    entity: Datasource
-    description: Approximate Loki index stats for a stream selector.
+    provides:
+    - uid
+    - discovery_data
     preflight:
     - kind: hydrate_invoke_target
       get: datasource_get
       prefix: ds
-    provides:
-    - uid
-    - query_results
+  datasource_loki_stats_query:
+    description: Approximate Loki index stats for a stream selector.
+    kind: action
+    entity: Datasource
     payload:
       input_type:
         type: object
@@ -1972,17 +1970,18 @@ capabilities:
           value_ref: nv_grafana_time_range
         - name: to
           value_ref: nv_grafana_time_range
-  datasource_clickhouse_query_run:
-    kind: action
-    entity: Datasource
-    description: Run raw SQL against a ClickHouse datasource through unified query.
+    provides:
+    - uid
+    - query_results
     preflight:
     - kind: hydrate_invoke_target
       get: datasource_get
       prefix: ds
-    provides:
-    - uid
-    - query_results
+  datasource_clickhouse_query_run:
+    description: Run raw SQL against a ClickHouse datasource through unified query.
+      Express any row limit in the SQL query.
+    kind: action
+    entity: Datasource
     payload:
       input_type:
         type: object
@@ -1994,36 +1993,34 @@ capabilities:
           value_ref: nv_grafana_time_range
         - name: to
           value_ref: nv_grafana_time_range
-        - name: limit
-          value_ref: nv_wire_int
-  datasource_clickhouse_table_query:
-    kind: action
-    entity: Datasource
-    description: List ClickHouse tables from system.tables.
+    provides:
+    - uid
+    - query_results
     preflight:
     - kind: hydrate_invoke_target
       get: datasource_get
       prefix: ds
-    provides:
-    - uid
-    - query_results
+  datasource_clickhouse_table_query:
+    description: List ClickHouse tables from system.tables.
+    kind: action
+    entity: Datasource
     payload:
       input_type:
         type: object
         fields:
         - name: database
           value_ref: nv_wire_str_short
-  datasource_clickhouse_column_query:
-    kind: action
-    entity: Datasource
-    description: Describe columns for a ClickHouse table via system.columns.
+    provides:
+    - uid
+    - query_results
     preflight:
     - kind: hydrate_invoke_target
       get: datasource_get
       prefix: ds
-    provides:
-    - uid
-    - query_results
+  datasource_clickhouse_column_query:
+    description: Describe columns for a ClickHouse table via system.columns.
+    kind: action
+    entity: Datasource
     payload:
       input_type:
         type: object
@@ -2033,20 +2030,28 @@ capabilities:
           required: true
         - name: database
           value_ref: nv_wire_str_short
+    provides:
+    - uid
+    - query_results
+    preflight:
+    - kind: hydrate_invoke_target
+      get: datasource_get
+      prefix: ds
   frontend_settings_query:
+    description: Load public frontend settings (appUrl for deeplinks).
     kind: query
     entity: FrontendSettings
-    description: Load public frontend settings (appUrl for deeplinks).
     provides:
     - app_url
   deeplink_generate_query:
-    kind: query
-    entity: NavigationLink
     description: 'Compose a Grafana navigation URL (MCP generate_deeplink parity).
 
-      Loads appUrl from frontend settings; returns assembled `url` plus scope echo fields.
+      Loads appUrl from frontend settings; returns assembled `url` plus scope echo
+      fields.
 
       '
+    kind: query
+    entity: NavigationLink
     selection:
     - name: resource_type
       value_ref: nv_grafana_deeplink_type
@@ -2077,9 +2082,9 @@ capabilities:
     - from
     - to
   panel_render_query:
+    description: Fetch a PNG render of a dashboard panel (requires image renderer).
     kind: query
     entity: PanelRender
-    description: Fetch a PNG render of a dashboard panel (requires image renderer).
     selection:
     - name: dashboard_uid
       value_ref: nv_grafana_dashboard_uid
@@ -2100,16 +2105,10 @@ capabilities:
     - dashboard_uid
     - panel_id
   panel_query_run:
+    description: Run a dashboard panel query when expr and datasource uid are known
+      (from dashboard_get panel targets).
     kind: action
     entity: Datasource
-    description: Run a dashboard panel query when expr and datasource uid are known (from dashboard_get panel targets).
-    preflight:
-    - kind: hydrate_invoke_target
-      get: datasource_get
-      prefix: ds
-    provides:
-    - uid
-    - query_results
     payload:
       input_type:
         type: object
@@ -2127,18 +2126,25 @@ capabilities:
           value_ref: nv_grafana_time_range
         - name: instant
           value_ref: nv_wire_bool
+    provides:
+    - uid
+    - query_results
+    preflight:
+    - kind: hydrate_invoke_target
+      get: datasource_get
+      prefix: ds
   sift_investigation_query:
+    description: List Sift investigations (requires grafana-ml-app plugin).
     kind: query
     entity: SiftInvestigation
-    description: List Sift investigations (requires grafana-ml-app plugin).
     selection: []
+    controls:
+    - name: limit
+      value_ref: nv_wire_int
     provides:
     - id
     - name
     - status
-    controls:
-    - name: limit
-      value_ref: nv_wire_int
   sift_investigation_get:
     kind: get
     entity: SiftInvestigation
@@ -2149,12 +2155,9 @@ capabilities:
     - failure_reason
     - analyses_json
   sift_investigation_create:
+    description: Create a Sift investigation with labels and optional checks.
     kind: create
     entity: SiftInvestigation
-    description: Create a Sift investigation with labels and optional checks.
-    output:
-      type: side_effect
-      description: Starts a Sift investigation and returns the created record.
     payload:
       input_type:
         type: object
@@ -2171,10 +2174,13 @@ capabilities:
           value_ref: nv_wire_str_short
         - name: checks
           value_ref: nv_grafana_tags
+    output:
+      type: side_effect
+      description: Starts a Sift investigation and returns the created record.
   sift_analysis_query:
+    description: List analyses for a Sift investigation.
     kind: query
     entity: SiftAnalysis
-    description: List analyses for a Sift investigation.
     selection:
     - name: investigation_id
       value_ref: nv_grafana_investigation_ref
@@ -2185,20 +2191,20 @@ capabilities:
     - status
     - title
   incident_query:
+    description: Search Grafana Incident previews (requires grafana-irm-app plugin).
     kind: query
     entity: Incident
-    description: Search Grafana Incident previews (requires grafana-irm-app plugin).
     selection:
     - name: query_string
       value_ref: nv_wire_str_short
+    controls:
+    - name: limit
+      value_ref: nv_wire_int
     provides:
     - incidentId
     - title
     - status
     - severity
-    controls:
-    - name: limit
-      value_ref: nv_wire_int
   incident_get:
     kind: get
     entity: Incident
@@ -2211,12 +2217,9 @@ capabilities:
     - created_time
     - labels_json
   incident_create:
+    description: Create a Grafana incident (Editor role; may notify responders).
     kind: create
     entity: Incident
-    description: Create a Grafana incident (Editor role; may notify responders).
-    output:
-      type: side_effect
-      description: Opens a new Grafana incident and returns the incident record.
     payload:
       input_type:
         type: object
@@ -2234,13 +2237,13 @@ capabilities:
           value_ref: nv_wire_bool
         - name: labels
           value_ref: nv_grafana_json_value
-  incident_activity_create:
-    kind: create
-    entity: IncidentActivity
-    description: Add a user note to an incident timeline.
     output:
       type: side_effect
-      description: Appends an activity item to the incident timeline.
+      description: Opens a new Grafana incident and returns the incident record.
+  incident_activity_create:
+    description: Add a user note to an incident timeline.
+    kind: create
+    entity: IncidentActivity
     payload:
       input_type:
         type: object
@@ -2254,20 +2257,23 @@ capabilities:
           sink_class: external_publish
         - name: event_time
           value_ref: nv_wire_str_short
+    output:
+      type: side_effect
+      description: Appends an activity item to the incident timeline.
   oncall_schedule_query:
+    description: List OnCall schedules via the IRM plugin proxy.
     kind: query
     entity: OnCallSchedule
-    description: List OnCall schedules via the IRM plugin proxy.
     selection:
     - name: team_id
       value_ref: nv_grafana_oncall_id
+    controls:
+    - name: page
+      value_ref: nv_wire_int
     provides:
     - id
     - name
     - timezone
-    controls:
-    - name: page
-      value_ref: nv_wire_int
   oncall_shift_get:
     kind: get
     entity: OnCallShift
@@ -2277,34 +2283,34 @@ capabilities:
     - type
     - frequency
   oncall_user_query:
+    description: List OnCall directory users.
     kind: query
     entity: OnCallUser
-    description: List OnCall directory users.
     selection:
     - name: username
       value_ref: nv_grafana_login
+    controls:
+    - name: page
+      value_ref: nv_wire_int
     provides:
     - id
     - username
     - email
+  oncall_team_query:
+    description: List OnCall teams.
+    kind: query
+    entity: OnCallTeam
+    selection: []
     controls:
     - name: page
       value_ref: nv_wire_int
-  oncall_team_query:
-    kind: query
-    entity: OnCallTeam
-    description: List OnCall teams.
-    selection: []
     provides:
     - id
     - name
-    controls:
-    - name: page
-      value_ref: nv_wire_int
   oncall_alert_group_query:
+    description: List OnCall alert groups with optional filters.
     kind: query
     entity: OnCallAlertGroup
-    description: List OnCall alert groups with optional filters.
     selection:
     - name: state
       value_ref: nv_grafana_oncall_state
@@ -2312,13 +2318,13 @@ capabilities:
       value_ref: nv_grafana_oncall_id
     - name: name
       value_ref: nv_wire_str_short
+    controls:
+    - name: page
+      value_ref: nv_wire_int
     provides:
     - id
     - title
     - state
-    controls:
-    - name: page
-      value_ref: nv_wire_int
   oncall_alert_group_get:
     kind: get
     entity: OnCallAlertGroup
@@ -2440,16 +2446,19 @@ views:
 
           {%- if resource_type == ''dashboard'' -%}
 
-          {{ base }}/d/{{ dashboard_uid }}{% if from or to or query_params_json %}?{% endif %}{% if from %}from={{ from |
-          wire_time(''unix_ms'') }}{% endif %}{% if from and to %}&{% endif %}{% if to %}to={{ to | wire_time(''unix_ms'')
-          }}{% endif %}{% if query_params_json %}{{ query_params_json | wire_query_suffix }}{% endif %}
+          {{ base }}/d/{{ dashboard_uid }}{% if from or to or query_params_json %}?{%
+          endif %}{% if from %}from={{ from | wire_time(''unix_ms'') }}{% endif %}{%
+          if from and to %}&{% endif %}{% if to %}to={{ to | wire_time(''unix_ms'')
+          }}{% endif %}{% if query_params_json %}{{ query_params_json | wire_query_suffix
+          }}{% endif %}
 
           {%- elif resource_type == ''panel'' -%}
 
-          {{ base }}/d/{{ dashboard_uid }}?viewPanel={{ panel_id }}{% if from or to or query_params_json %}&{% endif %}{%
-          if from %}from={{ from | wire_time(''unix_ms'') }}{% endif %}{% if from and to %}&{% endif %}{% if to %}to={{ to
-          | wire_time(''unix_ms'') }}{% endif %}{% if query_params_json %}{{ query_params_json | wire_query_suffix }}{% endif
-          %}
+          {{ base }}/d/{{ dashboard_uid }}?viewPanel={{ panel_id }}{% if from or to
+          or query_params_json %}&{% endif %}{% if from %}from={{ from | wire_time(''unix_ms'')
+          }}{% endif %}{% if from and to %}&{% endif %}{% if to %}to={{ to | wire_time(''unix_ms'')
+          }}{% endif %}{% if query_params_json %}{{ query_params_json | wire_query_suffix
+          }}{% endif %}
 
           {%- elif resource_type == ''explore'' -%}
 
@@ -2467,7 +2476,8 @@ views:
 
           {%- if from -%}
 
-          {%- set left = left ~ ''"from":'' ~ (from | wire_time(''unix_ms'') | json_encode) -%}
+          {%- set left = left ~ ''"from":'' ~ (from | wire_time(''unix_ms'') | json_encode)
+          -%}
 
           {%- endif -%}
 
@@ -2479,7 +2489,8 @@ views:
 
           {%- if to -%}
 
-          {%- set left = left ~ ''"to":'' ~ (to | wire_time(''unix_ms'') | json_encode) -%}
+          {%- set left = left ~ ''"to":'' ~ (to | wire_time(''unix_ms'') | json_encode)
+          -%}
 
           {%- endif -%}
 

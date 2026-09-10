@@ -1,0 +1,13 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const { PlasmEngine } = require("../index.js");
+const engine = new PlasmEngine();
+const declaration = await readFile(new URL("../index.d.ts", import.meta.url), "utf8");
+const signature = declaration.split("\n").find((line) => line.includes("routeIntent("));
+assert.ok(signature, "generated routeIntent declaration missing");
+assert.doesNotMatch(signature, /routingRef|clarifyChoices/);
+await assert.rejects(engine.routeIntent("inspect"), /activateDiscovery/);
+await assert.rejects(engine.routeIntent("inspect", "missing-session"), /activateDiscovery/);
+console.log("PASS: native routing requires activated discovery; generated contract has intent and session only");

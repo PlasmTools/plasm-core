@@ -7,6 +7,7 @@ pub(crate) fn render_surface_value(v: &Value) -> String {
         Value::Integer(i) => i.to_string(),
         Value::Float(f) => f.to_string(),
         Value::String(s) | Value::PhraseIdent(s) => render_bare_or_quoted_string(s),
+        Value::StringTemplate(value) => render_bare_or_quoted_string(value.source()),
         Value::PlasmInputRef(_) => "$".to_string(),
         Value::UnionCtor {
             ctor_label,

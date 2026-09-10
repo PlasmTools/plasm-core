@@ -99,6 +99,11 @@ fn append_compiled_query_pairs(url: &mut String, query: Option<&Value>) {
 /// Outbound HTTP: compile CML to request, then send and return JSON + optional `Link: rel=next` URL.
 #[async_trait]
 pub trait HttpTransport: Send + Sync {
+    /// The transport resolves configured host credentials and rejects missing required injection.
+    fn injects_host_auth(&self) -> bool {
+        false
+    }
+
     /// Send a compiled HTTP operation against `base_url` (no trailing slash).
     async fn send_compiled_http(
         &self,
@@ -119,11 +124,21 @@ pub trait HttpTransport: Send + Sync {
 #[derive(Debug, Clone)]
 pub struct ReqwestHttpTransport {
     client: reqwest::Client,
+    scoped_client: Option<reqwest::Client>,
 }
 
 impl ReqwestHttpTransport {
     pub fn new(client: reqwest::Client) -> Self {
-        Self { client }
+        Self {
+            client,
+            scoped_client: None,
+        }
+    }
+
+    /// The caller must configure this client with redirects disabled.
+    pub(crate) fn with_scoped_client(mut self, client: reqwest::Client) -> Self {
+        self.scoped_client = Some(client);
+        self
     }
 
     pub fn client(&self) -> &reqwest::Client {
@@ -144,7 +159,16 @@ impl ReqwestHttpTransport {
         let url = join_base_url_path(base_url, request.url_path());
         let http_span =
             crate::spans::http_compiled_request(compiled_method_label(&request.method), url.len());
-        let req_builder = build_compiled_reqwest(&self.client, &url, request, auth)?;
+        let client = if request.credential.is_some() {
+            self.scoped_client.as_ref().ok_or_else(|| {
+                crate::credentials::credential_error(
+                    "transport has no redirect-free scoped credential client",
+                )
+            })?
+        } else {
+            &self.client
+        };
+        let req_builder = build_compiled_reqwest(client, &url, request, auth)?;
         let method = compiled_method_label(&request.method);
         let response = req_builder
             .send()
@@ -500,7 +524,7 @@ fn add_multipart_part(
     }
 
     let text = match &spec.content {
-        Value::PlasmInputRef(_) => {
+        Value::PlasmInputRef(_) | Value::StringTemplate(_) => {
             return Err(RuntimeError::ConfigurationError {
                 message: format!(
                     "multipart part `{}`: compile-time Plasm input refs are not valid HTTP wire values",
@@ -1066,8 +1090,10 @@ fn strip_null_fields(value: serde_json::Value) -> serde_json::Value {
 
 fn plasm_value_to_json(value: &Value) -> Result<serde_json::Value, RuntimeError> {
     match value {
-        Value::PlasmInputRef(_) => {
-            Ok(serde_json::to_value(value).unwrap_or(serde_json::Value::Null))
+        Value::PlasmInputRef(_) | Value::StringTemplate(_) => {
+            Err(RuntimeError::ConfigurationError {
+                message: "unbound program operand reached HTTP body encoding".into(),
+            })
         }
         Value::Null => Ok(serde_json::Value::Null),
         Value::Bool(b) => Ok(serde_json::Value::Bool(*b)),
@@ -1115,6 +1141,7 @@ mod compiled_http_url_tests {
             map.insert("per_page".to_string(), Value::Integer(5));
         }
         let request = CompiledRequest {
+            credential: None,
             method: HttpMethod::Get,
             path: "https://hn.algolia.com/api/v1/search_by_date".to_string(),
             query: Some(query),
@@ -1365,6 +1392,7 @@ mod json_wire_tests {
             Value::String(markdown.into()),
         )]));
         let request = CompiledRequest {
+            credential: None,
             method: HttpMethod::Post,
             path: "/v1/share".into(),
             query: None,
@@ -1400,6 +1428,7 @@ mod json_wire_tests {
     #[test]
     fn compiled_request_rejects_template_override_of_resolver_auth_header() {
         let request = CompiledRequest {
+            credential: None,
             method: HttpMethod::Get,
             path: "/v1/items".into(),
             query: None,
@@ -1444,6 +1473,7 @@ mod json_wire_tests {
         assert!(encoded.contains("password=s3cret"), "{encoded}");
 
         let request = CompiledRequest {
+            credential: None,
             method: HttpMethod::Post,
             path: "/auth/token".into(),
             query: None,
@@ -1477,6 +1507,7 @@ mod json_wire_tests {
             Value::String("Bearer tok-abc".into()),
         )]));
         let request = CompiledRequest {
+            credential: None,
             method: HttpMethod::Get,
             path: "/friends".into(),
             query: None,

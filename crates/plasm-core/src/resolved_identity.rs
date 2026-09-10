@@ -134,8 +134,7 @@ mod tests {
     fn simple_ref_binds_id_field_name() {
         let ent = team_entity();
         let reference = Ref::new("Team", "EVA");
-        let identity =
-            ResolvedIdentity::from_ref(&reference, IdentityProjectionCtx::Entity(&ent));
+        let identity = ResolvedIdentity::from_ref(&reference, IdentityProjectionCtx::Entity(&ent));
         assert_eq!(identity.get("id"), Some("EVA"));
         assert_eq!(identity.get("key"), Some("EVA"));
     }
@@ -150,8 +149,7 @@ mod tests {
                 ("n".into(), "9".into()),
             ]),
         );
-        let identity =
-            ResolvedIdentity::from_ref(&reference, IdentityProjectionCtx::LegacyIdOnly);
+        let identity = ResolvedIdentity::from_ref(&reference, IdentityProjectionCtx::LegacyIdOnly);
         assert_eq!(identity.get("owner"), Some("o"));
         assert_eq!(identity.get("repo"), Some("r"));
         assert_eq!(identity.get("n"), Some("9"));
@@ -159,12 +157,9 @@ mod tests {
 
     #[test]
     fn binding_slot_projects_as_plasm_input_ref() {
-        let reference = Ref::simple_binding(
-            "Pet",
-            crate::PlasmInputRef::node_output("pikachu", vec![]),
-        );
-        let identity =
-            ResolvedIdentity::from_ref(&reference, IdentityProjectionCtx::LegacyIdOnly);
+        let reference =
+            Ref::simple_binding("Pet", crate::PlasmInputRef::node_output("pikachu", vec![]));
+        let identity = ResolvedIdentity::from_ref(&reference, IdentityProjectionCtx::LegacyIdOnly);
         assert!(matches!(
             identity.get_value("id"),
             Some(Value::PlasmInputRef(_))

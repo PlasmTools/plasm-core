@@ -24,7 +24,6 @@ struct StubState {
 
 #[derive(Debug, Clone)]
 struct RecordedRequest {
-    path: String,
     query: HashMap<String, String>,
 }
 
@@ -70,10 +69,10 @@ async fn indexed(
     if let Some(v) = q.page_limit {
         map.insert("page_limit".into(), v.to_string());
     }
-    st.requests.lock().unwrap().push(RecordedRequest {
-        path: "/items/indexed".into(),
-        query: map,
-    });
+    st.requests
+        .lock()
+        .unwrap()
+        .push(RecordedRequest { query: map });
     let all = items(45);
     let limit = q.page_limit.unwrap_or(20) as usize;
     let index = q.page_index.unwrap_or(0) as usize;
@@ -100,10 +99,10 @@ async fn offset(
     if let Some(v) = q.limit {
         map.insert("limit".into(), v.to_string());
     }
-    st.requests.lock().unwrap().push(RecordedRequest {
-        path: "/items/offset".into(),
-        query: map,
-    });
+    st.requests
+        .lock()
+        .unwrap()
+        .push(RecordedRequest { query: map });
     let all = items(45);
     let limit = q.limit.unwrap_or(20) as usize;
     let start = q.offset.unwrap_or(0) as usize;
@@ -128,10 +127,10 @@ async fn cursor(
     if let Some(v) = q.limit {
         map.insert("limit".into(), v.to_string());
     }
-    st.requests.lock().unwrap().push(RecordedRequest {
-        path: "/items/cursor".into(),
-        query: map,
-    });
+    st.requests
+        .lock()
+        .unwrap()
+        .push(RecordedRequest { query: map });
     let all = items(45);
     let limit = q.limit.unwrap_or(20) as usize;
     let start = q
@@ -210,7 +209,7 @@ async fn indexed_host_budget_25_keeps_stable_page_limit_20() {
                     one_page: false,
                     ..Default::default()
                 },
-                ExecuteOptions::default(),
+                ExecuteOptions::for_catalog(&cgs).unwrap(),
             )
             .await
     })
@@ -284,7 +283,7 @@ async fn indexed_complete_fetch_all_reaches_authoritative_end() {
                 one_page: false,
                 ..Default::default()
             },
-            ExecuteOptions::default(),
+            ExecuteOptions::for_catalog(&cgs).unwrap(),
         )
         .await
         .expect("execute");
@@ -327,7 +326,7 @@ async fn offset_stride_matches_page_size() {
                 one_page: false,
                 ..Default::default()
             },
-            ExecuteOptions::default(),
+            ExecuteOptions::for_catalog(&cgs).unwrap(),
         )
         .await
         .expect("execute");
@@ -369,7 +368,7 @@ async fn cursor_strategy_fetches_to_exhaustion() {
                 one_page: false,
                 ..Default::default()
             },
-            ExecuteOptions::default(),
+            ExecuteOptions::for_catalog(&cgs).unwrap(),
         )
         .await
         .expect("execute");

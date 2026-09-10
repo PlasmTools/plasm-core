@@ -18,7 +18,9 @@ import { createAgentTelemetry } from "../instrumentation.js";
 import { maybeCompactMessages } from "../runtime/compaction.js";
 import { AgentRuntime, type AgentRuntimeConfig } from "../runtime/agent-runtime.js";
 import { createHarnessTools, renderSkillIndex } from "../tools/harness-tools.js";
+import { gateArtefactTransform } from "../tools/format.js";
 import { createPlasmTools } from "../tools/plasm-tools.js";
+import { buildDefaultSystemLiturgy } from "../prompts/index.js";
 import { runEveToolLoop, type AgentStepEvent } from "../telemetry/eve-tool-loop.js";
 import type { EveChannelKind } from "../telemetry/eve-agent-runs.js";
 
@@ -47,6 +49,14 @@ export interface AgentGenerateOptions {
   resetConversation?: boolean;
   onStepStart?: () => void | Promise<void>;
   onStepFinish?: (step: AgentStepEvent) => void | Promise<void>;
+  /**
+   * Optional tool adapter. Observers must preserve result and error semantics.
+   */
+  wrapTools?: (tools: ToolSet) => ToolSet | Promise<ToolSet>;
+  /** Force tool use for this generate (eval: block prose-only refusals). */
+  toolChoice?: "auto" | "required" | "none" | { type: "tool"; toolName: string };
+  /** Override agent maxSteps for this generate only. */
+  maxSteps?: number;
   /** Workflow session run id (`wrun_*`) — links OTEL spans to Agent Runs. */
   sessionId?: string;
   turnId?: string;
@@ -59,7 +69,14 @@ export interface AgentTurnResult {
   text: string;
   steps: unknown[];
   usage: Awaited<ReturnType<typeof runEveToolLoop>>["usage"];
+  /** Number of tools registered for this turn (not invocations). */
+  toolsAvailable: number;
+  /** Tool call invocations observed across steps. */
   toolCount: number;
+  /** Ordered tool names invoked this turn. */
+  toolInvocations: string[];
+  messages: ModelMessage[];
+  stopReason: Awaited<ReturnType<typeof runEveToolLoop>>["stopReason"];
 }
 
 export class PlasmAgent {
@@ -110,16 +127,21 @@ export class PlasmAgent {
   }
 
   async loadInstructions(): Promise<string> {
-    let base: string;
+    // Framework core: language law + resource rites (same bytes as MCP tool cards).
+    const core = buildDefaultSystemLiturgy();
+    let project = "";
     try {
-      base = (await readFile(this.instructionsPath, "utf8")).trim();
+      project = (await readFile(this.instructionsPath, "utf8")).trim();
     } catch {
-      base = [
-        "You are a catalog-native Plasm agent.",
-        "Use plasm_context → plasm → plasm_run. On auto-seed hosts: plasm_context new with intent only (no seeds).",
-        "Keep one stable intent per user goal.",
-      ].join("\n");
+      project = "";
     }
+    // Placeholder / empty project files → core only.
+    const isPlaceholder =
+      !project ||
+      /^#\s*Placeholder\b/i.test(project) ||
+      /^#\s*Catalog-native Plasm agent\b/i.test(project);    const base = isPlaceholder
+      ? core
+      : `${core}\n\n# Project instructions\n\n${project}`;
 
     if (this.skillsMode === "inline") {
       const skillBlock = this.loadedSkills
@@ -148,11 +170,16 @@ export class PlasmAgent {
     const harnessTools = createHarnessTools({
       skills: this.skillsMode === "index" ? this.loadedSkills : undefined,
       subagents: this.subagentRegistry,
+      artefactWorkspaceRoot: this.runtime.artefactWorkspaceRoot,
+      includeArtefactTransform: true,
     });
-    const tools = {
+    let tools = {
       ...plasmTools,
       ...harnessTools,
     } as ToolSet;
+    if (options.wrapTools) {
+      tools = await options.wrapTools(tools);
+    }
 
     const telemetry = this.telemetryEnabled
       ? createAgentTelemetry({ serviceName: this.agentName })
@@ -173,7 +200,11 @@ export class PlasmAgent {
 
     messages = await maybeCompactMessages(messages, this.compaction, this.model);
 
+    const toolInvocations: string[] = [];
     const onStepFinish = async (step: AgentStepEvent) => {
+      for (const call of step.toolCalls ?? []) {
+        toolInvocations.push(call.toolName);
+      }
       await options.onStepFinish?.(step);
       if (!this.hookRunner || !this.getAuthoringContext) return;
       const toolsUsed = (step.toolCalls ?? []).map((call) => call.toolName);
@@ -183,9 +214,9 @@ export class PlasmAgent {
     const result = await runEveToolLoop({
       model,
       system,
-      tools,
+      tools: () => gateArtefactTransform(tools, this.runtime.hasMaterializedArtefact()),
       messages,
-      maxSteps: this.maxSteps,
+      maxSteps: options.maxSteps ?? this.maxSteps,
       agentName: this.agentName,
       channelKind: options.channelKind,
       sessionId: options.sessionId,
@@ -194,20 +225,24 @@ export class PlasmAgent {
       telemetry,
       onStepStart: options.onStepStart,
       onStepFinish: async (step) => {
-        await options.onStepFinish?.(step);
         await onStepFinish(step);
       },
       modelOptions: this.modelOptions,
+      toolChoice: options.toolChoice,
     });
 
     if (!externalMessages) {
-      this.conversation.push({ role: "assistant", content: result.text });
+      this.conversation = result.messages;
     }
     return {
       text: result.text,
       steps: result.steps,
       usage: result.usage,
-      toolCount: Object.keys(tools).length,
+      toolsAvailable: Object.keys(tools).length,
+      toolCount: toolInvocations.length,
+      toolInvocations,
+      messages: result.messages,
+      stopReason: result.stopReason,
     };
   }
 }

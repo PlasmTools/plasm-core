@@ -1,13 +1,6 @@
-_auth_header: &id001
-  type: object
-  fields:
-  - - Authorization
-    - type: format
-      template: Bearer {token}
-      vars:
-        token:
-          type: var
-          name: access_token
+_request_auth: &request_auth
+  scheme: bearer
+  token: { type: var, name: access_token }
 
 # AppWorld OpenAPI list endpoints use page_index (0-based) + page_limit (default 5, max 20).
 _appworld_page_index_limit: &appworld_page_index_limit
@@ -46,7 +39,7 @@ logout:
     value: auth
   - type: literal
     value: logout
-  headers: *id001
+  auth: *request_auth
 group_query:
   method: GET
   path:
@@ -54,7 +47,7 @@ group_query:
     value: splitwise
   - type: literal
     value: groups
-  headers: *id001
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -79,7 +72,7 @@ group_get:
     value: groups
   - type: var
     name: id
-  headers: *id001
+  auth: *request_auth
 group_create:
   method: POST
   path:
@@ -87,7 +80,7 @@ group_create:
     value: splitwise
   - type: literal
     value: groups
-  headers: *id001
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -117,7 +110,7 @@ group_update:
     value: groups
   - type: var
     name: id
-  headers: *id001
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -152,7 +145,7 @@ group_delete:
     value: groups
   - type: var
     name: id
-  headers: *id001
+  auth: *request_auth
 group_add_member:
   method: POST
   path:
@@ -164,7 +157,7 @@ group_add_member:
     name: id
   - type: literal
     value: members
-  headers: *id001
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -184,7 +177,7 @@ group_remove_member:
     value: members
   - type: var
     name: user_email
-  headers: *id001
+  auth: *request_auth
 group_exit:
   method: POST
   path:
@@ -198,7 +191,7 @@ group_exit:
     value: members
   - type: literal
     value: exit
-  headers: *id001
+  auth: *request_auth
 group_undelete:
   method: PATCH
   path:
@@ -210,7 +203,7 @@ group_undelete:
     name: id
   - type: literal
     value: undelete
-  headers: *id001
+  auth: *request_auth
 group_accept_invitation:
   method: POST
   path:
@@ -222,7 +215,7 @@ group_accept_invitation:
     name: invitation_code
   - type: literal
     value: accept
-  headers: *id001
+  auth: *request_auth
 group_regenerate_invitation:
   method: PATCH
   path:
@@ -234,7 +227,7 @@ group_regenerate_invitation:
     name: id
   - type: literal
     value: regenerate
-  headers: *id001
+  auth: *request_auth
 expense_query:
   method: GET
   path:
@@ -254,7 +247,7 @@ expense_query:
     else_expr:
       type: const
       value: no_group/expenses
-  headers: *id001
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -323,7 +316,7 @@ expense_get:
     value: expenses
   - type: var
     name: id
-  headers: *id001
+  auth: *request_auth
 expense_create:
   method: POST
   path:
@@ -331,7 +324,7 @@ expense_create:
     value: splitwise
   - type: literal
     value: expenses
-  headers: *id001
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -378,7 +371,7 @@ expense_update:
     value: expenses
   - type: var
     name: id
-  headers: *id001
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -446,7 +439,7 @@ expense_delete:
     value: expenses
   - type: var
     name: id
-  headers: *id001
+  auth: *request_auth
 expense_undelete:
   method: PATCH
   path:
@@ -458,7 +451,7 @@ expense_undelete:
     name: id
   - type: literal
     value: undelete
-  headers: *id001
+  auth: *request_auth
 expense_attach_receipt:
   method: POST
   path:
@@ -470,7 +463,7 @@ expense_attach_receipt:
     name: id
   - type: literal
     value: file
-  headers: *id001
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -502,7 +495,7 @@ expense_delete_receipt:
     name: id
   - type: literal
     value: file
-  headers: *id001
+  auth: *request_auth
 payment_query:
   method: GET
   path:
@@ -522,7 +515,7 @@ payment_query:
     else_expr:
       type: const
       value: no_group/payments
-  headers: *id001
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -569,7 +562,7 @@ payment_get:
     value: payments
   - type: var
     name: id
-  headers: *id001
+  auth: *request_auth
 payment_create:
   method: POST
   path:
@@ -577,7 +570,7 @@ payment_create:
     value: splitwise
   - type: literal
     value: payments
-  headers: *id001
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -621,7 +614,7 @@ payment_delete:
     value: payments
   - type: var
     name: id
-  headers: *id001
+  auth: *request_auth
 payment_update:
   method: PATCH
   path:
@@ -631,7 +624,7 @@ payment_update:
     value: payments
   - type: var
     name: id
-  headers: *id001
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -668,7 +661,7 @@ payment_undelete:
     name: id
   - type: literal
     value: undelete
-  headers: *id001
+  auth: *request_auth
 payment_attach_receipt:
   method: POST
   path:
@@ -680,7 +673,7 @@ payment_attach_receipt:
     name: id
   - type: literal
     value: file
-  headers: *id001
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -712,7 +705,7 @@ payment_delete_receipt:
     name: id
   - type: literal
     value: file
-  headers: *id001
+  auth: *request_auth
 settle_up:
   method: POST
   path:
@@ -720,7 +713,7 @@ settle_up:
     value: splitwise
   - type: literal
     value: settle_up
-  headers: *id001
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -760,7 +753,7 @@ expense_comment_query:
     name: expense_id
   - type: literal
     value: comments
-  headers: *id001
+  auth: *request_auth
   pagination: *appworld_page_index_limit
 expense_comment_create:
   method: POST
@@ -773,7 +766,7 @@ expense_comment_create:
     name: expense_id
   - type: literal
     value: comments
-  headers: *id001
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -789,7 +782,7 @@ expense_comment_update:
     value: expense_comments
   - type: var
     name: id
-  headers: *id001
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -805,7 +798,7 @@ expense_comment_delete:
     value: expense_comments
   - type: var
     name: id
-  headers: *id001
+  auth: *request_auth
 payment_comment_query:
   method: GET
   path:
@@ -817,7 +810,7 @@ payment_comment_query:
     name: payment_id
   - type: literal
     value: comments
-  headers: *id001
+  auth: *request_auth
   pagination: *appworld_page_index_limit
 payment_comment_create:
   method: POST
@@ -830,7 +823,7 @@ payment_comment_create:
     name: payment_id
   - type: literal
     value: comments
-  headers: *id001
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -846,7 +839,7 @@ payment_comment_update:
     value: payment_comments
   - type: var
     name: id
-  headers: *id001
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -862,7 +855,7 @@ payment_comment_delete:
     value: payment_comments
   - type: var
     name: id
-  headers: *id001
+  auth: *request_auth
 notification_query:
   method: GET
   path:
@@ -870,7 +863,7 @@ notification_query:
     value: splitwise
   - type: literal
     value: notifications
-  headers: *id001
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -895,7 +888,7 @@ activity_query:
     value: account
   - type: literal
     value: activity
-  headers: *id001
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -942,7 +935,7 @@ notification_delete:
     value: notifications
   - type: var
     name: id
-  headers: *id001
+  auth: *request_auth
 notification_mark:
   method: PATCH
   path:
@@ -952,7 +945,7 @@ notification_mark:
     value: notifications
   - type: var
     name: id
-  headers: *id001
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -966,7 +959,7 @@ notification_delete_all:
     value: splitwise
   - type: literal
     value: notifications
-  headers: *id001
+  auth: *request_auth
 notification_mark_all:
   method: PATCH
   path:
@@ -974,7 +967,7 @@ notification_mark_all:
     value: splitwise
   - type: literal
     value: notifications
-  headers: *id001
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -1009,7 +1002,7 @@ user_search:
     value: splitwise
   - type: literal
     value: users
-  headers: *id001
+  auth: *request_auth
   query:
     type: object
     fields:

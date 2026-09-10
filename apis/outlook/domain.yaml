@@ -1,4 +1,4 @@
-version: 11
+version: 12
 http_backend: https://graph.microsoft.com
 data_classes:
   untrusted:
@@ -23,7 +23,6 @@ entities:
       - folder
       - mail folder
       - outlook folder
-      seed_class: ambient
     fields:
       id:
         required: true
@@ -61,8 +60,7 @@ entities:
       messages:
         target: Message
         cardinality: many
-        discovery:
-          seed_nav: locate
+        discovery: null
         materialize:
           kind: query_scoped_bindings
           capability: message_folder_query
@@ -71,7 +69,8 @@ entities:
   Message:
     id_field: id
     primary_query: message_folder_query
-    description: An Outlook mail item — list threads/conversations via conversation grouping on messages.
+    description: An Outlook mail item — list threads/conversations via conversation
+      grouping on messages.
     discovery:
       names:
       - message
@@ -83,7 +82,6 @@ entities:
       - outlook thread
       - outlook threads
       - conversation
-      seed_class: primary
     fields:
       id:
         required: true
@@ -321,7 +319,6 @@ capabilities:
       value_ref: nv_mailfolder_query_shelf
       required: true
       description: mail_folder | mail_folder_child
-    controls:
     - name: includeHiddenFolders
       value_ref: nv_mail_folder_child_query_include_hidden_folders
       required: false
@@ -667,7 +664,8 @@ views:
         node: folders
       triage_status:
         kind: computed
-        template: '{%- if not has_folders -%}empty_mailbox{%- else -%}folders_ready{%- endif -%}
+        template: '{%- if not has_folders -%}empty_mailbox{%- else -%}folders_ready{%-
+          endif -%}
 
           '
     relation_outputs:
@@ -737,7 +735,8 @@ values:
     description: Subject line for the new event.
   nv_event_create_time_zone:
     type: string
-    description: IANA or Windows time zone name for start/end (defaults to UTC on the wire).
+    description: IANA or Windows time zone name for start/end (defaults to UTC on
+      the wire).
   nv_event_location_display_name:
     type: string
     description: Location label for the event.
@@ -805,7 +804,8 @@ values:
     description: Unread message count for triage in this folder.
   nv_mail_folder_well_known_name:
     type: string
-    description: Well-known folder role when the service exposes one (inbox, drafts, sentitems, etc.).
+    description: Well-known folder role when the service exposes one (inbox, drafts,
+      sentitems, etc.).
   nv_mailbox_triage_folder_count:
     type: integer
     description: Number of root-level folders returned for triage.
@@ -845,14 +845,16 @@ values:
     description: Conversation thread identifier grouping related messages.
   nv_message_folder_query_filter:
     type: string
-    description: OData filter expression for messages in the scoped folder (e.g. isRead eq false).
+    description: OData filter expression for messages in the scoped folder (e.g. isRead
+      eq false).
   nv_message_folder_query_mail_folder_id:
     type: entity_ref
     target: MailFolder
     description: Folder whose messages should be listed.
   nv_message_folder_query_order_by:
     type: string
-    description: OData orderBy clause for folder message listing (e.g. receivedDateTime desc).
+    description: OData orderBy clause for folder message listing (e.g. receivedDateTime
+      desc).
   nv_message_from_address:
     type: string
     description: Sender email address on the message envelope.
@@ -877,10 +879,12 @@ values:
     target: MailFolder
   nv_message_query_filter:
     type: string
-    description: OData filter expression for server-side message filtering (e.g. isRead eq false).
+    description: OData filter expression for server-side message filtering (e.g. isRead
+      eq false).
   nv_message_query_order_by:
     type: string
-    description: OData orderBy clause for mailbox-wide message listing (e.g. receivedDateTime desc).
+    description: OData orderBy clause for mailbox-wide message listing (e.g. receivedDateTime
+      desc).
   nv_message_subject:
     type: string
     description: Subject line shown in list and detail views.

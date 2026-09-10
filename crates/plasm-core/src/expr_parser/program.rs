@@ -4,11 +4,11 @@
 //! collect-meta tails, and `=>` applicators. Catalogue path leaves remain opaque strings until
 //! parsed with a CGS via [`super::parse`].
 
+use super::iterate_until::{try_parse_iterate_until, IterateUntilExpr};
 use super::program_surface::{
     collect_program_statement_lines, split_assignment_at_top_level, split_top_level,
     validate_program_label,
 };
-use super::iterate_until::{try_parse_iterate_until, IterateUntilExpr};
 use super::{
     parse_pipe_expr, peel_collect_meta, split_apply_expr, Applicator, CollectMeta, PipeExpr,
 };

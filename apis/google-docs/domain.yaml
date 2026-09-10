@@ -68,34 +68,44 @@ entities:
     relations: {}
 capabilities:
   documents_get:
+    description: Fetch the full document resource (optionally controlling tab content and suggestions
+      view).
     kind: get
     entity: Document
-    description: Fetch the full document resource (optionally controlling tab content and suggestions view).
-    parameters:
-    - name: includeTabsContent
-      value_ref: nv_documents_get_include_tabs_content
-      required: false
-    - name: suggestionsViewMode
-      value_ref: nv_wire_str_short
-      required: false
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: includeTabsContent
+          value_ref: nv_documents_get_include_tabs_content
+          required: false
+        - name: suggestionsViewMode
+          value_ref: nv_wire_str_short
+          required: false
   documents_create:
+    description: Create a blank document or supply an initial title and body via the JSON input.
     kind: create
     entity: Document
-    description: Create a blank document or supply an initial title and body via the JSON input.
-    parameters:
-    - name: input
-      value_ref: nv_documents_create_input
-      required: false
-      sink_class: external_publish
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: input
+          value_ref: nv_documents_create_input
+          required: false
+          sink_class: external_publish
   documents_batchUpdate:
+    description: Apply one or more structured updates (BatchUpdateDocumentRequest) to a document.
     kind: action
     entity: Document
-    description: Apply one or more structured updates (BatchUpdateDocumentRequest) to a document.
-    parameters:
-    - name: input
-      value_ref: nv_documents_batch_update_input
-      required: false
-      sink_class: external_publish
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: input
+          value_ref: nv_documents_batch_update_input
+          required: false
+          sink_class: external_publish
     provides:
     - documentId
     - replies

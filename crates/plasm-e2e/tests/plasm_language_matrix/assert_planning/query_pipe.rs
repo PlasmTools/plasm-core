@@ -4,9 +4,7 @@ use super::super::ir_helpers::*;
 use super::super::row::MatrixRow;
 use plasm_agent::plasm_plan::{AggregateFunction, ComputeOp, ComputeTemplate};
 use plasm_agent::plasm_plan_run::DryPlasmPlanEvaluation;
-use plasm_core::{
-    CompOp, Expr, Predicate,
-};
+use plasm_core::{CompOp, Expr, Predicate};
 
 pub(crate) fn assert_planning_query_pipe(
     row: &MatrixRow,
@@ -18,7 +16,7 @@ pub(crate) fn assert_planning_query_pipe(
 ) -> Result<Option<()>, String> {
     match row.id {
         "lang_query_all" => {
-            let q = first_query(&surfaces)?;
+            let q = first_query(surfaces)?;
             if q.entity != "LangItem" {
                 return Err(format!("expected LangItem query, got {:?}", q.entity));
             }
@@ -42,7 +40,7 @@ pub(crate) fn assert_planning_query_pipe(
             }
         }
         "lang_surface_line_limit" | "lang_bind_first_limit" => {
-            let q = first_query(&surfaces)?;
+            let q = first_query(surfaces)?;
             if q.entity != "LangItem" || q.predicate.is_some() {
                 return Err(format!("unexpected query IR: {q:?}"));
             }
@@ -63,7 +61,7 @@ pub(crate) fn assert_planning_query_pipe(
             }
         }
         "lang_search" => {
-            let q = first_query(&surfaces)?;
+            let q = first_query(surfaces)?;
             if q.entity != "LangItem" {
                 return Err(format!("expected LangItem, got {:?}", q.entity));
             }
@@ -106,7 +104,7 @@ pub(crate) fn assert_planning_query_pipe(
             }
         }
         "lang_predicate_brace_owner" => {
-            let q = first_query(&surfaces)?;
+            let q = first_query(surfaces)?;
             // `capability_name` may be inferred later in the pipeline; brace IR stability is the predicate.
             let Some(pred) = q.predicate.as_ref() else {
                 return Err("expected owner predicate".into());
@@ -132,7 +130,7 @@ pub(crate) fn assert_planning_query_pipe(
             }
         }
         "lang_limit_projection" => {
-            let q = first_query(&surfaces)?;
+            let q = first_query(surfaces)?;
             if q.entity != "LangItem" {
                 return Err(format!("expected LangItem, got {:?}", q.entity));
             }
@@ -358,7 +356,7 @@ pub(crate) fn assert_planning_query_pipe(
                     keys
                 ));
             }
-            let q = first_query(&surfaces)?;
+            let q = first_query(surfaces)?;
             if q.capability_name.as_deref() != Some("langitem_search") {
                 return Err(format!(
                     "expected langitem_search upstream, got {:?}",
@@ -382,7 +380,7 @@ pub(crate) fn assert_planning_query_pipe(
                     keys
                 ));
             }
-            let q = first_query(&surfaces)?;
+            let q = first_query(surfaces)?;
             if q.capability_name.as_deref() != Some("langitem_search") {
                 return Err(format!(
                     "expected langitem_search upstream, got {:?}",
@@ -421,7 +419,7 @@ pub(crate) fn assert_planning_query_pipe(
             else {
                 return Err(format!("expected Limit(5), got {:?}", computes));
             };
-            let q = first_query(&surfaces)?;
+            let q = first_query(surfaces)?;
             if q.entity != "LangItem" || q.predicate.is_some() {
                 return Err(format!(
                     "expected bare LangItem query before singleton tail, got {q:?}"

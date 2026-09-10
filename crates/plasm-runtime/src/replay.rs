@@ -62,7 +62,26 @@ impl RequestFingerprint {
     pub fn from_operation(request: &CompiledOperation) -> Self {
         let mut hasher = Hasher::new();
 
+        if let CompiledOperation::Http(request) | CompiledOperation::GraphQl(request) = request {
+            if let Some(credential) = &request.credential {
+                hasher.update(b"|credential|");
+                hasher.update(
+                    normalize_serde_for_fingerprint(&serde_json::json!({
+                        "slot": credential.slot,
+                        "resource": credential.resource,
+                        "reference": credential.reference,
+                    }))
+                    .as_bytes(),
+                );
+            }
+        }
         match request {
+            CompiledOperation::CredentialBind(request) => {
+                hasher.update(b"credential_bind");
+                hasher.update(request.slot.as_bytes());
+                hasher.update(request.origin.as_bytes());
+                hasher.update(normalize_serde_for_fingerprint(&request.resource).as_bytes());
+            }
             CompiledOperation::Http(request) => {
                 hasher.update(b"http");
                 hasher.update(request.method_str().as_bytes());
@@ -179,6 +198,14 @@ impl RequestFingerprint {
         }
 
         RequestFingerprint(*hasher.finalize().as_bytes())
+    }
+
+    /// Convert to hex string for debugging
+    pub fn from_credential_reference(reference: &str) -> Self {
+        let mut hasher = Hasher::new();
+        hasher.update(b"credential_receipt:");
+        hasher.update(reference.as_bytes());
+        Self(*hasher.finalize().as_bytes())
     }
 
     /// Convert to hex string for debugging
@@ -324,7 +351,9 @@ fn normalize_json_for_fingerprint(value: &Value) -> String {
 /// Convert plasm_core::Value to serde_json::Value
 fn value_to_json_value(value: &Value) -> serde_json::Value {
     match value {
-        Value::PlasmInputRef(_) => serde_json::to_value(value).unwrap_or(serde_json::Value::Null),
+        Value::PlasmInputRef(_) | Value::StringTemplate(_) => {
+            serde_json::to_value(value).unwrap_or(serde_json::Value::Null)
+        }
         Value::Null => serde_json::Value::Null,
         Value::Bool(b) => serde_json::Value::Bool(*b),
         Value::Integer(i) => serde_json::Value::Number((*i).into()),
@@ -362,6 +391,7 @@ mod tests {
 
     fn create_test_request() -> CompiledOperation {
         CompiledOperation::Http(CompiledRequest {
+            credential: None,
             method: HttpMethod::Post,
             path: "/test/path".to_string(),
             query: None,
@@ -470,6 +500,7 @@ mod tests {
     #[test]
     fn test_different_requests_different_fingerprints() {
         let request1 = CompiledRequest {
+            credential: None,
             method: HttpMethod::Get,
             path: "/path1".to_string(),
             query: None,
@@ -480,6 +511,7 @@ mod tests {
         };
 
         let request2 = CompiledRequest {
+            credential: None,
             method: HttpMethod::Get,
             path: "/path2".to_string(),
             query: None,
@@ -596,6 +628,7 @@ mod tests {
 
         let mk = |body: Option<Value>| {
             CompiledOperation::Http(CompiledRequest {
+                credential: None,
                 method: HttpMethod::Post,
                 path: "/api".into(),
                 query: None,
@@ -654,6 +687,7 @@ mod tests {
 
         let mk = |body: Option<Value>| {
             CompiledOperation::Http(CompiledRequest {
+                credential: None,
                 method: HttpMethod::Post,
                 path: "/typed-ir".into(),
                 query: None,

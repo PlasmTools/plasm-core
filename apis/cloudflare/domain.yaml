@@ -1,14 +1,14 @@
-version: 14
+version: 15
 http_backend: https://api.cloudflare.com/client/v4
 entities:
   Zone:
     id_field: id
-    description: DNS and proxy site container that scopes Cloudflare resources for one hostname.
+    description: DNS and proxy site container that scopes Cloudflare resources for
+      one hostname.
     discovery:
       names:
       - zone
       - cloudflare zone
-      seed_class: ambient
     fields:
       id:
         required: true
@@ -30,7 +30,6 @@ entities:
         target: Ruleset
         cardinality: many
         discovery:
-          seed_nav: locate
           qualifier_terms:
           - rulesets
           - ruleset engine
@@ -49,7 +48,6 @@ entities:
         target: SecurityOverview
         cardinality: one
         discovery:
-          seed_nav: locate
           qualifier_terms:
           - security overview
           - firewall summary
@@ -66,12 +64,12 @@ entities:
     key_vars:
     - zone_id
     - ruleset_id
-    description: Rules configuration held here—the inspect or replace target when the task names this ruleset.
+    description: Rules configuration held here—the inspect or replace target when
+      the task names this ruleset.
     discovery:
       names:
       - ruleset
       - waf ruleset
-      seed_class: primary
     fields:
       zone_id:
         required: true
@@ -112,7 +110,6 @@ entities:
       - ruleset entrypoint
       - entrypoint ruleset
       - ruleset phase
-      seed_class: primary
     fields:
       zone_id:
         required: true
@@ -146,7 +143,8 @@ entities:
     id_field: id
     key_vars:
     - zone_id
-    description: Legacy package catalog surface only—skip unless the task explicitly targets that API.
+    description: Legacy package catalog surface only—skip unless the task explicitly
+      targets that API.
     fields:
       zone_id:
         required: true
@@ -231,43 +229,37 @@ entities:
           traversal_weight: 1.0
 capabilities:
   zone_query:
+    description: Find or filter zones before any zone-scoped work.
     kind: query
     entity: Zone
-    description: Find or filter zones before any zone-scoped work.
-    parameters:
+    selection:
     - name: account_id
       value_ref: nv_zone_query_account_id
       required: false
-      role: filter
     - name: name
       value_ref: nv_zone_query_name
       required: false
-      role: filter
     - name: status
       value_ref: nv_zone_query_status
       required: false
-      role: filter
     - name: type
       value_ref: nv_zone_query_type
       required: false
-      role: filter
+    controls:
     - name: page
       value_ref: nv_zone_query_page
       required: false
-      role: response_control
     - name: per_page
       value_ref: nv_zone_query_per_page
       required: false
-      role: response_control
   zone_get:
+    description: Load canonical zone metadata when you already hold the zone id.
     kind: get
     entity: Zone
-    description: Load canonical zone metadata when you already hold the zone id.
-    parameters:
+    scope:
     - name: zone_id
       value_ref: nv_cloudflare_zone_id
       required: true
-      role: scope
     provides:
     - id
     - name
@@ -275,9 +267,9 @@ capabilities:
     - paused
     - type
   ruleset_query:
+    description: Inventory every ruleset on a zone before drilling into one.
     kind: query
     entity: Ruleset
-    description: Inventory every ruleset on a zone before drilling into one.
     discovery:
       operation_terms:
       - list
@@ -289,21 +281,14 @@ capabilities:
       - ruleset engine
       - firewall rulesets
       - mixed managed zone root inventory
-    parameters:
+    scope:
     - name: zone_id
       value_ref: nv_cloudflare_zone_id
       required: true
-      role: scope
-    - name: per_page
-      value_ref: nv_ruleset_query_per_page
-      required: false
-      role: response_control
-    selection: []
-    scope: []
   ruleset_get:
+    description: Full ruleset document when you hold zone id and ruleset id.
     kind: get
     entity: Ruleset
-    description: Full ruleset document when you hold zone id and ruleset id.
     discovery:
       operation_terms:
       - get
@@ -316,15 +301,13 @@ capabilities:
       - single ruleset
       - use id from zone ruleset list
       - prefer before phase entrypoint shortcut
-    parameters:
+    scope:
     - name: zone_id
       value_ref: nv_cloudflare_zone_id
       required: true
-      role: scope
     - name: ruleset_id
       value_ref: nv_wire_str_short
       required: true
-      role: scope
     provides:
     - zone_id
     - id
@@ -335,9 +318,9 @@ capabilities:
     - version
     - last_updated
   ruleset_entrypoint_get:
+    description: Resolve the managed ruleset Cloudflare exposes at a named phase.
     kind: get
     entity: RulesetEntrypoint
-    description: Resolve the managed ruleset Cloudflare exposes at a named phase.
     discovery:
       operation_terms:
       - entrypoint
@@ -350,15 +333,13 @@ capabilities:
       - unprovisioned phase
       - missing entrypoint normal error 10003
       - not same as empty ruleset list
-    parameters:
+    scope:
     - name: zone_id
       value_ref: nv_cloudflare_zone_id
       required: true
-      role: scope
     - name: ruleset_phase
       value_ref: nv_wire_sel_zone_ruleset_entrypoint_phase
       required: true
-      role: scope
     provides:
     - zone_id
     - ruleset_phase
@@ -370,28 +351,32 @@ capabilities:
     - version
     - last_updated
   ruleset_entrypoint_update:
+    description: Point a phase entrypoint at a different ruleset—requires zone WAF
+      edit on the token.
     kind: action
     entity: RulesetEntrypoint
-    description: Point a phase entrypoint at a different ruleset—requires zone WAF edit on the token.
-    parameters:
+    scope:
     - name: zone_id
       value_ref: nv_cloudflare_zone_id
       required: true
-      role: scope
     - name: ruleset_phase
       value_ref: nv_wire_sel_zone_ruleset_entrypoint_phase
       required: true
-      role: scope
-    - name: input
-      value_ref: nv_ruleset_entrypoint_update_input
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: input
+          value_ref: nv_ruleset_entrypoint_update_input
+          required: true
     output:
       type: side_effect
       description: The phase entrypoint now references the submitted ruleset.
   waf_package_query:
+    description: Legacy package listing—use only for migration or investigations against
+      the old packages API.
     kind: query
     entity: WafPackage
-    description: Legacy package listing—use only for migration or investigations against the old packages API.
     discovery:
       operation_terms:
       - list legacy packages
@@ -403,23 +388,22 @@ capabilities:
       - pre ruleset engine waf
       - explicit WafPackage seed
       - migration audit legacy api
-    parameters:
+    scope:
     - name: zone_id
       value_ref: nv_cloudflare_zone_id
       required: true
-      role: scope
+    controls:
     - name: page
       value_ref: nv_wire_int
       required: false
-      role: response_control
     - name: per_page
       value_ref: nv_wire_int
       required: false
-      role: response_control
   security_overview_query:
+    description: Posture snapshot exposed as a query—same agent-facing projection
+      as get for teaching symmetry.
     kind: query
     entity: SecurityOverview
-    description: Posture snapshot exposed as a query—same agent-facing projection as get for teaching symmetry.
     discovery:
       operation_terms:
       - security overview
@@ -429,11 +413,10 @@ capabilities:
       - zone security overview
       - composed posture snapshot
       - zone security posture summary
-    parameters:
+    scope:
     - name: zone_id
       value_ref: nv_cloudflare_zone_id
       required: true
-      role: scope
     provides:
     - zone_id
     - zone_name
@@ -443,9 +426,10 @@ capabilities:
     - legacy_waf_present
     - security_surface_status
   security_overview_get:
+    description: Posture snapshot by zone id—use when you already scoped the zone
+      and want the composed overview.
     kind: get
     entity: SecurityOverview
-    description: Posture snapshot by zone id—use when you already scoped the zone and want the composed overview.
     discovery:
       operation_terms:
       - get
@@ -455,11 +439,10 @@ capabilities:
       - security overview snapshot
       - zone security posture
       - posture snapshot
-    parameters:
+    scope:
     - name: zone_id
       value_ref: nv_cloudflare_zone_id
       required: true
-      role: scope
     provides:
     - zone_id
     - zone_name
@@ -470,7 +453,8 @@ capabilities:
     - security_surface_status
 views:
   security_overview:
-    description: One composed security overview without manually correlating the backing reads.
+    description: One composed security overview without manually correlating the backing
+      reads.
     capability: security_overview_query
     entity: SecurityOverview
     scope:
@@ -523,10 +507,11 @@ views:
         node: legacy_packages
       security_surface_status:
         kind: computed
-        template: '{%- if legacy_waf_present and not managed_waf_configured -%}legacy_heavy{%- elif custom_rules_configured
-          and managed_waf_configured -%}managed_and_custom{%- elif managed_waf_configured or ddos_l7_configured -%}managed_surface{%-
-          elif custom_rules_configured -%}custom_heavy{%- elif legacy_waf_present -%}legacy_only{%- else -%}minimal{%- endif
-          -%}
+        template: '{%- if legacy_waf_present and not managed_waf_configured -%}legacy_heavy{%-
+          elif custom_rules_configured and managed_waf_configured -%}managed_and_custom{%-
+          elif managed_waf_configured or ddos_l7_configured -%}managed_surface{%-
+          elif custom_rules_configured -%}custom_heavy{%- elif legacy_waf_present
+          -%}legacy_only{%- else -%}minimal{%- endif -%}
 
           '
     relation_outputs:
@@ -565,28 +550,34 @@ oauth:
   scopes:
     cloudflare.zone.read:
       label: Zone Read
-      notes: Lists and reads zones and zone metadata (matches API token permission **Zone Read**; scope family `com.cloudflare.api.account.zone`).
+      notes: Lists and reads zones and zone metadata (matches API token permission
+        **Zone Read**; scope family `com.cloudflare.api.account.zone`).
       docs_url: https://developers.cloudflare.com/fundamentals/api/reference/permissions/
     cloudflare.zone.edit:
       label: Zone Edit
-      notes: Zone lifecycle and configuration writes beyond read-only (API token **Zone Edit**).
+      notes: Zone lifecycle and configuration writes beyond read-only (API token **Zone
+        Edit**).
       docs_url: https://developers.cloudflare.com/fundamentals/api/reference/permissions/
     cloudflare.zone.waf.read:
       label: Zone WAF Read
-      notes: Read zone WAF surfaces — rulesets, packages, managed phases (API token **Zone WAF Read**).
+      notes: Read zone WAF surfaces — rulesets, packages, managed phases (API token
+        **Zone WAF Read**).
       docs_url: https://developers.cloudflare.com/fundamentals/api/reference/permissions/
     cloudflare.zone.waf.edit:
       label: Zone WAF Edit
-      notes: Change zone WAF rulesets including phase entrypoints (API token **Zone WAF Edit**).
+      notes: Change zone WAF rulesets including phase entrypoints (API token **Zone
+        WAF Edit**).
       docs_url: https://developers.cloudflare.com/fundamentals/api/reference/permissions/
   default_scope_sets:
     plasm_cloudflare_demo_readonly:
-      description: Read-only demo bundle for exploring zones and zone WAF; legacy packages appear only if you seed **WafPackage**.
+      description: Read-only demo bundle for exploring zones and zone WAF; legacy
+        packages appear only if you seed **WafPackage**.
       scopes:
       - cloudflare.zone.read
       - cloudflare.zone.waf.read
     plasm_cloudflare_demo_operator:
-      description: Operator demo bundle—adds zone WAF edit when tasks must change phase entrypoints.
+      description: Operator demo bundle—adds zone WAF edit when tasks must change
+        phase entrypoints.
       scopes:
       - cloudflare.zone.read
       - cloudflare.zone.waf.read
@@ -651,7 +642,8 @@ values:
     description: Yes/no posture signal derived for SecurityOverview.
   nv_wire_sel_security_surface_status:
     type: enum
-    description: Coarse derived posture label for SecurityOverview (mirrors runtime derivation).
+    description: Coarse derived posture label for SecurityOverview (mirrors runtime
+      derivation).
     enum:
     - minimal
     - managed_surface
@@ -682,7 +674,8 @@ values:
     - zone
   nv_wire_sel_zone_ruleset_entrypoint_phase:
     type: enum
-    description: Phases accepted by zone entrypoint ruleset GET/PUT (excludes account-scoped L4 DDoS).
+    description: Phases accepted by zone entrypoint ruleset GET/PUT (excludes account-scoped
+      L4 DDoS).
     enum:
     - ddos_l7
     - http_config_settings

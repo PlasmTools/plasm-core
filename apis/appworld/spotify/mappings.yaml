@@ -1,15 +1,8 @@
 # Spotify — AppWorld. Auth: login → access_token → Bearer header.
 
-_auth_header: &auth_header
-  type: object
-  fields:
-  - - Authorization
-    - type: format
-      template: "Bearer {token}"
-      vars:
-        token:
-          type: var
-          name: access_token
+_request_auth: &request_auth
+  scheme: bearer
+  token: { type: var, name: access_token }
 
 # AppWorld OpenAPI list endpoints use page_index (0-based) + page_limit (default 5, max 20).
 _appworld_page_index_limit: &appworld_page_index_limit
@@ -40,7 +33,7 @@ logout:
   - { type: literal, value: spotify }
   - { type: literal, value: auth }
   - { type: literal, value: logout }
-  headers: *auth_header
+  auth: *request_auth
 
 
 song_get:
@@ -49,7 +42,7 @@ song_get:
   - { type: literal, value: spotify }
   - { type: literal, value: songs }
   - { type: var, name: song_id }
-  headers: *auth_header
+  auth: *request_auth
 
 # Same Song detail wire as song_get — hydrates LikedSong.genre after liked_song_query.
 # Path param MUST be song_id (OpenAPI `/spotify/songs/{song_id}`); `id` is wrong and
@@ -60,7 +53,7 @@ liked_song_get:
   - { type: literal, value: spotify }
   - { type: literal, value: songs }
   - { type: var, name: song_id }
-  headers: *auth_header
+  auth: *request_auth
 
 song_like:
   method: POST
@@ -69,7 +62,7 @@ song_like:
   - { type: literal, value: songs }
   - { type: var, name: id }
   - { type: literal, value: like }
-  headers: *auth_header
+  auth: *request_auth
 
 song_unlike:
   method: DELETE
@@ -78,14 +71,14 @@ song_unlike:
   - { type: literal, value: songs }
   - { type: var, name: id }
   - { type: literal, value: like }
-  headers: *auth_header
+  auth: *request_auth
 
 downloaded_song_query:
   method: GET
   path:
   - { type: literal, value: spotify }
   - { type: literal, value: downloaded_songs }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -117,7 +110,7 @@ song_download:
   - { type: literal, value: spotify }
   - { type: literal, value: downloaded_songs }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 song_undownload:
   method: DELETE
@@ -125,7 +118,7 @@ song_undownload:
   - { type: literal, value: spotify }
   - { type: literal, value: downloaded_songs }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 
 album_get:
@@ -134,7 +127,7 @@ album_get:
   - { type: literal, value: spotify }
   - { type: literal, value: albums }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 album_like:
   method: POST
@@ -143,7 +136,7 @@ album_like:
   - { type: literal, value: albums }
   - { type: var, name: id }
   - { type: literal, value: like }
-  headers: *auth_header
+  auth: *request_auth
 
 album_unlike:
   method: DELETE
@@ -152,7 +145,7 @@ album_unlike:
   - { type: literal, value: albums }
   - { type: var, name: id }
   - { type: literal, value: like }
-  headers: *auth_header
+  auth: *request_auth
 
 
 artist_get:
@@ -161,7 +154,7 @@ artist_get:
   - { type: literal, value: spotify }
   - { type: literal, value: artists }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 artist_follow:
   method: POST
@@ -169,7 +162,7 @@ artist_follow:
   - { type: literal, value: spotify }
   - { type: literal, value: following_artists }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 artist_unfollow:
   method: DELETE
@@ -177,7 +170,7 @@ artist_unfollow:
   - { type: literal, value: spotify }
   - { type: literal, value: following_artists }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 
 playlist_get:
@@ -186,7 +179,7 @@ playlist_get:
   - { type: literal, value: spotify }
   - { type: literal, value: playlists }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   response: single
 
 playlist_create:
@@ -194,7 +187,7 @@ playlist_create:
   path:
   - { type: literal, value: spotify }
   - { type: literal, value: playlists }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -211,7 +204,7 @@ playlist_update:
   - { type: literal, value: spotify }
   - { type: literal, value: playlists }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -232,7 +225,7 @@ playlist_delete:
   - { type: literal, value: spotify }
   - { type: literal, value: playlists }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 playlist_add_song:
   method: POST
@@ -242,7 +235,7 @@ playlist_add_song:
   - { type: var, name: id }
   - { type: literal, value: songs }
   - { type: var, name: song_id }
-  headers: *auth_header
+  auth: *request_auth
 
 playlist_remove_song:
   method: DELETE
@@ -252,7 +245,7 @@ playlist_remove_song:
   - { type: var, name: id }
   - { type: literal, value: songs }
   - { type: var, name: song_id }
-  headers: *auth_header
+  auth: *request_auth
 
 playlist_like:
   method: POST
@@ -261,7 +254,7 @@ playlist_like:
   - { type: literal, value: playlists }
   - { type: var, name: id }
   - { type: literal, value: like }
-  headers: *auth_header
+  auth: *request_auth
 
 playlist_unlike:
   method: DELETE
@@ -270,7 +263,7 @@ playlist_unlike:
   - { type: literal, value: playlists }
   - { type: var, name: id }
   - { type: literal, value: like }
-  headers: *auth_header
+  auth: *request_auth
 
 player_current_wire:
   method: GET
@@ -278,7 +271,7 @@ player_current_wire:
   - { type: literal, value: spotify }
   - { type: literal, value: music_player }
   - { type: literal, value: current_song }
-  headers: *auth_header
+  auth: *request_auth
 
 player_current:
   transport: view
@@ -290,7 +283,7 @@ player_play:
   - { type: literal, value: spotify }
   - { type: literal, value: music_player }
   - { type: literal, value: play }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -316,7 +309,7 @@ player_pause:
   - { type: literal, value: spotify }
   - { type: literal, value: music_player }
   - { type: literal, value: pause }
-  headers: *auth_header
+  auth: *request_auth
 
 player_previous:
   method: POST
@@ -324,7 +317,7 @@ player_previous:
   - { type: literal, value: spotify }
   - { type: literal, value: music_player }
   - { type: literal, value: previous_song }
-  headers: *auth_header
+  auth: *request_auth
 
 player_next:
   method: POST
@@ -332,7 +325,7 @@ player_next:
   - { type: literal, value: spotify }
   - { type: literal, value: music_player }
   - { type: literal, value: next_song }
-  headers: *auth_header
+  auth: *request_auth
 
 player_queue:
   method: GET
@@ -340,7 +333,7 @@ player_queue:
   - { type: literal, value: spotify }
   - { type: literal, value: music_player }
   - { type: literal, value: song_queue }
-  headers: *auth_header
+  auth: *request_auth
 
 player_queue_add:
   method: POST
@@ -348,7 +341,7 @@ player_queue_add:
   - { type: literal, value: spotify }
   - { type: literal, value: music_player }
   - { type: literal, value: song_queue }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -374,7 +367,7 @@ player_queue_clear:
   - { type: literal, value: spotify }
   - { type: literal, value: music_player }
   - { type: literal, value: song_queue }
-  headers: *auth_header
+  auth: *request_auth
 
 player_queue_remove:
   method: DELETE
@@ -383,7 +376,7 @@ player_queue_remove:
   - { type: literal, value: music_player }
   - { type: literal, value: song_queue }
   - { type: var, name: position }
-  headers: *auth_header
+  auth: *request_auth
 
 player_move_song:
   method: POST
@@ -391,7 +384,7 @@ player_move_song:
   - { type: literal, value: spotify }
   - { type: literal, value: music_player }
   - { type: literal, value: move_song }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -404,7 +397,7 @@ player_seek:
   - { type: literal, value: spotify }
   - { type: literal, value: music_player }
   - { type: literal, value: seek }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -416,7 +409,7 @@ player_loop:
   - { type: literal, value: spotify }
   - { type: literal, value: music_player }
   - { type: literal, value: loop }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -428,7 +421,7 @@ player_shuffle:
   - { type: literal, value: spotify }
   - { type: literal, value: music_player }
   - { type: literal, value: shuffle }
-  headers: *auth_header
+  auth: *request_auth
 
 player_volume_get:
   method: GET
@@ -436,7 +429,7 @@ player_volume_get:
   - { type: literal, value: spotify }
   - { type: literal, value: music_player }
   - { type: literal, value: volume }
-  headers: *auth_header
+  auth: *request_auth
 
 player_volume_set:
   method: POST
@@ -444,7 +437,7 @@ player_volume_set:
   - { type: literal, value: spotify }
   - { type: literal, value: music_player }
   - { type: literal, value: volume }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -455,7 +448,7 @@ liked_song_query:
   path:
   - { type: literal, value: spotify }
   - { type: literal, value: liked_songs }
-  headers: *auth_header
+  auth: *request_auth
   query: &page_sort_query
     type: object
     fields:
@@ -484,7 +477,7 @@ song_library_query:
         right: { type: const, value: library }
       then_expr: { type: const, value: library/songs }
       else_expr: { type: const, value: songs }
-  headers: *auth_header
+  auth: *request_auth
   query: &page_query
     type: object
     fields:
@@ -512,7 +505,7 @@ song_library_add:
   - { type: literal, value: library }
   - { type: literal, value: songs }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 song_library_remove:
   method: DELETE
@@ -521,7 +514,7 @@ song_library_remove:
   - { type: literal, value: library }
   - { type: literal, value: songs }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 
 album_library_query:
@@ -535,7 +528,7 @@ album_library_query:
       right: { type: const, value: library }
     then_expr: { type: const, value: library/albums }
     else_expr: { type: const, value: albums }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -563,7 +556,7 @@ album_library_add:
   - { type: literal, value: library }
   - { type: literal, value: albums }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 album_library_remove:
   method: DELETE
@@ -572,7 +565,7 @@ album_library_remove:
   - { type: literal, value: library }
   - { type: literal, value: albums }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 playlist_library_query:
   method: GET
@@ -585,7 +578,7 @@ playlist_library_query:
       right: { type: const, value: library }
     then_expr: { type: const, value: library/playlists }
     else_expr: { type: const, value: playlists }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -609,7 +602,7 @@ liked_playlist_query:
   path:
   - { type: literal, value: spotify }
   - { type: literal, value: liked_playlists }
-  headers: *auth_header
+  auth: *request_auth
   query: *page_query
   pagination: *appworld_page_index_limit
 
@@ -618,7 +611,7 @@ liked_album_query:
   path:
   - { type: literal, value: spotify }
   - { type: literal, value: liked_albums }
-  headers: *auth_header
+  auth: *request_auth
   query: *page_query
   pagination: *appworld_page_index_limit
 
@@ -633,7 +626,7 @@ following_artist_query:
       right: { type: const, value: following }
     then_expr: { type: const, value: following_artists }
     else_expr: { type: const, value: artists }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -651,7 +644,7 @@ song_review_create:
   - { type: literal, value: songs }
   - { type: var, name: song_id }
   - { type: literal, value: reviews }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -673,7 +666,7 @@ song_review_update:
   - { type: literal, value: spotify }
   - { type: literal, value: song_reviews }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -699,7 +692,7 @@ song_review_delete:
   - { type: literal, value: spotify }
   - { type: literal, value: song_reviews }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 album_review_create:
   method: POST
@@ -708,7 +701,7 @@ album_review_create:
   - { type: literal, value: albums }
   - { type: var, name: album_id }
   - { type: literal, value: reviews }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -730,7 +723,7 @@ album_review_update:
   - { type: literal, value: spotify }
   - { type: literal, value: album_reviews }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -756,7 +749,7 @@ album_review_delete:
   - { type: literal, value: spotify }
   - { type: literal, value: album_reviews }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 playlist_review_create:
   method: POST
@@ -765,7 +758,7 @@ playlist_review_create:
   - { type: literal, value: playlists }
   - { type: var, name: playlist_id }
   - { type: literal, value: reviews }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -787,7 +780,7 @@ playlist_review_update:
   - { type: literal, value: spotify }
   - { type: literal, value: playlist_reviews }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -813,21 +806,21 @@ playlist_review_delete:
   - { type: literal, value: spotify }
   - { type: literal, value: playlist_reviews }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 payment_card_query:
   method: GET
   path:
   - { type: literal, value: spotify }
   - { type: literal, value: payment_cards }
-  headers: *auth_header
+  auth: *request_auth
 
 payment_card_create:
   method: POST
   path:
   - { type: literal, value: spotify }
   - { type: literal, value: payment_cards }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -844,7 +837,7 @@ payment_card_update:
   - { type: literal, value: spotify }
   - { type: literal, value: payment_cards }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -856,7 +849,7 @@ payment_card_delete:
   - { type: literal, value: spotify }
   - { type: literal, value: payment_cards }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 premium_plan_get:
   method: GET
@@ -871,7 +864,7 @@ premium_subscription_query:
   - { type: literal, value: spotify }
   - { type: literal, value: premium }
   - { type: literal, value: subscriptions }
-  headers: *auth_header
+  auth: *request_auth
   pagination: *appworld_page_index_limit
 
 premium_subscribe:
@@ -880,7 +873,7 @@ premium_subscribe:
   - { type: literal, value: spotify }
   - { type: literal, value: premium }
   - { type: literal, value: subscriptions }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -895,7 +888,7 @@ premium_subscription_receipt:
   - { type: literal, value: subscriptions }
   - { type: var, name: id }
   - { type: literal, value: receipt }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:

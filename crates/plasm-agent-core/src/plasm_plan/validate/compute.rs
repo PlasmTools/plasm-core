@@ -5,9 +5,8 @@ pub(super) fn validated_plan_expr_ir(
     node_index: usize,
     path: &str,
 ) -> Result<ValidatedPlanExprIr, String> {
-    validate_plan_expr_ir(ir, node_index, path)?;
-    let expr = serde_json::from_value::<Expr>(ir.expr.clone())
-        .map_err(|e| format!("plan.nodes[{node_index}].{path}.expr is invalid Plasm IR: {e}"))?;
+    let _ = (node_index, path);
+    let expr = ir.expr.clone();
     Ok(ValidatedPlanExprIr {
         expr,
         projection: ir.projection.clone(),
@@ -32,61 +31,117 @@ pub(super) fn validated_plan_expr_template(
 pub(super) fn validated_effect_template(
     template: &EffectTemplate,
     node_index: usize,
-) -> Result<EffectTemplate, String> {
+) -> Result<ValidatedEffectTemplate, String> {
     validate_effect_template(template, node_index)?;
-    Ok(template.clone())
+    Ok(ValidatedEffectTemplate {
+        kind: template.kind,
+        qualified_entity: template.qualified_entity.clone(),
+        expr_template: template.expr_template.clone(),
+        ir_template: validated_plan_expr_template(
+            &template.ir_template,
+            node_index,
+            "effect_template.ir_template",
+        )?,
+        effect_class: template.effect_class,
+        result_shape: template.result_shape,
+        projection: template.projection.clone(),
+        input_bindings: template.input_bindings.clone(),
+    })
 }
 
-pub(super) fn validate_effect_template_interpolation(
-    template: &EffectTemplate,
+pub(super) fn validate_expression_operands(
+    expr: &plasm_core::Expr,
     node_index: usize,
     ctx: &plasm_core::TemplateRefContext<'_>,
 ) -> Result<(), String> {
-    plasm_core::validate_interpolation_syntax(&template.expr_template, |detail| {
-        format!("plan.nodes[{node_index}].effect_template.expr_template {detail}")
-    })?;
-    ctx.validate_string_roots(&template.expr_template, |root| {
-        format!(
-            "plan.nodes[{node_index}].effect_template.expr_template references undeclared alias {root:?}"
-        )
-    })?;
-    validate_json_interpolation_refs(
-        &template.ir_template.expr,
-        node_index,
-        "effect_template.ir_template.expr",
-        ctx,
-    )
-}
-
-fn validate_json_interpolation_refs(
-    value: &serde_json::Value,
-    node_index: usize,
-    path: &str,
-    ctx: &plasm_core::TemplateRefContext<'_>,
-) -> Result<(), String> {
-    match value {
-        serde_json::Value::String(s) => {
-            plasm_core::validate_interpolation_syntax(s, |detail| {
-                format!("plan.nodes[{node_index}].{path} {detail}")
-            })?;
-            ctx.validate_string_roots(s, |root| {
-                format!("plan.nodes[{node_index}].{path} references undeclared alias {root:?}")
-            })
-        }
-        serde_json::Value::Array(items) => {
-            for (i, item) in items.iter().enumerate() {
-                validate_json_interpolation_refs(item, node_index, &format!("{path}[{i}]"), ctx)?;
-            }
-            Ok(())
-        }
-        serde_json::Value::Object(fields) => {
-            for (k, field) in fields {
-                validate_json_interpolation_refs(field, node_index, &format!("{path}.{k}"), ctx)?;
-            }
-            Ok(())
-        }
-        _ => Ok(()),
+    use plasm_core::operand_binding::{BindOperands, OperandResolver, ResolvedValue};
+    struct CheckOperands<'a, 'b> {
+        ctx: &'a plasm_core::TemplateRefContext<'b>,
+        index: usize,
     }
+    impl CheckOperands<'_, '_> {
+        fn reference(&self, reference: &plasm_core::PlasmInputRef) -> Result<(), String> {
+            let path = match reference {
+                plasm_core::PlasmInputRef::NodeInput { node, path } => {
+                    if !self
+                        .ctx
+                        .input_aliases
+                        .iter()
+                        .any(|(alias, _)| *alias == node)
+                    {
+                        return Err(format!(
+                            "plan.nodes[{}] operand references undeclared input alias {node:?}",
+                            self.index
+                        ));
+                    }
+                    path
+                }
+                plasm_core::PlasmInputRef::RowBinding { binding, path } => {
+                    if self.ctx.row_binding != Some(binding.as_str()) {
+                        return Err(format!("plan.nodes[{}] operand references row binding {binding:?} outside its scope", self.index));
+                    }
+                    path
+                }
+            };
+            if path.iter().any(|segment| segment.trim().is_empty()) {
+                return Err(format!(
+                    "plan.nodes[{}] operand contains an empty field path segment",
+                    self.index
+                ));
+            }
+            Ok(())
+        }
+    }
+    impl OperandResolver for CheckOperands<'_, '_> {
+        type Error = String;
+        fn resolve(
+            &mut self,
+            reference: &plasm_core::PlasmInputRef,
+        ) -> Result<ResolvedValue, String> {
+            self.reference(reference)?;
+            Ok(ResolvedValue::null())
+        }
+        fn identity(
+            &mut self,
+            _target: plasm_core::operand_binding::IdentityTarget<'_>,
+            reference: &plasm_core::PlasmInputRef,
+        ) -> Result<plasm_core::EntityId, String> {
+            self.reference(reference)?;
+            Ok(plasm_core::EntityId::from("operand-inspection"))
+        }
+        fn string(
+            &mut self,
+            value: &plasm_core::program_string_template::CompiledProgramString,
+        ) -> Result<String, String> {
+            for root in value.roots() {
+                if self.ctx.row_binding == Some(root.as_str())
+                    || self
+                        .ctx
+                        .input_aliases
+                        .iter()
+                        .any(|(alias, _)| *alias == root)
+                {
+                    continue;
+                }
+                let dotted = value
+                    .paths()
+                    .iter()
+                    .any(|path| path.len() > 1 && path.first() == Some(root));
+                if self.ctx.row_binding.is_none() || dotted {
+                    return Err(format!(
+                        "plan.nodes[{}] string operand references undeclared alias {root:?}",
+                        self.index
+                    ));
+                }
+            }
+            Ok(value.source().to_owned())
+        }
+    }
+    expr.bind_operands(&mut CheckOperands {
+        ctx,
+        index: node_index,
+    })?;
+    Ok(())
 }
 
 pub(super) fn validate_effect_template(
@@ -99,16 +154,6 @@ pub(super) fn validate_effect_template(
             t.kind
         ));
     }
-    if t.expr_template.trim().is_empty() {
-        return Err(format!(
-            "plan.nodes[{node_index}].effect_template.expr_template is empty"
-        ));
-    }
-    validate_no_js_object_coercion(
-        &t.expr_template,
-        node_index,
-        "effect_template.expr_template",
-    )?;
     validate_plan_expr_template(&t.ir_template, node_index, "effect_template.ir_template")?;
     for b in &t.input_bindings {
         if b.from.trim().is_empty() || b.to.trim().is_empty() {
@@ -120,66 +165,19 @@ pub(super) fn validate_effect_template(
     Ok(())
 }
 
-pub(super) fn validate_plan_expr_ir(
-    ir: &PlanExprIr,
-    node_index: usize,
-    path: &str,
-) -> Result<(), String> {
-    if let Some(display) = &ir.display_expr {
-        validate_no_js_object_coercion(display, node_index, path)?;
-    }
-    serde_json::from_value::<Expr>(ir.expr.clone())
-        .map_err(|e| format!("plan.nodes[{node_index}].{path}.expr is invalid Plasm IR: {e}"))?;
-    Ok(())
-}
-
 pub(super) fn validate_plan_expr_template(
     template: &PlanExprTemplate,
     node_index: usize,
     path: &str,
 ) -> Result<(), String> {
-    if let Some(display) = &template.display_expr {
-        validate_no_js_object_coercion(display, node_index, path)?;
-    }
-    let concrete = instantiate_template_holes_for_validation(&template.expr);
-    serde_json::from_value::<Expr>(concrete).map_err(|e| {
-        format!("plan.nodes[{node_index}].{path}.expr is invalid templated Plasm IR: {e}")
-    })?;
-    for b in &template.input_bindings {
-        if b.from.trim().is_empty() {
+    for binding in &template.input_bindings {
+        if binding.from.trim().is_empty() {
             return Err(format!(
                 "plan.nodes[{node_index}].{path}.input_bindings must have non-empty from"
             ));
         }
     }
     Ok(())
-}
-
-fn instantiate_template_holes_for_validation(value: &serde_json::Value) -> serde_json::Value {
-    if is_ir_hole(value) {
-        return serde_json::Value::String("__plasm_hole__".to_string());
-    }
-    match value {
-        serde_json::Value::Array(items) => serde_json::Value::Array(
-            items
-                .iter()
-                .map(instantiate_template_holes_for_validation)
-                .collect(),
-        ),
-        serde_json::Value::Object(map) => serde_json::Value::Object(
-            map.iter()
-                .map(|(k, v)| (k.clone(), instantiate_template_holes_for_validation(v)))
-                .collect(),
-        ),
-        other => other.clone(),
-    }
-}
-
-pub(crate) fn is_ir_hole(value: &serde_json::Value) -> bool {
-    value
-        .as_object()
-        .and_then(|obj| obj.get("__plasm_hole"))
-        .is_some()
 }
 
 pub(super) fn validate_plan_data_input(
@@ -253,13 +251,7 @@ fn validate_plan_value_input_refs(
                 };
                 validate_template_alias(alias, node_index, inputs_by_alias, item_binding)?;
             }
-            for raw_path in plasm_core::interpolation_paths(template) {
-                let (alias, _) = raw_path
-                    .split_once('.')
-                    .map_or((raw_path.as_str(), ""), |(alias, rest)| (alias, rest));
-                if alias.is_empty() {
-                    continue;
-                }
+            for alias in template.roots() {
                 validate_template_alias(alias, node_index, inputs_by_alias, item_binding)?;
             }
             Ok(())

@@ -1,6 +1,5 @@
 //! Durable/hot exposure coherence for plan commits (append-only domain_revision).
 
-use plasm_core::MutatorAdmit;
 use std::sync::Arc;
 
 use super::tests::{minimal_artifact, rehydrate_record};
@@ -20,7 +19,7 @@ async fn open_overshow_profile_host() -> (
 ) {
     use std::path::Path;
 
-    use plasm_core::discovery::InMemoryCgsRegistry;
+    use plasm_core::discovery::CgsRegistry;
     use plasm_core::loader::load_schema_dir;
     use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 
@@ -32,7 +31,7 @@ async fn open_overshow_profile_host() -> (
 
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
     let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
-    let registry = Arc::new(InMemoryCgsRegistry::from_pairs(vec![(
+    let registry = Arc::new(CgsRegistry::from_pairs(vec![(
         "overshow".into(),
         "Overshow".into(),
         vec!["demo".into()],
@@ -61,8 +60,6 @@ async fn open_overshow_profile_host() -> (
             principal: None,
             logical_session_id: None,
             context_intent: None,
-            ranked_capabilities: None,
-            mutator_admit: MutatorAdmit::IntentOnly,
         },
     )
     .await

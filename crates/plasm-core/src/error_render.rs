@@ -604,6 +604,7 @@ pub fn render_parse_error_with_feedback(
             ),
         },
         ParseErrorKind::IdentityBraceGetFailed { message } => message.clone(),
+        ParseErrorKind::InvalidProgramString { message } => format!("Invalid program string template: {message}"),
         ParseErrorKind::Other { message } => message.clone(),
     };
 
@@ -896,17 +897,9 @@ fn correction_empty_get_parens(cgs: &CGS, entity: &str, style: &FeedbackStyle<'_
         FeedbackStyle::SymbolicLlm { map } => {
             let es = map.entity_sym_for("", entity);
             if !singletons.is_empty() {
-                let methods: Vec<String> = singletons
-                    .iter()
-                    .map(|c| {
-                        let lab = capability_method_label_kebab(c);
-                        let ms = map.method_sym_for("", entity, lab.as_str());
-                        format!("{es}.{ms}()")
-                    })
-                    .collect();
+                // Pathless singleton Gets are taught as entity seats (`eN` / `eN[…]`), not `eN.mM()`.
                 format!(
-                    "Empty `()` after `{es}` is not valid. Use `{es}(<id>)` with an id, or a pathless singleton method shown in the prompt: {}.",
-                    methods.join(", ")
+                    "Empty `()` after `{es}` is not valid. Use `{es}(<id>)` with an id, or the pathless singleton seat from the language card: `{es}` or `{es}[…]` (never `{es}()`).",
                 )
             } else {
                 format!(
@@ -1196,7 +1189,7 @@ fn correction_unknown_entity_symbolic_llm(
         )
     } else {
         let mut msg = format!(
-            "`{bad}` is not a session entity token — use an `e#` from the teaching table ({summary})."
+            "`{bad}` is not a session entity token — copy an `e#` or a taught `e#.m#` from the teaching table ({summary}). A label from an earlier program is not in scope; re-bind in this program or pass a cell from the last observe."
         );
         if scalar_predicate_context {
             msg.push_str(&format!(
@@ -2258,6 +2251,14 @@ mod tests {
         assert!(
             !s.contains("quoted string"),
             "entity-root unknown token must not suggest scalar quotes: {s}"
+        );
+        assert!(
+            s.contains("e#.m#") && s.contains("not a session entity token"),
+            "verb-shaped roots must point at taught methods, not only e#: {s}"
+        );
+        assert!(
+            s.contains("earlier program") && !s.contains("quoted string"),
+            "prior-program labels are out of scope; must not use the scalar-quote template: {s}"
         );
     }
 

@@ -34,10 +34,7 @@ pub(super) fn validate_plan_value_expr(
         PlanValue::Literal { value } => {
             validate_json_value_no_js_object_coercion(value, node_index, path)
         }
-        PlanValue::Helper { display, args, .. } => {
-            if let Some(display) = display {
-                validate_no_js_object_coercion(display, node_index, path)?;
-            }
+        PlanValue::Helper { args, .. } => {
             for (i, arg) in args.iter().enumerate() {
                 validate_json_value_no_js_object_coercion(
                     arg,
@@ -76,7 +73,7 @@ pub(super) fn validate_plan_value_expr(
             template,
             input_bindings,
         } => {
-            validate_template_text(template, node_index, path)?;
+            validate_no_js_object_coercion(template.source(), node_index, path)?;
             for b in input_bindings {
                 if b.from.trim().is_empty() {
                     return Err(format!(
@@ -189,13 +186,6 @@ fn looks_like_unnormalized_entity_ref_wrapper(fields: &BTreeMap<String, PlanValu
             value: serde_json::Value::String(_)
         })
     )
-}
-
-fn validate_template_text(template: &str, node_index: usize, path: &str) -> Result<(), String> {
-    validate_no_js_object_coercion(template, node_index, path)?;
-    plasm_core::validate_interpolation_syntax(template, |detail| {
-        format!("plan.nodes[{node_index}].{path} {detail}")
-    })
 }
 
 fn validate_json_value_no_js_object_coercion(

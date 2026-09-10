@@ -274,8 +274,6 @@ impl RunArtifactHotCache {
 /// MCP logical sessions scope reuse by [`Self::logical_session_id`] only — accumulated intent evolves
 /// in place on that row.
 ///
-/// When [`Self::context_intent`] is set, [`Self::ranked_capabilities`] participates in reuse: distinct
-/// ranked gate lists must not share a session row filtered for different mutation picks.
 #[derive(Clone, Debug)]
 pub struct SessionReuseKey {
     /// Tenant scope from incoming auth (empty string when anonymous / auth off).
@@ -287,8 +285,6 @@ pub struct SessionReuseKey {
     pub entities: Vec<String>,
     /// Normalized first-open `plasm_context` intent when capability-scoped teaching table is active.
     pub context_intent: Option<String>,
-    /// Sorted deduped capability wire names for ranked mutation gating when intent-scoped teaching table is active.
-    pub ranked_capabilities: Option<Vec<String>>,
     /// Set when `PLASM_AUTH_RESOLUTION=delegated` so distinct users do not share a session.
     pub principal: Option<String>,
     /// MCP logical session UUID string (canonical); `None` for HTTP-only execute without a logical id.
@@ -301,7 +297,6 @@ impl PartialEq for SessionReuseKey {
             && self.entry_id == other.entry_id
             && self.catalog_cgs_hash == other.catalog_cgs_hash
             && self.entities == other.entities
-            && self.ranked_capabilities == other.ranked_capabilities
             && self.principal == other.principal
             && self.logical_session_id == other.logical_session_id
             && (self.logical_session_id.is_some() || self.context_intent == other.context_intent)
@@ -316,7 +311,6 @@ impl std::hash::Hash for SessionReuseKey {
         self.entry_id.hash(state);
         self.catalog_cgs_hash.hash(state);
         self.entities.hash(state);
-        self.ranked_capabilities.hash(state);
         self.principal.hash(state);
         self.logical_session_id.hash(state);
         if self.logical_session_id.is_none() {
@@ -465,20 +459,17 @@ impl SessionCore {
     }
 }
 
-/// Instance bind credentials mirrored to durable execute-session descriptors (cross-pod rehydrate).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SessionBindCredentialsSnapshot {
-    pub session_share_token: Option<String>,
-    pub session_proof_base_token: Option<String>,
-}
-
 #[derive(Clone)]
 pub struct ExecuteSession {
+    pub(crate) credential_memory: Arc<crate::session_credentials::CredentialMemory>,
+    pub discovery_pin: Option<crate::discovery_store::DiscoverySessionPin>,
     pub prompt_hash: String,
     pub prompt_text: String,
     pub cgs: Arc<CGS>,
     /// Loaded registry contexts keyed by `entry_id` (single entry for non-federated sessions).
     pub contexts_by_entry: IndexMap<String, Arc<CgsContext>>,
+    /// Parsed and validated request recipes pinned with each session catalog.
+    pub(crate) compiled_catalogs_by_entry: IndexMap<String, Arc<plasm_compile::CompiledCatalog>>,
     pub entry_id: String,
     /// Incoming-auth tenant scope (empty when anonymous).
     pub tenant_scope: String,
@@ -504,15 +495,6 @@ pub struct ExecuteSession {
     pub(crate) registry_catalog_hashes_by_entry: HashMap<String, String>,
     /// Normalized MCP `plasm_context` intent when teaching table uses intent-scoped capability exposure (`None` = legacy full closure).
     pub context_intent: Option<String>,
-    /// Optional ranked capability-name gate for mutators (aligned with [`SessionReuseKey::ranked_capabilities`]).
-    pub ranked_capabilities: Option<Vec<String>>,
-    /// When true, the next exposure-wave commit may append agent-facing ranked-replay diagnostics.
-    /// Turn-local provenance from [`crate::http_execute::RankedCapabilitiesArg`]; not part of reuse keys.
-    pub(crate) ranked_replay_emit_diagnostics: bool,
-    /// Share-link / instance token bound once per execute session (Bearer + optional `share_token` CML env).
-    pub session_share_token: Arc<RwLock<Option<String>>>,
-    /// Proof: `baseToken` from the latest successful `editor_state_get`; merged as `base_token` CML env for `/ops`.
-    pub session_proof_base_token: Arc<RwLock<Option<String>>>,
     /// Per-session materialized graph; isolated from other execute sessions.
     pub graph_cache: Arc<MutexGraphCacheSession>,
     /// Unified in-session graph/artifact state.
@@ -544,6 +526,9 @@ pub struct ExecuteSession {
 }
 
 impl ExecuteSession {
+    /// Test/support constructor for in-memory CGS fixtures. Product session paths
+    /// use [`Self::new_with_bindings`] with recipes from the active generation.
+    #[doc(hidden)]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         prompt_hash: String,
@@ -559,8 +544,19 @@ impl ExecuteSession {
         principal: Option<String>,
         catalog_cgs_hash: String,
         context_intent: Option<String>,
-        ranked_capabilities: Option<Vec<String>>,
     ) -> Self {
+        let compiled_catalogs_by_entry = contexts_by_entry
+            .iter()
+            .map(|(entry_id, context)| {
+                (
+                    entry_id.clone(),
+                    Arc::new(
+                        plasm_compile::compile_cgs_capability_templates(&context.cgs)
+                            .expect("test catalog must compile"),
+                    ),
+                )
+            })
+            .collect();
         Self::new_with_bindings(
             prompt_hash,
             prompt_text,
@@ -575,13 +571,13 @@ impl ExecuteSession {
             principal,
             catalog_cgs_hash,
             context_intent,
-            ranked_capabilities,
             IndexMap::new(),
+            compiled_catalogs_by_entry,
         )
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new_with_bindings(
+    pub fn new_with_bindings(
         prompt_hash: String,
         prompt_text: String,
         cgs: Arc<CGS>,
@@ -595,15 +591,23 @@ impl ExecuteSession {
         principal: Option<String>,
         catalog_cgs_hash: String,
         context_intent: Option<String>,
-        ranked_capabilities: Option<Vec<String>>,
         bindings_by_entry: indexmap::IndexMap<String, crate::binding_slots::SessionBindingMap>,
+        compiled_catalogs_by_entry: IndexMap<String, Arc<plasm_compile::CompiledCatalog>>,
     ) -> Self {
         let core = Arc::new(SessionCore::new());
+        assert!(
+            contexts_by_entry
+                .keys()
+                .all(|entry_id| compiled_catalogs_by_entry.contains_key(entry_id)),
+            "every session catalog requires pinned compiled request recipes"
+        );
         Self {
             prompt_hash,
             prompt_text,
+            credential_memory: Default::default(),
             cgs,
             contexts_by_entry,
+            compiled_catalogs_by_entry,
             entry_id,
             tenant_scope,
             principal_subject,
@@ -614,12 +618,9 @@ impl ExecuteSession {
             flow_policy: FlowPolicySnapshot::inactive_default(),
             principal,
             catalog_cgs_hash,
+            discovery_pin: None,
             registry_catalog_hashes_by_entry: HashMap::new(),
             context_intent,
-            ranked_capabilities,
-            ranked_replay_emit_diagnostics: false,
-            session_share_token: Arc::new(RwLock::new(None)),
-            session_proof_base_token: Arc::new(RwLock::new(None)),
             graph_cache: core.graph_cache(),
             core,
             run_resource_next: Arc::new(AtomicU64::new(0)),
@@ -638,18 +639,6 @@ impl ExecuteSession {
             bindings_by_entry,
             materialized_outbound_hosted_kv_by_entry: HashMap::new(),
         }
-    }
-
-    pub async fn snapshot_bind_credentials(&self) -> SessionBindCredentialsSnapshot {
-        SessionBindCredentialsSnapshot {
-            session_share_token: self.session_share_token.read().await.clone(),
-            session_proof_base_token: self.session_proof_base_token.read().await.clone(),
-        }
-    }
-
-    pub async fn restore_bind_credentials(&self, creds: &SessionBindCredentialsSnapshot) {
-        *self.session_share_token.write().await = creds.session_share_token.clone();
-        *self.session_proof_base_token.write().await = creds.session_proof_base_token.clone();
     }
 
     pub(crate) fn materialization_pins(
@@ -677,6 +666,28 @@ impl ExecuteSession {
         entry_id: &str,
     ) -> Option<&crate::binding_slots::SessionBindingMap> {
         self.bindings_by_entry.get(entry_id)
+    }
+
+    pub(crate) fn compiled_catalog_for_entry(
+        &self,
+        entry_id: &str,
+    ) -> Result<Arc<plasm_compile::CompiledCatalog>, String> {
+        self.compiled_catalogs_by_entry
+            .get(entry_id)
+            .cloned()
+            .ok_or_else(|| format!("no compiled request recipes pinned for catalog `{entry_id}`"))
+    }
+
+    pub(crate) fn compiled_catalog_for_cgs(
+        &self,
+        cgs: &CGS,
+    ) -> Result<Arc<plasm_compile::CompiledCatalog>, String> {
+        let hash = cgs.catalog_cgs_hash_hex();
+        self.compiled_catalogs_by_entry
+            .values()
+            .find(|compiled| compiled.cgs_hash() == hash)
+            .cloned()
+            .ok_or_else(|| format!("no compiled request recipes pinned for CGS `{hash}`"))
     }
 
     /// Allocate the next monotonic `resource_index` for this execute session (used for `plasm://r/{n}`).
@@ -1991,7 +2002,6 @@ mod tests {
             catalog_cgs_hash: "abc".into(),
             entities: vec!["Pet".into()],
             context_intent: Some("first turn".into()),
-            ranked_capabilities: None,
             principal: None,
             logical_session_id: Some("00000000-0000-4000-8000-000000000001".into()),
         };
@@ -2021,7 +2031,6 @@ mod tests {
             catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
             entities: vec!["Pet".into(), "Store".into()],
             context_intent: None,
-            ranked_capabilities: None,
             principal: None,
             logical_session_id: None,
         };
@@ -2044,7 +2053,6 @@ mod tests {
             None,
             None,
             cgs.catalog_cgs_hash_hex(),
-            None,
             None,
         );
         store
@@ -2080,7 +2088,6 @@ mod tests {
             None,
             cgs.catalog_cgs_hash_hex(),
             None,
-            None,
         );
         let s2 = ExecuteSession::new(
             "ph2".into(),
@@ -2095,7 +2102,6 @@ mod tests {
             None,
             None,
             s1.catalog_cgs_hash.clone(),
-            None,
             None,
         );
         assert!(!Arc::ptr_eq(&s1.graph_cache, &s2.graph_cache));
@@ -2182,7 +2188,6 @@ mod tests {
             catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
             entities: vec!["Pet".into()],
             context_intent: None,
-            ranked_capabilities: None,
             principal: None,
             logical_session_id: None,
         };
@@ -2204,7 +2209,6 @@ mod tests {
             None,
             None,
             "hash".into(),
-            None,
             None,
         );
         store
@@ -2256,7 +2260,6 @@ mod tests {
             None,
             None,
             cgs.catalog_cgs_hash_hex(),
-            None,
             None,
         );
         let r = sample_pagination_resume();
@@ -2335,7 +2338,6 @@ mod tests {
             None,
             "hash".into(),
             None,
-            None,
         );
         let h1 = es.mint_operation_handle("l_AAAAAAAAQACAAAAAAAAAAQ");
         let h2 = es.mint_operation_handle("l_AAAAAAAAQACAAAAAAAAAAQ");
@@ -2378,7 +2380,6 @@ mod tests {
             None,
             None,
             "hash".into(),
-            None,
             None,
         );
         for i in 0..2 {
@@ -2432,7 +2433,6 @@ mod tests {
             None,
             "hash".into(),
             None,
-            None,
         );
         let telemetry = Arc::new(plasm_runtime::LiveRunTelemetry::new());
         es.install_live_run_telemetry(Arc::clone(&telemetry));
@@ -2467,7 +2467,6 @@ mod tests {
             None,
             None,
             "hash".into(),
-            None,
             None,
         );
         let h = es.mint_operation_handle("l_AAAAAAAAQACAAAAAAAAAAQ");
@@ -2507,7 +2506,6 @@ mod tests {
             None,
             None,
             "hash".into(),
-            None,
             None,
         );
         let handle = es.mint_operation_handle("l_AAAAAAAAQACAAAAAAAAAAQ");

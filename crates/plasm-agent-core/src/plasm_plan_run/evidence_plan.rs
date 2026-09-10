@@ -6,8 +6,8 @@ use plasm_core::{Expr, Value};
 /// Fallback parsed expr for synthetic plan nodes and archive preimages.
 pub fn archive_fallback_parsed_expr() -> ParsedExpr {
     ParsedExpr::from_expr(Expr::TeachingValue {
-            value: Value::String("__plasm_run_artifact_archive__".into()),
-        })
+        value: Value::String("__plasm_run_artifact_archive__".into()),
+    })
 }
 
 pub fn parsed_expr_for_plan_node(node: &crate::plasm_plan::ValidatedPlanNode) -> ParsedExpr {
@@ -26,23 +26,11 @@ pub fn parsed_expr_for_plan_node(node: &crate::plasm_plan::ValidatedPlanNode) ->
             projection: relation.relation.ir.projection.clone(),
             field_dot_extract: None,
         },
-        crate::plasm_plan::ValidatedPlanNode::ForEach(for_each) => {
-            if let Ok(expr) = serde_json::from_value::<plasm_core::Expr>(
-                for_each.effect_template.ir_template.expr.clone(),
-            ) {
-                ParsedExpr {
-                    expr,
-                    projection: if for_each.effect_template.projection.is_empty() {
-                        None
-                    } else {
-                        Some(for_each.effect_template.projection.clone())
-                    },
-                    field_dot_extract: None,
-                }
-            } else {
-                archive_fallback_parsed_expr()
-            }
-        }
+        crate::plasm_plan::ValidatedPlanNode::ForEach(for_each) => ParsedExpr {
+            expr: for_each.effect_template.ir_template.expr.clone(),
+            projection: Some(for_each.effect_template.projection.clone()).filter(|p| !p.is_empty()),
+            field_dot_extract: None,
+        },
         _ => archive_fallback_parsed_expr(),
     }
 }

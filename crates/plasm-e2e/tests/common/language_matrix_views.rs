@@ -12,7 +12,7 @@ use plasm_agent::{
     run_artifacts::RunArtifactStore,
     server_state::CatalogBootstrap,
 };
-use plasm_core::discovery::InMemoryCgsRegistry;
+use plasm_core::discovery::CgsRegistry;
 use plasm_core::{CgsContext, TeachingExposureSession};
 use plasm_runtime::{ExecutionEngine, ExecutionMode};
 
@@ -80,7 +80,6 @@ pub fn views_execute_session(cgs: Arc<plasm_core::CGS>) -> ExecuteSession {
         None,
         cgs.catalog_cgs_hash_hex(),
         None,
-        None,
     )
 }
 
@@ -88,7 +87,7 @@ pub fn views_matrix_host_state(
     engine: ExecutionEngine,
     cgs: Arc<plasm_core::CGS>,
 ) -> plasm_agent::server_state::PlasmHostState {
-    let registry = Arc::new(InMemoryCgsRegistry::from_pairs(vec![(
+    let registry = Arc::new(CgsRegistry::from_pairs(vec![(
         VIEWS_MATRIX_ENTRY_ID.into(),
         "Plasm Language Matrix (views)".into(),
         vec!["matrix_views".into()],

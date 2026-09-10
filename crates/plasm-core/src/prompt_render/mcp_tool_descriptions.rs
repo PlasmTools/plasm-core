@@ -30,9 +30,6 @@ pub const PLASM_RUN_TOOL_DESCRIPTION: &str = concat!(
 /// Canonical `plasm_context` tool description.
 pub const PLASM_CONTEXT_TOOL_DESCRIPTION: &str = include_str!("assets/plasm_context_tool.txt");
 
-/// Canonical `discover_capabilities` tool description.
-pub const DISCOVER_TOOL_DESCRIPTION: &str = include_str!("assets/discover_tool.txt");
-
 /// JSON-schema description for the MCP `plasm` tool `program` parameter.
 ///
 /// Truncation-survival stub only: hosts sometimes clip [`PLASM_TOOL_DESCRIPTION`] but keep
@@ -57,10 +54,6 @@ pub const MCP_INITIALIZE_WORKFLOW: &str = include_str!("assets/initialize_workfl
 
 /// Marker for tests; compact executable-syntax guard in [`PLASM_TOOL_DESCRIPTION`].
 pub const MCP_TOOL_SYNTAX_CONTRACT_MARKER: &str = "`program` is Plasm source text, not JSON data.";
-
-/// Marker for tests; tool-order line in MCP tool descriptions.
-pub const MCP_TOOL_SEQUENCING_MARKER: &str =
-    "`plasm_context` (intent-only) → `plasm` (reads execute when clean; writes return `run_ref`) → `plasm_run` for reviewed writes/paging; `discover_capabilities` only on hard_miss/clarify.";
 
 /// Marker for tests; grammar contract opener in [`PLASM_TOOL_DESCRIPTION`].
 pub const TEACHING_VALID_EXPR_MARKER: &str =

@@ -1,5 +1,12 @@
 //! Peer-session overlap advisory for `session_mode: new`.
 
+fn intent_words(text: &str) -> std::collections::HashSet<String> {
+    text.split(|character: char| !character.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_lowercase)
+        .collect()
+}
+
 use super::super::*;
 use super::seeds::capability_seeds_from_session;
 use std::collections::BTreeSet;
@@ -13,8 +20,8 @@ pub(crate) struct SessionChurnAdvisory {
 }
 
 fn intent_token_jaccard(a: &str, b: &str) -> f64 {
-    let ta = plasm_core::catalog_search_index::CatalogSearchIndex::tokenize(a);
-    let tb = plasm_core::catalog_search_index::CatalogSearchIndex::tokenize(b);
+    let ta = intent_words(a);
+    let tb = intent_words(b);
     if ta.is_empty() || tb.is_empty() {
         return 0.0;
     }

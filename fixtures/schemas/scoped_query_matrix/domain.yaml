@@ -1,0 +1,43 @@
+version: 1
+entry_id: scoped_query_matrix
+http_backend: http://127.0.0.1:9
+auth: {scheme: none}
+values:
+  identifier: {type: string, description: A row identifier}
+  parent_reference: {type: entity_ref, target: Parent, description: The owning parent}
+entities:
+  Parent:
+    description: An owning record
+    id_field: id
+    fields:
+      id: {value_ref: identifier, required: true}
+  Child:
+    description: A record within a parent
+    id_field: id
+    fields:
+      id: {value_ref: identifier, required: true}
+  ChildWithParent:
+    description: A child that also returns its owning parent
+    id_field: id
+    fields:
+      id: {value_ref: identifier, required: true}
+      parent_id: {value_ref: parent_reference, required: true}
+capabilities:
+  parent_get:
+    entity: Parent
+    kind: get
+    provides: [id]
+  child_query:
+    description: List records owned by a parent
+    entity: Child
+    kind: query
+    scope:
+      - {name: parent_id, value_ref: parent_reference, required: true}
+    provides: [id]
+  child_with_parent_query:
+    description: List child records with their owning parent
+    entity: ChildWithParent
+    kind: query
+    scope:
+      - {name: parent_id, value_ref: parent_reference, required: true}
+    provides: [id, parent_id]

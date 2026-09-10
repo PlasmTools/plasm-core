@@ -1,4 +1,4 @@
-version: 13
+version: 14
 http_backend: https://api.linear.app
 data_classes:
   untrusted:
@@ -90,8 +90,7 @@ entities:
   Label:
     id_field: name
     description: An issue label.
-    discovery:
-      seed_class: dependent
+    discovery: null
     fields:
       id:
         required: true
@@ -109,7 +108,6 @@ entities:
     discovery:
       names:
       - comment
-      seed_class: dependent
     fields:
       id:
         required: true
@@ -130,7 +128,6 @@ entities:
       names:
       - issue
       - linear issue
-      seed_class: primary
     fields:
       id:
         required: true
@@ -178,8 +175,7 @@ entities:
       labels:
         target: Label
         cardinality: many
-        discovery:
-          seed_nav: attach
+        discovery: null
         materialize:
           kind: from_parent_get
           path:
@@ -201,8 +197,7 @@ entities:
       comments:
         target: Comment
         cardinality: many
-        discovery:
-          seed_nav: attach
+        discovery: null
         materialize:
           kind: query_scoped
           capability: comment_by_issue_query
@@ -214,7 +209,6 @@ entities:
       names:
       - linear document
       - document
-      seed_class: primary
     fields:
       id:
         required: true
@@ -301,7 +295,6 @@ entities:
       - my work
       - assigned to me
       - my issues
-      seed_class: ambient
     fields:
       viewer_id:
         required: true
@@ -316,8 +309,7 @@ entities:
       issues:
         target: Issue
         cardinality: many
-        discovery:
-          seed_nav: own
+        discovery: null
         materialize:
           kind: view_embed
           view: my_work
@@ -392,42 +384,34 @@ entities:
           view: cycle_board_snapshot
 capabilities:
   issue_search:
-    kind: search
-    entity: Issue
     description: Find issues by title and filter criteria.
-    parameters:
+    kind: query
+    entity: Issue
+    selection:
     - name: q
       value_ref: nv_issue_search_q
       required: false
-      role: search
     - name: team_key
       value_ref: nv_team_key
       required: false
-      role: filter
     - name: state_name
       value_ref: nv_state_name
       required: false
-      role: filter
     - name: label_name
       value_ref: nv_label_name
       required: false
-      role: filter
     - name: assignee_name
       value_ref: nv_assignee_name
       required: false
-      role: filter
     - name: priority
       value_ref: nv_issue_priority
       required: false
-      role: filter
     - name: project_name
       value_ref: nv_wire_str_short
       required: false
-      role: filter
     - name: cycle
       value_ref: nv_cycle_id
       required: false
-      role: filter
     provides:
     - identifier
     - title
@@ -451,30 +435,29 @@ capabilities:
     - cycle
     - parent
   user_viewer:
+    description: The authenticated Linear user.
     kind: get
     entity: User
-    description: The authenticated Linear user.
     provides:
     - id
     - name
     - displayName
     - email
   user_search:
+    description: Find users by display name (exact match on first page).
     kind: search
     entity: User
-    description: Find users by display name (exact match on first page).
-    parameters:
+    selection:
     - name: display_name
       value_ref: nv_assignee_name
       required: true
-      role: search
     provides:
     - id
     - displayName
   team_query:
+    description: List teams.
     kind: query
     entity: Team
-    description: List teams.
     provides:
     - key
     - name
@@ -486,9 +469,9 @@ capabilities:
     - key
     - name
   project_query:
+    description: List projects.
     kind: query
     entity: Project
-    description: List projects.
     provides:
     - id
     - name
@@ -501,27 +484,25 @@ capabilities:
     - name
     - slugId
   project_search:
+    description: Find projects by name substring.
     kind: search
     entity: Project
-    description: Find projects by name substring.
-    parameters:
+    selection:
     - name: q
       value_ref: nv_wire_str_short
-      required: false
-      role: search
+      required: true
     provides:
     - id
     - name
     - slugId
   cycle_query:
+    description: List cycles for a team.
     kind: query
     entity: Cycle
-    description: List cycles for a team.
-    parameters:
+    scope:
     - name: team_key
       value_ref: nv_team_key
       required: true
-      role: scope
     provides:
     - id
     - number
@@ -537,48 +518,43 @@ capabilities:
     - endsAt
     - team
   workflow_state_query:
+    description: List workflow columns for a team.
     kind: query
     entity: WorkflowState
-    description: List workflow columns for a team.
-    parameters:
+    scope:
     - name: team_key
       value_ref: nv_team_key
       required: true
-      role: scope
     provides:
     - id
     - name
     - type
   label_query:
+    description: List issue labels.
     kind: query
     entity: Label
-    description: List issue labels.
     provides:
     - name
     - color
   comment_by_issue_query:
+    description: List comments on an issue.
     kind: query
     entity: Comment
-    description: List comments on an issue.
-    parameters:
+    scope:
     - name: issue
       value_ref: nv_issue_ref
       required: true
-      role: scope
     provides:
     - id
     - body
-    selection: []
-    scope: []
   document_search:
-    kind: search
-    entity: Document
     description: Find documents by title.
-    parameters:
+    kind: query
+    entity: Document
+    selection:
     - name: q
       value_ref: nv_wire_str_short
       required: false
-      role: search
     provides:
     - id
     - title
@@ -589,23 +565,26 @@ capabilities:
     - id
     - title
   document_update:
+    description: Update document title or content.
     kind: update
     entity: Document
-    description: Update document title or content.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: title
+          value_ref: nv_wire_str_short
+          required: false
+        - name: content
+          value_ref: nv_wire_str_markdown
+          required: false
     provides:
     - id
     - title
-    parameters:
-    - name: title
-      value_ref: nv_wire_str_short
-      required: false
-    - name: content
-      value_ref: nv_wire_str_markdown
-      required: false
   initiative_query:
+    description: List initiatives.
     kind: query
     entity: Initiative
-    description: List initiatives.
     provides:
     - id
     - name
@@ -616,132 +595,142 @@ capabilities:
     - id
     - name
   initiative_update:
+    description: Update initiative name or description.
     kind: update
     entity: Initiative
-    description: Update initiative name or description.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: false
+        - name: description
+          value_ref: nv_wire_str_markdown
+          required: false
     provides:
     - id
     - name
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: false
-    - name: description
-      value_ref: nv_wire_str_markdown
-      required: false
   project_milestone_query:
+    description: List milestones on a project.
     kind: query
     entity: ProjectMilestone
-    description: List milestones on a project.
-    parameters:
+    scope:
     - name: project
       value_ref: nv_project_id
       required: true
-      role: scope
     provides:
     - id
     - name
   project_milestone_create:
+    description: Create a milestone on a project.
     kind: create
     entity: ProjectMilestone
-    description: Create a milestone on a project.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: project
+          value_ref: nv_project_id
+          required: true
+        - name: name
+          value_ref: nv_wire_str_short
+          required: true
+        - name: description
+          value_ref: nv_wire_str_markdown
+          required: false
     provides:
     - id
     - name
-    parameters:
-    - name: project
-      value_ref: nv_project_id
-      required: true
-    - name: name
-      value_ref: nv_wire_str_short
-      required: true
-    - name: description
-      value_ref: nv_wire_str_markdown
-      required: false
   project_milestone_update:
+    description: Update a project milestone.
     kind: update
     entity: ProjectMilestone
-    description: Update a project milestone.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: false
+        - name: description
+          value_ref: nv_wire_str_markdown
+          required: false
     provides:
     - id
     - name
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: false
-    - name: description
-      value_ref: nv_wire_str_markdown
-      required: false
   project_update_query:
+    description: List status updates on a project.
     kind: query
     entity: ProjectUpdate
-    description: List status updates on a project.
-    parameters:
+    scope:
     - name: project
       value_ref: nv_project_id
       required: true
-      role: scope
     provides:
     - id
     - body
     - health
   project_update_create:
+    description: Post a project status update.
     kind: create
     entity: ProjectUpdate
-    description: Post a project status update.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: project
+          value_ref: nv_project_id
+          required: true
+        - name: body
+          value_ref: nv_wire_str_markdown
+          required: true
+        - name: health
+          value_ref: nv_project_update_health
+          required: false
     provides:
     - id
     - body
     - health
-    parameters:
-    - name: project
-      value_ref: nv_project_id
-      required: true
-    - name: body
-      value_ref: nv_wire_str_markdown
-      required: true
-    - name: health
-      value_ref: nv_project_update_health
-      required: false
   issue_create:
+    description: Create an issue.
     kind: create
     entity: Issue
-    description: Create an issue.
-    identity_key:
-    - team
-    - title
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: team
+          value_ref: nv_issue_create_team
+          required: true
+        - name: title
+          value_ref: nv_wire_str_short
+          required: true
+          sink_class: external_publish
+        - name: description
+          value_ref: nv_wire_str_markdown
+          required: false
+          sink_class: external_publish
+        - name: state_name
+          value_ref: nv_state_name
+          required: false
+        - name: assignee_name
+          value_ref: nv_assignee_name
+          required: false
+        - name: project_name
+          value_ref: nv_wire_str_short
+          required: false
+        - name: parent_identifier
+          value_ref: nv_issue_identifier
+          required: false
+        - name: priority
+          value_ref: nv_issue_priority
+          required: false
     provides:
     - identifier
     - title
     - description
     - state
-    parameters:
-    - name: team
-      value_ref: nv_issue_create_team
-      required: true
-    - name: title
-      value_ref: nv_wire_str_short
-      required: true
-      sink_class: external_publish
-    - name: description
-      value_ref: nv_wire_str_markdown
-      required: false
-      sink_class: external_publish
-    - name: state_name
-      value_ref: nv_state_name
-      required: false
-    - name: assignee_name
-      value_ref: nv_assignee_name
-      required: false
-    - name: project_name
-      value_ref: nv_wire_str_short
-      required: false
-    - name: parent_identifier
-      value_ref: nv_issue_identifier
-      required: false
-    - name: priority
-      value_ref: nv_issue_priority
-      required: false
     preflight:
     - kind: hydrate_entity_ref_param
       param: team
@@ -781,42 +770,48 @@ capabilities:
         equals_param: project_name
       merge:
         projectId: id
+    identity_key:
+    - team
+    - title
   issue_update:
+    description: Change issue workflow, ownership, labels, or priority.
     kind: update
     entity: Issue
-    description: Change issue workflow, ownership, labels, or priority.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: title
+          value_ref: nv_wire_str_short
+          required: false
+          sink_class: external_publish
+        - name: description
+          value_ref: nv_wire_str_markdown
+          required: false
+          sink_class: external_publish
+        - name: state_name
+          value_ref: nv_state_name
+          required: false
+        - name: assignee_name
+          value_ref: nv_assignee_name
+          required: false
+        - name: project_name
+          value_ref: nv_wire_str_short
+          required: false
+        - name: add_label_name
+          value_ref: nv_label_name
+          required: false
+        - name: remove_label_name
+          value_ref: nv_label_name
+          required: false
+        - name: priority
+          value_ref: nv_issue_priority
+          required: false
     provides:
     - identifier
     - title
     - description
     - state
-    parameters:
-    - name: title
-      value_ref: nv_wire_str_short
-      required: false
-      sink_class: external_publish
-    - name: description
-      value_ref: nv_wire_str_markdown
-      required: false
-      sink_class: external_publish
-    - name: state_name
-      value_ref: nv_state_name
-      required: false
-    - name: assignee_name
-      value_ref: nv_assignee_name
-      required: false
-    - name: project_name
-      value_ref: nv_wire_str_short
-      required: false
-    - name: add_label_name
-      value_ref: nv_label_name
-      required: false
-    - name: remove_label_name
-      value_ref: nv_label_name
-      required: false
-    - name: priority
-      value_ref: nv_issue_priority
-      required: false
     preflight:
     - kind: hydrate_invoke_target
       get: issue_get
@@ -868,125 +863,131 @@ capabilities:
         - labels
       merge: labelIds
   issue_delete:
+    description: Move an issue to trash (recoverable).
     kind: delete
     entity: Issue
-    description: Move an issue to trash (recoverable).
   comment_create:
+    description: Add a comment on an issue.
     kind: create
     entity: Comment
-    description: Add a comment on an issue.
     discovery:
       operation_terms:
       - post comment
       - leave comment
       - summary comment
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: issue
+          value_ref: nv_issue_ref
+          required: true
+        - name: body
+          value_ref: nv_wire_str_markdown
+          required: true
+          sink_class: external_publish
     provides:
     - id
     - body
-    parameters:
-    - name: issue
-      value_ref: nv_issue_ref
-      required: true
-    - name: body
-      value_ref: nv_wire_str_markdown
-      required: true
-      sink_class: external_publish
   project_create:
+    description: Create a project on a team.
     kind: create
     entity: Project
-    description: Create a project on a team.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: true
+        - name: team
+          value_ref: nv_issue_create_team
+          required: true
+        - name: description
+          value_ref: nv_wire_str_markdown
+          required: false
     provides:
     - id
     - name
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: true
-    - name: team
-      value_ref: nv_issue_create_team
-      required: true
-    - name: description
-      value_ref: nv_wire_str_markdown
-      required: false
   project_update:
+    description: Update project name or description.
     kind: update
     entity: Project
-    description: Update project name or description.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: name
+          value_ref: nv_wire_str_short
+          required: false
+        - name: description
+          value_ref: nv_wire_str_markdown
+          required: false
     provides:
     - id
     - name
-    parameters:
-    - name: name
-      value_ref: nv_wire_str_short
-      required: false
-    - name: description
-      value_ref: nv_wire_str_markdown
-      required: false
   issue_context_query:
+    description: Triage bundle for one issue.
     kind: query
     entity: IssueContext
-    description: Triage bundle for one issue.
-    parameters:
+    scope:
     - name: issue_identifier
       value_ref: nv_issue_identifier
       required: true
-      role: scope
     provides:
     - issue_identifier
     - title
     - comment_count
   issue_context_get:
+    description: Triage bundle for one issue.
     kind: get
     entity: IssueContext
-    description: Triage bundle for one issue.
     provides:
     - issue_identifier
     - title
     - comment_count
   my_work_query:
+    description: Issues assigned to the authenticated user.
     kind: query
     entity: MyWorkSnapshot
-    description: Issues assigned to the authenticated user.
     provides:
     - viewer_id
     - issue_count
   my_work_get:
+    description: Dashboard snapshot for the current user.
     kind: get
     entity: MyWorkSnapshot
-    description: Dashboard snapshot for the current user.
     provides:
     - viewer_id
     - issue_count
   project_context_query:
+    description: Project with recent status updates.
     kind: query
     entity: ProjectContext
-    description: Project with recent status updates.
-    parameters:
+    scope:
     - name: project
       value_ref: nv_project_id
       required: true
-      role: scope
     provides:
     - project_id
     - name
     - update_count
   project_context_get:
+    description: Project context snapshot.
     kind: get
     entity: ProjectContext
-    description: Project context snapshot.
     provides:
     - project_id
     - name
     - update_count
   issue_navigation_link_query:
+    description: Shareable web URL for an issue.
     kind: query
     entity: IssueNavigationLink
-    description: Shareable web URL for an issue.
-    parameters:
+    scope:
     - name: issue_identifier
       value_ref: nv_issue_identifier
       required: true
-      role: scope
     provides:
     - issue_identifier
     - title
@@ -999,14 +1000,13 @@ capabilities:
     - title
     - url
   cycle_board_snapshot_query:
+    description: Cycle board snapshot.
     kind: query
     entity: CycleBoardSnapshot
-    description: Cycle board snapshot.
-    parameters:
+    scope:
     - name: cycle
       value_ref: nv_cycle_id
       required: true
-      role: scope
     provides:
     - cycle_id
     - number

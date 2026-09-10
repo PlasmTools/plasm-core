@@ -30,9 +30,7 @@ pub fn try_parse_iterate_until(raw: &str) -> Result<Option<IterateUntilExpr>, St
         return Ok(None);
     }
     let after_kw = &t["iterate".len()..];
-    if !after_kw.is_empty()
-        && !after_kw.starts_with(|c: char| c.is_ascii_whitespace())
-    {
+    if !after_kw.is_empty() && !after_kw.starts_with(|c: char| c.is_ascii_whitespace()) {
         return Ok(None);
     }
     let rest = after_kw.trim_start();
@@ -129,12 +127,10 @@ fn split_keyword_clause<'a>(src: &'a str, keyword: &str) -> Result<(&'a str, &'a
             b'"' | b'\'' if quote.is_none() => quote = Some(b),
             b'(' | b'[' | b'{' if quote.is_none() => depth += 1,
             b')' | b']' | b'}' if quote.is_none() => depth -= 1,
-            _ if quote.is_none() && depth == 0 => {
-                if is_keyword_at(bytes, i, kw) {
-                    let before = src[..i].trim_end();
-                    let after = src[i + kw.len()..].trim_start();
-                    return Ok((before, after));
-                }
+            _ if quote.is_none() && depth == 0 && is_keyword_at(bytes, i, kw) => {
+                let before = src[..i].trim_end();
+                let after = src[i + kw.len()..].trim_start();
+                return Ok((before, after));
             }
             _ => {}
         }
@@ -228,9 +224,11 @@ mod tests {
         assert!(try_parse_iterate_until(r#"LangItem("i1")"#)
             .unwrap()
             .is_none());
-        assert!(try_parse_iterate_until("items => LangItem(_.id).update(score=1)")
-            .unwrap()
-            .is_none());
+        assert!(
+            try_parse_iterate_until("items => LangItem(_.id).update(score=1)")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

@@ -48,12 +48,7 @@ impl ExecutionEngine {
                 Value::Array(proj.iter().map(|s| Value::String(s.clone())).collect()),
             );
         }
-        let capability_template = parse_capability_template(
-            &capability
-                .require_mapping()
-                .map_err(|message| RuntimeError::ConfigurationError { message })?
-                .template,
-        )?;
+        let capability_template = compiled_capability_template(capability)?;
         if let CapabilityTemplate::View(vt) = &capability_template {
             let view_name = vt.view.clone();
             let query = query.clone();
@@ -183,7 +178,7 @@ impl ExecutionEngine {
                         Some(&cml_env_to_identity_strings(&env)),
                     ),
                 )),
-                CapabilityTemplate::View(_) => Err(RuntimeError::ConfigurationError {
+                CapabilityTemplate::View(_) | CapabilityTemplate::CredentialBind(_) => Err(RuntimeError::ConfigurationError {
                     message: "internal: view query must use composed-read stream".into(),
                 }),
                 CapabilityTemplate::EvmCall(_) | CapabilityTemplate::EvmLogs(_) => {
@@ -316,7 +311,8 @@ impl ExecutionEngine {
                 ),
                 response_bare_array_wrap_key(req),
             ),
-            plasm_compile::CapabilityTemplate::View(_) => {
+            plasm_compile::CapabilityTemplate::View(_)
+            | plasm_compile::CapabilityTemplate::CredentialBind(_) => {
                 return Err(RuntimeError::ConfigurationError {
                     message: "composed views do not support CML pagination".into(),
                 });
@@ -360,6 +356,9 @@ impl ExecutionEngine {
 
                 let (response, link_next, http_live) =
                     if let Some(url) = driver.take_next_absolute_url() {
+                        if matches!(&base_compiled, CompiledOperation::Http(request) if request.credential.is_some()) {
+                            Err(crate::credentials::credential_error("scoped credential pagination requires declared request parameters, not an absolute continuation URL"))?;
+                        }
                         if mode != ExecutionMode::Live {
                             Err(RuntimeError::ConfigurationError {
                                 message: "absolute-URL pagination beyond the first page requires Live execution mode (replay/hybrid do not store Link headers or body next URLs)".to_string(),

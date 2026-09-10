@@ -75,6 +75,7 @@ mod invoke_teaching;
 mod line_validate;
 mod mcp_prompt_fragments;
 mod mcp_tool_descriptions;
+mod prerequisites;
 mod query_teaching;
 mod relation_teaching;
 mod row_producer;
@@ -86,11 +87,10 @@ mod teaching_gloss_emit;
 mod teaching_legend;
 mod teaching_push;
 mod teaching_util;
+pub use prerequisites::render_prerequisite_bindings;
 mod tsv_emit;
 mod types;
 
-#[cfg(test)]
-mod appworld_teaching_tests;
 #[cfg(test)]
 mod doc_fenced_examples_tests;
 #[cfg(test)]
@@ -123,13 +123,11 @@ pub use contract::{
     TeachingFenceSlice, ROW_COMPUTE_EXEMPLAR_THRESHOLD,
 };
 pub use mcp_prompt_fragments::{
-    format_ranked_replay_diagnostics, render_active_mutator_surface_recap,
-    render_compact_exposure_symbol_map,
+    render_active_mutator_surface_recap, render_compact_exposure_symbol_map,
 };
 pub use mcp_tool_descriptions::{
-    program_param_contract_violations, DISCOVER_TOOL_DESCRIPTION, MCP_INITIALIZE_WORKFLOW,
-    MCP_TOOL_SEQUENCING_MARKER, MCP_TOOL_SYNTAX_CONTRACT_MARKER, PLASM_CONTEXT_TOOL_DESCRIPTION,
-    PLASM_PROGRAM_PARAM_DESCRIPTION, PLASM_PROGRAM_PARAM_MAX_BYTES,
+    program_param_contract_violations, MCP_INITIALIZE_WORKFLOW, MCP_TOOL_SYNTAX_CONTRACT_MARKER,
+    PLASM_CONTEXT_TOOL_DESCRIPTION, PLASM_PROGRAM_PARAM_DESCRIPTION, PLASM_PROGRAM_PARAM_MAX_BYTES,
     PLASM_READ_RUN_ARTIFACT_TOOL_DESCRIPTION, PLASM_RUN_TOOL_ARTIFACT_RESOURCES,
     PLASM_RUN_TOOL_ARTIFACT_TOOL, PLASM_RUN_TOOL_DESCRIPTION, PLASM_RUN_TOOL_DESCRIPTION_BASE,
     PLASM_TOOL_DESCRIPTION, PLASM_TOOL_DESCRIPTION_MAX_BYTES, PLASM_TOOL_DESCRIPTION_PREFIX_BYTES,

@@ -15,11 +15,13 @@ use crate::preflight::{apply_preflight_steps, PreflightInvoke};
 use crate::view_plan::ViewAmbientContext;
 use crate::{AuthResolver, CachedEntity, CancelSignal, EntityCompleteness, RuntimeError};
 use indexmap::IndexMap;
+#[cfg(test)]
+use plasm_compile::parse_capability_template;
 use plasm_compile::{
-    compile_operation, compile_query, decode_entities_with_cgs, parse_capability_template,
-    path_var_names_from_request, template_pagination, template_var_names, BackendFilter,
-    CapabilityTemplate, CmlEnv, CmlRequest, CompiledOperation, CompiledRequest, HttpBodyFormat,
-    PaginationConfig, PathExpr, PathSegment, ResponsePreprocess,
+    compile_operation, compile_query, decode_entities_with_cgs, path_var_names_from_request,
+    template_pagination, template_var_names, BackendFilter, CapabilityTemplate, CmlEnv, CmlRequest,
+    CompiledOperation, CompiledRequest, HttpBodyFormat, PaginationConfig, PathExpr, PathSegment,
+    ResponsePreprocess,
 };
 use plasm_core::partition_prefer_resolutions;
 use plasm_core::resolve_relation_row_resolution;
@@ -69,12 +71,15 @@ mod template_env;
 mod types;
 
 #[cfg(test)]
+mod credential_tests;
+#[cfg(test)]
 mod tests;
 
 pub(crate) use hydrate::{
     get_with_session_params, identity_keys_for_entity, stamp_entities_and_mat, synthesized_get,
     wrap_synthesized_get_error, CapabilityParamEnv,
 };
+pub(crate) use session::{compiled_capability_template, compiled_conflict_rules};
 
 pub use pagination_driver::{PageAudit, PaginationDriver, PaginationTerminalReason};
 
@@ -97,16 +102,16 @@ pub use types::{
 };
 
 pub(crate) use task_scopes::{
-    EXECUTION_AUTH_RESOLVER, EXECUTION_CANCEL, EXECUTION_DISPATCH_ENTITY,
-    EXECUTION_EXECUTE_SESSION, EXECUTION_FEDERATION, EXECUTION_FINGERPRINT_SINK,
-    EXECUTION_HTTP_BASE, EXECUTION_ROWS_PROGRESS,
+    EXECUTION_AUTH_RESOLVER, EXECUTION_CANCEL, EXECUTION_COMPILED_CATALOG,
+    EXECUTION_DISPATCH_ENTITY, EXECUTION_EXECUTE_SESSION, EXECUTION_FEDERATION,
+    EXECUTION_FINGERPRINT_SINK, EXECUTION_HTTP_BASE, EXECUTION_ROWS_PROGRESS,
 };
 
 pub use session::{
     collect_query_stream, cooperative_cancel_check, merge_plasm_execute_session_bind_env,
     merge_plasm_execute_session_env, merge_plasm_execute_session_identity_env,
-    merge_plasm_execute_session_proof_base_token_env, report_rows_materialized,
-    ExecuteSessionMaterial, CML_ENV_PLASM_EXECUTE_PROMPT_HASH, CML_ENV_PLASM_EXECUTE_SESSION_ID,
+    report_rows_materialized, ExecuteSessionMaterial, CML_ENV_PLASM_EXECUTE_PROMPT_HASH,
+    CML_ENV_PLASM_EXECUTE_SESSION_ID,
 };
 
 pub(crate) use session::{
@@ -115,7 +120,7 @@ pub(crate) use session::{
     resolve_query_capability, try_current_execute_session_material, with_dispatch_entity,
 };
 
-pub use engine::{ExecuteOptions, ExecutionEngine};
+pub use engine::{ExecuteOptions, ExecutionEngine, OverlaySourceOptions};
 
 pub(crate) use cache_merge::query_result_merge_cache;
 pub(crate) use embed_cache::cache_decoded_entity_tree;
@@ -142,6 +147,6 @@ pub(crate) use scoped_fanout::{
     ref_from_materialize_bindings_for_get_chain, resolve_cached_targets_from_relation_refs,
 };
 pub(crate) use template_env::{
-    ensure_http_operation, normalize_cml_env_scope_entity_refs, normalize_cml_scope_entity_ref_value,
-    populate_template_path_env,
+    ensure_mutating_operation, normalize_cml_env_scope_entity_refs,
+    normalize_cml_scope_entity_ref_value, populate_template_path_env,
 };

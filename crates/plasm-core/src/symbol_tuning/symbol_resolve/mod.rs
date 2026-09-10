@@ -73,7 +73,7 @@ impl SymbolMap {
     /// Resolve a row projection / postfix field token for a known binding entity.
     pub fn resolve_entity_field(
         &self,
-        _catalog: CatalogScope<'_>,
+        catalog: CatalogScope<'_>,
         entity: &str,
         ent: &EntityDef,
         token: &str,
@@ -86,9 +86,12 @@ impl SymbolMap {
         if ent.fields.contains_key(t) || ent.relations.contains_key(t) {
             return Ok(t.to_string());
         }
+        let entry_id = catalog.entry_id().unwrap_or("");
         Err(SymbolResolveError::NotARowField {
             entity: entity.to_string(),
             token: t.to_string(),
+            method_invoke_form: self.mutator_param_invoke_form(entry_id, entity, t, None),
+            query_selection_form: self.query_selection_form(entry_id, entity, t, None),
         })
     }
 
@@ -128,10 +131,10 @@ impl SymbolMap {
         if ent.fields.contains_key(t) {
             return Ok(t.to_string());
         }
-        let entry_id = cgs.entry_id.as_deref().unwrap_or("");
-        if self.is_capability_param_wire_on_entity(entry_id, entity, t) {
-            return Ok(t.to_string());
-        }
+        let entry_id = _catalog
+            .entry_id()
+            .or(cgs.entry_id.as_deref())
+            .unwrap_or("");
         for cap in cgs.capabilities.values() {
             if cap.domain.as_str() != entity {
                 continue;
@@ -146,7 +149,106 @@ impl SymbolMap {
         Err(SymbolResolveError::UnknownQueryFilterPSym {
             entity: entity.to_string(),
             token: t.to_string(),
+            method_invoke_form: self.mutator_param_invoke_form(entry_id, entity, t, Some(cgs)),
         })
+    }
+
+    fn cap_kind_for_param(
+        &self,
+        catalog_entry_id: &str,
+        entity: &str,
+        cap_name: &str,
+        token: &str,
+        cgs: Option<&crate::CGS>,
+    ) -> Option<CapabilityKind> {
+        if let Some(cgs) = cgs {
+            if let Some(cap) = cgs.capabilities.get(cap_name) {
+                return Some(cap.kind);
+            }
+        }
+        let key = crate::symbol_tuning::tables::wire_occurrence_value_key(
+            catalog_entry_id,
+            entity,
+            token,
+        );
+        if let Some(kind) = self.values.wire_cap_param_kinds.get(&key) {
+            return Some(*kind);
+        }
+        let leaf = super::leaf_capability_param_expand_key(token);
+        if leaf != token {
+            let leaf_key = crate::symbol_tuning::tables::wire_occurrence_value_key(
+                catalog_entry_id,
+                entity,
+                leaf.as_str(),
+            );
+            if let Some(kind) = self.values.wire_cap_param_kinds.get(&leaf_key) {
+                return Some(*kind);
+            }
+        }
+        let m = self.method_sym_for(catalog_entry_id, entity, cap_name);
+        self.resolve_session_method(&m).ok().map(|b| b.kind)
+    }
+
+    /// When `token` is a query/search selection slot, return `e#{token=...}`.
+    fn query_selection_form(
+        &self,
+        catalog_entry_id: &str,
+        entity: &str,
+        token: &str,
+        cgs: Option<&crate::CGS>,
+    ) -> Option<String> {
+        let (_, _dom, cap_name, param) =
+            self.capability_param_quad_for_wire(catalog_entry_id, entity, token)?;
+        let kind =
+            self.cap_kind_for_param(catalog_entry_id, entity, cap_name.as_str(), token, cgs)?;
+        if !matches!(kind, CapabilityKind::Query | CapabilityKind::Search) {
+            return None;
+        }
+        let e = self.entity_sym_for(catalog_entry_id, entity);
+        Some(format!("{e}{{{param}=...}}"))
+    }
+
+    /// When `token` is a taught create/action/update/delete param on `entity`, return `e#.m#(... token=...)`.
+    fn mutator_param_invoke_form(
+        &self,
+        catalog_entry_id: &str,
+        entity: &str,
+        token: &str,
+        cgs: Option<&crate::CGS>,
+    ) -> Option<String> {
+        let (_, _dom, cap_name, param) =
+            self.capability_param_quad_for_wire(catalog_entry_id, entity, token)?;
+        let kind = self.cap_kind_for_param(catalog_entry_id, entity, cap_name.as_str(), token, cgs);
+        if matches!(
+            kind,
+            Some(CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get)
+        ) {
+            return None;
+        }
+        if let Some(cgs) = cgs {
+            if let Some(cap) = cgs.capabilities.get(cap_name.as_str()) {
+                let e = self.entity_sym_for(catalog_entry_id, entity);
+                let m = self.method_sym_for_cap(catalog_entry_id, cap);
+                return Some(format!("{e}.{m}(... {param}=...)"));
+            }
+        }
+        if !matches!(
+            kind,
+            Some(
+                CapabilityKind::Create
+                    | CapabilityKind::Action
+                    | CapabilityKind::Update
+                    | CapabilityKind::Delete
+            )
+        ) {
+            return None;
+        }
+        let e = self.entity_sym_for(catalog_entry_id, entity);
+        let m = self.method_sym_for(catalog_entry_id, entity, cap_name.as_str());
+        if m == cap_name.as_str() {
+            return Some(format!("{e}.<method>(... {param}=...)"));
+        }
+        Some(format!("{e}.{m}(... {param}=...)"))
     }
 
     /// Opaque session `m#` → catalog-qualified method binding.

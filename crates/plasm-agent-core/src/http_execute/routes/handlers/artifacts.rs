@@ -228,9 +228,13 @@ pub(crate) async fn get_execute_run_artifact(
         }
     };
 
-    let live_sess = st
-        .get_execute_session(prompt_hash.as_str(), session_id.as_str())
-        .await;
+    let live_sess = match st
+        .try_get_execute_session(prompt_hash.as_str(), session_id.as_str())
+        .await
+    {
+        Ok(session) => session,
+        Err(error) => return crate::http_execute::session_lookup_unavailable(error),
+    };
     let live_payload = if let Some(sess) = &live_sess {
         sess.core
             .get_run_artifact(run_id)

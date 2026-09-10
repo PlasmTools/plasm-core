@@ -9,7 +9,7 @@ use plasm_core::{ChainStep, Expr, PlasmComp, Predicate, TypedComparisonValue};
 use crate::execute_session::ExecuteSession;
 use crate::plan_dry_display::PlanDryReview;
 use crate::plan_node_graph::{unused_binding_hints, unused_seed_hints};
-use crate::plan_read_bounds::{apply_read_budgets, read_execution_is_expensive, PushedReadBudget};
+use crate::plan_read_bounds::{apply_read_budgets, read_execution_is_expensive};
 use crate::plasm_comp_lift::ExecutablePlasmComp;
 use crate::plasm_plan::{
     ComputeOp, Plan, PlanNodeKind, PlanValue, ValidatedPlan, ValidatedPlanNode, ValidatedPlanState,
@@ -37,77 +37,6 @@ impl ReadBoundedness {
             self.has_relation_many_source_fanout,
             self.has_foreach_fanout_risk,
         )
-    }
-}
-
-/// Read budgets from a prepared validated plan, keyed by surface node id.
-#[derive(Debug, Clone, Default)]
-pub(crate) struct PreparedSurfaceBudget {
-    pub page_size: Option<usize>,
-    pub pushed_read_budget: Option<PushedReadBudget>,
-}
-
-#[must_use]
-pub(crate) fn prepared_surface_budget_lookup(
-    plan: &Plan<ValidatedPlanState>,
-) -> HashMap<String, PreparedSurfaceBudget> {
-    plan.nodes
-        .iter()
-        .filter_map(|n| {
-            let ValidatedPlanNode::Surface(s) = n else {
-                return None;
-            };
-            Some((
-                s.id.as_str().to_string(),
-                PreparedSurfaceBudget {
-                    page_size: s.page_size,
-                    pushed_read_budget: s.pushed_read_budget.clone(),
-                },
-            ))
-        })
-        .collect()
-}
-
-/// Read budgets from a prepared validated plan, keyed by relation node id.
-#[must_use]
-pub(crate) fn prepared_relation_budget_lookup(
-    plan: &Plan<ValidatedPlanState>,
-) -> HashMap<String, PushedReadBudget> {
-    plan.nodes
-        .iter()
-        .filter_map(|n| {
-            let ValidatedPlanNode::RelationTraversal(r) = n else {
-                return None;
-            };
-            r.pushed_read_budget
-                .clone()
-                .map(|budget| (r.id.as_str().to_string(), budget))
-        })
-        .collect()
-}
-
-pub(crate) fn apply_prepared_relation_budget(
-    relation: &mut crate::plasm_plan::ValidatedRelationTraversalNode,
-    lookup: &HashMap<String, PushedReadBudget>,
-) {
-    let Some(budget) = lookup.get(relation.id.as_str()) else {
-        return;
-    };
-    relation.pushed_read_budget = Some(budget.clone());
-}
-
-pub(crate) fn apply_prepared_surface_budget(
-    surface: &mut ValidatedSurfaceNode,
-    lookup: &HashMap<String, PreparedSurfaceBudget>,
-) {
-    let Some(budget) = lookup.get(surface.id.as_str()) else {
-        return;
-    };
-    if budget.page_size.is_some() {
-        surface.page_size = budget.page_size;
-    }
-    if budget.pushed_read_budget.is_some() {
-        surface.pushed_read_budget = budget.pushed_read_budget.clone();
     }
 }
 
@@ -537,7 +466,6 @@ mod tests {
             None,
             cgs.catalog_cgs_hash_hex(),
             None,
-            None,
         )
     }
 
@@ -774,6 +702,12 @@ mod tests {
             dry.review
         );
         assert!(!dry.review.needs_review(false));
+        assert!(
+            dry.fuse_clean_read(),
+            "limited projected read must fuse: gate={:?} flow={:?}",
+            dry.evaluate_gate().verdict,
+            dry.flow.verdict
+        );
     }
 
     #[test]

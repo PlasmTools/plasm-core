@@ -7,7 +7,6 @@ use crate::mcp_run_markdown::{
     mcp_inline_run_snapshot_line, mcp_prepend_artifact_followup_markdown,
     mcp_tsv_body_to_markdown_fence, slim_result_section_header, OmittedReferenceOnlyFields,
 };
-use crate::observe_process_using::append_tsv_process_using_footers;
 use crate::output::LossySummaryFieldNames;
 use crate::run_artifacts::RunArtifactHandle;
 
@@ -238,10 +237,8 @@ pub(crate) fn render_markdown(
         inline.sections.clone()
     };
     let handles_meta = snapshot_handles_for_meta(plan, preview_needed);
-    let markdown =
-        mcp_prepend_artifact_followup_markdown(markdown, use_mcp_meta, &handles_meta, omitted);
-    // F_m0 observe-site footer: plural identity / large TSV dumps (payload untouched).
-    append_tsv_process_using_footers(&markdown)
+    // Publish Markdown is Plasm's own surface — do not append didactic observe footers.
+    mcp_prepend_artifact_followup_markdown(markdown, use_mcp_meta, &handles_meta, omitted)
 }
 
 fn lossy_preview_union(plan: &PublishPlan, preview_needed: bool) -> LossySummaryFieldNames {

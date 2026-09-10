@@ -45,7 +45,7 @@ fn lower_row_expression_with_suffixes(
     suffixes: Vec<RowSuffix>,
 ) -> Result<Vec<DagNode>, String> {
     if suffixes.is_empty() {
-        return Ok(compile_surface_nodes(session, state, binding_id, full_rhs)?);
+        return compile_surface_nodes(session, state, binding_id, full_rhs);
     }
     lower_suffix_stream(
         session, state, binding_id, full_rhs, &head, suffixes, final_id,

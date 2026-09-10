@@ -7,7 +7,6 @@ use super::test_support::assert_compile_rejects_unknown_cap_param;
 use super::test_support::github_symbol_map;
 use crate::plasm_plan_run::evaluate_plasm_plan_dry;
 use plasm_core::{CgsContext, PromptPipelineConfig, SymbolMap, TeachingExposureSession};
-use plasm_core::MutatorAdmit;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -42,7 +41,6 @@ fn homograph_matrix_session() -> ExecuteSession {
         Some(exp),
         None,
         cgs.catalog_cgs_hash_hex(),
-        None,
         None,
     )
 }
@@ -119,24 +117,12 @@ fn langitem_create_query_session() -> ExecuteSession {
         )
         .expect("load plasm_language_matrix"),
     );
-    let endpoints = ["LangItem"]
-        .iter()
-        .map(|e| plasm_core::ExposureEntityKey {
-            entry_id: "langmatrix".into(),
-            entity: plasm_core::EntityName::from(*e),
-        })
-        .collect::<Vec<_>>();
-    let delta = plasm_core::discovery::derive_intent_exposure_surface_batch(
+    let delta = plasm_core::capability_exposure::explicit_entity_capability_surface(
         cgs.as_ref(),
         "langmatrix",
-        "create and list lang items",
-        &endpoints,
         &["LangItem".to_string()],
-        Some(&["langitem_create".to_string(), "langitem_query".to_string()]),
-        plasm_core::discovery::ExposureSurfaceOptions {
-            mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-        },
-    );
+    )
+    .expect("explicit fixture capability exposure");
     let exp = TeachingExposureSession::new_with_intent_delta(
         cgs.as_ref(),
         "langmatrix",
@@ -161,7 +147,6 @@ fn langitem_create_query_session() -> ExecuteSession {
         Some(exp),
         None,
         cgs.catalog_cgs_hash_hex(),
-        None,
         None,
     )
 }
@@ -310,33 +295,16 @@ fn compound_branch_mutator_session() -> ExecuteSession {
         )
         .expect("load plasm_language_matrix"),
     );
-    let endpoints = ["LangItem", "CompoundBranch", "LangTag"]
-        .iter()
-        .map(|e| plasm_core::ExposureEntityKey {
-            entry_id: "langmatrix".into(),
-            entity: plasm_core::EntityName::from(*e),
-        })
-        .collect::<Vec<_>>();
-    let delta = plasm_core::discovery::derive_intent_exposure_surface_batch(
+    let delta = plasm_core::capability_exposure::explicit_entity_capability_surface(
         cgs.as_ref(),
         "langmatrix",
-        "patch lang item tags and resolve compound branch identity",
-        &endpoints,
         &[
             "LangItem".to_string(),
             "CompoundBranch".to_string(),
             "LangTag".to_string(),
         ],
-        Some(&[
-            "langitem_create".to_string(),
-            "langitem_update".to_string(),
-            "langtag_query".to_string(),
-            "langcompoundbranch_get".to_string(),
-        ]),
-        plasm_core::discovery::ExposureSurfaceOptions {
-            mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-        },
-    );
+    )
+    .expect("explicit fixture capability exposure");
     let exp = TeachingExposureSession::new_with_intent_delta(
         cgs.as_ref(),
         "langmatrix",
@@ -361,7 +329,6 @@ fn compound_branch_mutator_session() -> ExecuteSession {
         Some(exp),
         None,
         cgs.catalog_cgs_hash_hex(),
-        None,
         None,
     )
 }
@@ -497,28 +464,12 @@ fn langitem_query_update_tags_session() -> ExecuteSession {
         )
         .expect("load plasm_language_matrix"),
     );
-    let endpoints = ["LangItem"]
-        .iter()
-        .map(|e| plasm_core::ExposureEntityKey {
-            entry_id: "langmatrix".into(),
-            entity: plasm_core::EntityName::from(*e),
-        })
-        .collect::<Vec<_>>();
-    let delta = plasm_core::discovery::derive_intent_exposure_surface_batch(
+    let delta = plasm_core::capability_exposure::explicit_entity_capability_surface(
         cgs.as_ref(),
         "langmatrix",
-        "query and patch lang item tags",
-        &endpoints,
         &["LangItem".to_string()],
-        Some(&[
-            "langitem_create".to_string(),
-            "langitem_query".to_string(),
-            "langitem_update".to_string(),
-        ]),
-        plasm_core::discovery::ExposureSurfaceOptions {
-            mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-        },
-    );
+    )
+    .expect("explicit fixture capability exposure");
     let exp = TeachingExposureSession::new_with_intent_delta(
         cgs.as_ref(),
         "langmatrix",
@@ -543,7 +494,6 @@ fn langitem_query_update_tags_session() -> ExecuteSession {
         Some(exp),
         None,
         cgs.catalog_cgs_hash_hex(),
-        None,
         None,
     )
 }

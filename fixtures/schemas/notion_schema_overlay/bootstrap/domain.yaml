@@ -83,8 +83,8 @@ entities:
         value_ref: nv_wire_str_short
 capabilities:
   database_search:
-    description: Search databases shared with the integration.
-    kind: search
+    description: List databases shared with the integration, optionally filtered by title.
+    kind: query
     entity: Database
     selection:
     - name: query

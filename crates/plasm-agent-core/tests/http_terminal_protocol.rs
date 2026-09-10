@@ -12,7 +12,7 @@ use plasm_agent_core::http_discovery::discovery_routes_protected;
 use plasm_agent_core::http_execute::execute_routes;
 use plasm_agent_core::incoming_auth::IncomingPrincipal;
 use plasm_agent_core::server_state::PlasmHostState;
-use plasm_core::discovery::InMemoryCgsRegistry;
+use plasm_core::discovery::CgsRegistry;
 use plasm_core::loader::load_schema_dir;
 use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 use std::path::Path;
@@ -22,7 +22,7 @@ use tower::util::ServiceExt;
 fn test_state() -> PlasmHostState {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
     let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
-    let reg = InMemoryCgsRegistry::from_pairs(vec![(
+    let reg = CgsRegistry::from_pairs(vec![(
         "overshow".into(),
         "Overshow".into(),
         vec!["demo".into()],

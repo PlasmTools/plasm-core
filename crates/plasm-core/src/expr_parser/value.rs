@@ -167,11 +167,19 @@ impl<'a> Parser<'a> {
                         if self.pos < bytes.len() && bytes[self.pos] == b'\n' {
                             self.pos += 1;
                         }
-                        return Ok(Value::String(content));
+                        return Value::program_string(content).map_err(|error| {
+                            self.err(ParseErrorKind::InvalidProgramString {
+                                message: error.to_string(),
+                            })
+                        });
                     }
                     HeredocCloseLineKind::GluedSuffix => {
                         self.pos = line_start + leading_ws + tag.len();
-                        return Ok(Value::String(content));
+                        return Value::program_string(content).map_err(|error| {
+                            self.err(ParseErrorKind::InvalidProgramString {
+                                message: error.to_string(),
+                            })
+                        });
                     }
                 }
             }
@@ -243,7 +251,11 @@ impl<'a> Parser<'a> {
                         Some(c) => s.push(c),
                     }
                 }
-                Ok(Value::String(s))
+                Value::program_string(s).map_err(|error| {
+                    self.err(ParseErrorKind::InvalidProgramString {
+                        message: error.to_string(),
+                    })
+                })
             }
             Some(c) if c.is_ascii_digit() => {
                 if let Some(u) = self.try_consume_standard_uuid() {

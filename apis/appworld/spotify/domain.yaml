@@ -1,4 +1,4 @@
-version: 18
+version: 20
 entry_id: spotify
 auth:
   scheme: none
@@ -22,8 +22,6 @@ entities:
       - login
       - auth
       - access token
-      seed_class: primary
-      co_seed_with: catalog_primary
     fields:
       access_token:
         required: true
@@ -43,7 +41,6 @@ entities:
       - music
       - song library
       - library songs
-      seed_class: primary
     fields:
       song_id:
         required: true
@@ -89,7 +86,6 @@ entities:
       - liked songs
       - favorites
       - hearted song
-      seed_class: primary
     fields:
       song_id:
         required: true
@@ -133,7 +129,6 @@ entities:
       - albums
       - album library
       - library albums
-      seed_class: primary
     fields:
       album_id:
         required: true
@@ -163,7 +158,6 @@ entities:
       names:
       - liked album
       - liked albums
-      seed_class: primary
     fields:
       album_id:
         required: true
@@ -194,7 +188,6 @@ entities:
       names:
       - artist
       - artists
-      seed_class: primary
     fields:
       artist_id:
         required: true
@@ -215,7 +208,6 @@ entities:
       names:
       - profile
       - user
-      seed_class: ambient
     fields:
       first_name:
         required: false
@@ -237,7 +229,6 @@ entities:
       - genre
       - genres
       - music genre
-      seed_class: ambient
     fields:
       name:
         required: true
@@ -252,7 +243,6 @@ entities:
       - playlists
       - playlist library
       - library playlists
-      seed_class: primary
     fields:
       playlist_id:
         required: true
@@ -296,7 +286,6 @@ entities:
       names:
       - liked playlist
       - liked playlists
-      seed_class: primary
     fields:
       playlist_id:
         required: true
@@ -327,7 +316,6 @@ entities:
       - downloaded song
       - downloads
       - offline song
-      seed_class: primary
     fields:
       song_id:
         required: true
@@ -365,7 +353,6 @@ entities:
       - previous song
       - next song
       - play
-      seed_class: primary
     fields:
       access_token:
         required: true
@@ -415,7 +402,6 @@ entities:
       - song review
       - song reviews
       - rate song
-      seed_class: primary
     fields:
       song_review_id:
         required: true
@@ -441,7 +427,6 @@ entities:
       - album review
       - album reviews
       - rate album
-      seed_class: primary
     fields:
       album_review_id:
         required: true
@@ -467,7 +452,6 @@ entities:
       - playlist review
       - playlist reviews
       - rate playlist
-      seed_class: primary
     fields:
       playlist_review_id:
         required: true
@@ -493,7 +477,6 @@ entities:
       - payment card
       - card
       - payment cards
-      seed_class: primary
     fields:
       payment_card_id:
         required: true
@@ -526,7 +509,6 @@ entities:
       - premium plan
       - premium plans
       - premium pricing
-      seed_class: dependent
     fields:
       monthly:
         required: true
@@ -542,7 +524,6 @@ entities:
       - premium
       - premium subscription
       - subscription
-      seed_class: dependent
     fields:
       premium_subscription_id:
         required: true
@@ -579,8 +560,8 @@ capabilities:
     - access_token
     - token_type
     output:
-      type: side_effect
-      description: Creates an authenticated Spotify session.
+      type: entity
+      entity_type: AuthSession
   logout:
     description: Logout and invalidate the access token.
     kind: action
@@ -2075,3 +2056,649 @@ values:
   nv_datetime:
     type: rfc3339
     description: ISO datetime string.
+  prerequisite_principal_email:
+    type: email
+    description: Account holder email.
+  prerequisite_principal_phone:
+    type: e164
+    description: Account holder phone number.
+  prerequisite_account_name:
+    type: string
+    description: Service account identifier.
+prerequisites:
+  contracts:
+    appworld.principal:
+      version: 1
+      inputs: {}
+      outputs:
+        email: prerequisite_principal_email
+        phone: prerequisite_principal_phone
+    appworld.password:
+      version: 1
+      inputs:
+        account: prerequisite_account_name
+      outputs:
+        password: nv_password
+    appworld.session:
+      version: 1
+      inputs: {}
+      outputs:
+        token: nv_access_token
+  providers:
+    session:
+      contract: appworld.session
+      capability: login
+      outputs:
+        token: access_token
+  requirements:
+    login:
+    - id: principal
+      contract: appworld.principal
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - username
+        output: email
+    - id: password
+      contract: appworld.password
+      arguments:
+        account:
+          kind: constant
+          value: spotify
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - password
+        output: password
+    logout:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    song_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    song_like:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    song_unlike:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    downloaded_song_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    song_download:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    song_undownload:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    album_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    album_like:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    album_unlike:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    artist_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    artist_follow:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    artist_unfollow:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    playlist_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    playlist_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    playlist_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    playlist_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    playlist_add_song:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    playlist_remove_song:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    playlist_like:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    playlist_unlike:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    player_current_wire:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    player_current:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    player_play:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    player_pause:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    player_previous:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    player_next:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    player_queue:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    player_queue_add:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    player_queue_clear:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    player_queue_remove:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    player_move_song:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    player_seek:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    player_loop:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    player_shuffle:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    player_volume_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    player_volume_set:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    liked_song_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    liked_song_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    song_library_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    song_library_add:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    song_library_remove:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    album_library_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    album_library_add:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    album_library_remove:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    playlist_library_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    liked_playlist_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    liked_album_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    following_artist_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    song_review_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    song_review_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    song_review_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    album_review_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    album_review_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    album_review_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    playlist_review_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    playlist_review_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    playlist_review_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_card_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    payment_card_create:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_card_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    payment_card_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    premium_subscription_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    premium_subscribe:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    premium_subscription_receipt:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+      - input:
+          lane: payload
+          path:
+          - file_system_access_token
+        output: token

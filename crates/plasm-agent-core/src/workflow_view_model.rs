@@ -10,7 +10,7 @@ use crate::workflow_program_template::{
 };
 use crate::workflow_readiness::assess_workflow_readiness;
 use crate::workflow_registry::WorkflowRegistry;
-use plasm_core::discovery::InMemoryCgsRegistry;
+use plasm_core::discovery::CgsRegistry;
 use plasm_core::ExposedEntitySymbolRow;
 use plasm_core::Value;
 
@@ -49,7 +49,7 @@ pub fn build_workflow_view_model(manifest: &WorkflowManifest) -> WorkflowViewMod
 pub fn build_workflow_view_model_with_readiness(
     manifest: &WorkflowManifest,
     readiness: Option<(
-        &InMemoryCgsRegistry,
+        &CgsRegistry,
         Option<&crate::mcp_runtime_config::McpRuntimeConfig>,
     )>,
 ) -> WorkflowViewModel {
@@ -171,7 +171,7 @@ pub fn lookup_view_model(registry: &WorkflowRegistry, id: &str) -> Option<Workfl
 pub fn lookup_view_model_with_readiness(
     workflows: &WorkflowRegistry,
     id: &str,
-    catalog: &InMemoryCgsRegistry,
+    catalog: &CgsRegistry,
     tenant_cfg: Option<&crate::mcp_runtime_config::McpRuntimeConfig>,
 ) -> Option<WorkflowViewModel> {
     workflows

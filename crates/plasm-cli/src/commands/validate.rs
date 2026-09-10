@@ -149,7 +149,7 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
                         &mut SessionMaterialization::new(),
                         Some(ExecutionMode::Live),
                         StreamConsumeOpts::default(),
-                        ExecuteOptions::default(),
+                        ExecuteOptions::for_catalog(&cgs).expect("validated catalog must compile"),
                     )
                     .await;
                 results.push(match bare_result {
@@ -388,7 +388,7 @@ async fn check_execution(
             mat,
             Some(ExecutionMode::Live),
             consume,
-            ExecuteOptions::default(),
+            ExecuteOptions::for_catalog(cgs).expect("validated catalog must compile"),
         )
         .await
     {

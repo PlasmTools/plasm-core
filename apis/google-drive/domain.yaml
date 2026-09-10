@@ -1,4 +1,4 @@
-version: 4
+version: 5
 http_backend: https://www.googleapis.com/drive/v3
 data_classes:
   untrusted:
@@ -106,7 +106,8 @@ entities:
       permissions:
         target: DrivePermission
         cardinality: many
-        description: ACL entries when the API includes them or when loaded via the permissions API.
+        description: ACL entries when the API includes them or when loaded via the
+          permissions API.
         materialize:
           kind: query_scoped_bindings
           capability: permissions_list
@@ -130,7 +131,8 @@ entities:
             fileId: id
   About:
     id_field: kind
-    description: Per-user Drive capabilities, quotas, and import or export format metadata.
+    description: Per-user Drive capabilities, quotas, and import or export format
+      metadata.
     fields:
       kind:
         required: false
@@ -234,7 +236,8 @@ entities:
     relations: {}
   TeamDrive:
     id_field: id
-    description: Legacy team drive resource — prefer SharedDrive for new integrations when possible.
+    description: Legacy team drive resource — prefer SharedDrive for new integrations
+      when possible.
     fields:
       id:
         required: true
@@ -343,7 +346,8 @@ entities:
             commentId: id
   ChannelStop:
     id_field: id
-    description: Acknowledgement for stopping a push notification channel (no stable resource id on the wire).
+    description: Acknowledgement for stopping a push notification channel (no stable
+      resource id on the wire).
     domain_projection_examples: false
     fields:
       id:
@@ -447,18 +451,17 @@ entities:
     relations: {}
 capabilities:
   about_get:
+    description: Return storage and capability metadata for the authenticated user.
     kind: singleton
     entity: About
-    description: Return storage and capability metadata for the authenticated user.
   files_list:
+    description: List or search files — combine q, corpora, and drive scoping as needed.
     kind: query
     entity: File
-    description: List or search files — combine q, corpora, and drive scoping as needed.
-    parameters:
+    selection:
     - name: q
       value_ref: nv_wire_str_short
       required: false
-      role: search
     - name: corpora
       value_ref: nv_wire_str_short
       required: false
@@ -468,10 +471,6 @@ capabilities:
     - name: spaces
       value_ref: nv_wire_str_short
       required: false
-    - name: orderBy
-      value_ref: nv_wire_str_short
-      required: false
-      role: sort
     - name: includeItemsFromAllDrives
       value_ref: nv_wire_bool
       required: false
@@ -484,72 +483,94 @@ capabilities:
     - name: includePermissionsForView
       value_ref: nv_wire_str_short
       required: false
+    controls:
+    - name: orderBy
+      value_ref: nv_wire_str_short
+      required: false
   files_get:
     kind: get
     entity: File
   files_create:
+    description: Create a file or folder — supply metadata in the JSON input body
+      as the API expects.
     kind: create
     entity: File
-    description: Create a file or folder — supply metadata in the JSON input body as the API expects.
-    parameters:
-    - name: input
-      value_ref: nv_files_create_input
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: input
+          value_ref: nv_files_create_input
+          required: false
   files_update:
+    description: Patch file metadata or placement (addParents, removeParents via query
+      flags).
     kind: update
     entity: File
-    description: Patch file metadata or placement (addParents, removeParents via query flags).
-    parameters:
-    - name: addParents
-      value_ref: nv_wire_str_short
-      required: false
-    - name: removeParents
-      value_ref: nv_wire_str_short
-      required: false
-    - name: enforceSingleParent
-      value_ref: nv_wire_bool
-      required: false
-    - name: keepRevisionForever
-      value_ref: nv_wire_bool
-      required: false
-    - name: supportsAllDrives
-      value_ref: nv_wire_bool
-      required: false
-    - name: useDomainAdminAccess
-      value_ref: nv_wire_bool
-      required: false
-    - name: input
-      value_ref: nv_files_update_input
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: addParents
+          value_ref: nv_wire_str_short
+          required: false
+        - name: removeParents
+          value_ref: nv_wire_str_short
+          required: false
+        - name: enforceSingleParent
+          value_ref: nv_wire_bool
+          required: false
+        - name: keepRevisionForever
+          value_ref: nv_wire_bool
+          required: false
+        - name: supportsAllDrives
+          value_ref: nv_wire_bool
+          required: false
+        - name: useDomainAdminAccess
+          value_ref: nv_wire_bool
+          required: false
+        - name: input
+          value_ref: nv_files_update_input
+          required: false
   files_delete:
+    description: Permanently delete a file when permitted.
     kind: delete
     entity: File
-    description: Permanently delete a file when permitted.
-    parameters:
-    - name: supportsAllDrives
-      value_ref: nv_wire_bool
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: supportsAllDrives
+          value_ref: nv_wire_bool
+          required: false
   files_copy:
+    description: Copy an existing file to a new file entry.
     kind: action
     entity: File
-    description: Copy an existing file to a new file entry.
-    parameters:
-    - name: input
-      value_ref: nv_files_copy_input
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: input
+          value_ref: nv_files_copy_input
+          required: false
     provides:
     - id
     - name
     - mimeType
     - kind
   files_export:
+    description: Export a Google Workspace file to a downloadable MIME type (binary
+      response).
     kind: action
     entity: File
-    description: Export a Google Workspace file to a downloadable MIME type (binary response).
-    parameters:
-    - name: mimeType
-      value_ref: nv_wire_str_short
-      required: true
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: mimeType
+          value_ref: nv_wire_str_short
+          required: true
     output:
       type: side_effect
       description: Returns exported bytes for the requested MIME type.
@@ -560,20 +581,23 @@ capabilities:
       type: side_effect
       description: Permanently deletes all files in the user trash.
   files_download:
+    description: Start a long-running download of file bytes (returns an Operation).
     kind: action
     entity: DriveOperation
-    description: Start a long-running download of file bytes (returns an Operation).
-    parameters:
+    scope:
     - name: fileId
       value_ref: nv_files_download_file_id
       required: true
-      role: scope
-    - name: mimeType
-      value_ref: nv_wire_str_short
-      required: false
-    - name: revisionId
-      value_ref: nv_wire_str_short
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: mimeType
+          value_ref: nv_wire_str_short
+          required: false
+        - name: revisionId
+          value_ref: nv_wire_str_short
+          required: false
     provides:
     - name
     - done
@@ -581,241 +605,258 @@ capabilities:
     - response
     - error
   permissions_list:
+    description: List permissions on a file.
     kind: query
     entity: DrivePermission
-    description: List permissions on a file.
-    parameters:
+    selection:
+    - name: supportsAllDrives
+      value_ref: nv_wire_bool
+      required: false
+    - name: useDomainAdminAccess
+      value_ref: nv_wire_bool
+      required: false
+    scope:
     - name: fileId
       value_ref: nv_permissions_list_file_id
       required: true
-    - name: supportsAllDrives
-      value_ref: nv_wire_bool
-      required: false
-    - name: useDomainAdminAccess
-      value_ref: nv_wire_bool
-      required: false
-    selection: []
-    scope: []
   permissions_get:
     kind: get
     entity: DrivePermission
-    parameters:
-    - name: supportsAllDrives
-      value_ref: nv_wire_bool
-      required: false
-    - name: useDomainAdminAccess
-      value_ref: nv_wire_bool
-      required: false
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: supportsAllDrives
+          value_ref: nv_wire_bool
+          required: false
+        - name: useDomainAdminAccess
+          value_ref: nv_wire_bool
+          required: false
   permissions_create:
+    description: Create a permission (share the file).
     kind: create
     entity: DrivePermission
-    description: Create a permission (share the file).
-    parameters:
+    scope:
     - name: fileId
       value_ref: nv_permissions_create_file_id
       required: true
-      role: scope
-    - name: emailMessage
-      value_ref: nv_wire_str_short
-      required: false
-    - name: sendNotificationEmail
-      value_ref: nv_wire_bool
-      required: false
-    - name: supportsAllDrives
-      value_ref: nv_wire_bool
-      required: false
-    - name: transferOwnership
-      value_ref: nv_wire_bool
-      required: false
-    - name: useDomainAdminAccess
-      value_ref: nv_wire_bool
-      required: false
-    - name: input
-      value_ref: nv_permissions_create_input
-      required: false
-      sink_class: permission_grant
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: emailMessage
+          value_ref: nv_wire_str_short
+          required: false
+        - name: sendNotificationEmail
+          value_ref: nv_wire_bool
+          required: false
+        - name: supportsAllDrives
+          value_ref: nv_wire_bool
+          required: false
+        - name: transferOwnership
+          value_ref: nv_wire_bool
+          required: false
+        - name: useDomainAdminAccess
+          value_ref: nv_wire_bool
+          required: false
+        - name: input
+          value_ref: nv_permissions_create_input
+          required: false
+          sink_class: permission_grant
   permissions_update:
     kind: update
     entity: DrivePermission
-    parameters:
-    - name: removeExpiration
-      value_ref: nv_wire_bool
-      required: false
-    - name: supportsAllDrives
-      value_ref: nv_wire_bool
-      required: false
-    - name: transferOwnership
-      value_ref: nv_wire_bool
-      required: false
-    - name: useDomainAdminAccess
-      value_ref: nv_wire_bool
-      required: false
-    - name: input
-      value_ref: nv_permissions_update_input
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: removeExpiration
+          value_ref: nv_wire_bool
+          required: false
+        - name: supportsAllDrives
+          value_ref: nv_wire_bool
+          required: false
+        - name: transferOwnership
+          value_ref: nv_wire_bool
+          required: false
+        - name: useDomainAdminAccess
+          value_ref: nv_wire_bool
+          required: false
+        - name: input
+          value_ref: nv_permissions_update_input
+          required: false
   permissions_delete:
     kind: delete
     entity: DrivePermission
-    parameters:
-    - name: supportsAllDrives
-      value_ref: nv_wire_bool
-      required: false
-    - name: useDomainAdminAccess
-      value_ref: nv_wire_bool
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: supportsAllDrives
+          value_ref: nv_wire_bool
+          required: false
+        - name: useDomainAdminAccess
+          value_ref: nv_wire_bool
+          required: false
   comments_list:
     kind: query
     entity: DriveComment
-    parameters:
-    - name: fileId
-      value_ref: nv_comments_list_file_id
-      required: true
+    selection:
     - name: includeDeleted
       value_ref: nv_wire_bool
-      required: false
-    - name: pageSize
-      value_ref: nv_wire_int
       required: false
     - name: startModifiedTime
       value_ref: nv_wire_str_short
       required: false
-    selection: []
-    scope: []
+    scope:
+    - name: fileId
+      value_ref: nv_comments_list_file_id
+      required: true
   comments_get:
     kind: get
     entity: DriveComment
-    parameters:
-    - name: includeDeleted
-      value_ref: nv_wire_bool
-      required: false
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: includeDeleted
+          value_ref: nv_wire_bool
+          required: false
   comments_create:
     kind: create
     entity: DriveComment
-    parameters:
+    scope:
     - name: fileId
       value_ref: nv_comments_create_file_id
       required: true
-      role: scope
-    - name: input
-      value_ref: nv_comments_create_input
-      required: false
-      sink_class: external_publish
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: input
+          value_ref: nv_comments_create_input
+          required: false
+          sink_class: external_publish
   comments_update:
+    description: Patch a comment. Preflight runs comments_get and merges parent_*;
+      the wire body merges optional overrides. with the parent row (content, anchor,
+      quotedFileContent).
     kind: update
     entity: DriveComment
-    description: Patch a comment. Preflight runs comments_get and merges parent_*; the wire body merges optional overrides.
-      with the parent row (content, anchor, quotedFileContent).
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: content
+          value_ref: nv_comments_update_content
+          required: false
+          sink_class: external_publish
+        - name: anchor
+          value_ref: nv_comments_update_anchor
+          required: false
+        - name: quotedFileContent
+          value_ref: nv_comments_update_quoted_file_content
+          required: false
     preflight:
     - kind: hydrate_invoke_target
       get: comments_get
       prefix: parent
-    parameters:
-    - name: content
-      value_ref: nv_comments_update_content
-      required: false
-      sink_class: external_publish
-    - name: anchor
-      value_ref: nv_comments_update_anchor
-      required: false
-    - name: quotedFileContent
-      value_ref: nv_comments_update_quoted_file_content
-      required: false
   comments_delete:
     kind: delete
     entity: DriveComment
   replies_list:
     kind: query
     entity: DriveReply
-    parameters:
+    selection:
+    - name: includeDeleted
+      value_ref: nv_wire_bool
+      required: false
+    scope:
     - name: fileId
       value_ref: nv_replies_list_file_id
       required: true
     - name: commentId
       value_ref: nv_wire_str_short
       required: true
-    - name: includeDeleted
-      value_ref: nv_wire_bool
-      required: false
-    - name: pageSize
-      value_ref: nv_wire_int
-      required: false
-    selection: []
-    scope: []
   replies_get:
     kind: get
     entity: DriveReply
-    parameters:
-    - name: includeDeleted
-      value_ref: nv_wire_bool
-      required: false
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: includeDeleted
+          value_ref: nv_wire_bool
+          required: false
   replies_create:
     kind: create
     entity: DriveReply
-    parameters:
+    scope:
     - name: fileId
       value_ref: nv_replies_create_file_id
       required: true
-      role: scope
     - name: commentId
       value_ref: nv_wire_str_short
       required: true
-      role: scope
-    - name: input
-      value_ref: nv_replies_create_input
-      required: false
-      sink_class: external_publish
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: input
+          value_ref: nv_replies_create_input
+          required: false
+          sink_class: external_publish
   replies_update:
+    description: Patch a reply. Preflight runs replies_get and merges parent_*; the
+      wire body merges optional overrides with. the parent row (content, action).
     kind: update
     entity: DriveReply
-    description: Patch a reply. Preflight runs replies_get and merges parent_*; the wire body merges optional overrides with.
-      the parent row (content, action).
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: content
+          value_ref: nv_replies_update_content
+          required: false
+          sink_class: external_publish
+        - name: action
+          value_ref: nv_replies_update_action
+          required: false
     preflight:
     - kind: hydrate_invoke_target
       get: replies_get
       prefix: parent
-    parameters:
-    - name: content
-      value_ref: nv_replies_update_content
-      required: false
-      sink_class: external_publish
-    - name: action
-      value_ref: nv_replies_update_action
-      required: false
   replies_delete:
     kind: delete
     entity: DriveReply
   revisions_list:
     kind: query
     entity: DriveRevision
-    parameters:
+    selection: []
+    scope:
     - name: fileId
       value_ref: nv_revisions_list_file_id
       required: true
-    - name: pageSize
-      value_ref: nv_wire_int
-      required: false
-    selection: []
-    scope: []
   revisions_get:
     kind: get
     entity: DriveRevision
   revisions_update:
     kind: update
     entity: DriveRevision
-    parameters:
-    - name: input
-      value_ref: nv_revisions_update_input
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: input
+          value_ref: nv_revisions_update_input
+          required: false
   revisions_delete:
     kind: delete
     entity: DriveRevision
   drives_list:
     kind: query
     entity: SharedDrive
-    parameters:
-    - name: pageSize
-      value_ref: nv_wire_int
-      required: false
+    selection:
     - name: q
       value_ref: nv_wire_str_short
       required: false
@@ -825,37 +866,49 @@ capabilities:
   drives_get:
     kind: get
     entity: SharedDrive
-    parameters:
-    - name: useDomainAdminAccess
-      value_ref: nv_wire_bool
-      required: false
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: useDomainAdminAccess
+          value_ref: nv_wire_bool
+          required: false
   drives_create:
     kind: create
     entity: SharedDrive
-    parameters:
-    - name: requestId
-      value_ref: nv_wire_str_short
-      required: true
-    - name: input
-      value_ref: nv_drives_create_input
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: requestId
+          value_ref: nv_wire_str_short
+          required: true
+        - name: input
+          value_ref: nv_drives_create_input
+          required: false
   drives_update:
     kind: update
     entity: SharedDrive
-    parameters:
-    - name: useDomainAdminAccess
-      value_ref: nv_wire_bool
-      required: false
-    - name: input
-      value_ref: nv_drives_update_input
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: useDomainAdminAccess
+          value_ref: nv_wire_bool
+          required: false
+        - name: input
+          value_ref: nv_drives_update_input
+          required: false
   drives_delete:
     kind: delete
     entity: SharedDrive
-    parameters:
-    - name: allowItemDeletion
-      value_ref: nv_wire_bool
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: allowItemDeletion
+          value_ref: nv_wire_bool
+          required: false
   drives_hide:
     kind: action
     entity: SharedDrive
@@ -871,20 +924,23 @@ capabilities:
   changes_getStartPageToken:
     kind: singleton
     entity: StartPageToken
-    parameters:
-    - name: driveId
-      value_ref: nv_wire_str_short
-      required: false
-    - name: supportsAllDrives
-      value_ref: nv_wire_bool
-      required: false
-    - name: teamDriveId
-      value_ref: nv_wire_str_short
-      required: false
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: driveId
+          value_ref: nv_wire_str_short
+          required: false
+        - name: supportsAllDrives
+          value_ref: nv_wire_bool
+          required: false
+        - name: teamDriveId
+          value_ref: nv_wire_str_short
+          required: false
   changes_list:
     kind: query
     entity: DriveChange
-    parameters:
+    selection:
     - name: startPageToken
       value_ref: nv_wire_str_short
       required: true
@@ -918,10 +974,13 @@ capabilities:
   channels_stop:
     kind: action
     entity: ChannelStop
-    parameters:
-    - name: input
-      value_ref: nv_channels_stop_input
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: input
+          value_ref: nv_channels_stop_input
+          required: false
     output:
       type: side_effect
       description: Stops push notifications for the given channel id.
@@ -931,10 +990,7 @@ capabilities:
   teamdrives_list:
     kind: query
     entity: TeamDrive
-    parameters:
-    - name: pageSize
-      value_ref: nv_wire_int
-      required: false
+    selection:
     - name: q
       value_ref: nv_wire_str_short
       required: false
@@ -944,30 +1000,39 @@ capabilities:
   teamdrives_get:
     kind: get
     entity: TeamDrive
-    parameters:
-    - name: useDomainAdminAccess
-      value_ref: nv_wire_bool
-      required: false
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: useDomainAdminAccess
+          value_ref: nv_wire_bool
+          required: false
   teamdrives_create:
     kind: create
     entity: TeamDrive
-    parameters:
-    - name: requestId
-      value_ref: nv_wire_str_short
-      required: true
-    - name: input
-      value_ref: nv_teamdrives_create_input
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: requestId
+          value_ref: nv_wire_str_short
+          required: true
+        - name: input
+          value_ref: nv_teamdrives_create_input
+          required: false
   teamdrives_update:
     kind: update
     entity: TeamDrive
-    parameters:
-    - name: useDomainAdminAccess
-      value_ref: nv_wire_bool
-      required: false
-    - name: input
-      value_ref: nv_teamdrives_update_input
-      required: false
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: useDomainAdminAccess
+          value_ref: nv_wire_bool
+          required: false
+        - name: input
+          value_ref: nv_teamdrives_update_input
+          required: false
   teamdrives_delete:
     kind: delete
     entity: TeamDrive
@@ -1247,7 +1312,8 @@ values:
     target: File
   nv_drive_reply_action:
     type: string
-    description: Reply action on the parent comment (e.g. resolve, reopen); patchable on update.
+    description: Reply action on the parent comment (e.g. resolve, reopen); patchable
+      on update.
   nv_drive_reply_file_id:
     type: entity_ref
     target: File

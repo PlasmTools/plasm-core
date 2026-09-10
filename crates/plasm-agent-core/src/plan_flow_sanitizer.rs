@@ -38,7 +38,7 @@ pub fn apply_label_clearance<C: FlowCatalog + ?Sized, P: FlowPolicyEvaluator + ?
     key: &QualifiedCapabilityKey,
     capability_name: &str,
     incoming_labels: BTreeSet<DataClassName>,
-    template_expr: Option<&serde_json::Value>,
+    template_expr: Option<&plasm_core::Expr>,
     uses_result: &[PlanResultUse],
     facts: &BTreeMap<String, NodeFlowFacts>,
     check_control_taint: bool,
@@ -84,7 +84,7 @@ pub fn apply_label_clearance<C: FlowCatalog + ?Sized, P: FlowPolicyEvaluator + ?
 
 /// Returns true if any control param receives **untrusted** (integrity) taint.
 fn control_param_untrusted_voided(
-    expr: &serde_json::Value,
+    expr: &plasm_core::Expr,
     control_params: &BTreeSet<String>,
     uses_result: &[PlanResultUse],
     facts: &BTreeMap<String, NodeFlowFacts>,
@@ -92,7 +92,9 @@ fn control_param_untrusted_voided(
     if control_params.is_empty() {
         return false;
     }
-    let Some(input_obj) = expr.get("input").and_then(|v| v.as_object()) else {
+    let Some(plasm_core::Value::Object(input_obj)) =
+        plasm_core::operand_binding::invocation_input(expr)
+    else {
         return false;
     };
     let Ok(untrusted) = DataClassName::new("untrusted") else {
@@ -102,7 +104,7 @@ fn control_param_untrusted_voided(
         if !control_params.contains(param_name.as_str()) {
             continue;
         }
-        if hole_value_has_label(param_value, uses_result, facts, &untrusted) {
+        if hole_value_has_label(&param_value, uses_result, facts, &untrusted) {
             return true;
         }
     }
@@ -110,43 +112,60 @@ fn control_param_untrusted_voided(
 }
 
 fn hole_value_has_label(
-    value: &serde_json::Value,
+    value: &plasm_core::Value,
     uses_result: &[PlanResultUse],
     facts: &BTreeMap<String, NodeFlowFacts>,
     label: &DataClassName,
 ) -> bool {
-    if let Some(hole) = value.as_object().and_then(|o| o.get("__plasm_hole")) {
-        if hole.get("kind").and_then(|v| v.as_str()) == Some("node_input") {
-            let alias = hole
-                .get("alias")
-                .or_else(|| hole.get("node"))
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
-            let path: Vec<String> = hole
-                .get("path")
-                .and_then(|v| v.as_array())
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(|i| i.as_str().map(str::to_string))
-                        .collect()
-                })
-                .unwrap_or_default();
+    match value {
+        plasm_core::Value::PlasmInputRef(
+            plasm_core::PlasmInputRef::NodeInput { node, path }
+            | plasm_core::PlasmInputRef::RowBinding {
+                binding: node,
+                path,
+            },
+        ) => {
+            let Some(source_id) = resolve_alias_node(uses_result, node) else {
+                return false;
+            };
+            facts
+                .get(&source_id)
+                .cloned()
+                .unwrap_or_default()
+                .at_path(path)
+                .labels
+                .contains(label)
+        }
+        plasm_core::Value::Object(fields) => fields
+            .values()
+            .any(|v| hole_value_has_label(v, uses_result, facts, label)),
+        plasm_core::Value::Array(items) => items
+            .iter()
+            .any(|v| hole_value_has_label(v, uses_result, facts, label)),
+        plasm_core::Value::UnionCtor { ctor_fields, .. } => ctor_fields
+            .values()
+            .any(|v| hole_value_has_label(v, uses_result, facts, label)),
+        plasm_core::Value::StringTemplate(template) => template.paths().iter().any(|path| {
+            let Some((alias, field_path)) = path.split_first() else {
+                return false;
+            };
             let Some(source_id) = resolve_alias_node(uses_result, alias) else {
                 return false;
             };
-            let source_facts = facts.get(source_id.as_str()).cloned().unwrap_or_default();
-            return source_facts.at_path(&path).labels.contains(label);
-        }
-        return false;
-    }
-    match value {
-        serde_json::Value::Object(map) => map
-            .values()
-            .any(|v| hole_value_has_label(v, uses_result, facts, label)),
-        serde_json::Value::Array(items) => items
-            .iter()
-            .any(|v| hole_value_has_label(v, uses_result, facts, label)),
-        _ => false,
+            facts
+                .get(&source_id)
+                .cloned()
+                .unwrap_or_default()
+                .at_path(field_path)
+                .labels
+                .contains(label)
+        }),
+        plasm_core::Value::Null
+        | plasm_core::Value::Bool(_)
+        | plasm_core::Value::Integer(_)
+        | plasm_core::Value::Float(_)
+        | plasm_core::Value::String(_)
+        | plasm_core::Value::PhraseIdent(_)
+        | plasm_core::Value::Money(_) => false,
     }
 }

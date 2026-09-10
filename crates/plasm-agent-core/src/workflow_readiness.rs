@@ -1,6 +1,6 @@
 //! Registry + tenant MCP policy checks for workflow manifests.
 
-use plasm_core::discovery::{CgsCatalog, InMemoryCgsRegistry};
+use plasm_core::discovery::{CgsCatalog, CgsRegistry};
 
 use crate::mcp_runtime_config::McpRuntimeConfig;
 use crate::workflow_manifest::WorkflowManifest;
@@ -27,7 +27,7 @@ pub fn workflow_catalog_entry_ids(manifest: &WorkflowManifest) -> Vec<String> {
 
 pub fn assess_workflow_readiness(
     manifest: &WorkflowManifest,
-    registry: &InMemoryCgsRegistry,
+    registry: &CgsRegistry,
     tenant_cfg: Option<&McpRuntimeConfig>,
 ) -> WorkflowReadiness {
     let mut blocking_errors = Vec::new();
@@ -53,12 +53,12 @@ pub fn assess_workflow_readiness(
 mod tests {
     use super::*;
     use crate::workflow_registry::workflow_matrix_manifest;
-    use plasm_core::discovery::InMemoryCgsRegistry;
+    use plasm_core::discovery::CgsRegistry;
 
     #[test]
     fn readiness_fails_when_registry_missing_pins() {
         let m = workflow_matrix_manifest();
-        let reg = InMemoryCgsRegistry::from_pairs(vec![]);
+        let reg = CgsRegistry::from_pairs(vec![]);
         let r = assess_workflow_readiness(&m, &reg, None);
         assert!(!r.ready);
         assert!(r.blocking_errors.iter().any(|e| e.contains("catalog_a")));

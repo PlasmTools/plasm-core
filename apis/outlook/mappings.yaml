@@ -11,8 +11,12 @@ mail_folder_child_query:
         type: const
         value: mail_folder_child
     then_expr:
-      type: const
-      value: v1.0/me/mailFolders/{mailFolderId}/childFolders
+      type: format
+      template: v1.0/me/mailFolders/{mailFolderId}/childFolders
+      vars:
+        mailFolderId:
+          type: var
+          name: mailFolderId
     else_expr:
       type: const
       value: v1.0/me/mailFolders
@@ -21,17 +25,10 @@ mail_folder_child_query:
   query:
     type: object
     fields:
-    - - mailFolderId
-      - type: if
-        condition:
-          type: exists
-          var: mailFolderId
-        then_expr:
-          type: var
-          name: mailFolderId
-        else_expr:
-          type: const
-          value: null
+    - - includeHiddenFolders
+      - type: var
+        name: includeHiddenFolders
+        if: { exists: includeHiddenFolders }
   pagination:
     location: response_next_url
     response_next_url_field: '@odata.nextLink'
@@ -65,8 +62,12 @@ message_folder_query:
         type: const
         value: message_folder
     then_expr:
-      type: const
-      value: v1.0/me/mailFolders/{mailFolderId}/messages
+      type: format
+      template: v1.0/me/mailFolders/{mailFolderId}/messages
+      vars:
+        mailFolderId:
+          type: var
+          name: mailFolderId
     else_expr:
       type: const
       value: v1.0/me/messages
@@ -75,28 +76,14 @@ message_folder_query:
   query:
     type: object
     fields:
-    - - mailFolderId
-      - type: if
-        condition:
-          type: exists
-          var: mailFolderId
-        then_expr:
-          type: var
-          name: mailFolderId
-        else_expr:
-          type: const
-          value: null
-    - - filter
-      - type: if
-        condition:
-          type: exists
-          var: filter
-        then_expr:
-          type: var
-          name: filter
-        else_expr:
-          type: const
-          value: null
+    - - $filter
+      - type: var
+        name: filter
+        if: { exists: filter }
+    - - $orderby
+      - type: var
+        name: orderBy
+        if: { exists: orderBy }
   pagination:
     location: response_next_url
     response_next_url_field: '@odata.nextLink'
@@ -183,38 +170,17 @@ message_update:
     type: object
     fields:
     - - isRead
-      - type: if
-        condition:
-          type: exists
-          var: isRead
-        then_expr:
-          type: var
-          name: isRead
-        else_expr:
-          type: const
-          value: null
+      - type: var
+        name: isRead
+        if: { exists: isRead }
     - - importance
-      - type: if
-        condition:
-          type: exists
-          var: importance
-        then_expr:
-          type: var
-          name: importance
-        else_expr:
-          type: const
-          value: null
+      - type: var
+        name: importance
+        if: { exists: importance }
     - - categories
-      - type: if
-        condition:
-          type: exists
-          var: categories
-        then_expr:
-          type: var
-          name: categories
-        else_expr:
-          type: const
-          value: null
+      - type: var
+        name: categories
+        if: { exists: categories }
 message_move:
   method: POST
   path:
@@ -347,8 +313,12 @@ event_calendar_query:
         type: const
         value: event_calendar
     then_expr:
-      type: const
-      value: v1.0/me/calendars/{calendarId}/events
+      type: format
+      template: v1.0/me/calendars/{calendarId}/events
+      vars:
+        calendarId:
+          type: var
+          name: calendarId
     else_expr:
       type: const
       value: v1.0/me/events
@@ -357,28 +327,14 @@ event_calendar_query:
   query:
     type: object
     fields:
-    - - calendarId
-      - type: if
-        condition:
-          type: exists
-          var: calendarId
-        then_expr:
-          type: var
-          name: calendarId
-        else_expr:
-          type: const
-          value: null
-    - - filter
-      - type: if
-        condition:
-          type: exists
-          var: filter
-        then_expr:
-          type: var
-          name: filter
-        else_expr:
-          type: const
-          value: null
+    - - $filter
+      - type: var
+        name: filter
+        if: { exists: filter }
+    - - $orderby
+      - type: var
+        name: orderBy
+        if: { exists: orderBy }
   pagination:
     location: response_next_url
     response_next_url_field: '@odata.nextLink'

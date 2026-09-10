@@ -1,0 +1,10 @@
+acquire:
+  transport: credential_bind
+  slot: record_access
+  lifetime_seconds: 3600
+  origin: https://example.test
+  resource:
+    type: object
+    fields:
+      - [record, {type: var, name: record}]
+  source: {scheme: host}

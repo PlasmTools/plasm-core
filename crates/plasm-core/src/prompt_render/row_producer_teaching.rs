@@ -53,14 +53,8 @@ pub(crate) fn enrich_row_producer_teaching_line(
     canonical_bracket: Option<&str>,
     witness_taught: bool,
 ) -> (String, Option<String>, RowContractLegend) {
-    let mut bracket = capability_row_projection_bracket(
-        cgs,
-        cap,
-        map,
-        catalog_entry_id,
-        ename,
-        surface_filter,
-    );
+    let mut bracket =
+        capability_row_projection_bracket(cgs, cap, map, catalog_entry_id, ename, surface_filter);
     if witness_taught {
         if let (Some(br), Some(canon)) = (bracket.as_deref(), canonical_bracket) {
             let br_syms = projection_bracket_syms(br);

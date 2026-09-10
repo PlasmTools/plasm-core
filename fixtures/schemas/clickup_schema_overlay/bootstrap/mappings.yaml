@@ -8,7 +8,7 @@ team_query:
   response:
     items: teams
 
-custom_field_query:
+space_fields:
   method: GET
   path:
     - type: literal

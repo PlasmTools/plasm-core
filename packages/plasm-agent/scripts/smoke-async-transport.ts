@@ -22,7 +22,6 @@ async function main(): Promise<void> {
 
   const contextMd = await agent.runtime.plasmContext({
     intent: "list execute_tiny products async transport",
-    seeds: [{ api: "execute_tiny", entity: "Product" }],
   });
   const logicalSessionRef = extractLogicalSessionRef(contextMd);
 
@@ -34,7 +33,7 @@ async function main(): Promise<void> {
 
   const runMd = await agent.runtime.plasmRun({
     logicalSessionRef,
-    planCommitRef,
+    runRef: planCommitRef,
   });
 
   if (!/Widget|p1/i.test(runMd)) {

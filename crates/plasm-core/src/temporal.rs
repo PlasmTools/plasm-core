@@ -421,46 +421,15 @@ fn encode_utc_datetime(dt: chrono::DateTime<chrono::Utc>, fmt: TemporalWireForma
 }
 
 /// Render an encoded temporal [`Value`] as a wire string (for URL query params).
-pub fn temporal_encoded_as_wire_string(encoded: &Value) -> String {
+pub fn temporal_encoded_as_wire_string(encoded: &Value) -> Result<String, String> {
     match encoded {
-        Value::String(s) | Value::PhraseIdent(s) => s.clone(),
-        Value::Integer(i) => i.to_string(),
-        Value::Float(f) => {
-            if f.fract() == 0.0 && f.is_finite() {
-                (*f as i64).to_string()
-            } else {
-                f.to_string()
-            }
-        }
-        Value::Bool(b) => b.to_string(),
-        Value::Null => String::new(),
-        Value::Array(_) | Value::Object(_) => {
-            serde_json::to_string(&plasm_value_to_json_temporal(encoded)).unwrap_or_default()
-        }
-        Value::PlasmInputRef(_) | Value::UnionCtor { .. } | Value::Money(_) => String::new(),
-    }
-}
-
-fn plasm_value_to_json_temporal(v: &Value) -> serde_json::Value {
-    match v {
-        Value::Null => serde_json::Value::Null,
-        Value::Bool(b) => serde_json::json!(b),
-        Value::Integer(i) => serde_json::json!(i),
-        Value::Float(f) => serde_json::json!(f),
-        Value::String(s) | Value::PhraseIdent(s) => serde_json::json!(s),
-        Value::Array(arr) => {
-            serde_json::Value::Array(arr.iter().map(plasm_value_to_json_temporal).collect())
-        }
-        Value::Object(obj) => {
-            let mut map = serde_json::Map::new();
-            for (k, v) in obj {
-                map.insert(k.clone(), plasm_value_to_json_temporal(v));
-            }
-            serde_json::Value::Object(map)
-        }
-        Value::PlasmInputRef(_) | Value::UnionCtor { .. } | Value::Money(_) => {
-            serde_json::Value::Null
-        }
+        Value::String(s) | Value::PhraseIdent(s) => Ok(s.clone()),
+        Value::Integer(value) => Ok(value.to_string()),
+        Value::Float(value) if value.is_finite() => Ok(value.to_string()),
+        other => Err(format!(
+            "{} is not an encoded temporal scalar",
+            other.type_name()
+        )),
     }
 }
 
@@ -484,7 +453,7 @@ pub fn wire_temporal_value(val: Value, fmt: TemporalWireFormat) -> Result<Value,
         }
     }
     let encoded = normalize_temporal_value(val, fmt)?;
-    Ok(Value::String(temporal_encoded_as_wire_string(&encoded)))
+    Ok(Value::String(temporal_encoded_as_wire_string(&encoded)?))
 }
 
 /// Parse a wire-format name (`unix_ms`, `rfc3339`, …) for view templates and filters.

@@ -395,11 +395,15 @@ fn collect_expr(
             // Values the LLM chose for the GET key — counts toward pred_values_any.
             match &g.reference.key {
                 plasm_core::EntityKey::Simple(id) => {
-                    pred_values.insert(id.to_string());
+                    if let Some(id) = id.as_lit_str() {
+                        pred_values.insert(id.to_owned());
+                    }
                 }
                 plasm_core::EntityKey::Compound(parts) => {
                     for v in parts.values() {
-                        pred_values.insert(v.clone());
+                        if let Some(value) = v.as_lit_str() {
+                            pred_values.insert(value.to_owned());
+                        }
                     }
                 }
             }

@@ -79,6 +79,8 @@ impl From<crate::money::CrossCurrencyError> for TypeError {
 
 #[derive(Error, Debug, Clone)]
 pub enum SchemaError {
+    #[error("invalid prerequisite declaration: {detail}")]
+    PrerequisiteInvalid { detail: String },
     #[error("Duplicate entity name: '{name}'")]
     DuplicateEntity { name: String },
 

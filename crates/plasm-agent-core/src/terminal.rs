@@ -1,38 +1,26 @@
-//! Remote HTTP terminal for `plasm`: discovery, client-owned context symbols, plan/run.
+//! Remote HTTP terminal for `plasm`: discovery, server-owned routed contexts, plan/run.
 //!
 //! See `docs/plasm-cgs-remote-terminal.md` in the parent repo.
 
 use anyhow::{anyhow, Context as _, Result};
 use clap::Parser;
-use plasm_core::MutatorAdmit;
 use reqwest::header::{
     HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE,
 };
-use reqwest::redirect::Policy;
 use reqwest::{Client, Method, StatusCode};
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
-use crate::http_discovery::TerminalDiscoverBody;
-use crate::http_execute::{
-    build_capability_exposure_plan, CapabilitySeed, CreateExecuteSessionBody,
-    CreateExecuteSessionResponse, ExecuteSessionContextBody,
-};
-use crate::resolved_plan_http::{
-    ResolvedPlanProtocolVersion, ResolvedPlanRequest, ResolvedPlanRunMode,
-    RESOLVED_PLAN_CONTENT_TYPE,
-};
-use crate::terminal_cli::{validate_context_args, Cli, Cmd, RunModeCli};
+use crate::http_discovery::IntentDiscoveryRequest;
+use crate::resolved_plan_http::ResolvedPlanRunMode;
+use crate::terminal_cli::{validate_context_args, Cli, Cmd};
 use crate::terminal_mirror::{mirror_eprintln, MirrorOpKind, SessionMirror};
-use crate::terminal_session::ClientSymbolSession;
+use crate::terminal_session::RoutedTerminalSession;
 use crate::terminal_state::{
-    display_mirror_path, format_qualified_capabilities, merge_and_write_latest_discovery,
-    mint_client_session_id, read_current_session_pointer, resolve_capability_seeds,
-    resolve_current_session, write_current_session_pointer, write_language_frontmatter_markdown,
-    write_plasm_cli_agent_skill, ExecutionBinding,
+    mint_client_session_id, read_current_session_pointer, write_current_session_pointer,
+    write_language_frontmatter_markdown, write_plasm_cli_agent_skill, ExecutionBinding,
 };
-use plasm_core::PlasmComp;
 
 /// Default HTTP origin written by `plasm init` when `--server` is omitted.
 pub const DEFAULT_PLASM_HTTP_ORIGIN: &str = "http://127.0.0.1:3000";
@@ -52,21 +40,6 @@ pub struct TerminalProfile {
     /// OAuth / GitHub sign-in JWT from [`run_device_login`] (stored as Bearer on HTTP).
     #[serde(alias = "bearer_token")]
     pub access_token: Option<String>,
-}
-
-/// Auth view for HTTP helpers shared with [`crate::terminal_session`].
-pub struct TerminalProfileRef<'a> {
-    inner: &'a TerminalProfile,
-}
-
-impl<'a> TerminalProfileRef<'a> {
-    pub fn new(inner: &'a TerminalProfile) -> Self {
-        Self { inner }
-    }
-
-    pub fn apply_auth_headers(&self, headers: &mut HeaderMap) -> Result<()> {
-        apply_auth_headers(headers, self.inner)
-    }
 }
 
 fn profile_path(name: &str) -> PathBuf {
@@ -393,10 +366,14 @@ async fn post_execute_program(
     program: &str,
     accept: &str,
     wait: bool,
+    plan_only: bool,
     force: bool,
     plan_commit_ref: Option<&str>,
 ) -> Result<(StatusCode, HeaderMap, Vec<u8>)> {
     let mut query = format!("wait={wait}");
+    if plan_only {
+        query.push_str("&mode=plan");
+    }
     if force {
         query.push_str("&force=true");
     }
@@ -418,83 +395,37 @@ async fn post_execute_program(
     .await
 }
 
-async fn http_create_session(
+async fn run_context_command(
     client: &Client,
     server: &str,
     profile: &TerminalProfile,
-    entry_id: &str,
-    entities: Vec<String>,
-    intent: Option<String>,
-) -> Result<CreateExecuteSessionResponse> {
-    let body_json = serde_json::to_vec(&CreateExecuteSessionBody {
-        entry_id: entry_id.to_string(),
-        entities,
-        principal: None,
-        logical_session_id: None,
-        context_intent: intent,
-        ranked_capabilities: None,
-        mutator_admit: MutatorAdmit::IntentOnly,
-    })?;
-    let create_client = Client::builder()
-        .redirect(Policy::none())
-        .build()
-        .map_err(|e| anyhow!("http client (no redirect): {e}"))?;
-    let url = format!("{}/execute", server.trim_end_matches('/'));
-    let mut headers = HeaderMap::new();
-    apply_auth_headers(&mut headers, profile)?;
-    headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    let res = create_client
-        .post(url)
-        .headers(headers)
-        .body(body_json)
-        .send()
-        .await?;
-    let st = res.status();
-    if st != StatusCode::SEE_OTHER {
-        let b = res.bytes().await?;
-        return Err(anyhow!(
-            "open session: expected 303, got {st}: {}",
-            String::from_utf8_lossy(&b)
-        ));
-    }
-    let loc = res
-        .headers()
-        .get(reqwest::header::LOCATION)
-        .and_then(|v| v.to_str().ok())
-        .ok_or_else(|| anyhow!("open session: missing Location header"))?;
-    let session_url = if loc.starts_with("http") {
-        loc.to_string()
-    } else {
-        format!("{}{}", server.trim_end_matches('/'), loc)
-    };
-    let mut gh = HeaderMap::new();
-    apply_auth_headers(&mut gh, profile)?;
-    gh.insert(ACCEPT, HeaderValue::from_static("application/json"));
-    let get = client.get(&session_url).headers(gh).send().await?;
-    let gst = get.status();
-    let session_body = get.bytes().await?.to_vec();
-    if !gst.is_success() {
-        return Err(anyhow!(
-            "open session: GET failed {gst}: {}",
-            String::from_utf8_lossy(&session_body)
-        ));
-    }
-    serde_json::from_slice(&session_body).map_err(|e| anyhow!("open session: invalid JSON: {e}"))
-}
-
-async fn http_post_context(
-    client: &Client,
-    server: &str,
-    profile: &TerminalProfile,
-    prompt_hash: &str,
-    session: &str,
-    intent: Option<String>,
-    seeds: Vec<CapabilitySeed>,
+    args: crate::terminal_cli::ContextArgs,
 ) -> Result<()> {
-    let payload = serde_json::to_vec(&ExecuteSessionContextBody { intent, seeds })?;
-    let path = format!("/execute/{prompt_hash}/{session}/context");
-    let (st, _, body) = send_bytes(
+    let previous = if args.new {
+        None
+    } else {
+        Some(RoutedTerminalSession::load_from_disk(
+            server,
+            &read_current_session_pointer(server)?
+                .ok_or_else(|| anyhow!("context: open --new first"))?,
+        )?)
+    };
+    let intent = args.intent.as_deref().unwrap_or_default().trim();
+    let path = previous
+        .as_ref()
+        .map(|session| {
+            format!(
+                "/execute/{}/{}/context",
+                session.execution.prompt_hash, session.execution.session
+            )
+        })
+        .unwrap_or_else(|| "/v1/context".into());
+    let payload = IntentDiscoveryRequest {
+        principal: None,
+        intent: intent.into(),
+        allowed_entry_ids: None,
+    };
+    let (status, _, body) = send_bytes(
         client,
         server,
         profile,
@@ -502,193 +433,85 @@ async fn http_post_context(
         &path,
         Some("application/json"),
         Some("application/json"),
-        Some(payload),
+        Some(serde_json::to_vec(&payload)?),
     )
     .await?;
-    if !st.is_success() {
+    if !status.is_success() {
         return Err(anyhow!(
-            "context: HTTP {st}: {}",
+            "context: HTTP {status}: {}",
             String::from_utf8_lossy(&body)
         ));
     }
-    Ok(())
-}
-
-fn context_seeds_after_open(
-    seeds: &[CapabilitySeed],
-    primary_entry_id: &str,
-) -> Vec<CapabilitySeed> {
-    seeds
-        .iter()
-        .filter(|s| s.entry_id != primary_entry_id)
-        .cloned()
-        .collect()
-}
-
-/// Lazy server execute binding for HTTP run/plan (opaque; symbols stay on the client).
-async fn ensure_execution_binding(
-    client: &Client,
-    server: &str,
-    profile: &TerminalProfile,
-    sym: &mut ClientSymbolSession,
-) -> Result<ExecutionBinding> {
-    if let Some(ex) = sym.execution.clone() {
-        return Ok(ex);
+    #[derive(Deserialize)]
+    struct ContextReply {
+        routing: crate::discovery_service::RoutingReceipt,
+        context: Option<crate::http_execute::ApplyCapabilitySeedsOutcome>,
+        #[serde(default)]
+        prerequisite_guidance: String,
     }
-    let seeds: Vec<CapabilitySeed> = sym
-        .capabilities
-        .iter()
-        .map(|(api, entity)| CapabilitySeed {
-            entry_id: api.clone(),
-            entity: entity.clone(),
-        })
-        .collect();
-    let plan = build_capability_exposure_plan(&seeds)
-        .ok_or_else(|| anyhow!("empty capability set for execution binding"))?;
-    let primary_api = plan.primary_entry_id.clone();
-    let primary_entities = plan
-        .seeds_by_entry
-        .get(&primary_api)
-        .cloned()
-        .ok_or_else(|| anyhow!("missing entities for execution binding"))?;
-    let created = http_create_session(
-        client,
-        server,
-        profile,
-        &primary_api,
-        primary_entities,
-        Some(sym.intent.clone()),
-    )
-    .await?;
-    let ph = created.prompt_hash.clone();
-    let sid = created.session.clone();
-    let follow_on = context_seeds_after_open(&seeds, &primary_api);
-    if !follow_on.is_empty() {
-        http_post_context(
-            client,
-            server,
-            profile,
-            &ph,
-            &sid,
-            Some(sym.intent.clone()),
-            follow_on,
-        )
-        .await?;
-    }
-    let binding = ExecutionBinding {
-        prompt_hash: ph,
-        session: sid,
+    let reply: ContextReply = serde_json::from_slice(&body)?;
+    let Some(context) = reply.context else {
+        anyhow::ensure!(
+            reply.routing.selection.status != crate::discovery_service::SelectionStatus::Ready,
+            "Ready routing response is missing its execution context"
+        );
+        // Preserve the full insufficiency receipt; no execution binding is opened or replaced.
+        std::io::stdout().write_all(&body)?;
+        println!();
+        return Ok(());
     };
-    sym.execution = Some(binding.clone());
-    sym.persist(server)?;
-    Ok(binding)
-}
-
-fn print_context_summary(capabilities: &[(String, String)], mirror: &Path, rows_added: usize) {
-    eprintln!(
-        "Active context: {}",
-        format_qualified_capabilities(capabilities)
+    anyhow::ensure!(
+        reply.routing.closure.is_some(),
+        "context attached to routing without capability closure"
     );
-    let shown = display_mirror_path(mirror);
-    if rows_added > 0 {
-        eprintln!("mirror: {shown} (+{rows_added} rows)");
-    } else {
-        eprintln!("mirror: {shown}");
+    if let Some(previous) = &previous {
+        anyhow::ensure!(
+            previous.generation == reply.routing.retrieval.generation
+                && previous.execution.prompt_hash == context.prompt_hash
+                && previous.execution.session == context.session_id,
+            "extension changed the pinned execution session"
+        );
     }
-}
-
-async fn run_context_command(
-    client: &Client,
-    server: &str,
-    profile: &TerminalProfile,
-    new_session: bool,
-    verbose: bool,
-    intent_arg: Option<String>,
-    capability_names: Vec<String>,
-) -> Result<()> {
-    let discovery = crate::terminal_state::read_latest_discovery(server)?;
-    let seeds = resolve_capability_seeds(&capability_names, discovery.as_ref(), new_session)?;
-
-    let resolved_intent = intent_arg
-        .as_ref()
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .or_else(|| {
-            discovery
-                .as_ref()
-                .and_then(|d| d.intent.as_deref())
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string)
-        });
-
-    let mut sym = if new_session {
-        let id = mint_client_session_id();
-        let intent = resolved_intent
-            .clone()
-            .ok_or_else(|| anyhow!("context: pass --intent (-i), or run `plasm search` first"))?;
-        ClientSymbolSession::new(id, intent)
-    } else if let Some(id) = read_current_session_pointer(server)? {
-        ClientSymbolSession::load_from_disk(server, &id)?
-    } else {
-        let id = mint_client_session_id();
-        let intent = resolved_intent
-            .clone()
-            .ok_or_else(|| anyhow!("context: pass --intent (-i), or run `plasm search` first"))?;
-        ClientSymbolSession::new(id, intent)
+    let state = RoutedTerminalSession {
+        version: 2,
+        client_session_id: previous
+            .as_ref()
+            .map(|s| s.client_session_id.clone())
+            .unwrap_or_else(mint_client_session_id),
+        intent: previous
+            .as_ref()
+            .map(|s| format!("{}\n{intent}", s.intent))
+            .unwrap_or_else(|| intent.into()),
+        execution: ExecutionBinding {
+            prompt_hash: context.prompt_hash,
+            session: context.session_id,
+        },
+        generation: reply.routing.retrieval.generation,
     };
-
-    if let Some(intent) = resolved_intent {
-        sym.intent = intent;
+    let mut mirror = SessionMirror::open(&state.client_session_id)?;
+    let op_dir = mirror.alloc_dir(MirrorOpKind::Context)?;
+    mirror.write_file(&op_dir, "routing.json", &body)?;
+    let mut teaching = context
+        .waves
+        .into_iter()
+        .map(|wave| wave.markdown_delta)
+        .collect::<Vec<_>>()
+        .join("\n");
+    teaching.push('\n');
+    teaching.push_str(&reply.prerequisite_guidance);
+    for explanation in reply.routing.selection.explanation_lines() {
+        teaching.push_str("\n\n");
+        teaching.push_str(&explanation);
     }
-
-    let prof_ref = TerminalProfileRef::new(profile);
-    for api in seeds
-        .iter()
-        .map(|s| s.entry_id.as_str())
-        .collect::<std::collections::HashSet<_>>()
-    {
-        sym.ensure_catalog(client, server, &prof_ref, api).await?;
+    let artifact = mirror.write_file(&op_dir, "teaching.md", teaching.as_bytes())?;
+    mirror.update_latest_pointer(&mirror.rel_dir_for_display(&op_dir))?;
+    state.persist(server)?;
+    write_current_session_pointer(server, &state.client_session_id)?;
+    if args.verbose {
+        eprintln!("Pinned registry generation: {}", state.generation);
     }
-
-    let tsv_delta = sym.expose_seeds(&seeds)?;
-    let rows_added = if tsv_delta.is_empty() {
-        0
-    } else {
-        sym.append_rendered_tsv(server, &tsv_delta)?.1
-    };
-
-    let mut session_mirror = SessionMirror::open(&sym.client_session_id)?;
-    let op_dir = session_mirror.alloc_dir(MirrorOpKind::Context)?;
-    let wave_path = session_mirror.write_file(&op_dir, "wave.tsv", tsv_delta.as_bytes())?;
-    let meta_json = serde_json::json!({
-        "intent": sym.intent,
-        "capabilities": sym.capabilities.iter().map(|(a, e)| format!("{a}:{e}")).collect::<Vec<_>>(),
-        "seeds": seeds.iter().map(|s| serde_json::json!({"api": s.entry_id, "entity": s.entity})).collect::<Vec<_>>(),
-    });
-    session_mirror.write_file(
-        &op_dir,
-        "meta.json",
-        serde_json::to_string_pretty(&meta_json)?.as_bytes(),
-    )?;
-    let rel = session_mirror.rel_dir_for_display(&op_dir);
-    session_mirror.update_latest_pointer(&rel)?;
-
-    if !tsv_delta.is_empty() {
-        if verbose {
-            eprintln!("\n--- client exposure (symbol wave) ---");
-        }
-        print!("{tsv_delta}");
-        if !tsv_delta.ends_with('\n') {
-            println!();
-        }
-    }
-
-    sym.persist(server)?;
-    write_current_session_pointer(server, &sym.client_session_id)?;
-
-    print_context_summary(&sym.capabilities, &wave_path, rows_added);
+    println!("{teaching}");
+    mirror_eprintln(&artifact);
     Ok(())
 }
 
@@ -753,7 +576,7 @@ async fn run_doctor(profile_name: &str, profile: &TerminalProfile) -> Result<()>
             println!("HTTP API origin: (not configured)");
             println!("  {e}");
             println!();
-            println!("Agent flow: `plasm init` → `search` → `plasm context -i \"…\" api:Entity …` → `run`");
+            println!("Agent flow: `plasm init` → `search` → `plasm context --new --intent \"…\"` → `run --mode plan` → `run`");
             return Ok(());
         }
     };
@@ -795,9 +618,9 @@ async fn run_doctor(profile_name: &str, profile: &TerminalProfile) -> Result<()>
         Err(e) => println!("  GET /v1/health -> error: {e}"),
     }
     println!();
-    println!("Agent flow: `search` → `context -i \"…\" api:Entity …` → `run`");
+    println!("Agent flow: `search` → `context --new --intent \"…\"` → `run --mode plan` → `run`");
     println!(
-        "Local state: {}/hosts/<slug>/current → s/<session_id>/ (teaching.tsv, out/NNNN-*/)",
+        "Local state: {}/hosts/<slug>/current → s/<session_id>/ (symbols.json, out/NNNN-*/teaching.md)",
         crate::terminal_state::plasm_root_dir().display()
     );
     Ok(())
@@ -828,7 +651,7 @@ pub async fn run_terminal() -> Result<()> {
         }
         Cmd::Login => run_device_login(cli.profile.as_str(), &mut profile).await,
         Cmd::Doctor => run_doctor(cli.profile.as_str(), &profile).await,
-        Cmd::Search { intent, limit } => {
+        Cmd::Search { intent } => {
             let utterance = intent.trim().to_string();
             if utterance.is_empty() {
                 return Err(anyhow!("search: intent text required"));
@@ -837,18 +660,18 @@ pub async fn run_terminal() -> Result<()> {
             let client = Client::builder()
                 .build()
                 .map_err(|e| anyhow!("http client: {e}"))?;
-            let payload = serde_json::to_vec(&TerminalDiscoverBody {
+            let payload = serde_json::to_vec(&IntentDiscoveryRequest {
+                principal: None,
                 intent: utterance.clone(),
-                limit,
-                allowed_entry_ids: vec![],
+                allowed_entry_ids: None,
             })?;
             let (st, _, body) = send_bytes(
                 &client,
                 &server,
                 &profile,
                 Method::POST,
-                "/v1/terminal/discover",
-                Some("text/plain"),
+                "/v1/discover",
+                Some("application/json"),
                 Some("application/json"),
                 Some(payload),
             )
@@ -858,20 +681,12 @@ pub async fn run_terminal() -> Result<()> {
                 std::io::stdout().write_all(&body)?;
                 std::process::exit(1);
             }
-            let md = String::from_utf8_lossy(&body);
-            let disc = crate::terminal_state::discovery_from_search_markdown(&md, &utterance)?;
-            let path = merge_and_write_latest_discovery(&server, &disc)?;
-            eprintln!("discovery cache: {}", display_mirror_path(&path));
-            if let Some(sid) = read_current_session_pointer(&server)? {
-                let mut session_mirror = SessionMirror::open(&sid)?;
-                let op_dir = session_mirror.alloc_dir(MirrorOpKind::Search)?;
-                session_mirror.write_file(&op_dir, "body.md", &body)?;
-                let disc_json = serde_json::to_string_pretty(&disc)?;
-                let json_path =
-                    session_mirror.write_file(&op_dir, "body.json", disc_json.as_bytes())?;
-                let rel = session_mirror.rel_dir_for_display(&op_dir);
-                session_mirror.update_latest_pointer(&rel)?;
-                mirror_eprintln(&json_path);
+            if let Some(id) = read_current_session_pointer(&server)? {
+                let mut mirror = SessionMirror::open(&id)?;
+                let op_dir = mirror.alloc_dir(MirrorOpKind::Search)?;
+                let artifact = mirror.write_file(&op_dir, "routing.json", &body)?;
+                mirror.update_latest_pointer(&mirror.rel_dir_for_display(&op_dir))?;
+                mirror_eprintln(&artifact);
             }
             std::io::stdout().write_all(&body)?;
             if !body.ends_with(b"\n") {
@@ -885,21 +700,13 @@ pub async fn run_terminal() -> Result<()> {
             let client = Client::builder()
                 .build()
                 .map_err(|e| anyhow!("http client: {e}"))?;
-            run_context_command(
-                &client,
-                &server,
-                &profile,
-                context.new,
-                context.verbose,
-                context.intent,
-                context.seeds,
-            )
-            .await
+            run_context_command(&client, &server, &profile, context).await
         }
         Cmd::Run { run } => {
             let server = require_configured_server(&profile)?;
-            let meta = resolve_current_session(&server)?;
-            let mut sym = ClientSymbolSession::load_from_disk(&server, &meta.client_session_id)?;
+            let id = read_current_session_pointer(&server)?
+                .ok_or_else(|| anyhow!("run: open context --new --intent first"))?;
+            let sym = RoutedTerminalSession::load_from_disk(&server, &id)?;
             let body = read_program_body(run.file.as_ref())?;
             if body.is_empty() {
                 return Err(anyhow!("run: empty program (stdin or --file)"));
@@ -907,11 +714,7 @@ pub async fn run_terminal() -> Result<()> {
             let line =
                 String::from_utf8(body).map_err(|_| anyhow!("run: program must be UTF-8"))?;
             let program = line.trim().to_string();
-            let is_operation_continuation =
-                program.starts_with("wait(") || program.starts_with("cancel(");
-            let post_program_live =
-                is_operation_continuation || (run.mode == RunModeCli::Run && !run.wait);
-            let run_mode = run.mode.into();
+            let run_mode: ResolvedPlanRunMode = run.mode.into();
             let mode_kind = if run_mode == ResolvedPlanRunMode::Plan {
                 MirrorOpKind::Plan
             } else {
@@ -923,100 +726,23 @@ pub async fn run_terminal() -> Result<()> {
             let client = Client::builder()
                 .build()
                 .map_err(|e| anyhow!("http client: {e}"))?;
-            let binding = ensure_execution_binding(&client, &server, &profile, &mut sym).await?;
+            let binding = &sym.execution;
             let ph = binding.prompt_hash.trim();
             let sid = binding.session.trim();
-            if post_program_live {
-                let (st, rh, out) = post_execute_program(
-                    &client,
-                    &server,
-                    &profile,
-                    ph,
-                    sid,
-                    &program,
-                    run.accept.as_accept_header(),
-                    run.wait,
-                    run.force,
-                    run.plan_commit_ref.as_deref(),
-                )
-                .await?;
-                let accept_hint = run.accept.as_accept_header();
-                let (_, body_txt) =
-                    session_mirror.write_pair(&op_dir, "body", &out, Some(accept_hint))?;
-                let rel = session_mirror.rel_dir_for_display(&op_dir);
-                session_mirror.update_latest_pointer(&rel)?;
-                mirror_eprintln(&body_txt);
-                if !st.is_success() {
-                    eprintln!("run: HTTP {}", st);
-                    std::io::stdout().write_all(&out)?;
-                    std::process::exit(1);
-                }
-                std::io::stdout().write_all(&out)?;
-                if !out.ends_with(b"\n") {
-                    println!();
-                }
-                if run_mode != ResolvedPlanRunMode::Plan {
-                    if let Some(rid) = extract_run_id_from_response(&rh, &out) {
-                        let _ = mirror_run_snapshot(
-                            &client,
-                            &MirrorRunSnapshotCtx {
-                                server: &server,
-                                profile: &profile,
-                                client_session_id: &sym.client_session_id,
-                                prompt_hash: ph,
-                                session: sid,
-                                run_id: &rid,
-                                op_dir: &op_dir,
-                            },
-                        )
-                        .await;
-                    }
-                }
-                return Ok(());
-            }
-            let comp_json = sym
-                .compile_program_to_plan(&program)
-                .context("compile program to comp")?;
-            let comp: PlasmComp =
-                serde_json::from_value(comp_json.clone()).context("decode comp")?;
-            comp.validate().map_err(|e| anyhow!("comp: {e}"))?;
-            let comp_bytes =
-                serde_json::to_vec_pretty(&comp_json).map_err(|e| anyhow!("comp json: {e}"))?;
-            session_mirror.write_file(&op_dir, "comp.json", &comp_bytes)?;
-            let req = ResolvedPlanRequest {
-                protocol_version: ResolvedPlanProtocolVersion::V1.as_u16(),
-                client_session_id: sym.client_session_id.clone(),
-                catalog_pins: sym.catalog_pins(),
-                mode: run_mode,
-                source_program: program,
-                comp,
-            };
-            let path = format!("/execute/{ph}/{sid}/plan");
-            let mut headers = HeaderMap::new();
-            apply_auth_headers(&mut headers, &profile)?;
-            headers.insert(
-                ACCEPT,
-                HeaderValue::from_static(run.accept.as_accept_header()),
-            );
-            headers.insert(
-                CONTENT_TYPE,
-                HeaderValue::from_str(RESOLVED_PLAN_CONTENT_TYPE)
-                    .map_err(|e| anyhow!("content-type: {e}"))?,
-            );
-            let url = format!(
-                "{}/{}",
-                server.trim_end_matches('/'),
-                path.trim_start_matches('/')
-            );
-            let res = client
-                .post(url)
-                .headers(headers)
-                .body(serde_json::to_vec(&req).map_err(|e| anyhow!("request json: {e}"))?)
-                .send()
-                .await?;
-            let st = res.status();
-            let rh = res.headers().clone();
-            let out = res.bytes().await?.to_vec();
+            let (st, rh, out) = post_execute_program(
+                &client,
+                &server,
+                &profile,
+                ph,
+                sid,
+                &program,
+                run.accept.as_accept_header(),
+                run.wait,
+                run_mode == ResolvedPlanRunMode::Plan,
+                run.force,
+                run.plan_commit_ref.as_deref(),
+            )
+            .await?;
             let accept_hint = run.accept.as_accept_header();
             let (_, body_txt) =
                 session_mirror.write_pair(&op_dir, "body", &out, Some(accept_hint))?;
@@ -1154,5 +880,77 @@ mod platform_origin_tests {
             "https://platform.plasm.tools/plasm/http/"
         ));
         assert!(!is_managed_platform_origin("http://127.0.0.1:3000"));
+    }
+}
+
+#[cfg(test)]
+mod routed_terminal_tests {
+    use super::*;
+    use axum::{extract::OriginalUri, routing::post, Json, Router};
+    use serde_json::{json, Value};
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn routed_terminal_preserves_binding_and_forwards_review_mode() {
+        let directory = tempfile::tempdir().unwrap();
+        crate::terminal_state::test_env::with_plasm_workspace(directory.path(), || {
+            tokio::runtime::Runtime::new().unwrap().block_on(async {
+                let seen = Arc::new(Mutex::new(Vec::<(String, Value)>::new()));
+                let requests = seen.clone();
+                let router = Router::new().fallback(post(move |OriginalUri(uri): OriginalUri, body: String| {
+                    let requests = requests.clone();
+                    async move {
+                        let payload: Value = serde_json::from_str(&body).unwrap_or_else(|_| json!(body));
+                        requests.lock().unwrap().push((uri.to_string(), payload.clone()));
+                        if uri.path() == "/execute/ph/sid" { return Json(json!({"planned":true})); }
+                        let missing = payload["intent"] == "unavailable";
+                        let insufficient = missing || payload["intent"] == "partial records";
+                        let mut reply = json!({
+                            "routing": {
+                                "authorization":{"catalogs":["matrix"],"capabilities":{}},
+                                "intent":payload["intent"],"pin_id":"pin",
+                                "retrieval":{"generation":"generation-one","candidates":[],"lexical_count":0,"vector_count":0,"lexical_truncated":false,"vector_truncated":false,"fusion_truncated":0,"relation_truncated":0},
+                                "selection":{"status":if insufficient {"insufficient"} else {"ready"},"additional_capability_ids":[],"unsupported":if insufficient {json!([{"intent_quote":"unavailable","reason":"No supplied capability"}])} else {json!([])}},
+                                "closure":null
+                            }
+                        });
+                        if payload["intent"] == "wrong generation" {
+                            reply["routing"]["retrieval"]["generation"] = json!("generation-two");
+                        }
+                        if !missing {
+                            reply["routing"]["closure"] = json!({"business":[{"catalog":"matrix","capability":"read"}],"prerequisites":[],"acquisitions":[],"edges":[]});
+                            reply["context"] = json!({"prompt_hash":"ph","session_id":"sid","primary_entry_id":"matrix","principal":null,"waves":[{"mode":"new","entry_id":"matrix","entities":["Record"],"markdown_delta":"canonical teaching","reused_session":false,"teaching_prompt_chars_added":18}],"binding_updated":true,"new_symbol_space":true,"stale_execute_binding_recovered":false,"stale_binding_previous":null,"symbol_space_reset":false});
+                            reply["prerequisite_guidance"] = json!("explicit provider binding");
+                        }
+                        Json(reply)
+                    }
+                }));
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let server = format!("http://{}", listener.local_addr().unwrap());
+                let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap(); });
+                let client = Client::new();
+                let profile = TerminalProfile::default();
+                let args = |new, intent: &str| crate::terminal_cli::ContextArgs { new, verbose:false, intent:Some(intent.into()) };
+                run_context_command(&client, &server, &profile, args(true,"unavailable")).await.unwrap();
+                assert!(read_current_session_pointer(&server).unwrap().is_none());
+                run_context_command(&client, &server, &profile, args(true,"partial records")).await.unwrap();
+                let id = read_current_session_pointer(&server).unwrap().unwrap();
+                run_context_command(&client, &server, &profile, args(false,"more records")).await.unwrap();
+                run_context_command(&client, &server, &profile, args(false,"unavailable")).await.unwrap();
+                assert_eq!(read_current_session_pointer(&server).unwrap().as_deref(), Some(id.as_str()));
+                let state = RoutedTerminalSession::load_from_disk(&server,&id).unwrap();
+                assert_eq!(state.generation,"generation-one");
+                assert_eq!(state.execution.session,"sid");
+                post_execute_program(&client,&server,&profile,"ph","sid","e1{}","application/json",true,true,false,None).await.unwrap();
+                assert!(run_context_command(&client, &server, &profile, args(false,"wrong generation")).await.is_err());
+                assert_eq!(RoutedTerminalSession::load_from_disk(&server,&id).unwrap().generation,"generation-one");
+                let seen = seen.lock().unwrap();
+                assert!(seen.iter().all(|(_, body)| body.get("routing_ref").is_none() && body.get("clarify_choices").is_none()));
+                assert_eq!(seen[2].0,"/execute/ph/sid/context");
+                assert!(seen.iter().all(|(_,body)| body.get("seeds").is_none()));
+                assert_eq!(seen[4].0,"/execute/ph/sid?wait=true&mode=plan");
+                task.abort();
+            });
+        });
     }
 }

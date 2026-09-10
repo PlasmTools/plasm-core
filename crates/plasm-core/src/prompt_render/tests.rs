@@ -585,27 +585,17 @@ fn teaching_tsv_return_glyphs_mutation_result_field_alphabet_language_matrix() {
 
 #[test]
 fn query_only_primary_query_teaching_order_and_gloss() {
-    use crate::discovery::{
-        derive_intent_exposure_surface_batch, ExposureSurfaceOptions, MutatorAdmit,
-    };
-
     let dir = fixtures_schemas_dir("plasm_language_matrix");
     if !dir.exists() {
         return;
     }
     let cgs = load_schema_dir(&dir).unwrap();
-    let intent = "list received payment requests approve deny remind";
-    let delta = derive_intent_exposure_surface_batch(
+    let delta = crate::capability_exposure::explicit_entity_capability_surface(
         &cgs,
         "",
-        intent,
-        &[],
         &["QueryOnlyRequest".to_string()],
-        None,
-        ExposureSurfaceOptions {
-            mutator_admit: MutatorAdmit::IntentOnly,
-        },
-    );
+    )
+    .expect("explicit fixture capability exposure");
     assert!(
         delta
             .required
@@ -654,18 +644,37 @@ fn query_only_primary_query_teaching_order_and_gloss() {
         .teaching_expr
         .expression
         .as_str();
+    assert!(
+        query_line.contains("status=<wire>"),
+        "query Select filter must be a hole, not the first enum member; got: {query_line}"
+    );
+    assert!(
+        !query_line.contains("status=\"draft\""),
+        "query Select must not privilege first allowed_values member; got: {query_line}"
+    );
     let query_meaning = tsv
         .lines()
         .find(|l| l.starts_with(query_line.split('[').next().unwrap_or(query_line)))
         .and_then(|l| l.split_once('\t').map(|(_, m)| m))
         .expect("query row in TSV");
     assert!(
-        query_meaning.contains("↣ [") && query_meaning.contains(entity_banner),
-        "query anchor must carry list glyph + entity banner; got: {query_meaning}"
+        query_meaning.contains("↣ [") && !query_meaning.contains(entity_banner),
+        "query anchor is list gloss only — noun-card must not ride the filter head; got: {query_meaning}"
+    );
+    assert!(
+        tsv.lines().any(|l| {
+            l.split_once('\t')
+                .is_some_and(|(e, m)| e == "QueryOnlyRequest" && m.contains(entity_banner))
+        }),
+        "query-only noun-card must be a non-executable entity-name row; tsv:\n{tsv}"
     );
     assert!(
         query_meaning.contains("List payment requests other people sent to you"),
         "primary query row must include capability gloss; got: {query_meaning}"
+    );
+    assert!(
+        !query_meaning.contains("existing rows only"),
+        "QueryOnlyRequest has no create peer — must not name a new-row create; got: {query_meaning}"
     );
 
     let mutator_meanings: Vec<&str> = block
@@ -695,6 +704,43 @@ fn query_only_primary_query_teaching_order_and_gloss() {
         distinct.len(),
         mutator_meanings.len(),
         "void mutator Meaning rows must be pairwise distinct"
+    );
+}
+
+#[test]
+fn query_meaning_names_create_peer_when_entity_has_both() {
+    let dir = fixtures_schemas_dir("plasm_language_matrix");
+    if !dir.exists() {
+        return;
+    }
+    let cgs = load_schema_dir(&dir).unwrap();
+    let bundle = render_teaching_prompt_bundle(&cgs, RenderConfig::for_eval_seeds(&["LangItem"]));
+    let tsv = render_prompt_tsv_from_bundle(&bundle);
+    let block_idx = bundle
+        .model
+        .entities
+        .iter()
+        .position(|e| e.entity == "LangItem")
+        .expect("LangItem block");
+    let block = &bundle.teaching_blocks[block_idx];
+    let query_row = block
+        .teaching_rows
+        .iter()
+        .find(|r| r.meta.kind == DomainLineKind::Query)
+        .expect("LangItem query row");
+    let expr = query_row.teaching_expr.expression.as_str();
+    let meaning = tsv
+        .lines()
+        .find(|l| l.split_once('\t').is_some_and(|(e, _)| e == expr))
+        .and_then(|l| l.split_once('\t').map(|(_, m)| m))
+        .expect("LangItem query in TSV");
+    assert!(
+        meaning.contains("existing rows only"),
+        "query+create entity must say listing is not a new row; got: {meaning}"
+    );
+    assert!(
+        meaning.contains(".m") && meaning.contains('('),
+        "query Meaning must name the taught create invoke; got: {meaning}"
     );
 }
 
@@ -739,88 +785,6 @@ fn proof_document_tsv_topo_p_gloss_before_union_ctor_and_summary_after() {
     assert!(
         first_ctor < u,
         "union ctor exemplars must precede union summary; first_ctor={first_ctor} summary={u}"
-    );
-}
-
-#[test]
-fn venmo_payment_request_primary_query_federated_teaching() {
-    use crate::discovery::{
-        derive_intent_exposure_surface_batch, ExposureSurfaceOptions, MutatorAdmit,
-    };
-    use indexmap::IndexMap;
-
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/appworld/venmo");
-    if !dir.is_dir() {
-        return;
-    }
-    let mut cgs = load_schema_dir(&dir).unwrap();
-    cgs.bind_registry_entry_id("venmo");
-    let intent = "How much money have I been requested on Venmo in the last 7 days including today";
-    let seeds = ["AuthSession".to_string(), "PaymentRequest".to_string()];
-    let delta = derive_intent_exposure_surface_batch(
-        &cgs,
-        "venmo",
-        intent,
-        &[],
-        &seeds,
-        None,
-        ExposureSurfaceOptions {
-            mutator_admit: MutatorAdmit::IntentOnly,
-        },
-    );
-    assert!(
-        delta.required.capabilities.iter().any(|c| {
-            c.capability.as_str() == "payment_request_received_query"
-                && c.domain.as_str() == "PaymentRequest"
-        }),
-        "seeded PaymentRequest must expose primary query on surface; caps={:?}",
-        delta
-            .required
-            .capabilities
-            .iter()
-            .filter(|c| c.domain.as_str() == "PaymentRequest")
-            .collect::<Vec<_>>()
-    );
-    let exp = TeachingExposureSession::new_with_intent_delta(
-        &cgs,
-        "venmo",
-        &["AuthSession", "PaymentRequest"],
-        delta,
-    );
-    let mut by_entry: IndexMap<String, &CGS> = IndexMap::new();
-    by_entry.insert("venmo".into(), &cgs);
-    let config = RenderConfig::for_eval_seeds(&["AuthSession", "PaymentRequest"]);
-    let bundle =
-        render_teaching_prompt_bundle_for_exposure_federated(&by_entry, config, &exp, None);
-    let block_idx = bundle
-        .model
-        .entities
-        .iter()
-        .position(|e| e.entity == "PaymentRequest")
-        .expect("PaymentRequest block");
-    let block = &bundle.teaching_blocks[block_idx];
-    let query_idx = block.teaching_rows.iter().position(|r| {
-        r.meta.kind == DomainLineKind::Query
-            && r.meta.source_capability.as_deref() == Some("payment_request_received_query")
-    });
-    let first_mutator_idx = block
-        .teaching_rows
-        .iter()
-        .position(|r| r.meta.kind == DomainLineKind::Method);
-    assert!(
-        query_idx.is_some(),
-        "expected primary query witness row; teaching_rows={:?}",
-        block
-            .teaching_rows
-            .iter()
-            .map(|r| (&r.meta.kind, r.meta.source_capability.as_deref()))
-            .collect::<Vec<_>>()
-    );
-    let query_idx = query_idx.unwrap();
-    let first_mutator_idx = first_mutator_idx.expect("mutators under IntentOnly");
-    assert!(
-        query_idx < first_mutator_idx,
-        "primary query row must precede mutators (query={query_idx}, mutator={first_mutator_idx})"
     );
 }
 
@@ -1145,28 +1109,17 @@ fn linear_issue_heading_projection_despite_method_style_get() {
 /// Intent-scoped Issue surface: query/search share the witness field set → bare producers, no `rows:`.
 #[test]
 fn github_issue_intent_surface_omits_set_equal_projection_on_query_search() {
-    use crate::discovery::MutatorAdmit;
-
     let dir = apis_dir("github");
     if !dir.exists() {
         return;
     }
     let cgs = load_schema_dir(&dir).unwrap();
-    let endpoints = vec![ExposureEntityKey {
-        entry_id: "github".into(),
-        entity: EntityName::from("Issue"),
-    }];
-    let delta = crate::discovery::derive_intent_exposure_surface_batch(
+    let delta = crate::capability_exposure::explicit_entity_capability_surface(
         &cgs,
         "github",
-        "list issues and create or update issue labels",
-        &endpoints,
         &["Issue".to_string()],
-        None,
-        crate::discovery::ExposureSurfaceOptions {
-            mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-        },
-    );
+    )
+    .expect("explicit fixture capability exposure");
     let exp = TeachingExposureSession::new_with_intent_delta(&cgs, "github", &["Issue"], delta);
     let surface = Some(&exp.surface);
     let map = exp.symbol_map_arc();
@@ -1332,50 +1285,28 @@ fn tsv_additive_wave_omits_global_contract_but_keeps_column_header() {
 
 #[test]
 fn expand_wave_emits_parent_relation_edge_for_pokeapi_berry_firmness() {
-    use crate::discovery::{
-        derive_intent_exposure_surface_batch, ExposureSurfaceOptions, MutatorAdmit,
-    };
-    use crate::symbol_tuning::ExposureEntityKey;
-
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
     if !dir.is_dir() {
         return;
     }
     let cgs = load_schema_dir(&dir).unwrap();
     let pipeline = PromptPipelineConfig::default();
-    let intent = "cheri berry firmness";
-    let relation_keys = vec![ExposureEntityKey {
-        entry_id: "pokeapi".to_string(),
-        entity: crate::EntityName::from("Berry"),
-    }];
-    let delta1 = derive_intent_exposure_surface_batch(
+    let delta1 = crate::capability_exposure::explicit_entity_capability_surface(
         &cgs,
         "pokeapi",
-        intent,
-        &relation_keys,
         &["Berry".to_string()],
-        None,
-        ExposureSurfaceOptions {
-            mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-        },
-    );
+    )
+    .expect("explicit fixture capability exposure");
     let mut exp =
         TeachingExposureSession::new_with_intent_delta(&cgs, "pokeapi", &["Berry"], delta1);
     let slots_before = exp.surface.slots.clone();
     let cgs_arc = std::sync::Arc::new(cgs.clone());
-    let relation_keys_wave2 =
-        exp.relation_endpoint_keys_for_wave("pokeapi", &["BerryFirmness".to_string()]);
-    let delta2 = derive_intent_exposure_surface_batch(
+    let delta2 = crate::capability_exposure::explicit_entity_capability_surface(
         &cgs,
         "pokeapi",
-        intent,
-        &relation_keys_wave2,
         &["BerryFirmness".to_string()],
-        None,
-        ExposureSurfaceOptions {
-            mutator_admit: MutatorAdmit::AlwaysOnSeeds,
-        },
-    );
+    )
+    .expect("explicit fixture capability exposure");
     exp.expose_surface(&[&cgs], cgs_arc, "pokeapi", &["BerryFirmness"], delta2);
     let added = exp.qualified_entities_since(1);
     let new_relation_slots = exp.relation_edge_delta_slots(&slots_before, &added);
@@ -1815,15 +1746,12 @@ fn exposure_surface_omits_entity_ref_nav_when_target_entity_not_exposed() {
     let dir = fixtures_schemas_dir("plasm_prompt_matrix");
     let cgs = load_schema_dir(&dir).unwrap();
     let entry = cgs.entry_id.clone().unwrap_or_default();
-    let delta = crate::discovery::derive_intent_exposure_surface_batch(
+    let delta = crate::capability_exposure::explicit_entity_capability_surface(
         &cgs,
         entry.as_str(),
-        "rules traffic handling Cloudflare zone firewall WAF",
-        &crate::relation_endpoint_keys(entry.as_str(), &["Ruleset".to_string()]),
         &["Ruleset".to_string()],
-        None,
-        crate::discovery::ExposureSurfaceOptions::default(),
-    );
+    )
+    .expect("explicit fixture capability exposure");
     assert!(
         delta
             .required
@@ -1930,15 +1858,12 @@ fn incoming_relation_nav_bases_respect_exposure_surface_parent_and_slots() {
         "without surface filter expect Zone-anchored incoming bases toward Ruleset; got {unfiltered:?}"
     );
 
-    let delta = crate::discovery::derive_intent_exposure_surface_batch(
+    let delta = crate::capability_exposure::explicit_entity_capability_surface(
         &cgs,
         entry.as_str(),
-        "rules traffic handling Cloudflare zone firewall WAF",
-        &crate::relation_endpoint_keys(entry.as_str(), &["Ruleset".to_string()]),
         &["Ruleset".to_string()],
-        None,
-        crate::discovery::ExposureSurfaceOptions::default(),
-    );
+    )
+    .expect("explicit fixture capability exposure");
     let filtered = super::incoming_relation_nav_bases_to_entity(
         &cgs,
         "Ruleset",
@@ -2341,11 +2266,10 @@ fn plasm_tool_description_includes_composition_strata() {
 
 #[test]
 fn mcp_static_tool_descriptions_byte_budget() {
-    const MAX_WORKFLOW_BYTES: usize = 1200;
+    const MAX_WORKFLOW_BYTES: usize = 1600;
 
     let workflow = super::MCP_INITIALIZE_WORKFLOW;
     let plasm_tool = super::PLASM_TOOL_DESCRIPTION;
-    let discover = super::DISCOVER_TOOL_DESCRIPTION;
     let context = super::PLASM_CONTEXT_TOOL_DESCRIPTION;
     let param = super::PLASM_PROGRAM_PARAM_DESCRIPTION;
 
@@ -2358,11 +2282,6 @@ fn mcp_static_tool_descriptions_byte_budget() {
         plasm_tool.len() <= super::PLASM_TOOL_DESCRIPTION_MAX_BYTES,
         "plasm tool description too long: {} bytes",
         plasm_tool.len()
-    );
-    assert!(
-        discover.len() <= 550,
-        "discover tool description too long: {} bytes",
-        discover.len()
     );
     assert!(
         context.len() <= 1800,

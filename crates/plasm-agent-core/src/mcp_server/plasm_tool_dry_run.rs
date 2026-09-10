@@ -169,9 +169,7 @@ async fn execute_plasm_tool_dry_run_inner(
         .is_some_and(|comp| inline_ui_payload_fits(comp, &plan_ux_reflection));
     record_mcp_plasm_dry_run_phase("prepare", phase.elapsed());
 
-    let auto_execute = matches!(gate_decision, crate::PlanGateDecision::Proceed(_))
-        && matches!(dry.flow.verdict, crate::plan_flow::FlowVerdict::Clean)
-        && !crate::plan_flow::validated_plan_has_remote_mutation(dry.validated_plan());
+    let auto_execute = dry.fuse_clean_read();
     if auto_execute {
         phase = Instant::now();
         let _plan_refs = CodePlanTraceInput {
@@ -221,7 +219,7 @@ async fn execute_plasm_tool_dry_run_inner(
             },
         )
         .await
-        .map_err(|e| HostFault(e));
+        .map_err(HostFault);
     }
 
     let commit_ref = ctx.es.mint_plan_commit_ref();

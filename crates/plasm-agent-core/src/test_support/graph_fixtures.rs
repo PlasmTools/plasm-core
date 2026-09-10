@@ -15,7 +15,7 @@ use crate::run_artifacts::RunArtifactStore;
 use crate::server_state::{CatalogBootstrap, PlasmHostState};
 use crate::session_graph_persistence::SessionGraphPersistence;
 use crate::test_support::session_fixtures::ExecuteSessionFixture;
-use plasm_core::discovery::InMemoryCgsRegistry;
+use plasm_core::discovery::CgsRegistry;
 
 pub fn load_pokeapi_mini_cgs() -> Arc<CGS> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -101,7 +101,7 @@ impl SpillHostFixture {
         let st = Arc::new(build_plasm_host_state(PlasmHostBootstrap {
             engine: ExecutionEngine::new(ExecutionConfig::default()).expect("engine"),
             mode: ExecutionMode::Live,
-            registry: Arc::new(InMemoryCgsRegistry::from_pairs(vec![])),
+            registry: Arc::new(CgsRegistry::from_pairs(vec![])),
             catalog_bootstrap: CatalogBootstrap::Fixed,
             incoming_auth: None,
             run_artifacts: Arc::new(RunArtifactStore::memory()),

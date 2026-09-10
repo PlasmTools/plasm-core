@@ -100,6 +100,7 @@ pub async fn run_repl(
     let mut output_format = initial_format;
     let lexicon = DomainLexicon::from_cgs(cgs);
     let mut llm = LlmState::default();
+    let compiled_catalog = Arc::new(plasm_compile::compile_cgs_capability_templates(cgs)?);
     let cgs = Arc::new(cgs.clone());
 
     loop {
@@ -175,6 +176,7 @@ pub async fn run_repl(
                                     parsed,
                                     cgs.as_ref(),
                                     engine,
+                                    &compiled_catalog,
                                     &mut mat,
                                     mode,
                                     output_format,
@@ -235,6 +237,7 @@ pub async fn run_repl(
                             parsed,
                             cgs.as_ref(),
                             engine,
+                            &compiled_catalog,
                             &mut mat,
                             mode,
                             output_format,
@@ -383,6 +386,7 @@ async fn execute_parsed_expr(
     mut parsed: ParsedExpr,
     cgs: &CGS,
     engine: &ExecutionEngine,
+    compiled_catalog: &Arc<plasm_compile::CompiledCatalog>,
     cache: &mut SessionMaterialization,
     mode: ExecutionMode,
     output_format: OutputFormat,
@@ -425,7 +429,10 @@ async fn execute_parsed_expr(
             cache,
             Some(mode),
             StreamConsumeOpts::default(),
-            ExecuteOptions::default(),
+            ExecuteOptions {
+                compiled_catalog: Some(compiled_catalog.clone()),
+                ..Default::default()
+            },
         )
         .instrument(expr_span.clone())
         .await
@@ -442,7 +449,10 @@ async fn execute_parsed_expr(
                             cgs,
                             cache,
                             mode,
-                            ExecuteOptions::default(),
+                            ExecuteOptions {
+                                compiled_catalog: Some(compiled_catalog.clone()),
+                                ..Default::default()
+                            },
                         )
                         .instrument(expr_span.clone())
                         .await

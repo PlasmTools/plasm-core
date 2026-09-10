@@ -1,11 +1,6 @@
-_auth_header: &auth_header
-  type: object
-  fields:
-  - - Authorization
-    - type: format
-      template: "Bearer {token}"
-      vars:
-        token: { type: var, name: access_token }
+_request_auth: &request_auth
+  scheme: bearer
+  token: { type: var, name: access_token }
 
 # AppWorld OpenAPI list endpoints use page_index (0-based) + page_limit (default 5, max 20).
 # Composable pagination enables default fetch-all for summarize / aggregate programs.
@@ -35,13 +30,13 @@ logout:
   - { type: literal, value: venmo }
   - { type: literal, value: auth }
   - { type: literal, value: logout }
-  headers: *auth_header
+  auth: *request_auth
 user_search:
   method: GET
   path:
   - { type: literal, value: venmo }
   - { type: literal, value: users }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -52,7 +47,7 @@ user_get:
   path:
   - { type: literal, value: venmo }
   - { type: literal, value: profile }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -62,7 +57,7 @@ friend_query:
   path:
   - { type: literal, value: venmo }
   - { type: literal, value: friends }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -83,26 +78,26 @@ friend_add:
   - { type: literal, value: venmo }
   - { type: literal, value: friends }
   - { type: var, name: user_email }
-  headers: *auth_header
+  auth: *request_auth
 friend_remove:
   method: DELETE
   path:
   - { type: literal, value: venmo }
   - { type: literal, value: friends }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 balance_get:
   method: GET
   path:
   - { type: literal, value: venmo }
   - { type: literal, value: balance }
-  headers: *auth_header
+  auth: *request_auth
 balance_add:
   method: POST
   path:
   - { type: literal, value: venmo }
   - { type: literal, value: balance }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -113,7 +108,7 @@ balance_withdraw:
   path:
   - { type: literal, value: venmo }
   - { type: literal, value: balance }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -124,7 +119,7 @@ bank_transfer_query:
   path:
   - { type: literal, value: venmo }
   - { type: literal, value: bank_transfers }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -145,7 +140,7 @@ transaction_query:
       right: { type: const, value: social_feed }
     then_expr: { type: const, value: social_feed }
     else_expr: { type: const, value: transactions }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -211,13 +206,13 @@ transaction_get:
   - { type: literal, value: venmo }
   - { type: literal, value: transactions }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 transaction_create:
   method: POST
   path:
   - { type: literal, value: venmo }
   - { type: literal, value: transactions }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -238,7 +233,7 @@ transaction_create:
         condition: { type: exists, var: private }
         then_expr: { type: var, name: private }
         else_expr: { type: const, value: null }
-payment_request_received_query:
+payment_request_query:
   method: GET
   path:
   - { type: literal, value: venmo }
@@ -249,7 +244,7 @@ payment_request_received_query:
       right: { type: const, value: sent }
     then_expr: { type: const, value: sent_payment_requests }
     else_expr: { type: const, value: received_payment_requests }
-  headers: *auth_header
+  auth: *request_auth
   query: &status_query
     type: object
     fields:
@@ -264,7 +259,7 @@ payment_request_create:
   path:
   - { type: literal, value: venmo }
   - { type: literal, value: payment_requests }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -287,7 +282,7 @@ payment_request_approve:
   - { type: literal, value: payment_requests }
   - { type: var, name: id }
   - { type: literal, value: approve }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -303,20 +298,20 @@ payment_request_deny:
   - { type: literal, value: payment_requests }
   - { type: var, name: id }
   - { type: literal, value: deny }
-  headers: *auth_header
+  auth: *request_auth
 payment_card_query:
   method: GET
   path:
   - { type: literal, value: venmo }
   - { type: literal, value: payment_cards }
-  headers: *auth_header
+  auth: *request_auth
 payment_request_update:
   method: PATCH
   path:
   - { type: literal, value: venmo }
   - { type: literal, value: payment_requests }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -342,21 +337,21 @@ payment_request_remind:
   - { type: literal, value: payment_requests }
   - { type: var, name: id }
   - { type: literal, value: remind }
-  headers: *auth_header
+  auth: *request_auth
 payment_request_delete:
   method: DELETE
   path:
   - { type: literal, value: venmo }
   - { type: literal, value: payment_requests }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 transaction_update:
   method: PATCH
   path:
   - { type: literal, value: venmo }
   - { type: literal, value: transactions }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -377,7 +372,7 @@ transaction_like:
   - { type: literal, value: transactions }
   - { type: var, name: id }
   - { type: literal, value: likes }
-  headers: *auth_header
+  auth: *request_auth
 transaction_unlike:
   method: DELETE
   path:
@@ -385,7 +380,7 @@ transaction_unlike:
   - { type: literal, value: transactions }
   - { type: var, name: id }
   - { type: literal, value: likes }
-  headers: *auth_header
+  auth: *request_auth
 transaction_comment_create:
   method: POST
   path:
@@ -393,7 +388,7 @@ transaction_comment_create:
   - { type: literal, value: transactions }
   - { type: var, name: transaction_id }
   - { type: literal, value: comments }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -404,7 +399,7 @@ transaction_comment_update:
   - { type: literal, value: venmo }
   - { type: literal, value: comments }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -415,13 +410,13 @@ transaction_comment_delete:
   - { type: literal, value: venmo }
   - { type: literal, value: comments }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 payment_card_create:
   method: POST
   path:
   - { type: literal, value: venmo }
   - { type: literal, value: payment_cards }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -437,7 +432,7 @@ payment_card_update:
   - { type: literal, value: venmo }
   - { type: literal, value: payment_cards }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -448,13 +443,13 @@ payment_card_delete:
   - { type: literal, value: venmo }
   - { type: literal, value: payment_cards }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 notification_query:
   method: GET
   path:
   - { type: literal, value: venmo }
   - { type: literal, value: notifications }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -470,14 +465,14 @@ notification_delete:
   - { type: literal, value: venmo }
   - { type: literal, value: notifications }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 notification_mark:
   method: PATCH
   path:
   - { type: literal, value: venmo }
   - { type: literal, value: notifications }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -487,13 +482,13 @@ notification_delete_all:
   path:
   - { type: literal, value: venmo }
   - { type: literal, value: notifications }
-  headers: *auth_header
+  auth: *request_auth
 notification_mark_all:
   method: PATCH
   path:
   - { type: literal, value: venmo }
   - { type: literal, value: notifications }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -502,5 +497,5 @@ notification_mark_all:
   path:
   - { type: literal, value: venmo }
   - { type: literal, value: social_feed }
-  headers: *auth_header
+  auth: *request_auth
   pagination: *appworld_page_index_limit

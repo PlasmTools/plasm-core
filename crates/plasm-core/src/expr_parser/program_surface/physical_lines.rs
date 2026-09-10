@@ -212,4 +212,3 @@ pub(super) fn plp2_unterminated_heredoc_message(tag: &str, cur: &str) -> String 
     }
     crate::plp::plp2_heredoc(BASE)
 }
-

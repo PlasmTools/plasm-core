@@ -92,15 +92,6 @@ pub(crate) fn typecheck_expr() -> Span {
 }
 
 #[inline]
-pub(crate) fn discovery_discover() -> Span {
-    tracing::debug_span!(
-        "plasm_core.discovery.discover",
-        candidate_count = tracing::field::Empty,
-        result_count = tracing::field::Empty,
-    )
-}
-
-#[inline]
 pub(crate) fn catalog_load_il(byte_len: usize) -> Span {
     tracing::debug_span!("plasm_core.catalog.load_il", byte_len = byte_len)
 }

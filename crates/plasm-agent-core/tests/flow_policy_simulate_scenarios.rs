@@ -270,7 +270,7 @@ mod live_dry_run {
         simulate_flow_policy_with_options, CapabilityGatePattern, CapabilityGateRule,
         SimulateOptions, SimulatePolicyArm,
     };
-    use plasm_core::discovery::InMemoryCgsRegistry;
+    use plasm_core::discovery::CgsRegistry;
     use plasm_core::loader::load_schema_dir;
     use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 
@@ -297,7 +297,7 @@ mod live_dry_run {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = Arc::new(load_schema_dir(&dir).expect("plasm_language_matrix"));
-        let reg = InMemoryCgsRegistry::from_pairs(vec![(
+        let reg = CgsRegistry::from_pairs(vec![(
             "langmatrix".into(),
             "Lang Matrix".into(),
             vec!["matrix".into()],

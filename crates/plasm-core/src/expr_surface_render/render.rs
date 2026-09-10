@@ -132,7 +132,8 @@ impl<'a> RenderCtx<'a> {
         match &g.reference.key {
             EntityKey::Simple(slot) => {
                 if slot.is_empty_lit() {
-                    format!("{head}()")
+                    // Pathless singleton Get — teach/display as the seat, never `Entity()`.
+                    head.to_string()
                 } else {
                     format!("{head}({})", render_identity_slot(slot))
                 }
@@ -192,7 +193,9 @@ impl<'a> RenderCtx<'a> {
         if let Some(cap) = cap {
             let method = capability_method_label_kebab(cap);
             let args = self.render_invoke_args(
-                &InvokeInputPayload::raw(Value::Null),
+                d.input
+                    .as_ref()
+                    .unwrap_or(&InvokeInputPayload::raw(Value::Null)),
                 cap,
                 entry_id,
                 d.target.entity_type.as_str(),

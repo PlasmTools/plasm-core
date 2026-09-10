@@ -26,6 +26,126 @@ pub enum ProgramStringError {
     MaxLengthExceeded { max: usize },
 }
 
+/// A string-producing program operand compiled at the source/wire boundary.
+/// Literal and returned strings never acquire this type merely by containing braces.
+#[derive(Clone)]
+pub struct CompiledProgramString {
+    source: String,
+    environment: std::sync::Arc<Environment<'static>>,
+    roots: std::collections::BTreeSet<String>,
+    paths: Vec<Vec<String>>,
+}
+
+impl std::fmt::Debug for CompiledProgramString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("CompiledProgramString")
+            .field(&self.source)
+            .finish()
+    }
+}
+impl PartialEq for CompiledProgramString {
+    fn eq(&self, other: &Self) -> bool {
+        self.source == other.source
+    }
+}
+impl Eq for CompiledProgramString {}
+
+/// Explicit string-expression wire fields compile while decoding, before admission.
+pub mod source_wire {
+    use super::CompiledProgramString;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(
+        value: &CompiledProgramString,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(value.source())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<CompiledProgramString, D::Error> {
+        let source = String::deserialize(deserializer)?;
+        CompiledProgramString::compile(source).map_err(serde::de::Error::custom)
+    }
+}
+impl CompiledProgramString {
+    pub fn compile(source: String) -> Result<Self, ProgramStringError> {
+        reject_dollar_interpolation(&source)?;
+        let mut environment = program_string_env();
+        environment
+            .add_template_owned("operand", source.clone())
+            .map_err(|error| ProgramStringError::Render(error.to_string()))?;
+        let roots = environment
+            .get_template("operand")
+            .map_err(|error| ProgramStringError::Render(error.to_string()))?
+            .undeclared_variables(false)
+            .into_iter()
+            .collect();
+        let paths = environment
+            .get_template("operand")
+            .map_err(|error| ProgramStringError::Render(error.to_string()))?
+            .undeclared_variables(true)
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .map(|path| path.split('.').map(str::to_owned).collect())
+            .collect();
+        Ok(Self {
+            source,
+            environment: std::sync::Arc::new(environment),
+            roots,
+            paths,
+        })
+    }
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+    pub fn paths(&self) -> &[Vec<String>] {
+        &self.paths
+    }
+    pub fn roots(&self) -> &std::collections::BTreeSet<String> {
+        &self.roots
+    }
+    pub fn render(&self, scope: &BTreeMap<String, Value>) -> Result<String, ProgramStringError> {
+        let context: BTreeMap<_, _> = scope
+            .iter()
+            .map(|(key, value)| (key.as_str(), plasm_to_mj(value)))
+            .collect();
+        let output = self
+            .environment
+            .get_template("operand")
+            .map_err(|error| ProgramStringError::Render(error.to_string()))?
+            .render(context)
+            .map_err(|error| ProgramStringError::Render(error.to_string()))?;
+        if output.len() > DEFAULT_MAX_INTERPOLATED_LEN {
+            return Err(ProgramStringError::MaxLengthExceeded {
+                max: DEFAULT_MAX_INTERPOLATED_LEN,
+            });
+        }
+        Ok(output)
+    }
+}
+impl serde::Serialize for CompiledProgramString {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(1))?;
+        map.serialize_entry("__plasm_string_template", &self.source)?;
+        map.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for CompiledProgramString {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Wire {
+            __plasm_string_template: String,
+        }
+        let wire = Wire::deserialize(deserializer)?;
+        Self::compile(wire.__plasm_string_template).map_err(serde::de::Error::custom)
+    }
+}
+
 /// True when `s` contains a `${` opener (including after `$$` — dollar dialect is fully banned).
 #[must_use]
 pub fn contains_dollar_interpolation(s: &str) -> bool {
@@ -113,7 +233,9 @@ fn plasm_to_mj(v: &Value) -> MjValue {
             MjValue::from_serialize(&obj)
         }
         Value::Money(m) => MjValue::from(m.display()),
-        Value::PlasmInputRef(_) | Value::UnionCtor { .. } => MjValue::from(()),
+        Value::StringTemplate(_) | Value::PlasmInputRef(_) | Value::UnionCtor { .. } => {
+            MjValue::from(())
+        }
     }
 }
 
@@ -173,7 +295,6 @@ pub fn interpolation_paths(s: &str) -> Vec<String> {
                 .split('|')
                 .next()
                 .unwrap_or(expr)
-                .trim()
                 .split_whitespace()
                 .next()
                 .unwrap_or("");

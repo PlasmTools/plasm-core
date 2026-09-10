@@ -96,7 +96,8 @@ async fn lang_federated_auth_session_bearer_hole_fill_live_async() {
             cgs_live,
         ),
     );
-    let row = find_row("lang_federated_auth_session_provides_mutation").expect("auth hole-fill matrix row");
+    let row = find_row("lang_federated_auth_session_provides_mutation")
+        .expect("auth hole-fill matrix row");
     matrix_live_run_row(row, es.as_ref(), st.as_ref()).await;
 }
 
@@ -137,7 +138,8 @@ async fn lang_integer_where_gt_dry_coerce_live_async() {
         .expect("ExecutionEngine"),
         cgs_live,
     ));
-    let row = find_row("lang_integer_where_gt_dry_coerce").expect("integer where coerce matrix row");
+    let row =
+        find_row("lang_integer_where_gt_dry_coerce").expect("integer where coerce matrix row");
     matrix_live_run_row(row, es.as_ref(), st.as_ref()).await;
 }
 
@@ -178,7 +180,8 @@ async fn lang_utf8_minijinja_content_stitch_live_async() {
         .expect("ExecutionEngine"),
         cgs_live,
     ));
-    let row = find_row("lang_utf8_minijinja_content_stitch").expect("minijinja content stitch matrix row");
+    let row = find_row("lang_utf8_minijinja_content_stitch")
+        .expect("minijinja content stitch matrix row");
     matrix_live_run_row(row, es.as_ref(), st.as_ref()).await;
 }
 
@@ -208,7 +211,8 @@ fn matrix_coverage_contract_all_rows_require_live_execution() {
         assert!(
             !row.expect_markdown_substrings.is_empty()
                 || row.features.contains(&"host_wait_cancel")
-                || row.expect_live_error.is_some() || row.features.contains(&"iterate_bound_exhausted"),
+                || row.expect_live_error.is_some()
+                || row.features.contains(&"iterate_bound_exhausted"),
             "row {} must declare live markdown/IO expectations",
             row.id
         );
@@ -300,4 +304,3 @@ fn lang_wait_cancel_operation_parse() {
         other => panic!("expected Cancel, got {other:?}"),
     }
 }
-

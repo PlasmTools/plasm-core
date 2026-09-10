@@ -257,7 +257,7 @@ pub(crate) fn update_modal_key(state: &mut RunState, key: KeyEvent, deps: &Updat
                         RunNotice::new(
                             NoticeSeverity::Info,
                             "OpenRouter key saved",
-                            "Semantic auto-seed can call OpenRouter when enabled.",
+                            "Intent routing uses OpenRouter for embeddings and capability selection.",
                         )
                         .with_sticky(false),
                     );
@@ -943,43 +943,6 @@ The control station stores secrets in auth-framework KV, so there is nowhere to 
                                     "Could not load OAuth scope catalogue for `{entry_id}`: {e}"
                                 ),
                             ),
-                        );
-                    }
-                }
-            }
-        }
-        KeyCode::Char('e') if state.screen == RunScreen::Discovery => {
-            if matches!(state.mode, InputMode::Normal) {
-                let enabled =
-                    !crate::discovery_bootstrap::current_state().semantic_auto_seed_enabled;
-                match crate::discovery_bootstrap::set_semantic_auto_seed_enabled(enabled) {
-                    Ok(()) => {
-                        set_notice(
-                            state,
-                            RunNotice::new(
-                                if enabled {
-                                    NoticeSeverity::Info
-                                } else {
-                                    NoticeSeverity::Warning
-                                },
-                                if enabled {
-                                    "Semantic auto-seed enabled"
-                                } else {
-                                    "Semantic auto-seed disabled"
-                                },
-                                if enabled {
-                                    "Intent-only plasm_context new sessions will route via OpenRouter."
-                                } else {
-                                    "Pass explicit seeds on plasm_context session_mode new."
-                                },
-                            )
-                            .with_sticky(false),
-                        );
-                    }
-                    Err(e) => {
-                        set_notice(
-                            state,
-                            RunNotice::new(NoticeSeverity::Error, "Toggle failed", e),
                         );
                     }
                 }

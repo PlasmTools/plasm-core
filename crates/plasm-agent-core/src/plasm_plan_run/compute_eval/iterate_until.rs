@@ -1,7 +1,7 @@
 //! Live materialization for PLP-8 `iterate … step … until … take N`.
 
 use super::super::*;
-use super::eval::{instantiate_raw_expr_template, wire_coercion_by_alias_from_inputs};
+use super::eval::{instantiate_expr_template, wire_coercion_by_alias_from_inputs};
 use super::for_each::{bound_row_plan_eval_env, cross_uses_excluding_item};
 use super::materialized_result_use_inputs;
 use crate::plasm_plan::{PlanPredicate, ValidatedIterateUntilNode};
@@ -25,16 +25,14 @@ pub(crate) async fn materialize_iterate_until_node(
     sink: Option<&McpPlasmTraceSink>,
     plan_shared: Option<Arc<crate::plan_execute_shared::PlanLineExecuteShared>>,
 ) -> Result<MaterializedNode, String> {
-    let mut current_rows =
-        materialized_rows(es, st, session_id, materialized, &it.source).await?;
+    let mut current_rows = materialized_rows(es, st, session_id, materialized, &it.source).await?;
     if current_rows.is_empty() {
         return Err("iterate_until seed produced no rows".into());
     }
     let cross = cross_uses_excluding_item(&it.uses_result, &it.item_binding);
     let mut input_rows = materialized_result_use_inputs(materialized, &cross, None)?;
     let wire_coercion_by_alias = wire_coercion_by_alias_from_inputs(es, &mut input_rows)?;
-    let scoped_es =
-        entry_scoped_execute_session(es, Some(&it.effect_template.qualified_entity))?;
+    let scoped_es = entry_scoped_execute_session(es, Some(&it.effect_template.qualified_entity))?;
 
     if row_satisfies_until(&current_rows[0], &it.until_predicates) {
         return Ok(final_iterate_node(it, current_rows));
@@ -44,13 +42,10 @@ pub(crate) async fn materialize_iterate_until_node(
         let row = current_rows
             .first()
             .ok_or_else(|| "iterate_until lost seed row".to_string())?;
-        let env = bound_row_plan_eval_env(
-            &it.item_binding,
-            row,
-            &input_rows,
-            &wire_coercion_by_alias,
-        );
-        let parsed = instantiate_raw_expr_template(&it.effect_template.ir_template, &env)?;
+        let env =
+            bound_row_plan_eval_env(&it.item_binding, row, &input_rows, &wire_coercion_by_alias);
+        let parsed =
+            instantiate_expr_template(&it.effect_template.ir_template, &env, &scoped_es.cgs)?;
         let expr_label = crate::expr_display::expr_display(&parsed.expr);
         let mut jobs = Vec::new();
         super::super::plan_fanout_parallel::push_row_job(
@@ -77,8 +72,7 @@ pub(crate) async fn materialize_iterate_until_node(
         // substitute for primary_read / composed views — e.g. Player.previous may echo song_id while
         // `is_liked` lives only on player_current. LangCursor.tick remains correct because re-Get
         // reads the updated cursor row.
-        current_rows =
-            reobserve_seed(st, es, session_id, it, plan_shared.as_ref(), trace).await?;
+        current_rows = reobserve_seed(st, es, session_id, it, plan_shared.as_ref(), trace).await?;
         if current_rows.is_empty() {
             return Err(format!(
                 "iterate_until re-observe after step {step_idx} produced no rows"
@@ -126,8 +120,7 @@ async fn reobserve_seed(
         projection: seed_ir.projection.clone(),
         field_dot_extract: None,
     };
-    let scoped_es =
-        entry_scoped_execute_session(es, Some(&it.effect_template.qualified_entity))?;
+    let scoped_es = entry_scoped_execute_session(es, Some(&it.effect_template.qualified_entity))?;
     let expr_label = seed_ir.display_expr.as_deref().unwrap_or("<iterate-seed>");
     let (_parsed, result, _artifact) = execute_plasm_parsed_expr(
         st,

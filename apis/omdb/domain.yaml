@@ -1,4 +1,4 @@
-version: 2
+version: 3
 http_backend: http://www.omdbapi.com
 entities:
   Movie:
@@ -55,36 +55,31 @@ capabilities:
     description: Search movies by title keywords.
     kind: search
     entity: Movie
-    parameters:
-    - name: s
+    selection:
+    - name: query
       value_ref: nv_wire_str_short
       required: true
-      role: search
     - name: y
       value_ref: nv_wire_str_short
       required: false
-      role: filter
     - name: type
       value_ref: nv_movie_search_type
       required: false
-      role: filter
   movie_get_by_title:
     description: Look up a single movie by exact title match.
     kind: query
     entity: Movie
-    parameters:
+    selection:
     - name: t
       value_ref: nv_wire_str_short
       required: true
-      role: search
     - name: y
       value_ref: nv_wire_str_short
       required: false
-      role: filter
+    controls:
     - name: plot
       value_ref: nv_movie_get_by_title_plot
       required: false
-      role: response_control
 auth:
   scheme: api_key_query
   param: apikey

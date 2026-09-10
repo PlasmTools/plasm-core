@@ -41,6 +41,9 @@ fn plasm_value_to_json(v: &Value) -> serde_json::Value {
             }
             serde_json::Value::Object(map)
         }
+        Value::StringTemplate(value) => {
+            serde_json::json!({"__plasm_string_template": value.source()})
+        }
         Value::PlasmInputRef(_) | Value::UnionCtor { .. } => serde_json::Value::Null,
         Value::Money(m) => serde_json::Value::String(m.display()),
     }
@@ -170,7 +173,12 @@ fn register_view_template_filters(env: &mut Environment<'_>) {
                 Value::Array(_) | Value::Object(_) => {
                     serde_json::to_string(&plasm_value_to_json(&out)).unwrap_or_default()
                 }
-                Value::PlasmInputRef(_) | Value::UnionCtor { .. } => String::new(),
+                Value::StringTemplate(_) | Value::PlasmInputRef(_) | Value::UnionCtor { .. } => {
+                    return Err(minijinja::Error::new(
+                        minijinja::ErrorKind::InvalidOperation,
+                        "unbound operand reached wire_time",
+                    ))
+                }
                 Value::Money(m) => m.display(),
             })
         },
@@ -308,6 +316,17 @@ fn render_view_template_with_nodes(
     fields_plain: &IndexMap<String, Value>,
     node_fields: &IndexMap<String, IndexMap<String, Value>>,
 ) -> Result<Value, RuntimeError> {
+    for value in scope
+        .values()
+        .chain(fields_plain.values())
+        .chain(node_fields.values().flat_map(|fields| fields.values()))
+    {
+        plasm_core::operand_binding::ResolvedValue::new(value.clone()).map_err(|message| {
+            RuntimeError::ConfigurationError {
+                message: message.into(),
+            }
+        })?;
+    }
     let trimmed = desugar_view_computed_template(template.trim());
     let trimmed = trimmed.trim();
     if trimmed.is_empty() {

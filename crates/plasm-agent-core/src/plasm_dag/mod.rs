@@ -7,6 +7,7 @@
 mod binding_continuation;
 mod binding_contract;
 mod invoke_cardinality;
+mod password_domain;
 mod plan_serialize;
 mod prelude;
 mod relation;
@@ -24,9 +25,12 @@ mod pipeline;
 // --- crate-visible entrypoints ---
 #[allow(unused_imports)]
 pub(crate) use pipeline::{
-    compile_plasm_dag_to_plan, compile_plasm_dag_to_plan_inner, compile_plasm_expression_to_plan,
-    compile_plasm_surface_line_to_plan, is_plasm_dag_candidate, is_plasm_dag_source,
+    compile_plasm_dag_to_plan_inner, compile_plasm_surface_line_to_plan, is_plasm_dag_candidate,
+    is_plasm_dag_source,
 };
+
+#[cfg(test)]
+pub(crate) use pipeline::{compile_plasm_dag_to_plan, compile_surface_fixture_json};
 
 // --- in-module re-exports for submodules + integration tests (`use super::*`) ---
 #[allow(unused_imports)]
@@ -43,7 +47,7 @@ pub(in crate::plasm_dag) use pipeline::{
     split_return_list,
 };
 #[allow(unused_imports)]
-pub(in crate::plasm_dag) use plan_serialize::{node_to_json, parse_aggregates};
+pub(in crate::plasm_dag) use plan_serialize::parse_aggregates;
 #[allow(unused_imports)]
 pub(in crate::plasm_dag) use plasm_core::expr_parser::{
     collect_program_statement_lines, split_top_level,

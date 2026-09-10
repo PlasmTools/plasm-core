@@ -12,9 +12,7 @@ pub(in crate::plasm_dag) use parse_helpers::{
     parse_plan_value_expr, parse_sort_direction_token, parse_sort_field_and_direction,
 };
 #[allow(unused_imports)]
-pub(in crate::plasm_dag) use plan_emit::{
-    emit_plan_json_for_source, expr_template_json, node_to_json,
-};
+pub(in crate::plasm_dag) use plan_emit::{expression_template, lower_plan_node};
 #[allow(unused_imports)]
 pub(in crate::plasm_dag) use surface_infer::{
     infer_surface_contract, infer_surface_contract_from_expr, schema_from_aggregates,
@@ -22,7 +20,6 @@ pub(in crate::plasm_dag) use surface_infer::{
 };
 #[allow(unused_imports)]
 pub(in crate::plasm_dag) use template_uses::{
-    collect_expr_for_template_uses, collect_predicate_for_template_uses,
-    collect_template_uses_from_expr, collect_value_for_template_uses, dedupe_inputs, dedupe_uses,
+    collect_expr_for_template_uses, collect_template_uses_from_expr, dedupe_inputs, dedupe_uses,
     relation_plan_uses_result, stamp_plan_uses_result_qualified_entities,
 };

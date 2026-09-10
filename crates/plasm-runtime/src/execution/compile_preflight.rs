@@ -13,16 +13,17 @@ use crate::view_preflight::{preflight_view_get, preflight_view_query};
 pub fn preflight_compile_expr(
     expr: &Expr,
     cgs: &CGS,
+    compiled: &plasm_compile::CompiledCatalog,
     ambient: &ViewAmbientContext,
     mat: &SessionMaterialization,
 ) -> Result<(), RuntimeError> {
     match expr {
-        Expr::Query(query) => preflight_compile_query(query, cgs, ambient, mat),
-        Expr::Get(get) => preflight_compile_get(get, cgs, ambient, mat),
-        Expr::Create(create) => preflight_compile_create(create, cgs),
-        Expr::Delete(delete) => preflight_compile_delete(delete, cgs),
-        Expr::Invoke(invoke) => preflight_compile_invoke(invoke, cgs),
-        Expr::Chain(chain) => preflight_compile_expr(&chain.source, cgs, ambient, mat),
+        Expr::Query(query) => preflight_compile_query(query, cgs, compiled, ambient, mat),
+        Expr::Get(get) => preflight_compile_get(get, cgs, compiled, ambient, mat),
+        Expr::Create(create) => preflight_compile_create(create, cgs, compiled),
+        Expr::Delete(delete) => preflight_compile_delete(delete, cgs, compiled),
+        Expr::Invoke(invoke) => preflight_compile_invoke(invoke, cgs, compiled),
+        Expr::Chain(chain) => preflight_compile_expr(&chain.source, cgs, compiled, ambient, mat),
         Expr::Page(_) | Expr::Wait(_) | Expr::Cancel(_) | Expr::TeachingValue { .. } => Ok(()),
     }
 }
@@ -30,6 +31,7 @@ pub fn preflight_compile_expr(
 fn preflight_compile_query(
     query: &QueryExpr,
     cgs: &CGS,
+    compiled: &plasm_compile::CompiledCatalog,
     ambient: &ViewAmbientContext,
     mat: &SessionMaterialization,
 ) -> Result<(), RuntimeError> {
@@ -55,14 +57,9 @@ fn preflight_compile_query(
             Value::Array(proj.iter().map(|s| Value::String(s.clone())).collect()),
         );
     }
-    let capability_template = parse_capability_template(
-        &capability
-            .require_mapping()
-            .map_err(|message| RuntimeError::ConfigurationError { message })?
-            .template,
-    )?;
+    let capability_template = compiled.capability(capability.name.as_str())?.clone();
     if let CapabilityTemplate::View(vt) = &capability_template {
-        return preflight_view_query(vt.view.as_str(), query, cgs, ambient, mat);
+        return preflight_view_query(vt.view.as_str(), query, cgs, compiled, ambient, mat);
     }
     compile_operation_dispatch(&capability_template, &env).map(|_| ())
 }
@@ -107,6 +104,7 @@ fn resolve_get_capability_for_preflight<'a>(
 fn preflight_compile_get(
     get: &GetExpr,
     cgs: &CGS,
+    compiled: &plasm_compile::CompiledCatalog,
     ambient: &ViewAmbientContext,
     mat: &SessionMaterialization,
 ) -> Result<(), RuntimeError> {
@@ -116,29 +114,19 @@ fn preflight_compile_get(
     if capability.derived.is_some() {
         return Ok(());
     }
-    let mapping = capability
-        .mapping
-        .as_ref()
-        .ok_or_else(|| RuntimeError::ConfigurationError {
-            message: format!(
-                "capability '{}' has neither CML mapping nor derived plan",
-                capability.name
-            ),
-        })?;
-    let capability_template = parse_capability_template(&mapping.template)?;
+    let capability_template = compiled.capability(capability.name.as_str())?.clone();
     if let CapabilityTemplate::View(vt) = &capability_template {
-        return preflight_view_get(vt.view.as_str(), &get, cgs, ambient, mat);
+        return preflight_view_get(vt.view.as_str(), &get, cgs, compiled, ambient, mat);
     }
     let mut env = CmlEnv::new();
-    merge_plasm_execute_session_proof_base_token_env(&mut env);
-    let target_ent = cgs.get_entity(get.reference.entity_type.as_str()).ok_or_else(|| {
-        RuntimeError::ConfigurationError {
+    let target_ent = cgs
+        .get_entity(get.reference.entity_type.as_str())
+        .ok_or_else(|| RuntimeError::ConfigurationError {
             message: format!(
                 "unknown entity `{}` for get identity-env projection",
                 get.reference.entity_type
             ),
-        }
-    })?;
+        })?;
     populate_template_path_env(
         &mut env,
         capability,
@@ -159,6 +147,7 @@ fn preflight_compile_get(
 fn preflight_compile_create(
     create: &plasm_core::CreateExpr,
     cgs: &CGS,
+    compiled: &plasm_compile::CompiledCatalog,
 ) -> Result<(), RuntimeError> {
     let capability = cgs
         .get_capability(create.capability.as_str())
@@ -166,12 +155,7 @@ fn preflight_compile_create(
             capability: create.capability.to_string(),
             entity: create.entity.to_string(),
         })?;
-    let capability_template = parse_capability_template(
-        &capability
-            .require_mapping()
-            .map_err(|message| RuntimeError::ConfigurationError { message })?
-            .template,
-    )?;
+    let capability_template = compiled.capability(capability.name.as_str())?.clone();
     let payload = if let Some(schema) = &capability.inputs.payload {
         InvokeInputPayload::lift(&create.input.to_value(), &schema.input_type, cgs)
     } else {
@@ -187,7 +171,6 @@ fn preflight_compile_create(
     };
     let input = plasm_core::prepare_create_capability_input(capability, create, input, cgs);
     let mut env = CmlEnv::new();
-    merge_plasm_execute_session_proof_base_token_env(&mut env);
     env.insert("input".to_string(), input.clone());
     if let Value::Object(ref map) = input {
         for (k, v) in map {
@@ -208,6 +191,7 @@ fn preflight_compile_create(
 fn preflight_compile_delete(
     delete: &plasm_core::DeleteExpr,
     cgs: &CGS,
+    compiled: &plasm_compile::CompiledCatalog,
 ) -> Result<(), RuntimeError> {
     let capability = cgs
         .get_capability(delete.capability.as_str())
@@ -215,29 +199,27 @@ fn preflight_compile_delete(
             capability: delete.capability.to_string(),
             entity: delete.target.entity_type.to_string(),
         })?;
-    let capability_template = parse_capability_template(
-        &capability
-            .require_mapping()
-            .map_err(|message| RuntimeError::ConfigurationError { message })?
-            .template,
-    )?;
+    let capability_template = compiled.capability(capability.name.as_str())?.clone();
+    let input_for_env = targeted_call_input(delete, capability, cgs);
     let mut env = CmlEnv::new();
-    merge_plasm_execute_session_proof_base_token_env(&mut env);
-    let target_ent = cgs.get_entity(delete.target.entity_type.as_str()).ok_or_else(|| {
-        RuntimeError::ConfigurationError {
+    let target_ent = cgs
+        .get_entity(delete.target.entity_type.as_str())
+        .ok_or_else(|| RuntimeError::ConfigurationError {
             message: format!(
                 "unknown entity `{}` for delete identity-env projection",
                 delete.target.entity_type
             ),
-        }
-    })?;
+        })?;
     populate_template_path_env(
         &mut env,
         capability,
         &delete.target,
         plasm_core::IdentityProjectionCtx::Entity(target_ent),
-        None,
+        input_for_env.as_ref(),
     )?;
+    if let Some(input) = input_for_env {
+        env.insert("input".to_string(), input);
+    }
     normalize_cml_env_scope_entity_refs(&mut env, cgs, capability)?;
     plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
         RuntimeError::ConfigurationError {
@@ -248,55 +230,28 @@ fn preflight_compile_delete(
     compile_operation_dispatch(&capability_template, &env).map(|_| ())
 }
 
-fn preflight_compile_invoke(invoke: &InvokeExpr, cgs: &CGS) -> Result<(), RuntimeError> {
+fn preflight_compile_invoke(
+    invoke: &InvokeExpr,
+    cgs: &CGS,
+    compiled: &plasm_compile::CompiledCatalog,
+) -> Result<(), RuntimeError> {
     let capability = cgs
         .get_capability(invoke.capability.as_str())
         .ok_or_else(|| RuntimeError::CapabilityNotFound {
             capability: invoke.capability.to_string(),
             entity: invoke.target.entity_type.to_string(),
         })?;
-    let capability_template = parse_capability_template(
-        &capability
-            .require_mapping()
-            .map_err(|message| RuntimeError::ConfigurationError { message })?
-            .template,
-    )?;
-    let input_for_env = {
-        let raw = match &invoke.input {
-            None => Value::Object(indexmap::IndexMap::new()),
-            Some(input) => {
-                let payload = if let Some(schema) = &capability.inputs.payload {
-                    InvokeInputPayload::lift(&input.to_value(), &schema.input_type, cgs)
-                } else {
-                    input.clone()
-                };
-                match capability.inputs.payload.as_ref() {
-                    Some(schema) => plasm_core::normalize_structured_string_inputs(
-                        payload.to_value(),
-                        &schema.input_type,
-                        cgs,
-                    ),
-                    None => payload.to_value(),
-                }
-            }
-        };
-        let effective = plasm_core::prepare_invoke_capability_input(capability, invoke, raw, cgs);
-        if invoke.input.is_none() && effective.as_object().is_some_and(|m| m.is_empty()) {
-            None
-        } else {
-            Some(effective)
-        }
-    };
+    let capability_template = compiled.capability(capability.name.as_str())?.clone();
+    let input_for_env = targeted_call_input(invoke, capability, cgs);
     let mut env = CmlEnv::new();
-    merge_plasm_execute_session_proof_base_token_env(&mut env);
-    let target_ent = cgs.get_entity(invoke.target.entity_type.as_str()).ok_or_else(|| {
-        RuntimeError::ConfigurationError {
+    let target_ent = cgs
+        .get_entity(invoke.target.entity_type.as_str())
+        .ok_or_else(|| RuntimeError::ConfigurationError {
             message: format!(
                 "unknown entity `{}` for invoke identity-env projection",
                 invoke.target.entity_type
             ),
-        }
-    })?;
+        })?;
     populate_template_path_env(
         &mut env,
         capability,
@@ -322,4 +277,35 @@ fn preflight_compile_invoke(invoke: &InvokeExpr, cgs: &CGS) -> Result<(), Runtim
     apply_preflight_compile_stubs(&mut env, capability, cgs);
     merge_plasm_execute_session_env(&mut env);
     compile_operation_dispatch(&capability_template, &env).map(|_| ())
+}
+
+pub(super) fn targeted_call_input(
+    invoke: &impl plasm_core::expr::TargetedCall,
+    capability: &plasm_core::CapabilitySchema,
+    cgs: &CGS,
+) -> Option<Value> {
+    let raw = match invoke.input() {
+        None => Value::Object(indexmap::IndexMap::new()),
+        Some(input) => {
+            let payload = if let Some(schema) = &capability.inputs.payload {
+                InvokeInputPayload::lift(&input.to_value(), &schema.input_type, cgs)
+            } else {
+                input.clone()
+            };
+            match capability.inputs.payload.as_ref() {
+                Some(schema) => plasm_core::normalize_structured_string_inputs(
+                    payload.to_value(),
+                    &schema.input_type,
+                    cgs,
+                ),
+                None => payload.to_value(),
+            }
+        }
+    };
+    let effective = plasm_core::prepare_targeted_capability_input(capability, invoke, raw, cgs);
+    if invoke.input().is_none() && effective.as_object().is_some_and(|m| m.is_empty()) {
+        None
+    } else {
+        Some(effective)
+    }
 }

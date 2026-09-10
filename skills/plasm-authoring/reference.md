@@ -1208,6 +1208,13 @@ Pagination is transparent in the domain model: `domain.yaml` still uses `kind: q
 
 When a mapping includes `pagination`, the runtime merges page parameters from `pagination.params` (counter / fixed / `from_response` keys and `location`) for follow-up HTTP requests.
 
+If the first request requires a caller-supplied cursor, declare that source input
+explicitly (for example `initial_cursor`) and map it to the wire cursor key in CML.
+The same wire key may declare `from_response` for continuation. Before the first
+response, pagination leaves the compiled initial value intact; subsequent requests
+replace it with the returned cursor. Do not also expose the continuation parameter
+as an independent input or emit a fixed page-size parameter manually.
+
 **LLM / MCP execute:** paginated queries return one upstream page by default. When more pages exist, the host mints an opaque session handle (`pg1`, `pg2`, …) and surfaces `has_more` plus a compact `page(pgN)` follow-up. Clients continue with `page(pgN)` or `page(pgN, limit=50)`.
 
 **`plasm-repl` / expressions:** use postfix limits / continuation forms taught in teaching table, or session `page(...)` — not synthetic `--limit` / `--all`.
@@ -1341,6 +1348,47 @@ path:
 type: var
 name: <variable_name>
 ```
+
+#### Scoped host injection references
+
+A local `credential_bind` capability binds the owning catalog's configured host
+injection source to a resource. Declare it as a create/action with a typed receipt
+containing `reference` and `resource`. It runs only through normal reviewed live
+execution; compilation, discovery and teaching perform no acquisition.
+
+```yaml
+transport: credential_bind
+slot: record_access
+lifetime_seconds: 3600
+origin: https://example.test
+resource:
+  type: object
+  fields:
+    - [record, {type: var, name: record_id}]
+source: {scheme: host}
+```
+
+The source accepts no credential literal or secret-provider key. Configure secrets
+through the existing host injection mechanism. Session persistence stores source,
+scope, expiry and opaque reference metadata only. A consuming HTTP template uses:
+
+```yaml
+auth:
+  scheme: credential
+  slot: record_access
+  resource:
+    type: object
+    fields:
+      - [record, {type: var, name: record_id}]
+  reference: {type: var, name: access}
+```
+
+Declare `access` in an existing capability input lane. Resolution checks session,
+pinned catalog revision, origin, slot, resource and expiry before delegating to the
+existing host resolver. Invalid references fail. Scoped requests reject redirects.
+Use `auth: {scheme: host}` for direct configured authentication; a catalog can
+explicitly select between those sources with `scheme: when`. Business preconditions
+remain ordinary provider outputs bound into consumer inputs.
 
 #### Constant
 

@@ -30,28 +30,24 @@ capabilities:
     description: Search meals by name using the s parameter.
     kind: search
     entity: Meal
-    parameters:
+    selection:
     - name: s
       value_ref: nv_wire_str_short
       required: true
-      role: search
   meal_filter:
     description: Filter meals by category, area, or ingredient.
     kind: query
     entity: Meal
-    parameters:
+    selection:
     - name: c
       value_ref: nv_wire_str_short
       required: false
-      role: filter
     - name: a
       value_ref: nv_wire_str_short
       required: false
-      role: filter
     - name: i
       value_ref: nv_wire_str_short
       required: false
-      role: filter
   meal_get:
     description: Retrieve full meal detail including ingredients.
     kind: get

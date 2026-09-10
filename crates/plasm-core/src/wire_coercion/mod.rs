@@ -20,7 +20,6 @@ use crate::{ArrayItemsSchema, FieldType, NamedValueSchema, Value, ValueWireForma
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
-
 mod dry_stub;
 mod relation_binding;
 
@@ -83,6 +82,13 @@ pub fn coerce_value_for_field_type_with_policy(
     if val.is_domain_example_placeholder() {
         return Ok(val);
     }
+    if matches!(val, Value::StringTemplate(_)) {
+        return if matches!(ft, FieldType::String | FieldType::Blob) {
+            Ok(val)
+        } else {
+            Err(format!("string template cannot bind a {ft:?} operand"))
+        };
+    }
     if matches!(val, Value::Null | Value::PlasmInputRef(_)) {
         return Ok(val);
     }
@@ -134,17 +140,13 @@ pub fn coerce_value_for_field_type_with_policy(
                 }
             }
         }
-        FieldType::String | FieldType::Uuid | FieldType::Select => {
-            Ok(match val {
-                Value::Integer(n) => Value::String(n.to_string()),
-                Value::Float(f) => Value::String(normalize_numeric_id_float(f)),
-                Value::PhraseIdent(s) => Value::String(s),
-                Value::String(s) => Value::String(s),
-                other => {
-                    return Err(format!("cannot coerce {} to {ft:?}", other.type_name()))
-                }
-            })
-        }
+        FieldType::String | FieldType::Uuid | FieldType::Select => Ok(match val {
+            Value::Integer(n) => Value::String(n.to_string()),
+            Value::Float(f) => Value::String(normalize_numeric_id_float(f)),
+            Value::PhraseIdent(s) => Value::String(s),
+            Value::String(s) => Value::String(s),
+            other => return Err(format!("cannot coerce {} to {ft:?}", other.type_name())),
+        }),
         FieldType::Blob => {
             if val.is_plasm_attachment_object() {
                 return Ok(val);
@@ -154,9 +156,7 @@ pub fn coerce_value_for_field_type_with_policy(
                 Value::Float(f) => Value::String(normalize_numeric_id_float(f)),
                 Value::PhraseIdent(s) => Value::String(s),
                 Value::String(s) => Value::String(s),
-                other => {
-                    return Err(format!("cannot coerce {} to blob", other.type_name()))
-                }
+                other => return Err(format!("cannot coerce {} to blob", other.type_name())),
             })
         }
         FieldType::MultiSelect => match val {
@@ -170,24 +170,30 @@ pub fn coerce_value_for_field_type_with_policy(
         },
         FieldType::Integer => {
             if let Some(s) = stringish(&val) {
-                return s.parse::<i64>().map(Value::Integer).map_err(|_| {
-                    format!("cannot coerce {s:?} to integer")
-                });
+                return s
+                    .parse::<i64>()
+                    .map(Value::Integer)
+                    .map_err(|_| format!("cannot coerce {s:?} to integer"));
             }
             match val {
                 Value::Integer(n) => Ok(Value::Integer(n)),
-                Value::Float(f) if f.fract() == 0.0 && f.is_finite() => Ok(Value::Integer(f as i64)),
-                other => Err(format!(
-                    "cannot coerce {} to integer",
-                    other.type_name()
-                )),
+                Value::Float(f)
+                    if f.fract() == 0.0
+                        && f.is_finite()
+                        && f >= i64::MIN as f64
+                        && f < -(i64::MIN as f64) =>
+                {
+                    Ok(Value::Integer(f as i64))
+                }
+                other => Err(format!("cannot coerce {} to integer", other.type_name())),
             }
         }
         FieldType::Number => {
             if let Some(s) = stringish(&val) {
-                return s.parse::<f64>().map(Value::Float).map_err(|_| {
-                    format!("cannot coerce {s:?} to number")
-                });
+                return s
+                    .parse::<f64>()
+                    .map(Value::Float)
+                    .map_err(|_| format!("cannot coerce {s:?} to number"));
             }
             match val {
                 Value::Integer(n) => Ok(Value::Float(n as f64)),
@@ -201,12 +207,7 @@ pub fn coerce_value_for_field_type_with_policy(
             Value::PhraseIdent(s) => Value::String(s),
             Value::String(s) => Value::String(s),
             Value::Object(o) => Value::Object(o),
-            other => {
-                return Err(format!(
-                    "cannot coerce {} to entity_ref",
-                    other.type_name()
-                ))
-            }
+            other => return Err(format!("cannot coerce {} to entity_ref", other.type_name())),
         }),
         FieldType::Boolean => match stringish(&val) {
             // RA-8: reject `"1"` / `"0"` — only true/false tokens.
@@ -217,10 +218,7 @@ pub fn coerce_value_for_field_type_with_policy(
             )),
             None => match val {
                 Value::Bool(b) => Ok(Value::Bool(b)),
-                other => Err(format!(
-                    "cannot coerce {} to boolean",
-                    other.type_name()
-                )),
+                other => Err(format!("cannot coerce {} to boolean", other.type_name())),
             },
         },
         FieldType::Json => match val {
@@ -298,6 +296,18 @@ pub fn coerce_json_value_for_field_type(
     array_items: Option<&ArrayItemsSchema>,
     value: serde_json::Value,
 ) -> serde_json::Value {
+    if let serde_json::Value::Number(number) = &value {
+        if matches!(
+            ft,
+            FieldType::String | FieldType::Select | FieldType::EntityRef { .. }
+        ) {
+            return serde_json::Value::String(number.to_string());
+        }
+        // Preserve out-of-domain integers for the response-contract validator; never round them.
+        if number.is_u64() && number.as_i64().is_none() {
+            return value;
+        }
+    }
     let plasm = json_to_plasm_for_field(ft, &value);
     match coerce_value_for_field_type(ft, value_format, array_items, plasm) {
         Ok(v) => match try_plasm_value_to_json(&v) {
@@ -307,7 +317,6 @@ pub fn coerce_json_value_for_field_type(
         Err(_) => value,
     }
 }
-
 
 pub(crate) fn json_to_plasm_for_field(ft: &FieldType, value: &serde_json::Value) -> Value {
     if matches!(ft, FieldType::Money) {
@@ -353,6 +362,7 @@ pub fn try_plasm_value_to_json(v: &Value) -> Result<serde_json::Value, String> {
         return Ok(serde_json::Value::String(s.to_string()));
     }
     match v {
+        Value::StringTemplate(_) => Err("unbound string template reached wire encoding".into()),
         Value::Null => Ok(serde_json::Value::Null),
         Value::Bool(b) => Ok(serde_json::Value::Bool(*b)),
         Value::Integer(i) => Ok(serde_json::json!(i)),
@@ -389,7 +399,6 @@ fn normalize_numeric_id_float(f: f64) -> String {
         f.to_string()
     }
 }
-
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DecodeFieldDiagnostic {
@@ -772,8 +781,14 @@ mod tests {
 
         let nv = NamedValueSchema::from_domain(
             String::new(),
-            ValueDomain::new(KernelKind::Integer, None, Constraints::default(), None, None)
-                .expect("integer domain"),
+            ValueDomain::new(
+                KernelKind::Integer,
+                None,
+                Constraints::default(),
+                None,
+                None,
+            )
+            .expect("integer domain"),
             None,
         );
         let v = dry_stub_value_for_named_value(&nv, 3);
@@ -784,11 +799,9 @@ mod tests {
 
     #[test]
     fn compare_unify_parses_numeric_strings() {
-        let (l, r) = compare_unify_json_ordered_numbers(
-            &serde_json::json!("5"),
-            &serde_json::json!(0),
-        )
-        .expect("string vs number");
+        let (l, r) =
+            compare_unify_json_ordered_numbers(&serde_json::json!("5"), &serde_json::json!(0))
+                .expect("string vs number");
         assert!(l > r);
         assert!(compare_unify_json_ordered_numbers(
             &serde_json::json!("nope"),

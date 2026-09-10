@@ -241,7 +241,6 @@ mod tests {
             None,
             "hash".into(),
             None,
-            None,
         );
         es.bind_operation_wire("sid");
         let handle = es.mint_operation_handle("l_AAAAAAAAQACAAAAAAAAAAQ");
@@ -279,7 +278,6 @@ mod tests {
             None,
             "hash".into(),
             None,
-            None,
         );
         es2.restore_persisted_operations(&snap);
         let op = es2.get_operation(&handle).expect("restored");
@@ -314,7 +312,6 @@ mod tests {
             None,
             None,
             "hash".into(),
-            None,
             None,
         );
         let mut stubs = Vec::new();
@@ -377,7 +374,6 @@ mod tests {
             None,
             None,
             "hash".into(),
-            None,
             None,
         );
         es.bind_operation_wire("sid");

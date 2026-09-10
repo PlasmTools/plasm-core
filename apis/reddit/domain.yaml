@@ -43,13 +43,13 @@ entities:
   Subreddit:
     id_field: display_name
     primary_read: subreddit_get
-    description: A Reddit community for public discussion — trending topics, hot posts, and moderated conversation.
+    description: A Reddit community for public discussion — trending topics, hot posts, and moderated
+      conversation.
     discovery:
       names:
       - trending discussion
       - subreddit
       - community discussion
-      seed_class: ambient
     fields:
       display_name:
         required: true
@@ -92,13 +92,13 @@ entities:
   Post:
     id_field: name
     primary_read: post_get
-    description: A Reddit post in trending, hot, or rising feeds — public discussion threads and comment debates.
+    description: A Reddit post in trending, hot, or rising feeds — public discussion threads and comment
+      debates.
     discovery:
       names:
       - trending discussion
       - hot post
       - discussion thread
-      seed_class: primary
     fields:
       name:
         required: true
@@ -170,8 +170,7 @@ entities:
         description: Top-level comments returned with the post’s comment thread listing.
         target: Comment
         cardinality: many
-        discovery:
-          seed_nav: attach
+        discovery: null
         materialize:
           kind: query_scoped_bindings
           capability: comment_thread_query
@@ -182,8 +181,7 @@ entities:
     id_field: name
     primary_read: comment_get
     description: A comment on a post, identified by fullname (t1_…).
-    discovery:
-      seed_class: dependent
+    discovery: null
     fields:
       name:
         required: true
@@ -215,9 +213,9 @@ entities:
         value_ref: nv_wire_int
 capabilities:
   account_me_read:
+    description: Load the authenticated Reddit account profile.
     kind: action
     entity: Account
-    description: Load the authenticated Reddit account profile.
     provides:
     - id
     - name
@@ -255,7 +253,8 @@ capabilities:
     - over18
     - url
   post_feed_query:
-    description: Browse trending Reddit posts — hot, new, top, rising, or controversial feeds for public discussion.
+    description: Browse trending Reddit posts — hot, new, top, rising, or controversial feeds for public
+      discussion.
     kind: query
     entity: Post
     discovery:
@@ -270,20 +269,18 @@ capabilities:
       - rising
       - spam
       - moderation
-    parameters:
+    scope:
     - name: subreddit
       value_ref: nv_post_feed_query_subreddit
       required: true
-      role: scope
+    selection:
     - name: feed
       value_ref: nv_post_feed_query_feed
       required: true
+    controls:
     - name: time
       value_ref: nv_wire_sel_2fde0f3a716481f3
       required: false
-      role: response_control
-    selection: []
-    scope: []
   post_get:
     kind: get
     entity: Post
@@ -310,7 +307,8 @@ capabilities:
     - spoiler
     - domain
   post_search_query:
-    description: Search Reddit posts and discussions by topic — find trending conversation about regulation, policy, or moderation.
+    description: Search Reddit posts and discussions by topic — find trending conversation about regulation,
+      policy, or moderation.
     kind: search
     entity: Post
     discovery:
@@ -323,49 +321,41 @@ capabilities:
       - regulation
       - spam
       - moderation
-    parameters:
+    selection:
     - name: q
       value_ref: nv_wire_str_short
       required: true
-      role: search
     - name: subreddit
       value_ref: nv_post_search_query_subreddit
       required: false
-      role: filter
+    controls:
     - name: sort
       value_ref: nv_post_search_query_sort
       required: false
-      role: sort
     - name: time
       value_ref: nv_wire_sel_2fde0f3a716481f3
       required: false
-      role: response_control
   subreddit_popular_query:
     kind: query
     entity: Subreddit
   subreddit_search_query:
     kind: search
     entity: Subreddit
-    parameters:
+    selection:
     - name: q
       value_ref: nv_wire_str_short
       required: true
-      role: search
   comment_thread_query:
+    description: Lists comments for a post using its subreddit and short article id from the thread JSON.
     kind: query
     entity: Comment
-    description: Lists comments for a post using its subreddit and short article id from the thread JSON.
-    parameters:
+    scope:
     - name: subreddit
       value_ref: nv_comment_thread_query_subreddit
       required: true
-      role: scope
     - name: article
       value_ref: nv_wire_str_short
       required: true
-      role: scope
-    selection: []
-    scope: []
   comment_get:
     kind: get
     entity: Comment
@@ -380,14 +370,17 @@ capabilities:
     - subreddit
     - score
   post_comment_submit:
+    description: Publishes a top-level comment on this post as the authenticated user.
     kind: action
     entity: Post
-    description: Publishes a top-level comment on this post as the authenticated user.
-    parameters:
-    - name: text
-      value_ref: nv_wire_str_markdown
-      required: true
-      sink_class: external_publish
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: text
+          value_ref: nv_wire_str_markdown
+          required: true
+          sink_class: external_publish
     output:
       type: side_effect
       description: Inserts a new public comment under the post identified by this fullname.

@@ -2,9 +2,9 @@
 
 use super::prelude::*;
 
-/// Plan JSON emission from a lowered DAG node (`node_to_json` match lives here).
+/// Structural plan emission from a resolved DAG node.
 pub(in crate::plasm_dag) trait PlanNodeEmitter {
-    fn emit_plan_json(&self, node: &DagNode) -> Result<serde_json::Value, String>;
+    fn emit_plan_node(&self, node: &DagNode) -> Result<crate::plasm_plan::PlanNode, String>;
 }
 
 /// Γ binding contract derivation from a lowered node (`binding_contract_inner` match lives here).
@@ -65,7 +65,7 @@ pub(in crate::plasm_dag) enum DagNodeSource {
         qualified_entity: QualifiedEntityKey,
         effect_class: EffectClass,
         result_shape: crate::plasm_plan::ResultShape,
-        uses_result: Vec<serde_json::Value>,
+        uses_result: Vec<crate::plasm_plan::PlanResultUse>,
     },
     /// CGS relation traversal compiled from `bound_label.relation…` (substitutes bound anchor Plasm).
     RelationTraversal {
@@ -88,33 +88,33 @@ pub(in crate::plasm_dag) enum DagNodeSource {
     Derive {
         source: String,
         value: PlanValue,
-        inputs: Vec<serde_json::Value>,
+        inputs: Vec<crate::plasm_plan::PlanDataInput>,
     },
     /// PLP-1: StaticSingleton field cell extract (`ℓ.wire` / `Get.wire`).
-    /// Plan JSON still emits as `derive` (BindingSymbol path) for runtime compatibility.
+    /// Lowers to a typed derive node with a binding-field operand.
     ScalarExtract {
         source: String,
         wire: String,
     },
     ForEach {
         source: String,
-        parsed_template: serde_json::Value,
+        parsed_template: crate::plasm_plan::PlanExprTemplate,
         display_expr: String,
         effect_kind: PlanNodeKind,
         qualified_entity: QualifiedEntityKey,
-        uses_result: Vec<serde_json::Value>,
+        uses_result: Vec<crate::plasm_plan::PlanResultUse>,
     },
     /// PLP-8 / IT-2: state iterator (`iterate … step … until … take N`).
     IterateUntil {
         seed: String,
-        parsed_step_template: serde_json::Value,
+        parsed_step_template: crate::plasm_plan::PlanExprTemplate,
         step_display: String,
         effect_kind: PlanNodeKind,
         qualified_entity: QualifiedEntityKey,
         until_body: String,
         until_predicates: Vec<crate::plasm_plan::PlanPredicate>,
         take: u32,
-        uses_result: Vec<serde_json::Value>,
+        uses_result: Vec<crate::plasm_plan::PlanResultUse>,
     },
 }
 

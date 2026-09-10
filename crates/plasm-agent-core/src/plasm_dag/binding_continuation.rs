@@ -123,11 +123,13 @@ fn parse_relation_continuation_expr(
         Some(plasm_core::ProgramBindingLabel(contract.label.as_str())),
     )?;
     if force_row_hole || prefer_row_hole_relation_continuation(state, contract, segment, session) {
-        return Ok(plasm_core::expr_parser::ParsedExpr::from_expr(relation_continuation_expr_from_source_row_hole(
+        return Ok(plasm_core::expr_parser::ParsedExpr::from_expr(
+            relation_continuation_expr_from_source_row_hole(
                 session,
                 &contract.row_entity,
                 &relation_wire,
-            )?));
+            )?,
+        ));
     }
     let refs = state.program_node_id_set();
     let try_expanded_chain = |expanded: &str| -> Option<plasm_core::expr_parser::ParsedExpr> {
@@ -177,11 +179,13 @@ fn parse_relation_continuation_expr(
             }
         }
     }
-    Ok(plasm_core::expr_parser::ParsedExpr::from_expr(relation_continuation_expr_from_source_row_hole(
+    Ok(plasm_core::expr_parser::ParsedExpr::from_expr(
+        relation_continuation_expr_from_source_row_hole(
             session,
             &contract.row_entity,
             &relation_wire,
-        )?))
+        )?,
+    ))
 }
 
 fn looks_like_method_invoke_continuation_tail(
@@ -382,7 +386,7 @@ fn lower_relation_continuation_inner(
     let source_card = contract.relation_source_cardinality();
     let result_shape = relation_result_shape(rel_cardinality, source_card);
     let ir = PlanExprIr {
-        expr: serde_json::to_value(&parsed.expr).map_err(|e| e.to_string())?,
+        expr: parsed.expr.clone(),
         projection: parsed.projection.clone(),
         display_expr: Some(expr.to_string()),
     };
@@ -632,7 +636,7 @@ fn lower_multi_segment_relation_continuation(
         let source_card = contract.relation_source_cardinality();
         let result_shape = relation_result_shape(rel_cardinality, source_card);
         let ir = PlanExprIr {
-            expr: serde_json::to_value(&parsed.expr).map_err(|e| e.to_string())?,
+            expr: parsed.expr.clone(),
             projection: parsed.projection.clone(),
             display_expr: Some(expr.to_string()),
         };

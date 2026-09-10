@@ -107,8 +107,7 @@ fn try_resolve_search_for_filter_query<'a>(
     let mut matching: Vec<&CapabilitySchema> = Vec::new();
     for cap in &search_caps {
         let names: HashSet<String> = cap
-            .selection_params()
-            .iter()
+            .query_surface_fields()
             .map(|f| f.name.to_string())
             .collect();
         if pred_fields.iter().all(|f| names.contains(f)) {
@@ -533,7 +532,7 @@ mod tests {
         cgs.bind_registry_entry_id("venmo");
         let q = QueryExpr::filtered("PaymentRequest", Predicate::eq("access_token", "tok"));
         let cap = resolve_query_capability(&q, &cgs).unwrap();
-        assert_eq!(cap.name.as_str(), "payment_request_received_query");
+        assert_eq!(cap.name.as_str(), "payment_request_query");
     }
 
     #[test]

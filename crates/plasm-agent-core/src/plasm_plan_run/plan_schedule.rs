@@ -167,7 +167,7 @@ mod tests {
                 source_cardinality: plasm_core::RelationSourceCardinality::Single,
                 expr: String::new(),
                 ir: PlanExprIr {
-                    expr: serde_json::json!({"op": "query", "entity": "Tag"}),
+                    expr: plasm_core::Expr::Query(plasm_core::QueryExpr::all("Tag")),
                     projection: None,
                     display_expr: None,
                 },

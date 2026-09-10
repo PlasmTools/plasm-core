@@ -1,6 +1,8 @@
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readFile, readdir, writeFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
 
+import type { PrerequisiteClosure } from "./engine/routing.js";
 import type { SymbolRegistrySnapshot } from "./symbol-registry.js";
 
 export interface ExecuteSessionRef {
@@ -21,10 +23,13 @@ export interface AgentSessionState {
   logicalSessionId: string;
   tenantScope: string;
   seeds: Array<{ api: string; entity: string }>;
+  engineInstanceId?: string;
+  registryGeneration?: string;
+  routingClosures?: PrerequisiteClosure[];
   teachingTsv: string;
   waves: TeachingWave[];
   symbolRegistry?: SymbolRegistrySnapshot;
-  planCommits: Array<{ ref: string; program: string; at: string }>;
+  planCommits: Array<{ ref: string; program: string; at: string; writeCount?: number }>;
   updatedAt: string;
 }
 
@@ -34,8 +39,9 @@ export interface SessionStore {
   listIntents(): Promise<string[]>;
 }
 
-function intentKey(intent: string): string {
-  return Buffer.from(intent, "utf8").toString("base64url");
+/** Filesystem / KV key — SHA-256 hex. Never encode the raw intent (ENAMETOOLONG). */
+export function intentKey(intent: string): string {
+  return createHash("sha256").update(intent, "utf8").digest("hex");
 }
 
 export class LocalSessionStore implements SessionStore {
@@ -57,15 +63,21 @@ export class LocalSessionStore implements SessionStore {
     try {
       const raw = await readFile(this.sessionPath(intent), "utf8");
       return JSON.parse(raw) as AgentSessionState;
-    } catch {
-      return null;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
     }
   }
 
   async put(state: AgentSessionState): Promise<void> {
     const dir = this.sessionDir();
     await mkdir(dir, { recursive: true });
-    await writeFile(this.sessionPath(state.intent), JSON.stringify(state, null, 2), "utf8");
+    const target = this.sessionPath(state.intent);
+    const temporary = `${target}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporary, JSON.stringify(state, null, 2), {mode: 0o600});
+      await rename(temporary, target);
+    } finally { await rm(temporary, {force: true}); }
     await writeFile(this.teachingPath(state.intent), state.teachingTsv, "utf8");
   }
 
@@ -81,8 +93,9 @@ export class LocalSessionStore implements SessionStore {
         intents.push(state.intent);
       }
       return intents;
-    } catch {
-      return [];
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
     }
   }
 }

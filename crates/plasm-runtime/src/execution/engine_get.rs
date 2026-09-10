@@ -126,17 +126,7 @@ impl ExecutionEngine {
                 ),
             });
         }
-        let mapping =
-            capability
-                .mapping
-                .as_ref()
-                .ok_or_else(|| RuntimeError::ConfigurationError {
-                    message: format!(
-                        "capability '{}' has neither CML mapping nor derived plan",
-                        capability.name
-                    ),
-                })?;
-        let capability_template = parse_capability_template(&mapping.template)?;
+        let capability_template = compiled_capability_template(capability)?;
         if matches!(capability_template, CapabilityTemplate::View(_)) {
             return Err(RuntimeError::ConfigurationError {
                 message:
@@ -210,6 +200,7 @@ impl ExecutionEngine {
             body_format: HttpBodyFormat::default(),
             multipart: None,
             headers: aux.headers.clone(),
+            auth: aux.auth.clone(),
             pagination: None,
             response: None,
         };
@@ -261,17 +252,14 @@ impl ExecutionEngine {
         ambient: &ViewAmbientContext,
     ) -> Result<(CachedEntity, ExecutionSource), RuntimeError> {
         let mut env = CmlEnv::new();
-        if inject_execute_session_env {
-            merge_plasm_execute_session_proof_base_token_env(&mut env);
-        }
-        let target_ent = cgs.get_entity(get.reference.entity_type.as_str()).ok_or_else(|| {
-            RuntimeError::ConfigurationError {
+        let target_ent = cgs
+            .get_entity(get.reference.entity_type.as_str())
+            .ok_or_else(|| RuntimeError::ConfigurationError {
                 message: format!(
                     "unknown entity `{}` for get identity-env projection",
                     get.reference.entity_type
                 ),
-            }
-        })?;
+            })?;
         let mut overlay_map = cache
             .as_ref()
             .map(|m| m.capability_params_for(&get.reference))
@@ -413,22 +401,12 @@ impl ExecutionEngine {
             let mut ephemeral = SessionMaterialization::new();
             let cache_ref = cache.unwrap_or(&mut ephemeral);
             return crate::derived_get::execute_derived_get(
-                self, plan, capability, get, cgs, cache_ref, mode, ambient,
+                self, plan, get, cgs, cache_ref, mode, ambient,
             )
             .await;
         }
 
-        let mapping =
-            capability
-                .mapping
-                .as_ref()
-                .ok_or_else(|| RuntimeError::ConfigurationError {
-                    message: format!(
-                        "capability '{}' has neither CML mapping nor derived plan",
-                        capability.name
-                    ),
-                })?;
-        let capability_template = parse_capability_template(&mapping.template)?;
+        let capability_template = compiled_capability_template(capability)?;
 
         if let CapabilityTemplate::View(vt) = &capability_template {
             let mut ephemeral = SessionMaterialization::new();

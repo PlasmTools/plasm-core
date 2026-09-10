@@ -368,42 +368,6 @@ instrument_get:
       - type: var
         name: id
   response: single
-ticker_for_symbol_query:
-  method: GET
-  path:
-  - type: if
-    condition:
-      type: equals
-      left:
-        type: var
-        name: shelf
-      right:
-        type: const
-        value: ticker_for_symbol
-    then_expr:
-      type: const
-      value: api/ticker
-    else_expr:
-      type: const
-      value: api/tickers
-  query:
-    type: object
-    fields:
-    - - symbol
-      - type: if
-        condition:
-          type: exists
-          var: symbol
-        then_expr:
-          type: var
-          name: symbol
-        else_expr:
-          type: const
-          value: null
-  response:
-    single: true
-    items_path:
-    - ticker
 ticker_get:
   method: GET
   path:
@@ -416,7 +380,7 @@ ticker_get:
     fields:
     - - symbol
       - type: var
-        name: id
+        name: symbol
   response:
     single: true
     items_path:
@@ -1716,3 +1680,35 @@ instrument_context_query:
 order_context_query:
   transport: view
   view: order_context
+ticker_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: tickers
+  query:
+    type: object
+    fields:
+    - - sort
+      - type: if
+        condition:
+          type: exists
+          var: sort
+        then_expr:
+          type: var
+          name: sort
+        else_expr:
+          type: const
+          value: null
+  response:
+    items: tickers
+  pagination:
+    strategy: offset
+    params:
+      offset:
+        counter: 0
+        step: 100
+      limit:
+        fixed: 100
+        role: page_size

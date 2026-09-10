@@ -11,10 +11,16 @@ pub enum SymbolResolveError {
     NotARowField {
         entity: String,
         token: String,
+        /// When set, `token` is a taught create/action/update param — use this invoke form.
+        method_invoke_form: Option<String>,
+        /// When set, `token` is a query/search selection slot — use this `{wire=…}` form.
+        query_selection_form: Option<String>,
     },
     UnknownQueryFilterPSym {
         entity: String,
         token: String,
+        /// When set, `token` is a taught mutator param, not a query/search filter.
+        method_invoke_form: Option<String>,
     },
     AmbiguousQueryFilterPSym {
         entity: String,
@@ -66,6 +72,13 @@ impl SymbolResolveError {
     /// Optional agent-facing hint appended after the primary error line.
     pub fn agent_program_hint(&self) -> Option<&'static str> {
         match self {
+            Self::NotARowField { query_selection_form: Some(_), .. } => Some(
+                "That wire is a query/search selection slot — use the taught query selection form, not a row projection.",
+            ),
+            Self::NotARowField { method_invoke_form: Some(_), .. }
+            | Self::UnknownQueryFilterPSym { method_invoke_form: Some(_), .. } => Some(
+                "That wire is a method/create parameter — use the taught method invocation form.",
+            ),
             Self::UnknownEntityPSym { .. }
             | Self::NotARowField { .. }
             | Self::AmbiguousEntityRowFieldPSym { .. } => Some(
@@ -81,7 +94,7 @@ impl SymbolResolveError {
                 "Supply every compound identity key using wire names from the teaching table.",
             ),
             Self::UnknownMethodSym { .. } | Self::MethodAnchorMismatch { .. } => Some(
-                "Use `m#` symbols from the teaching table for this session. If the capability exists but was not taught, pass its wire name in `ranked_capabilities` and call plasm_context with session_mode: \"extend\".",
+                "Use `m#` symbols from the teaching table for this session. If the capability exists but was not taught, call plasm_context with the required intent and session_mode: \"extend\".",
             ),
             Self::UnknownEntitySym { .. } => Some(
                 "Use `e#` symbols from the teaching table for this session.",
@@ -123,14 +136,29 @@ impl std::fmt::Display for SymbolResolveError {
                 f,
                 "`{token}` is not a row symbol for `{entity}` in this session"
             ),
-            Self::NotARowField { entity, token } => write!(
-                f,
-                "`{token}` is not a row field on `{entity}` for this binding"
-            ),
-            Self::UnknownQueryFilterPSym { entity, token } => write!(
-                f,
-                "`{token}` is not a query filter symbol for `{entity}` in this session (not a row field or query/search scope param)"
-            ),
+            Self::NotARowField { entity, token, method_invoke_form, query_selection_form } => {
+                if let Some(form) = query_selection_form {
+                    write!(f, "`{token}` is not a row field on `{entity}` for this binding; it is a query selection slot — use `{form}`")
+                } else if let Some(form) = method_invoke_form {
+                    write!(f, "`{token}` is not a row field on `{entity}` for this binding; it is a method parameter — use `{form}`")
+                } else {
+                    write!(f, "`{token}` is not a row field on `{entity}` for this binding")
+                }
+            }
+            Self::UnknownQueryFilterPSym {
+                entity,
+                token,
+                method_invoke_form,
+            } => match method_invoke_form {
+                Some(form) => write!(
+                    f,
+                    "`{token}` is not a query filter for `{entity}`; it is a method parameter — use `{form}`"
+                ),
+                None => write!(
+                    f,
+                    "`{token}` is not a query filter symbol for `{entity}` in this session (not a row field or query/search scope param)"
+                ),
+            },
             Self::AmbiguousQueryFilterPSym {
                 entity,
                 token,

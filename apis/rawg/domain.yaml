@@ -37,43 +37,35 @@ capabilities:
     description: Search and filter the RAWG games catalog.
     kind: query
     entity: Game
-    parameters:
+    selection:
     - name: search
       value_ref: nv_wire_str_short
       required: false
-      role: search
     - name: genres
       value_ref: nv_wire_str_short
       required: false
-      role: filter
     - name: platforms
       value_ref: nv_wire_str_short
       required: false
-      role: filter
     - name: developers
       value_ref: nv_wire_str_short
       required: false
-      role: filter
     - name: publishers
       value_ref: nv_wire_str_short
       required: false
-      role: filter
     - name: tags
       value_ref: nv_wire_str_short
       required: false
-      role: filter
     - name: dates
       value_ref: nv_wire_str_short
       required: false
-      role: filter
     - name: metacritic
       value_ref: nv_wire_str_short
       required: false
-      role: filter
+    controls:
     - name: ordering
       value_ref: nv_wire_str_short
       required: false
-      role: sort
   game_get:
     description: Retrieve full details for a single game.
     kind: get

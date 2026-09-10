@@ -153,6 +153,7 @@ fn append_get_template_var_args(mut cmd: Command, template: &CapabilityTemplate)
             path_var_names_from_request(cml)
         }
         CapabilityTemplate::View(_)
+        | CapabilityTemplate::CredentialBind(_)
         | CapabilityTemplate::EvmCall(_)
         | CapabilityTemplate::EvmLogs(_) => Vec::new(),
     };
@@ -180,6 +181,7 @@ fn http_template_request(template: &serde_json::Value) -> Option<CmlRequest> {
     match parse_capability_template(template).ok()? {
         CapabilityTemplate::Http(cml) | CapabilityTemplate::GraphQl(cml) => Some(cml),
         CapabilityTemplate::View(_)
+        | CapabilityTemplate::CredentialBind(_)
         | CapabilityTemplate::EvmCall(_)
         | CapabilityTemplate::EvmLogs(_) => None,
     }

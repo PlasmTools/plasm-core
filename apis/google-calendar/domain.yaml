@@ -19,7 +19,6 @@ entities:
       - calendar
       - google calendar
       - primary calendar
-      seed_class: ambient
     fields:
       id:
         required: true
@@ -63,8 +62,7 @@ entities:
       events:
         target: Event
         cardinality: many
-        discovery:
-          seed_nav: locate
+        discovery: null
         materialize:
           kind: query_scoped_bindings
           capability: event_list
@@ -83,7 +81,6 @@ entities:
       - google calendar event
       - meeting
       - appointment
-      seed_class: primary
     fields:
       calendarId:
         required: true
@@ -193,9 +190,9 @@ entities:
     primary_read: event_get
 capabilities:
   calendar_get:
+    description: Get a calendar from the authenticated user's list by its ID.
     kind: get
     entity: Calendar
-    description: Get a calendar from the authenticated user's list by its ID.
     provides:
     - id
     - summary
@@ -210,10 +207,10 @@ capabilities:
     - selected
     - hidden
   calendar_list:
+    description: List all calendars in the authenticated user's calendar list.
     kind: query
     entity: Calendar
-    description: List all calendars in the authenticated user's calendar list.
-    parameters:
+    selection:
     - name: showHidden
       value_ref: nv_wire_bool
       required: false
@@ -224,9 +221,9 @@ capabilities:
       value_ref: nv_calendar_list_min_access_role
       required: false
   event_get:
+    description: Get a specific event by compound key (calendarId/eventId).
     kind: get
     entity: Event
-    description: Get a specific event by compound key (calendarId/eventId).
     provides:
     - id
     - calendarId
@@ -260,9 +257,9 @@ capabilities:
     - updated
     - eventType
   event_list:
+    description: List events in a specific calendar.
     kind: query
     entity: Event
-    description: List events in a specific calendar.
     discovery:
       operation_terms:
       - list events
@@ -271,25 +268,20 @@ capabilities:
       - event
       - calendar event
       - meeting
-    parameters:
+    scope:
     - name: calendarId
       value_ref: nv_event_list_calendar_id
       required: true
-      role: scope
+    selection:
     - name: q
       value_ref: nv_wire_str_short
       required: false
-      role: search
     - name: timeMin
       value_ref: nv_wire_date_rfc3339
       required: false
     - name: timeMax
       value_ref: nv_wire_date_rfc3339
       required: false
-    - name: timeZone
-      value_ref: nv_event_list_time_zone
-      required: false
-      role: response_control
     - name: updatedMin
       value_ref: nv_event_list_updated_min
       required: false
@@ -311,10 +303,6 @@ capabilities:
     - name: sharedExtendedProperty
       value_ref: nv_event_list_shared_extended_property
       required: false
-    - name: orderBy
-      value_ref: nv_event_list_order_by
-      required: false
-      role: sort
     - name: singleEvents
       value_ref: nv_wire_bool
       required: false
@@ -324,27 +312,33 @@ capabilities:
     - name: eventTypes
       value_ref: nv_event_list_event_types
       required: false
-    selection: []
-    scope: []
+    controls:
+    - name: timeZone
+      value_ref: nv_event_list_time_zone
+      required: false
+    - name: orderBy
+      value_ref: nv_event_list_order_by
+      required: false
 oauth:
   provider: google
   scopes:
     https://www.googleapis.com/auth/calendar:
       label: Full Calendar API access (calendars, events, sharing, and deletes)
-      notes: Superset of all narrower Calendar scopes; use when the product needs writes or ACL changes beyond this read-only
-        CGS.
+      notes: Superset of all narrower Calendar scopes; use when the product needs writes or ACL changes
+        beyond this read-only CGS.
       docs_url: https://developers.google.com/calendar/api/auth
     https://www.googleapis.com/auth/calendar.readonly:
       label: Read calendars you can access and their events (recommended for this domain)
-      notes: Covers calendarList and events GET/list for calendars the user can open in Google Calendar; broader than the
-        granular calendarlist/events pairs.
+      notes: Covers calendarList and events GET/list for calendars the user can open in Google Calendar;
+        broader than the granular calendarlist/events pairs.
       docs_url: https://developers.google.com/calendar/api/auth
     https://www.googleapis.com/auth/calendar.calendarlist:
       label: Manage which calendars you are subscribed to (add/remove subscriptions)
       docs_url: https://developers.google.com/calendar/api/auth
     https://www.googleapis.com/auth/calendar.calendarlist.readonly:
       label: See the list of calendars you are subscribed to
-      notes: Sufficient for calendar_list and calendar_get when you do not need event bodies from other scopes.
+      notes: Sufficient for calendar_list and calendar_get when you do not need event bodies from other
+        scopes.
       docs_url: https://developers.google.com/calendar/api/auth
     https://www.googleapis.com/auth/calendar.events:
       label: View and edit events on all calendars you can access
@@ -358,15 +352,18 @@ oauth:
       docs_url: https://developers.google.com/calendar/api/auth
     https://www.googleapis.com/auth/calendar.events.owned.readonly:
       label: View events on calendars you own
-      notes: Narrower than calendar.events.readonly; shared calendars another user owns may be inaccessible for event reads.
+      notes: Narrower than calendar.events.readonly; shared calendars another user owns may be inaccessible
+        for event reads.
       docs_url: https://developers.google.com/calendar/api/auth
   default_scope_sets:
     readonly_calendar_surface:
-      description: Matches this CGS (calendar list + event reads). Prefer a single calendar.readonly token when possible.
+      description: Matches this CGS (calendar list + event reads). Prefer a single calendar.readonly token
+        when possible.
       scopes:
       - https://www.googleapis.com/auth/calendar.readonly
     granular_readonly_calendarlist_plus_events:
-      description: Narrower split—calendar list metadata plus read-only events—when consent screens must avoid full calendar.readonly.
+      description: Narrower split—calendar list metadata plus read-only events—when consent screens must
+        avoid full calendar.readonly.
       scopes:
       - https://www.googleapis.com/auth/calendar.calendarlist.readonly
       - https://www.googleapis.com/auth/calendar.events.readonly
@@ -458,8 +455,8 @@ values:
     - updated
   nv_event_list_sync_token:
     type: string
-    description: Incremental sync token from a prior list response; cannot combine with several other filters (see API sync.
-      guide).
+    description: Incremental sync token from a prior list response; cannot combine with several other
+      filters (see API sync. guide).
   nv_event_list_time_zone:
     type: string
     description: IANA time zone used when interpreting and returning event times in the response.

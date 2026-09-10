@@ -2,7 +2,8 @@ use super::*;
 
 #[tokio::test]
 async fn open_wire_is_table_only() {
-    use plasm_core::{TeachingFenceSlice, TSV_TEACHING_TABLE_HEADER};
+    use plasm_core::prompt_render::{catalog_teaching_fence_info, markdown_fence_body_inner};
+    use plasm_core::TSV_TEACHING_TABLE_HEADER;
 
     let st = test_state_with_registry();
     let out = apply_capability_seeds(
@@ -17,7 +18,6 @@ async fn open_wire_is_table_only() {
         None,
         None,
         "list profiles for triage",
-        RankedCapabilitiesArg::Unspecified,
     )
     .await
     .expect("apply seeds");
@@ -44,13 +44,17 @@ async fn open_wire_is_table_only() {
         .get_execute_session(&out.prompt_hash, &out.session_id)
         .await
         .expect("session row");
-    let mode = st.engine.prompt_pipeline().render_mode;
-    let body = plasm_core::teaching_tsv_from_wrapped_prompt(
+    // Inspect the raw stored body: TableOnly extraction would hide an unwanted
+    // grammar prefix before this assertion could detect it.
+    let body = markdown_fence_body_inner(
         &created.prompt_text,
-        mode.markdown_fence_info_string(),
-        TeachingFenceSlice::TableOnly,
+        catalog_teaching_fence_info(&created.entry_id),
     )
-    .expect("agent body slice");
+    .expect("stored teaching block uses the catalog fence");
+    assert!(
+        body.starts_with(TSV_TEACHING_TABLE_HEADER),
+        "stored teaching body must start with its table header"
+    );
     assert!(
         !body.lines().any(|l| l.starts_with('#')),
         "stored execute prompt is table-only"
@@ -74,7 +78,6 @@ async fn open_wire_includes_seeded_abstract_entity_row() {
         None,
         None,
         "triage one issue with comments",
-        RankedCapabilitiesArg::Unspecified,
     )
     .await
     .expect("apply seeds");
@@ -118,7 +121,6 @@ async fn same_intent_federated_expand_assigns_distinct_e_symbols() {
         None,
         None,
         INTENT,
-        RankedCapabilitiesArg::Unspecified,
     )
     .await
     .expect("first open");
@@ -153,7 +155,6 @@ async fn same_intent_federated_expand_assigns_distinct_e_symbols() {
         None,
         None,
         INTENT,
-        RankedCapabilitiesArg::Unspecified,
     )
     .await
     .expect("federated expand");
@@ -194,7 +195,6 @@ async fn same_intent_federated_expand_assigns_distinct_e_symbols() {
         None,
         None,
         "different intent string same seeds",
-        RankedCapabilitiesArg::Unspecified,
     )
     .await
     .expect("reuse with new intent string");
@@ -316,7 +316,6 @@ async fn federated_extend_second_catalog_e_symbol_compiles_after_delta_tsv() {
         None,
         None,
         INTENT,
-        RankedCapabilitiesArg::Unspecified,
     )
     .await
     .expect("linear open");
@@ -335,7 +334,6 @@ async fn federated_extend_second_catalog_e_symbol_compiles_after_delta_tsv() {
         None,
         None,
         INTENT,
-        RankedCapabilitiesArg::Unspecified,
     )
     .await
     .expect("github federate");

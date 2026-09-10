@@ -13,9 +13,8 @@ use axum::body::Body;
 use axum::extract::Extension;
 use axum::http::Request;
 use axum::Router;
-use plasm_core::discovery::InMemoryCgsRegistry;
+use plasm_core::discovery::CgsRegistry;
 use plasm_core::loader::load_schema_dir;
-use plasm_core::MutatorAdmit;
 use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 use std::path::Path;
 use tower::util::ServiceExt;
@@ -184,7 +183,7 @@ fn live_run_tool_meta_finalizes_run_explorer_ui() {
         .is_some_and(|a| !a.is_empty()));
 }
 
-fn test_host_state_from_registry(reg: InMemoryCgsRegistry) -> PlasmHostState {
+fn test_host_state_from_registry(reg: CgsRegistry) -> PlasmHostState {
     let engine = ExecutionEngine::new(ExecutionConfig::default()).expect("engine");
     http::build_plasm_host_state(http::PlasmHostBootstrap {
         engine,
@@ -201,7 +200,7 @@ fn test_host_state_from_registry(reg: InMemoryCgsRegistry) -> PlasmHostState {
 fn test_state_with_registry() -> PlasmHostState {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
     let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
-    test_host_state_from_registry(InMemoryCgsRegistry::from_pairs(vec![(
+    test_host_state_from_registry(CgsRegistry::from_pairs(vec![(
         "overshow".into(),
         "Overshow".into(),
         vec!["demo".into()],
@@ -215,14 +214,9 @@ fn test_state_with_linear_registry() -> Option<PlasmHostState> {
         return None;
     }
     let cgs = Arc::new(load_schema_dir(&dir).expect("linear"));
-    Some(test_host_state_from_registry(
-        InMemoryCgsRegistry::from_pairs(vec![(
-            "linear".into(),
-            "Linear".into(),
-            vec!["linear".into()],
-            cgs,
-        )]),
-    ))
+    Some(test_host_state_from_registry(CgsRegistry::from_pairs(
+        vec![("linear".into(), "Linear".into(), vec!["linear".into()], cgs)],
+    )))
 }
 
 fn test_state_with_matrix_federated_registry() -> Option<PlasmHostState> {
@@ -232,8 +226,8 @@ fn test_state_with_matrix_federated_registry() -> Option<PlasmHostState> {
         return None;
     }
     let cgs = Arc::new(load_schema_dir(&dir).expect("plasm_language_matrix"));
-    Some(test_host_state_from_registry(
-        InMemoryCgsRegistry::from_pairs(vec![
+    Some(test_host_state_from_registry(CgsRegistry::from_pairs(
+        vec![
             (
                 "github".into(),
                 "Github".into(),
@@ -241,8 +235,8 @@ fn test_state_with_matrix_federated_registry() -> Option<PlasmHostState> {
                 cgs.clone(),
             ),
             ("linear".into(), "Linear".into(), vec!["demo".into()], cgs),
-        ]),
-    ))
+        ],
+    )))
 }
 
 fn test_app_execute(st: PlasmHostState) -> Router<()> {
@@ -732,8 +726,6 @@ async fn execute_session_create_marks_reused_on_second_open() {
         principal: None,
         logical_session_id: None,
         context_intent: None,
-        ranked_capabilities: None,
-        mutator_admit: MutatorAdmit::IntentOnly,
     };
     let first = execute_session_create_response(&st, None, body.clone())
         .await
@@ -759,8 +751,6 @@ async fn expand_domain_session_updates_session_entities() {
             principal: None,
             logical_session_id: None,
             context_intent: None,
-            ranked_capabilities: None,
-            mutator_admit: MutatorAdmit::IntentOnly,
         },
     )
     .await
@@ -834,6 +824,17 @@ async fn expand_domain_session_updates_session_entities() {
 }
 
 #[test]
+fn execute_session_open_rejects_removed_caller_rankings() {
+    let body = serde_json::json!({
+        "entry_id": "matrix",
+        "entities": ["LangItem"],
+        "ranked_capabilities": ["langitem_create"]
+    });
+    let err = serde_json::from_value::<CreateExecuteSessionBody>(body).unwrap_err();
+    assert!(err.to_string().contains("unknown field"));
+}
+
+#[test]
 fn parse_execute_program_body_rejects_lines_array() {
     let err = parse_execute_program_body(Some("application/json"), br#"{"lines":["a","b"]}"#)
         .expect_err("lines");
@@ -874,8 +875,6 @@ async fn unknown_entity_parse_error_includes_session_bounds() {
             principal: None,
             logical_session_id: None,
             context_intent: None,
-            ranked_capabilities: None,
-            mutator_admit: MutatorAdmit::IntentOnly,
         },
     )
     .await

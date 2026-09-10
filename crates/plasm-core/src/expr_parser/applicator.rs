@@ -172,17 +172,13 @@ pub(crate) fn method_call_at_depth_zero(t: &str) -> bool {
             b')' | b']' | b'}' if quote.is_none() => depth -= 1,
             b'.' if quote.is_none() && depth == 0 => {
                 let mut j = i + 1;
-                if j >= bytes.len()
-                    || !(bytes[j].is_ascii_alphabetic() || bytes[j] == b'_')
-                {
+                if j >= bytes.len() || !(bytes[j].is_ascii_alphabetic() || bytes[j] == b'_') {
                     i += 1;
                     continue;
                 }
                 j += 1;
                 while j < bytes.len()
-                    && (bytes[j].is_ascii_alphanumeric()
-                        || bytes[j] == b'_'
-                        || bytes[j] == b'-')
+                    && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_' || bytes[j] == b'-')
                 {
                     j += 1;
                 }
@@ -249,10 +245,8 @@ mod tests {
     fn foreach_wire_update_and_secured_touch() {
         let a = parse_applicator("LangItem(_.id).update(score=9, title=_.title)").unwrap();
         assert!(matches!(a, Applicator::ForEach { .. }));
-        let b = parse_applicator(
-            "LangItem(_.id).secured-touch(access_token=auth.access_token)",
-        )
-        .unwrap();
+        let b = parse_applicator("LangItem(_.id).secured-touch(access_token=auth.access_token)")
+            .unwrap();
         assert!(matches!(b, Applicator::ForEach { .. }));
     }
 

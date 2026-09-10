@@ -36,7 +36,18 @@ auth:
 
 ### Runtime schema overlay
 
-At execute session open, the host runs the **`schema_overlay.source.steps`** pipeline using session auth only: **`team_query`** → per-team **`custom_field_query`**, then merges **custom field columns** onto **`Task`** (`augment_base`). Agents supply `{ api, entity }` seeds only — no overlay configuration. See [docs/schema-overlay.md](../../../docs/schema-overlay.md).
+At execute session open, the host runs the **`schema_overlay.source.steps`** pipeline using session auth only: **`team_query`** → per-team **`custom_field_query`**, then merges **custom field columns** onto **`Task`** (`augment_base`). Discovery selects capabilities from intent; agents do not configure the overlay. See [docs/schema-overlay.md](../../../docs/schema-overlay.md).
+
+Create operations declare their parent identifiers as typed arguments separately
+from the new object's payload. Branching list queries interpolate parent IDs in
+their paths. Archived filtering on spaces, folders and lists is an ordinary source
+selection, matching the vendor's [space](https://developer.clickup.com/reference/getspaces),
+[folder](https://developer.clickup.com/reference/getfolders) and
+[list](https://developer.clickup.com/reference/getlists) query parameters.
+Dependency removal binds its arguments into the
+[DELETE query](https://developer.clickup.com/reference/deletedependency); group
+listing sends its workspace ID through the
+[group query](https://developer.clickup.com/reference/getteams1).
 
 ### ClickUp's workspace hierarchy
 

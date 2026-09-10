@@ -26,13 +26,36 @@ pub(in crate::plasm_dag) fn validate_invoke_scalar_field_refs(
                 input,
             )
         }
+        Expr::Delete(delete) => {
+            let Some(input) = &delete.input else {
+                return Ok(());
+            };
+            (
+                delete.capability.as_str(),
+                delete.target.entity_type.as_str(),
+                delete.catalog_entry_id.as_deref(),
+                input,
+            )
+        }
         Expr::Create(c) => (
             c.capability.as_str(),
             c.entity.as_str(),
             c.catalog_entry_id.as_deref(),
             &c.input,
         ),
-        _ => return Ok(()),
+        Expr::Chain(chain) => {
+            validate_invoke_scalar_field_refs(session, state, node_id, &chain.source)?;
+            if let plasm_core::ChainStep::Explicit { expr } = &chain.step {
+                validate_invoke_scalar_field_refs(session, state, node_id, expr)?;
+            }
+            return Ok(());
+        }
+        Expr::Query(_)
+        | Expr::Get(_)
+        | Expr::Page(_)
+        | Expr::Wait(_)
+        | Expr::Cancel(_)
+        | Expr::TeachingValue { .. } => return Ok(()),
     };
     let qe = QualifiedEntityKey {
         entry_id: catalog_entry_id

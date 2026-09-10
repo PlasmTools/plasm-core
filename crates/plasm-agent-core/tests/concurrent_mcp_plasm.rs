@@ -6,9 +6,7 @@ use std::sync::Arc;
 
 use plasm_agent_core::execute_session::ExecuteSession;
 use plasm_agent_core::http::{build_plasm_host_state, PlasmHostBootstrap};
-use plasm_agent_core::http_execute::{
-    apply_capability_seeds, CapabilitySeed, RankedCapabilitiesArg,
-};
+use plasm_agent_core::http_execute::{apply_capability_seeds, CapabilitySeed};
 use plasm_agent_core::operation::{
     compute_plan_commit_id_from_dry, PlanCommitRecord, PLAN_COMMIT_TTL,
 };
@@ -24,7 +22,7 @@ use plasm_agent_core::run_explorer_meta::build_run_explorer_accept_payload;
 use plasm_agent_core::server_state::CatalogBootstrap;
 use plasm_agent_core::trace_sink_emit::PlasmTraceContext;
 use plasm_agent_core::PlanDryVerdict;
-use plasm_core::discovery::InMemoryCgsRegistry;
+use plasm_core::discovery::CgsRegistry;
 use plasm_core::loader::load_schema_dir;
 use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 use uuid::Uuid;
@@ -35,7 +33,7 @@ fn matrix_fixture_dir() -> PathBuf {
 
 fn matrix_federated_host() -> Arc<plasm_agent_core::server_state::PlasmHostState> {
     let cgs = Arc::new(load_schema_dir(&matrix_fixture_dir()).expect("plasm_language_matrix"));
-    let reg = InMemoryCgsRegistry::from_pairs(vec![
+    let reg = CgsRegistry::from_pairs(vec![
         (
             "github".into(),
             "GitHub".into(),
@@ -76,7 +74,6 @@ async fn open_matrix_session(
         None,
         Some(logical_id),
         "concurrent mcp eval",
-        RankedCapabilitiesArg::Unspecified,
     )
     .await
     .expect("apply_capability_seeds")

@@ -16,6 +16,7 @@ export interface JsDryRunResult {
   planCommitRef: string
   summary: string
   compJson: string
+  fusedCleanRead: boolean
 }
 
 export interface JsSeed {

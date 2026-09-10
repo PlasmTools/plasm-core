@@ -63,3 +63,13 @@ pub fn execute_routes() -> Router {
             get(handle_execute_session_get).post(post_run_execute_session),
         )
 }
+
+/// Pin validation and generation loading failures are operational, never an absent session.
+pub(crate) fn session_lookup_unavailable(error: anyhow::Error) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    (
+        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+        axum::Json(serde_json::json!({"error":"routing_error","detail":error.to_string()})),
+    )
+        .into_response()
+}

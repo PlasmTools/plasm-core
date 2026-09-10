@@ -1,16 +1,13 @@
-//! Local appliance persistence for semantic auto-seed (OpenRouter key + runtime toggle).
+//! Local appliance persistence for the OpenRouter discovery key.
 
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub const OPENROUTER_KEY_RELATIVE_PATH: &str = "bootstrap-secrets/OPENROUTER_API_KEY";
-pub const SEMANTIC_AUTO_SEED_FLAG_RELATIVE_PATH: &str =
-    "bootstrap-secrets/PLASM_DISCOVERY_SEMANTIC_AUTO_SEED";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DiscoveryBootstrapState {
-    pub semantic_auto_seed_enabled: bool,
     pub openrouter_key_configured: bool,
     pub model: String,
 }
@@ -20,12 +17,6 @@ fn env_str_nonempty(key: &str) -> bool {
         .ok()
         .filter(|s| !s.trim().is_empty())
         .is_some()
-}
-
-fn semantic_auto_seed_enabled_from_env() -> bool {
-    std::env::var("PLASM_DISCOVERY_SEMANTIC_AUTO_SEED")
-        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "yes" | "YES"))
-        .unwrap_or(false)
 }
 
 fn discovery_model_from_env() -> String {
@@ -41,10 +32,6 @@ fn bootstrap_root() -> Option<PathBuf> {
 
 pub fn openrouter_key_path() -> Option<PathBuf> {
     bootstrap_root().map(|root| root.join(OPENROUTER_KEY_RELATIVE_PATH))
-}
-
-pub fn semantic_auto_seed_flag_path() -> Option<PathBuf> {
-    bootstrap_root().map(|root| root.join(SEMANTIC_AUTO_SEED_FLAG_RELATIVE_PATH))
 }
 
 fn open_local_secret_file_for_write(path: &Path) -> std::io::Result<std::fs::File> {
@@ -104,7 +91,6 @@ fn read_trimmed_file(path: &Path) -> Result<String, String> {
 
 pub fn current_state() -> DiscoveryBootstrapState {
     DiscoveryBootstrapState {
-        semantic_auto_seed_enabled: semantic_auto_seed_enabled_from_env(),
         openrouter_key_configured: env_str_nonempty("OPENROUTER_API_KEY"),
         model: discovery_model_from_env(),
     }
@@ -120,26 +106,7 @@ pub fn ensure_discovery_bootstrap_at_boot() -> Result<DiscoveryBootstrapState, S
             }
         }
     }
-    if !env_str_nonempty("PLASM_DISCOVERY_SEMANTIC_AUTO_SEED") {
-        if let Some(path) = semantic_auto_seed_flag_path() {
-            if path.exists() {
-                let flag = read_trimmed_file(&path)?;
-                std::env::set_var("PLASM_DISCOVERY_SEMANTIC_AUTO_SEED", flag);
-            }
-        }
-    }
     Ok(current_state())
-}
-
-pub fn set_semantic_auto_seed_enabled(enabled: bool) -> Result<(), String> {
-    let value = if enabled { "1" } else { "0" };
-    std::env::set_var("PLASM_DISCOVERY_SEMANTIC_AUTO_SEED", value);
-    let Some(path) = semantic_auto_seed_flag_path() else {
-        return Err(
-            "discovery bootstrap path unavailable; set PLASM_LOCAL_STATE_DIR or HOME".into(),
-        );
-    };
-    write_secret_file(&path, value)
 }
 
 pub fn set_openrouter_api_key(key: &str) -> Result<(), String> {
@@ -173,14 +140,7 @@ pub fn clear_openrouter_api_key() -> Result<(), String> {
 
 pub fn status_lines(state: &DiscoveryBootstrapState) -> Vec<String> {
     vec![
-        format!(
-            "Semantic auto-seed: {}",
-            if state.semantic_auto_seed_enabled {
-                "enabled"
-            } else {
-                "disabled"
-            }
-        ),
+        "Discovery: PostgreSQL lexical + vector retrieval".into(),
         format!(
             "OpenRouter key: {}",
             if state.openrouter_key_configured {
@@ -190,23 +150,7 @@ pub fn status_lines(state: &DiscoveryBootstrapState) -> Vec<String> {
             }
         ),
         format!("Model: {}", state.model),
-        "Intent-only plasm_context (session_mode: new, no seeds) uses the LLM seed selector when enabled and keyed.".into(),
+        "Intent-only new and extend use one capability selector and declared prerequisite closure."
+            .into(),
     ]
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn flag_file_round_trip() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        std::env::set_var("PLASM_LOCAL_STATE_DIR", temp.path());
-        std::env::remove_var("PLASM_DISCOVERY_SEMANTIC_AUTO_SEED");
-        set_semantic_auto_seed_enabled(true).expect("enable");
-        std::env::remove_var("PLASM_DISCOVERY_SEMANTIC_AUTO_SEED");
-        let state = ensure_discovery_bootstrap_at_boot().expect("boot");
-        assert!(state.semantic_auto_seed_enabled);
-        std::env::remove_var("PLASM_LOCAL_STATE_DIR");
-    }
 }

@@ -68,7 +68,8 @@ entities:
           param: project_id
   File:
     id_field: key
-    description: A Figma design file or branch, including collaboration metadata and optional structured document payloads.
+    description: A Figma design file or branch, including collaboration metadata and optional structured
+      document payloads.
     fields:
       key:
         required: true
@@ -220,65 +221,59 @@ entities:
         value_ref: nv_comment_reactions
 capabilities:
   user_get_me:
+    description: Load the profile for the authenticated Figma user.
     kind: singleton
     entity: User
-    description: Load the profile for the authenticated Figma user.
     provides:
     - id
     - handle
     - img_url
     - email
   team_get:
+    description: Open a known Figma team so its projects can be traversed.
     kind: get
     entity: Team
-    description: Open a known Figma team so its projects can be traversed.
     provides:
     - id
     - name
   project_query:
+    description: List projects visible within a specific team.
     kind: query
     entity: Project
-    description: List projects visible within a specific team.
-    parameters:
+    scope:
     - name: team_id
       value_ref: nv_project_query_team_id
       required: true
-      role: scope
     provides:
     - id
     - name
-    selection: []
-    scope: []
   project_get:
+    description: Open a known project so its files can be traversed.
     kind: get
     entity: Project
-    description: Open a known project so its files can be traversed.
     provides:
     - id
     - name
   file_query:
+    description: List files in a project.
     kind: query
     entity: File
-    description: List files in a project.
-    parameters:
+    scope:
     - name: project_id
       value_ref: nv_file_query_project_id
       required: true
-      role: scope
+    controls:
     - name: branch_data
       value_ref: nv_file_query_branch_data
       required: false
-      role: response_control
     provides:
     - key
     - name
     - last_modified
-    selection: []
-    scope: []
   file_get:
+    description: Load a file document and its structured node tree for a known file key.
     kind: get
     entity: File
-    description: Load a file document and its structured node tree for a known file key.
     provides:
     - key
     - name
@@ -294,9 +289,9 @@ capabilities:
     - styles
     - branches
   file_metadata_get:
+    description: Load collaboration and ownership metadata for a known file key.
     kind: get
     entity: FileMetadata
-    description: Load collaboration and ownership metadata for a known file key.
     provides:
     - key
     - name
@@ -314,18 +309,17 @@ capabilities:
     - url
     - version
   comment_query:
+    description: List comments on a file.
     kind: query
     entity: Comment
-    description: List comments on a file.
-    parameters:
+    scope:
     - name: file_key
       value_ref: nv_comment_query_file_key
       required: true
-      role: scope
+    controls:
     - name: as_md
       value_ref: nv_comment_query_as_md
       required: false
-      role: response_control
     provides:
     - id
     - file_key
@@ -338,18 +332,15 @@ capabilities:
     - message
     - order_id
     - reactions
-    selection: []
-    scope: []
   comment_create:
+    description: Add a new comment or reply in a file.
     kind: create
     entity: Comment
-    description: Add a new comment or reply in a file.
-    parameters:
+    scope:
     - name: file_key
       value_ref: nv_comment_create_file_key
       required: true
-      role: scope
-    input_schema:
+    payload:
       input_type:
         type: object
         additional_fields: true
@@ -398,7 +389,8 @@ oauth:
       docs_url: https://developers.figma.com/docs/rest-api/scopes/
   default_scope_sets:
     figma_readonly_core:
-      description: Current user profile, team/project traversal, file content and metadata reads, and file comments reads.
+      description: Current user profile, team/project traversal, file content and metadata reads, and
+        file comments reads.
       scopes:
       - current_user:read
       - projects:read

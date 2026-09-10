@@ -4,7 +4,7 @@ use super::binding_continuation;
 use super::binding_contract::binding_contract;
 use super::invoke_cardinality::validate_invoke_scalar_field_refs;
 use super::plan_serialize::{
-    collect_template_uses_from_expr, expr_template_json, infer_surface_contract, node_to_json,
+    collect_template_uses_from_expr, expression_template, infer_surface_contract, lower_plan_node,
     parse_plan_value_expr, stamp_plan_uses_result_qualified_entities,
 };
 use super::prelude::*;
@@ -35,22 +35,26 @@ pub(crate) fn is_plasm_dag_source(src: &str) -> bool {
             .unwrap_or(false)
 }
 
-/// Compile one program expression to plan JSON (DAG program vs single surface line).
-#[allow(dead_code)]
-pub(crate) fn compile_plasm_expression_to_plan(
+#[cfg(test)]
+pub(crate) fn compile_surface_fixture_json(
     pipeline: &PromptPipelineConfig,
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     session: &ExecuteSession,
     name: &str,
     source: &str,
 ) -> Result<serde_json::Value, String> {
-    if is_plasm_dag_source(source.trim()) {
-        compile_plasm_dag_to_plan(pipeline, symbol_map_cross_cache, session, name, source)
-    } else {
-        compile_plasm_surface_line_to_plan(pipeline, symbol_map_cross_cache, session, name, source)
-    }
+    let plan = compile_plasm_surface_line_to_plan(
+        pipeline,
+        symbol_map_cross_cache,
+        session,
+        name,
+        source,
+    )?;
+    serde_json::to_value(plan).map_err(|error| format!("fixture artifact serialization: {error}"))
 }
 
+/// Serialize a compiled fixture for tests that assert the artifact wire contract.
+#[cfg(test)]
 pub(crate) fn compile_plasm_dag_to_plan(
     pipeline: &PromptPipelineConfig,
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
@@ -58,7 +62,9 @@ pub(crate) fn compile_plasm_dag_to_plan(
     name: &str,
     source: &str,
 ) -> Result<serde_json::Value, String> {
-    compile_plasm_dag_to_plan_inner(pipeline, symbol_map_cross_cache, session, name, source)
+    let plan =
+        compile_plasm_dag_to_plan_inner(pipeline, symbol_map_cross_cache, session, name, source)?;
+    serde_json::to_value(plan).map_err(|error| format!("fixture artifact serialization: {error}"))
 }
 
 // compile_plasm_program / compile_plasm_expression live in plasm_compile.rs
@@ -69,7 +75,7 @@ pub(crate) fn compile_plasm_dag_to_plan_inner(
     session: &ExecuteSession,
     name: &str,
     source: &str,
-) -> Result<serde_json::Value, String> {
+) -> Result<crate::plasm_plan::Plan, String> {
     let mut state = CompileState::new(pipeline, symbol_map_cross_cache);
     let flattened = expand_flattened_program_statements(&collect_program_statement_lines(source)?);
     let statements = flattened.statements;
@@ -99,14 +105,16 @@ pub(crate) fn compile_plasm_dag_to_plan_inner(
     let nodes = state
         .nodes
         .iter()
-        .map(|n| node_to_json(n.as_ref()))
+        .map(|n| lower_plan_node(n.as_ref()))
         .collect::<Result<Vec<_>, _>>()?;
     let return_value = if roots.len() == 1 {
-        json!({ "kind": "node", "node": roots[0] })
+        crate::plasm_plan::PlanReturn::Node {
+            node: roots[0].clone(),
+        }
     } else {
-        json!({ "kind": "parallel", "nodes": roots })
+        crate::plasm_plan::PlanReturn::Parallel { nodes: roots }
     };
-    let mut metadata = serde_json::Map::new();
+    let mut metadata = BTreeMap::new();
     metadata.insert("language".to_string(), serde_json::json!("plasm-dag"));
     if let Some(label) = flattened.coerced_default_return {
         metadata.insert(
@@ -114,14 +122,8 @@ pub(crate) fn compile_plasm_dag_to_plan_inner(
             serde_json::json!(label),
         );
     }
-    let mut plan = json!({
-        "version": 1,
-        "kind": "program",
-        "name": name,
-        "nodes": nodes,
-        "return": return_value,
-        "metadata": serde_json::Value::Object(metadata),
-    });
+    let mut plan =
+        crate::plasm_plan::Plan::from_nodes(Some(name.to_owned()), nodes, return_value, metadata);
     stamp_plan_uses_result_qualified_entities(&mut plan)?;
     Ok(plan)
 }
@@ -134,10 +136,16 @@ pub(crate) fn compile_plasm_surface_line_to_plan(
     session: &ExecuteSession,
     name: &str,
     line: &str,
-) -> Result<serde_json::Value, String> {
+) -> Result<crate::plasm_plan::Plan, String> {
     let trimmed = line.trim();
     if is_plasm_dag_source(trimmed) {
-        return compile_plasm_dag_to_plan(pipeline, symbol_map_cross_cache, session, name, trimmed);
+        return compile_plasm_dag_to_plan_inner(
+            pipeline,
+            symbol_map_cross_cache,
+            session,
+            name,
+            trimmed,
+        );
     }
     let mut state = CompileState::new(pipeline, symbol_map_cross_cache);
     if trimmed.starts_with("return ") {
@@ -151,21 +159,21 @@ pub(crate) fn compile_plasm_surface_line_to_plan(
     let nodes = state
         .nodes
         .iter()
-        .map(|n| node_to_json(n.as_ref()))
+        .map(|n| lower_plan_node(n.as_ref()))
         .collect::<Result<Vec<_>, _>>()?;
     let return_value = if roots.len() == 1 {
-        json!({ "kind": "node", "node": &roots[0] })
+        crate::plasm_plan::PlanReturn::Node {
+            node: roots[0].clone(),
+        }
     } else {
-        json!({ "kind": "parallel", "nodes": roots })
+        crate::plasm_plan::PlanReturn::Parallel { nodes: roots }
     };
-    let mut plan = json!({
-        "version": 1,
-        "kind": "program",
-        "name": name,
-        "nodes": nodes,
-        "return": return_value,
-        "metadata": { "language": "plasm-dag" }
-    });
+    let mut plan = crate::plasm_plan::Plan::from_nodes(
+        Some(name.to_owned()),
+        nodes,
+        return_value,
+        BTreeMap::from([("language".to_owned(), serde_json::json!("plasm-dag"))]),
+    );
     stamp_plan_uses_result_qualified_entities(&mut plan)?;
     Ok(plan)
 }
@@ -233,7 +241,7 @@ fn lower_expr_node(
                         true,
                         Some(id),
                     )?;
-                    let uses = collect_template_uses_from_expr(&parsed.expr);
+                    let uses = collect_template_uses_from_expr(&parsed.expr, Some("_"));
                     let (kind, qualified, _effect, _shape) =
                         infer_surface_contract(session, &parsed.expr)?;
                     if !matches!(
@@ -254,7 +262,7 @@ fn lower_expr_node(
                         page_size: None,
                         source: DagNodeSource::ForEach {
                             source: source.to_string(),
-                            parsed_template: expr_template_json(&parsed, &uses)?,
+                            parsed_template: expression_template(&parsed, &uses),
                             display_expr: surface.trim().to_string(),
                             effect_kind: kind,
                             qualified_entity: qualified,
@@ -382,14 +390,11 @@ fn lower_iterate_until(
         true,
         Some(id),
     )?;
-    let uses = collect_template_uses_from_expr(&parsed.expr);
+    let uses = collect_template_uses_from_expr(&parsed.expr, Some("_"));
     let (kind, qualified, _effect, _shape) = infer_surface_contract(session, &parsed.expr)?;
     if !matches!(
         kind,
-        PlanNodeKind::Create
-            | PlanNodeKind::Update
-            | PlanNodeKind::Delete
-            | PlanNodeKind::Action
+        PlanNodeKind::Create | PlanNodeKind::Update | PlanNodeKind::Delete | PlanNodeKind::Action
     ) {
         return Err(format!(
             "Plasm program `{id}` iterate step must be a write/side-effect expression"
@@ -428,7 +433,7 @@ fn lower_iterate_until(
         page_size: None,
         source: DagNodeSource::IterateUntil {
             seed: seed_label,
-            parsed_step_template: expr_template_json(&parsed, &uses)?,
+            parsed_step_template: expression_template(&parsed, &uses),
             step_display: it.step.trim().to_string(),
             effect_kind: kind,
             qualified_entity: qualified,
@@ -725,7 +730,7 @@ pub(in crate::plasm_dag) fn compile_surface_nodes(
             session, state, id, expr, parsed, wire,
         );
     }
-    let uses = collect_template_uses_from_expr(&parsed.expr);
+    let uses = collect_template_uses_from_expr(&parsed.expr, None);
     let (kind, qualified_entity, effect_class, result_shape) =
         infer_surface_contract(session, &parsed.expr)?;
     let node = DagNode {
@@ -745,6 +750,7 @@ pub(in crate::plasm_dag) fn compile_surface_nodes(
     validate_surface_inline_projection(session, state, &node)?;
     if let DagNodeSource::Surface { parsed, .. } = &node.source {
         validate_invoke_scalar_field_refs(session, state, id, &parsed.expr)?;
+        super::password_domain::validate_password_domain_bind(session, state, id, &parsed.expr)?;
     }
     Ok(vec![node])
 }

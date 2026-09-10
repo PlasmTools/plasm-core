@@ -19,7 +19,8 @@ schema_overlay:
   entity:
     from_template: Page
     name:
-      template: '{{ row.title[0].plain_text | join_sanitize(''__'', '' '') }}__{{ row.id | sanitize_identifier }}'
+      template: '{{ row.title[0].plain_text | join_sanitize(''__'', '' '') }}__{{
+        row.id | sanitize_identifier }}'
     scope_key:
       template: '{{ row.id }}'
     static_fields:
@@ -67,8 +68,9 @@ schema_overlay:
 entities:
   Page:
     id_field: id
-    description: 'A Notion page object. Covers both standalone document pages and database rows/records (Notion uses the same
-      type for both; parent.type distinguishes them).
+    description: 'A Notion page object. Covers both standalone document pages and
+      database rows/records (Notion uses the same type for both; parent.type distinguishes
+      them).
 
       '
     discovery:
@@ -76,7 +78,6 @@ entities:
       - page
       - notion page
       - document
-      seed_class: primary
     fields:
       id:
         required: true
@@ -119,7 +120,6 @@ entities:
         cardinality: many
         description: Comments on this page.
         discovery:
-          seed_nav: attach
           qualifier_terms:
           - comment
           - page comment
@@ -129,12 +129,12 @@ entities:
           param: block_id
   Database:
     id_field: id
-    description: A Notion database — a container with a property schema whose rows are Pages.
+    description: A Notion database — a container with a property schema whose rows
+      are Pages.
     discovery:
       names:
       - database
       - notion database
-      seed_class: ambient
     fields:
       id:
         required: true
@@ -168,8 +168,7 @@ entities:
         target: Page
         cardinality: many
         description: Pages (rows) within this database.
-        discovery:
-          seed_nav: own
+        discovery: null
         materialize:
           kind: query_scoped
           capability: database_query
@@ -203,7 +202,6 @@ entities:
       - comment
       - page comment
       - notion comment
-      seed_class: dependent
     fields:
       id:
         required: true
@@ -250,8 +248,9 @@ capabilities:
       type: side_effect
       description: 'Move a page to trash (in_trash: true). Use page_update to restore.'
   page_get_markdown:
-    description: 'Retrieve full page content as Enhanced Markdown in a single call. Populates the Page entity''s markdown
-      and truncated fields via additive merge — the page''s structural metadata (url, timestamps, etc.) is preserved. Requires
+    description: 'Retrieve full page content as Enhanced Markdown in a single call.
+      Populates the Page entity''s markdown and truncated fields via additive merge
+      — the page''s structural metadata (url, timestamps, etc.) is preserved. Requires
       read content capability on the integration.
 
       '
@@ -262,16 +261,19 @@ capabilities:
     - markdown
     - truncated
   page_update_markdown:
-    description: "Update page content using Enhanced Markdown. Supports:\n  update_content  — targeted search-and-replace\
-      \ (recommended)\n  replace_content — replace entire page content\nPopulates the Page entity's markdown and truncated\
-      \ fields with the updated content. Requires update content capability on the integration.\n"
+    description: "Update page content using Enhanced Markdown. Supports:\n  update_content\
+      \  — targeted search-and-replace (recommended)\n  replace_content — replace\
+      \ entire page content\nPopulates the Page entity's markdown and truncated fields\
+      \ with the updated content. Requires update content capability on the integration.\n"
     kind: action
     entity: Page
     output:
       type: side_effect
-      description: "Update page content using Enhanced Markdown. Supports:\n  update_content  — targeted search-and-replace\
-        \ (recommended)\n  replace_content — replace entire page content\nPopulates the Page entity's markdown and truncated\
-        \ fields with the updated content. Requires update content capability on the integration."
+      description: "Update page content using Enhanced Markdown. Supports:\n  update_content\
+        \  — targeted search-and-replace (recommended)\n  replace_content — replace\
+        \ entire page content\nPopulates the Page entity's markdown and truncated\
+        \ fields with the updated content. Requires update content capability on the\
+        \ integration."
   database_get:
     description: Retrieve a database object including its property schema.
     kind: get
@@ -285,20 +287,34 @@ capabilities:
     - in_trash
     - is_inline
   database_query:
-    description: Query a database and return matching rows as Page objects. Scoped to a specific database.
+    description: List Page rows from a database when database_id is supplied, or list
+      pages shared with the integration otherwise. Optional query and sort_direction
+      apply to workspace listing only.
     kind: query
     entity: Page
-    parameters:
+    scope:
     - name: database_id
       value_ref: nv_database_query_database_id
-      required: true
-      role: scope
-    - name: page_size
-      value_ref: nv_database_query_page_size
       required: false
-      role: response_control
-    selection: []
-    scope: []
+    controls:
+    - name: sort_direction
+      value_ref: nv_wire_sel_54ee3732e356907b
+      required: false
+    - name: page_size
+      value_ref: nv_wire_int
+      required: false
+    selection:
+    - name: query
+      value_ref: nv_page_search_query
+      required: false
+    provides:
+    - id
+    - url
+    - public_url
+    - created_time
+    - last_edited_time
+    - in_trash
+    - archived
   user_get:
     description: Retrieve a Notion user by their ID.
     kind: get
@@ -323,17 +339,14 @@ capabilities:
       target_terms:
       - comment
       - page comment
-    parameters:
+    scope:
     - name: block_id
       value_ref: nv_comment_query_block_id
       required: true
-      role: scope
+    controls:
     - name: page_size
       value_ref: nv_wire_int
       required: false
-      role: response_control
-    selection: []
-    scope: []
   comment_create:
     description: Create a new comment on a page or within an existing discussion thread.
     kind: create
@@ -345,35 +358,22 @@ capabilities:
       target_terms:
       - comment
       - page comment
-  page_search:
-    description: Search Notion pages (and database rows) shared with this integration by title.
-    kind: search
-    entity: Page
-    provides:
-    - id
-    - url
-    - public_url
-    - created_time
-    - last_edited_time
-    - in_trash
-    - archived
-    parameters:
+  database_search:
+    description: List databases shared with this integration, optionally filtered
+      by title.
+    kind: query
+    entity: Database
+    selection:
     - name: query
-      value_ref: nv_page_search_query
+      value_ref: nv_database_search_query
       required: false
-      role: search
+    controls:
     - name: sort_direction
       value_ref: nv_wire_sel_54ee3732e356907b
       required: false
-      role: sort_direction
     - name: page_size
       value_ref: nv_wire_int
       required: false
-      role: response_control
-  database_search:
-    description: Search Notion databases shared with this integration by title.
-    kind: search
-    entity: Database
     provides:
     - id
     - url
@@ -382,20 +382,7 @@ capabilities:
     - last_edited_time
     - in_trash
     - is_inline
-    parameters:
-    - name: query
-      value_ref: nv_database_search_query
-      required: false
-      role: search
-    - name: sort_direction
-      value_ref: nv_wire_sel_54ee3732e356907b
-      required: false
-      role: sort_direction
-    - name: page_size
-      value_ref: nv_wire_int
-      required: false
-      role: response_control
-version: 4
+version: 5
 auth:
   scheme: bearer_token
   env: NOTION_API_TOKEN
@@ -429,7 +416,8 @@ values:
     description: True if this page has been trashed.
   nv_page_markdown:
     type: markdown
-    description: Full page content as Enhanced Markdown. Populated by page_get_markdown; absent until that action is invoked.
+    description: Full page content as Enhanced Markdown. Populated by page_get_markdown;
+      absent until that action is invoked.
   nv_page_public_url:
     type: string
     description: Public web URL if the page is published, otherwise null.
@@ -438,7 +426,8 @@ values:
     description: Title text to search for. Omit to retrieve all accessible pages.
   nv_page_truncated:
     type: boolean
-    description: True if the markdown content was truncated (page exceeded ~20k block limit). Populated by page_get_markdown.
+    description: True if the markdown content was truncated (page exceeded ~20k block
+      limit). Populated by page_get_markdown.
   nv_page_url:
     type: string
     description: Canonical Notion URL for this page.

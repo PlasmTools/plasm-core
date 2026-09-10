@@ -32,6 +32,7 @@ impl ExecutionEngine {
         let fp_sink = opts.request_fingerprint_sink.clone();
         let federation = opts.federation.clone();
         let execute_session = opts.execute_session.clone();
+        let compiled_catalog = opts.required_compiled_catalog()?;
         let cancel = opts.cancel.clone();
         let rows_progress = opts.rows_progress.clone();
         Self::run_in_execute_task_scopes(
@@ -40,6 +41,7 @@ impl ExecutionEngine {
             fp_sink,
             federation,
             execute_session,
+            compiled_catalog,
             cancel,
             rows_progress,
             async {

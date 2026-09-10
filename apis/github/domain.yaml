@@ -27,7 +27,6 @@ entities:
       - repo
       - monorepo
       - github repo
-      seed_class: primary
     fields:
       id:
         required: true
@@ -150,7 +149,6 @@ entities:
       - bug
       - ticket
       - github issue
-      seed_class: primary
     fields:
       repository_url:
         required: false
@@ -256,7 +254,6 @@ entities:
         target: Milestone
         cardinality: one
         discovery:
-          seed_nav: attach
           qualifier_terms:
           - milestone
           - milestones
@@ -267,7 +264,6 @@ entities:
         target: Label
         cardinality: many
         discovery:
-          seed_nav: attach
           qualifier_terms:
           - label
           - labels
@@ -288,7 +284,6 @@ entities:
         target: IssueComment
         cardinality: many
         discovery:
-          seed_nav: attach
           qualifier_terms:
           - comment
           - issue comment
@@ -322,7 +317,6 @@ entities:
       names:
       - pull request
       - pr
-      seed_class: primary
     fields:
       repository_url:
         required: false
@@ -418,7 +412,6 @@ entities:
         target: Milestone
         cardinality: one
         discovery:
-          seed_nav: attach
           qualifier_terms:
           - milestone
           - milestones
@@ -435,8 +428,7 @@ entities:
       reviews:
         target: PullRequestReview
         cardinality: many
-        discovery:
-          seed_nav: attach
+        discovery: null
         materialize:
           kind: query_scoped_bindings
           capability: pr_review_query
@@ -658,7 +650,6 @@ entities:
       - pull request review
       - pr review
       - code review
-      seed_class: dependent
     fields:
       owner:
         required: false
@@ -783,7 +774,6 @@ entities:
       names:
       - label
       - labels
-      seed_class: dependent
     fields:
       owner:
         required: true
@@ -817,7 +807,6 @@ entities:
       names:
       - milestone
       - milestones
-      seed_class: dependent
     fields:
       owner:
         required: true
@@ -915,7 +904,6 @@ entities:
       - comment
       - issue comment
       - triage note
-      seed_class: dependent
     fields:
       id:
         required: true
@@ -1674,9 +1662,9 @@ entities:
         value_ref: nv_wire_str_short
 capabilities:
   repo_search:
+    description: Find repositories by free-text and repository qualifiers.
     kind: search
     entity: Repository
-    description: Find repositories by free-text and repository qualifiers.
     selection:
     - name: q
       value_ref: nv_repo_search_q
@@ -1689,15 +1677,23 @@ capabilities:
       value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
   user_repos_query:
+    description: List Repository by shelf (user_repos | auth_user_repos | repo_forks | org_repos | org_public_repos).
     kind: query
     entity: Repository
-    description: List Repository by shelf (user_repos | auth_user_repos | repo_forks | org_repos | org_public_repos).
     scope:
     - name: username
       value_ref: nv_github_account_login
       required: false
     - name: org
       value_ref: nv_github_account_login
+      required: false
+    selection:
+    - name: shelf
+      value_ref: nv_repository_query_shelf
+      required: true
+      description: user_repos | auth_user_repos | repo_forks | org_repos | org_public_repos
+    - name: repository
+      value_ref: nv_github_scope_repository
       required: false
     controls:
     - name: type
@@ -1715,18 +1711,10 @@ capabilities:
     - name: affiliation
       value_ref: nv_auth_user_repos_query_affiliation
       required: false
-    selection:
-    - name: shelf
-      value_ref: nv_repository_query_shelf
-      required: true
-      description: user_repos | auth_user_repos | repo_forks | org_repos | org_public_repos
-    - name: repository
-      value_ref: nv_github_scope_repository
-      required: false
   repo_get:
+    description: Resolve one repository for follow-up work.
     kind: get
     entity: Repository
-    description: Resolve one repository for follow-up work.
     provides:
     - id
     - owner
@@ -1747,10 +1735,14 @@ capabilities:
     - pushed_at
     - html_url
   repo_collaborators_query:
+    description: List User by shelf (repo_collaborators | org_members).
     kind: query
     entity: User
-    description: List User by shelf (repo_collaborators | org_members).
     scope_aggregate_key_policy: omit_when_redundant
+    scope:
+    - name: org
+      value_ref: nv_github_account_login
+      required: false
     selection:
     - name: shelf
       value_ref: nv_user_query_shelf
@@ -1769,14 +1761,23 @@ capabilities:
     - name: role
       value_ref: nv_org_members_query_role
       required: false
-    scope:
-    - name: org
-      value_ref: nv_github_account_login
-      required: false
   issue_get:
+    description: Read one issue for triage or follow-up.
     kind: get
     entity: Issue
-    description: Read one issue for triage or follow-up.
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: owner
+          value_ref: nv_github_account_login
+          required: true
+        - name: repo
+          value_ref: nv_github_repository_name
+          required: true
+        - name: number
+          value_ref: nv_issue_number
+          required: true
     provides:
     - id
     - owner
@@ -1798,23 +1799,10 @@ capabilities:
     - updated_at
     - closed_at
     - html_url
-    arguments:
-      input_type:
-        type: object
-        fields:
-        - name: owner
-          value_ref: nv_github_account_login
-          required: true
-        - name: repo
-          value_ref: nv_github_repository_name
-          required: true
-        - name: number
-          value_ref: nv_issue_number
-          required: true
   issue_sub_issue_query:
+    description: List Issue by shelf (issue | issue_sub_issue).
     kind: query
     entity: Issue
-    description: List Issue by shelf (issue | issue_sub_issue).
     scope_aggregate_key_policy: omit_when_redundant
     scope:
     - name: owner
@@ -1857,9 +1845,9 @@ capabilities:
       value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
   issue_search:
+    description: Search issue and pull request conversations across GitHub.
     kind: search
     entity: Issue
-    description: Search issue and pull request conversations across GitHub.
     discovery:
       operation_terms:
       - search issues
@@ -1880,9 +1868,22 @@ capabilities:
       value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
   pr_get:
+    description: Read one pull request for review or merge decisions.
     kind: get
     entity: PullRequest
-    description: Read one pull request for review or merge decisions.
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: owner
+          value_ref: nv_github_account_login
+          required: true
+        - name: repo
+          value_ref: nv_github_repository_name
+          required: true
+        - name: number
+          value_ref: nv_pull_request_number
+          required: true
     provides:
     - id
     - owner
@@ -1898,23 +1899,10 @@ capabilities:
     - updated_at
     - closed_at
     - html_url
-    arguments:
-      input_type:
-        type: object
-        fields:
-        - name: owner
-          value_ref: nv_github_account_login
-          required: true
-        - name: repo
-          value_ref: nv_github_repository_name
-          required: true
-        - name: number
-          value_ref: nv_pull_request_number
-          required: true
   pr_query:
+    description: Find pull requests in a repository by state or branch.
     kind: query
     entity: PullRequest
-    description: Find pull requests in a repository by state or branch.
     scope_aggregate_key_policy: omit_when_redundant
     selection:
     - name: repository
@@ -1937,9 +1925,10 @@ capabilities:
       value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
   pr_search:
+    description: List PullRequest by shelf (pr | pr_touching_path).
     kind: search
     entity: PullRequest
-    description: List PullRequest by shelf (pr | pr_touching_path).
+    scope: []
     selection:
     - name: shelf
       value_ref: nv_pullrequest_search_shelf
@@ -1958,25 +1947,15 @@ capabilities:
     - name: order
       value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
-    scope: []
   commit_query:
+    description: List commits for a repository.
     kind: query
     entity: Commit
-    description: List commits for a repository.
-    provides:
-    - owner
-    - repo
-    - sha
-    - message
-    - html_url
-    - url
-    - authored_at
-    - committed_at
-    - comment_count
-    - stats_additions
-    - stats_deletions
-    - total_changes
     scope_aggregate_key_policy: omit_when_redundant
+    scope:
+    - name: repository
+      value_ref: nv_github_scope_repository
+      required: true
     selection:
     - name: sha
       value_ref: nv_github_git_sha
@@ -1997,14 +1976,23 @@ capabilities:
     - name: since
       value_ref: nv_wire_date_rfc3339
       required: false
-    scope:
-    - name: repository
-      value_ref: nv_github_scope_repository
-      required: true
+    provides:
+    - owner
+    - repo
+    - sha
+    - message
+    - html_url
+    - url
+    - authored_at
+    - committed_at
+    - comment_count
+    - stats_additions
+    - stats_deletions
+    - total_changes
   commit_get:
+    description: Resolve one commit for history, release, or branch decisions.
     kind: get
     entity: Commit
-    description: Resolve one commit for history, release, or branch decisions.
     provides:
     - owner
     - repo
@@ -2019,10 +2007,10 @@ capabilities:
     - stats_deletions
     - total_changes
   commit_file_get:
+    description: Read one repository file at a path (existence, content, and sha) on a branch or commit
+      ref — prefer this over mutation probes.
     kind: get
     entity: CommitFile
-    description: Read one repository file at a path (existence, content, and sha) on a branch or commit ref — prefer this
-      over mutation probes.
     discovery:
       operation_terms:
       - read file
@@ -2036,14 +2024,6 @@ capabilities:
       - content
       - path
       - README
-    provides:
-    - owner
-    - repo
-    - filename
-    - sha
-    - blob_url
-    - raw_url
-    - content
     arguments:
       input_type:
         type: object
@@ -2057,10 +2037,18 @@ capabilities:
         - name: ref
           value_ref: nv_github_branch_name
           required: false
+    provides:
+    - owner
+    - repo
+    - filename
+    - sha
+    - blob_url
+    - raw_url
+    - content
   pr_review_query:
+    description: List reviews on a pull request.
     kind: query
     entity: PullRequestReview
-    description: List reviews on a pull request.
     scope_aggregate_key_policy: omit_when_redundant
     scope:
     - name: owner
@@ -2074,9 +2062,9 @@ capabilities:
       required: true
     selection: []
   pr_file_query:
+    description: List files changed in a pull request.
     kind: query
     entity: PullRequestFile
-    description: List files changed in a pull request.
     scope_aggregate_key_policy: omit_when_redundant
     scope:
     - name: owner
@@ -2090,9 +2078,9 @@ capabilities:
       required: true
     selection: []
   pr_review_comment_query:
+    description: List inline review comments on a pull request.
     kind: query
     entity: PullRequestReviewComment
-    description: List inline review comments on a pull request.
     scope_aggregate_key_policy: omit_when_redundant
     scope:
     - name: owner
@@ -2104,15 +2092,15 @@ capabilities:
     - name: pull_number
       value_ref: nv_pull_request_number
       required: true
+    selection: []
     controls:
     - name: since
       value_ref: nv_pr_review_comment_query_since
       required: false
-    selection: []
   pr_context_query:
+    description: Summarize one pull request with diff and review activity for code review.
     kind: query
     entity: PullRequestContext
-    description: Summarize one pull request with diff and review activity for code review.
     selection:
     - name: owner
       value_ref: nv_github_account_login
@@ -2124,9 +2112,9 @@ capabilities:
       value_ref: nv_pull_request_number
       required: true
   pr_review_get:
+    description: Read one pull request review.
     kind: get
     entity: PullRequestReview
-    description: Read one pull request review.
     provides:
     - id
     - owner
@@ -2138,9 +2126,9 @@ capabilities:
     - submitted_at
     - html_url
   pr_review_comment_get:
+    description: Read one inline pull request review comment.
     kind: get
     entity: PullRequestReviewComment
-    description: Read one inline pull request review comment.
     provides:
     - id
     - owner
@@ -2160,19 +2148,9 @@ capabilities:
     - created_at
     - updated_at
   pr_review_create:
+    description: Create or submit a pull request review.
     kind: create
     entity: PullRequestReview
-    description: Create or submit a pull request review.
-    provides:
-    - id
-    - owner
-    - repo
-    - pull_number
-    - state
-    - body
-    - commit_id
-    - submitted_at
-    - html_url
     scope_aggregate_key_policy: omit_when_redundant
     scope:
     - name: pull_number
@@ -2195,13 +2173,20 @@ capabilities:
         - name: event
           value_ref: nv_pr_review_create_event
           required: false
+    provides:
+    - id
+    - owner
+    - repo
+    - pull_number
+    - state
+    - body
+    - commit_id
+    - submitted_at
+    - html_url
   pr_review_submit:
+    description: Submit an existing pending pull request review.
     kind: action
     entity: PullRequestReview
-    description: Submit an existing pending pull request review.
-    output:
-      type: side_effect
-      description: Submit pending PR review with chosen decision.
     payload:
       input_type:
         type: object
@@ -2213,32 +2198,17 @@ capabilities:
           value_ref: nv_wire_str_markdown
           required: false
           sink_class: external_publish
+    output:
+      type: side_effect
+      description: Submit pending PR review with chosen decision.
   pr_review_delete:
+    description: Remove a pending pull request review.
     kind: delete
     entity: PullRequestReview
-    description: Remove a pending pull request review.
   pr_review_comment_create:
+    description: Add or reply to an inline review comment.
     kind: create
     entity: PullRequestReviewComment
-    description: Add or reply to an inline review comment.
-    provides:
-    - id
-    - owner
-    - repo
-    - body
-    - path
-    - diff_hunk
-    - commit_id
-    - pull_number
-    - review_id
-    - line
-    - side
-    - start_line
-    - start_side
-    - subject_type
-    - html_url
-    - created_at
-    - updated_at
     scope_aggregate_key_policy: omit_when_redundant
     scope:
     - name: pull_number
@@ -2279,20 +2249,38 @@ capabilities:
         - name: in_reply_to
           value_ref: nv_pr_review_comment_create_in_reply_to
           required: false
+    provides:
+    - id
+    - owner
+    - repo
+    - body
+    - path
+    - diff_hunk
+    - commit_id
+    - pull_number
+    - review_id
+    - line
+    - side
+    - start_line
+    - start_side
+    - subject_type
+    - html_url
+    - created_at
+    - updated_at
   branch_query:
+    description: List branches in a repository.
     kind: query
     entity: Branch
-    description: List branches in a repository.
     scope_aggregate_key_policy: omit_when_redundant
-    selection: []
     scope:
     - name: repository
       value_ref: nv_github_scope_repository
       required: true
+    selection: []
   branch_get:
+    description: Resolve one branch and its head commit.
     kind: get
     entity: Branch
-    description: Resolve one branch and its head commit.
     provides:
     - owner
     - repo
@@ -2301,18 +2289,18 @@ capabilities:
     - protected
     - html_url
   repo_tags_query:
+    description: List git tags in a repository.
     kind: query
     entity: RepositoryTag
-    description: List git tags in a repository.
     scope_aggregate_key_policy: omit_when_redundant
     selection:
     - name: repository
       value_ref: nv_github_scope_repository
       required: true
   repo_tag_get:
+    description: Resolve one git tag and its commit.
     kind: get
     entity: RepositoryTag
-    description: Resolve one git tag and its commit.
     provides:
     - owner
     - repo
@@ -2321,22 +2309,22 @@ capabilities:
     - zipball_url
     - tarball_url
   contributor_query:
+    description: List repo contributors with commit counts.
     kind: query
     entity: Contributor
-    description: List repo contributors with commit counts.
     scope_aggregate_key_policy: omit_when_redundant
-    selection:
-    - name: anon
-      value_ref: nv_contributor_query_anon
-      required: false
     scope:
     - name: repository
       value_ref: nv_github_scope_repository
       required: true
+    selection:
+    - name: anon
+      value_ref: nv_contributor_query_anon
+      required: false
   workflow_query:
+    description: List workflows in a repository.
     kind: query
     entity: Workflow
-    description: List workflows in a repository.
     scope_aggregate_key_policy: omit_when_redundant
     scope:
     - name: owner
@@ -2347,9 +2335,9 @@ capabilities:
       required: true
     selection: []
   workflow_get:
+    description: Resolve one workflow for inspection or manual runs.
     kind: get
     entity: Workflow
-    description: Resolve one workflow for inspection or manual runs.
     provides:
     - id
     - owner
@@ -2363,12 +2351,9 @@ capabilities:
     - html_url
     - badge_url
   workflow_dispatch:
+    description: Start a manual workflow run on a selected ref.
     kind: action
     entity: Workflow
-    description: Start a manual workflow run on a selected ref.
-    output:
-      type: side_effect
-      description: Start workflow on the selected ref.
     payload:
       input_type:
         type: object
@@ -2376,10 +2361,13 @@ capabilities:
         - name: ref
           value_ref: nv_workflow_dispatch_ref
           required: true
+    output:
+      type: side_effect
+      description: Start workflow on the selected ref.
   workflow_run_query:
+    description: List WorkflowRun by shelf (workflow_run | workflow_run_by_workflow).
     kind: query
     entity: WorkflowRun
-    description: List WorkflowRun by shelf (workflow_run | workflow_run_by_workflow).
     scope_aggregate_key_policy: omit_when_redundant
     scope:
     - name: owner
@@ -2413,9 +2401,22 @@ capabilities:
       value_ref: nv_workflow_run_query_actor
       required: false
   workflow_run_get:
+    description: Read one workflow run for CI status and provenance.
     kind: get
     entity: WorkflowRun
-    description: Read one workflow run for CI status and provenance.
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: owner
+          value_ref: nv_github_account_login
+          required: true
+        - name: repo
+          value_ref: nv_github_repository_name
+          required: true
+        - name: id
+          value_ref: nv_wire_int
+          required: true
     provides:
     - id
     - owner
@@ -2437,51 +2438,38 @@ capabilities:
     - run_started_at
     - created_at
     - updated_at
-    arguments:
-      input_type:
-        type: object
-        fields:
-        - name: owner
-          value_ref: nv_github_account_login
-          required: true
-        - name: repo
-          value_ref: nv_github_repository_name
-          required: true
-        - name: id
-          value_ref: nv_wire_int
-          required: true
   workflow_run_rerun:
+    description: Rerun all jobs in a workflow run.
     kind: action
     entity: WorkflowRun
-    description: Rerun all jobs in a workflow run.
     output:
       type: side_effect
       description: Queue a rerun of the workflow run.
   workflow_run_rerun_failed_jobs:
+    description: Rerun only failed jobs in a workflow run.
     kind: action
     entity: WorkflowRun
-    description: Rerun only failed jobs in a workflow run.
     output:
       type: side_effect
       description: Queue a rerun of failed jobs for the workflow run.
   workflow_run_cancel:
+    description: Cancel an in-progress workflow run.
     kind: action
     entity: WorkflowRun
-    description: Cancel an in-progress workflow run.
     output:
       type: side_effect
       description: Request cancellation of the workflow run.
   workflow_run_logs_delete:
+    description: Remove stored logs for a workflow run.
     kind: action
     entity: WorkflowRun
-    description: Remove stored logs for a workflow run.
     output:
       type: side_effect
       description: Remove stored logs for the workflow run.
   workflow_job_query:
+    description: List jobs in a workflow run.
     kind: query
     entity: WorkflowJob
-    description: List jobs in a workflow run.
     scope_aggregate_key_policy: omit_when_redundant
     scope:
     - name: owner
@@ -2493,15 +2481,15 @@ capabilities:
     - name: run_id
       value_ref: nv_wire_int
       required: true
+    selection: []
     controls:
     - name: filter
       value_ref: nv_workflow_job_query_filter
       required: false
-    selection: []
   workflow_artifact_query:
+    description: List artifacts produced by a workflow run.
     kind: query
     entity: WorkflowArtifact
-    description: List artifacts produced by a workflow run.
     scope_aggregate_key_policy: omit_when_redundant
     scope:
     - name: owner
@@ -2515,20 +2503,9 @@ capabilities:
       required: true
     selection: []
   workflow_run_usage_get:
+    description: Runner timing and billable usage for a run.
     kind: get
     entity: WorkflowRunUsage
-    description: Runner timing and billable usage for a run.
-    provides:
-    - owner
-    - repo
-    - run_id
-    - run_duration_ms
-    - ubuntu_total_ms
-    - ubuntu_jobs
-    - macos_total_ms
-    - macos_jobs
-    - windows_total_ms
-    - windows_jobs
     arguments:
       input_type:
         type: object
@@ -2542,10 +2519,21 @@ capabilities:
         - name: run_id
           value_ref: nv_wire_int
           required: true
+    provides:
+    - owner
+    - repo
+    - run_id
+    - run_duration_ms
+    - ubuntu_total_ms
+    - ubuntu_jobs
+    - macos_total_ms
+    - macos_jobs
+    - windows_total_ms
+    - windows_jobs
   workflow_run_context_query:
+    description: Summarize one workflow run with jobs, artifacts, and billable timing for CI review.
     kind: query
     entity: WorkflowRunContext
-    description: Summarize one workflow run with jobs, artifacts, and billable timing for CI review.
     selection:
     - name: owner
       value_ref: nv_github_account_login
@@ -2557,9 +2545,9 @@ capabilities:
       value_ref: nv_wire_int
       required: true
   user_get:
+    description: Resolve one public user profile.
     kind: get
     entity: User
-    description: Resolve one public user profile.
     provides:
     - login
     - id
@@ -2577,13 +2565,13 @@ capabilities:
     - avatar_url
     - created_at
   user_get_me:
+    description: Resolve the authenticated account.
     kind: singleton
     entity: User
-    description: Resolve the authenticated account.
   user_search:
+    description: Search GitHub users.
     kind: search
     entity: User
-    description: Search GitHub users.
     selection:
     - name: q
       value_ref: nv_wire_str_short
@@ -2596,9 +2584,9 @@ capabilities:
       value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
   org_get:
+    description: Resolve one public organization.
     kind: get
     entity: Organization
-    description: Resolve one public organization.
     provides:
     - login
     - id
@@ -2615,21 +2603,21 @@ capabilities:
     - following
     - type
   issue_type_query:
+    description: List org issue types.
     kind: query
     entity: IssueType
-    description: List org issue types.
     scope:
     - name: org
       value_ref: nv_github_account_login
       required: true
   gist_query:
+    description: List gists for the authenticated user.
     kind: query
     entity: Gist
-    description: List gists for the authenticated user.
   gist_get:
+    description: Resolve one gist.
     kind: get
     entity: Gist
-    description: Resolve one gist.
     provides:
     - id
     - description
@@ -2639,9 +2627,9 @@ capabilities:
     - created_at
     - updated_at
   notification_query:
+    description: List notification threads for the auth user.
     kind: query
     entity: Notification
-    description: List notification threads for the auth user.
     selection:
     - name: all
       value_ref: nv_wire_bool
@@ -2657,9 +2645,9 @@ capabilities:
       value_ref: nv_notification_query_since
       required: false
   notification_get:
+    description: Read one notification thread.
     kind: get
     entity: Notification
-    description: Read one notification thread.
     provides:
     - id
     - unread
@@ -2669,25 +2657,17 @@ capabilities:
     - url
     - subscription_url
   notification_mark_read:
+    description: Mark a notification thread as read.
     kind: action
     entity: Notification
-    description: Mark a notification thread as read.
     output:
       type: side_effect
       description: Mark thread read in the recipient's inbox.
   label_query:
+    description: List Label by shelf (label | issue_label).
     kind: query
     entity: Label
-    description: List Label by shelf (label | issue_label).
     scope_aggregate_key_policy: omit_when_redundant
-    selection:
-    - name: shelf
-      value_ref: nv_label_query_shelf
-      required: true
-      description: label | issue_label
-    - name: repository
-      value_ref: nv_github_scope_repository
-      required: true
     scope:
     - name: owner
       value_ref: nv_github_account_login
@@ -2698,11 +2678,19 @@ capabilities:
     - name: issue_number
       value_ref: nv_issue_number
       required: false
+    selection:
+    - name: shelf
+      value_ref: nv_label_query_shelf
+      required: true
+      description: label | issue_label
+    - name: repository
+      value_ref: nv_github_scope_repository
+      required: true
     controls: []
   label_get:
+    description: Resolve one repository label by name.
     kind: get
     entity: Label
-    description: Resolve one repository label by name.
     provides:
     - name
     - owner
@@ -2712,9 +2700,9 @@ capabilities:
     - color
     - default
   milestone_query:
+    description: List milestones for a repository.
     kind: query
     entity: Milestone
-    description: List milestones for a repository.
     scope_aggregate_key_policy: omit_when_redundant
     selection:
     - name: repository
@@ -2731,9 +2719,9 @@ capabilities:
       value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
   milestone_get:
+    description: Resolve one milestone.
     kind: get
     entity: Milestone
-    description: Resolve one milestone.
     provides:
     - number
     - owner
@@ -2750,24 +2738,9 @@ capabilities:
     - closed_at
     - html_url
   milestone_create:
+    description: Create a milestone in a repository.
     kind: create
     entity: Milestone
-    description: Create a milestone in a repository.
-    provides:
-    - number
-    - owner
-    - repo
-    - id
-    - title
-    - description
-    - state
-    - open_issues
-    - closed_issues
-    - due_on
-    - created_at
-    - updated_at
-    - closed_at
-    - html_url
     scope_aggregate_key_policy: omit_when_redundant
     payload:
       input_type:
@@ -2788,10 +2761,6 @@ capabilities:
         - name: due_on
           value_ref: nv_wire_date_rfc3339
           required: false
-  milestone_update:
-    kind: update
-    entity: Milestone
-    description: Update milestone.
     provides:
     - number
     - owner
@@ -2807,6 +2776,10 @@ capabilities:
     - updated_at
     - closed_at
     - html_url
+  milestone_update:
+    description: Update milestone.
+    kind: update
+    entity: Milestone
     payload:
       input_type:
         type: object
@@ -2823,23 +2796,38 @@ capabilities:
         - name: due_on
           value_ref: nv_wire_date_rfc3339
           required: false
+    provides:
+    - number
+    - owner
+    - repo
+    - id
+    - title
+    - description
+    - state
+    - open_issues
+    - closed_issues
+    - due_on
+    - created_at
+    - updated_at
+    - closed_at
+    - html_url
   milestone_delete:
+    description: Remove a milestone from a repository.
     kind: delete
     entity: Milestone
-    description: Remove a milestone from a repository.
   release_query:
+    description: List releases for a repository.
     kind: query
     entity: Release
-    description: List releases for a repository.
     scope_aggregate_key_policy: omit_when_redundant
     selection:
     - name: repository
       value_ref: nv_github_scope_repository
       required: true
   release_get:
+    description: Resolve one release.
     kind: get
     entity: Release
-    description: Resolve one release.
     provides:
     - id
     - owner
@@ -2853,21 +2841,9 @@ capabilities:
     - published_at
     - html_url
   release_create:
+    description: Create a GitHub release (tag).
     kind: create
     entity: Release
-    description: Create a GitHub release (tag).
-    provides:
-    - id
-    - owner
-    - repo
-    - tag_name
-    - name
-    - body
-    - draft
-    - prerelease
-    - created_at
-    - published_at
-    - html_url
     scope_aggregate_key_policy: omit_when_redundant
     payload:
       input_type:
@@ -2897,10 +2873,6 @@ capabilities:
         - name: generate_release_notes
           value_ref: nv_release_create_generate_release_notes
           required: false
-  release_update:
-    kind: update
-    entity: Release
-    description: Update an existing release.
     provides:
     - id
     - owner
@@ -2913,6 +2885,10 @@ capabilities:
     - created_at
     - published_at
     - html_url
+  release_update:
+    description: Update an existing release.
+    kind: update
+    entity: Release
     payload:
       input_type:
         type: object
@@ -2935,14 +2911,27 @@ capabilities:
         - name: target_commitish
           value_ref: nv_wire_str_short
           required: false
+    provides:
+    - id
+    - owner
+    - repo
+    - tag_name
+    - name
+    - body
+    - draft
+    - prerelease
+    - created_at
+    - published_at
+    - html_url
   release_delete:
+    description: Remove a release from a repository.
     kind: delete
     entity: Release
-    description: Remove a release from a repository.
   issue_comment_query:
+    description: List IssueComment by shelf (issue_comment | repo_comment).
     kind: query
     entity: IssueComment
-    description: List IssueComment by shelf (issue_comment | repo_comment).
+    scope_aggregate_key_policy: omit_when_redundant
     discovery:
       operation_terms:
       - list comments
@@ -2950,7 +2939,6 @@ capabilities:
       target_terms:
       - comment
       - issue comment
-    scope_aggregate_key_policy: omit_when_redundant
     scope:
     - name: owner
       value_ref: nv_github_account_login
@@ -2960,6 +2948,14 @@ capabilities:
       required: false
     - name: issue_number
       value_ref: nv_issue_number
+      required: false
+    selection:
+    - name: shelf
+      value_ref: nv_issuecomment_query_shelf
+      required: true
+      description: issue_comment | repo_comment
+    - name: repository
+      value_ref: nv_github_scope_repository
       required: false
     controls:
     - name: since
@@ -2971,18 +2967,10 @@ capabilities:
     - name: direction
       value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
-    selection:
-    - name: shelf
-      value_ref: nv_issuecomment_query_shelf
-      required: true
-      description: issue_comment | repo_comment
-    - name: repository
-      value_ref: nv_github_scope_repository
-      required: false
   issue_triage_context_query:
+    description: Summarize one issue with label, comment, and sub-issue counts for triage.
     kind: query
     entity: IssueTriageContext
-    description: Summarize one issue with label, comment, and sub-issue counts for triage.
     selection:
     - name: owner
       value_ref: nv_github_account_login
@@ -2994,9 +2982,10 @@ capabilities:
       value_ref: nv_issue_number
       required: true
   issue_create:
+    description: Create an issue with optional initial labels.
     kind: create
     entity: Issue
-    description: Create an issue with optional initial labels.
+    scope_aggregate_key_policy: omit_when_redundant
     discovery:
       operation_terms:
       - open issue
@@ -3005,28 +2994,6 @@ capabilities:
       target_terms:
       - issue
       - bug
-    provides:
-    - id
-    - owner
-    - repo
-    - number
-    - title
-    - body
-    - state
-    - state_reason
-    - issue_type_id
-    - issue_type_name
-    - issue_type_color
-    - sub_issues_total
-    - sub_issues_completed
-    - sub_issues_percent_completed
-    - locked
-    - comments
-    - created_at
-    - updated_at
-    - closed_at
-    - html_url
-    scope_aggregate_key_policy: omit_when_redundant
     payload:
       input_type:
         type: object
@@ -3051,25 +3018,6 @@ capabilities:
         - name: milestone
           value_ref: nv_issue_milestone_number
           required: false
-  issue_update:
-    kind: update
-    entity: Issue
-    description: Update an issue or PR by number (GitHub labels PRs via the issues API); pass labels for a full replacement
-      list of label names.
-    discovery:
-      operation_terms:
-      - update issue
-      - label issue
-      - label pr
-      - pr labels
-      - update pull request labels
-      - set labels
-      - replace labels
-      target_terms:
-      - issue
-      - pull request
-      - pr
-      - labels
     provides:
     - id
     - owner
@@ -3091,6 +3039,25 @@ capabilities:
     - updated_at
     - closed_at
     - html_url
+  issue_update:
+    description: Update an issue or PR by number (GitHub labels PRs via the issues API); pass labels for
+      a full replacement list of label names.
+    kind: update
+    entity: Issue
+    discovery:
+      operation_terms:
+      - update issue
+      - label issue
+      - label pr
+      - pr labels
+      - update pull request labels
+      - set labels
+      - replace labels
+      target_terms:
+      - issue
+      - pull request
+      - pr
+      - labels
     payload:
       input_type:
         type: object
@@ -3121,17 +3088,35 @@ capabilities:
         - name: locked
           value_ref: nv_issue_update_locked
           required: false
+    provides:
+    - id
+    - owner
+    - repo
+    - number
+    - title
+    - body
+    - state
+    - state_reason
+    - issue_type_id
+    - issue_type_name
+    - issue_type_color
+    - sub_issues_total
+    - sub_issues_completed
+    - sub_issues_percent_completed
+    - locked
+    - comments
+    - created_at
+    - updated_at
+    - closed_at
+    - html_url
   issue_delete:
+    description: Remove an issue.
     kind: delete
     entity: Issue
-    description: Remove an issue.
   issue_sub_issue_add:
+    description: Add an existing issue as a sub-issue of this issue.
     kind: action
     entity: Issue
-    description: Add an existing issue as a sub-issue of this issue.
-    output:
-      type: side_effect
-      description: Attach the selected issue under this parent issue.
     payload:
       input_type:
         type: object
@@ -3142,13 +3127,13 @@ capabilities:
         - name: replace_parent
           value_ref: nv_issue_sub_issue_add_replace_parent
           required: false
-  issue_sub_issue_remove:
-    kind: action
-    entity: Issue
-    description: Remove a sub-issue from this parent issue.
     output:
       type: side_effect
-      description: Remove the selected sub-issue from this parent.
+      description: Attach the selected issue under this parent issue.
+  issue_sub_issue_remove:
+    description: Remove a sub-issue from this parent issue.
+    kind: action
+    entity: Issue
     payload:
       input_type:
         type: object
@@ -3156,13 +3141,13 @@ capabilities:
         - name: sub_issue_id
           value_ref: nv_issue_sub_issue_remove_sub_issue_id
           required: true
-  issue_sub_issue_reprioritize:
-    kind: action
-    entity: Issue
-    description: Reorder a sub-issue within this parent issue.
     output:
       type: side_effect
-      description: Reorder a sub-issue under this parent.
+      description: Remove the selected sub-issue from this parent.
+  issue_sub_issue_reprioritize:
+    description: Reorder a sub-issue within this parent issue.
+    kind: action
+    entity: Issue
     payload:
       input_type:
         type: object
@@ -3176,10 +3161,13 @@ capabilities:
         - name: before_id
           value_ref: nv_issue_sub_issue_reprioritize_before_id
           required: false
+    output:
+      type: side_effect
+      description: Reorder a sub-issue under this parent.
   issue_assignees_add:
+    description: Add assignees without replacing existing ones.
     kind: action
     entity: Issue
-    description: Add assignees without replacing existing ones.
     discovery:
       operation_terms:
       - add assignees
@@ -3188,9 +3176,6 @@ capabilities:
       target_terms:
       - assignee
       - issue
-    output:
-      type: side_effect
-      description: Add the selected assignees to the issue.
     payload:
       input_type:
         type: object
@@ -3198,13 +3183,13 @@ capabilities:
         - name: assignees
           value_ref: nv_issue_assignees_add_assignees
           required: true
-  issue_assignees_remove:
-    kind: action
-    entity: Issue
-    description: Remove one or more assignees from an issue.
     output:
       type: side_effect
-      description: Remove the selected assignees from the issue.
+      description: Add the selected assignees to the issue.
+  issue_assignees_remove:
+    description: Remove one or more assignees from an issue.
+    kind: action
+    entity: Issue
     payload:
       input_type:
         type: object
@@ -3212,10 +3197,13 @@ capabilities:
         - name: assignees
           value_ref: nv_issue_assignees_remove_assignees
           required: true
+    output:
+      type: side_effect
+      description: Remove the selected assignees from the issue.
   issue_assign_copilot:
+    description: Assign Copilot agent to an issue.
     kind: action
     entity: Issue
-    description: Assign Copilot agent to an issue.
     discovery:
       operation_terms:
       - assign copilot
@@ -3224,9 +3212,6 @@ capabilities:
       target_terms:
       - copilot
       - issue
-    output:
-      type: side_effect
-      description: Apply Copilot assignment with requested settings.
     payload:
       input_type:
         type: object
@@ -3246,10 +3231,14 @@ capabilities:
         - name: model
           value_ref: nv_issue_assign_copilot_model
           required: false
+    output:
+      type: side_effect
+      description: Apply Copilot assignment with requested settings.
   issue_comment_create:
+    description: Add a timeline comment to an issue or pull request thread.
     kind: create
     entity: IssueComment
-    description: Add a timeline comment to an issue or pull request thread.
+    scope_aggregate_key_policy: omit_when_redundant
     discovery:
       operation_terms:
       - leave comment
@@ -3258,13 +3247,6 @@ capabilities:
       target_terms:
       - comment
       - note
-    provides:
-    - id
-    - body
-    - created_at
-    - updated_at
-    - html_url
-    scope_aggregate_key_policy: omit_when_redundant
     scope:
     - name: issue_number
       value_ref: nv_issue_number
@@ -3280,16 +3262,16 @@ capabilities:
           value_ref: nv_wire_str_markdown
           required: true
           sink_class: external_publish
-  issue_comment_update:
-    kind: update
-    entity: IssueComment
-    description: Update an issue or pull request comment.
     provides:
     - id
     - body
     - created_at
     - updated_at
     - html_url
+  issue_comment_update:
+    description: Update an issue or pull request comment.
+    kind: update
+    entity: IssueComment
     scope_aggregate_key_policy: omit_when_redundant
     payload:
       input_type:
@@ -3302,10 +3284,16 @@ capabilities:
           value_ref: nv_wire_str_markdown
           required: true
           sink_class: external_publish
+    provides:
+    - id
+    - body
+    - created_at
+    - updated_at
+    - html_url
   issue_comment_delete:
+    description: Remove an issue or pull request timeline comment.
     kind: delete
     entity: IssueComment
-    description: Remove an issue or pull request timeline comment.
     arguments:
       input_type:
         type: object
@@ -3314,9 +3302,9 @@ capabilities:
           value_ref: nv_github_scope_repository
           required: true
   pr_update:
+    description: Update an open pull request — change title, body, state, or base branch.
     kind: update
     entity: PullRequest
-    description: Update an open pull request — change title, body, state, or base branch.
     discovery:
       operation_terms:
       - update pull request
@@ -3326,21 +3314,6 @@ capabilities:
       target_terms:
       - pull request
       - pr
-    provides:
-    - id
-    - owner
-    - repo
-    - number
-    - title
-    - body
-    - state
-    - locked
-    - draft
-    - merged_at
-    - created_at
-    - updated_at
-    - closed_at
-    - html_url
     payload:
       input_type:
         type: object
@@ -3359,62 +3332,6 @@ capabilities:
         - name: base
           value_ref: nv_pr_update_base
           required: false
-  pr_merge:
-    kind: action
-    entity: PullRequest
-    description: Merge a pull request.
-    discovery:
-      operation_terms:
-      - merge pull request
-      - merge pr
-      target_terms:
-      - pull request
-      - pr
-    output:
-      type: side_effect
-      description: Merge the pull request.
-    payload:
-      input_type:
-        type: object
-        fields:
-        - name: commit_title
-          value_ref: nv_wire_str_short
-          required: false
-        - name: commit_message
-          value_ref: nv_wire_str_markdown
-          required: false
-        - name: merge_method
-          value_ref: nv_pr_merge_merge_method
-          required: false
-  pr_update_branch:
-    kind: action
-    entity: PullRequest
-    description: Update a pull request branch from its base branch.
-    output:
-      type: side_effect
-      description: Update the pull request head from the base branch.
-    payload:
-      input_type:
-        type: object
-        fields:
-        - name: expected_head_sha
-          value_ref: nv_pr_update_branch_expected_head_sha
-          required: false
-  pr_create:
-    kind: create
-    entity: PullRequest
-    description: Create a pull request from a head branch into a base branch.
-    discovery:
-      operation_terms:
-      - open pull request
-      - open pr
-      - create pull request
-      - request reviewers
-      - assign reviewers
-      target_terms:
-      - pull request
-      - pr
-      - reviewers
     provides:
     - id
     - owner
@@ -3430,7 +3347,63 @@ capabilities:
     - updated_at
     - closed_at
     - html_url
+  pr_merge:
+    description: Merge a pull request.
+    kind: action
+    entity: PullRequest
+    discovery:
+      operation_terms:
+      - merge pull request
+      - merge pr
+      target_terms:
+      - pull request
+      - pr
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: commit_title
+          value_ref: nv_wire_str_short
+          required: false
+        - name: commit_message
+          value_ref: nv_wire_str_markdown
+          required: false
+        - name: merge_method
+          value_ref: nv_pr_merge_merge_method
+          required: false
+    output:
+      type: side_effect
+      description: Merge the pull request.
+  pr_update_branch:
+    description: Update a pull request branch from its base branch.
+    kind: action
+    entity: PullRequest
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: expected_head_sha
+          value_ref: nv_pr_update_branch_expected_head_sha
+          required: false
+    output:
+      type: side_effect
+      description: Update the pull request head from the base branch.
+  pr_create:
+    description: Create a pull request from a head branch into a base branch.
+    kind: create
+    entity: PullRequest
     scope_aggregate_key_policy: omit_when_redundant
+    discovery:
+      operation_terms:
+      - open pull request
+      - open pr
+      - create pull request
+      - request reviewers
+      - assign reviewers
+      target_terms:
+      - pull request
+      - pr
+      - reviewers
     payload:
       input_type:
         type: object
@@ -3471,25 +3444,32 @@ capabilities:
           - title
           - issue
           error_message: provide exactly one of title or issue (GitHub rejects both together)
+    provides:
+    - id
+    - owner
+    - repo
+    - number
+    - title
+    - body
+    - state
+    - locked
+    - draft
+    - merged_at
+    - created_at
+    - updated_at
+    - closed_at
+    - html_url
   label_create:
+    description: Create a label in a repository.
     kind: create
     entity: Label
-    description: Create a label in a repository.
+    scope_aggregate_key_policy: omit_when_redundant
     discovery:
       operation_terms:
       - add label
       - create label
       target_terms:
       - label
-    provides:
-    - name
-    - owner
-    - repo
-    - id
-    - description
-    - color
-    - default
-    scope_aggregate_key_policy: omit_when_redundant
     payload:
       input_type:
         type: object
@@ -3506,10 +3486,6 @@ capabilities:
         - name: description
           value_ref: nv_wire_str_markdown
           required: false
-  label_update:
-    kind: update
-    entity: Label
-    description: Update a label (name, color, or description).
     provides:
     - name
     - owner
@@ -3518,6 +3494,10 @@ capabilities:
     - description
     - color
     - default
+  label_update:
+    description: Update a label (name, color, or description).
+    kind: update
+    entity: Label
     scope_aggregate_key_policy: omit_when_redundant
     payload:
       input_type:
@@ -3532,14 +3512,23 @@ capabilities:
         - name: description
           value_ref: nv_wire_str_markdown
           required: false
+    provides:
+    - name
+    - owner
+    - repo
+    - id
+    - description
+    - color
+    - default
   label_delete:
+    description: Remove a label from a repository.
     kind: delete
     entity: Label
-    description: Remove a label from a repository.
   repo_content_create:
+    description: Create a new file at a repository path on the given branch (no blob sha).
     kind: action
     entity: Repository
-    description: Create a new file at a repository path on the given branch (no blob sha).
+    scope_aggregate_key_policy: omit_when_redundant
     discovery:
       operation_terms:
       - create file
@@ -3548,10 +3537,6 @@ capabilities:
       target_terms:
       - file
       - content
-    scope_aggregate_key_policy: omit_when_redundant
-    output:
-      type: side_effect
-      description: Create the file at the path.
     scope:
     - name: path
       value_ref: nv_wire_str_short
@@ -3573,14 +3558,14 @@ capabilities:
         - name: branch
           value_ref: nv_github_branch_name
           required: false
-  repo_content_update:
-    kind: action
-    entity: Repository
-    description: Update an existing file at a repository path; requires the current blob sha.
-    scope_aggregate_key_policy: omit_when_redundant
     output:
       type: side_effect
-      description: Replace the file at the path.
+      description: Create the file at the path.
+  repo_content_update:
+    description: Update an existing file at a repository path; requires the current blob sha.
+    kind: action
+    entity: Repository
+    scope_aggregate_key_policy: omit_when_redundant
     scope:
     - name: path
       value_ref: nv_wire_str_short
@@ -3605,10 +3590,14 @@ capabilities:
         - name: sha
           value_ref: nv_github_git_sha
           required: true
+    output:
+      type: side_effect
+      description: Replace the file at the path.
   repo_branch_create:
+    description: Create a branch ref in a repository from an existing commit SHA.
     kind: action
     entity: Repository
-    description: Create a branch ref in a repository from an existing commit SHA.
+    scope_aggregate_key_policy: omit_when_redundant
     discovery:
       operation_terms:
       - cut branch
@@ -3616,13 +3605,6 @@ capabilities:
       - open branch
       target_terms:
       - branch
-    identity_key:
-    - repository
-    - name
-    scope_aggregate_key_policy: omit_when_redundant
-    output:
-      type: side_effect
-      description: Create the branch ref at the requested commit.
     payload:
       input_type:
         type: object
@@ -3636,14 +3618,17 @@ capabilities:
         - name: sha
           value_ref: nv_github_git_sha
           required: true
-  repo_content_delete:
-    kind: action
-    entity: Repository
-    description: Remove a file from a repository.
-    scope_aggregate_key_policy: omit_when_redundant
     output:
       type: side_effect
-      description: Remove the file at the path.
+      description: Create the branch ref at the requested commit.
+    identity_key:
+    - repository
+    - name
+  repo_content_delete:
+    description: Remove a file from a repository.
+    kind: action
+    entity: Repository
+    scope_aggregate_key_policy: omit_when_redundant
     scope:
     - name: path
       value_ref: nv_wire_str_short
@@ -3664,6 +3649,9 @@ capabilities:
         - name: branch
           value_ref: nv_github_branch_name
           required: false
+    output:
+      type: side_effect
+      description: Remove the file at the path.
   pr_file_get:
     description: Get PullRequestFile by filename.
     kind: get
@@ -3738,8 +3726,8 @@ oauth:
       docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
     repo:
       label: Full control of private and public repositories, issues, PRs, and related org resources
-      notes: Classic OAuth-app scopes (space-separated on /login/oauth/authorize). Not GitHub App installation permissions
-        or fine-grained PAT permission sets.
+      notes: Classic OAuth-app scopes (space-separated on /login/oauth/authorize). Not GitHub App installation
+        permissions or fine-grained PAT permission sets.
       docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
     repo:invite:
       label: Accept or decline repository collaboration invitations
@@ -3764,9 +3752,10 @@ oauth:
       label: Follow and unfollow users
       docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
     workflow:
-      label: Add or update GitHub Actions workflow files (.github/workflows); often needed with repo for new workflow YAML
-      notes: Required in addition to repo for many new or changed workflow files under .github/workflows (see GitHub Actions
-        docs).
+      label: Add or update GitHub Actions workflow files (.github/workflows); often needed with repo for
+        new workflow YAML
+      notes: Required in addition to repo for many new or changed workflow files under .github/workflows
+        (see GitHub Actions docs).
       docs_url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
     write:gpg_key:
       label: Create, list, and view GPG keys
@@ -3902,10 +3891,6 @@ oauth:
         any_of:
         - repo
         - public_repo
-      issue_sub_issue_query:
-        any_of:
-        - repo
-        - public_repo
       issue_type_query:
         any_of:
         - read:org
@@ -3929,10 +3914,6 @@ oauth:
         - repo
         - public_repo
       label_get:
-        any_of:
-        - repo
-        - public_repo
-      label_query:
         any_of:
         - repo
         - public_repo
@@ -3977,22 +3958,8 @@ oauth:
         - repo
       repo_collaborators_query:
         any_of:
-        - read:org
-        - write:org
-        - admin:org
         - repo
-      user_repos_query:
-        any_of:
-        - read:org
-        - write:org
-        - admin:org
-        - repo
-      user_repos_query:
-        any_of:
-        - read:org
-        - write:org
-        - admin:org
-        - repo
+        - public_repo
       pr_file_query:
         any_of:
         - repo
@@ -4061,10 +4028,6 @@ oauth:
         any_of:
         - repo
         - public_repo
-      pr_search:
-        any_of:
-        - repo
-        - public_repo
       release_get:
         any_of:
         - repo
@@ -4085,14 +4048,6 @@ oauth:
         any_of:
         - repo
         - public_repo
-      repo_collaborators_query:
-        any_of:
-        - repo
-        - public_repo
-      issue_comment_query:
-        any_of:
-        - repo
-        - public_repo
       commit_file_get:
         any_of:
         - repo
@@ -4110,10 +4065,6 @@ oauth:
         - repo
         - public_repo
       repo_content_delete:
-        any_of:
-        - repo
-        - public_repo
-      user_repos_query:
         any_of:
         - repo
         - public_repo
@@ -4143,12 +4094,6 @@ oauth:
         any_of:
         - read:user
         - user
-      user_repos_query:
-        any_of:
-        - read:user
-        - user
-        - repo
-        - public_repo
       user_search:
         any_of:
         - read:user
@@ -4191,10 +4136,6 @@ oauth:
         any_of:
         - repo
         - workflow
-      workflow_run_query:
-        any_of:
-        - repo
-        - public_repo
       workflow_run_rerun:
         any_of:
         - repo
@@ -5017,8 +4958,8 @@ values:
     - stargazers
   nv_repo_search_q:
     type: string
-    description: GitHub repository search query, not natural language. Use valid qualifiers such as "org:rust-lang rust in:name".
-      or "plasm-core in:name not:fork"; invalid qualifier syntax may be rejected by GitHub.
+    description: GitHub repository search query, not natural language. Use valid qualifiers such as "org:rust-lang
+      rust in:name". or "plasm-core in:name not:fork"; invalid qualifier syntax may be rejected by GitHub.
   nv_repo_search_sort:
     type: enum
     enum:

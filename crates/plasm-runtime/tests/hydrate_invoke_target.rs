@@ -32,20 +32,28 @@ fn run_expr(capability: &str) -> Expr {
 #[test]
 fn static_compile_hydrates_declared_entity_fields_and_honors_prefix() {
     let cgs = fixture();
+    let compiled = plasm_compile::compile_cgs_capability_templates(&cgs).unwrap();
     let ambient = ViewAmbientContext::default();
 
     let mat = SessionMaterialization::new();
-    preflight_compile_expr(&run_expr("datasource_run"), &cgs, &ambient, &mat)
+    preflight_compile_expr(&run_expr("datasource_run"), &cgs, &compiled, &ambient, &mat)
         .expect("ds_type comes from Datasource fields even though provides omits it");
     preflight_compile_expr(
         &run_expr("datasource_run_source_prefix"),
         &cgs,
+        &compiled,
         &ambient,
         &mat,
     )
     .expect("source_type should honor the configured prefix");
 
-    let error = preflight_compile_expr(&run_expr("datasource_run_typo"), &cgs, &ambient, &mat)
-        .expect_err("ds_typo must remain an unknown CML variable");
+    let error = preflight_compile_expr(
+        &run_expr("datasource_run_typo"),
+        &cgs,
+        &compiled,
+        &ambient,
+        &mat,
+    )
+    .expect_err("ds_typo must remain an unknown CML variable");
     assert!(error.to_string().contains("ds_typo"), "{error}");
 }

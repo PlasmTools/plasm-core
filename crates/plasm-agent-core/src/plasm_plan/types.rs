@@ -88,26 +88,10 @@ pub use plasm_core::{
 pub struct SourceRef(pub NodeRef);
 
 /// Effect classification (mirrors CGS capability + action output semantics; host authority).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EffectClass {
-    Read,
-    Write,
-    SideEffect,
-    ArtifactRead,
-}
+pub use plasm_core::plasm_monad::EffectClass;
 
 /// Expected host result shape for dry-run / planning.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ResultShape {
-    List,
-    Single,
-    MutationResult,
-    SideEffectAck,
-    Page,
-    Artifact,
-}
+pub use plasm_core::plasm_monad::ResultShape;
 
 /// Qualified catalog entity key for dispatch (matches federation doctrine).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,9 +160,9 @@ pub struct ValidatedPlanDataInput {
 }
 
 /// Executable Plasm IR for a program-plan node. `display_expr` is inert provenance only.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlanExprIr {
-    pub expr: serde_json::Value,
+    pub expr: plasm_core::Expr,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub projection: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -192,11 +176,10 @@ pub struct ValidatedPlanExprIr {
     pub(crate) display_expr: Option<String>,
 }
 
-/// IR template with value holes. The `expr` JSON must become `plasm_core::Expr`
-/// after holes are instantiated; strings are never reparsed as Plasm.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Structural expression with deferred operands. Binding cannot reconstruct expression structure.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlanExprTemplate {
-    pub expr: serde_json::Value,
+    pub expr: plasm_core::Expr,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub projection: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -205,9 +188,9 @@ pub struct PlanExprTemplate {
     pub input_bindings: Vec<PlanInputBinding>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ValidatedPlanExprTemplate {
-    pub(crate) expr: serde_json::Value,
+    pub(crate) expr: plasm_core::Expr,
     pub(crate) projection: Option<Vec<String>>,
     pub(crate) display_expr: Option<String>,
     #[allow(dead_code)]
@@ -270,6 +253,26 @@ pub struct Plan<State: PlanState = RawPlanState> {
     pub metadata: BTreeMap<String, serde_json::Value>,
     #[serde(skip)]
     state: PhantomData<State>,
+}
+
+impl Plan<RawPlanState> {
+    /// Construct an untrusted plan from structural lowering. This grants no execution authority.
+    pub(crate) fn from_nodes(
+        name: Option<String>,
+        nodes: Vec<PlanNode>,
+        return_value: PlanReturn,
+        metadata: BTreeMap<String, serde_json::Value>,
+    ) -> Self {
+        Self {
+            version: 1,
+            kind: PlanKind::Program,
+            name,
+            nodes,
+            return_value,
+            metadata,
+            state: PhantomData,
+        }
+    }
 }
 
 pub type RawPlanArtifact = Plan<RawPlanState>;
@@ -432,7 +435,7 @@ pub struct ValidatedForEachNode {
     pub(crate) result_shape: ResultShape,
     pub(crate) source: PlanNodeId,
     pub(crate) item_binding: BindingName,
-    pub(crate) effect_template: EffectTemplate,
+    pub(crate) effect_template: ValidatedEffectTemplate,
     pub(crate) projection: Vec<String>,
     pub(crate) predicates: Vec<PlanPredicate>,
     pub(crate) depends_on: Vec<PlanNodeId>,
@@ -448,7 +451,7 @@ pub struct ValidatedIterateUntilNode {
     pub(crate) result_shape: ResultShape,
     pub(crate) source: PlanNodeId,
     pub(crate) item_binding: BindingName,
-    pub(crate) effect_template: EffectTemplate,
+    pub(crate) effect_template: ValidatedEffectTemplate,
     pub(crate) until_predicates: Vec<PlanPredicate>,
     pub(crate) take: u32,
     /// Seed Get IR for re-observe after each step (PLP-8).
@@ -742,22 +745,23 @@ pub(super) fn missing_materialize(m: &Option<plasm_core::RelationMaterialization
     m.is_none()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RelationCardinality {
-    One,
-    Many,
+pub use plasm_core::plasm_monad::RelationCardinality;
+
+pub use plasm_core::plasm_monad::RelationSourceCardinality;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ValidatedEffectTemplate {
+    pub(crate) kind: PlanNodeKind,
+    pub(crate) qualified_entity: QualifiedEntityKey,
+    pub(crate) expr_template: String,
+    pub(crate) ir_template: ValidatedPlanExprTemplate,
+    pub(crate) effect_class: EffectClass,
+    pub(crate) result_shape: ResultShape,
+    pub(crate) projection: Vec<String>,
+    pub(crate) input_bindings: Vec<PlanInputBinding>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RelationSourceCardinality {
-    Single,
-    Many,
-    RuntimeCheckedSingleton,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EffectTemplate {
     pub kind: PlanNodeKind,
     pub qualified_entity: QualifiedEntityKey,

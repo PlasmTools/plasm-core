@@ -16,22 +16,50 @@ pub(crate) fn resolve_query_capability<'a>(
 ///
 /// These match `/execute/:prompt_hash/:session` path validation and must **not** be confused
 /// with MCP `logical_session_ref` slot aliases (`s0`, …), which are transport-local.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct ExecuteSessionMaterial {
     pub prompt_hash: String,
     pub session_id: String,
-    /// Session-bound transport Bearer consumed only by the host's [`AuthResolver`].
-    /// Runtime CML and predicate environments must never receive this credential.
-    pub share_token: Option<String>,
-    /// Proof (and similar catalogs): merged into CML env as `base_token` before invoke parameters
-    /// so `/ops` bodies can send `baseToken` after `editor_state_get` without repeating it every line.
-    pub proof_base_token: Option<String>,
+    pub catalog_revision: String,
+    /// Typed request recipes pinned to `catalog_revision` before program execution.
+    pub compiled_catalog: Arc<plasm_compile::CompiledCatalog>,
+    pub credential_store: Option<Arc<dyn crate::credentials::SessionCredentialStore>>,
     /// Pinned HTTP(S) transport origin for this execute row (session backend override).
     pub transport_origin: Option<String>,
     /// UI / browse deeplink origin; defaults to [`Self::transport_origin`] when unset.
     pub ui_origin: Option<String>,
     /// MCP connect binding wire values for the active catalog row (merged as `bind_<wire>` CML env).
     pub catalog_bind: Option<indexmap::IndexMap<String, String>>,
+}
+
+pub(crate) fn compiled_capability_template(
+    capability: &CapabilitySchema,
+) -> Result<CapabilityTemplate, RuntimeError> {
+    EXECUTION_COMPILED_CATALOG
+        .try_with(|compiled| {
+            compiled
+                .capability(capability.name.as_str())
+                .cloned()
+                .map_err(RuntimeError::from)
+        })
+        .map_err(|_| RuntimeError::ConfigurationError {
+            message: "execution requires a pinned compiled catalog scope".into(),
+        })?
+}
+
+pub(crate) fn compiled_conflict_rules(
+    capability: &CapabilitySchema,
+) -> Result<Vec<plasm_core::ConflictRule>, RuntimeError> {
+    EXECUTION_COMPILED_CATALOG
+        .try_with(|compiled| {
+            compiled
+                .conflict_rules(capability.name.as_str())
+                .map(<[_]>::to_vec)
+                .map_err(RuntimeError::from)
+        })
+        .map_err(|_| RuntimeError::ConfigurationError {
+            message: "execution requires a pinned compiled catalog scope".into(),
+        })?
 }
 
 /// Reserved CML env key: 64-char lowercase hex (rendered teaching prompt digest for the row).
@@ -172,27 +200,6 @@ pub(crate) fn try_current_execute_session_material(
         .try_with(|s| s.clone())
         .ok()
         .flatten()
-}
-
-/// Merge session-bound Proof precondition token into CML env as `base_token` **before** flattened
-/// invoke parameters so explicit `base_token=` on a capability overrides it (escape hatch).
-///
-/// No-op when [`ExecuteOptions::execute_session`] is unset or `proof_base_token` is absent/blank.
-pub fn merge_plasm_execute_session_proof_base_token_env(env: &mut CmlEnv) {
-    let Ok(material) = EXECUTION_EXECUTE_SESSION.try_with(|s| s.clone()) else {
-        return;
-    };
-    let Some(m) = material else {
-        return;
-    };
-    let Some(ref token) = m.proof_base_token else {
-        return;
-    };
-    let trimmed = token.trim();
-    if trimmed.is_empty() {
-        return;
-    }
-    env.insert("base_token".to_string(), Value::String(trimmed.to_string()));
 }
 
 /// Merge [`CML_ENV_PLASM_EXECUTE_PROMPT_HASH`] / [`CML_ENV_PLASM_EXECUTE_SESSION_ID`] when the

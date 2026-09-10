@@ -10,11 +10,13 @@ use plasm_runtime::{
 #[test]
 fn matrix_lang_tag_filter_demo_literal_label_bind_preflight() {
     let cgs = matrix_views_cgs();
+    let compiled = plasm_compile::compile_cgs_capability_templates(&cgs).unwrap();
     let query = matrix_view_query("LangTagFilterDemo");
     preflight_view_query(
         "lang_tag_filter_demo",
         &query,
         &cgs,
+        &compiled,
         &ViewAmbientContext::default(),
         &SessionMaterialization::new(),
     )

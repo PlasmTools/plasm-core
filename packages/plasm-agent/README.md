@@ -12,20 +12,27 @@ There is **no `tools/` directory**. See the architecture plan (`.cursor/plans/ev
 ```
 packages/plasm-agent/
   src/                    # framework library
+    prompts/              # plasm-core asset liturgy (language + resource rites)
   agent/                  # example / template agent project
     agent.ts              # model + runtime config (AI Gateway slugs)
-    instructions.md       # always-on system prompt
+    instructions.md       # project overlay only (framework prepends core liturgy)
     catalogs/             # authored domain.yaml + mappings.yaml
     .plasm/stubs/         # generated TS clients (build artifact)
     skills/ channels/ schedules/ subagents/ hooks/
   evals/                  # native eval harness (*.eval.ts)
 ```
 
+**System prompt ownership:** `PlasmAgent.loadInstructions()` always prepends
+`buildDefaultSystemLiturgy()` (`initialize_workflow` + artifact rites +
+`plasm_tool.txt`). Tool cards load the same assets. Project `instructions.md`
+is product overlay — not where language law lives.
+
 ## Core modules
 
 | Module | Role |
 |--------|------|
 | `runtime/plasm-agent.ts` | `PlasmAgent` — AI SDK `generateText` tool loop, AI Gateway model slug, OTEL |
+| `prompts/` | Canonical liturgy from plasm-core assets (system + tool descriptions) |
 | `tools/plasm-tools.ts` | Four MCP-shaped language tools (Zod + `tool()`) |
 | `runtime/agent-runtime.ts` | Engine + session orchestration for tool handlers |
 | `session-state.ts` | Durable session mirror (`agent/.plasm/sessions/`, teaching.tsv) |
@@ -76,7 +83,7 @@ cd ../plasm-agent && npm install
 
 | Class | Role |
 |-------|------|
-| `NapiPlasmEngine` | `loadCatalog`, `discover`, `exposeSeeds`, `dryRun` → `pcN`, `runPlan` (validates `pcN`) |
+| `NapiPlasmEngine` | `loadCatalog`, `discover` (browse), `selectAutoSeeds` (session mint), `exposeSeeds`, `dryRun` → `pcN`, `runPlan` (validates `pcN`) |
 | `StubPlasmEngine` | Placeholder when native binding unavailable |
 
 **Host transport:** env bearer → Vercel Connect `getToken()` → `fetch`. Fixture mock when `PLASM_AGENT_MOCK_HTTP=1` or no bearer and no connector configured.
@@ -238,3 +245,11 @@ export WORKFLOW_POSTGRES_URL=postgres://...
 - ~~Package publish name~~ — **`@plasm_lang/vercel-agent`** (resolved)
 - Prod execution default: force-bundled NAPI vs Vercel Rust Function sidecar
 - Catalog wire format: raw YAML vs precompiled `catalog.cgs.json` IR at build time
+
+### Scoped host transport injection
+
+Custom `HostTransportFn` callbacks must honor `requireHostAuth`: resolve configured
+host injection and reject missing credentials before dispatch. `rejectRedirects`
+requires rejecting redirects. The default transport implements both checks. Scoped
+delegated reads dispatch live so a response cache cannot skip injection validation.
+These flags contain policy, not credential material.

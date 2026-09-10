@@ -135,26 +135,19 @@ fn dry_stub_entity_rows(
     Ok((rows, vec![None; count]))
 }
 
-/// The dry-run [`IoPort`]: every I/O leaf is replaced by typed stub entity rows so downstream
+/// Dry validation replaces backend leaves with typed stub entity rows so downstream
 /// `uses_result` resolution can proceed without touching a backend. Returns `None` when there is
 /// nothing to stub (entity-optional / page-continuation surfaces, or a foreign-catalog effect
 /// target not loaded in this session) — live execute would perform the real effect there.
-pub(crate) struct DryIoPort<'a> {
-    pub es: &'a ExecuteSession,
-}
-
-#[async_trait::async_trait]
-impl IoPort for DryIoPort<'_> {
-    async fn materialize_io(
-        &self,
-        step: &IoStep,
-        _step_idx: usize,
-        materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
-    ) -> Result<Option<MaterializedNode>, String> {
-        match step {
-            IoStep::Surface(surface) => {
-                let federated = self.es.contexts_by_entry.len() > 1;
-                match crate::plan_surface_policy::surface_qualified_entity_policy_err(
+async fn dry_stub_materialize_io(
+    es: &ExecuteSession,
+    step: &IoStep,
+    materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
+) -> Result<Option<MaterializedNode>, String> {
+    match step {
+        IoStep::Surface(surface) => {
+            let federated = es.contexts_by_entry.len() > 1;
+            match crate::plan_surface_policy::surface_qualified_entity_policy_err(
                     surface.id.as_str(),
                     surface,
                     federated,
@@ -167,7 +160,7 @@ impl IoPort for DryIoPort<'_> {
                         qe,
                     ) => {
                         let (rows, row_identities) =
-                            self.stub_entity_rows(&qe, dry_stub_row_count(surface.result_shape))?;
+                            dry_stub_entity_rows_for(es, &qe, dry_stub_row_count(surface.result_shape))?;
                         Ok(Some(MaterializedNode::inline_cache(
                             qe.clone(),
                             rows,
@@ -177,93 +170,88 @@ impl IoPort for DryIoPort<'_> {
                         )))
                     }
                 }
+        }
+        IoStep::Relation(relation) => {
+            if !materialized.contains_key(&relation.relation.source) {
+                return Err(format!(
+                    "dry staging: relation `{}` source `{}` not stubbed",
+                    relation.id.as_str(),
+                    relation.relation.source.as_str()
+                ));
             }
-            IoStep::Relation(relation) => {
-                if !materialized.contains_key(&relation.relation.source) {
-                    return Err(format!(
-                        "dry staging: relation `{}` source `{}` not stubbed",
-                        relation.id.as_str(),
-                        relation.relation.source.as_str()
-                    ));
-                }
-                let qe = &relation.relation.target;
-                let (rows, row_identities) = self.stub_entity_rows(qe, 2)?;
-                Ok(Some(MaterializedNode::inline_cache(
-                    qe.clone(),
-                    rows,
-                    row_identities,
-                    String::new(),
-                    relation.relation.ir.projection.clone(),
-                )))
+            let qe = &relation.relation.target;
+            let (rows, row_identities) = dry_stub_entity_rows_for(es, qe, 2)?;
+            Ok(Some(MaterializedNode::inline_cache(
+                qe.clone(),
+                rows,
+                row_identities,
+                String::new(),
+                relation.relation.ir.projection.clone(),
+            )))
+        }
+        IoStep::ForEach(for_each) => {
+            // A `for_each` body invokes a mutator/read per source row. Dry cannot invoke, so it
+            // stubs the target entity rows. When that catalog is not loaded here (foreign-catalog
+            // policy-gate analysis), there is nothing to stub — live execute fails loudly at the
+            // real invoke instead.
+            let qe = &for_each.effect_template.qualified_entity;
+            let target_loaded = es
+                .contexts_by_entry
+                .get(&qe.entry_id)
+                .is_some_and(|ctx| ctx.cgs.entities.contains_key(qe.entity.as_str()));
+            if !target_loaded {
+                return Ok(None);
             }
-            IoStep::ForEach(for_each) => {
-                // A `for_each` body invokes a mutator/read per source row. Dry cannot invoke, so it
-                // stubs the target entity rows. When that catalog is not loaded here (foreign-catalog
-                // policy-gate analysis), there is nothing to stub — live execute fails loudly at the
-                // real invoke instead.
-                let qe = &for_each.effect_template.qualified_entity;
-                let target_loaded = self
-                    .es
-                    .contexts_by_entry
-                    .get(&qe.entry_id)
-                    .is_some_and(|ctx| ctx.cgs.entities.contains_key(qe.entity.as_str()));
-                if !target_loaded {
-                    return Ok(None);
-                }
-                let (rows, row_identities) =
-                    self.stub_entity_rows(qe, dry_stub_row_count(for_each.result_shape))?;
-                Ok(Some(MaterializedNode::inline_cache(
-                    qe.clone(),
-                    rows,
-                    row_identities,
-                    String::new(),
-                    Some(for_each.projection.clone()).filter(|p| !p.is_empty()),
-                )))
+            let (rows, row_identities) =
+                dry_stub_entity_rows_for(es, qe, dry_stub_row_count(for_each.result_shape))?;
+            Ok(Some(MaterializedNode::inline_cache(
+                qe.clone(),
+                rows,
+                row_identities,
+                String::new(),
+                Some(for_each.projection.clone()).filter(|p| !p.is_empty()),
+            )))
+        }
+        IoStep::IterateUntil(it) => {
+            // Dry: stub final singleton state for the seed entity (step effects not invoked).
+            let qe = &it.effect_template.qualified_entity;
+            let target_loaded = es
+                .contexts_by_entry
+                .get(&qe.entry_id)
+                .is_some_and(|ctx| ctx.cgs.entities.contains_key(qe.entity.as_str()));
+            if !target_loaded {
+                return Ok(None);
             }
-            IoStep::IterateUntil(it) => {
-                // Dry: stub final singleton state for the seed entity (step effects not invoked).
-                let qe = &it.effect_template.qualified_entity;
-                let target_loaded = self
-                    .es
-                    .contexts_by_entry
-                    .get(&qe.entry_id)
-                    .is_some_and(|ctx| ctx.cgs.entities.contains_key(qe.entity.as_str()));
-                if !target_loaded {
-                    return Ok(None);
-                }
-                let (rows, row_identities) =
-                    self.stub_entity_rows(qe, dry_stub_row_count(it.result_shape))?;
-                Ok(Some(MaterializedNode::inline_cache(
-                    qe.clone(),
-                    rows,
-                    row_identities,
-                    String::new(),
-                    None,
-                )))
-            }
+            let (rows, row_identities) =
+                dry_stub_entity_rows_for(es, qe, dry_stub_row_count(it.result_shape))?;
+            Ok(Some(MaterializedNode::inline_cache(
+                qe.clone(),
+                rows,
+                row_identities,
+                String::new(),
+                None,
+            )))
         }
     }
 }
 
-impl DryIoPort<'_> {
-    /// Resolve a qualified entity in this session and produce `count` typed stub rows for it.
-    fn stub_entity_rows(
-        &self,
-        qe: &QualifiedEntityKey,
-        count: usize,
-    ) -> Result<(Vec<serde_json::Value>, Vec<Option<plasm_core::RowIdentity>>), String> {
-        let scoped = entry_scoped_execute_session(self.es, Some(qe))?;
-        let ent = scoped
-            .cgs
-            .get_entity(qe.entity.as_str())
-            .ok_or_else(|| format!("dry staging: unknown entity `{}`", qe.entity))?;
-        dry_stub_entity_rows(scoped.cgs.as_ref(), ent, count)
-    }
+/// Resolve a qualified entity in this session and produce typed dry-validation rows.
+fn dry_stub_entity_rows_for(
+    es: &ExecuteSession,
+    qe: &QualifiedEntityKey,
+    count: usize,
+) -> Result<(Vec<serde_json::Value>, Vec<Option<plasm_core::RowIdentity>>), String> {
+    let scoped = entry_scoped_execute_session(es, Some(qe))?;
+    let ent = scoped
+        .cgs
+        .get_entity(qe.entity.as_str())
+        .ok_or_else(|| format!("dry staging: unknown entity `{}`", qe.entity))?;
+    dry_stub_entity_rows(scoped.cgs.as_ref(), ent, count)
 }
 
 /// Dry stub materialization of one node, dispatched through the PEC [`ExecStep`] taxonomy. Pure
-/// steps run the *shared* pure kernel over inline stub source rows; I/O steps go through
-/// [`DryIoPort`]. There is no per-node-kind `match` here — a new node kind is classified once, in
+/// steps run the shared pure kernel over inline stub source rows. There is no adapter-facing
+/// plan-node API: a new node kind is classified once, in
 /// [`ExecStep::classify`], and cannot silently bypass dry preflight.
 async fn dry_stub_materialize_node(
     es: &ExecuteSession,
@@ -333,8 +321,7 @@ async fn dry_stub_materialize_node(
             );
         }
         ExecStep::Io(io) => {
-            let port = DryIoPort { es };
-            if let Some(stub) = port.materialize_io(&io, 0, materialized).await? {
+            if let Some(stub) = dry_stub_materialize_io(es, &io, materialized).await? {
                 materialized.insert(id, stub);
             }
         }
@@ -356,10 +343,8 @@ pub(crate) fn dry_validate_staged_surfaces(
         .collect();
     let mut materialized: BTreeMap<PlanNodeId, MaterializedNode> = BTreeMap::new();
     for n in &plan.nodes {
-        // The dry [`IoPort`] is synchronous by nature (it produces stub rows, never awaits a
-        // backend), so the async [`IoPort`] contract shared with live execute resolves in a single
-        // poll. `block_on` here is the one justified sync/async bridge: it needs no runtime and
-        // cannot pend.
+        // Dry validation performs no backend exchange. `block_on` is only the sync bridge for the
+        // shared async materialization helpers used by the closed execution machine.
         futures::executor::block_on(async {
             for dep in n.depends_on() {
                 let dep_id = dep.clone();
@@ -396,7 +381,8 @@ pub(crate) fn dry_validate_staged_surfaces(
             inputs,
             wire_coercion_by_alias: &empty_coercion,
         };
-        instantiate_expr_template(template, &env)?;
+        let scoped_es = entry_scoped_execute_session(es, surface.qualified_entity.as_ref())?;
+        instantiate_expr_template(template, &env, &scoped_es.cgs)?;
     }
     Ok(())
 }
@@ -418,6 +404,10 @@ mod dry_stub_tests {
         assert_eq!(rows[0]["score"], serde_json::json!(0));
         assert_eq!(rows[1]["score"], serde_json::json!(1));
         assert!(rows[0]["score"].is_i64() || rows[0]["score"].is_u64());
-        assert!(rows[0]["active"].is_boolean(), "active={}", rows[0]["active"]);
+        assert!(
+            rows[0]["active"].is_boolean(),
+            "active={}",
+            rows[0]["active"]
+        );
     }
 }

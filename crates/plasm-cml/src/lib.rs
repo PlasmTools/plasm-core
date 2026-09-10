@@ -1,8 +1,17 @@
 //! CML template AST, parsing, and HTTP/EVM transport compilation for Plasm.
 
 pub mod cml;
+mod credential;
 pub mod error;
-pub(crate) mod gmail_send_body;
+mod expression_validation;
+mod format_template;
+mod mail;
+pub use format_template::FormatTemplate;
+mod projection;
+pub use credential::{
+    CompiledCredentialBind, CompiledCredentialUse, CredentialBindTemplate, CredentialSource,
+};
+pub use projection::{UrlPathPart, UrlProjection};
 pub mod pagination_validate;
 pub mod transport;
 pub(crate) mod wire_normalize;

@@ -15,8 +15,8 @@ mod tests;
 
 pub use errors::{
     missing_program_roots_error, program_binding_after_return_error,
-    program_duplicate_return_node_error, program_empty_error,
-    program_invalid_binding_label_error, program_return_keyword_error,
+    program_duplicate_return_node_error, program_empty_error, program_invalid_binding_label_error,
+    program_return_keyword_error,
 };
 // Intermediate-return helpers stay crate-visible for order validation + unit tests.
 #[allow(unused_imports)]

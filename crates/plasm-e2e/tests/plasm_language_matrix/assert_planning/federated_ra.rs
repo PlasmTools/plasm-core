@@ -6,9 +6,7 @@ use super::super::ir_helpers::*;
 use super::super::row::MatrixRow;
 use plasm_agent::plasm_plan::{ComputeOp, ComputeTemplate, PlanValue};
 use plasm_agent::plasm_plan_run::DryPlasmPlanEvaluation;
-use plasm_core::{
-    Expr, InvokeExpr,
-};
+use plasm_core::{Expr, InvokeExpr};
 
 pub(crate) fn assert_planning_federated_ra(
     row: &MatrixRow,
@@ -39,7 +37,7 @@ pub(crate) fn assert_planning_federated_ra(
             }
         }
         "lang_federated_duplicate_entity_e1_query" => {
-            let q = first_query(&surfaces)?;
+            let q = first_query(surfaces)?;
             if q.entity != "LangItem" {
                 return Err(format!("expected LangItem query on e1, got {:?}", q.entity));
             }
@@ -59,7 +57,7 @@ pub(crate) fn assert_planning_federated_ra(
             }
         }
         "lang_federated_duplicate_entity_e2_search" => {
-            let q = first_query(&surfaces)?;
+            let q = first_query(surfaces)?;
             if q.entity != "LangItem" {
                 return Err(format!(
                     "expected LangItem search on e2, got {:?}",
@@ -232,7 +230,7 @@ pub(crate) fn assert_planning_federated_ra(
             if !aggregates.iter().any(|a| a.name.as_str() == "n") {
                 return Err(format!("expected aggregate n, got {:?}", aggregates));
             }
-            let q = first_query(&surfaces)?;
+            let q = first_query(surfaces)?;
             if q.catalog_entry_id.as_deref() != Some("github") {
                 return Err(format!(
                     "e1 group_by query must be github, got {:?}",
@@ -244,7 +242,7 @@ pub(crate) fn assert_planning_federated_ra(
             if computes.is_empty() {
                 return Err("expected render compute on inline e1 template".into());
             }
-            let q = first_query(&surfaces)?;
+            let q = first_query(surfaces)?;
             if q.catalog_entry_id.as_deref() != Some("github") {
                 return Err(format!(
                     "inline template query must be github e1, got {:?}",
@@ -356,7 +354,9 @@ pub(crate) fn assert_planning_federated_ra(
                 ));
             };
         }
-        "lang_iterate_until_bound" | "lang_iterate_until_zero_step" | "lang_iterate_bound_exhausted" => {
+        "lang_iterate_until_bound"
+        | "lang_iterate_until_zero_step"
+        | "lang_iterate_bound_exhausted" => {
             let matches_it = |nr: &serde_json::Value| {
                 nr.get("kind").and_then(|k| k.as_str()) == Some("iterate_until")
                     || nr.get("kind").and_then(|k| k.as_str()) == Some("unfold_until")
@@ -385,7 +385,7 @@ pub(crate) fn assert_planning_federated_ra(
             }
         }
         "lang_domain_symbol_page_size" => {
-            let q = first_query(&surfaces)?;
+            let q = first_query(surfaces)?;
             if q.entity != "LangItem" || q.predicate.is_some() {
                 return Err(format!("unexpected query IR: {q:?}"));
             }

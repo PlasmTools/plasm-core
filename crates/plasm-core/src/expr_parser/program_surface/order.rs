@@ -67,4 +67,3 @@ fn roots_line_is_postfix_on_binding(stmt: &str, bindings: &BTreeSet<String>) -> 
     }
     rest.starts_with('.')
 }
-

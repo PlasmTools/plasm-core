@@ -57,8 +57,6 @@ impl PlanLineExecuteShared {
         preflight: PreflightToken,
         rows_progress: Option<RowsProgressFn>,
     ) -> ExecuteOptions {
-        let bound_share = sess.session_share_token.read().await.clone();
-        let bound_proof_base_token = sess.session_proof_base_token.read().await.clone();
         let engine_override = st
             .engine
             .config()
@@ -98,21 +96,31 @@ impl PlanLineExecuteShared {
             .session_bindings_for_entry(&catalog_entry_for_bind)
             .map(|m| m.cml_env_entries());
         ExecuteOptions {
+            compiled_catalog: Some(
+                sess.compiled_catalog_for_entry(&catalog_entry_for_bind)
+                    .expect("scoped execute catalog was compiled when the session opened"),
+            ),
             request_fingerprint_sink: Some(fp_sink),
             http_base_url_override: http_backend_for_root.clone(),
-            auth_resolver_override: auth_for_exec.map(|scheme| {
-                Arc::new(
-                    AuthResolver::new(scheme, self.secret_provider.clone())
-                        .with_session_bearer_override(bound_share.clone()),
-                )
-            }),
+            auth_resolver_override: auth_for_exec
+                .map(|scheme| Arc::new(AuthResolver::new(scheme, self.secret_provider.clone()))),
             federation: self.federation.clone(),
             preflight: Some(preflight),
             execute_session: Some(Arc::new(ExecuteSessionMaterial {
                 prompt_hash: self.prompt_hash.clone(),
                 session_id: self.session_id.clone(),
-                share_token: bound_share,
-                proof_base_token: bound_proof_base_token,
+                catalog_revision: format!(
+                    "{}:{}",
+                    catalog_entry_for_bind,
+                    exec_cgs.catalog_cgs_hash_hex()
+                ),
+                compiled_catalog: sess
+                    .compiled_catalog_for_entry(&catalog_entry_for_bind)
+                    .expect("scoped execute catalog was compiled when the session opened"),
+                credential_store: Some(Arc::new(crate::session_credentials::HostCredentialStore {
+                    registry: st.execute_session_registry.clone(),
+                    memory: sess.credential_memory.clone(),
+                })),
                 transport_origin: http_backend_for_root.clone(),
                 ui_origin: http_backend_for_root,
                 catalog_bind,
@@ -121,99 +129,5 @@ impl PlanLineExecuteShared {
             graph_page_spill: self.graph_page_spill.clone(),
             rows_progress,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::{Arc, Mutex};
-
-    use crate::http_execute::try_proof_document_share_bind;
-    use crate::test_support::proof_bind_fixtures::ProofBindFixture;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn build_exec_opts_reads_fresh_share_token_after_mid_plan_bind() {
-        let fx = ProofBindFixture::open("plan_share_refresh");
-        let st = fx.host_with_registry();
-        let shared = PlanLineExecuteShared::prepare(&fx.session, &st, "sid_plan").await;
-        let fp_sink = Arc::new(Mutex::new(Vec::<String>::new()));
-
-        let before = shared
-            .build_exec_opts(
-                &fx.session,
-                &st,
-                fx.cgs.as_ref(),
-                "Document",
-                fp_sink.clone(),
-                plasm_core::PreflightToken::VERIFIED,
-                None,
-            )
-            .await;
-        assert!(
-            before
-                .execute_session
-                .as_ref()
-                .and_then(|m| m.share_token.as_deref())
-                .is_none(),
-            "expected no share token before bind"
-        );
-
-        try_proof_document_share_bind(&fx.session, fx.cgs.as_ref(), &fx.token_only_bind_expr())
-            .await
-            .expect("bind")
-            .expect("bind intercept");
-
-        let after = shared
-            .build_exec_opts(
-                &fx.session,
-                &st,
-                fx.cgs.as_ref(),
-                "Document",
-                fp_sink,
-                plasm_core::PreflightToken::VERIFIED,
-                None,
-            )
-            .await;
-        assert_eq!(
-            after
-                .execute_session
-                .as_ref()
-                .and_then(|m| m.share_token.as_deref()),
-            Some("secret-tok"),
-            "plan line after bind must see fresh session share token"
-        );
-    }
-
-    #[tokio::test]
-    async fn build_exec_opts_after_bind_matches_session_read() {
-        let fx = ProofBindFixture::open("plan_share_read");
-        let st = fx.host_with_registry();
-        let shared = PlanLineExecuteShared::prepare(&fx.session, &st, "sid_read").await;
-
-        try_proof_document_share_bind(&fx.session, fx.cgs.as_ref(), &fx.token_only_bind_expr())
-            .await
-            .expect("bind")
-            .expect("bind intercept");
-
-        let opts = shared
-            .build_exec_opts(
-                &fx.session,
-                &st,
-                fx.cgs.as_ref(),
-                "Document",
-                Arc::new(Mutex::new(Vec::<String>::new())),
-                plasm_core::PreflightToken::VERIFIED,
-                None,
-            )
-            .await;
-        assert_eq!(
-            opts.execute_session
-                .as_ref()
-                .and_then(|m| m.share_token.as_deref()),
-            fx.session.session_share_token.read().await.as_deref(),
-            "build_exec_opts share token must match session read lock"
-        );
     }
 }

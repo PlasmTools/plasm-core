@@ -361,26 +361,18 @@ impl ExecutionEngine {
                     .unwrap_or_default();
                 let get = synthesized_get(reference.clone(), &inherit);
                 let cap_name = get_cap_name.clone();
-                let ambient =
-                    ViewAmbientContext::default().with_capability_params(inherit.bindings().clone());
+                let ambient = ViewAmbientContext::default()
+                    .with_capability_params(inherit.bindings().clone());
                 async move {
-                    self.fetch_get_decoded(
-                        &get,
-                        cgs,
-                        mode,
-                        None,
-                        false,
-                        None,
-                        &ambient,
-                    )
-                    .await
-                    .map_err(|e| {
-                        wrap_synthesized_get_error(
-                            cap_name.as_str(),
-                            reference.entity_type.as_str(),
-                            e,
-                        )
-                    })
+                    self.fetch_get_decoded(&get, cgs, mode, None, false, None, &ambient)
+                        .await
+                        .map_err(|e| {
+                            wrap_synthesized_get_error(
+                                cap_name.as_str(),
+                                reference.entity_type.as_str(),
+                                e,
+                            )
+                        })
                 }
             }))
             .buffer_unordered(concurrency);
@@ -644,7 +636,7 @@ impl ExecutionEngine {
         }
 
         let capability_name = cap.name.clone();
-        let cap_params: Vec<_> = cap.selection_params().to_vec();
+        let cap_params: Vec<_> = cap.query_surface_fields().cloned().collect();
         let parent_def = parent_entity_def;
         let binds = bindings;
 
@@ -1038,26 +1030,18 @@ impl ExecutionEngine {
                 let inherit = inherit_by_ref.get(&reference).cloned().unwrap_or_default();
                 let get = synthesized_get(reference.clone(), &inherit);
                 let cap_name = get_cap_name.clone();
-                let ambient =
-                    ViewAmbientContext::default().with_capability_params(inherit.bindings().clone());
+                let ambient = ViewAmbientContext::default()
+                    .with_capability_params(inherit.bindings().clone());
                 async move {
-                    self.fetch_get_decoded(
-                        &get,
-                        cgs,
-                        mode,
-                        None,
-                        false,
-                        None,
-                        &ambient,
-                    )
-                    .await
-                    .map_err(|e| {
-                        wrap_synthesized_get_error(
-                            cap_name.as_str(),
-                            reference.entity_type.as_str(),
-                            e,
-                        )
-                    })
+                    self.fetch_get_decoded(&get, cgs, mode, None, false, None, &ambient)
+                        .await
+                        .map_err(|e| {
+                            wrap_synthesized_get_error(
+                                cap_name.as_str(),
+                                reference.entity_type.as_str(),
+                                e,
+                            )
+                        })
                 }
             }))
             .buffer_unordered(concurrency);

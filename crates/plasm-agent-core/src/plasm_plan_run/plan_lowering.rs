@@ -53,9 +53,7 @@ pub fn lowered_ir_digest_from_validated_plan(
                 collect_get_exprs(&ir.expr, &mut gets);
             }
             if let Some(t) = &surface.ir_template {
-                if let Ok(expr) = serde_json::from_value::<Expr>(t.expr.clone()) {
-                    collect_get_exprs(&expr, &mut gets);
-                }
+                collect_get_exprs(&t.expr, &mut gets);
             }
         }
     }

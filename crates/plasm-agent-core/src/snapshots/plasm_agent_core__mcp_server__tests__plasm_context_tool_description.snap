@@ -1,18 +1,14 @@
 ---
-source: crates/plasm-agent-core/src/mcp_server/tests.rs
+source: plasm-oss/crates/plasm-agent-core/src/mcp_server/tests.rs
 expression: context
 ---
-**Returns a language card** (session symbols + syntax table) — **not** domain data. Next tool is **`plasm`** for domain rows. Call before `plasm` / `plasm_run`. Session identity is **`logical_session_ref`** only — not `intent`.
+**Returns a language card** with a session symbol table, selected business capabilities, declared prerequisites and input bindings. Call before `plasm` / `plasm_run`; this tool performs no acquisition or business calls.
 
-**Intent-only open (semantic auto-seed hosts):** `session_mode: "new"` + **`intent` only** — omit **`seeds`** (rejected if passed). Host selects a minimal capability surface and opens the language card on **`ready`**. On **`clarify`** / **`hard_miss`** / **`routing_error`**, rephrase **`intent`** with the provider brand (use breakout browse preview as prose — do not invent `{api, entity}` keys), **or** continue with **`routing_ref`** + **`clarify_choice`** from the breakout. Abstain does **not** mint a session.
+**Intent-only lifecycle:**
+- `session_mode: "new"` + `intent`: describe every business requirement. Ready creates `logical_session_ref` and fresh symbols. Use once per workflow.
+- `session_mode: "extend"` + the same `logical_session_ref` + current `intent`: select against the pinned generation and exposed capabilities. Existing symbols and bindings remain unchanged; teaching appends the admitted delta.
+- `intent` does NOT select the session. Repair plan or parse errors with the same ref.
 
-**Lifecycle:**
-- **`new`** — mint `logical_session_ref` + fresh symbol table once per workflow (**after** ready). Auto-seed on → no `seeds`; auto-seed off → `seeds` required.
-- **`extend`** — same `logical_session_ref` + this turn's **`intent`** (delta route against already-exposed entities; intent-only when auto-seed on). Symbols never reset. Delta card when new surface is admitted; reuse cheat sheet / `delta_noop` when unchanged. Abstain does **not** append intent.
-- **`intent` does NOT select the session.** Only **`new`** discards symbols.
+**Routing outcomes:** `ready` reports that the presented capabilities support the requested workflow. `insufficient` reports missing functionality within the presented set and can accompany useful teaching. Preserve useful capabilities and use intent-only extension when more are needed. You own conversation and execution: ask the user when needed, then write only the chosen program. Neither status authorizes execution or guarantees success. Routing errors are operational failures. Empty additions on extension preserve existing capabilities and bindings.
 
-**One workflow:** one `logical_session_ref`, many **`extend`** turns. Never **`new`** to recover from plan/parse errors or mid-workflow clarify — use **`extend`**.
-
-**Programs:** copy **`e#`/`m#`/`r#`** and wire names from the language card into `plasm.program`.
-
-**Discover:** omitted from MCP tools/list on auto-seed hosts; breakout embeds browse rows. HTTP `/v1/discover` remains for non-MCP clients.
+Infrastructure dependencies come from declarations. Write the taught provider calls as ordinary Plasm programs and bind their outputs into the specified existing inputs. Submit programs to `plasm` for review and execute returned `run_ref` plans with `plasm_run`.

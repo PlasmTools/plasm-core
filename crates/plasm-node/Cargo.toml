@@ -14,7 +14,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 plasm-core = { path = "../plasm-core" }
-plasm-agent-core = { path = "../plasm-agent-core", default-features = false, features = ["semantic-auto-seed"] }
+plasm-agent-core = { path = "../plasm-agent-core", default-features = false }
 plasm-runtime = { path = "../plasm-runtime" }
 plasm-compile = { path = "../plasm-compile" }
 anyhow = { workspace = true }

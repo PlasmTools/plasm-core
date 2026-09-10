@@ -11,27 +11,15 @@
 export declare class PlasmEngine {
   constructor()
   loadCatalog(catalogDir: string): Promise<JsCatalogInfo>
+  /** Activate the complete loaded manifest set using explicit deployment bindings. */
+  activateDiscovery(deploymentId: string, bindingsJson: string): Promise<string>
+  /** Intent-only new/extend; selection runs outside the execution mutex. */
+  routeIntent(intent: string, logicalSessionId?: string | undefined | null): Promise<string>
   exposeSeeds(intent: string, seeds: Array<JsSeed>): Promise<JsTeachingResult>
   introspectCatalog(entryId: string): Promise<string>
-  dryRun(program: string): Promise<JsDryRunResult>
-  discover(intent: string): Promise<JsDiscoverResult>
-  /**
-   * Semantic auto-seed (FO + co_seed / identity_pair). Prefer over browse `discover` for session mint.
-   *
-   * Clones the registry under a short lock, then runs FO **outside** the mutex so concurrent
-   * `dry_run` / `expose_seeds` are not serialized behind the LLM round-trip.
-   */
-  selectAutoSeeds(intent: string): Promise<JsAutoSeedResult>
-  runPlan(planCommitRef: string): Promise<JsRunPlanResult>
-  runPlanLive(planCommitRef: string, transport: (request: JsTransportRequest) => JsTransportResponse | Promise<JsTransportResponse>): Promise<JsRunPlanResult>
-}
-
-export interface JsAutoSeedResult {
-  /** `ready` | `noop` | `clarify` | `hard_miss` | `routing_error` */
-  decision: string
-  seeds: Array<JsSeed>
-  markdown: string
-  reasoning?: string
+  dryRun(program: string, logicalSessionId?: string | undefined | null): Promise<JsDryRunResult>
+  runPlan(planCommitRef: string, logicalSessionId?: string | undefined | null): Promise<JsRunPlanResult>
+  runPlanLive(planCommitRef: string, transport: (request: JsTransportRequest) => JsTransportResponse | Promise<JsTransportResponse>, logicalSessionId?: string): Promise<JsRunPlanResult>
 }
 
 export interface JsCatalogInfo {
@@ -39,14 +27,11 @@ export interface JsCatalogInfo {
   catalogCgsHash: string
 }
 
-export interface JsDiscoverResult {
-  markdown: string
-}
-
 export interface JsDryRunResult {
   planCommitRef: string
   summary: string
   compJson: string
+  fusedCleanRead: boolean
 }
 
 export interface JsRunPlanResult {
@@ -54,6 +39,7 @@ export interface JsRunPlanResult {
   message: string
   rowsJson?: string
   metaJson?: string
+  artifactsJson?: string
 }
 
 export interface JsSeed {
@@ -67,6 +53,9 @@ export interface JsTeachingResult {
 }
 
 export interface JsTransportRequest {
+  /** Scoped credentials require the callback to reject HTTP redirects. */
+  rejectRedirects: boolean
+  requireHostAuth: boolean
   method: string
   url: string
   headers?: Record<string, string>

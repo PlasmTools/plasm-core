@@ -606,7 +606,7 @@ mod tests {
 
     fn min_test_host_state() -> PlasmHostState {
         use plasm_agent_core::http::{build_plasm_host_state, PlasmHostBootstrap};
-        use plasm_core::discovery::InMemoryCgsRegistry;
+        use plasm_core::discovery::CgsRegistry;
         use plasm_core::loader::load_schema_dir;
         use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
         use std::path::Path;
@@ -615,7 +615,7 @@ mod tests {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
         let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
-        let reg = InMemoryCgsRegistry::from_pairs(vec![(
+        let reg = CgsRegistry::from_pairs(vec![(
             "overshow".into(),
             "Overshow".into(),
             vec!["demo".into()],

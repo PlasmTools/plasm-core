@@ -120,15 +120,20 @@ impl TeachingExposureSession {
         }
 
         let mut value_fps_in_wave: IndexMap<String, IdentMetadata> = IndexMap::new();
-        for meta in by_fp.values() {
-            if let Some(vfp) = meta.value_domain_allocation_fp() {
-                value_fps_in_wave
-                    .entry(vfp)
-                    .and_modify(|existing| {
-                        *existing = prefer_value_domain_representative(existing, meta);
-                    })
-                    .or_insert_with(|| (*meta).clone());
+        for (slot_fp, meta) in &by_fp {
+            // Registry-backed value domains share a `v#` per structural class **and** wire
+            // (`slot_symbol_allocation_fingerprint`). Using bare `value_domain_allocation_fp`
+            // would collapse distinct wires (e.g. login `username` vs counterparty `user_email`).
+            if meta.value_domain_allocation_fp().is_none() {
+                continue;
             }
+            let value_alloc_key = slot_fp.clone();
+            value_fps_in_wave
+                .entry(value_alloc_key)
+                .and_modify(|existing| {
+                    *existing = prefer_value_domain_representative(existing, meta);
+                })
+                .or_insert_with(|| (*meta).clone());
         }
         let mut new_v_fps: Vec<String> = value_fps_in_wave
             .keys()

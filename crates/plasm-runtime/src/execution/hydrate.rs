@@ -220,17 +220,9 @@ impl ExecutionEngine {
             let ambient =
                 ViewAmbientContext::default().with_capability_params(inherit.bindings().clone());
             async move {
-                self.fetch_get_decoded(
-                    &get,
-                    cgs,
-                    mode,
-                    None,
-                    false,
-                    None,
-                    &ambient,
-                )
-                .await
-                .map_err(|e| wrap_synthesized_get_error(cap_name.as_str(), entity_type, e))
+                self.fetch_get_decoded(&get, cgs, mode, None, false, None, &ambient)
+                    .await
+                    .map_err(|e| wrap_synthesized_get_error(cap_name.as_str(), entity_type, e))
             }
         }))
         .buffer_unordered(concurrency);
@@ -392,8 +384,14 @@ mod tests {
         let mut get = GetExpr::from_ref(Ref::new("LangKeyPick", "alpha"));
         get.capability_name = Some("lang_key_pick_get".into());
         let mat = SessionMaterialization::new();
-        preflight_compile_expr(&Expr::Get(get), &cgs, &ViewAmbientContext::default(), &mat)
-            .expect("derived Get preflight must succeed without CML mapping");
+        preflight_compile_expr(
+            &Expr::Get(get),
+            &cgs,
+            &plasm_compile::compile_cgs_capability_templates(&cgs).unwrap(),
+            &ViewAmbientContext::default(),
+            &mat,
+        )
+        .expect("derived Get preflight must succeed without CML mapping");
     }
 
     /// Live plan path that previously unwound with `require_mapping` panic on derived Gets.
@@ -460,6 +458,7 @@ mod tests {
         preflight_compile_expr(
             &Expr::Get(get.clone()),
             &cgs,
+            &plasm_compile::compile_cgs_capability_templates(&cgs).unwrap(),
             &ViewAmbientContext::default(),
             &mat,
         )
@@ -496,6 +495,7 @@ mod tests {
         let err = preflight_compile_expr(
             &Expr::Get(get.clone()),
             &cgs,
+            &plasm_compile::compile_cgs_capability_templates(&cgs).unwrap(),
             &ViewAmbientContext::default(),
             &empty,
         )
@@ -509,8 +509,14 @@ mod tests {
             &get.reference,
             IndexMap::from([("access_token".into(), Value::String("tok".into()))]),
         );
-        preflight_compile_expr(&Expr::Get(get), &cgs, &ViewAmbientContext::default(), &mat)
-            .expect("session-stamped identity GET compiles");
+        preflight_compile_expr(
+            &Expr::Get(get),
+            &cgs,
+            &plasm_compile::compile_cgs_capability_templates(&cgs).unwrap(),
+            &ViewAmbientContext::default(),
+            &mat,
+        )
+        .expect("session-stamped identity GET compiles");
     }
 
     #[tokio::test]
@@ -610,7 +616,7 @@ mod tests {
                 &mut mat,
                 None,
                 StreamConsumeOpts::default(),
-                ExecuteOptions::default(),
+                ExecuteOptions::for_catalog(&cgs).unwrap(),
             )
             .await
             .expect("search+hydrate");
@@ -733,7 +739,7 @@ mod tests {
                 &mut mat,
                 None,
                 StreamConsumeOpts::default(),
-                ExecuteOptions::default(),
+                ExecuteOptions::for_catalog(&cgs).unwrap(),
             )
             .await
             .expect("search without hydrate");

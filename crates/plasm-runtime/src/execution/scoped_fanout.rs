@@ -52,7 +52,7 @@ pub(crate) fn build_scoped_query_from_fallback(
                     message: format!("unknown fallback capability '{capability}'"),
                 }
             })?;
-            let cap_params: Vec<_> = cap.selection_params().to_vec();
+            let cap_params: Vec<_> = cap.query_surface_fields().cloned().collect();
             let preds: Vec<Predicate> = bindings
                 .iter()
                 .map(|(cap_param, parent_field)| {

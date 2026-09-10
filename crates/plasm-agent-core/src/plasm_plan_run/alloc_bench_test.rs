@@ -15,12 +15,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::http::{build_plasm_host_state, PlasmHostBootstrap};
-use crate::http_execute::{apply_capability_seeds, CapabilitySeed, RankedCapabilitiesArg};
+use crate::http_execute::{apply_capability_seeds, CapabilitySeed};
 use crate::plan_execute_shared::PlanLineExecuteShared;
 use crate::plasm_compile::compile_plasm_expression;
 use crate::plasm_plan_run::{evaluate_plasm_comp_dry, run_plasm_comp};
 use crate::server_state::{CatalogBootstrap, PlasmHostState};
-use plasm_core::discovery::InMemoryCgsRegistry;
+use plasm_core::discovery::CgsRegistry;
 use plasm_core::loader::load_schema_dir;
 use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 
@@ -33,7 +33,7 @@ fn matrix_fixture_dir() -> PathBuf {
 
 fn matrix_host() -> PlasmHostState {
     let cgs = Arc::new(load_schema_dir(&matrix_fixture_dir()).expect("plasm_language_matrix"));
-    let reg = InMemoryCgsRegistry::from_pairs(vec![(
+    let reg = CgsRegistry::from_pairs(vec![(
         "github".into(),
         "GitHub".into(),
         vec!["github".into()],
@@ -76,7 +76,6 @@ async fn matrix_limit_3_session(
         None,
         None,
         "alloc budget",
-        RankedCapabilitiesArg::Unspecified,
     )
     .await
     .expect("seeds");

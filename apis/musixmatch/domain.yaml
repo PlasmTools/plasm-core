@@ -1,4 +1,4 @@
-version: 3
+version: 4
 http_backend: https://api.musixmatch.com
 data_classes:
   untrusted:
@@ -47,8 +47,9 @@ entities:
         description: Lyrics content for this track.
   Lyrics:
     id_field: lyrics_id
-    description: 'Lyrics content for a Musixmatch track. Retrieved via GET /track.lyrics.get?track_id=<id>. This is a separate
-      entity from Track (has its own lyrics_id), navigable via Track.lyrics relation.
+    description: 'Lyrics content for a Musixmatch track. Retrieved via GET /track.lyrics.get?track_id=<id>.
+      This is a separate entity from Track (has its own lyrics_id), navigable via
+      Track.lyrics relation.
 
       '
     fields:
@@ -70,15 +71,13 @@ capabilities:
     description: Search for artists by name.
     kind: search
     entity: Artist
-    parameters:
-    - name: q_artist
+    selection:
+    - name: query
       value_ref: nv_wire_str_short
       required: true
-      role: search
     - name: f_artist_id
       value_ref: nv_wire_int
       required: false
-      role: filter
   artist_get:
     description: Retrieve a single artist.
     kind: get
@@ -92,36 +91,10 @@ capabilities:
     description: Get top charting artists by country.
     kind: query
     entity: Artist
-    parameters:
+    selection:
     - name: country
       value_ref: nv_wire_str_short
       required: false
-      role: filter
-  track_search:
-    description: Search tracks by title, artist, or lyrics.
-    kind: search
-    entity: Track
-    parameters:
-    - name: q_track
-      value_ref: nv_wire_str_short
-      required: false
-      role: search
-    - name: q_artist
-      value_ref: nv_wire_str_short
-      required: false
-      role: search
-    - name: f_artist_id
-      value_ref: nv_wire_int
-      required: false
-      role: filter
-    - name: f_music_genre_id
-      value_ref: nv_wire_int
-      required: false
-      role: filter
-    - name: f_has_lyrics
-      value_ref: nv_wire_int
-      required: false
-      role: filter
   track_get:
     description: Retrieve a single track.
     kind: get
@@ -132,22 +105,10 @@ capabilities:
     - artist_id
     - track_rating
     - has_lyrics
-  chart_tracks:
-    description: Get top charting tracks by country.
-    kind: query
-    entity: Track
-    parameters:
-    - name: country
-      value_ref: nv_wire_str_short
-      required: false
-      role: filter
-    - name: f_has_lyrics
-      value_ref: nv_wire_int
-      required: false
-      role: filter
   track_lyrics_get:
-    description: 'Retrieve the lyrics for a track by its Musixmatch track_id. Returns a Lyrics object (lyrics_id, lyrics_body,
-      lyrics_copyright, lyrics_language). Navigate via Track.lyrics relation: artist_search → Track → Lyrics.
+    description: 'Retrieve the lyrics for a track by its Musixmatch track_id. Returns
+      a Lyrics object (lyrics_id, lyrics_body, lyrics_copyright, lyrics_language).
+      Navigate via Track.lyrics relation: artist_search → Track → Lyrics.
 
       '
     kind: get
@@ -157,6 +118,33 @@ capabilities:
     - lyrics_body
     - lyrics_copyright
     - lyrics_language
+  track_query:
+    description: List tracks using mode search for title, artist, genre and lyrics-availability
+      filters, or mode chart for country charts. Country applies to chart mode.
+    kind: query
+    entity: Track
+    selection:
+    - name: q_track
+      value_ref: nv_wire_str_short
+      required: false
+    - name: q_artist
+      value_ref: nv_wire_str_short
+      required: false
+    - name: f_artist_id
+      value_ref: nv_wire_int
+      required: false
+    - name: f_music_genre_id
+      value_ref: nv_wire_int
+      required: false
+    - name: f_has_lyrics
+      value_ref: nv_wire_int
+      required: false
+    - name: country
+      value_ref: nv_wire_str_short
+      required: false
+    - name: mode
+      value_ref: nv_track_query_mode
+      required: true
 auth:
   scheme: api_key_query
   param: apikey
@@ -207,3 +195,9 @@ values:
     type: integer
   nv_wire_str_short:
     type: string
+  nv_track_query_mode:
+    type: enum
+    enum:
+    - search
+    - chart
+    description: 'Track collection source: filtered catalog search or popularity chart.'

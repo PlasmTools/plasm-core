@@ -151,7 +151,7 @@ mod tests {
     use crate::operation::OperationProgress;
     use crate::run_artifacts::RunArtifactStore;
     use crate::server_state::CatalogBootstrap;
-    use plasm_core::discovery::InMemoryCgsRegistry;
+    use plasm_core::discovery::CgsRegistry;
     use plasm_core::CGS;
     use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 
@@ -189,6 +189,7 @@ mod tests {
             PersistedExecuteSessionDescriptor, PersistedSessionReuseKey,
         };
         let desc = PersistedExecuteSessionDescriptor {
+            discovery_pin: None,
             prompt_hash: ph.into(),
             session_id: sid.into(),
             prompt_text: String::new(),
@@ -202,7 +203,6 @@ mod tests {
             principal: None,
             catalog_cgs_hash: "h".into(),
             context_intent: None,
-            ranked_capabilities: None,
             domain_revision: 0,
             reuse_key: PersistedSessionReuseKey {
                 tenant_scope: String::new(),
@@ -210,7 +210,6 @@ mod tests {
                 catalog_cgs_hash: "h".into(),
                 entities: vec![],
                 context_intent: None,
-                ranked_capabilities: None,
                 principal: None,
                 logical_session_id: None,
             },
@@ -223,8 +222,6 @@ mod tests {
             plan_commit_next: 0,
             operations: vec![],
             operation_handle_next: 1,
-            session_share_token: None,
-            session_proof_base_token: None,
             symbol_ledger_bytes: Vec::new(),
         };
         store.write().await.insert(
@@ -242,7 +239,7 @@ mod tests {
         let st = build_plasm_host_state(PlasmHostBootstrap {
             engine,
             mode: ExecutionMode::Live,
-            registry: Arc::new(InMemoryCgsRegistry::from_pairs(vec![(
+            registry: Arc::new(CgsRegistry::from_pairs(vec![(
                 "default".into(),
                 "Default".into(),
                 vec![],

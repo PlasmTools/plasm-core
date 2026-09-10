@@ -21,9 +21,8 @@ pub fn dry_stub_value_for_named_value(nv: &NamedValueSchema, i: usize) -> Value 
 /// DryStub JSON cell for agent dry-plan row materialization.
 pub fn dry_stub_json_for_named_value(nv: &NamedValueSchema, i: usize) -> serde_json::Value {
     // DryStub invents only JSON-encodable placeholders (int/bool/string/array/object).
-    try_plasm_value_to_json(&dry_stub_value_for_named_value(nv, i)).unwrap_or_else(|e| {
-        panic!("RA-8 DryStub cell must be JSON-encodable: {e}")
-    })
+    try_plasm_value_to_json(&dry_stub_value_for_named_value(nv, i))
+        .unwrap_or_else(|e| panic!("RA-8 DryStub cell must be JSON-encodable: {e}"))
 }
 
 /// Build typed dry-plan stub rows for an entity (RA-8 DryStub).
@@ -68,11 +67,10 @@ fn dry_stub_value_for_field_type(
     match ft {
         FieldType::Integer => Value::Integer(i as i64),
         FieldType::Number => Value::Float(i as f64),
-        FieldType::Boolean => Value::Bool(i % 2 == 0),
-        FieldType::String
-        | FieldType::Uuid
-        | FieldType::Blob
-        | FieldType::EntityRef { .. } => Value::String(format!("dry-{i}")),
+        FieldType::Boolean => Value::Bool(i.is_multiple_of(2)),
+        FieldType::String | FieldType::Uuid | FieldType::Blob | FieldType::EntityRef { .. } => {
+            Value::String(format!("dry-{i}"))
+        }
         FieldType::Select => {
             if let Some(toks) = allowed.filter(|t| !t.is_empty()) {
                 Value::String(toks[i % toks.len()].clone())
@@ -123,4 +121,3 @@ fn dry_stub_value_for_field_type(
         FieldType::Json => Value::Object(IndexMap::new()),
     }
 }
-

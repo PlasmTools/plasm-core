@@ -1,6 +1,8 @@
 //! Pack-time CGS capability template + view validation.
 
 use plasm_core::CapabilitySchema;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 use crate::{
     emit_paginated_list_missing_cml_pagination_warnings, parse_capability_template,
@@ -16,7 +18,158 @@ use crate::{
 /// as a CML `var` (path/query/body/headers/multipart) or as a pagination param key, unless
 /// the template uses the aggregate `input` body var (params splat into env) or `transport: view`
 /// (params bind via view scope / node binds, not this HTTP template).
-pub fn validate_cgs_capability_templates(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
+/// Parsed, validated capability request recipes for one exact CGS revision.
+///
+/// This is a portable pack artifact. Runtime request preparation evaluates these
+/// typed recipes; it must never parse `CapabilityTemplateJson` again.
+///
+/// Trusted catalogs cannot be deserialized directly:
+/// ```compile_fail
+/// let _: plasm_compile::CompiledCatalog = serde_json::from_slice(b"{}").unwrap();
+/// ```
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CompiledCatalog {
+    cgs_hash: String,
+    capabilities: BTreeMap<String, CapabilityTemplate>,
+    conflict_rules: BTreeMap<String, Vec<plasm_core::ConflictRule>>,
+}
+
+#[derive(Deserialize)]
+struct CompiledCatalogArtifact {
+    cgs_hash: String,
+    capabilities: BTreeMap<String, CapabilityTemplate>,
+    conflict_rules: BTreeMap<String, Vec<plasm_core::ConflictRule>>,
+}
+
+impl CompiledCatalog {
+    /// Decode untrusted artifact bytes and construct a trusted catalog only after
+    /// exact revision and capability-set validation.
+    pub fn decode_artifact(bytes: &[u8], cgs: &plasm_core::CGS) -> Result<Self, CmlError> {
+        let artifact: CompiledCatalogArtifact =
+            serde_json::from_slice(bytes).map_err(|error| CmlError::InvalidTemplate {
+                message: format!("decode compiled request recipes: {error}"),
+            })?;
+        let compiled = Self {
+            cgs_hash: artifact.cgs_hash,
+            capabilities: artifact.capabilities,
+            conflict_rules: artifact.conflict_rules,
+        };
+        compiled.validate_against(cgs)?;
+        Ok(compiled)
+    }
+
+    pub fn cgs_hash(&self) -> &str {
+        &self.cgs_hash
+    }
+
+    pub fn capability(&self, name: &str) -> Result<&CapabilityTemplate, CmlError> {
+        self.capabilities
+            .get(name)
+            .ok_or_else(|| CmlError::InvalidTemplate {
+                message: format!("compiled catalog has no request recipe for `{name}`"),
+            })
+    }
+
+    pub fn conflict_rules(&self, name: &str) -> Result<&[plasm_core::ConflictRule], CmlError> {
+        self.conflict_rules
+            .get(name)
+            .map(Vec::as_slice)
+            .ok_or_else(|| CmlError::InvalidTemplate {
+                message: format!("compiled catalog has no conflict contract for `{name}`"),
+            })
+    }
+
+    pub fn validate_against(&self, cgs: &plasm_core::CGS) -> Result<(), CmlError> {
+        let actual_hash = cgs.catalog_cgs_hash_hex();
+        if self.cgs_hash != actual_hash {
+            return Err(CmlError::InvalidTemplate {
+                message: format!(
+                    "compiled request recipes target CGS {}, loaded CGS is {actual_hash}",
+                    self.cgs_hash
+                ),
+            });
+        }
+        let expected = cgs
+            .capabilities
+            .iter()
+            .filter_map(|(name, capability)| capability.derived.is_none().then_some(name.as_str()))
+            .collect::<std::collections::BTreeSet<_>>();
+        let actual = self
+            .capabilities
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        if expected != actual {
+            return Err(CmlError::InvalidTemplate {
+                message: "compiled request recipe capability set does not match the CGS".into(),
+            });
+        }
+        let conflict_actual = self
+            .conflict_rules
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        if expected != conflict_actual {
+            return Err(CmlError::InvalidTemplate {
+                message: "compiled conflict contract set does not match the CGS".into(),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Load the checksummed compiled-recipe artifact and bind it to the exact CGS.
+pub fn load_compiled_catalog_artifact(
+    dir: &std::path::Path,
+    manifest: &plasm_core::catalog_il::CatalogManifest,
+    cgs: &plasm_core::CGS,
+) -> Result<CompiledCatalog, CmlError> {
+    manifest
+        .validate_format()
+        .map_err(|message| CmlError::InvalidTemplate { message })?;
+    let bytes = std::fs::read(dir.join(&manifest.recipes_json)).map_err(|error| {
+        CmlError::InvalidTemplate {
+            message: format!("read compiled request recipes: {error}"),
+        }
+    })?;
+    if plasm_core::catalog_discovery::content_hash(&bytes) != manifest.recipes_hash {
+        return Err(CmlError::InvalidTemplate {
+            message: "compiled request recipe digest mismatch".into(),
+        });
+    }
+    CompiledCatalog::decode_artifact(&bytes, cgs)
+}
+
+pub fn compile_cgs_capability_templates(
+    cgs: &plasm_core::CGS,
+) -> Result<CompiledCatalog, CmlError> {
+    let capabilities = compile_capability_templates(cgs)?;
+    let compiled = CompiledCatalog {
+        cgs_hash: cgs.catalog_cgs_hash_hex(),
+        capabilities,
+        conflict_rules: cgs
+            .capabilities
+            .iter()
+            .filter(|(_, capability)| capability.derived.is_none())
+            .map(|(name, capability)| {
+                let rules = capability
+                    .require_mapping()
+                    .map(|mapping| {
+                        plasm_core::conflict_rules_from_mapping_template(&mapping.template.0)
+                    })
+                    .unwrap_or_default();
+                (name.to_string(), rules)
+            })
+            .collect(),
+    };
+    compiled.validate_against(cgs)?;
+    Ok(compiled)
+}
+
+fn compile_capability_templates(
+    cgs: &plasm_core::CGS,
+) -> Result<BTreeMap<String, CapabilityTemplate>, CmlError> {
+    let mut capabilities = BTreeMap::new();
     for (name, cap) in &cgs.capabilities {
         // Domain-authored derived Gets have no CML mapping.
         if cap.derived.is_some() {
@@ -44,11 +197,24 @@ pub fn validate_cgs_capability_templates(cgs: &plasm_core::CGS) -> Result<(), Cm
         })?;
 
         forbid_pagination_dual_wire(name, &template)?;
+        if matches!(template, CapabilityTemplate::CredentialBind(_))
+            && !matches!(
+                cap.kind,
+                plasm_core::CapabilityKind::Create | plasm_core::CapabilityKind::Action
+            )
+        {
+            return Err(CmlError::InvalidTemplate { message: format!("capability `{name}`: credential binding requires a create or action capability") });
+        }
         validate_capability_params_wired_in_cml(name, cap, &template)?;
         validate_capability_path_vars_projectable(cgs, cap)?;
+        capabilities.insert(name.to_string(), template);
     }
     emit_paginated_list_missing_cml_pagination_warnings(cgs);
-    Ok(())
+    Ok(capabilities)
+}
+
+pub fn validate_cgs_capability_templates(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
+    compile_capability_templates(cgs).map(|_| ())
 }
 
 /// Every CML path / GraphQL identity var must be projectable from the domain entity's
@@ -66,7 +232,10 @@ fn validate_capability_path_vars_projectable(
 /// Fail closed when a `pagination.params` key is also a CML template var
 /// (path/query/body/headers/multipart). Dual-wire races the driver against
 /// manual exists/var fields and is forbidden.
-pub(crate) fn forbid_pagination_dual_wire(name: &str, template: &CapabilityTemplate) -> Result<(), CmlError> {
+pub(crate) fn forbid_pagination_dual_wire(
+    name: &str,
+    template: &CapabilityTemplate,
+) -> Result<(), CmlError> {
     let Some(pconf) = template_pagination(template) else {
         return Ok(());
     };
@@ -362,7 +531,6 @@ pub fn pagination_config_for_capability(cap: &CapabilitySchema) -> Option<Pagina
         .ok()
         .and_then(|template| template_pagination(&template).cloned())
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -691,5 +859,24 @@ mod tests {
         .expect_err("unknown bind");
         assert!(err.to_string().contains("bind.evil_origin"));
     }
-}
 
+    #[test]
+    fn compiled_catalog_round_trip_is_bound_to_exact_cgs_revision() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs =
+            plasm_core::load_schema_dir(&root.join("../../fixtures/schemas/prerequisite_matrix"))
+                .expect("load prerequisite matrix");
+        let compiled = compile_cgs_capability_templates(&cgs).expect("compile recipes");
+        let bytes = serde_json::to_vec(&compiled).expect("encode recipes");
+        let decoded = CompiledCatalog::decode_artifact(&bytes, &cgs).expect("decode recipes");
+        decoded.validate_against(&cgs).expect("exact revision");
+
+        let mut changed = cgs.clone();
+        changed.version += 1;
+        let changed = changed.fresh_catalog_digest();
+        let error = decoded
+            .validate_against(&changed)
+            .expect_err("different CGS revision must be rejected");
+        assert!(error.to_string().contains("target CGS"), "{error}");
+    }
+}

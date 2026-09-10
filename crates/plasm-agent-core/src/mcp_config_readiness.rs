@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use auth_framework::storage::AuthStorage;
-use plasm_core::discovery::InMemoryCgsRegistry;
+use plasm_core::discovery::CgsRegistry;
 use plasm_core::schema::AuthScheme;
 use plasm_core::CgsCatalog;
 
@@ -83,7 +83,7 @@ pub async fn active_config_readiness_gaps(
     st: &PlasmHostState,
     cfg: &McpRuntimeConfig,
     optional_entry_ids: &[String],
-    registry: &InMemoryCgsRegistry,
+    registry: &CgsRegistry,
 ) -> Vec<ReadinessGap> {
     let Some(repo) = st.mcp_config_repository() else {
         return cfg

@@ -16,6 +16,7 @@ use tokio::sync::OnceCell;
 static LANGUAGE_MATRIX_HERMIT: OnceCell<String> = OnceCell::const_new();
 /// Dedicated host for [`plasm_language_matrix_live_runs`] so focused live tests cannot poison
 /// Hermit's mutable example store before early matrix rows (e.g. `lang_relation_lines`).
+#[allow(dead_code)]
 static LANGUAGE_MATRIX_SUITE_HERMIT: OnceCell<String> = OnceCell::const_new();
 
 #[derive(Clone)]
@@ -86,10 +87,7 @@ fn language_matrix_spec_path() -> std::path::PathBuf {
     );
 }
 
-async fn get_cursor(
-    State(lab): State<CursorLab>,
-    Path(id): Path<String>,
-) -> Json<Value> {
+async fn get_cursor(State(lab): State<CursorLab>, Path(id): Path<String>) -> Json<Value> {
     let mut guard = lab.store.lock().expect("cursor lab lock");
     let row = guard
         .entry(id.clone())
@@ -97,10 +95,7 @@ async fn get_cursor(
     Json(row.to_json())
 }
 
-async fn tick_cursor(
-    State(lab): State<CursorLab>,
-    Path(id): Path<String>,
-) -> Json<Value> {
+async fn tick_cursor(State(lab): State<CursorLab>, Path(id): Path<String>) -> Json<Value> {
     let mut guard = lab.store.lock().expect("cursor lab lock");
     let row = guard
         .entry(id.clone())
@@ -168,6 +163,7 @@ pub async fn language_matrix_hermit_base_url() -> &'static String {
 
 /// Isolated Hermit for the full matrix live harness (must not share mutable state with
 /// `lang_*_live` focused tests that create/patch against the shared host).
+#[allow(dead_code)]
 pub async fn language_matrix_suite_hermit_base_url() -> &'static String {
     hermit_base_url(&LANGUAGE_MATRIX_SUITE_HERMIT).await
 }
@@ -182,6 +178,7 @@ async fn hermit_base_url(cell: &'static OnceCell<String>) -> &'static String {
 
 /// Clear LangCursor in-memory state on a Hermit base URL so iterate-until rows
 /// start from bootstrap phases.
+#[allow(dead_code)]
 pub async fn language_matrix_reset_lang_cursors_on(base: &str) {
     let _ = reqwest::Client::new()
         .post(format!("{base}/language/v1/cursors/_lab_reset"))

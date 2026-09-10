@@ -192,7 +192,6 @@ mod tests {
             None,
             cgs.catalog_cgs_hash_hex(),
             None,
-            None,
         )
     }
 

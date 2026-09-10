@@ -55,7 +55,7 @@ enum TopCommand {
     Mcp(mcp_cli::McpCliRoot),
     /// Outbound OAuth providers (`oauth_provider_apps`) + device authorization helpers.
     Oauth(oauth_cli::OauthCliRoot),
-    /// Semantic auto-seed / OpenRouter configuration (appliance bootstrap files).
+    /// Compiled discovery / OpenRouter configuration (appliance bootstrap files).
     Discovery(discovery_cli::DiscoveryCliRoot),
 }
 

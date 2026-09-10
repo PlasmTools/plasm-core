@@ -18,7 +18,7 @@ use super::artifact_resolve::{
     resolve_lookup_arg, resolve_run_artifact_for_binding, RunArtifactLookupArg,
     RunArtifactResolveError,
 };
-use super::discover::mcp_artifact_payload_chars;
+use super::resource_helpers::mcp_artifact_payload_chars;
 use super::tool_parse::parse_logical_session_ref_arg;
 use super::PlasmMcpHandler;
 

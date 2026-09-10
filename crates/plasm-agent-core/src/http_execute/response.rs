@@ -35,7 +35,15 @@ pub(crate) struct RunArtifactQuery {
     pub slim: Option<bool>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum HttpContextExtension {
+    Routed(crate::http_discovery::IntentDiscoveryRequest),
+    Explicit(ExecuteSessionContextBody),
+}
+
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExecuteSessionContextBody {
     /// Optional; when opening intent-scoped teaching table via MCP this is required — HTTP expand may omit when session already has intent.
     #[serde(default)]

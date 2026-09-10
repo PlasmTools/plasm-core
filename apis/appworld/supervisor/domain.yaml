@@ -1,4 +1,4 @@
-version: 6
+version: 7
 entry_id: supervisor
 auth:
   scheme: none
@@ -12,8 +12,6 @@ entities:
       - supervisor
       - task user
       - principal
-      seed_class: primary
-      co_seed_with: federated_primary
     fields:
       first_name:
         required: true
@@ -25,7 +23,7 @@ entities:
         required: true
         value_ref: nv_email
       phone_number:
-        required: false
+        required: true
         value_ref: nv_phone
       birthday:
         required: false
@@ -43,8 +41,6 @@ entities:
       - password
       - account password
       - credentials
-      seed_class: primary
-      co_seed_with: session_primary
     fields:
       account_name:
         required: true
@@ -131,6 +127,7 @@ capabilities:
     - phone_number
     - birthday
     - sex
+    output: {type: entity, entity_type: Supervisor}
   account_password_query:
     description: List all per-app passwords for the task principal.
     kind: query
@@ -151,6 +148,7 @@ capabilities:
       projection:
         account_name: account_name
         password: password
+    output: {type: entity, entity_type: AccountPassword}
   address_query:
     description: List supervisor addresses.
     kind: query
@@ -254,3 +252,35 @@ values:
     enum:
     - success
     - fail
+prerequisites:
+  contracts:
+    appworld.principal:
+      version: 1
+      inputs: {}
+      outputs:
+        email: nv_email
+        phone: nv_phone
+    appworld.password:
+      version: 1
+      inputs:
+        account: nv_account_name
+      outputs:
+        password: nv_password
+  providers:
+    principal:
+      contract: appworld.principal
+      capability: supervisor_profile_get
+      outputs:
+        email: email
+        phone: phone_number
+    password:
+      contract: appworld.password
+      capability: account_password_get
+      inputs:
+        account:
+          lane: selection
+          path:
+          - account_name
+      outputs:
+        password: password
+  requirements: {}

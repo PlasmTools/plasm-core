@@ -439,7 +439,6 @@ mod tests {
             None,
             "hash".into(),
             None,
-            None,
         )
     }
 

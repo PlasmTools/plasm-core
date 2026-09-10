@@ -1,15 +1,8 @@
 # Todoist — AppWorld. Auth: login → access_token → Bearer header.
 
-_auth_header: &auth_header
-  type: object
-  fields:
-  - - Authorization
-    - type: format
-      template: "Bearer {token}"
-      vars:
-        token:
-          type: var
-          name: access_token
+_request_auth: &request_auth
+  scheme: bearer
+  token: { type: var, name: access_token }
 
 # AppWorld OpenAPI list endpoints use page_index (0-based) + page_limit (default 5, max 20).
 _appworld_page_index_limit: &appworld_page_index_limit
@@ -40,14 +33,14 @@ logout:
   - { type: literal, value: todoist }
   - { type: literal, value: auth }
   - { type: literal, value: logout }
-  headers: *auth_header
+  auth: *request_auth
 
 project_query:
   method: GET
   path:
   - { type: literal, value: todoist }
   - { type: literal, value: projects }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -68,14 +61,14 @@ project_get:
   - { type: literal, value: todoist }
   - { type: literal, value: projects }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 project_create:
   method: POST
   path:
   - { type: literal, value: todoist }
   - { type: literal, value: projects }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -97,7 +90,7 @@ project_update:
   - { type: literal, value: todoist }
   - { type: literal, value: projects }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -123,7 +116,7 @@ project_delete:
   - { type: literal, value: todoist }
   - { type: literal, value: projects }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 task_query:
   method: GET
@@ -132,7 +125,7 @@ task_query:
   - { type: literal, value: projects }
   - { type: var, name: project_id }
   - { type: literal, value: tasks }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -148,7 +141,7 @@ task_get:
   - { type: literal, value: todoist }
   - { type: literal, value: tasks }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 task_create:
   method: POST
@@ -157,7 +150,7 @@ task_create:
   - { type: literal, value: projects }
   - { type: var, name: project_id }
   - { type: literal, value: tasks }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -194,7 +187,7 @@ task_update:
   - { type: literal, value: todoist }
   - { type: literal, value: tasks }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -235,7 +228,7 @@ task_delete:
   - { type: literal, value: todoist }
   - { type: literal, value: tasks }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 task_assign:
   method: POST
@@ -244,7 +237,7 @@ task_assign:
   - { type: literal, value: tasks }
   - { type: var, name: id }
   - { type: literal, value: assign }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -259,7 +252,7 @@ label_query:
   path:
   - { type: literal, value: todoist }
   - { type: literal, value: labels }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -279,7 +272,7 @@ label_create:
   path:
   - { type: literal, value: todoist }
   - { type: literal, value: labels }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -296,7 +289,7 @@ label_delete:
   - { type: literal, value: todoist }
   - { type: literal, value: labels }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 task_add_label:
   method: POST
@@ -305,7 +298,7 @@ task_add_label:
   - { type: literal, value: tasks }
   - { type: var, name: id }
   - { type: literal, value: labels }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -319,7 +312,7 @@ task_remove_label:
   - { type: var, name: id }
   - { type: literal, value: labels }
   - { type: var, name: label_id }
-  headers: *auth_header
+  auth: *request_auth
 
 section_query:
   method: GET
@@ -328,7 +321,7 @@ section_query:
   - { type: literal, value: projects }
   - { type: var, name: project_id }
   - { type: literal, value: sections }
-  headers: *auth_header
+  auth: *request_auth
 
 section_create:
   method: POST
@@ -337,7 +330,7 @@ section_create:
   - { type: literal, value: projects }
   - { type: var, name: project_id }
   - { type: literal, value: sections }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -349,7 +342,7 @@ section_delete:
   - { type: literal, value: todoist }
   - { type: literal, value: sections }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 task_comment_query:
   method: GET
@@ -358,7 +351,7 @@ task_comment_query:
   - { type: literal, value: tasks }
   - { type: var, name: task_id }
   - { type: literal, value: comments }
-  headers: *auth_header
+  auth: *request_auth
 
 task_comment_create:
   method: POST
@@ -367,7 +360,7 @@ task_comment_create:
   - { type: literal, value: tasks }
   - { type: var, name: task_id }
   - { type: literal, value: comments }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -379,7 +372,7 @@ task_comment_update:
   - { type: literal, value: todoist }
   - { type: literal, value: task_comments }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -395,7 +388,7 @@ task_comment_delete:
   - { type: literal, value: todoist }
   - { type: literal, value: task_comments }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 task_comment_upload_attachment:
   method: POST
@@ -404,7 +397,7 @@ task_comment_upload_attachment:
   - { type: literal, value: task_comments }
   - { type: var, name: id }
   - { type: literal, value: attachments }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -424,7 +417,7 @@ task_comment_delete_attachment:
   - { type: var, name: id }
   - { type: literal, value: attachments }
   - { type: var, name: attachment_file_name }
-  headers: *auth_header
+  auth: *request_auth
 
 sub_task_query:
   method: GET
@@ -433,7 +426,7 @@ sub_task_query:
   - { type: literal, value: tasks }
   - { type: var, name: task_id }
   - { type: literal, value: sub_tasks }
-  headers: *auth_header
+  auth: *request_auth
 
 sub_task_create:
   method: POST
@@ -442,7 +435,7 @@ sub_task_create:
   - { type: literal, value: tasks }
   - { type: var, name: task_id }
   - { type: literal, value: sub_tasks }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -454,14 +447,14 @@ sub_task_delete:
   - { type: literal, value: todoist }
   - { type: literal, value: sub_tasks }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 user_query:
   method: GET
   path:
   - { type: literal, value: todoist }
   - { type: literal, value: users }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -492,7 +485,7 @@ project_invite_accept:
   - { type: literal, value: project_invites }
   - { type: var, name: id }
   - { type: literal, value: accept }
-  headers: *auth_header
+  auth: *request_auth
 
 project_invite_delete:
   method: POST
@@ -501,14 +494,14 @@ project_invite_delete:
   - { type: literal, value: project_invites }
   - { type: var, name: id }
   - { type: literal, value: delete }
-  headers: *auth_header
+  auth: *request_auth
 
 notification_query:
   method: GET
   path:
   - { type: literal, value: todoist }
   - { type: literal, value: notifications }
-  headers: *auth_header
+  auth: *request_auth
   query:
     type: object
     fields:
@@ -524,7 +517,7 @@ notification_delete:
   - { type: literal, value: todoist }
   - { type: literal, value: notifications }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
 
 notification_mark:
   method: PATCH
@@ -532,7 +525,7 @@ notification_mark:
   - { type: literal, value: todoist }
   - { type: literal, value: notifications }
   - { type: var, name: id }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:
@@ -543,14 +536,14 @@ notification_delete_all:
   path:
   - { type: literal, value: todoist }
   - { type: literal, value: notifications }
-  headers: *auth_header
+  auth: *request_auth
 
 notification_mark_all:
   method: PATCH
   path:
   - { type: literal, value: todoist }
   - { type: literal, value: notifications }
-  headers: *auth_header
+  auth: *request_auth
   body:
     type: object
     fields:

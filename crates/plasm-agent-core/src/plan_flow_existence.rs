@@ -29,7 +29,7 @@ pub fn check_plan_mutation_existence(
     entry_id: &str,
     entity: &str,
     capability: &str,
-    template_expr: Option<&serde_json::Value>,
+    template_expr: Option<&plasm_core::Expr>,
     uses_result: &[PlanResultUse],
 ) -> ExistenceCheckOutcome {
     if !catalog.workflow_identity_enabled(entry_id) {
@@ -352,18 +352,16 @@ enum IdentityBinding {
 }
 
 fn identity_bindings_from_template(
-    template_expr: Option<&serde_json::Value>,
+    template_expr: Option<&plasm_core::Expr>,
     identity_key: &[String],
 ) -> BTreeMap<String, IdentityBinding> {
     let mut out = BTreeMap::new();
     let Some(expr) = template_expr else {
         return out;
     };
-    let input = expr
-        .get("input")
-        .or_else(|| expr.get("params"))
-        .and_then(|v| v.as_object());
-    let Some(input) = input else {
+    let Some(plasm_core::Value::Object(input)) =
+        plasm_core::operand_binding::invocation_input(expr)
+    else {
         return out;
     };
     for key in identity_key {
@@ -378,29 +376,18 @@ fn identity_bindings_from_template(
     out
 }
 
-fn identity_binding_from_value(v: &serde_json::Value) -> Option<IdentityBinding> {
-    if let Some(s) = v.as_str() {
-        return Some(IdentityBinding::Literal(s.to_string()));
-    }
-    if let Some(n) = v.as_i64() {
-        return Some(IdentityBinding::Literal(n.to_string()));
-    }
-    if let Some(hole) = v.get("__plasm_hole") {
-        if hole.get("kind").and_then(|k| k.as_str()) == Some("node_input") {
-            let alias = hole.get("alias").and_then(|a| a.as_str())?.to_string();
-            let path = hole
-                .get("path")
-                .and_then(|p| p.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|x| x.as_str().map(str::to_string))
-                        .collect()
-                })
-                .unwrap_or_default();
-            return Some(IdentityBinding::FromAlias { alias, path });
+fn identity_binding_from_value(v: &plasm_core::Value) -> Option<IdentityBinding> {
+    match v {
+        plasm_core::Value::String(s) => Some(IdentityBinding::Literal(s.clone())),
+        plasm_core::Value::Integer(n) => Some(IdentityBinding::Literal(n.to_string())),
+        plasm_core::Value::PlasmInputRef(plasm_core::PlasmInputRef::NodeInput { node, path }) => {
+            Some(IdentityBinding::FromAlias {
+                alias: node.clone(),
+                path: path.clone(),
+            })
         }
+        _ => None,
     }
-    None
 }
 
 fn is_read_kind(kind: CapabilityKind) -> bool {

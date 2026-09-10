@@ -277,4 +277,3 @@ pub fn expand_flattened_program_statements(lines: &[String]) -> FlattenedProgram
         coerced_default_return,
     }
 }
-
