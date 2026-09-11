@@ -33,7 +33,6 @@ pub struct ViewTemplate {
     /// Stable view id matching the CGS `views:` map key.
     pub view: String,
 }
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ViewCompiled {
     pub view: String,
@@ -555,4 +554,3 @@ mod tests {
         );
     }
 }
-
