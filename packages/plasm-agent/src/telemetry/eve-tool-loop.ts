@@ -57,12 +57,34 @@ export interface EveToolLoopOptions {
   toolChoice?: "auto" | "required" | "none" | { type: "tool"; toolName: string };
 }
 
+/**
+ * Loop-exit telemetry. `unterminated` is the existing host grade vocabulary
+ * (`EvalTerminalGrade.kind`) for a model stop with no validated terminal.
+ * Do not reuse `budget_exhausted` for mid-budget prose exits.
+ */
+export type EveToolLoopStopReason =
+  | "completed"
+  | "budget_exhausted"
+  | "unterminated"
+  | "error";
+
 export interface EveToolLoopResult {
   text: string;
   steps: unknown[];
   usage: LanguageModelUsage;
   messages: ModelMessage[];
-  stopReason: "completed" | "budget_exhausted" | "error";
+  stopReason: EveToolLoopStopReason;
+}
+
+/** Non-terminal finish: error, mid-budget model stop, or true max-steps. */
+export function classifyNonTerminalStop(
+  finishReason: string,
+  stepsUsed: number,
+  maxSteps: number,
+): Exclude<EveToolLoopStopReason, "completed"> {
+  if (finishReason === "error") return "error";
+  if (stepsUsed < maxSteps) return "unterminated";
+  return "budget_exhausted";
 }
 
 function addUsage(a: LanguageModelUsage, b: LanguageModelUsage): LanguageModelUsage {
@@ -188,8 +210,11 @@ export async function runEveToolLoop(options: EveToolLoopOptions): Promise<EveTo
 
     stepIndex += 1;
     if (stepResult.finishReason !== "tool-calls") {
-      stopReason = stepResult.finishReason === "stop" ? "completed"
-        : stepResult.finishReason === "length" ? "budget_exhausted" : "error";
+      stopReason = classifyNonTerminalStop(
+        stepResult.finishReason,
+        stepIndex,
+        options.maxSteps,
+      );
       break;
     }
   }

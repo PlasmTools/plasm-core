@@ -6,7 +6,7 @@ import { jsonSchema, tool } from "ai";
 import { MockLanguageModelV3 } from "ai/test";
 import { PlasmAgent } from "../src/runtime/plasm-agent.js";
 import type { PlasmEngine } from "../src/engine/napi-binding.js";
-import { runEveToolLoop } from "../src/telemetry/eve-tool-loop.js";
+import { classifyNonTerminalStop, runEveToolLoop } from "../src/telemetry/eve-tool-loop.js";
 
 const unused = async (): Promise<never> => { throw new Error("unexpected engine call"); };
 const engine: PlasmEngine = {
@@ -40,7 +40,7 @@ try {
   let executed = 0;
   const options = {wrapTools: () => ({plasm_context: tool({inputSchema: jsonSchema({type: "object", properties: {}}), execute: async () => `observation-${executed++}`})})};
   const first = await agent.generate("ORIGINAL_TASK", options);
-  assert.equal(first.stopReason, "completed");
+  assert.equal(first.stopReason, "unterminated");
   assert.equal(first.usage.totalTokens, 36);
   assert.equal(executed, 2);
   for (const call of model.doStreamCalls) {
@@ -57,6 +57,22 @@ try {
   const bounded = await runEveToolLoop({model, system: "system", tools: options.wrapTools(), messages: [{role: "user", content: "BOUND"}], maxSteps: 1, agentName: "test", telemetry: {isEnabled: false}});
   assert.equal(bounded.stopReason, "budget_exhausted");
   assert.equal(bounded.text, "");
+  const proseModel = new MockLanguageModelV3({doStream: async () => ({stream: new ReadableStream({start(controller) {
+    controller.enqueue({type: "text-start", id: "text"});
+    controller.enqueue({type: "text-delta", id: "text", delta: "ordinary prose"});
+    controller.enqueue({type: "text-end", id: "text"});
+    controller.enqueue({type: "finish", finishReason: {unified: "stop", raw: undefined}, usage: {
+      inputTokens: {total: 8, noCache: 8, cacheRead: 0, cacheWrite: 0},
+      outputTokens: {total: 2, text: 2, reasoning: 0},
+    }});
+    controller.close();
+  }})})});
+  const midBudget = await runEveToolLoop({model: proseModel, system: "system", tools: options.wrapTools(), messages: [{role: "user", content: "TALK"}], maxSteps: 8, agentName: "test-mid-budget-prose", telemetry: {isEnabled: false}});
+  assert.equal(midBudget.stopReason, "unterminated");
+  assert.notEqual(midBudget.stopReason, "budget_exhausted");
+  assert.equal(classifyNonTerminalStop("stop", 6, 32), "unterminated");
+  assert.equal(classifyNonTerminalStop("stop", 32, 32), "budget_exhausted");
+  assert.equal(classifyNonTerminalStop("error", 3, 32), "error");
   await assert.rejects(runEveToolLoop({model, system: "", tools: {}, messages: [], maxSteps: NaN, agentName: "test"}), /positive integer/);
-  console.log("PASS: multi-step and cross-turn history, context availability, usage, budget exhaustion");
+  console.log("PASS: multi-step and cross-turn history, context availability, usage, budget exhaustion vs unterminated");
 } finally { await rm(root, {recursive: true, force: true}); }
