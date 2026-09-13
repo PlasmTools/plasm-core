@@ -1,0 +1,53 @@
+version: 4
+auth:
+  scheme: none
+http_backend: http://127.0.0.1:9
+entities:
+  Transfer:
+    id_field: transfer_id
+    primary_query: transfer_query
+    description: Completed transfer between two addresses.
+    fields:
+      transfer_id:
+        required: true
+        value_ref: nv_transfer_id
+      receiver_email:
+        required: true
+        value_ref: nv_email
+      sender_email:
+        required: true
+        value_ref: nv_email
+  Contact:
+    id_field: contact_id
+    primary_query: contact_query
+    description: Address book entry.
+    fields:
+      contact_id:
+        required: true
+        value_ref: nv_contact_id
+      email:
+        required: true
+        value_ref: nv_email
+capabilities:
+  transfer_query:
+    description: List transfers for the authenticated account
+    kind: query
+    entity: Transfer
+    provides:
+    - transfer_id
+    - receiver_email
+    - sender_email
+  contact_query:
+    description: List address book contacts
+    kind: query
+    entity: Contact
+    provides:
+    - contact_id
+    - email
+values:
+  nv_transfer_id:
+    type: string
+  nv_contact_id:
+    type: string
+  nv_email:
+    type: string

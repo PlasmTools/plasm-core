@@ -7,10 +7,10 @@ use super::super::plan_serialize::{
 };
 use super::super::prelude::*;
 use super::super::schema_validate::{
-    cgs_for_qualified_entity, compute_passthrough_or_fallback_schema, resolve_compute_field_path,
+    cgs_for_qualified_entity, compute_passthrough_or_fallback_schema,
+    is_opaque_passthrough_compute_schema, resolve_compute_field_path,
     resolve_immediate_compute_schema, resolve_qualified_entity_for_dag_source,
-    resolve_sort_field_path, synthetic_schema_passthrough_rows,
-    validate_compute_paths_for_dag_source,
+    resolve_sort_field_path, validate_compute_paths_for_dag_source,
 };
 use super::super::types::{CompileState, DagNode, DagNodeSource};
 
@@ -57,45 +57,112 @@ pub(in crate::plasm_dag) fn row_suffix_to_compute(
                     qe.entry_id, qe.entity
                 )
             })?;
+            let extra = resolve_immediate_compute_schema(state, staged, source);
+            let row_schema_fields: Vec<String> = extra
+                .as_ref()
+                .filter(|schema| !is_opaque_passthrough_compute_schema(schema))
+                .map(|schema| {
+                    schema
+                        .fields
+                        .iter()
+                        .map(|f| f.name.as_str().to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
             let layer = plasm_core::CgsLayer::new(qe.entry_id.as_str(), cgs.as_ref());
             let stack = [layer];
             let sym_map = state.sym_map_for(session);
             let core_qe =
                 plasm_core::QualifiedEntityKey::new(qe.entry_id.as_str(), qe.entity.as_str());
-            let row_pred = plasm_core::parse_row_predicate_list(
-                qe.entity.as_str(),
-                body.as_str(),
-                &stack,
-                sym_map,
-            )?;
+            let clauses = plasm_core::split_where_and_clauses(body.as_str())?;
+            let mut membership_preds = Vec::new();
+            let mut scalar_clauses = Vec::new();
+            for clause in clauses {
+                match plasm_core::parse_membership_clause(clause)? {
+                    Some(m) => {
+                        let rhs = match m.rhs {
+                            plasm_core::MembershipRhs::Binding(name) => name,
+                            plasm_core::MembershipRhs::Pipe(_) => {
+                                return Err(
+                                    "internal: membership pipe RHS must be rewritten to a binding before filter lower"
+                                        .into(),
+                                );
+                            }
+                        };
+                        if !state.contains(rhs.as_str()) && !staged.iter().any(|n| n.id == rhs) {
+                            return Err(format!(
+                                "membership RHS `{rhs}` is not a bound one-column rowset (RA-13)"
+                            ));
+                        }
+                        let path = membership_rhs_column_path(state, staged, &rhs)?;
+                        membership_preds.push(PlanPredicate {
+                            field_path: FieldPath::from_dotted(m.field.as_str())?,
+                            op: if m.anti {
+                                PlanPredicateOp::NotIn
+                            } else {
+                                PlanPredicateOp::In
+                            },
+                            value: PlanValue::BindingSymbol { binding: rhs, path },
+                        });
+                    }
+                    None => scalar_clauses.push(clause.to_string()),
+                }
+            }
+            let row_pred = if scalar_clauses.is_empty() {
+                plasm_core::RowPredicate(vec![])
+            } else {
+                plasm_core::parse_row_predicate_list(
+                    qe.entity.as_str(),
+                    &scalar_clauses.join(", "),
+                    &stack,
+                    sym_map,
+                    &row_schema_fields,
+                )?
+            };
             let tc_ctx = plasm_core::RowPredicateTypeCtx {
                 qe: &core_qe,
                 cgs: cgs.as_ref(),
                 symbol_map: None,
             };
-            let predicates = crate::row_predicate_lower::lower_row_predicate_to_plan(
-                &row_pred,
-                session,
-                &qe,
-                state.cross_cache,
-            )?;
-            let extra = resolve_immediate_compute_schema(state, staged, source);
-            let mut catalog_pred = row_pred.clone();
-            if let Some(schema) = extra.as_ref() {
-                catalog_pred.0.retain(|c| {
-                    !schema
-                        .fields
-                        .iter()
-                        .any(|f| f.name.as_str() == c.field.as_str())
-                });
+            let mut predicates = if row_pred.0.is_empty() {
+                Vec::new()
+            } else {
+                crate::row_predicate_lower::lower_row_predicate_to_plan(
+                    &row_pred,
+                    session,
+                    &qe,
+                    state.cross_cache,
+                    &row_schema_fields,
+                )?
+            };
+            predicates.extend(membership_preds);
+            if predicates.is_empty() {
+                return Err("filter(...) requires at least one predicate".into());
             }
+            let mut catalog_pred = row_pred.clone();
             if !catalog_pred.0.is_empty() {
-                plasm_core::type_check_row_predicate(&catalog_pred, &tc_ctx)
-                    .map_err(|e| e.to_string())?;
+                if row_schema_fields.is_empty() {
+                    plasm_core::type_check_row_predicate(&catalog_pred, &tc_ctx)
+                        .map_err(|e| e.to_string())?;
+                } else {
+                    catalog_pred.0.retain(|c| {
+                        cgs.get_entity(qe.entity.as_str())
+                            .is_some_and(|ent| ent.fields.contains_key(c.field.as_str()))
+                    });
+                    if !catalog_pred.0.is_empty() {
+                        plasm_core::type_check_row_predicate(&catalog_pred, &tc_ctx)
+                            .map_err(|e| e.to_string())?;
+                    }
+                }
             }
             let mut paths = Vec::new();
             for clause in &row_pred.0 {
                 paths.push(FieldPath::from_dotted(clause.field.as_str())?);
+            }
+            for pred in &predicates {
+                if matches!(pred.op, PlanPredicateOp::In | PlanPredicateOp::NotIn) {
+                    paths.push(pred.field_path.clone());
+                }
             }
             if !paths.is_empty() {
                 validate_compute_paths_for_dag_source(
@@ -244,23 +311,44 @@ pub(in crate::plasm_dag) fn row_suffix_to_compute(
                 &key_fps,
                 "dedupe(...)",
             )?;
-            let schema = synthetic_schema_passthrough_rows(session, state, staged, source)?;
+            let schema = compute_passthrough_or_fallback_schema(
+                session,
+                state,
+                staged,
+                source,
+                "PlanDedupe",
+            );
             Ok(mk(ComputeOp::DedupeBy { keys: key_fps }, schema, false))
         }
         RowSuffix::Distinct { keys: None } => {
-            let schema = synthetic_schema_passthrough_rows(session, state, staged, source)?;
+            let schema = compute_passthrough_or_fallback_schema(
+                session,
+                state,
+                staged,
+                source,
+                "PlanDistinct",
+            );
             Ok(mk(ComputeOp::DedupeBy { keys: vec![] }, schema, false))
         }
         RowSuffix::With { body } => {
             let columns = plasm_core::parse_with_body(body).map_err(|e| e.to_string())?;
-            let schema = synthetic_schema_passthrough_rows(session, state, staged, source)?;
-            let mut schema = schema;
+            // Immediate grain when known (already-projected `| select`); else entity passthrough.
+            // Assignment onto an existing field name replaces — `| select receiver_email = sender_email`
+            // must not emit duplicate schema fields (plan validate rejects that as dishonest).
+            let mut schema =
+                compute_passthrough_or_fallback_schema(session, state, staged, source, "PlanWith");
             for col in &columns {
-                schema.fields.push(plasm_core::SyntheticFieldSchema {
-                    name: col.name.clone(),
-                    value_kind: SyntheticValueKind::Unknown,
-                    source: None,
-                });
+                let remat = rematerialize_with_column(&schema, col);
+                if let Some(existing) = schema
+                    .fields
+                    .iter_mut()
+                    .find(|f| f.name.as_str() == col.name.as_str())
+                {
+                    existing.value_kind = remat.value_kind;
+                    existing.source = remat.source;
+                } else {
+                    schema.fields.push(remat);
+                }
             }
             Ok(mk(ComputeOp::With { columns }, schema, false))
         }
@@ -310,11 +398,104 @@ pub(in crate::plasm_dag) fn row_suffix_to_compute(
                 schema_from_output_fields("PlanProject", map.keys(), SyntheticValueKind::Unknown);
             Ok(mk(ComputeOp::Project { fields: map }, schema, false))
         }
+        RowSuffix::Union { rhs } => {
+            if !state.contains(rhs.as_str()) && !staged.iter().any(|n| n.id == *rhs) {
+                return Err(format!("union RHS `{rhs}` is not a bound rowset (RA-14)"));
+            }
+            let left_schema = resolve_immediate_compute_schema(state, staged, source);
+            let right_schema = resolve_immediate_compute_schema(state, staged, rhs);
+            if let (Some(left), Some(right)) = (left_schema.as_ref(), right_schema.as_ref()) {
+                if !is_opaque_passthrough_compute_schema(left)
+                    && !is_opaque_passthrough_compute_schema(right)
+                {
+                    let left_names: std::collections::BTreeSet<&str> =
+                        left.fields.iter().map(|f| f.name.as_str()).collect();
+                    let right_names: std::collections::BTreeSet<&str> =
+                        right.fields.iter().map(|f| f.name.as_str()).collect();
+                    if left_names != right_names {
+                        let left_list: Vec<&str> =
+                            left.fields.iter().map(|f| f.name.as_str()).collect();
+                        let right_list: Vec<&str> =
+                            right.fields.iter().map(|f| f.name.as_str()).collect();
+                        return Err(format!(
+                            "union requires the same columns; left has [{}], right has [{}] (RA-14)",
+                            left_list.join(", "),
+                            right_list.join(", ")
+                        ));
+                    }
+                }
+            }
+            let schema =
+                compute_passthrough_or_fallback_schema(session, state, staged, source, "PlanUnion");
+            Ok(mk(
+                ComputeOp::Union {
+                    other: OutputName::new(rhs.clone())?,
+                },
+                schema,
+                false,
+            ))
+        }
         RowSuffix::Singleton | RowSuffix::PageSize { .. } => {
             Err("internal: singleton/page_size must be split as tail flags before lowering".into())
         }
         RowSuffix::Relation { .. } => {
             Err("internal: relation suffixes lower via binding continuation, not compute".into())
         }
+    }
+}
+
+/// RA-13: membership RHS must project exactly one column.
+fn membership_rhs_column_path(
+    state: &CompileState<'_>,
+    staged: &[DagNode],
+    rhs: &str,
+) -> Result<Vec<String>, String> {
+    let schema = resolve_immediate_compute_schema(state, staged, rhs);
+    let names: Vec<String> = schema
+        .as_ref()
+        .filter(|schema| !is_opaque_passthrough_compute_schema(schema))
+        .map(|schema| {
+            schema
+                .fields
+                .iter()
+                .map(|f| f.name.as_str().to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    match names.as_slice() {
+        [] => Ok(Vec::new()),
+        [one] => Ok(vec![one.clone()]),
+        _ => Err(format!(
+            "membership RHS `{rhs}` must be one column; write `({rhs} | select field)` (RA-13)"
+        )),
+    }
+}
+
+/// RA-14: `| select dest = src` copies src type, identity path, and policy source onto dest.
+fn rematerialize_with_column(
+    schema: &SyntheticResultSchema,
+    col: &plasm_core::WithColumn,
+) -> plasm_core::SyntheticFieldSchema {
+    let plasm_core::WithExpr::Field(fp) = &col.expr else {
+        return plasm_core::SyntheticFieldSchema {
+            name: col.name.clone(),
+            value_kind: SyntheticValueKind::Unknown,
+            source: None,
+        };
+    };
+    if let Some(src) = schema.fields.iter().find(|f| {
+        f.name.as_str() == fp.dotted()
+            || f.source.as_ref().is_some_and(|s| s.dotted() == fp.dotted())
+    }) {
+        return plasm_core::SyntheticFieldSchema {
+            name: col.name.clone(),
+            value_kind: src.value_kind,
+            source: src.source.clone().or_else(|| Some(fp.clone())),
+        };
+    }
+    plasm_core::SyntheticFieldSchema {
+        name: col.name.clone(),
+        value_kind: SyntheticValueKind::Unknown,
+        source: Some(fp.clone()),
     }
 }

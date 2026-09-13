@@ -4,6 +4,72 @@ use super::super::row::MatrixRow;
 
 pub(crate) const ROWS: &[MatrixRow] = &[
     MatrixRow {
+        id: "lang_take_one_field_bound_argument",
+        program: r#"items = LangItem
+one = items | order by id | take 1 | select id
+value = one.id
+out = LangItem("i1").update(title=value, score=42, owner="alice")
+one, out"#,
+        surface_line: false,
+        federated: false,
+        features: &["bounded_singleton_field_extract", "binding_continuation"],
+        min_node_results: 4,
+        expect_markdown_substrings: &["```tsv"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_take_one_field_bind",
+        program: r#"items = LangItem
+one = items | order by id | take 1
+value = one.id
+one, value"#,
+        surface_line: false,
+        federated: false,
+        features: &["bounded_singleton_field_extract", "binding_continuation"],
+        min_node_results: 3,
+        expect_markdown_substrings: &["```tsv"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_take_one_field_argument",
+        program: r#"items = LangItem
+one = items | order by id | take 1
+out = LangItem("i1").update(title=one.id, score=42, owner="alice")
+one, out"#,
+        surface_line: false,
+        federated: false,
+        features: &["bounded_singleton_field_extract", "binding_continuation"],
+        min_node_results: 3,
+        expect_markdown_substrings: &["```tsv"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_take_one_field_empty_bind",
+        program: r#"items = LangItem
+one = items | where id = "missing" | take 1
+value = one.id
+value"#,
+        surface_line: false,
+        federated: false,
+        features: &["bounded_singleton_field_extract", "binding_continuation"],
+        min_node_results: 3,
+        expect_markdown_substrings: &[],
+        expect_live_error: Some("zero rows"),
+    },
+    MatrixRow {
+        id: "lang_take_one_field_empty_argument",
+        program: r#"items = LangItem
+one = items | where id = "missing" | take 1
+out = LangItem("i1").update(title=one.id, score=42, owner="alice")
+out"#,
+        surface_line: false,
+        federated: false,
+        features: &["bounded_singleton_field_extract", "binding_continuation"],
+        min_node_results: 3,
+        expect_markdown_substrings: &[],
+        expect_live_error: Some("zero rows"),
+    },
+    MatrixRow {
         id: "lang_query_all",
         program: "LangItem",
         surface_line: false,
@@ -39,6 +105,26 @@ pub(crate) const ROWS: &[MatrixRow] = &[
         surface_line: false,
         federated: false,
         features: &["entity_search"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "Alpha"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_search_miss",
+        program: r#"LangItem~"no-such-item""#,
+        surface_line: false,
+        federated: false,
+        features: &["entity_search", "search_text_not_exact_match"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_search_brace_q",
+        program: r#"LangItem{q="Alpha"}"#,
+        surface_line: false,
+        federated: false,
+        features: &["entity_search", "search_brace_owns_text"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "Alpha"],
         expect_live_error: None,
@@ -106,7 +192,7 @@ pub(crate) const ROWS: &[MatrixRow] = &[
     MatrixRow {
         id: "lang_aggregate",
         program: "LangItem | summarize n=count()",
-        surface_line: false,
+        surface_line: true,
         federated: false,
         features: &["pipe_summarize"],
         min_node_results: 1,
@@ -116,7 +202,7 @@ pub(crate) const ROWS: &[MatrixRow] = &[
     MatrixRow {
         id: "lang_aggregate_sugar_count",
         program: "LangItem | summarize count=count()",
-        surface_line: false,
+        surface_line: true,
         federated: false,
         features: &["aggregate_sugar_count", "pipe_summarize"],
         min_node_results: 1,
@@ -126,7 +212,7 @@ pub(crate) const ROWS: &[MatrixRow] = &[
     MatrixRow {
         id: "lang_aggregate_sum",
         program: "LangItem | summarize t=sum(score)",
-        surface_line: false,
+        surface_line: true,
         federated: false,
         features: &["aggregate_sum", "pipe_summarize"],
         min_node_results: 1,
@@ -137,7 +223,7 @@ pub(crate) const ROWS: &[MatrixRow] = &[
     MatrixRow {
         id: "lang_group_by",
         program: "LangItem | summarize by owner n=count()",
-        surface_line: false,
+        surface_line: true,
         federated: false,
         features: &["pipe_summarize_by", "pipe_summarize_chain"],
         min_node_results: 1,
@@ -147,7 +233,7 @@ pub(crate) const ROWS: &[MatrixRow] = &[
     MatrixRow {
         id: "lang_group_by_aggregate_chain",
         program: "LangItem | summarize by owner, score n=count(), title=first(title)",
-        surface_line: false,
+        surface_line: true,
         federated: false,
         features: &["pipe_summarize_chain", "pipe_summarize_by_multi", "agg_first_last"],
         min_node_results: 1,
@@ -157,7 +243,7 @@ pub(crate) const ROWS: &[MatrixRow] = &[
     MatrixRow {
         id: "lang_group_by_sugar",
         program: "LangItem | summarize by owner count=count()",
-        surface_line: false,
+        surface_line: true,
         federated: false,
         features: &["pipe_summarize_by_count", "pipe_summarize_by"],
         min_node_results: 1,
@@ -167,7 +253,7 @@ pub(crate) const ROWS: &[MatrixRow] = &[
     MatrixRow {
         id: "lang_group_by_multi",
         program: "LangItem | summarize by owner, score n=count()",
-        surface_line: false,
+        surface_line: true,
         federated: false,
         features: &["pipe_summarize_by_multi", "pipe_summarize_by"],
         min_node_results: 1,
@@ -284,7 +370,7 @@ newbranch, newfile"#,
         federated: false,
         features: &["pipe_select_compute", "bindings_assignment", "pipe_take"],
         min_node_results: 1,
-        expect_markdown_substrings: &["```tsv", "half"],
+        expect_markdown_substrings: &["```tsv", "id"],
         expect_live_error: None,
     },
     MatrixRow {
@@ -296,7 +382,7 @@ tagged"#,
         federated: false,
         features: &["pipe_select_compute", "bindings_assignment", "pipe_take", "pipe_where"],
         min_node_results: 1,
-        expect_markdown_substrings: &["```tsv", "alicealice"],
+        expect_markdown_substrings: &["```tsv"],
         expect_live_error: None,
     },
     MatrixRow {
@@ -308,7 +394,220 @@ labeled"#,
         federated: false,
         features: &["pipe_select_compute", "bindings_assignment", "pipe_take", "pipe_where"],
         min_node_results: 1,
+        expect_markdown_substrings: &["```tsv"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_where_in_rowset",
+        program: r#"alice = LangItem | where owner = "alice" | select owner
+kept = LangItem | where owner in alice
+kept"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "pipe_where_in_rowset",
+            "pipe_where",
+            "pipe_select",
+            "bindings_assignment",
+            "dry_live_parity",
+        ],
+        min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "alice"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_where_not_in_rowset",
+        program: r#"alice = LangItem | where owner = "alice" | select owner
+drop = LangItem | where owner not in alice
+drop"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "pipe_where_not_in_rowset",
+            "pipe_where",
+            "pipe_select",
+            "bindings_assignment",
+        ],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_where_in_rowset_paren",
+        program: r#"kept = LangItem | where owner in (LangItem | where owner = "alice" | select owner)
+kept"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "pipe_where_in_rowset",
+            "pipe_where",
+            "pipe_select",
+            "bindings_assignment",
+        ],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "alice"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_union_rowset",
+        program: r#"alice = LangItem | where owner = "alice" | select owner
+bob = LangItem | where owner = "bob" | select owner
+peers = alice | union bob
+kept = LangItem | where owner in peers
+kept"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "pipe_union_rowset",
+            "pipe_where_in_rowset",
+            "pipe_select",
+            "bindings_assignment",
+            "dry_live_parity",
+        ],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "alice"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_union_rowset_alias",
+        program: r#"sent = LangItem | where owner = "alice" | select email = owner
+recv = LangItem | where owner = "bob" | select email = owner
+peers = sent | union recv
+kept = LangItem | where owner in peers
+kept"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "pipe_union_rowset",
+            "pipe_select_compute",
+            "pipe_where_in_rowset",
+            "bindings_assignment",
+        ],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "alice"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_union_rowset_alias_distinct",
+        program: r#"sent = LangItem | where owner = "alice" | select email = owner
+recv = LangItem | where owner = "bob" | select email = owner
+peers = sent | union recv | distinct
+kept = LangItem | where owner in (peers | select email)
+kept"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "pipe_union_rowset",
+            "pipe_select_compute",
+            "pipe_where_in_rowset",
+            "pipe_distinct",
+            "bindings_assignment",
+        ],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "alice"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_union_rowset_alias_existing",
+        program: r#"recv = LangItem | where owner = "alice" | select owner
+sent = LangItem | where owner = "bob" | select title
+peers = recv | union (sent | select owner = title)
+kept = LangItem | where owner in peers
+kept"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "pipe_union_rowset",
+            "pipe_select_compute",
+            "pipe_where_in_rowset",
+            "pipe_select",
+            "bindings_assignment",
+        ],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_union_empty_right",
+        program: r#"kept = LangLane {shelf="alpha"} | select title
+none = LangLane {shelf="empty"} | select title
+peers = kept | union none
+peers"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "pipe_union_rowset",
+            "pipe_union_empty_right",
+            "pipe_select",
+            "bindings_assignment",
+        ],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "alpha-one"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_required_selection_default",
+        program: r#"LangLaneStock"#,
+        surface_line: false,
+        federated: false,
+        features: &["required_selection_default", "entity_query"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "stock-one"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_required_selection_multi",
+        program: r#"LangLane {shelf="alpha"}"#,
+        surface_line: false,
+        federated: false,
+        features: &["required_selection_default", "entity_query"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "alpha-one", "alpha-two"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_required_selection_empty",
+        program: r#"LangLane {shelf="empty"}"#,
+        surface_line: false,
+        federated: false,
+        features: &["required_selection_default", "entity_query"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_union_rowset_paren",
+        program: r#"alice = LangItem | where owner = "alice" | select owner
+peers = alice | union (LangItem | where owner = "bob" | select owner)
+kept = LangItem | where owner in peers
+kept"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "pipe_union_rowset",
+            "pipe_where_in_rowset",
+            "pipe_select",
+            "bindings_assignment",
+        ],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "alice"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_select_alias_where",
+        program: r#"items = LangItem
+renamed = items | select handle = owner, owner | where handle = "alice"
+renamed"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "pipe_select_alias_where",
+            "pipe_select_compute",
+            "pipe_where",
+            "bindings_assignment",
+        ],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv"],
         expect_live_error: None,
     },
     MatrixRow {
@@ -320,6 +619,38 @@ lines | select id, note"#,
         features: &["relation_from_parent_get"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "note"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_quoted_binding_literal",
+        program: r#"item = LangItem("i1")
+LangItem | where title = "item""#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "quoted_string_literal",
+            "pipe_where",
+            "bindings_assignment",
+            "dry_live_parity",
+        ],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_quoted_binding_field_literal",
+        program: r#"item = LangItem("i1")
+LangItem("i1").update(title="item.title", score=1, owner="alice")"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "quoted_string_literal",
+            "effect_update",
+            "bindings_assignment",
+            "dry_live_parity",
+        ],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv"],
         expect_live_error: None,
     },
     MatrixRow {

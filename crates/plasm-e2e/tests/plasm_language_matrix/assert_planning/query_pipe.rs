@@ -92,6 +92,64 @@ pub(crate) fn assert_planning_query_pipe(
                 ));
             }
         }
+        "lang_search_miss" => {
+            let q = first_query(surfaces)?;
+            if q.entity != "LangItem" {
+                return Err(format!("expected LangItem, got {:?}", q.entity));
+            }
+            let Some(cap) = q.capability_name.as_ref() else {
+                return Err("miss search must pin langitem_search, not Query::all".into());
+            };
+            if cap.as_str() != "langitem_search" {
+                return Err(format!("expected langitem_search, got {cap}"));
+            }
+            let Some(pred) = q.predicate.as_ref() else {
+                return Err("expected search predicate on miss literal".into());
+            };
+            let Predicate::Comparison {
+                field,
+                op: CompOp::Eq,
+                value,
+            } = pred
+            else {
+                return Err(format!("expected equality predicate, got {pred:?}"));
+            };
+            if field != "q" {
+                return Err(format!("expected search field q, got {field}"));
+            }
+            if tcv_string(value).as_deref() != Some("no-such-item") {
+                return Err(format!(
+                    "expected no-such-item search text, got {:?}",
+                    tcv_string(value)
+                ));
+            }
+        }
+        "lang_search_brace_q" => {
+            let q = first_query(surfaces)?;
+            if q.entity != "LangItem" {
+                return Err(format!("expected LangItem, got {:?}", q.entity));
+            }
+            let Some(cap) = q.capability_name.as_ref() else {
+                return Err("brace {{q=}} must resolve to Search, not primary Query".into());
+            };
+            if cap.as_str() != "langitem_search" {
+                return Err(format!("RA-2: {{q=}} must be langitem_search, got {cap}"));
+            }
+            let Some(pred) = q.predicate.as_ref() else {
+                return Err("expected q predicate".into());
+            };
+            let Predicate::Comparison {
+                field,
+                op: CompOp::Eq,
+                value,
+            } = pred
+            else {
+                return Err(format!("expected equality predicate, got {pred:?}"));
+            };
+            if field != "q" || tcv_string(value).as_deref() != Some("Alpha") {
+                return Err(format!("expected q=Alpha, got {field}={value:?}"));
+            }
+        }
         "lang_get_by_id" => {
             if !surfaces
                 .iter()
@@ -297,6 +355,154 @@ pub(crate) fn assert_planning_query_pipe(
                 return Err(format!("expected With compute, got {:?}", computes));
             }
         }
+        "lang_where_in_rowset" | "lang_where_in_rowset_paren" => {
+            let Some(ComputeOp::Filter { predicates }) =
+                computes.iter().map(|c| &c.op).find(|op| {
+                    matches!(
+                        op,
+                        ComputeOp::Filter { predicates } if predicates.iter().any(|p| {
+                            format!("{p:?}").contains("In") && !format!("{p:?}").contains("NotIn")
+                        })
+                    )
+                })
+            else {
+                return Err(format!(
+                    "RA-13: expected `| where owner in …` Filter, got {computes:?}"
+                ));
+            };
+            let dbg = format!("{predicates:?}");
+            if !dbg.contains("owner") {
+                return Err(format!(
+                    "RA-13: membership Filter must bind `owner`, got {dbg}"
+                ));
+            }
+        }
+        "lang_union_empty_right" => {
+            if !computes
+                .iter()
+                .any(|c| matches!(c.op, ComputeOp::Union { .. }))
+            {
+                return Err(format!(
+                    "RA-14 empty-right: expected `| union` ComputeOp::Union, got {computes:?}"
+                ));
+            }
+        }
+        "lang_required_selection_default" => {
+            let q = first_query(surfaces)?;
+            if q.entity != "LangLaneStock" {
+                return Err(format!("expected LangLaneStock query, got {:?}", q.entity));
+            }
+            let pred = format!("{:?}", q.predicate);
+            if !pred.contains("shelf") || !pred.contains("mine") {
+                return Err(format!(
+                    "RA-15: omitted shelf must receive authored default mine, got {pred}"
+                ));
+            }
+        }
+        "lang_required_selection_multi" | "lang_required_selection_empty" => {
+            let q = first_query(surfaces)?;
+            if q.entity != "LangLane" {
+                return Err(format!("expected LangLane query, got {:?}", q.entity));
+            }
+            let pred = format!("{:?}", q.predicate);
+            if !pred.contains("shelf") {
+                return Err(format!("RA-15: LangLane query must keep shelf, got {pred}"));
+            }
+        }
+        "lang_union_rowset"
+        | "lang_union_rowset_alias"
+        | "lang_union_rowset_alias_distinct"
+        | "lang_union_rowset_alias_existing"
+        | "lang_union_rowset_paren" => {
+            if !computes
+                .iter()
+                .any(|c| matches!(c.op, ComputeOp::Union { .. }))
+            {
+                return Err(format!(
+                    "RA-14: expected `| union` ComputeOp::Union, got {computes:?}"
+                ));
+            }
+            if !computes.iter().any(|c| {
+                matches!(
+                    &c.op,
+                    ComputeOp::Filter { predicates } if predicates.iter().any(|p| {
+                        format!("{p:?}").contains("In") && !format!("{p:?}").contains("NotIn")
+                    })
+                )
+            }) {
+                return Err(format!(
+                    "RA-14: union result must be a lawful RA-13 RHS, got {computes:?}"
+                ));
+            }
+        }
+        "lang_where_not_in_rowset" => {
+            let Some(ComputeOp::Filter { predicates }) =
+                computes.iter().map(|c| &c.op).find(|op| {
+                    matches!(
+                        op,
+                        ComputeOp::Filter { predicates } if predicates
+                            .iter()
+                            .any(|p| format!("{p:?}").contains("NotIn"))
+                    )
+                })
+            else {
+                return Err(format!(
+                    "RA-13: expected `| where owner not in …` Filter, got {computes:?}"
+                ));
+            };
+            let dbg = format!("{predicates:?}");
+            if !dbg.contains("owner") {
+                return Err(format!(
+                    "RA-13: anti-join Filter must bind `owner`, got {dbg}"
+                ));
+            }
+        }
+        "lang_quoted_binding_literal" => {
+            let Some(ComputeOp::Filter { predicates }) = computes
+                .iter()
+                .map(|c| &c.op)
+                .find(|op| matches!(op, ComputeOp::Filter { .. }))
+            else {
+                return Err(format!(
+                    "PLP-11: expected `| where title = \"item\"` Filter, got {computes:?}"
+                ));
+            };
+            let dbg = format!("{predicates:?}");
+            if !dbg.contains("title") || !dbg.contains("item") {
+                return Err(format!(
+                    "PLP-11: filter must keep the quoted literal `item`, got {dbg}"
+                ));
+            }
+            if dbg.contains("BindingSymbol") {
+                return Err(format!(
+                    "PLP-11: quoted `item` must stay a literal, not a binding, got {dbg}"
+                ));
+            }
+        }
+        "lang_select_alias_where" => {
+            if !computes
+                .iter()
+                .any(|c| matches!(c.op, ComputeOp::With { .. }))
+            {
+                return Err(format!("expected With compute, got {:?}", computes));
+            }
+            let Some(ComputeOp::Filter { predicates }) = computes
+                .iter()
+                .map(|c| &c.op)
+                .find(|op| matches!(op, ComputeOp::Filter { .. }))
+            else {
+                return Err(format!(
+                    "expected Filter on select alias, got {:?}",
+                    computes
+                ));
+            };
+            let predicate_debug = format!("{predicates:?}");
+            if !predicate_debug.contains("handle") {
+                return Err(format!(
+                    "RA-2: filter must bind select alias `handle`, got {predicate_debug}"
+                ));
+            }
+        }
         "lang_group_by" => {
             let Some(ComputeTemplate {
                 op: ComputeOp::GroupBy { keys, aggregates },
@@ -450,7 +656,10 @@ pub(crate) fn assert_planning_query_pipe(
                 ));
             }
         }
-        "lang_bindings_render" => {
+        "lang_bindings_render"
+        | "lang_render_split_part"
+        | "lang_per_row_render_zero"
+        | "lang_per_row_render_many" => {
             let Some(ComputeTemplate {
                 op: ComputeOp::Render { .. },
                 ..
@@ -458,8 +667,25 @@ pub(crate) fn assert_planning_query_pipe(
                 .iter()
                 .find(|c| matches!(c.op, ComputeOp::Render { .. }))
             else {
-                return Err(format!("expected Render compute, got {:?}", computes));
+                return Err(format!(
+                    "expected per-row Render compute, got {:?}",
+                    computes
+                ));
             };
+        }
+        "lang_plain_template_foreach" => {
+            if computes
+                .iter()
+                .any(|c| matches!(c.op, ComputeOp::Render { .. }))
+            {
+                return Err(
+                    "plain `{% for item in items %}` must evaluate once as a Data template, not per-row Render"
+                        .into(),
+                );
+            }
+            if !json_value_contains_substring(comp, "items") {
+                return Err("plain template must depend on named binding `items`".into());
+            }
         }
         "lang_cross_binding_render" => {
             let Some(ComputeTemplate {
@@ -474,8 +700,11 @@ pub(crate) fn assert_planning_query_pipe(
                 return Err(format!("expected Render compute, got {:?}", computes));
             };
             let labels: Vec<_> = render_bindings.iter().map(|l| l.as_str()).collect();
-            if labels != ["a"] {
-                return Err(format!("expected render_bindings [a], got {:?}", labels));
+            if !labels.is_empty() {
+                return Err(format!(
+                    "per-row `{{{{ id }}}}` must not inject collection bindings, got {:?}",
+                    labels
+                ));
             }
         }
         "lang_render_content_into_create" => {

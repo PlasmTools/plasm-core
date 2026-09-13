@@ -1,0 +1,11 @@
+transfer_query:
+  method: GET
+  path:
+  - type: literal
+    value: transfers
+
+contact_query:
+  method: GET
+  path:
+  - type: literal
+    value: contacts
