@@ -18,11 +18,13 @@ use std::sync::Arc;
 mod test_support;
 use test_support::github_issue_label_session;
 
-mod github_symbol_resolution;
+mod matrix_symbol_resolution;
 
 mod homograph_matrix;
 
 mod tau3_cli_chain;
+
+mod projected_alias_grain;
 
 fn test_session() -> ExecuteSession {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
