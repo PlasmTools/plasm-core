@@ -2,7 +2,7 @@
 
 use crate::expr_correction::RecoveryHint;
 use crate::expr_parser::{ParseError, ParseErrorKind};
-use crate::query_resolve::QueryCapabilityResolveError;
+use crate::query_resolve::{sole_nullary_singleton_get, QueryCapabilityResolveError};
 use crate::schema::{
     capability_is_zero_arity_invoke, capability_method_label_kebab, capability_path_method_segment,
     CapabilityKind, CGS,
@@ -411,6 +411,12 @@ pub fn render_parse_error_with_feedback(
             span_start,
             span_end: _,
         } => correction_predicate_field(cgs, field, entity, expr_line, *span_start, &style),
+        ParseErrorKind::RowSchemaFieldNotFound { field, available, .. } => {
+            let cols = available.join(", ");
+            format!(
+                "RA-2: `{field}` is not a column on the current row (available: {cols}). `| where` binds the projection grain after `| select`."
+            )
+        }
         ParseErrorKind::NotFieldOrRelation {
             field,
             entity,
@@ -520,16 +526,9 @@ pub fn render_parse_error_with_feedback(
         ParseErrorKind::AmbiguousEntityCatalog { entity } => {
             correction_ambiguous_entity_catalog(entity, &style)
         }
-        ParseErrorKind::InvokeRequiresTargetId { .. } => match style {
-            FeedbackStyle::CanonicalDev => {
-                "This action needs an id from the path: write `Entity(<id>).method()` (see the expression examples in the prompt)."
-                    .into()
-            }
-            FeedbackStyle::SymbolicLlm { map: _ } => {
-                "This action needs an id from the path: write `e#(<id>).m#(...)` using symbols from the expression examples in the prompt."
-                    .into()
-            }
-        },
+        ParseErrorKind::InvokeRequiresTargetId { taught_seat, .. } => {
+            format!("This action needs the taught identity seat: `{taught_seat}`")
+        }
         ParseErrorKind::ExpectedChar { expected, got } => {
             correction_expected_char(
                 *expected,
@@ -605,6 +604,7 @@ pub fn render_parse_error_with_feedback(
         },
         ParseErrorKind::IdentityBraceGetFailed { message } => message.clone(),
         ParseErrorKind::InvalidProgramString { message } => format!("Invalid program string template: {message}"),
+        ParseErrorKind::UnfilledTeachingHole { .. } => err.message(),
         ParseErrorKind::Other { message } => message.clone(),
     };
 
@@ -670,6 +670,16 @@ Check spelling, `=`, commas, and closing `)`."
             }
             return s;
         }
+        if get_id_region_has_extra_argument(got) {
+            return match style {
+                FeedbackStyle::CanonicalDev => {
+                    "Get parentheses are identity-only (PLP-1). After a positional id, extra arguments are not allowed. Close `)` after the id. Method parameters go on `Entity(id).method(key=value, …)`; catalog selection uses `Entity{wire=value}`.".into()
+                }
+                FeedbackStyle::SymbolicLlm { .. } => {
+                    "Get parentheses are identity-only (PLP-1). After a positional id, extra arguments are not allowed. Close `)` after the id. Method parameters go on `e#(<id>).m#(key=value, …)`; catalog selection uses `e#{wire=value}`.".into()
+                }
+            };
+        }
         if get_id_region_has_ascii_whitespace(work, offset, got) {
             return match style {
                 FeedbackStyle::CanonicalDev => {
@@ -693,6 +703,12 @@ Check spelling, `=`, commas, and closing `)`."
         .map(|c| format!("`{c}`"))
         .unwrap_or_else(|| "end of input".into());
     format!("Expected `{expected}` here; got {got_s}. Match the expression examples in the prompt.")
+}
+
+/// True when Get identity already consumed a positional id and the next token is a comma —
+/// `e#(id, field=…)` / `Entity(id, field=…)` rather than identity-only `e#(id)`.
+fn get_id_region_has_extra_argument(got: Option<&char>) -> bool {
+    matches!(got, Some(','))
 }
 
 /// True when the parser failed while closing `…(id)` and the bytes between the last `(` before
@@ -864,7 +880,8 @@ fn open_paren_is_invoke_style(input: &str, offset: usize) -> bool {
 fn correction_empty_get_parens(cgs: &CGS, entity: &str, style: &FeedbackStyle<'_>) -> String {
     let get_caps = cgs.find_capabilities(entity, CapabilityKind::Get);
     let singletons: Vec<_> = get_caps
-        .into_iter()
+        .iter()
+        .copied()
         .filter(|cap| {
             cap.mapping
                 .as_ref()
@@ -874,9 +891,27 @@ fn correction_empty_get_parens(cgs: &CGS, entity: &str, style: &FeedbackStyle<'_
                 && capability_is_zero_arity_invoke(cap)
         })
         .collect();
+    let sole = sole_nullary_singleton_get(cgs, entity);
+    let has_query = !cgs
+        .find_capabilities(entity, CapabilityKind::Query)
+        .is_empty();
+    // Federated parse may see the entity name without this graph's Gets.
+    let gets_missing = get_caps.is_empty();
     match style {
         FeedbackStyle::CanonicalDev => {
-            if !singletons.is_empty() {
+            if sole.is_some() {
+                format!(
+                    "Empty parentheses after `{entity}` are not valid. Use the pathless singleton `{entity}` or `{entity}[…]` (never `{entity}()`)."
+                )
+            } else if gets_missing && has_query {
+                format!(
+                    "Empty parentheses after `{entity}` are not valid. This entity has no keyed Get — use `{entity}{{…}}` query (never `{entity}()`)."
+                )
+            } else if gets_missing {
+                format!(
+                    "Empty parentheses after `{entity}` are not valid (never `{entity}()`). Copy the get seat from the language card — do not invent `{entity}()`."
+                )
+            } else if !singletons.is_empty() {
                 let methods: Vec<String> = singletons
                     .iter()
                     .map(|c| {
@@ -896,8 +931,19 @@ fn correction_empty_get_parens(cgs: &CGS, entity: &str, style: &FeedbackStyle<'_
         }
         FeedbackStyle::SymbolicLlm { map } => {
             let es = map.entity_sym_for("", entity);
-            if !singletons.is_empty() {
-                // Pathless singleton Gets are taught as entity seats (`eN` / `eN[…]`), not `eN.mM()`.
+            if sole.is_some() {
+                format!(
+                    "Empty `()` after `{es}` is not valid. Use the pathless singleton seat `{es}` or `{es}[…]` (never `{es}()`)."
+                )
+            } else if gets_missing && !has_query {
+                format!(
+                    "Empty `()` after `{es}` is not valid (never `{es}()`). Copy the get seat from the language card — do not invent `{es}()`."
+                )
+            } else if gets_missing && has_query {
+                format!(
+                    "Empty `()` after `{es}` is not valid. This entity has no keyed Get — use `{es}{{…}}` query (never `{es}()`)."
+                )
+            } else if !singletons.is_empty() {
                 format!(
                     "Empty `()` after `{es}` is not valid. Use `{es}(<id>)` with an id, or the pathless singleton seat from the language card: `{es}` or `{es}[…]` (never `{es}()`).",
                 )
@@ -2034,6 +2080,18 @@ pub fn render_type_error_with_feedback(
             );
             StepError::type_correction(correction, error)
         }
+        TypeError::RequiredParameterOmitted {
+            parameter,
+            expression,
+        } => {
+            let param = ident_label_for_feedback(parameter, &style);
+            StepError::type_correction(
+                format!(
+                    "Fill `{param}` on `{expression}` with a bound value, a row field, or `{{{param}=…}}`. The catalog did not author a default — do not invent one."
+                ),
+                error,
+            )
+        }
         TypeError::RelationNotFound { relation, entity } => {
             let mut extra = Vec::new();
             if let Some(ent) = cgs.get_entity(entity) {
@@ -2128,7 +2186,7 @@ For example: `{te}(<id>)` when you already know the id, instead of relying on `{
             );
             if value_type == "object" && matches!(field_type.as_str(), "String" | "Blob") {
                 correction.push_str(
-                    "\n\nIf you passed a **program binding** created by a row-to-text template (`label = rows[field,…] <<TAG … TAG`), that binding is a row object with a **`content`** field. Use **`binding.content`** for plain string / body parameters—not the bare binding name.",
+                    "\n\nIf you passed a **program binding** created by per-row render (`label = items => <<TAG … TAG`), each record has a **`content`** field. Use singleton **`binding.content`** for plain string / body parameters—not the bare binding name. A plain template (`body = <<TAG`) is already a string (`param=body`).",
                 );
             }
             StepError::type_correction(correction, error)
@@ -2259,6 +2317,50 @@ mod tests {
         assert!(
             s.contains("earlier program") && !s.contains("quoted string"),
             "prior-program labels are out of scope; must not use the scalar-quote template: {s}"
+        );
+    }
+
+    #[test]
+    fn identity_mutator_correction_names_taught_seat() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = loader::load_schema_dir(dir).unwrap();
+        let exp =
+            crate::symbol_tuning::TeachingExposureSession::new(&cgs, "langmatrix", &["LangItem"]);
+        let map = exp.symbol_map_arc();
+        let e = map.entity_sym_for("langmatrix", "LangItem");
+        let m = map.method_sym_for("langmatrix", "LangItem", "langitem_update");
+        let line = format!(r#"{e}.{m}(title="x")"#);
+        let err = expr_parser::parse_session_line(
+            &line,
+            &cgs,
+            Some(std::sync::Arc::clone(&map)
+                as std::sync::Arc<dyn crate::symbol_tuning::SymbolSession>),
+        )
+        .expect_err("pathless identity mutator");
+        let step = render_parse_error_with_feedback(
+            &err,
+            &line,
+            &line,
+            &cgs,
+            FeedbackStyle::SymbolicLlm { map: map.as_ref() },
+        );
+        let taught = format!("{e}(<id>).{m}(...)");
+        let error = step.error.as_deref().unwrap_or("");
+        assert!(
+            step.correction.contains(&taught),
+            "correction must name taught seat, got: {}",
+            step.correction
+        );
+        assert!(
+            error.contains(&taught),
+            "error Display must name taught seat, got: {error}"
+        );
+        assert!(
+            !error.contains(&format!("requires `{e}.{m}")),
+            "must not require pathless form, got: {error}"
         );
     }
 
@@ -2496,12 +2598,9 @@ mod tests {
 
     #[test]
     fn parse_error_expected_identifier_suggests_raw_block_when_markdown_slot_resolves() {
-        let dir = std::path::Path::new("../../apis/linear");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = loader::load_schema_dir(dir).unwrap();
-        let work = "Issue(1).update(description=## Scope, x=1)";
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = loader::load_schema_dir(dir).expect("plasm_language_matrix");
+        let work = "LangItem(1).update(title=## Scope, x=1)";
         let err = expr_parser::ParseError {
             kind: expr_parser::ParseErrorKind::ExpectedIdentifier,
             offset: work.find("##").expect("## in fixture"),
@@ -2643,36 +2742,30 @@ mod tests {
         };
         let se = render_type_error(&err, &cgs);
         assert!(
-            se.correction.contains("row-to-text template") && se.correction.contains(".content"),
-            "expected row-to-text / .content hint, correction={}",
+            se.correction.contains("per-row render") && se.correction.contains(".content"),
+            "expected per-row render / .content hint, correction={}",
             se.correction
         );
     }
 
     #[test]
-    fn gmail_nav_typo_levenshtein_to_attachments() {
-        let dir = std::path::Path::new("../../apis/gmail");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = loader::load_schema_dir(dir).unwrap();
-        let err = expr_parser::parse("Thread(1).mesages", &cgs).unwrap_err();
-        let se = render_parse_error(&err, "Thread(1).mesages", &cgs);
+    fn langitem_nav_typo_levenshtein_to_tags() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = loader::load_schema_dir(dir).expect("plasm_language_matrix");
+        let err = expr_parser::parse("LangItem(1).tgs", &cgs).unwrap_err();
+        let se = render_parse_error(&err, "LangItem(1).tgs", &cgs);
         assert!(
-            se.correction.contains("messages"),
-            "expected suggestion toward messages, got: {}",
+            se.correction.contains("tags"),
+            "expected suggestion toward tags, got: {}",
             se.correction
         );
     }
 
     #[test]
     fn parse_correction_spaces_in_entity_id() {
-        let dir = std::path::Path::new("../../apis/clickup");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = loader::load_schema_dir(dir).unwrap();
-        let expr = "Task(123 456)";
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = loader::load_schema_dir(dir).expect("plasm_language_matrix");
+        let expr = "LangItem(123 456)";
         let err = expr_parser::parse(expr, &cgs).unwrap_err();
         let se = render_parse_error(&err, expr, &cgs);
         assert!(
@@ -2689,21 +2782,18 @@ mod tests {
 
     #[test]
     fn predicate_unknown_field_explicit_correction() {
-        let dir = std::path::Path::new("../../apis/clickup");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = loader::load_schema_dir(dir).unwrap();
-        let expr = r#"Member{space_id=Space(555555555)}"#;
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = loader::load_schema_dir(dir).expect("plasm_language_matrix");
+        let expr = r#"LangTag{owner=LangItem(i1)}"#;
         let err = expr_parser::parse(expr, &cgs).unwrap_err();
         let se = render_parse_error(&err, expr, &cgs);
         assert!(
-            se.correction.contains("Member{space_id"),
+            se.correction.contains("LangTag{owner"),
             "correction={}",
             se.correction
         );
         assert!(
-            se.correction.contains("task_id") && se.correction.contains("team_id"),
+            se.correction.contains("item_id") || se.correction.contains("label"),
             "correction={}",
             se.correction
         );
@@ -2816,12 +2906,12 @@ mod tests {
         }
         let cgs = loader::load_schema_dir(&root).expect("plasm_language_matrix");
         let layers = [&cgs, &cgs];
-        let stack = cgs_layer_stack(&["github", "linear"], &layers);
-        let mut exp = crate::TeachingExposureSession::new(&cgs, "github", &["LangItem"]);
+        let stack = cgs_layer_stack(&["langmatrix_a", "langmatrix_b"], &layers);
+        let mut exp = crate::TeachingExposureSession::new(&cgs, "langmatrix_a", &["LangItem"]);
         exp.expose_entities(
             &layers,
             std::sync::Arc::new(cgs.clone()),
-            "linear",
+            "langmatrix_b",
             &["LangItem"],
         );
         let map = exp.symbol_map_arc();
@@ -2846,8 +2936,8 @@ mod tests {
             se.correction
         );
         assert!(
-            se.correction.contains("`e1` → github:LangItem")
-                && se.correction.contains("`e2` → linear:LangItem"),
+            se.correction.contains("`e1` → langmatrix_a:LangItem")
+                && se.correction.contains("`e2` → langmatrix_b:LangItem"),
             "{}",
             se.correction
         );
@@ -2855,11 +2945,8 @@ mod tests {
 
     #[test]
     fn symbolic_type_error_field_not_found_keeps_canonical_error_symbolic_correction() {
-        let dir = std::path::Path::new("../../apis/clickup");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = loader::load_schema_dir(dir).unwrap();
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = loader::load_schema_dir(dir).expect("plasm_language_matrix");
         let (full, _) = crate::symbol_tuning::entity_slices_for_render(
             &cgs,
             crate::symbol_tuning::FocusSpec::All,
@@ -2867,19 +2954,19 @@ mod tests {
         let map = crate::symbol_tuning::SymbolMap::build(&cgs, &full);
         let err = crate::TypeError::FieldNotFound {
             field: "not_a_field".into(),
-            entity: "Task".into(),
+            entity: "LangItem".into(),
         };
         let se =
             render_type_error_with_feedback(&err, &cgs, FeedbackStyle::SymbolicLlm { map: &map });
         assert!(
             se.error
                 .as_ref()
-                .is_some_and(|e| { e.contains("not_a_field") && e.contains("Task") }),
+                .is_some_and(|e| { e.contains("not_a_field") && e.contains("LangItem") }),
             "error log should stay canonical: {:?}",
             se.error
         );
         assert!(
-            se.correction.contains("team_id") || se.correction.contains("list_id"),
+            se.correction.contains("owner") || se.correction.contains("title"),
             "correction should cite wire filter names for scoped query examples; correction={}",
             se.correction
         );
@@ -2922,6 +3009,91 @@ mod tests {
             se.correction.contains("and") && se.correction.contains("more"),
             "correction should still elide long lists: {}",
             se.correction
+        );
+    }
+
+    /// PLP-1: positional Get + extra named args is agent-invented, not a taught form.
+    #[test]
+    fn get_identity_extra_argument_names_identity_only_law() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = loader::load_schema_dir(dir).unwrap();
+        let line = r#"LangItem("i1", title="x")"#;
+        let err = expr_parser::parse(line, &cgs).expect_err("positional id plus extra args");
+        let canonical = render_parse_error(&err, line, &cgs);
+        assert!(
+            canonical.correction.contains("identity-only")
+                && canonical.correction.contains("PLP-1")
+                && canonical.correction.contains("Entity(id).method(key=value")
+                && canonical.correction.contains("Entity{wire=value}"),
+            "canonical extra-arg Get must name identity-only law, got: {}",
+            canonical.correction
+        );
+        assert!(
+            !canonical.correction.contains("single token"),
+            "must not blame spaces/id tokens when the id was already complete: {}",
+            canonical.correction
+        );
+
+        let exp =
+            crate::symbol_tuning::TeachingExposureSession::new(&cgs, "langmatrix", &["LangItem"]);
+        let map = exp.symbol_map_arc();
+        let e = map.entity_sym_for("langmatrix", "LangItem");
+        let symbolic_line = format!(r#"{e}("i1", title="x")"#);
+        let err = expr_parser::parse_session_line(
+            &symbolic_line,
+            &cgs,
+            Some(std::sync::Arc::clone(&map)
+                as std::sync::Arc<dyn crate::symbol_tuning::SymbolSession>),
+        )
+        .expect_err("symbolic extra-arg Get");
+        let step = render_parse_error_with_feedback(
+            &err,
+            &symbolic_line,
+            &symbolic_line,
+            &cgs,
+            FeedbackStyle::SymbolicLlm { map: map.as_ref() },
+        );
+        assert!(
+            step.correction.contains("identity-only")
+                && step.correction.contains("PLP-1")
+                && step.correction.contains("e#(<id>).m#(key=value")
+                && step.correction.contains("e#{wire=value}"),
+            "symbolic extra-arg Get must distinguish identity vs method parens, got: {}",
+            step.correction
+        );
+        assert!(
+            !step.correction.contains("access_token") && !step.correction.contains("note"),
+            "diagnostic must stay domain-general: {}",
+            step.correction
+        );
+    }
+
+    /// Lawful Get+token: unary identity Get / brace Search; invented mash stays illegal.
+    #[test]
+    fn get_identity_omits_token_argument_in_parens() {
+        let dir = std::path::Path::new("../../fixtures/schemas/auth_bearer_search");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = loader::load_schema_dir(dir).unwrap();
+        expr_parser::parse("SecuredNote(1)", &cgs).expect("unary Get identity");
+        expr_parser::parse(r#"SecuredNote{access_token="tok", query="habit"}"#, &cgs)
+            .expect("Search brace owns token");
+        let invented = r#"SecuredNote(1, access_token="tok")"#;
+        let err = expr_parser::parse(invented, &cgs).expect_err("token must not enter Get parens");
+        let step = render_parse_error(&err, invented, &cgs);
+        assert!(
+            step.correction.contains("identity-only") && step.correction.contains("PLP-1"),
+            "invented Get+token mash must name identity-only, got: {}",
+            step.correction
+        );
+        assert!(
+            !step.correction.contains("access_token"),
+            "must not task-shape the diagnostic around the mashed wire: {}",
+            step.correction
         );
     }
 }

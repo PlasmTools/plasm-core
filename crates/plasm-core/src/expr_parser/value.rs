@@ -230,6 +230,16 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn reject_unfilled_teaching_hole(&self, token: &str) -> Result<(), ParseError> {
+        if crate::taught_seat::is_teaching_angle_hole(token) {
+            Err(self.err(ParseErrorKind::UnfilledTeachingHole {
+                hole: token.trim().to_string(),
+            }))
+        } else {
+            Ok(())
+        }
+    }
+
     /// Parse a value: quoted string, UUID, number, or bare word (with optional `\` escapes).
     pub(super) fn parse_value(&mut self) -> Result<Value, ParseError> {
         self.skip_ws();
@@ -251,6 +261,7 @@ impl<'a> Parser<'a> {
                         Some(c) => s.push(c),
                     }
                 }
+                self.reject_unfilled_teaching_hole(&s)?;
                 Value::program_string(s).map_err(|error| {
                     self.err(ParseErrorKind::InvalidProgramString {
                         message: error.to_string(),
@@ -334,6 +345,7 @@ impl<'a> Parser<'a> {
             }
             _ => {
                 let token = self.parse_bare_value_token()?;
+                self.reject_unfilled_teaching_hole(&token)?;
                 self.skip_ws();
                 // `Foo(bar)` unwraps to a single inner value (entity ref id, etc.). It is not a
                 // generic function call — no commas; use `field=now` or quoted text for dates.
@@ -484,7 +496,7 @@ impl<'a> Parser<'a> {
                 if let Some(v) =
                     self.try_parse_entity_ref_value(&name, EntityRefRhsMode::Lenient(close))?
                 {
-                    return Ok(v);
+                    return self.maybe_get_scalar_extract_after_entity_ref(&name, v, close);
                 }
                 self.pos = id_start;
                 return self.parse_value();
@@ -496,6 +508,58 @@ impl<'a> Parser<'a> {
             self.pos = id_start;
         }
         self.parse_phrase_value(close)
+    }
+
+    /// After `Entity(id)`, accept `.wire` as PLP-1 inline Get scalar extract.
+    fn maybe_get_scalar_extract_after_entity_ref(
+        &mut self,
+        surface: &str,
+        identity: Value,
+        close: PhraseClose,
+    ) -> Result<Value, ParseError> {
+        self.skip_ws();
+        if self.peek_char() != Some('.') {
+            return Ok(identity);
+        }
+        let Some(head) = self.resolve_entity_ctor_head(surface) else {
+            return Ok(identity);
+        };
+        let Some(cgs) = self.cgs_for_entity(head.canonical.as_str()) else {
+            return Ok(identity);
+        };
+        let Some(ent) = cgs.get_entity(head.canonical.as_str()) else {
+            return Ok(identity);
+        };
+        let field_names: Vec<String> = ent.fields.keys().map(|k| k.to_string()).collect();
+        let relation_names: Vec<String> = ent.relations.keys().map(|k| k.to_string()).collect();
+        let mark = self.pos;
+        self.pos += 1;
+        self.skip_ws();
+        if !self.ident_starts_here() {
+            self.pos = mark;
+            return Ok(identity);
+        }
+        let f0 = self.pos;
+        self.consume_raw_ident();
+        let wire = self.input[f0..self.pos].to_string();
+        if relation_names.iter().any(|n| n == &wire) {
+            self.pos = mark;
+            return Ok(identity);
+        }
+        if !field_names.iter().any(|n| n == &wire) {
+            self.pos = mark;
+            return Ok(identity);
+        }
+        if !self.at_rhs_close_delimiter(close) {
+            self.pos = mark;
+            return Ok(identity);
+        }
+        Ok(Value::GetScalarExtract(crate::GetScalarExtract {
+            entity: head.canonical,
+            identity: Box::new(identity),
+            wire,
+            catalog_entry_id: head.entry_id,
+        }))
     }
 
     /// After consuming a program input ref, true if the next non-whitespace char ends this RHS.
@@ -761,6 +825,7 @@ impl<'a> Parser<'a> {
         if t.is_empty() {
             return Err(self.err(ParseErrorKind::ExpectedValue));
         }
+        self.reject_unfilled_teaching_hole(t)?;
         if self.program_nodes.is_some() {
             Ok(Value::PhraseIdent(t.to_string()))
         } else {

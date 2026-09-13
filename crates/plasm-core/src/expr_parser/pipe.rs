@@ -1,6 +1,7 @@
 //! Canonical pipe row algebra (`catalog_source | stage` / `binding | stage`).
 
 use crate::row_composition::RowSuffix;
+use crate::row_membership::{parse_closed_rowset_ref, MembershipRhs};
 
 use super::{
     is_valid_program_label, peel_collect_meta, split_top_level, validate_pipe_head_syntax,
@@ -27,6 +28,9 @@ pub enum PipeStage {
     Take(usize),
     Distinct {
         keys: Option<String>,
+    },
+    Union {
+        rhs: MembershipRhs,
     },
 }
 
@@ -78,6 +82,13 @@ impl PipeStage {
             PipeStage::Take(n) => vec![RowSuffix::Limit { count: *n as u32 }],
             PipeStage::Distinct { keys } => {
                 vec![RowSuffix::Distinct { keys: keys.clone() }]
+            }
+            PipeStage::Union { rhs } => {
+                let rhs = match rhs {
+                    MembershipRhs::Binding(name) => name.clone(),
+                    MembershipRhs::Pipe(inner) => format!("({inner})"),
+                };
+                vec![RowSuffix::Union { rhs }]
             }
         }
     }
@@ -173,8 +184,14 @@ fn parse_stage(raw: &str) -> Result<PipeStage, String> {
             keys: Some(body.to_string()),
         });
     }
+    if let Some(body) = keyword_tail(raw, "union") {
+        require_nonempty(body, "union rhs")?;
+        return Ok(PipeStage::Union {
+            rhs: parse_closed_rowset_ref(body, "union")?,
+        });
+    }
     Err(format!(
-        "unknown pipe stage `{raw}`; use `where`, `select`, `summarize`, `order by`, `take`, or `distinct`"
+        "unknown pipe stage `{raw}`; use `where`, `select`, `summarize`, `order by`, `take`, `distinct`, or `union`"
     ))
 }
 
@@ -434,5 +451,36 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(parsed.stages.len(), 2);
+    }
+
+    #[test]
+    fn parses_union_binding_and_parenthesized_pipe() {
+        let bind = parse_pipe_expr("alice | union bob").unwrap().unwrap();
+        assert!(matches!(
+            bind.stages[0],
+            PipeStage::Union {
+                rhs: MembershipRhs::Binding(ref name)
+            } if name == "bob"
+        ));
+        let pipe =
+            parse_pipe_expr(r#"alice | union (LangItem | where owner = "bob" | select owner)"#)
+                .unwrap()
+                .unwrap();
+        assert!(matches!(
+            pipe.stages[0],
+            PipeStage::Union {
+                rhs: MembershipRhs::Pipe(ref inner)
+            } if inner.contains("select owner")
+        ));
+        assert!(matches!(
+            pipe.row_suffixes().unwrap().last(),
+            Some(RowSuffix::Union { rhs }) if rhs.starts_with('(')
+        ));
+    }
+
+    #[test]
+    fn rejects_union_literal_list() {
+        let err = parse_pipe_expr(r#"alice | union ("a", "b")"#).expect_err("list");
+        assert!(err.contains("not a literal list"), "{err}");
     }
 }
