@@ -1409,6 +1409,7 @@ pub(crate) fn field_type_to_gloss_label(ft: &FieldType) -> String {
         FieldType::String => "string".to_string(),
         FieldType::Blob => "blob".to_string(),
         FieldType::Uuid => "uuid".to_string(),
+        FieldType::DigitId => "digit_id".to_string(),
         FieldType::Select => "enum".to_string(),
         FieldType::MultiSelect => "multi_enum".to_string(),
         FieldType::Date => "rfc3339".to_string(),
@@ -2133,11 +2134,14 @@ impl SymbolMap {
 
     /// Resolve `r#` → declared relation wire. Returns `None` if `sym` is not a session relation token.
     pub fn resolve_relation_ident<'a>(&'a self, sym: &str) -> Option<&'a str> {
-        let rsym = OpaqueRSym::parse(sym)?;
-        self.tables
-            .sym_to_relation_binding
-            .get(&rsym)
+        self.relation_binding_for_sym(sym)
             .map(|b| b.relation_wire.as_str())
+    }
+
+    /// Session `r#` → owning catalog / source entity / wire / target.
+    pub fn relation_binding_for_sym(&self, sym: &str) -> Option<&RelationBinding> {
+        let rsym = OpaqueRSym::parse(sym)?;
+        self.tables.sym_to_relation_binding.get(&rsym)
     }
 
     /// True when `sym` is a session `r#` relation token.
@@ -3732,56 +3736,40 @@ mod tests {
 
     #[test]
     fn opaque_dotted_call_on_get_parses_without_string_expansion() {
-        let dir = std::path::Path::new("../../apis/proof");
-        if !dir.is_dir() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let session = TeachingExposureSession::new(&cgs, "proof", &["Document"]);
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let mut cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        cgs.bind_registry_entry_id("langmatrix");
+        let session = TeachingExposureSession::new(&cgs, "langmatrix", &["LangItem"]);
         let map = session.symbol_map_arc();
-        let stack = [crate::CgsLayer::new("proof", &cgs)];
+        let stack = [crate::CgsLayer::new("langmatrix", &cgs)];
         let e_sym = session
             .tables
             .sym_to_entity_binding
             .iter()
-            .find(|(_, b)| b.entity.as_str() == "Document")
+            .find(|(_, b)| b.entity.as_str() == "LangItem")
             .map(|(k, _)| k.as_wire())
-            .expect("Document e#");
+            .expect("LangItem e#");
         let m_sym = session
             .tables
             .sym_to_method
             .iter()
-            .find(|(_, b)| b.capability.as_str() == "annotation_suggestion_insert")
+            .find(|(_, b)| b.capability.as_str() == "langitem_ping")
             .map(|(k, _)| k.as_wire())
-            .expect("annotation insert m#");
-        let slug_sym = map.ident_sym_entity_field_for("proof", "Document", "slug");
-        let agent_sym = map.ident_sym_cap_param_for(
-            "proof",
-            "Document",
-            "annotation_suggestion_insert",
-            "agent_id",
-        );
+            .expect("langitem_ping m#");
+        let id_sym = map.ident_sym_entity_field_for("langmatrix", "LangItem", "id");
         let opaque = format!(
-            "{e}({slug}=\"acme\").{m}({agent}=\"bot\")",
+            "{e}({id}=\"acme\").{m}()",
             e = e_sym,
-            slug = slug_sym,
+            id = id_sym,
             m = m_sym,
-            agent = agent_sym,
         );
-        let cap = cgs
-            .get_capability("annotation_suggestion_insert")
-            .expect("annotation_suggestion_insert");
-        let _label = crate::capability_method_label_kebab(cap);
         let opaque_parsed = crate::expr_parser::parse_with_cgs_layers(&opaque, &stack, map.clone())
             .expect("opaque surface parses in-grammar");
         let Expr::Invoke(opaque_inv) = &opaque_parsed.expr else {
             panic!("expected Invoke, got {:?}", opaque_parsed.expr);
         };
-        assert_eq!(
-            opaque_inv.capability.as_str(),
-            "annotation_suggestion_insert"
-        );
-        assert_eq!(opaque_inv.catalog_entry_id.as_deref(), Some("proof"));
+        assert_eq!(opaque_inv.capability.as_str(), "langitem_ping");
+        assert_eq!(opaque_inv.catalog_entry_id.as_deref(), Some("langmatrix"));
     }
 
     #[test]
@@ -4186,17 +4174,17 @@ mod tests {
         let cgs = Arc::new(load_schema_dir(dir).expect("matrix"));
         let mut contexts = indexmap::IndexMap::new();
         contexts.insert(
-            "linear".to_string(),
-            Arc::new(crate::CgsContext::entry("linear", cgs.clone())),
+            "langmatrix_a".to_string(),
+            Arc::new(crate::CgsContext::entry("langmatrix_a", cgs.clone())),
         );
         contexts.insert(
-            "github".to_string(),
-            Arc::new(crate::CgsContext::entry("github", cgs.clone())),
+            "langmatrix_b".to_string(),
+            Arc::new(crate::CgsContext::entry("langmatrix_b", cgs.clone())),
         );
         let layers: Vec<&CGS> = contexts.values().map(|c| c.cgs.as_ref()).collect();
         let mut exp = TeachingExposureSession::new(
             cgs.as_ref(),
-            "linear",
+            "langmatrix_a",
             &["LangItem", "LangLine", "LangTag"],
         );
         let cache = SymbolMapCrossRequestCache::new(8);
@@ -4206,7 +4194,7 @@ mod tests {
         assert!(map_three.resolve_session_entity_symbol("e4").is_none());
         let fp_three = hash_exposure_session_rows(&exp);
 
-        exp.expose_entities(&layers, cgs.clone(), "github", &["LangDetail"]);
+        exp.expose_entities(&layers, cgs.clone(), "langmatrix_b", &["LangDetail"]);
         // Simulate a stale session-local memo (e.g. concurrent compile during extend).
         *exp.ledger
             .symbol_map_cache
@@ -4219,7 +4207,7 @@ mod tests {
             map_four.resolve_session_entity_symbol("e4").is_some(),
             "federated extend must rebuild symbol map when exposure fingerprint advances"
         );
-        assert_eq!(map_four.entity_sym_for("github", "LangDetail"), "e4");
+        assert_eq!(map_four.entity_sym_for("langmatrix_b", "LangDetail"), "e4");
     }
 
     /// Two exposures reaching the **same ordered entity rows + surface** via different wave
@@ -4332,22 +4320,18 @@ mod tests {
 
     #[test]
     fn wire_surface_relation_owned_on_receiver() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
-        if !dir.is_dir() {
-            return;
-        }
-        let cgs = load_schema_dir(&dir).unwrap();
-        let exp = TeachingExposureSession::new(&cgs, "pokeapi", &["Berry", "BerryFirmness"]);
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let mut cgs = load_schema_dir(&dir).expect("plasm_language_matrix");
+        cgs.bind_registry_entry_id("langmatrix");
+        let exp = TeachingExposureSession::new(&cgs, "langmatrix", &["LangItem", "LangTag"]);
         let map = exp.to_symbol_map();
-        let berry = map.entity_sym_for("pokeapi", "Berry");
-        let firmness = map.ident_sym_relation_for("pokeapi", "Berry", "firmness");
-        if firmness == "firmness" {
-            return;
-        }
-        let opaque = format!("{berry}(\"cheri\").{firmness}", firmness = firmness);
+        let item = map.entity_sym_for("langmatrix", "LangItem");
+        let tags = map.ident_sym_relation_for("langmatrix", "LangItem", "tags");
+        let opaque = format!("{item}(\"i1\").{tags}");
         let wire = crate::expr_surface_render::wire_surface_from_teaching_line(&opaque, &cgs, map)
             .expect("wire");
-        assert!(wire.contains(".firmness"), "got {wire}");
+        assert!(wire.contains(".tags"), "got {wire}");
     }
 
     #[test]
@@ -4937,34 +4921,26 @@ mod tests {
     }
 
     #[test]
-    fn proof_insert_before_blocks_slot_meta_is_structural_not_relation_collision() {
+    fn langitem_create_tags_slot_meta_is_registry_backed() {
         let mut p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        p.push("../../apis/proof");
-        if !p.is_dir() {
-            return;
-        }
-        let cgs = crate::loader::load_schema_dir(&p).unwrap();
-        let entry_id = cgs.entry_id.as_deref().unwrap_or("");
-        let map = TeachingExposureSession::new(&cgs, entry_id, &["Document"]).symbol_map_arc();
-        let sym = map.ident_sym_cap_param_for(
-            entry_id,
-            "Document",
-            "document_edit_v2",
-            "operations.insert_before.blocks",
-        );
+        p.push("../../fixtures/schemas/plasm_language_matrix");
+        let mut cgs = crate::loader::load_schema_dir(&p).expect("plasm_language_matrix");
+        cgs.bind_registry_entry_id("langmatrix");
+        let map = TeachingExposureSession::new(&cgs, "langmatrix", &["LangItem"]).symbol_map_arc();
+        let sym = map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_create", "tags");
         let quad = map
             .capability_param_quad_for_p_sym(sym.as_str())
             .unwrap_or_else(|| panic!("no quad for {sym}"));
         let meta = ident_metadata_for_capability_input_path(
             &cgs,
-            "Document",
+            "LangItem",
             quad.2.as_str(),
             quad.3.as_str(),
         )
         .unwrap_or_else(|| panic!("no meta for {quad:?}"));
         assert!(
             matches!(meta, IdentMetadata::RegistryBacked { .. }),
-            "expected registry-backed blocks array (flat logical surface), got {meta:?}"
+            "expected registry-backed tags array, got {meta:?}"
         );
     }
 
@@ -4974,31 +4950,34 @@ mod tests {
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(&root).expect("plasm_language_matrix");
         let layers = [&cgs, &cgs];
-        let mut exp = TeachingExposureSession::new(&cgs, "github", &["LangItem"]);
+        let mut exp = TeachingExposureSession::new(&cgs, "langmatrix_a", &["LangItem"]);
         exp.expose_entities(
             &layers,
             std::sync::Arc::new(cgs.clone()),
-            "linear",
+            "langmatrix_b",
             &["LangItem"],
         );
         assert_eq!(exp.entities, vec!["LangItem", "LangItem"]);
-        assert_eq!(exp.entity_catalog_entry_ids, vec!["github", "linear"]);
+        assert_eq!(
+            exp.entity_catalog_entry_ids,
+            vec!["langmatrix_a", "langmatrix_b"]
+        );
         let map = exp.symbol_map_arc();
         assert_eq!(
             map.entry_id_for_entity_symbol("e1").as_deref(),
-            Some("github")
+            Some("langmatrix_a")
         );
         assert_eq!(
             map.entry_id_for_entity_symbol("e2").as_deref(),
-            Some("linear")
+            Some("langmatrix_b")
         );
-        assert_eq!(map.entity_sym_for("github", "LangItem"), "e1");
-        assert_eq!(map.entity_sym_for("linear", "LangItem"), "e2");
+        assert_eq!(map.entity_sym_for("langmatrix_a", "LangItem"), "e1");
+        assert_eq!(map.entity_sym_for("langmatrix_b", "LangItem"), "e2");
         assert_eq!(
             map.entity_stamps_for_wire("LangItem"),
             vec![
-                ("github".to_string(), "e1".to_string()),
-                ("linear".to_string(), "e2".to_string()),
+                ("langmatrix_a".to_string(), "e1".to_string()),
+                ("langmatrix_b".to_string(), "e2".to_string()),
             ]
         );
     }
@@ -5017,30 +4996,34 @@ mod tests {
         let layers = [&cgs];
         let delta = crate::capability_exposure::explicit_entity_capability_surface(
             &cgs,
-            "matrix",
+            "langmatrix",
             &["LangItem".to_string()],
         )
         .expect("explicit fixture capability exposure");
-        let mut exp =
-            TeachingExposureSession::new_with_intent_delta(&cgs, "matrix", &["LangItem"], delta);
+        let mut exp = TeachingExposureSession::new_with_intent_delta(
+            &cgs,
+            "langmatrix",
+            &["LangItem"],
+            delta,
+        );
         let slots_before = exp.surface.slots.clone();
         let n0 = exp.entities.len();
         let summary_delta = crate::capability_exposure::explicit_entity_capability_surface(
             &cgs,
-            "matrix",
+            "langmatrix",
             &["LangSummary".to_string()],
         )
         .expect("explicit fixture capability exposure");
         exp.expose_surface(
             &layers,
             cgs_arc.clone(),
-            "matrix",
+            "langmatrix",
             &["LangSummary"],
             summary_delta,
         );
         let added = exp.qualified_entities_since(n0);
         let relation_keys =
-            exp.relation_endpoint_keys_for_wave("matrix", &["LangSummary".to_string()]);
+            exp.relation_endpoint_keys_for_wave("langmatrix", &["LangSummary".to_string()]);
         let edge_slots = exp.relation_slots_for_expand_wave(&slots_before, &added, &relation_keys);
         assert!(
             edge_slots.iter().any(|slot| matches!(
@@ -5052,7 +5035,7 @@ mod tests {
         );
         exp.admit_relation_edge_slots_for_render(&layers, &edge_slots);
         let map = exp.symbol_map_arc();
-        let r_sym = map.ident_sym_relation_for("matrix", "LangItem", "summary");
+        let r_sym = map.ident_sym_relation_for("langmatrix", "LangItem", "summary");
         assert!(
             r_sym.starts_with('r'),
             "parser symbol map must assign r# for LangItem.summary after repair: {r_sym}"
@@ -5098,22 +5081,18 @@ mod tests {
     }
 
     #[test]
-    fn github_create_capabilities_optional_legend_uses_compact_marker_and_pairs() {
+    fn langitem_create_capabilities_optional_legend_uses_compact_marker_and_pairs() {
         let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let dir = root.join("../../apis/github");
-        if !dir.is_dir() {
-            return;
-        }
-        let cgs = crate::loader::load_schema(&dir).expect("github");
-        let exp =
-            TeachingExposureSession::new(&cgs, "github", &["Repository", "Issue", "PullRequest"]);
+        let dir = root.join("../../fixtures/schemas/plasm_language_matrix");
+        let mut cgs = crate::loader::load_schema(&dir).expect("plasm_language_matrix");
+        cgs.bind_registry_entry_id("langmatrix");
+        let exp = TeachingExposureSession::new(&cgs, "langmatrix", &["LangItem"]);
         let map = exp.symbol_map_arc();
         for (cap_name, param) in [
-            ("issue_create", "labels"),
-            ("issue_update", "labels"),
-            ("pr_create", "body"),
-            ("repo_content_create", "branch"),
-            ("repo_content_update", "branch"),
+            ("langitem_create", "tags"),
+            ("langitem_update", "tags"),
+            ("langitem_create", "owner"),
+            ("langitem_update", "owner"),
         ] {
             let cap = cgs.get_capability(cap_name).expect(cap_name);
             let sig = map.capability_input_signature_gloss(&cgs, cap);
@@ -5123,7 +5102,7 @@ mod tests {
             );
             let pairs = capability_optional_legend_param_pairs(
                 map.as_ref(),
-                "github",
+                "langmatrix",
                 cap.domain.as_str(),
                 cap,
             );

@@ -382,6 +382,15 @@ fn push_money_sum(
 
 fn pred_expr(p: &PlanPredicate, state: &FrameState) -> PolarsResult<Expr> {
     let lhs = col_expr(&p.field_path);
+    if matches!(p.op, PlanPredicateOp::In | PlanPredicateOp::NotIn) {
+        let rhs = membership_set_expr(&p.value)?;
+        let inn = lhs.is_in(rhs);
+        return Ok(if p.op == PlanPredicateOp::NotIn {
+            inn.not()
+        } else {
+            inn
+        });
+    }
     let rhs = data_lit(&p.value)?;
     let field_kind = state.kinds.get(&p.field_path.dotted()).copied();
     let rhs_kind = data_value_kind(&p.value);
@@ -394,9 +403,62 @@ fn pred_expr(p: &PlanPredicate, state: &FrameState) -> PolarsResult<Expr> {
         PlanPredicateOp::Gt => lhs.gt(rhs),
         PlanPredicateOp::Gte => lhs.gt_eq(rhs),
         PlanPredicateOp::Contains => lhs.cast(DataType::String).str().contains(rhs, false),
-        PlanPredicateOp::In => lhs.is_in(rhs),
+        PlanPredicateOp::In | PlanPredicateOp::NotIn => unreachable!("membership uses set expr"),
         PlanPredicateOp::Exists => lhs.is_not_null(),
     })
+}
+
+fn membership_set_expr(v: &PlasmDataValue) -> PolarsResult<Expr> {
+    let items = membership_json_items(v)?;
+    Ok(lit(json_values_to_membership_series(&items)?))
+}
+
+fn membership_json_items(v: &PlasmDataValue) -> PolarsResult<Vec<serde_json::Value>> {
+    match v {
+        PlasmDataValue::Literal {
+            value: serde_json::Value::Array(items),
+        } => Ok(items.clone()),
+        PlasmDataValue::Literal { value } => Ok(vec![value.clone()]),
+        PlasmDataValue::Array { items } => {
+            let mut out = Vec::new();
+            for item in items {
+                out.extend(membership_json_items(item)?);
+            }
+            Ok(out)
+        }
+        other => Err(PolarsError::ComputeError(
+            format!("membership RHS must be an array, got {other:?}").into(),
+        )),
+    }
+}
+
+fn json_values_to_membership_series(items: &[serde_json::Value]) -> PolarsResult<Series> {
+    let name = PlSmallStr::from_static("memb");
+    if items.iter().all(|v| v.is_null() || v.is_string()) {
+        let vals: Vec<Option<&str>> = items.iter().map(|v| v.as_str()).collect();
+        return Ok(Series::new(name, vals));
+    }
+    if items.iter().all(|v| v.is_null() || v.as_i64().is_some()) {
+        let vals: Vec<Option<i64>> = items.iter().map(|v| v.as_i64()).collect();
+        return Ok(Series::new(name, vals));
+    }
+    if items.iter().all(|v| v.is_null() || v.as_f64().is_some()) {
+        let vals: Vec<Option<f64>> = items.iter().map(|v| v.as_f64()).collect();
+        return Ok(Series::new(name, vals));
+    }
+    let vals: Vec<Option<String>> = items
+        .iter()
+        .map(|v| {
+            if v.is_null() {
+                None
+            } else if let Some(s) = v.as_str() {
+                Some(s.to_string())
+            } else {
+                Some(v.to_string())
+            }
+        })
+        .collect();
+    Ok(Series::new(name, vals))
 }
 
 /// RA-8 CompareUnify for Polars filters: cast toward the field column kind (or numeric LUB).
@@ -630,6 +692,7 @@ fn cmp_exprs(op: PlanPredicateOp, l: Expr, r: Expr) -> Expr {
         PlanPredicateOp::Gte => l.gt_eq(r),
         PlanPredicateOp::Contains => l.cast(DataType::String).str().contains(r, false),
         PlanPredicateOp::In => l.is_in(r),
+        PlanPredicateOp::NotIn => l.is_in(r).not(),
         PlanPredicateOp::Exists => l.is_not_null(),
     }
 }
@@ -772,6 +835,98 @@ mod tests {
         };
         assert_eq!(out.len(), 1);
         assert_eq!(out[0]["score"], serde_json::json!(20));
+    }
+
+    fn filter_eq_pan(rhs: serde_json::Value) -> PlanPredicate {
+        PlanPredicate {
+            field_path: FieldPath::from_dotted("pan").unwrap(),
+            op: PlanPredicateOp::Eq,
+            value: PlasmDataValue::Literal { value: rhs },
+        }
+    }
+
+    fn eval_pan_eq(rows: &[serde_json::Value], rhs: serde_json::Value) -> Vec<serde_json::Value> {
+        let ComputeEvalOutcome::Rows(out) = eval_compute_ops(
+            &[ComputeOp::Filter {
+                predicates: vec![filter_eq_pan(rhs)],
+            }],
+            rows,
+        )
+        .unwrap() else {
+            panic!("rows");
+        };
+        out
+    }
+
+    /// Residual Filter Eq after digit_id coerce: exact digit string keeps the listed PAN.
+    #[test]
+    fn filter_eq_keeps_digit_id_string_identity() {
+        let pan = "6419671322388907";
+        let rows = vec![
+            serde_json::json!({"label": "other", "pan": "6043624134251612"}),
+            serde_json::json!({"label": "Chase", "pan": pan}),
+        ];
+        let kept = eval_pan_eq(&rows, serde_json::json!(pan));
+        assert_eq!(kept.len(), 1, "digit_id residual eq dropped the listed PAN");
+        assert_eq!(kept[0]["label"], serde_json::json!("Chase"));
+    }
+
+    /// IEEE-rounded neighbor must not match the exact digit_id cell.
+    #[test]
+    fn filter_eq_digit_id_rejects_f64_neighbor() {
+        let exact = "9007199254740993";
+        let rounded = (9_007_199_254_740_993i64 as f64 as i64).to_string();
+        assert_ne!(rounded, exact);
+        let rows = vec![serde_json::json!({"label": "wide", "pan": exact})];
+        let kept = eval_pan_eq(&rows, serde_json::json!(rounded));
+        assert!(
+            kept.is_empty(),
+            "f64 neighbor must not identify a digit_id row"
+        );
+    }
+
+    #[test]
+    fn filter_in_and_not_in_literal_set() {
+        let rows = vec![
+            serde_json::json!({"owner":"alice","score":10}),
+            serde_json::json!({"owner":"bob","score":30}),
+        ];
+        let inn = plasm_core::PlanPredicate {
+            field_path: FieldPath::from_dotted("owner").unwrap(),
+            op: PlanPredicateOp::In,
+            value: PlasmDataValue::Literal {
+                value: serde_json::json!(["alice"]),
+            },
+        };
+        let outn = plasm_core::PlanPredicate {
+            field_path: FieldPath::from_dotted("owner").unwrap(),
+            op: PlanPredicateOp::NotIn,
+            value: PlasmDataValue::Literal {
+                value: serde_json::json!(["alice"]),
+            },
+        };
+        let ComputeEvalOutcome::Rows(kept) = eval_compute_ops(
+            &[ComputeOp::Filter {
+                predicates: vec![inn],
+            }],
+            &rows,
+        )
+        .unwrap() else {
+            panic!("rows");
+        };
+        let ComputeEvalOutcome::Rows(drop) = eval_compute_ops(
+            &[ComputeOp::Filter {
+                predicates: vec![outn],
+            }],
+            &rows,
+        )
+        .unwrap() else {
+            panic!("rows");
+        };
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0]["owner"], serde_json::json!("alice"));
+        assert_eq!(drop.len(), 1);
+        assert_eq!(drop[0]["owner"], serde_json::json!("bob"));
     }
 
     #[test]

@@ -546,6 +546,7 @@ fn field_type_compact_label(ft: &FieldType) -> String {
         FieldType::Number => "number · f64".into(),
         FieldType::Integer => "integer · i64".into(),
         FieldType::Uuid => "uuid".into(),
+        FieldType::DigitId => "digit_id".into(),
         FieldType::String => "string".into(),
         FieldType::Blob => "blob".into(),
         FieldType::Select => "select".into(),
@@ -1587,7 +1588,8 @@ mod tests {
 
     #[test]
     fn gmail_tool_model_exposes_cgs_auth_oauth_metadata() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/gmail");
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_prompt_matrix");
         let cgs = load_schema(&dir).expect("gmail");
         let meta = CatalogEntryMeta {
             entry_id: "gmail".into(),
@@ -1650,17 +1652,18 @@ mod tests {
     }
 
     #[test]
-    fn github_pull_request_infers_returns_when_output_omitted() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/github");
-        let cgs = load_schema(&dir).expect("github");
-        let pr_get = cgs.get_capability("pr_get").expect("pr_get");
+    fn langitem_get_infers_returns_when_output_omitted() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema(&dir).expect("plasm_language_matrix");
+        let item_get = cgs.get_capability("langitem_get").expect("langitem_get");
         assert!(
-            pr_get.output_schema.is_none(),
-            "GitHub pr_get should omit explicit output: (inference applies)"
+            item_get.output_schema.is_none(),
+            "langitem_get should omit explicit output: (inference applies)"
         );
         let meta = CatalogEntryMeta {
-            entry_id: "github".into(),
-            label: "GitHub".into(),
+            entry_id: "langmatrix".into(),
+            label: "Langmatrix".into(),
             tags: vec![],
             catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
             aliases: vec![],
@@ -1670,35 +1673,39 @@ mod tests {
             entity: vec![],
         };
         let m = build_tool_model(&cgs, &meta, &q).expect("ok");
-        let pr = m
+        let item = m
             .entities
             .iter()
-            .find(|e| e.name == "PullRequest")
-            .expect("PullRequest");
-        let get = pr.verbs.iter().find(|v| v.kind == "identity").expect("get");
-        assert_eq!(get.returns.kind, "entity");
-        assert_eq!(get.returns.entity.as_deref(), Some("PullRequest"));
-        // `pr_query` is repository-scoped → surfaced as `named_query`, not primary `query`.
-        let list = pr
+            .find(|e| e.name == "LangItem")
+            .expect("LangItem");
+        let get = item
             .verbs
             .iter()
-            .find(|v| v.capability_name.as_deref() == Some("pr_query"))
-            .expect("pr_query verb");
+            .find(|v| v.kind == "identity")
+            .expect("get");
+        assert_eq!(get.returns.kind, "entity");
+        assert_eq!(get.returns.entity.as_deref(), Some("LangItem"));
+        let list = item
+            .verbs
+            .iter()
+            .find(|v| v.capability_name.as_deref() == Some("langitem_query"))
+            .expect("langitem_query verb");
         assert_eq!(list.returns.kind, "collection");
         assert!(
-            list.returns.label.contains("PullRequest"),
+            list.returns.label.contains("LangItem"),
             "label={:?}",
             list.returns.label
         );
     }
 
     #[test]
-    fn github_repo_content_create_content_param_is_document_string() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/github");
-        let cgs = load_schema(&dir).expect("github");
+    fn langitem_create_title_param_is_string() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema(&dir).expect("plasm_language_matrix");
         let meta = CatalogEntryMeta {
-            entry_id: "github".into(),
-            label: "GitHub".into(),
+            entry_id: "langmatrix".into(),
+            label: "Langmatrix".into(),
             tags: vec![],
             catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
             aliases: vec![],
@@ -1708,30 +1715,32 @@ mod tests {
             entity: vec![],
         };
         let m = build_tool_model(&cgs, &meta, &q).expect("ok");
-        let repo = m
+        let item = m
             .entities
             .iter()
-            .find(|e| e.name == "Repository")
-            .expect("Repository entity");
-        let create = repo
+            .find(|e| e.name == "LangItem")
+            .expect("LangItem entity");
+        let create = item
             .capabilities
             .iter()
-            .find(|c| c.capability_name.as_deref() == Some("repo_content_create"))
-            .expect("repo_content_create capability row");
-        let content = create
+            .find(|c| c.capability_name.as_deref() == Some("langitem_create"))
+            .expect("langitem_create capability row");
+        let title = create
             .parameters
             .iter()
-            .find(|p| p.binding == "content")
-            .expect("content parameter");
-        assert_eq!(
-            content.type_label, "string · document",
-            "write path must not surface blob · binary for plain UTF-8 upload"
+            .find(|p| p.binding == "title")
+            .expect("title parameter");
+        assert!(
+            title.type_label.contains("string"),
+            "langitem_create title must stay a string type_label, got {}",
+            title.type_label
         );
     }
 
     #[test]
     fn notion_page_relation_created_by_targets_user() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/notion");
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/notion_schema_overlay");
         let cgs = load_schema(&dir).expect("notion");
         let meta = CatalogEntryMeta {
             entry_id: "notion".into(),

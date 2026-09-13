@@ -200,7 +200,11 @@ pub fn relation_binding_assignable(
     if identity_slot {
         return matches!(
             parent_ty,
-            FieldType::String | FieldType::Integer | FieldType::Number | FieldType::Uuid
+            FieldType::String
+                | FieldType::Integer
+                | FieldType::Number
+                | FieldType::Uuid
+                | FieldType::DigitId
         );
     }
     parent_scalar_field_supplies_entity_ref_scope(parent_entity, parent_field, parent_ty)
@@ -217,6 +221,7 @@ fn parent_scalar_field_supplies_entity_ref_scope(
         FieldType::Integer => Value::Integer(1),
         FieldType::Number => Value::Float(1.0),
         FieldType::Uuid => Value::String("00000000-0000-0000-0000-000000000001".into()),
+        FieldType::DigitId => Value::String("1000000000000000".into()),
         _ => return false,
     };
     let row = Value::Object(IndexMap::from([(parent_field.to_string(), leaf)]));

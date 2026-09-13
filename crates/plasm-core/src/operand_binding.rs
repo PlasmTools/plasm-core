@@ -39,10 +39,12 @@ impl IdentityCodec {
         match field_type {
             crate::FieldType::String
             | crate::FieldType::Uuid
+            | crate::FieldType::DigitId
             | crate::FieldType::Select
             | crate::FieldType::Integer
             | crate::FieldType::Number
-            | crate::FieldType::Boolean => Ok(Self { field_type }),
+            | crate::FieldType::Boolean
+            | crate::FieldType::Date => Ok(Self { field_type }),
             _ => Err(format!(
                 "{}.{field} has unsupported identity type {field_type:?}",
                 target.entity
@@ -53,6 +55,9 @@ impl IdentityCodec {
     pub fn encode(&self, value: &serde_json::Value) -> Result<EntityId, String> {
         use crate::FieldType;
         use serde_json::Value as Json;
+        if matches!(self.field_type, FieldType::DigitId) {
+            return crate::wire_coercion::encode_digit_id_identity(value).map(EntityId::from);
+        }
         let text = match (&self.field_type, value) {
             (FieldType::String | FieldType::Uuid | FieldType::Select, Json::String(value)) => {
                 value.clone()
@@ -76,6 +81,8 @@ impl IdentityCodec {
                 .parse::<bool>()
                 .map_err(|_| "identity is not a declared boolean".to_string())?
                 .to_string(),
+            (FieldType::Date, Json::String(value)) => value.clone(),
+            (FieldType::Date, Json::Number(value)) => value.to_string(),
             _ => {
                 return Err(format!(
                     "identity operand does not match declared {:?} scalar domain",
@@ -103,7 +110,10 @@ impl ResolvedValue {
     pub fn new(value: Value) -> Result<Self, &'static str> {
         fn check(value: &Value) -> bool {
             match value {
-                Value::PlasmInputRef(_) | Value::PhraseIdent(_) | Value::StringTemplate(_) => false,
+                Value::PlasmInputRef(_)
+                | Value::GetScalarExtract(_)
+                | Value::PhraseIdent(_)
+                | Value::StringTemplate(_) => false,
                 Value::Array(items) => items.iter().all(check),
                 Value::Object(fields) => fields.values().all(check),
                 Value::UnionCtor { ctor_fields, .. } => ctor_fields.values().all(check),
@@ -242,6 +252,12 @@ impl BindOperands for Value {
     fn bind_operands<R: OperandResolver>(&self, resolver: &mut R) -> Result<Self, R::Error> {
         Ok(match self {
             Self::PlasmInputRef(reference) => resolver.resolve(reference)?.into_value(),
+            Self::GetScalarExtract(extract) => Self::GetScalarExtract(crate::GetScalarExtract {
+                entity: extract.entity.clone(),
+                identity: Box::new(extract.identity.bind_operands(resolver)?),
+                wire: extract.wire.clone(),
+                catalog_entry_id: extract.catalog_entry_id.clone(),
+            }),
             Self::StringTemplate(value) => Self::String(resolver.string(value)?),
             Self::Array(items) => Self::Array(
                 items
@@ -563,6 +579,130 @@ mod tests {
             }
         )
         .is_err());
+    }
+
+    fn date_identity_cgs() -> crate::CGS {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/date_identity");
+        crate::loader::load_schema_dir(&path).expect("date_identity fixture")
+    }
+
+    fn digit_id_identity_cgs() -> crate::CGS {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/digit_id_identity");
+        crate::loader::load_schema_dir(&path).expect("digit_id_identity fixture")
+    }
+
+    #[test]
+    fn identity_codec_date_identity_encodes_temporal_wire() {
+        let codec = IdentityCodec {
+            field_type: crate::FieldType::Date,
+        };
+        assert_eq!(
+            codec
+                .encode(&serde_json::json!("2020-01-01T00:00:00Z"))
+                .unwrap()
+                .as_str(),
+            "2020-01-01T00:00:00Z"
+        );
+        assert_eq!(
+            codec
+                .encode(&serde_json::json!(1_577_836_800_000i64))
+                .unwrap()
+                .as_str(),
+            "1577836800000"
+        );
+        assert!(codec.encode(&serde_json::json!(true)).is_err());
+    }
+
+    #[test]
+    fn identity_codec_digit_id_encodes_exact_digits_rejects_float() {
+        let codec = IdentityCodec {
+            field_type: crate::FieldType::DigitId,
+        };
+        assert_eq!(
+            codec
+                .encode(&serde_json::json!("6419671322388907"))
+                .unwrap()
+                .as_str(),
+            "6419671322388907"
+        );
+        assert_eq!(
+            codec
+                .encode(&serde_json::json!(6_419_671_322_388_907i64))
+                .unwrap()
+                .as_str(),
+            "6419671322388907"
+        );
+        assert!(codec
+            .encode(&serde_json::json!(9_007_199_254_740_993i64 as f64))
+            .unwrap_err()
+            .contains("IEEE"));
+    }
+
+    #[test]
+    fn digit_id_query_and_where_compile() {
+        let cgs = digit_id_identity_cgs();
+        let entity = crate::EntityName::from("DigitAccount");
+        let codec = IdentityCodec::compile(
+            &cgs,
+            IdentityTarget {
+                entity: &entity,
+                field: None,
+            },
+        )
+        .expect("digit_id id_field is a lawful identity scalar");
+        let ent = cgs.get_entity("DigitAccount").expect("DigitAccount");
+        let rows = crate::dry_stub_entity_row_json(&cgs, ent, 1).expect("RA-8 digit_id stubs");
+        codec
+            .encode(rows[0].get("pan").expect("dry stub retains digit_id"))
+            .expect("dry digit_id identity encodes");
+
+        let queried =
+            parse(r#"DigitAccount{access_token="tok"}"#, &cgs).expect("taught query form");
+        crate::type_checker::type_check_expr(&queried.expr, &cgs).expect("query type-checks");
+
+        let shape = crate::expr_parser::parse_program_shape(
+            r#"DigitAccount{access_token="tok"} | where pan = "6419671322388907""#,
+        )
+        .expect("quoted digit_id where is a pipe program");
+        match &shape.roots[0].row {
+            crate::expr_parser::RowExpr::Pipe(p) => {
+                assert!(
+                    p.stages.iter().any(|s| matches!(
+                        s,
+                        crate::expr_parser::PipeStage::Where { predicates }
+                        if predicates.contains("6419671322388907")
+                    )),
+                    "expected residual | where on pan, got {p:?}"
+                );
+            }
+            other => panic!("expected pipe, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn date_identity_query_dry_stub_encodes() {
+        let cgs = date_identity_cgs();
+        let entity = crate::EntityName::from("DateLedger");
+        let codec = IdentityCodec::compile(
+            &cgs,
+            IdentityTarget {
+                entity: &entity,
+                field: None,
+            },
+        )
+        .expect("Date id_field is a lawful identity scalar");
+        let ent = cgs.get_entity("DateLedger").expect("DateLedger");
+        let rows = crate::dry_stub_entity_row_json(&cgs, ent, 2).expect("RA-8 Date stubs");
+        for row in &rows {
+            let value = row
+                .get("occurred_at")
+                .expect("dry stub retains Date identity");
+            codec.encode(value).expect("dry Date identity encodes");
+        }
+        let parsed = parse(r#"DateLedger{access_token="tok"}"#, &cgs).expect("taught query form");
+        crate::type_checker::type_check_expr(&parsed.expr, &cgs).expect("query type-checks");
     }
 
     #[test]

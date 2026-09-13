@@ -68,6 +68,7 @@ fn dry_stub_value_for_field_type(
         FieldType::Integer => Value::Integer(i as i64),
         FieldType::Number => Value::Float(i as f64),
         FieldType::Boolean => Value::Bool(i.is_multiple_of(2)),
+        FieldType::DigitId => Value::String(format!("{i:016}")),
         FieldType::String | FieldType::Uuid | FieldType::Blob | FieldType::EntityRef { .. } => {
             Value::String(format!("dry-{i}"))
         }

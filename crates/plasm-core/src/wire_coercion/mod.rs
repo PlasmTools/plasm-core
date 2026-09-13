@@ -20,9 +20,11 @@ use crate::{ArrayItemsSchema, FieldType, NamedValueSchema, Value, ValueWireForma
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
+mod digit_id;
 mod dry_stub;
 mod relation_binding;
 
+pub(crate) use digit_id::{coerce_digit_id, digit_id_json_to_plasm, encode_digit_id_identity};
 pub use dry_stub::{
     dry_stub_entity_row_json, dry_stub_json_for_named_value, dry_stub_value_for_named_value,
 };
@@ -89,7 +91,10 @@ pub fn coerce_value_for_field_type_with_policy(
             Err(format!("string template cannot bind a {ft:?} operand"))
         };
     }
-    if matches!(val, Value::Null | Value::PlasmInputRef(_)) {
+    if matches!(
+        val,
+        Value::Null | Value::PlasmInputRef(_) | Value::GetScalarExtract(_)
+    ) {
         return Ok(val);
     }
     match ft {
@@ -140,6 +145,7 @@ pub fn coerce_value_for_field_type_with_policy(
                 }
             }
         }
+        FieldType::DigitId => coerce_digit_id(val),
         FieldType::String | FieldType::Uuid | FieldType::Select => Ok(match val {
             Value::Integer(n) => Value::String(n.to_string()),
             Value::Float(f) => Value::String(normalize_numeric_id_float(f)),
@@ -296,6 +302,12 @@ pub fn coerce_json_value_for_field_type(
     array_items: Option<&ArrayItemsSchema>,
     value: serde_json::Value,
 ) -> serde_json::Value {
+    if matches!(ft, FieldType::DigitId) {
+        return match coerce_digit_id(digit_id_json_to_plasm(&value)) {
+            Ok(v) => try_plasm_value_to_json(&v).unwrap_or(serde_json::Value::Null),
+            Err(_) => serde_json::Value::Null,
+        };
+    }
     if let serde_json::Value::Number(number) = &value {
         if matches!(
             ft,
@@ -321,6 +333,8 @@ pub fn coerce_json_value_for_field_type(
 pub(crate) fn json_to_plasm_for_field(ft: &FieldType, value: &serde_json::Value) -> Value {
     if matches!(ft, FieldType::Money) {
         crate::money::json_amount_to_value(value)
+    } else if matches!(ft, FieldType::DigitId) {
+        digit_id_json_to_plasm(value)
     } else {
         json_value_to_plasm_value(value)
     }
@@ -381,6 +395,7 @@ pub fn try_plasm_value_to_json(v: &Value) -> Result<serde_json::Value, String> {
                 .collect::<Result<_, String>>()?,
         )),
         Value::PlasmInputRef(_)
+        | Value::GetScalarExtract(_)
         | Value::UnionCtor { .. }
         | Value::String(_)
         | Value::PhraseIdent(_) => Ok(serde_json::Value::Null),

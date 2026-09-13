@@ -7,6 +7,7 @@ use crate::{FieldType, CGS};
 use super::symbol_tokens::{ent_sym, id_sym_cap, id_sym_entity};
 use super::teaching_util::{
     TEACHING_ID_HOLE, TEACHING_PARAM_VALUE_PLACEHOLDER, TEACHING_SEARCH_QUERY_LITERAL,
+    TEACHING_SELECT_MEMBER_LITERAL,
 };
 
 /// Compound `Entity(p#=<id>,…)` when the target has multiple `key_vars`.
@@ -105,12 +106,15 @@ fn query_param_slot_example(
         FieldType::Integer | FieldType::Number | FieldType::Money | FieldType::Boolean => {
             format!("{n}={p}")
         }
-        FieldType::String | FieldType::Blob | FieldType::Uuid => format!("{n}={p}"),
+        FieldType::String | FieldType::Blob | FieldType::Uuid | FieldType::DigitId => {
+            format!("{n}={p}")
+        }
         FieldType::Date => format!("{n}={p}"),
-        // Query/search Select holes stay `<wire>`. Meaning lists members.
-        // First-member literals on this plane steer inbox copies (T_enum_query_hole).
-        FieldType::Select => format!("{n}={p}"),
-        FieldType::MultiSelect => format!("{n}=[{p}]"),
+        // Query/search Select holes stay quoted `"<member>"` — not a first-member
+        // exemplar (T_enum_query_hole). Meaning lists members; the quotes teach
+        // the same literal law the compiler already demands.
+        FieldType::Select => format!("{n}={TEACHING_SELECT_MEMBER_LITERAL}"),
+        FieldType::MultiSelect => format!("{n}=[{TEACHING_SELECT_MEMBER_LITERAL}]"),
         FieldType::EntityRef { target, .. } => {
             format!(
                 "{n}={}",
@@ -122,7 +126,7 @@ fn query_param_slot_example(
     }
 }
 
-/// One `p#=value` for a **required scope** parameter (same as filter slots).
+/// One `p#=value` for a scope parameter (same as filter slots).
 pub(crate) fn scope_param_slot(
     f: &InputFieldSchema,
     cap: &crate::CapabilitySchema,
@@ -157,6 +161,7 @@ pub(crate) fn compound_get_expr_line(
             | FieldType::Boolean
             | FieldType::String
             | FieldType::Uuid
+            | FieldType::DigitId
             | FieldType::Date
             | FieldType::Select
             | FieldType::MultiSelect
@@ -186,6 +191,10 @@ pub(crate) fn get_requires_identity_anchor(
 }
 
 /// Identity GET with explicit id wire: `e#{wire=<wire>}` (valid brace→Get sugar).
+///
+/// Callers must gate this on [`EntityDef::teaches_token_identity_braces`] — not
+/// “no Query peer”. File-polarity unary Gets (email / path / note_id) stay
+/// [`unary_entity_id_teaching_expr_line`].
 pub(crate) fn keyed_identity_get_teaching_expr_line(
     es: &str,
     ent: &EntityDef,
@@ -204,7 +213,26 @@ pub(crate) fn keyed_identity_get_teaching_expr_line(
     Some(format!("{es}{{{wire}={TEACHING_PARAM_VALUE_PLACEHOLDER}}}"))
 }
 
+/// Primary Get identity teaching: token-identity braces IFF
+/// [`EntityDef::teaches_token_identity_braces`]. Otherwise `e#(<id>)`.
+pub(crate) fn primary_get_identity_teaching_expr_line(
+    es: &str,
+    ent: &EntityDef,
+    cgs: &CGS,
+    map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
+) -> String {
+    if ent.teaches_token_identity_braces(cgs) {
+        keyed_identity_get_teaching_expr_line(es, ent, map, catalog_entry_id)
+            .unwrap_or_else(|| unary_entity_id_teaching_expr_line(es, ent, map, catalog_entry_id))
+    } else {
+        unary_entity_id_teaching_expr_line(es, ent, map, catalog_entry_id)
+    }
+}
+
 /// Unary identity GET teaching: always `e#(<id>)` — never sample ids or bare `$`.
+/// Token-identity Gets (Get-only + `implicit_request_identity`) use
+/// [`keyed_identity_get_teaching_expr_line`] on the fetch head, not this hole.
 pub(crate) fn unary_entity_id_teaching_expr_line(
     es: &str,
     _ent: &EntityDef,
@@ -214,7 +242,7 @@ pub(crate) fn unary_entity_id_teaching_expr_line(
     format!("{es}({TEACHING_ID_HOLE})")
 }
 
-/// Scope predicates + all selection (filter) parameters with CGS-derived placeholders.
+/// All authored scope (required and optional) plus all selection parameters.
 pub(crate) fn query_expr_maximal(
     cap: &crate::CapabilitySchema,
     es: &str,
@@ -222,11 +250,8 @@ pub(crate) fn query_expr_maximal(
     map: Option<&SymbolMap>,
     catalog_entry_id: &str,
 ) -> Option<String> {
-    let scope_fields: Vec<&InputFieldSchema> =
-        cap.scope_params().iter().filter(|f| f.required).collect();
-
     let mut inner: Vec<String> = Vec::new();
-    for sf in &scope_fields {
+    for sf in cap.scope_params() {
         inner.push(scope_param_slot(sf, cap, cgs, map, catalog_entry_id));
     }
 
@@ -325,13 +350,11 @@ pub(crate) fn query_expr_scope_only(
     map: Option<&SymbolMap>,
     catalog_entry_id: &str,
 ) -> Option<String> {
-    let scope_fields: Vec<&InputFieldSchema> =
-        cap.scope_params().iter().filter(|f| f.required).collect();
-    if scope_fields.is_empty() {
+    if cap.scope_params().is_empty() {
         return None;
     }
     let mut inner: Vec<String> = Vec::new();
-    for sf in &scope_fields {
+    for sf in cap.scope_params() {
         inner.push(scope_param_slot(sf, cap, cgs, map, catalog_entry_id));
     }
     Some(format!("{es}{{{}}}", inner.join(", ")))

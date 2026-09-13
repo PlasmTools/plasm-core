@@ -32,18 +32,23 @@ pub struct RowPredicateTypeCtx<'a> {
 }
 
 /// Parse a comma-separated predicate body by reusing the path parser on `Entity{body}`.
+///
+/// `row_schema_fields` is RA-2 `current_row_schema`. When non-empty (after `| select`),
+/// predicate names bind that grain — including aliases that are not catalog fields.
 pub fn parse_row_predicate_list(
     entity: &str,
     body: &str,
     layers: &[CgsLayer<'_>],
     sym_map: Arc<dyn SymbolSession>,
+    row_schema_fields: &[String],
 ) -> Result<RowPredicate, String> {
     // Deterministic rewrite of Kusto / wire-shaped temporal RHS before parse
     // (`now() - 7d` → `7d ago`, etc.). Wire slots still pass `now-7d` unchanged.
     let rewritten = crate::temporal::rewrite_temporal_aliases_in_predicate_body(body);
     let input = format!("{entity}{{{}}}", rewritten.trim());
-    let parsed = crate::expr_parser::parse_row_filter_body(&input, layers, sym_map)
-        .map_err(|e| format!("row filter parse: {e}"))?;
+    let parsed =
+        crate::expr_parser::parse_row_filter_body(&input, layers, sym_map, row_schema_fields)
+            .map_err(|e| format!("row filter parse: {e}"))?;
     row_predicate_from_expr(&parsed.expr)
 }
 
@@ -140,11 +145,97 @@ mod tests {
         let stack = vec![CgsLayer::unset(cgs.as_ref())];
         let (full, _) = entity_slices_for_render(cgs.as_ref(), FocusSpec::All);
         let sym_map = Arc::new(SymbolMap::build(cgs.as_ref(), &full));
-        let pred = parse_row_predicate_list("LangItem", r#"owner="a", score>1"#, &stack, sym_map)
-            .expect("parse");
+        let pred =
+            parse_row_predicate_list("LangItem", r#"owner="a", score>1"#, &stack, sym_map, &[])
+                .expect("parse");
         assert_eq!(pred.0.len(), 2);
         assert_eq!(pred.0[0].field, "owner");
         assert_eq!(pred.0[1].field, "score");
+    }
+
+    fn digit_id_layers() -> (Arc<CGS>, Vec<std::sync::Arc<CGS>>) {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/digit_id_identity");
+        let cgs = Arc::new(load_schema_dir(&dir).expect("digit_id_identity"));
+        (cgs.clone(), vec![cgs])
+    }
+
+    /// digit_id: unquoted i64 literal RA-8 coerces to exact digit string (not f64).
+    #[test]
+    fn parse_row_filter_eq_unquoted_pan_coerces_to_digit_id_string() {
+        let (cgs, _layers_arc) = digit_id_layers();
+        let stack = vec![CgsLayer::unset(cgs.as_ref())];
+        let (full, _) = entity_slices_for_render(cgs.as_ref(), FocusSpec::All);
+        let sym_map = Arc::new(SymbolMap::build(cgs.as_ref(), &full));
+        let pred =
+            parse_row_predicate_list("DigitAccount", "pan=6419671322388907", &stack, sym_map, &[])
+                .expect("unquoted digits on digit_id coerce via exact i64");
+        assert_eq!(
+            pred.0[0].value.typed_literal(),
+            Some(&crate::TypedLiteral::String("6419671322388907".into()))
+        );
+    }
+
+    /// Taught form: quoted digits on digit_id stay exact digit-string identity.
+    #[test]
+    fn parse_row_filter_eq_quoted_pan_is_digit_id_string() {
+        let (cgs, _layers_arc) = digit_id_layers();
+        let stack = vec![CgsLayer::unset(cgs.as_ref())];
+        let (full, _) = entity_slices_for_render(cgs.as_ref(), FocusSpec::All);
+        let sym_map = Arc::new(SymbolMap::build(cgs.as_ref(), &full));
+        let pred = parse_row_predicate_list(
+            "DigitAccount",
+            r#"pan="6419671322388907""#,
+            &stack,
+            sym_map,
+            &[],
+        )
+        .expect("quoted digits on digit_id");
+        assert_eq!(
+            pred.0[0].value.typed_literal(),
+            Some(&crate::TypedLiteral::String("6419671322388907".into()))
+        );
+    }
+
+    /// Unquoted integer beyond f64 exact range still becomes the exact digit string.
+    #[test]
+    fn parse_row_filter_eq_beyond_f64_pan_stays_exact_digits() {
+        let (cgs, _layers_arc) = digit_id_layers();
+        let stack = vec![CgsLayer::unset(cgs.as_ref())];
+        let (full, _) = entity_slices_for_render(cgs.as_ref(), FocusSpec::All);
+        let sym_map = Arc::new(SymbolMap::build(cgs.as_ref(), &full));
+        let pred =
+            parse_row_predicate_list("DigitAccount", "pan=9007199254740993", &stack, sym_map, &[])
+                .expect("i64 beyond f64 exact range");
+        assert_eq!(
+            pred.0[0].value.typed_literal(),
+            Some(&crate::TypedLiteral::String("9007199254740993".into()))
+        );
+        assert_ne!(
+            9_007_199_254_740_993i64 as f64 as i64,
+            9_007_199_254_740_993i64
+        );
+    }
+
+    #[test]
+    fn parse_row_filter_eq_float_on_digit_id_is_rejected() {
+        let (cgs, _layers_arc) = digit_id_layers();
+        let stack = vec![CgsLayer::unset(cgs.as_ref())];
+        let (full, _) = entity_slices_for_render(cgs.as_ref(), FocusSpec::All);
+        let sym_map = Arc::new(SymbolMap::build(cgs.as_ref(), &full));
+        let err = parse_row_predicate_list(
+            "DigitAccount",
+            "pan=9007199254740993.0",
+            &stack,
+            sym_map,
+            &[],
+        )
+        .expect_err("IEEE float is not digit_id identity");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("digit_id") || msg.contains("float") || msg.contains("IEEE"),
+            "expected float reject, got {msg}"
+        );
     }
 
     #[test]
@@ -157,8 +248,9 @@ mod tests {
         let stack = vec![CgsLayer::unset(cgs.as_ref())];
         let (full, _) = entity_slices_for_render(cgs.as_ref(), FocusSpec::All);
         let sym_map = Arc::new(SymbolMap::build(cgs.as_ref(), &full));
-        let pred = parse_row_predicate_list("CompoundBranch", r#"name="main""#, &stack, sym_map)
-            .expect("row filter on id_field must parse as a predicate");
+        let pred =
+            parse_row_predicate_list("CompoundBranch", r#"name="main""#, &stack, sym_map, &[])
+                .expect("row filter on id_field must parse as a predicate");
         assert_eq!(pred.0.len(), 1);
         assert_eq!(pred.0[0].field, "name");
         assert_eq!(pred.0[0].op, CompOp::Eq);
@@ -170,9 +262,59 @@ mod tests {
         let stack = vec![CgsLayer::unset(cgs.as_ref())];
         let (full, _) = entity_slices_for_render(cgs.as_ref(), FocusSpec::All);
         let sym_map = Arc::new(SymbolMap::build(cgs.as_ref(), &full));
-        let err =
-            parse_row_predicate_list("LangItem", "owner=\"a\" or owner=\"b\"", &stack, sym_map)
-                .unwrap_err();
+        let err = parse_row_predicate_list(
+            "LangItem",
+            "owner=\"a\" or owner=\"b\"",
+            &stack,
+            sym_map,
+            &[],
+        )
+        .unwrap_err();
         assert!(err.contains("OR") || err.contains("parse"), "{err}");
+    }
+
+    #[test]
+    fn parse_row_filter_binds_select_alias_on_current_row_schema() {
+        let (cgs, _layers_arc) = matrix_layers();
+        let stack = vec![CgsLayer::unset(cgs.as_ref())];
+        let (full, _) = entity_slices_for_render(cgs.as_ref(), FocusSpec::All);
+        let sym_map = Arc::new(SymbolMap::build(cgs.as_ref(), &full));
+        let pred = parse_row_predicate_list(
+            "LangItem",
+            r#"handle="alice""#,
+            &stack,
+            sym_map.clone(),
+            &[String::from("handle")],
+        )
+        .expect("RA-2: select alias must parse as a row predicate");
+        assert_eq!(pred.0.len(), 1);
+        assert_eq!(pred.0[0].field, "handle");
+        assert_eq!(pred.0[0].op, CompOp::Eq);
+
+        let err = parse_row_predicate_list(
+            "LangItem",
+            r#"handle="alice""#,
+            &stack,
+            sym_map.clone(),
+            &[],
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("handle") && err.contains("LangItem"),
+            "empty grain must still reject a non-entity alias: {err}"
+        );
+
+        let err = parse_row_predicate_list(
+            "LangItem",
+            r#"owner="alice""#,
+            &stack,
+            sym_map,
+            &[String::from("handle")],
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("RA-2") && err.contains("handle"),
+            "projected grain must name the taught alias, not synthesize Entity{{owner=}}: {err}"
+        );
     }
 }

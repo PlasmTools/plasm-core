@@ -39,6 +39,9 @@ pub enum ProfileId {
     JsonText,
     Html,
     Uuid,
+    /// Digit-string identifier (PAN / account number). Kernel is string; identity is exact digits.
+    #[serde(rename = "digit_id")]
+    DigitId,
     Email,
     Url,
     #[serde(rename = "http_url")]
@@ -71,6 +74,7 @@ impl ProfileId {
             "json_text" => Self::JsonText,
             "html" => Self::Html,
             "uuid" => Self::Uuid,
+            "digit_id" => Self::DigitId,
             "email" => Self::Email,
             "url" => Self::Url,
             "http_url" => Self::HttpUrl,
@@ -98,6 +102,7 @@ impl ProfileId {
             Self::JsonText => "json_text",
             Self::Html => "html",
             Self::Uuid => "uuid",
+            Self::DigitId => "digit_id",
             Self::Email => "email",
             Self::Url => "url",
             Self::HttpUrl => "http_url",
@@ -140,6 +145,7 @@ impl ProfileId {
         matches!(
             self,
             Self::Uuid
+                | Self::DigitId
                 | Self::Email
                 | Self::Url
                 | Self::HttpUrl
@@ -359,6 +365,7 @@ pub fn parse_type_name(
             | ProfileId::JsonText
             | ProfileId::Html
             | ProfileId::Uuid
+            | ProfileId::DigitId
             | ProfileId::Email
             | ProfileId::Url
             | ProfileId::HttpUrl
@@ -435,6 +442,7 @@ impl ValueDomain {
             FieldType::Number => (KernelKind::Number, None),
             FieldType::Integer => (KernelKind::Integer, None),
             FieldType::Uuid => (KernelKind::String, Some(ProfileId::Uuid)),
+            FieldType::DigitId => (KernelKind::String, Some(ProfileId::DigitId)),
             FieldType::Blob => (KernelKind::Blob, None),
             FieldType::String => (KernelKind::String, profile),
             FieldType::Select => (KernelKind::String, Some(ProfileId::Enum)),
@@ -534,6 +542,7 @@ impl ValueDomain {
             (KernelKind::Blob, _) => FieldType::Blob,
             (KernelKind::Money, _) => FieldType::Money,
             (KernelKind::String, Some(ProfileId::Uuid)) => FieldType::Uuid,
+            (KernelKind::String, Some(ProfileId::DigitId)) => FieldType::DigitId,
             (KernelKind::String, Some(ProfileId::Enum)) => FieldType::Select,
             (KernelKind::String, Some(ProfileId::MultiEnum)) => FieldType::MultiSelect,
             (KernelKind::String, Some(p)) if p.is_temporal() => FieldType::Date,
@@ -675,6 +684,7 @@ impl ValueDomain {
 pub fn validate_string_profile(profile: ProfileId, s: &str) -> Result<(), String> {
     match profile {
         ProfileId::Uuid => validate_uuid(s),
+        ProfileId::DigitId => validate_digit_id(s),
         ProfileId::Email => validate_email(s),
         ProfileId::Url => validate_url(s, false),
         ProfileId::HttpUrl => validate_url(s, true),
@@ -696,6 +706,13 @@ pub fn validate_string_profile(profile: ProfileId, s: &str) -> Result<(), String
         ProfileId::Base64Url => validate_base64(s, true),
         _ => Ok(()),
     }
+}
+
+pub(crate) fn validate_digit_id(s: &str) -> Result<(), String> {
+    if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(format!("digit_id must be ASCII digits, got {s:?}"));
+    }
+    Ok(())
 }
 
 fn validate_uuid(s: &str) -> Result<(), String> {
@@ -907,6 +924,33 @@ mod tests {
         let (k, p) = parse_type_name("string", None).unwrap();
         assert!(matches!(k, KernelKind::String));
         assert_eq!(p, None);
+        let (k, p) = parse_type_name("digit_id", None).unwrap();
+        assert!(matches!(k, KernelKind::String));
+        assert_eq!(p, Some(ProfileId::DigitId));
+        assert_eq!(
+            ValueDomain::new(
+                KernelKind::String,
+                Some(ProfileId::DigitId),
+                Constraints::default(),
+                None,
+                None,
+            )
+            .unwrap()
+            .to_field_type(),
+            FieldType::DigitId
+        );
+        assert_eq!(
+            ValueDomain::new(
+                KernelKind::String,
+                Some(ProfileId::DigitId),
+                Constraints::default(),
+                None,
+                None,
+            )
+            .unwrap()
+            .gloss_type_keyword(),
+            "digit_id"
+        );
     }
 
     #[test]
@@ -916,6 +960,9 @@ mod tests {
         validate_string_profile(ProfileId::Ipv4, "1.2.3.4").unwrap();
         assert!(validate_string_profile(ProfileId::Ipv4, "999.1.1.1").is_err());
         validate_string_profile(ProfileId::Uuid, "550e8400-e29b-41d4-a716-446655440000").unwrap();
+        validate_string_profile(ProfileId::DigitId, "6419671322388907").unwrap();
+        assert!(validate_string_profile(ProfileId::DigitId, "64-1967").is_err());
+        assert!(validate_string_profile(ProfileId::DigitId, "").is_err());
         validate_string_profile(ProfileId::HttpUrl, "https://example.com/x").unwrap();
         assert!(validate_string_profile(ProfileId::HttpUrl, "ftp://example.com").is_err());
     }

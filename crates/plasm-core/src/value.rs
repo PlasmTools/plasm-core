@@ -118,6 +118,75 @@ impl<'de> Deserialize<'de> for PlasmInputRef {
     }
 }
 
+/// Compile-time Get-identity scalar extract (`e#("id").wire`) in invoke/create args (PLP-1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct GetScalarExtract {
+    pub entity: String,
+    pub identity: Box<Value>,
+    pub wire: String,
+    pub catalog_entry_id: Option<String>,
+}
+
+impl Serialize for GetScalarExtract {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeMap;
+        let mut m = serializer.serialize_map(Some(1))?;
+        m.serialize_entry(
+            "__plasm_get_scalar_extract",
+            &serde_json::json!({
+                "entity": self.entity,
+                "identity": self.identity,
+                "wire": self.wire,
+                "catalog_entry_id": self.catalog_entry_id,
+            }),
+        )?;
+        m.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for GetScalarExtract {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let v = serde_json::Value::deserialize(deserializer)?;
+        let obj = v
+            .as_object()
+            .ok_or_else(|| de::Error::custom("GetScalarExtract expects a JSON object"))?;
+        let inner = obj.get("__plasm_get_scalar_extract").ok_or_else(|| {
+            de::Error::custom("GetScalarExtract expects __plasm_get_scalar_extract")
+        })?;
+        let entity = inner
+            .get("entity")
+            .and_then(|x| x.as_str())
+            .ok_or_else(|| de::Error::custom("GetScalarExtract missing entity"))?
+            .to_string();
+        let identity = inner
+            .get("identity")
+            .ok_or_else(|| de::Error::custom("GetScalarExtract missing identity"))?;
+        let identity: Value =
+            serde_json::from_value(identity.clone()).map_err(de::Error::custom)?;
+        let wire = inner
+            .get("wire")
+            .and_then(|x| x.as_str())
+            .ok_or_else(|| de::Error::custom("GetScalarExtract missing wire"))?
+            .to_string();
+        let catalog_entry_id = inner
+            .get("catalog_entry_id")
+            .and_then(|x| x.as_str())
+            .map(str::to_string);
+        Ok(Self {
+            entity,
+            identity: Box::new(identity),
+            wire,
+            catalog_entry_id,
+        })
+    }
+}
+
 /// Plasm's universal value type supporting JSON-like data plus typed extensions.
 ///
 /// `Integer` and `Float` are kept distinct so that integer field values (e.g. from
@@ -128,6 +197,8 @@ impl<'de> Deserialize<'de> for PlasmInputRef {
 pub enum Value {
     /// Program / template compile-time reference (see [`PlasmInputRef`]).
     PlasmInputRef(PlasmInputRef),
+    /// Inline Get scalar extract in an argument (`e#("id").wire`).
+    GetScalarExtract(GetScalarExtract),
     StringTemplate(crate::program_string_template::CompiledProgramString),
     Null,
     Bool(bool),
@@ -238,6 +309,7 @@ impl Value {
                     v.normalize_phrase_idents_in_tree();
                 }
             }
+            Value::GetScalarExtract(g) => g.identity.normalize_phrase_idents_in_tree(),
             Value::PlasmInputRef(_)
             | Value::Null
             | Value::Bool(_)
@@ -276,6 +348,7 @@ impl Value {
             Value::Object(m) => m.values().any(Self::contains_domain_placeholder_deep),
             Value::Array(a) => a.iter().any(Self::contains_domain_placeholder_deep),
             Value::PlasmInputRef(_)
+            | Value::GetScalarExtract(_)
             | Value::Null
             | Value::Bool(_)
             | Value::Integer(_)
@@ -288,6 +361,7 @@ impl Value {
     pub fn type_name(&self) -> &'static str {
         match self {
             Value::PlasmInputRef(_) => "plasm_input_ref",
+            Value::GetScalarExtract(_) => "get_scalar_extract",
             Value::Null => "null",
             Value::Bool(_) => "boolean",
             Value::Integer(_) => "integer",
@@ -394,6 +468,12 @@ impl Value {
     fn format_table_cell_inner(v: &Value, budget: &ValueTableCellBudget, depth: u8) -> String {
         match v {
             Value::StringTemplate(value) => value.source().to_owned(),
+            Value::GetScalarExtract(g) => format!(
+                "{}({}).{}",
+                g.entity,
+                g.identity.format_for_table_cell(budget),
+                g.wire
+            ),
             Value::PlasmInputRef(r) => match r {
                 PlasmInputRef::NodeInput { node, path } if path.is_empty() => {
                     format!("@{node}")
@@ -710,6 +790,9 @@ pub enum FieldType {
     Integer,
     /// Canonical UUID string (wire format matches `string`; distinguishes ids in the domain model).
     Uuid,
+    /// Digit-string identifier (PAN, account number, similar wire keys).
+    /// Exact ASCII-digit identity — not `integer`, not IEEE float, not a JSON number.
+    DigitId,
     /// Opaque binary or large payload field (base64 text, attachment object, etc.).
     /// Prefer `field_type: blob` over `string` + `string_semantics: blob`.
     Blob,
@@ -783,7 +866,7 @@ impl FieldType {
                 CompOp::Lte,
                 CompOp::Exists,
             ],
-            FieldType::String | FieldType::Blob | FieldType::Uuid => {
+            FieldType::String | FieldType::Blob | FieldType::Uuid | FieldType::DigitId => {
                 &[CompOp::Eq, CompOp::Neq, CompOp::Contains, CompOp::Exists]
             }
             FieldType::Date => &[

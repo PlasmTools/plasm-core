@@ -95,9 +95,11 @@ fn field_type_mermaid(ft: &FieldType) -> String {
         FieldType::Boolean => "boolean".to_string(),
         FieldType::Number => "float".to_string(),
         FieldType::Integer => "int".to_string(),
-        FieldType::String | FieldType::Uuid | FieldType::Select | FieldType::MultiSelect => {
-            "string".to_string()
-        }
+        FieldType::String
+        | FieldType::Uuid
+        | FieldType::DigitId
+        | FieldType::Select
+        | FieldType::MultiSelect => "string".to_string(),
         FieldType::Blob => "blob".to_string(),
         FieldType::Json => "json".to_string(),
         FieldType::Date => "date".to_string(),

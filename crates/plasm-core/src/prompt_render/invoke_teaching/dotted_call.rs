@@ -12,7 +12,7 @@ use super::super::query_teaching::{entity_ref_id_example, scope_param_slot};
 use super::super::relation_teaching::receiver_for_dotted_suffix;
 use super::super::symbol_tokens::{id_sym_cap, met_sym};
 use super::super::teaching_util::{select_enum_teach_literal, TEACHING_PARAM_VALUE_PLACEHOLDER};
-use super::path_vars_empty;
+use super::receiver_absent;
 use super::union_ctor::{
     format_root_union_constructor_invoke_example, format_union_constructor_invoke_example,
     union_variants_teachable,
@@ -86,6 +86,7 @@ pub(crate) fn invoke_dotted_call_arg_example(
         | FieldType::Blob
         | FieldType::Json
         | FieldType::Uuid
+        | FieldType::DigitId
         | FieldType::Integer
         | FieldType::Number
         | FieldType::Money => Some(format!("{n}={p}")),
@@ -253,7 +254,7 @@ pub(crate) fn format_dotted_call_line(
     let args = build_dotted_call_paren_args(anchor_entity, cap, cgs, map, catalog_entry_id)?;
     let ms = met_sym(map, catalog_entry_id, cap.domain.as_str(), cap);
     let suffix = format!(".{ms}({args})");
-    let prefer_bare = path_vars_empty(cap);
+    let prefer_bare = receiver_absent(cap);
     let recv = receiver_for_dotted_suffix(
         es,
         ent,

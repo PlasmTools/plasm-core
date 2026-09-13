@@ -121,6 +121,7 @@ fn field_type_wire_label(ft: &FieldType) -> &'static str {
         FieldType::Number => "number",
         FieldType::Integer => "integer",
         FieldType::Uuid => "uuid",
+        FieldType::DigitId => "digit_id",
         FieldType::Blob => "blob",
         FieldType::String => "string",
         FieldType::Select => "select",

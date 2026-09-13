@@ -75,28 +75,31 @@ pub use collect_meta::{normalize_nested_projection_field, peel_collect_meta, Col
 pub use heredoc_surface::{
     parse_tagged_heredoc_literal, tagged_heredoc_close_kind, HeredocCloseLineKind,
 };
-pub use iterate_until::{iterate_seed_is_label, try_parse_iterate_until, IterateUntilExpr};
+pub use iterate_until::{
+    iterate_seed_is_label, iterate_seed_must_be_get_identity, try_parse_iterate_until,
+    IterateUntilExpr, ITERATE_SEED_GET_FAMILY,
+};
 pub use pipe::{parse_pipe_expr, PipeExpr, PipeStage};
 pub use program::{
     parse_expr_node, parse_program_shape, ExprNode, ParsedProgram, RowExpr, Statement,
 };
 pub use program_surface::{
-    collect_program_statement_lines, expand_flattened_program_statements, is_valid_program_label,
-    looks_like_domain_symbol, missing_program_roots_error, pipe_head_has_catalog_surface_syntax,
+    classify_top_level_assignment, collect_program_statement_lines,
+    expand_flattened_program_statements, is_valid_program_label, looks_like_domain_symbol,
+    missing_program_roots_error, pipe_head_has_catalog_surface_syntax,
     program_binding_after_return_error, program_duplicate_return_node_error, program_empty_error,
     program_invalid_binding_label_error, program_return_keyword_error,
     scan_physical_line_stmt_state, split_assignment_at_top_level, split_assignment_for_binding,
     split_flattened_program_line, split_token_top_level, split_top_level, strip_line_comment,
     validate_pipe_head_syntax, validate_program_label, validate_program_statement_order,
-    FlattenedProgram, FlattenedProgramLine, PhysicalLineStmtState,
+    FlattenedProgram, FlattenedProgramLine, PhysicalLineStmtState, TopLevelAssignment,
 };
 pub use value_expr::{RenderExpr, ValueExpr};
 
 use crate::cgs_federation::CgsLayer;
 use crate::schema::{
     capability_is_zero_arity_invoke, capability_path_method_segment,
-    path_var_names_from_mapping_json, resolve_capability_input_param_field,
-    template_invoke_requires_explicit_anchor_id,
+    resolve_capability_input_param_field,
 };
 use crate::symbol_tuning::{
     entity_slices_for_render, CatalogScope, FocusSpec, SymbolMap, SymbolSession,
@@ -160,6 +163,13 @@ pub enum ParseErrorKind {
         field: String,
         entity: String,
         /// Byte range in the source covering the predicate field identifier.
+        span_start: usize,
+        span_end: usize,
+    },
+    /// `| where` after a concrete compute schema (RA-2 projection grain).
+    RowSchemaFieldNotFound {
+        field: String,
+        available: Vec<String>,
         span_start: usize,
         span_end: usize,
     },
@@ -234,6 +244,8 @@ pub enum ParseErrorKind {
     InvokeRequiresTargetId {
         entity: String,
         label: String,
+        /// Taught left-hand seat (`eN(<id>).mK(...)` or token-brace equivalent).
+        taught_seat: String,
     },
     UnexpectedTrailingInput {
         tail: String,
@@ -243,6 +255,10 @@ pub enum ParseErrorKind {
     },
     InvalidTemporalValue {
         message: String,
+    },
+    /// Angle-bracket teaching hole used as a program value (PLP-10).
+    UnfilledTeachingHole {
+        hole: String,
     },
     /// Prefer adding a variant above.
     Other {
@@ -289,6 +305,13 @@ impl fmt::Display for ParseErrorKind {
             ParseErrorKind::PredicateFieldNotFound { field, entity, .. } => write!(
                 f,
                 "field '{field}' not found on entity '{entity}' (not an entity field or capability param)"
+            ),
+            ParseErrorKind::RowSchemaFieldNotFound {
+                field, available, ..
+            } => write!(
+                f,
+                "RA-2: field '{field}' is not a column on the current row (available: {})",
+                available.join(", ")
             ),
             ParseErrorKind::NotNavigable { field, entity, .. } => write!(
                 f,
@@ -352,9 +375,9 @@ impl fmt::Display for ParseErrorKind {
             ParseErrorKind::CapabilityMissingInternal { name } => {
                 write!(f, "internal: capability '{name}' missing")
             }
-            ParseErrorKind::InvokeRequiresTargetId { entity, label } => write!(
+            ParseErrorKind::InvokeRequiresTargetId { taught_seat, .. } => write!(
                 f,
-                "`{entity}.{label}()` requires a target id; use {entity}(<id>).{label}()"
+                "invoke requires `{taught_seat}` on the left"
             ),
             ParseErrorKind::UnexpectedTrailingInput { tail } => {
                 write!(f, "unexpected input after expression: '{tail}'")
@@ -362,6 +385,10 @@ impl fmt::Display for ParseErrorKind {
             ParseErrorKind::InvalidTemporalValue { message } => {
                 write!(f, "invalid date/time value: {message}")
             }
+            ParseErrorKind::UnfilledTeachingHole { hole } => write!(
+                f,
+                "PLP-10: unfilled teaching hole `{hole}` is not an identifier or literal; fill it with a bound value, a row field, or a string of that sort"
+            ),
             ParseErrorKind::Other { message } => f.write_str(message),
         }
     }
@@ -485,14 +512,6 @@ fn scan_top_level_pred_rhs_end(input: &str, start: usize) -> usize {
     i
 }
 
-fn normalize_numeric_id_float(f: f64) -> String {
-    if f.fract() == 0.0 && f.is_finite() {
-        format!("{}", f as i64)
-    } else {
-        f.to_string()
-    }
-}
-
 /// Classification of unparsed input tail after a prefix parse.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParseRemainder {
@@ -527,6 +546,98 @@ pub fn parse_with_remainder(
             }
         })?;
     Ok((parsed, p.classify_remainder()))
+}
+
+/// Honest Create-as-filter note: do not name a Search wire when the entity has none.
+fn create_only_predicate_entity_note(cgs: &CGS, entity_name: &str, pred_wire: &str) -> String {
+    let has_search = !cgs
+        .find_capabilities(entity_name, CapabilityKind::Search)
+        .is_empty();
+    let has_query = !cgs
+        .find_capabilities(entity_name, CapabilityKind::Query)
+        .is_empty();
+    if has_search {
+        format!(
+            "{entity_name} (field `{pred_wire}` is a Create-capability param; in search filters `e#~\"…\"{{…}}` use the Search-capability param wire, not a Create-only homograph)"
+        )
+    } else if has_query {
+        format!(
+            "{entity_name} (field `{pred_wire}` is a Create-capability param, not a query filter; use the Query teaching-row wires in `e#{{…}}`, not a Create-only homograph)"
+        )
+    } else if crate::query_resolve::sole_nullary_singleton_get(cgs, entity_name).is_some() {
+        format!(
+            "{entity_name} (field `{pred_wire}` is a Create-capability param; this entity has no Query or Search filter surface — use the pathless singleton `{entity_name}` / `e#`, not Create params as `{{…}}` filters)"
+        )
+    } else {
+        format!(
+            "{entity_name} (field `{pred_wire}` is a Create-capability param; this entity has no Query or Search filter surface — use Get `e#(<id>)` when the id is known, not Create params as `{{…}}` filters)"
+        )
+    }
+}
+
+/// Opaque `m#` bound to a read kind: name the taught seat, never "find a mutator".
+fn opaque_read_kind_invoke_note(
+    raw: &str,
+    cap: &crate::CapabilitySchema,
+    entity_sym: &str,
+    cgs: Option<&CGS>,
+) -> String {
+    let kind = cap.kind.as_str();
+    let fq = format!("{}.{}", cap.domain, cap.name);
+    match cap.kind {
+        CapabilityKind::Get => {
+            let pathless = cgs
+                .and_then(|g| crate::query_resolve::sole_nullary_singleton_get(g, &cap.domain))
+                .is_some();
+            if pathless {
+                format!(
+                    "`{raw}` is {kind} `{fq}` — fetch is pathless `{entity_sym}` / `{entity_sym}[…]`, not `{entity_sym}.{raw}(…)`"
+                )
+            } else {
+                format!(
+                    "`{raw}` is {kind} `{fq}` — fetch is `{entity_sym}(<id>)`, not `{entity_sym}.{raw}(…)`"
+                )
+            }
+        }
+        CapabilityKind::Query => format!(
+            "`{raw}` is {kind} `{fq}` — list with `{entity_sym}{{…}}`, not `{entity_sym}.{raw}(…)`"
+        ),
+        CapabilityKind::Search => format!(
+            "`{raw}` is {kind} `{fq}` — search with `{entity_sym}~\"<query>\"`, not `{entity_sym}.{raw}(…)`"
+        ),
+        _ => format!("`{raw}` is {kind} `{fq}`, not a mutator"),
+    }
+}
+
+/// Identity-required mutator/Get seat the teaching table already showed.
+fn taught_explicit_anchor_seat(
+    source: &Expr,
+    cap: &crate::CapabilitySchema,
+    sym_map: &dyn crate::symbol_tuning::SymbolSession,
+    cgs: Option<&CGS>,
+) -> String {
+    let entity = source.primary_entity();
+    let eid = source
+        .session_catalog_entry_id()
+        .map(|s| s.as_str())
+        .unwrap_or("");
+    let es = sym_map.entity_sym_for(eid, entity);
+    let ent = cgs.and_then(|g| g.get_entity(entity));
+    let id_wire = match ent {
+        Some(e) if !e.id_field.as_str().is_empty() => {
+            sym_map.ident_sym_entity_field_for(eid, entity, e.id_field.as_str())
+        }
+        _ => String::new(),
+    };
+    match cap.kind {
+        CapabilityKind::Get => {
+            crate::taught_seat::taught_get_identity_receiver(&es, &id_wire, ent, cgs)
+        }
+        _ => {
+            let ms = sym_map.method_sym_for(eid, entity, cap.name.as_str());
+            crate::taught_seat::taught_identity_mutator_invoke_seat(&es, &ms, &id_wire, ent, cgs)
+        }
+    }
 }
 
 /// Parse a Plasm path expression string against a CGS for validation.
@@ -615,12 +726,47 @@ pub fn parse_with_cgs_layers_program(
 /// `id_field → Get` sugar. That rewrite is correct for surface queries, but inside a row predicate
 /// it would fold `{id_field=value}` into an `Expr::Get` and trip the row-predicate contract with a
 /// misleading "no list to filter" diagnostic. Row filters are always predicate `Expr::Query`.
+///
+/// `row_schema_fields` is RA-2 `current_row_schema` (prior `| select` aliases / projected columns).
+/// When non-empty, predicate LHS names are judged against that grain, not the catalog entity.
 pub fn parse_row_filter_body(
     input: &str,
     layers: &[CgsLayer<'_>],
     sym_map: Arc<dyn SymbolSession>,
+    row_schema_fields: &[String],
 ) -> Result<ParsedExpr, ParseError> {
-    parse_with_cgs_layers_program_opts(input, layers, sym_map, None, false, false)
+    let span = crate::spans::parse_program(input.len());
+    let _guard = span.enter();
+    if layers.is_empty() {
+        return Err(ParseError {
+            kind: ParseErrorKind::Other {
+                message: "parse_with_cgs_layers: empty CGS layer list".into(),
+            },
+            offset: 0,
+        });
+    }
+    let mut p = Parser::new_with_sym_map(input, LayerStack::borrowed(layers), sym_map);
+    p.row_schema_fields = row_schema_fields.to_vec();
+    let parsed = p.parse_expr()?;
+    let remainder = p.classify_remainder();
+    if !remainder.acceptable_for_program_line() {
+        return Err(ParseError {
+            kind: ParseErrorKind::Other {
+                message: format!(
+                    "unexpected trailing syntax starting with `{}`",
+                    match &remainder {
+                        ParseRemainder::Syntax { head, .. } => *head,
+                        _ => ' ',
+                    }
+                ),
+            },
+            offset: match remainder {
+                ParseRemainder::Syntax { at, .. } => at,
+                _ => p.pos,
+            },
+        });
+    }
+    Ok(parsed)
 }
 
 fn parse_with_cgs_layers_program_opts(
@@ -710,6 +856,9 @@ pub(super) struct Parser<'a> {
     pub(super) program_nodes: Option<&'a BTreeSet<String>>,
     /// Enables `_.path` row references (for `source => …` templates).
     pub(super) for_each_row_context: bool,
+    /// RA-2 `current_row_schema` column names when parsing a row-local `| where` body.
+    /// Empty means catalog-entity grain (query braces / iterate-until).
+    row_schema_fields: Vec<String>,
     /// When the surface entity token was an opaque `e#`, owning catalog stamped on built [`Expr`].
     pending_session_catalog_entry_id: Option<String>,
     /// Deferred field-dot extract candidate (PLP-1 scalar on StaticSingleton; `[…]` remains row projection).
@@ -739,6 +888,7 @@ impl<'a> Parser<'a> {
             sym_map,
             program_nodes: None,
             for_each_row_context: false,
+            row_schema_fields: Vec::new(),
             pending_session_catalog_entry_id: None,
             pending_field_dot_extract: None,
         };
@@ -969,7 +1119,7 @@ impl<'a> Parser<'a> {
                         }
                         if Self::scoped_query_bridge_matches_anchor(cap, cgs, anchor)
                             || (cap.kind == CapabilityKind::Create
-                                && self.can_bind_create_path_vars(cap, source))
+                                && self.can_bind_create_receiver(cap, source))
                         {
                             return Some(Ok(cap));
                         }
@@ -1024,10 +1174,7 @@ impl<'a> Parser<'a> {
             source.session_catalog_entry_id().map(|id| id.as_str()),
         )?;
         let cap_name = cap.name.clone();
-        let needs_anchor_id = cap
-            .mapping
-            .as_ref()
-            .is_some_and(|m| template_invoke_requires_explicit_anchor_id(&m.template.0));
+        let needs_anchor_id = cap.requires_receiver();
 
         let expr = if cap.kind == CapabilityKind::Create {
             Expr::Create(CreateExpr::new(
@@ -1039,17 +1186,10 @@ impl<'a> Parser<'a> {
             if let Expr::Get(g) = source {
                 Expr::Delete(DeleteExpr::with_target(cap_name, g.reference.clone()))
             } else if !needs_anchor_id {
-                let g = self.pathless_mutator_anchor_from_receiver(
-                    source,
-                    false,
-                    "delete requires Entity(id) on the left",
-                )?;
+                let g = self.pathless_mutator_anchor_from_receiver(source, false, cap, raw)?;
                 Expr::Delete(DeleteExpr::with_target(cap_name, g.reference.clone()))
             } else {
-                return Err(self.err(ParseErrorKind::InvokeRequiresTargetId {
-                    entity: entity.clone(),
-                    label: raw.to_string(),
-                }));
+                return Err(self.err_invoke_requires_taught_seat(source, cap, raw));
             }
         } else if cap.kind == CapabilityKind::Get {
             let mut g = if !needs_anchor_id {
@@ -1064,10 +1204,7 @@ impl<'a> Parser<'a> {
                         g
                     }
                     _ => {
-                        return Err(self.err(ParseErrorKind::InvokeRequiresTargetId {
-                            entity: entity.clone(),
-                            label: raw.to_string(),
-                        }));
+                        return Err(self.err_invoke_requires_taught_seat(source, cap, raw));
                     }
                 }
             };
@@ -1076,18 +1213,11 @@ impl<'a> Parser<'a> {
             }
             Expr::Get(g)
         } else if !needs_anchor_id {
-            let g = self.pathless_mutator_anchor_from_receiver(
-                source,
-                false,
-                "invoke requires Entity(id) on the left",
-            )?;
+            let g = self.pathless_mutator_anchor_from_receiver(source, false, cap, raw)?;
             Expr::Invoke(InvokeExpr::with_target(cap_name, g.reference.clone(), None))
         } else {
             let Expr::Get(g) = source else {
-                return Err(self.err(ParseErrorKind::InvokeRequiresTargetId {
-                    entity: entity.clone(),
-                    label: raw.to_string(),
-                }));
+                return Err(self.err_invoke_requires_taught_seat(source, cap, raw));
             };
             Expr::Invoke(InvokeExpr::with_target(cap_name, g.reference.clone(), None))
         };
@@ -1818,7 +1948,11 @@ impl<'a> Parser<'a> {
         match v {
             Value::String(s) => Ok(s.clone()),
             Value::Integer(n) => Ok(n.to_string()),
-            Value::Float(f) => Ok(normalize_numeric_id_float(*f)),
+            Value::Float(_) => Err(self.err(ParseErrorKind::Other {
+                message:
+                    "IEEE float is not an identity literal; use quoted digits or an exact integer"
+                        .into(),
+            })),
             Value::Object(_) => serde_json::to_string(v).map_err(|e| {
                 self.err(ParseErrorKind::Other {
                     message: format!("compound get slot must be JSON-serializable: {e}"),
@@ -1939,14 +2073,7 @@ impl<'a> Parser<'a> {
                 .cgs_for_entity_required(entity)?
                 .find_capabilities(entity, kind)
             {
-                if matches!(kind, CapabilityKind::Get)
-                    && !cap
-                        .mapping
-                        .as_ref()
-                        .map(|m| path_var_names_from_mapping_json(&m.template.0))
-                        .unwrap_or_default()
-                        .is_empty()
-                {
+                if matches!(kind, CapabilityKind::Get) && cap.requires_receiver() {
                     continue;
                 }
                 if !capability_is_zero_arity_invoke(cap) {
@@ -2137,7 +2264,11 @@ impl<'a> Parser<'a> {
                 if let (Some(labels), Value::PhraseIdent(ident)) = (self.program_nodes, &old) {
                     if matches!(
                         nv.field_type,
-                        FieldType::String | FieldType::Blob | FieldType::Uuid | FieldType::Json
+                        FieldType::String
+                            | FieldType::Blob
+                            | FieldType::Uuid
+                            | FieldType::DigitId
+                            | FieldType::Json
                     ) {
                         crate::phrase_ident::validate_identifier_phrase(
                             ident,
@@ -2210,9 +2341,9 @@ impl<'a> Parser<'a> {
     /// Resolve Create / Update / Action / Delete with object input.
     /// Opaque session `m#` resolves only via the forward method binding table — no CGS scan fallback.
     ///
-    /// Read kinds (Query / Search / Get) are rejected here so a wrong `m#` yields a clear
-    /// "not a mutator" diagnostic instead of a param error naming the bound query. Zero-arity
-    /// `e#.m#()` Gets still resolve via [`Self::parse_zero_arity_invoke`] (teaching pathless gets).
+    /// Read kinds (Query / Search / Get) are rejected here so a wrong `m#` names the
+    /// taught read seat instead of a param error on the bound query. Zero-arity
+    /// `e#.m#()` Gets still resolve via [`Self::parse_zero_arity_invoke`] (pathless gets).
     fn resolve_dotted_call_capability(
         &self,
         label: &str,
@@ -2228,14 +2359,15 @@ impl<'a> Parser<'a> {
                     cap.kind,
                     CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get
                 ) {
+                    let entity = source.primary_entity();
+                    let eid = source
+                        .session_catalog_entry_id()
+                        .map(|s| s.as_str())
+                        .unwrap_or("");
+                    let es = self.sym_map.entity_sym_for(eid, entity);
+                    let cgs = self.cgs_for_entity_required(entity).ok();
                     return Err(self.err(ParseErrorKind::Other {
-                        message: format!(
-                            "`{raw}` is {} `{}.{}`, not a mutator — use the teaching row for a create/update/action/delete method on `{}`",
-                            cap.kind.as_str(),
-                            cap.domain,
-                            cap.name,
-                            source.primary_entity(),
-                        ),
+                        message: opaque_read_kind_invoke_note(raw, cap, &es, cgs),
                     }));
                 }
                 return Ok(cap);
@@ -2279,7 +2411,7 @@ impl<'a> Parser<'a> {
                     && cap.kind == CapabilityKind::Create
             })
             .collect();
-        if cross.len() == 1 && self.can_bind_create_path_vars(cross[0], source) {
+        if cross.len() == 1 && self.can_bind_create_receiver(cross[0], source) {
             return Ok(cross[0]);
         }
         if cross.len() > 1 {
@@ -2295,7 +2427,7 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    fn can_bind_create_path_vars(&self, cap: &crate::CapabilitySchema, source: &Expr) -> bool {
+    fn can_bind_create_receiver(&self, cap: &crate::CapabilitySchema, source: &Expr) -> bool {
         let Expr::Get(g) = source else {
             return false;
         };
@@ -2331,7 +2463,8 @@ impl<'a> Parser<'a> {
             cap.invocation_object_fields(),
             &mut map,
         )?;
-        let needs_explicit_anchor = cap.invoke_requires_explicit_anchor_id();
+        let needs_explicit_anchor = cap.requires_receiver();
+        let taught_seat = self.taught_explicit_anchor_seat_for(&source, cap);
         let input = Value::Object(map);
         self.finish_dotted_call_with_payload_value_inner(
             source,
@@ -2339,6 +2472,8 @@ impl<'a> Parser<'a> {
             cap.name.clone(),
             cap.domain.clone(),
             cap.kind,
+            field_raw.as_str(),
+            taught_seat,
             input,
         )
     }
@@ -2398,18 +2533,43 @@ impl<'a> Parser<'a> {
                 message: "expected `v#{{…}}` union constructor for this invoke".into(),
             }));
         }
-        let needs_explicit_anchor = cap.invoke_requires_explicit_anchor_id();
+        let needs_explicit_anchor = cap.requires_receiver();
+        let taught_seat = self.taught_explicit_anchor_seat_for(&source, cap);
         self.finish_dotted_call_with_payload_value_inner(
             source,
             needs_explicit_anchor,
             cap.name.clone(),
             cap.domain.clone(),
             cap.kind,
+            field_raw.as_str(),
+            taught_seat,
             value,
         )
     }
 
-    /// Pathless mutator/get anchor: explicit `Entity(id)` or, when the CML template has no path
+    fn taught_explicit_anchor_seat_for(
+        &self,
+        source: &Expr,
+        cap: &crate::CapabilitySchema,
+    ) -> String {
+        let cgs = self.cgs_for_entity_required(source.primary_entity()).ok();
+        taught_explicit_anchor_seat(source, cap, self.sym_map.as_ref(), cgs)
+    }
+
+    fn err_invoke_requires_taught_seat(
+        &self,
+        source: &Expr,
+        cap: &crate::CapabilitySchema,
+        label: &str,
+    ) -> ParseError {
+        self.err(ParseErrorKind::InvokeRequiresTargetId {
+            entity: source.primary_entity().to_string(),
+            label: label.to_string(),
+            taught_seat: self.taught_explicit_anchor_seat_for(source, cap),
+        })
+    }
+
+    /// Pathless mutator/get anchor: explicit identity Get or, when the CML template has no path
     /// variables, a synthetic `"0"` Get that **preserves** the receiver's federated catalog stamp.
     ///
     /// Bare teaching heads (`e3.m7(…)`) must not re-validate the wire entity name unqualified —
@@ -2418,14 +2578,33 @@ impl<'a> Parser<'a> {
         &self,
         source: &Expr,
         needs_explicit_anchor: bool,
-        requires_entity_id_message: &str,
+        cap: &crate::CapabilitySchema,
+        label: &str,
+    ) -> Result<GetExpr, ParseError> {
+        let taught_seat = self.taught_explicit_anchor_seat_for(source, cap);
+        self.coerce_dotted_call_get_anchor_with_seat(
+            source,
+            needs_explicit_anchor,
+            label,
+            &taught_seat,
+        )
+    }
+
+    fn coerce_dotted_call_get_anchor_with_seat(
+        &self,
+        source: &Expr,
+        needs_explicit_anchor: bool,
+        label: &str,
+        taught_seat: &str,
     ) -> Result<GetExpr, ParseError> {
         if let Expr::Get(g) = source {
             return Ok(g.clone());
         }
         if needs_explicit_anchor {
-            return Err(self.err(ParseErrorKind::Other {
-                message: requires_entity_id_message.to_string(),
+            return Err(self.err(ParseErrorKind::InvokeRequiresTargetId {
+                entity: source.primary_entity().to_string(),
+                label: label.to_string(),
+                taught_seat: taught_seat.to_string(),
             }));
         }
         let entity = source.primary_entity().to_string();
@@ -2438,20 +2617,6 @@ impl<'a> Parser<'a> {
         Ok(g)
     }
 
-    /// Dotted invoke/delete anchor — see [`Self::pathless_mutator_anchor_from_receiver`].
-    fn coerce_dotted_call_get_anchor(
-        &self,
-        source: &Expr,
-        needs_explicit_anchor: bool,
-        requires_entity_id_message: &str,
-    ) -> Result<GetExpr, ParseError> {
-        self.pathless_mutator_anchor_from_receiver(
-            source,
-            needs_explicit_anchor,
-            requires_entity_id_message,
-        )
-    }
-
     fn finish_dotted_call_with_payload_value_inner(
         &mut self,
         source: Expr,
@@ -2459,6 +2624,8 @@ impl<'a> Parser<'a> {
         cap_name: CapabilityName,
         cap_domain: EntityName,
         cap_kind: CapabilityKind,
+        label: &str,
+        taught_seat: String,
         input: Value,
     ) -> Result<Expr, ParseError> {
         match cap_kind {
@@ -2473,10 +2640,11 @@ impl<'a> Parser<'a> {
                 }),
             )),
             CapabilityKind::Delete => {
-                let g = self.coerce_dotted_call_get_anchor(
+                let g = self.coerce_dotted_call_get_anchor_with_seat(
                     &source,
                     needs_explicit_anchor,
-                    "delete with arguments requires Entity(id) on the left",
+                    label,
+                    &taught_seat,
                 )?;
                 let mut delete = DeleteExpr::with_target(cap_name, g.reference.clone());
                 delete.input = Some(input.into());
@@ -2486,10 +2654,11 @@ impl<'a> Parser<'a> {
                 ))
             }
             CapabilityKind::Update | CapabilityKind::Action => {
-                let g = self.coerce_dotted_call_get_anchor(
+                let g = self.coerce_dotted_call_get_anchor_with_seat(
                     &source,
                     needs_explicit_anchor,
-                    "invoke with arguments requires Entity(id) on the left",
+                    label,
+                    &taught_seat,
                 )?;
                 Ok(Self::stamp_session_catalog_from_source(
                     &source,
@@ -2584,6 +2753,20 @@ impl<'a> Parser<'a> {
         span_start: usize,
         span_end: usize,
     ) -> Result<(), ParseError> {
+        if !self.row_schema_fields.is_empty() {
+            if self.row_schema_fields.iter().any(|f| f == pred_wire) {
+                return Ok(());
+            }
+            return Err(ParseError {
+                kind: ParseErrorKind::RowSchemaFieldNotFound {
+                    field: pred_field.to_string(),
+                    available: self.row_schema_fields.clone(),
+                    span_start,
+                    span_end,
+                },
+                offset: span_start,
+            });
+        }
         let Some(ent) = cgs.get_entity(entity_name) else {
             return Ok(());
         };
@@ -2605,9 +2788,7 @@ impl<'a> Parser<'a> {
             return Err(ParseError {
                 kind: ParseErrorKind::PredicateFieldNotFound {
                     field: pred_field.to_string(),
-                    entity: format!(
-                        "{entity_name} (field `{pred_wire}` is a Create-capability param; in search filters `e#~\"…\"{{…}}` use the Search-capability param wire, not a Create-only homograph)"
-                    ),
+                    entity: create_only_predicate_entity_note(cgs, entity_name, pred_wire),
                     span_start,
                     span_end,
                 },
@@ -3803,7 +3984,9 @@ mod tests {
     use crate::schema::capability_method_label_kebab;
     use crate::schema::registry_test_util;
     use crate::schema::NamedValueSchema;
-    use crate::symbol_tuning::{entity_slices_for_render, FocusSpec, SymbolMap};
+    use crate::symbol_tuning::{
+        entity_slices_for_render, teaching_exposure_session_from_focus, FocusSpec, SymbolMap,
+    };
     use crate::{
         loader::load_schema_dir, CapabilityKind, CapabilityMapping, CapabilitySchema, Cardinality,
         EntityKey, FieldType, InputFieldSchema, InputFieldWire, InputSchema, InputType,
@@ -3865,16 +4048,13 @@ mod tests {
         crate::type_check_expr(&r.expr, &cgs).unwrap();
     }
 
-    /// GraphQL `issue_get` has `variables.id` but no HTTP `path` vars; pipeline must not default id to "0".
+    /// Path-var Get must keep a UUID identity slot (must not default id to "0").
     #[test]
-    fn linear_issue_get_preserves_uuid() {
-        let dir = std::path::Path::new("../../apis/linear");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
+    fn langitem_get_preserves_uuid() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let u = "d6f28392-a2a8-46ce-a1c5-b5ec81ed2396";
-        let r = parse(&format!("Issue({u}).get()"), &cgs).unwrap();
+        let r = parse(&format!(r#"LangItem("{u}")"#), &cgs).unwrap();
         let Expr::Get(g) = &r.expr else {
             panic!("expected Get, got {:?}", r.expr);
         };
@@ -3932,6 +4112,89 @@ mod tests {
             "unexpected: {}",
             err.message()
         );
+    }
+
+    #[test]
+    fn parse_get_rejects_positional_id_plus_extra_arguments() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        parse(r#"LangItem("i1")"#, &cgs).expect("unary Get");
+        parse(
+            r#"LangItem("i1").update(title="x", score=1, owner="alice")"#,
+            &cgs,
+        )
+        .expect("method args belong after Get identity");
+        let err = parse(r#"LangItem("i1", title="x")"#, &cgs)
+            .expect_err("positional id plus extra Get args");
+        assert!(
+            matches!(
+                err.kind,
+                ParseErrorKind::ExpectedChar {
+                    expected: ')',
+                    got: Some(',')
+                }
+            ),
+            "expected close after positional id, got {:?}",
+            err.kind
+        );
+    }
+
+    /// PLP-10: card glyphs (`<id>`, `<wire>`, `"<query>"`) are templates, not program values.
+    /// Official T102901 copied `e4(<id>).m5(...)` — that shape must parse-reject.
+    #[test]
+    fn parse_rejects_unfilled_teaching_holes() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(&dir).unwrap();
+        let assert_hole = |input: &str, hole: &str| {
+            let err = parse(input, &cgs).expect_err(input);
+            assert!(
+                matches!(
+                    &err.kind,
+                    ParseErrorKind::UnfilledTeachingHole { hole: h } if h == hole
+                ),
+                "{input}: {:?}",
+                err.kind
+            );
+            let msg = err.message();
+            assert!(
+                msg.contains("PLP-10")
+                    && msg.contains("fill it with a bound value")
+                    && msg.contains("row field")
+                    && msg.contains("string of that sort"),
+                "{input}: {msg}"
+            );
+            assert!(
+                !msg.to_ascii_lowercase().contains("email"),
+                "fill law must stay domain-general: {msg}"
+            );
+        };
+        assert_hole("LangItem(<id>)", "<id>");
+        assert_hole(r#"LangItem("<id>")"#, "<id>");
+        assert_hole("LangItem{title=<wire>}", "<wire>");
+        assert_hole(r#"LangItem~"<query>""#, "<query>");
+        parse(r#"LangItem("i1")"#, &cgs).expect("filled Get identity");
+        parse(r#"LangItem{tags="alpha"}"#, &cgs).expect("filled query string");
+        parse("LangItem | where score < 10", &cgs).expect("comparison < is not a teaching hole");
+
+        let exposure = teaching_exposure_session_from_focus(&cgs, FocusSpec::Single("LangItem"));
+        let map = exposure.symbol_map_arc();
+        let e = map.entity_sym_for("", "LangItem");
+        let err = parse_session_line(&format!("{e}(<id>)"), &cgs, Some(map.clone()))
+            .expect_err("e#(<id>) must reject");
+        assert!(
+            matches!(
+                &err.kind,
+                ParseErrorKind::UnfilledTeachingHole { hole } if hole == "<id>"
+            ),
+            "{:?}",
+            err.kind
+        );
+        parse_session_line(&format!(r#"{e}("i1")"#), &cgs, Some(map))
+            .expect("filled e# identity must parse");
     }
 
     #[test]
@@ -4365,6 +4628,9 @@ mod tests {
             }),
             derived: None,
             inputs: crate::schema::CapabilityInputs {
+                receiver: Some(crate::CapabilityReceiver::Entity {
+                    entity: "Document".into(),
+                }),
                 payload: Some(InputSchema {
                     input_type: InputType::Union {
                         variants: vec![InputVariantSchema {
@@ -4762,96 +5028,72 @@ mod tests {
     }
 
     #[test]
-    fn parse_zero_arity_invoke_pathless_clickup() {
-        let dir = std::path::Path::new("../../apis/clickup");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let r = parse("User.get-me()", &cgs).unwrap();
+    fn parse_zero_arity_invoke_pathless_profile() {
+        let dir = std::path::Path::new("../../fixtures/schemas/sole_nullary_get");
+        let cgs = load_schema_dir(dir).expect("sole_nullary_get");
+        let r = parse("Profile.profile-get()", &cgs).unwrap();
         assert!(matches!(r.expr, Expr::Get(_)));
-        assert_eq!(r.expr.primary_entity(), "User");
+        assert_eq!(r.expr.primary_entity(), "Profile");
     }
 
-    /// Bare `true`/`false` in `{…}` are string tokens at parse time; coercion must turn them into
-    /// [`Value::Bool`] for boolean fields (eval: List(…).tasks{archived=false}).
+    /// Bare `true`/`false` coerce to [`Value::Bool`] on boolean payload fields.
     #[test]
-    fn parse_clickup_list_tasks_archived_false_typechecks() {
-        let dir = std::path::Path::new("../../apis/clickup");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let r = parse("List(123456789012345678).tasks{archived=false}", &cgs).unwrap();
-        assert!(matches!(r.expr, Expr::Query(_)));
+    fn parse_langitem_create_active_false_typechecks() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        let r = parse(r#"LangItem.create(title="t", active=false)"#, &cgs).unwrap();
+        assert!(matches!(r.expr, Expr::Create(_)));
         crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
     }
 
     #[test]
-    fn parse_zero_arity_invoke_pathless_clickup_no_parens() {
-        let dir = std::path::Path::new("../../apis/clickup");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let r = parse("User.get-me", &cgs).unwrap();
+    fn parse_zero_arity_invoke_pathless_profile_no_parens() {
+        let dir = std::path::Path::new("../../fixtures/schemas/sole_nullary_get");
+        let cgs = load_schema_dir(dir).expect("sole_nullary_get");
+        let r = parse("Profile.profile-get", &cgs).unwrap();
         assert!(matches!(r.expr, Expr::Get(_)));
-        assert_eq!(r.expr.primary_entity(), "User");
+        assert_eq!(r.expr.primary_entity(), "Profile");
     }
 
     #[test]
-    fn parse_zero_arity_invoke_path_clickup() {
-        let dir = std::path::Path::new("../../apis/clickup");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let r = parse("Team(42).seat_usage", &cgs).unwrap();
+    fn parse_zero_arity_invoke_path_langitem_tags() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        let r = parse("LangItem(i1).tags", &cgs).unwrap();
         assert!(matches!(r.expr, Expr::Chain(_)));
-        assert_eq!(r.expr.primary_entity(), "Team");
+        assert_eq!(r.expr.primary_entity(), "LangItem");
     }
 
-    /// Opaque session `m#` resolves to catalog capability for scoped query bridge.
+    /// Opaque session `m#` resolves to catalog capability for a query.
     #[test]
-    fn parse_clickup_team_get_space_query_via_method_symbol() {
-        let dir = std::path::Path::new("../../apis/clickup");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let cap = cgs.get_capability("space_query").expect("space_query");
+    fn parse_langitem_query_via_method_symbol() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        let cap = cgs
+            .get_capability("langitem_query")
+            .expect("langitem_query");
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
         let map = SymbolMap::build(&cgs, &full);
-        let sym = map.method_sym_for("", "Space", cap.name.as_str());
-        if sym == cap.name.as_str() {
-            return;
-        }
-        let line = format!("Team(42).{sym}");
+        let sym = map.method_sym_for("", "LangItem", cap.name.as_str());
+        let line = format!("LangItem.{sym}");
         let r = parse(&line, &cgs).unwrap();
         let Expr::Query(q) = &r.expr else {
             panic!("expected Query, got {:?}", r.expr);
         };
-        assert_eq!(q.entity.as_str(), "Space");
-        assert_eq!(q.capability_name.as_deref(), Some("space_query"));
+        assert_eq!(q.entity.as_str(), "LangItem");
+        assert_eq!(q.capability_name.as_deref(), Some("langitem_query"));
     }
 
-    /// Dotted-call alias grammar: non-empty `(key=value,…)` after kebab label → cross-domain Create when path binds.
+    /// Dotted-call alias grammar: non-empty `(key=value,…)` after kebab label → Create.
     #[test]
-    fn parse_dotted_call_team_create_space_typechecks() {
-        let dir = std::path::Path::new("../../apis/clickup");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let r = parse(
-            "Team(11111).team-create-space(name=\"Sprint Sandbox\")",
-            &cgs,
-        )
-        .unwrap();
+    fn parse_dotted_call_langitem_create_typechecks() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        let r = parse(r#"LangItem.langitem-create(title="Sprint Sandbox")"#, &cgs).unwrap();
         assert!(matches!(r.expr, Expr::Create(_)));
         if let Expr::Create(c) = &r.expr {
-            assert_eq!(c.capability.as_str(), "team_create_space");
-            assert_eq!(c.entity.as_str(), "Space");
+            assert_eq!(c.capability.as_str(), "langitem_create");
+            assert_eq!(c.entity.as_str(), "LangItem");
         }
         crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
     }
@@ -4859,83 +5101,62 @@ mod tests {
     /// Dotted-call args: `(..)` when all parameters are optional (teaching table ellipsis).
     #[test]
     fn parse_dotted_call_optional_only_double_dot_typechecks() {
-        let dir = std::path::Path::new("../../apis/clickup");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let r = parse("Team(42).team-create-time-entry(..)", &cgs).unwrap();
-        assert!(matches!(r.expr, Expr::Create(_)));
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        let r = parse("LangItem(i1).langitem-update(..)", &cgs).unwrap();
+        assert!(matches!(r.expr, Expr::Invoke(_)));
         crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
     }
 
     /// Dotted-call args: required bindings plus `,..` for optional tail.
     #[test]
     fn parse_dotted_call_required_plus_optional_ellipsis_typechecks() {
-        let dir = std::path::Path::new("../../apis/clickup");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let r = parse("Team(42).team-create-goal(name=\"example\",..)", &cgs).unwrap();
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        let r = parse(r#"LangItem.langitem-create(title="example",..)"#, &cgs).unwrap();
         assert!(matches!(r.expr, Expr::Create(_)));
         if let Expr::Create(c) = &r.expr {
             let wire = c.input.to_value();
             let obj = wire.as_object().expect("object input");
-            assert!(obj.contains_key("name"));
-            assert!(!obj.contains_key("due_date"));
+            assert!(obj.contains_key("title"));
+            assert!(!obj.contains_key("recorded_at"));
         }
         crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
     }
 
     #[test]
-    fn parse_proof_suggestion_insert_invoke_typechecks() {
-        let dir = std::path::Path::new("../../apis/proof");
-        if !dir.is_dir() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let cap = cgs
-            .get_capability("annotation_suggestion_insert")
-            .expect("annotation_suggestion_insert");
+    fn parse_langitem_ping_invoke_typechecks() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        let cap = cgs.get_capability("langitem_ping").expect("langitem_ping");
         let label = capability_method_label_kebab(cap);
-        let line = format!(
-            "Document(demo-slug).{label}(agent_id=\"bot\",by=\"bot\",quote=\"Status\",content=\"Status: green\")"
-        );
+        let line = format!("LangItem(demo-slug).{label}()");
         let r = parse(&line, &cgs).unwrap();
         let Expr::Invoke(inv) = &r.expr else {
             panic!("expected Invoke, got {:?}", r.expr);
         };
-        assert_eq!(inv.capability.as_str(), "annotation_suggestion_insert");
+        assert_eq!(inv.capability.as_str(), "langitem_ping");
         crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
     }
 
     #[test]
-    fn proof_document_get_markdown_capability_is_get_kind() {
-        let dir = std::path::Path::new("../../apis/proof");
-        if !dir.is_dir() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let cap = cgs
-            .get_capability("document_get_markdown")
-            .expect("document_get_markdown");
+    fn langitem_get_capability_is_get_kind() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        let cap = cgs.get_capability("langitem_get").expect("langitem_get");
         assert_eq!(cap.kind, CapabilityKind::Get);
     }
 
     /// Sole `vN{{…}}` is rejected when the capability root input is an object, not a union.
     #[test]
-    fn parse_proof_rejects_root_union_ctor_on_object_input_capability() {
-        let dir = std::path::Path::new("../../apis/proof");
-        if !dir.is_dir() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
+    fn parse_rejects_root_union_ctor_on_object_input_capability() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let cap = cgs
-            .get_capability("annotation_comment_add")
-            .expect("annotation_comment_add");
+            .get_capability("langitem_create")
+            .expect("langitem_create");
         let label = capability_method_label_kebab(cap);
-        let line = format!("Document(x).{label}(v111{{agent_id=$,by=$,quote=$,text=$}})");
+        let line = format!("LangItem.{label}(v111{{title=$,score=$}})");
         let e = parse(&line, &cgs).expect_err("expected parse error");
         assert!(
             e.message().contains("tagged union") || e.message().contains("key=value"),
@@ -4945,16 +5166,13 @@ mod tests {
     }
 
     #[test]
-    fn parse_hex_task_id_delete_clickup() {
-        let dir = std::path::Path::new("../../apis/clickup");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
+    fn parse_hex_item_id_delete() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         // Without hex continuation, `8` parses as an integer and `)` is expected at `b`.
         for line in [
-            "Task(8badcafe00000001).delete",
-            "Task(8badcafe00000001).delete()",
+            "LangItem(8badcafe00000001).delete",
+            "LangItem(8badcafe00000001).delete()",
         ] {
             let r = parse(line, &cgs).unwrap();
             assert!(
@@ -4963,7 +5181,7 @@ mod tests {
                 r.expr
             );
             if let Expr::Delete(d) = &r.expr {
-                assert_eq!(d.capability.as_str(), "task_delete");
+                assert_eq!(d.capability.as_str(), "langitem_delete");
                 assert_eq!(
                     d.target.simple_id().map(|s| s.as_str()),
                     Some("8badcafe00000001")
@@ -4974,135 +5192,72 @@ mod tests {
     }
 
     #[test]
-    fn typecheck_custom_field_team_id_union_query_caps() {
-        let dir = std::path::Path::new("../../apis/clickup");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let r = parse(r#"CustomField{team_id=Team(777666555)}"#, &cgs).unwrap();
+    fn typecheck_langtag_item_id_entity_ctor_query() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        let r = parse(r#"LangTag{item_id=LangItem(i1)}"#, &cgs).unwrap();
         assert!(crate::type_checker::type_check_expr(&r.expr, &cgs).is_ok());
     }
 
     #[test]
-    fn parse_zero_arity_invoke_path_clickup_no_parens() {
-        let dir = std::path::Path::new("../../apis/clickup");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let r = parse("Team(42).seat_usage", &cgs).unwrap();
+    fn parse_zero_arity_invoke_path_langitem_tags_no_parens() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        let r = parse("LangItem(i1).tags", &cgs).unwrap();
         assert!(matches!(r.expr, Expr::Chain(_)));
-        assert_eq!(r.expr.primary_entity(), "Team");
+        assert_eq!(r.expr.primary_entity(), "LangItem");
     }
 
     #[test]
-    fn parse_zero_arity_invoke_rejects_query_without_id_when_path_needs_it() {
-        let dir = std::path::Path::new("../../apis/clickup");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let e = parse("Team.start-time-entry()", &cgs).unwrap_err();
-        assert!(e.message().contains("target id"), "{}", e.message());
-    }
-
-    /// Zero-arity dotted invoke must keep compound [`Ref`] parts for CML path vars (`spreadsheetId`, `range`).
-    #[test]
-    fn parse_zero_arity_google_sheets_value_range_update_preserves_compound_ref() {
-        let dir = std::path::Path::new("../../apis/google-sheets");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let line = concat!(
-            "ValueRange(spreadsheetId=abc123,range=Sheet1!A1:C3)",
-            ".value-range-update()",
+    fn parse_zero_arity_invoke_rejects_action_without_id_when_path_needs_it() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        let e = parse("LangItem.langitem-ping()", &cgs).unwrap_err();
+        let msg = e.message();
+        assert!(
+            msg.contains("(<id>).") && msg.contains("on the left"),
+            "must name taught identity seat, got: {msg}"
         );
+        assert!(
+            !msg.contains("requires `LangItem.langitem-ping"),
+            "must not advertise pathless wire form as required, got: {msg}"
+        );
+    }
+
+    /// Compound-key Get must keep all identity parts (not flatten to a single slot).
+    #[test]
+    fn parse_compound_branch_get_preserves_compound_ref() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        let line = concat!("CompoundBranch(owner=alice,item_id=i1,name=main)", ".get()",);
         let r = parse(line, &cgs).unwrap();
-        let Expr::Invoke(inv) = &r.expr else {
-            panic!("expected Invoke, got {:?}", r.expr);
+        let Expr::Get(g) = &r.expr else {
+            panic!("expected Get, got {:?}", r.expr);
         };
-        assert_eq!(inv.capability.as_str(), "value_range_update");
-        let parts = inv
-            .target
+        let parts = g
+            .reference
             .compound_parts()
-            .expect("compound ValueRange ref");
-        assert_eq!(
-            parts.get("spreadsheetId").map(String::as_str),
-            Some("abc123")
-        );
-        assert_eq!(parts.get("range").map(String::as_str), Some("Sheet1!A1:C3"));
+            .expect("compound CompoundBranch ref");
+        assert_eq!(parts.get("owner").map(String::as_str), Some("alice"));
+        assert_eq!(parts.get("item_id").map(String::as_str), Some("i1"));
+        assert_eq!(parts.get("name").map(String::as_str), Some("main"));
         crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
     }
 
-    /// Spreadsheet path templates use `id`; simple refs must stay a single slot (not `primary_slot_str()`).
+    /// Simple-id Get must stay a single slot (not `primary_slot_str()` flattening).
     #[test]
-    fn parse_zero_arity_google_sheets_spreadsheet_batch_update_preserves_simple_ref() {
-        let dir = std::path::Path::new("../../apis/google-sheets");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let line = concat!("Spreadsheet(sheet-id-9)", ".batch-update()");
-        let r = parse(line, &cgs).unwrap();
+    fn parse_langitem_ping_preserves_simple_ref() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        let r = parse("LangItem(sheet-id-9).langitem-ping()", &cgs).unwrap();
         let Expr::Invoke(inv) = &r.expr else {
             panic!("expected Invoke, got {:?}", r.expr);
         };
-        assert_eq!(inv.capability.as_str(), "spreadsheet_batch_update");
+        assert_eq!(inv.capability.as_str(), "langitem_ping");
         assert_eq!(
             inv.target.simple_id().map(|s| s.as_str()),
             Some("sheet-id-9")
         );
-        assert!(inv.input.is_none());
-        crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
-    }
-
-    /// Fibery `entity_delete` has no HTTP path vars; zero-arity delete must still keep compound scope.
-    #[test]
-    fn parse_zero_arity_fibery_record_delete_preserves_compound_ref() {
-        let dir = std::path::Path::new("../../apis/fibery");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let line = concat!(
-            "Record(database=\"Product Development/Bug\",id=\"019ea239-59d4-7374-b684-ac61b0dd28ec\")",
-            ".entity-delete()",
-        );
-        let r = parse(line, &cgs).unwrap();
-        let Expr::Delete(del) = &r.expr else {
-            panic!("expected Delete, got {:?}", r.expr);
-        };
-        assert_eq!(del.capability.as_str(), "entity_delete");
-        let parts = del.target.compound_parts().expect("compound Record ref");
-        assert_eq!(
-            parts.get("database").map(String::as_str),
-            Some("Product Development/Bug")
-        );
-        assert_eq!(
-            parts.get("id").map(String::as_str),
-            Some("019ea239-59d4-7374-b684-ac61b0dd28ec")
-        );
-        crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
-    }
-
-    #[test]
-    fn parse_dotted_fibery_record_delete_with_scope_args_is_delete_not_invoke() {
-        let dir = std::path::Path::new("../../apis/fibery");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let line = concat!(
-            "Record(database=\"Product Development/Bug\",id=\"019ea239-59d4-7374-b684-ac61b0dd28ec\")",
-            ".entity-delete(database=\"Product Development/Bug\",id=\"019ea239-59d4-7374-b684-ac61b0dd28ec\")",
-        );
-        let r = parse(line, &cgs).unwrap();
-        let Expr::Delete(del) = &r.expr else {
-            panic!("expected Delete, got {:?}", r.expr);
-        };
-        assert_eq!(del.capability.as_str(), "entity_delete");
         crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
     }
 
@@ -5117,16 +5272,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_clickup_list_string_id_coerces_integer_literal() {
-        let dir = std::path::Path::new("../../apis/clickup");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        // `List{id=<bigint>}` is referentially `List(<id>)`: the id-field brace sugar
-        // (`expr_sugar::lower_id_field_brace_to_get`) rewrites it to a Get whose key preserves
-        // the string-typed id verbatim — no integer coercion or precision loss on the 18-digit literal.
-        let r = parse("List{id=123456789012345678}", &cgs).unwrap();
+    fn parse_langitem_string_id_preserves_integer_literal() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        // `LangItem{id=<bigint>}` is referentially `LangItem(<id>)`: the id-field brace sugar
+        // rewrites it to a Get whose key preserves the string-typed id verbatim.
+        let r = parse("LangItem{id=123456789012345678}", &cgs).unwrap();
         let Expr::Get(g) = &r.expr else {
             panic!("expected get (id-field brace sugar), got {:?}", r.expr);
         };
@@ -5134,72 +5285,47 @@ mod tests {
     }
 
     #[test]
-    fn parse_clickup_task_due_date_now_normalizes_to_unix_ms() {
-        let dir = std::path::Path::new("../../apis/clickup");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let r = parse("Task{due_date=now}", &cgs).unwrap();
-        let Expr::Query(q) = &r.expr else {
-            panic!("expected query");
+    fn parse_langitem_recorded_at_now_normalizes_temporal() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        let r = parse(r#"LangItem.create(title="t", recorded_at=now)"#, &cgs).unwrap();
+        let Expr::Create(c) = &r.expr else {
+            panic!("expected create");
         };
-        let Some(pred) = &q.predicate else {
-            panic!("expected predicate");
-        };
-        let Predicate::Comparison { value, .. } = pred else {
-            panic!("expected comparison");
-        };
+        let wire = c.input.to_value();
+        let obj = wire.as_object().expect("object input");
+        let value = obj.get("recorded_at").expect("recorded_at");
         assert!(
-            matches!(value.to_value(), Value::Integer(_)),
-            "due_date=now should coerce to unix_ms integer, got {value:?}"
+            !matches!(value, Value::String(s) if s == "now"),
+            "recorded_at=now should normalize, got {value:?}"
         );
+        crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
     }
 
     #[test]
-    fn parse_clickup_goal_due_date_next_week_normalizes_to_unix_ms() {
-        let dir = std::path::Path::new("../../apis/clickup");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let r = parse("Goal{team_id=Team(999888777), due_date=next-week}", &cgs).unwrap();
-        let Expr::Query(q) = &r.expr else {
-            panic!("expected query");
+    fn parse_langitem_recorded_at_next_week_normalizes_temporal() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        let r = parse(r#"LangItem.create(title="t", recorded_at=next-week)"#, &cgs).unwrap();
+        let Expr::Create(c) = &r.expr else {
+            panic!("expected create");
         };
-        let Some(pred) = &q.predicate else {
-            panic!("expected predicate");
-        };
-        let due_val = match pred {
-            crate::Predicate::And { args } => args.iter().find_map(|p| {
-                if let crate::Predicate::Comparison { field, value, .. } = p {
-                    (field == "due_date").then_some(value)
-                } else {
-                    None
-                }
-            }),
-            crate::Predicate::Comparison { field, value, .. } if field == "due_date" => Some(value),
-            _ => None,
-        };
-        let Some(value) = due_val else {
-            panic!("expected due_date comparison, got {pred:?}");
-        };
+        let wire = c.input.to_value();
+        let obj = wire.as_object().expect("object input");
+        let value = obj.get("recorded_at").expect("recorded_at");
         assert!(
-            matches!(value.to_value(), Value::Integer(_)),
-            "due_date=next-week should coerce via temporal pre-normalisation, got {value:?}"
+            !matches!(value, Value::String(s) if s == "next-week"),
+            "recorded_at=next-week should normalize, got {value:?}"
         );
+        crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
     }
 
     #[test]
-    fn parse_uuid_value_in_predicate() {
-        let dir = std::path::Path::new("../../apis/clickup");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
+    fn parse_uuid_value_in_id_brace() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let u = "550e8400-e29b-41d4-a716-446655440000";
-        // id-field brace sugar: `List{id=<uuid>}` ≡ `List(<uuid>)`; the uuid survives as a string key.
-        let r = parse(&format!("List{{id={u}}}"), &cgs).unwrap();
+        let r = parse(&format!("LangItem{{id={u}}}"), &cgs).unwrap();
         let Expr::Get(g) = &r.expr else {
             panic!("expected get (id-field brace sugar), got {:?}", r.expr);
         };
@@ -5262,27 +5388,21 @@ mod tests {
         assert_eq!(value.to_value(), Value::String("acme(test)".to_string()));
     }
 
-    /// Unquoted multi-word string in `{{…}}` predicate (lenient RHS).
+    /// Unquoted multi-word string in `{…}` predicate (lenient RHS).
     #[test]
-    fn parse_clickup_space_query_unquoted_phrase_name_typechecks() {
-        let dir = std::path::Path::new("../../apis/clickup");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let r = parse("Space{team_id=Team(11111), name=Sprint Sandbox}", &cgs).unwrap();
+    fn parse_langitem_query_unquoted_phrase_owner_typechecks() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        let r = parse("LangItem{owner=Sprint Sandbox}", &cgs).unwrap();
         assert!(matches!(r.expr, Expr::Query(_)));
         crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
     }
 
     #[test]
-    fn parse_dotted_call_team_create_space_unquoted_name_typechecks() {
-        let dir = std::path::Path::new("../../apis/clickup");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let r = parse("Team(11111).team-create-space(name=Sprint Sandbox)", &cgs).unwrap();
+    fn parse_dotted_call_langitem_create_unquoted_title_typechecks() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        let r = parse("LangItem.langitem-create(title=Sprint Sandbox)", &cgs).unwrap();
         assert!(matches!(r.expr, Expr::Create(_)));
         crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
     }
@@ -5351,7 +5471,37 @@ mod tests {
                 "input {input:?}: expected EmptyGetParens for Widget, got {:?}",
                 err.kind
             );
+            let step = crate::error_render::render_parse_error(&err, input, &cgs);
+            assert!(
+                step.correction.contains("query")
+                    && !step.correction.contains("Put a non-empty id"),
+                "query-only entity must not name a keyed Get: {}",
+                step.correction
+            );
         }
+    }
+
+    #[test]
+    fn empty_parens_on_sole_nullary_names_pathless_seat() {
+        let dir = std::path::Path::new("../../fixtures/schemas/sole_nullary_get");
+        assert!(dir.exists(), "missing fixture {dir:?}");
+        let cgs = crate::loader::load_schema_dir(dir).unwrap();
+        let err = parse("Profile()", &cgs).unwrap_err();
+        assert!(
+            matches!(
+                &err.kind,
+                ParseErrorKind::EmptyGetParens { entity } if entity == "Profile"
+            ),
+            "got {:?}",
+            err.kind
+        );
+        let step = crate::error_render::render_parse_error(&err, "Profile()", &cgs);
+        assert!(
+            step.correction.contains("pathless singleton")
+                && step.correction.contains("never `Profile()`"),
+            "sole-nullary empty parens must name the pathless seat: {}",
+            step.correction
+        );
     }
 
     fn str_field(cgs: &CGS, name: &str) -> crate::schema::FieldSchema {
@@ -5520,22 +5670,13 @@ mod tests {
         crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
     }
 
-    /// Regression: GitHub `issue_query` scope `repository` accepts compound `Repository(owner=…, repo=…)`.
+    /// Nested entity constructor on a scoped query param (`LangTag{item_id=LangItem(id=…)}`).
     #[test]
-    fn parse_github_issue_query_nested_repository_constructor_when_schema_loads() {
-        let dir = std::path::Path::new("../../apis/github");
-        if !dir.exists() {
-            return;
-        }
-        let Ok(cgs) = load_schema_dir(dir) else {
-            // Some dev trees may skip bundled GitHub if CGS validation is in flux.
-            return;
-        };
-        let r = parse(
-            "Issue{repository=Repository(owner=octocat, repo=Hello-World)}",
-            &cgs,
-        )
-        .expect("nested Repository constructor should parse");
+    fn parse_langtag_query_nested_langitem_constructor() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        let r = parse("LangTag{item_id=LangItem(id=i1)}", &cgs)
+            .expect("nested LangItem constructor should parse");
         let Expr::Query(q) = &r.expr else {
             panic!("expected query");
         };
@@ -5545,14 +5686,9 @@ mod tests {
         let Predicate::Comparison { field, value, .. } = pred else {
             panic!("expected comparison");
         };
-        assert_eq!(field, "repository");
-        let wire = value.to_value();
-        let Value::Object(m) = wire else {
-            panic!("expected normalized object, got {value:?}");
-        };
-        assert_eq!(m.get("owner"), Some(&Value::String("octocat".into())));
-        assert_eq!(m.get("repo"), Some(&Value::String("Hello-World".into())));
+        assert_eq!(field, "item_id");
         let _ = crate::type_checker::type_check_expr(&r.expr, &cgs);
+        let _ = value;
     }
 
     /// Mid-call heredoc with comma-suffixed close on the same line (user repro / PLP-2 staging).
@@ -5576,21 +5712,14 @@ mod tests {
         );
     }
 
-    /// Regression (eval gh-54): glued `TAG)` after heredoc body in a method call must parse.
+    /// Glued `TAG)` after heredoc body in a method call must parse (language matrix).
     #[test]
-    fn parse_github_issue_comment_create_glued_heredoc_close() {
-        let dir = std::path::Path::new("../../apis/github");
-        if !dir.exists() {
-            return;
-        }
-        let Ok(cgs) = load_schema_dir(dir) else {
-            return;
-        };
+    fn parse_langitem_create_glued_heredoc_close() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let expr = concat!(
-            "IssueComment.issue-comment-create(",
-            "repository=Repository(owner=\"plasm\",repo=\"plasm\"),",
-            "issue_number=99,",
-            "body=<<B\n# Issue Comment\n- [ ] Task 1\n- [ ] Task 2\nB)",
+            "LangItem.create(",
+            "title=<<B\n# Item Comment\n- [ ] Task 1\n- [ ] Task 2\nB, score=0, owner=\"matrix\")",
         );
         let r = parse(expr, &cgs).expect("glued TAG) close should parse");
         let _ = crate::type_checker::type_check_expr(&r.expr, &cgs);
@@ -5604,14 +5733,10 @@ mod tests {
     /// Unary `Entity($)` parses inside brace-query RHS (teaching table fill-in, same as scalar `$`).
     #[test]
     fn parse_accepts_unary_entity_ctor_dollar_in_brace_query() {
-        let dir = std::path::Path::new("../../apis/github");
-        if !dir.exists() {
-            return;
-        }
-        let Ok(cgs) = load_schema_dir(dir) else {
-            return;
-        };
-        let r = parse("Issue{assignee=User($)}", &cgs).expect("User($) in filter should parse");
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        let r = parse("LangTag{item_id=LangItem($)}", &cgs)
+            .expect("LangItem($) in filter should parse");
         let Expr::Query(q) = r.expr else {
             panic!("expected Query, got {:?}", r.expr);
         };
@@ -5964,13 +6089,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_pokeapi_materialized_many_relation_yields_chain() {
-        let dir = std::path::Path::new("../../apis/pokeapi");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        for input in ["Type(electric).pokemon", "Pokemon(pikachu).types"] {
+    fn parse_langitem_materialized_many_relation_yields_chain() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        for input in ["LangItem(i1).tags", "LangItem(i1).children"] {
             let r = parse(input, &cgs).unwrap();
             assert!(
                 matches!(r.expr, Expr::Chain(_)),
@@ -6021,18 +6143,15 @@ mod tests {
 
     #[test]
     fn program_parse_maps_known_binding_to_plasm_input_ref_in_predicate() {
-        let dir = std::path::Path::new("../../apis/github");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
         let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
         let stack = test_layer(&cgs);
         let mut refs = std::collections::BTreeSet::new();
         refs.insert("report".into());
         let r = parse_with_cgs_layers_program(
-            "Issue{state=report}",
+            "LangItem{status=report}",
             &stack,
             sym_map,
             Some(&refs),
@@ -6062,18 +6181,15 @@ mod tests {
     fn program_parse_unknown_ident_becomes_phrase_ident_in_predicate() {
         // Bare unquoted words in query `{…}` predicates coerce to string at parse time via
         // [`coerce_value_for_field_type`] (same path as teaching-table query filters).
-        let dir = std::path::Path::new("../../apis/github");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
         let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
         let stack = test_layer(&cgs);
         let mut refs = std::collections::BTreeSet::new();
         refs.insert("not_report".into());
         let r = parse_with_cgs_layers_program(
-            "Issue{title=report}",
+            "LangItem{title=report}",
             &stack,
             sym_map,
             Some(&refs),
@@ -6093,38 +6209,57 @@ mod tests {
     }
 
     #[test]
-    fn linear_issue_search_method_sugar() {
-        let dir = std::path::Path::new("../../apis/linear");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
+    fn langitem_search_method_sugar() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
         let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
         let stack = test_layer(&cgs);
-        let r = parse_with_cgs_layers(r#"Issue.search(q="bug", team_key="ENG")"#, &stack, sym_map)
-            .expect("parse");
+        let r = parse_with_cgs_layers(
+            r#"LangItem.search(q="bug", team_key="ENG")"#,
+            &stack,
+            sym_map,
+        )
+        .expect("parse");
         let Expr::Query(q) = &r.expr else {
             panic!("expected query");
         };
-        assert_eq!(q.capability_name.as_deref(), Some("issue_search"));
+        assert_eq!(q.capability_name.as_deref(), Some("langitem_search"));
     }
 
     #[test]
     fn bare_search_tilde_without_text_is_search_text_error() {
-        let dir = std::path::Path::new("../../apis/linear");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
         let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
         let stack = test_layer(&cgs);
-        let err = parse_with_cgs_layers(r#"Issue~"#, &stack, sym_map).unwrap_err();
+        let err = parse_with_cgs_layers(r#"LangItem~"#, &stack, sym_map).unwrap_err();
         assert!(
             matches!(err.kind, ParseErrorKind::SearchTextMustBeString),
             "expected SearchTextMustBeString, got {err:?}"
         );
+    }
+
+    #[test]
+    fn language_matrix_search_tilde_and_brace_q_are_search_not_query_all() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("language matrix");
+        let tilde = parse(r#"LangItem~"no-such-item""#, &cgs).expect("parse tilde");
+        let Expr::Query(tq) = &tilde.expr else {
+            panic!("expected Query, got {:?}", tilde.expr);
+        };
+        assert_eq!(tq.capability_name.as_deref(), Some("langitem_search"));
+        let brace = parse(r#"LangItem{q="no-such-item"}"#, &cgs).expect("parse brace q");
+        let Expr::Query(bq) = &brace.expr else {
+            panic!("expected Query, got {:?}", brace.expr);
+        };
+        assert!(
+            bq.capability_name.is_none(),
+            "brace does not stamp Search at parse; resolve must"
+        );
+        let cap = crate::query_resolve::resolve_query_capability(bq, &cgs).expect("RA-2");
+        assert_eq!(cap.name.as_str(), "langitem_search");
     }
 
     #[test]
@@ -6159,6 +6294,26 @@ mod tests {
         assert!(
             fields.iter().any(|f| f == "query"),
             "expected query field from tilde text; fields={fields:?}"
+        );
+    }
+
+    #[test]
+    fn create_only_filter_on_get_only_entity_does_not_name_a_search_wire() {
+        let dir = std::path::Path::new("../../fixtures/schemas/create_filter_polarity");
+        assert!(
+            dir.exists(),
+            "missing fixture schemas/create_filter_polarity"
+        );
+        let cgs = load_schema_dir(dir).unwrap();
+        let err = parse(r#"Doc{access_token="tok"}"#, &cgs).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("no Query or Search filter surface"),
+            "expected get-only honesty, got {msg}"
+        );
+        assert!(
+            !msg.contains("use the Search-capability param wire"),
+            "must not name a Search wire when none exists: {msg}"
         );
     }
 
@@ -6292,47 +6447,49 @@ mod tests {
     }
 
     #[test]
-    fn federated_issue_collision_parse_uses_opaque_entity_catalog() {
+    fn federated_langitem_collision_parse_uses_opaque_entity_catalog() {
         use crate::symbol_tuning::TeachingExposureSession;
         use std::path::Path;
         use std::sync::Arc;
 
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let github_dir = root.join("../../apis/github");
-        let linear_dir = root.join("../../apis/linear");
-        if !github_dir.is_dir() || !linear_dir.is_dir() {
-            return;
-        }
-        let mut cgs_github = load_schema_dir(&github_dir).expect("github");
-        cgs_github.bind_registry_entry_id("github");
-        let mut cgs_linear = load_schema_dir(&linear_dir).expect("linear");
-        cgs_linear.bind_registry_entry_id("linear");
-        let layers = [&cgs_github, &cgs_linear];
-        let stack = cgs_layer_stack(&["github", "linear"], &layers);
-        let mut exp = TeachingExposureSession::new(&cgs_github, "github", &["Issue"]);
-        exp.expose_entities(&layers, Arc::new(cgs_linear.clone()), "linear", &["Issue"]);
+        let dir = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let mut cgs_a = load_schema_dir(dir).expect("plasm_language_matrix");
+        cgs_a.bind_registry_entry_id("langmatrix_a");
+        let mut cgs_b = load_schema_dir(dir).expect("plasm_language_matrix");
+        cgs_b.bind_registry_entry_id("langmatrix_b");
+        let layers = [&cgs_a, &cgs_b];
+        let stack = cgs_layer_stack(&["langmatrix_a", "langmatrix_b"], &layers);
+        let mut exp = TeachingExposureSession::new(&cgs_a, "langmatrix_a", &["LangItem"]);
+        exp.expose_entities(
+            &layers,
+            Arc::new(cgs_b.clone()),
+            "langmatrix_b",
+            &["LangItem"],
+        );
         let map = exp.symbol_map_arc();
         assert_eq!(
             map.entry_id_for_entity_symbol("e1").as_deref(),
-            Some("github")
+            Some("langmatrix_a")
         );
         assert_eq!(
             map.entry_id_for_entity_symbol("e2").as_deref(),
-            Some("linear")
+            Some("langmatrix_b")
         );
-        let linear_e = "e2";
-        let team_key = map.ident_sym_cap_param_for("", "Issue", "issue_search", "team_key");
-        let expr = format!(r#"{linear_e}~"plasm"{{{team_key}="ENG"}}"#);
-        let r = parse_with_cgs_layers(&expr, &stack, map).expect("parse linear Issue search");
+        let e2 = "e2";
+        let team_key =
+            map.ident_sym_cap_param_for("langmatrix_b", "LangItem", "langitem_search", "team_key");
+        let expr = format!(r#"{e2}~"plasm"{{{team_key}="ENG"}}"#);
+        let r =
+            parse_with_cgs_layers(&expr, &stack, map).expect("parse langmatrix_b LangItem search");
         let Expr::Query(q) = &r.expr else {
             panic!("expected query, got {:?}", r.expr);
         };
-        assert_eq!(q.capability_name.as_deref(), Some("issue_search"));
-        assert_eq!(q.entity, "Issue");
+        assert_eq!(q.capability_name.as_deref(), Some("langitem_search"));
+        assert_eq!(q.entity, "LangItem");
         assert_eq!(
             q.catalog_entry_id.as_deref(),
-            Some("linear"),
-            "e2 must stamp linear catalog ownership"
+            Some("langmatrix_b"),
+            "e2 must stamp langmatrix_b catalog ownership"
         );
     }
 
@@ -6348,25 +6505,25 @@ mod tests {
         if !dir.is_dir() {
             return;
         }
-        let mut cgs_github = load_schema_dir(dir).expect("matrix github");
-        cgs_github.bind_registry_entry_id("github");
-        let mut cgs_linear = load_schema_dir(dir).expect("matrix linear");
-        cgs_linear.bind_registry_entry_id("linear");
-        let layers = [&cgs_github, &cgs_linear];
-        let stack = cgs_layer_stack(&["github", "linear"], &layers);
-        let mut exp = TeachingExposureSession::new(&cgs_github, "github", &["LangItem"]);
+        let mut cgs_a = load_schema_dir(dir).expect("matrix a");
+        cgs_a.bind_registry_entry_id("langmatrix_a");
+        let mut cgs_b = load_schema_dir(dir).expect("matrix b");
+        cgs_b.bind_registry_entry_id("langmatrix_b");
+        let layers = [&cgs_a, &cgs_b];
+        let stack = cgs_layer_stack(&["langmatrix_a", "langmatrix_b"], &layers);
+        let mut exp = TeachingExposureSession::new(&cgs_a, "langmatrix_a", &["LangItem"]);
         exp.expose_entities(
             &layers,
-            Arc::new(cgs_linear.clone()),
-            "linear",
+            Arc::new(cgs_b.clone()),
+            "langmatrix_b",
             &["LangItem"],
         );
         let map = exp.symbol_map_arc();
         assert_eq!(
             map.entry_id_for_entity_symbol("e2").as_deref(),
-            Some("linear")
+            Some("langmatrix_b")
         );
-        let m_sym = map.method_sym_for("linear", "LangItem", "broadcast");
+        let m_sym = map.method_sym_for("langmatrix_b", "LangItem", "broadcast");
         let expr = format!(r#"e2.{m_sym}(message="stamp-pathless")"#);
         let r = parse_with_cgs_layers_program(&expr, &stack, map.clone(), None, false)
             .expect("parse stamped pathless Action");
@@ -6376,8 +6533,8 @@ mod tests {
         assert_eq!(inv.capability.as_str(), "langitem_broadcast");
         assert_eq!(
             inv.catalog_entry_id.as_deref(),
-            Some("linear"),
-            "pathless Action must preserve e2 linear stamp"
+            Some("langmatrix_b"),
+            "pathless Action must preserve e2 langmatrix_b stamp"
         );
 
         let zero = format!("e2.{m_sym}()");
@@ -6388,8 +6545,8 @@ mod tests {
         };
         assert_eq!(
             inv0.catalog_entry_id.as_deref(),
-            Some("linear"),
-            "zero-arity pathless Action must preserve e2 linear stamp"
+            Some("langmatrix_b"),
+            "zero-arity pathless Action must preserve e2 langmatrix_b stamp"
         );
     }
 
@@ -6467,34 +6624,25 @@ mod tests {
         crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
     }
 
-    /// GitHub scoped search: opaque `e3` Repository ctor inside `e1` Issue predicate (agent copy-paste path).
+    /// Opaque `e#` LangItem ctor inside LangTag query predicate.
     #[test]
-    fn parse_github_issue_predicate_session_repository_ctor_when_schema_loads() {
+    fn parse_langtag_predicate_session_langitem_ctor() {
         use std::sync::Arc;
 
-        let dir = std::path::Path::new("../../apis/github");
-        if !dir.exists() {
-            return;
-        }
-        let Ok(cgs) = load_schema_dir(dir) else {
-            return;
-        };
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let mut cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        cgs.bind_registry_entry_id("langmatrix");
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
         let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
         let stack = test_layer(&cgs);
-        let issue_sym = sym_map.entity_sym_for("", "Issue");
-        let repo_sym = sym_map.entity_sym_for("", "Repository");
-        if issue_sym == "Issue" || repo_sym == "Repository" {
-            return;
-        }
-        let repo_region = sym_map.ident_sym_entity_field_for("", "Repository", "owner");
-        let repo_name = sym_map.ident_sym_entity_field_for("", "Repository", "repo");
-        let repo_field = sym_map.ident_sym_entity_field_for("", "Issue", "repository");
-        let state_field = sym_map.ident_sym_cap_param_for("", "Issue", "issue_query", "state");
-        let expr = format!(
-            r#"{issue_sym}{{{repo_field}={repo_sym}({repo_region}=octocat, {repo_name}=Hello-World), {state_field}=open}}"#
-        );
-        let r = parse_with_cgs_layers(&expr, &stack, sym_map).expect("github symbolic predicate");
+        let tag_sym = sym_map.entity_sym_for("langmatrix", "LangTag");
+        let item_sym = sym_map.entity_sym_for("langmatrix", "LangItem");
+        let item_id =
+            sym_map.ident_sym_cap_param_for("langmatrix", "LangTag", "langtag_query", "item_id");
+        let id_field = sym_map.ident_sym_entity_field_for("langmatrix", "LangItem", "id");
+        let expr = format!(r#"{tag_sym}{{{item_id}={item_sym}({id_field}=i1)}}"#);
+        let r =
+            parse_with_cgs_layers(&expr, &stack, sym_map).expect("langmatrix symbolic predicate");
         let Expr::Query(q) = &r.expr else {
             panic!("expected query");
         };
@@ -6502,54 +6650,30 @@ mod tests {
         let _ = crate::type_checker::type_check_expr(&r.expr, &cgs);
     }
 
-    /// GitHub comment-create shape: nested session entity ctor + binding field ref with symbolic `p#` path.
+    /// Nested session entity ctor + binding field ref with symbolic `p#` path on language matrix.
     #[test]
     fn program_parse_binding_field_ref_and_nested_entity_ctor_in_method_args() {
         use std::collections::BTreeSet;
         use std::sync::Arc;
 
-        let dir = std::path::Path::new("../../apis/github");
-        if !dir.exists() {
-            return;
-        }
-        let Ok(cgs) = load_schema_dir(dir) else {
-            return;
-        };
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let mut cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        cgs.bind_registry_entry_id("langmatrix");
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
         let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
         let stack = test_layer(&cgs);
-        let repo_sym = sym_map.entity_sym_for("", "Repository");
-        let comment_ent = sym_map.entity_sym_for("", "IssueComment");
-        if repo_sym == "Repository" || comment_ent == "IssueComment" {
-            return;
-        }
-        let cap = cgs
-            .get_capability("issue_comment_create")
-            .expect("issue_comment_create");
-        let method_sym = sym_map.method_sym_for("", "IssueComment", cap.name.as_str());
-        let owner = sym_map.ident_sym_entity_field_for("", "Repository", "owner");
-        let repo = sym_map.ident_sym_entity_field_for("", "Repository", "repo");
-        let repo_param = sym_map.ident_sym_cap_param_for(
-            "",
-            "IssueComment",
-            "issue_comment_create",
-            "repository",
-        );
-        let issue_num_param = sym_map.ident_sym_cap_param_for(
-            "",
-            "IssueComment",
-            "issue_comment_create",
-            "issue_number",
-        );
-        let issue_id_field = sym_map.ident_sym_entity_field_for("", "Issue", "number");
-        let body_param =
-            sym_map.ident_sym_cap_param_for("", "IssueComment", "issue_comment_create", "body");
+        let item_sym = sym_map.entity_sym_for("langmatrix", "LangItem");
+        let method_sym = sym_map.method_sym_for("langmatrix", "LangItem", "langitem_create");
+        let title =
+            sym_map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_create", "title");
+        let owner =
+            sym_map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_create", "owner");
+        let owner_field = sym_map.ident_sym_entity_field_for("langmatrix", "LangItem", "owner");
         let mut refs = BTreeSet::new();
-        refs.insert("issue".into());
+        refs.insert("item".into());
         refs.insert("body".into());
-        let expr = format!(
-            r#"{comment_ent}.{method_sym}({repo_param}={repo_sym}({owner}="octocat", {repo}="Hello-World"), {issue_num_param}=issue.{issue_id_field}, {body_param}=body.content)"#
-        );
+        let expr =
+            format!(r#"{item_sym}.{method_sym}({title}=body.content, {owner}=item.{owner_field})"#);
         let r = parse_with_cgs_layers_program(&expr, &stack, sym_map, Some(&refs), false)
             .expect("method args with nested e# ctor + issue.p# + body.content");
         let _ = crate::type_checker::type_check_expr(&r.expr, &cgs);
@@ -6571,9 +6695,9 @@ mod tests {
             refs_found.iter().any(|r| matches!(
                 r,
                 PlasmInputRef::NodeInput { node, path }
-                    if node == "issue" && path == &["number"]
+                    if node == "item" && path == &["owner"]
             )),
-            "expected issue.number PlasmInputRef, got {refs_found:?}"
+            "expected item.owner PlasmInputRef, got {refs_found:?}"
         );
         assert!(
             refs_found.iter().any(|r| matches!(
@@ -6659,6 +6783,9 @@ mod tests {
             }),
             derived: None,
             inputs: crate::schema::CapabilityInputs {
+                receiver: Some(crate::CapabilityReceiver::Entity {
+                    entity: "Pet".into(),
+                }),
                 arguments: Some(InputSchema {
                     input_type: InputType::Object {
                         fields: vec![InputFieldSchema {
@@ -6894,7 +7021,7 @@ mod tests {
         );
     }
 
-    /// Pathless Action + Lit|Binding receivers: same invoke body; identity only on Ref slots.
+    /// An entity action accepts literal and bound identity without changing its arguments.
     #[test]
     fn binding_and_literal_method_invoke_ir_equivalent() {
         use std::collections::BTreeSet;
@@ -6953,7 +7080,7 @@ mod tests {
     }
 
     #[test]
-    fn pathless_action_bare_receiver_typechecks() {
+    fn receiver_free_action_rejects_an_entity_receiver() {
         use std::collections::BTreeSet;
         use std::sync::Arc;
 
@@ -7002,7 +7129,8 @@ mod tests {
                 "pathless+binding must not invent path keys in body: {m:?}"
             );
         }
-        crate::type_checker::type_check_expr(&bind.expr, &cgs).unwrap();
+        let err = crate::type_checker::type_check_expr(&bind.expr, &cgs).unwrap_err();
+        assert!(err.to_string().contains("no entity receiver"));
     }
 
     #[test]

@@ -1,0 +1,9 @@
+date_ledger_query:
+  method: GET
+  path:
+  - type: literal
+    value: ledger
+  query:
+    type: object
+    fields:
+    - [access_token, { type: var, name: access_token }]

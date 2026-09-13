@@ -1,0 +1,35 @@
+version: 4
+auth:
+  scheme: none
+http_backend: http://127.0.0.1:9
+entities:
+  DateLedger:
+    id_field: occurred_at
+    primary_query: date_ledger_query
+    description: Ledger rows whose identity is an rfc3339 instant.
+    fields:
+      occurred_at:
+        required: true
+        value_ref: nv_occurred_at
+      amount:
+        required: true
+        value_ref: nv_amount
+capabilities:
+  date_ledger_query:
+    description: List DateLedger rows for the authenticated account
+    kind: query
+    entity: DateLedger
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - occurred_at
+    - amount
+values:
+  nv_occurred_at:
+    type: rfc3339
+  nv_amount:
+    type: number
+  nv_access_token:
+    type: string

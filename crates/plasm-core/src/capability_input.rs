@@ -15,6 +15,9 @@ fn expected_type_phrase_for_placeholder(field_type: &FieldType) -> String {
         FieldType::Uuid => {
             "a UUID string in standard form — never the literal `$`".into()
         }
+        FieldType::DigitId => {
+            "quoted digit-string identifier — never the literal `$`".into()
+        }
         FieldType::String | FieldType::Date => {
             "a concrete string for this slot (quotes if needed) — never the literal `$`".into()
         }
@@ -49,7 +52,7 @@ pub(crate) fn value_fits_field_type_entity_ref_aware(
         return false;
     };
     match value {
-        Value::PlasmInputRef(_) | Value::Null => true,
+        Value::PlasmInputRef(_) | Value::GetScalarExtract(_) | Value::Null => true,
         _ => normalize_entity_ref_value_for_target(value, ent).is_some(),
     }
 }
@@ -401,84 +404,41 @@ pub fn validate_capability_invocation_input(
     input: &Value,
     cgs: &CGS,
 ) -> Result<(), TypeError> {
-    validate_capability_invocation_input_inner(
-        capability,
-        input,
-        cgs,
-        &std::collections::HashSet::new(),
-    )
-}
-
-/// Create/invoke typecheck after CML path-var injection into the same object as body fields.
-///
-/// 1. Type-check mapping path vars that are **declared** on an invocation lane (still present on
-///    `effective`).
-/// 2. Strip those path keys ([`crate::body_value_without_mapping_path_vars`]).
-/// 3. Validate the remaining body, treating path-template fields as already satisfied so they are
-///    neither "additional" nor spuriously missing-required.
-pub fn validate_capability_invocation_input_with_path_vars(
-    capability: &CapabilitySchema,
-    effective: Value,
-    cgs: &CGS,
-) -> Result<(), TypeError> {
-    use crate::schema::{body_value_without_mapping_path_vars, path_var_names_from_mapping_json};
-    use std::collections::HashSet;
-
-    let path_vars: HashSet<String> = capability
-        .mapping
-        .as_ref()
-        .map(|m| path_var_names_from_mapping_json(&m.template.0))
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
-
-    if !path_vars.is_empty() {
-        if let Some(object) = effective.as_object() {
-            for field in capability.invocation_object_fields() {
-                if !path_vars.contains(field.name.as_str()) {
-                    continue;
-                }
-                match object.get(&field.name) {
-                    Some(field_value) => {
-                        if !field_value.is_domain_example_placeholder() {
-                            validate_invocation_object_field(field, field_value, cgs)?;
-                        }
+    let mut body = input.clone();
+    if let Value::Object(object) = &mut body {
+        for field in capability.scope_params() {
+            match object.swap_remove(field.name.as_str()) {
+                Some(value) if !value.is_domain_example_placeholder() => match &field.wire {
+                    crate::InputFieldWire::Inline(ty) => {
+                        validate_input_type(&value, ty, field.name.as_str(), cgs)?
                     }
-                    None if field.required => {
-                        return Err(TypeError::FieldNotFound {
-                            field: field.name.clone(),
-                            entity: "input object".to_string(),
-                        });
+                    crate::InputFieldWire::Registry(_) => {
+                        let named =
+                            field
+                                .named_value(cgs)
+                                .map_err(|_| TypeError::FieldNotFound {
+                                    field: field.name.clone(),
+                                    entity: "scope".into(),
+                                })?;
+                        validate_concrete_named_value(&value, named, field.name.as_str(), cgs)?;
                     }
-                    None => {}
+                },
+                None if field.required => {
+                    return Err(TypeError::FieldNotFound {
+                        field: field.name.clone(),
+                        entity: "scope".into(),
+                    })
                 }
+                _ => {}
             }
         }
     }
-
-    let body = body_value_without_mapping_path_vars(capability, effective);
-    validate_capability_invocation_input_inner(capability, &body, cgs, &path_vars)
-}
-
-fn validate_invocation_object_field(
-    field: &crate::InputFieldSchema,
-    field_value: &Value,
-    cgs: &CGS,
-) -> Result<(), TypeError> {
-    match &field.wire {
-        crate::InputFieldWire::Inline(ty) => {
-            validate_input_type(field_value, ty.as_ref(), field.name.as_str(), cgs)
-        }
-        crate::InputFieldWire::Registry(_) => {
-            let fnv = field
-                .named_value(cgs)
-                .map_err(|_| TypeError::FieldNotFound {
-                    field: field.name.clone(),
-                    entity: "input object".to_string(),
-                })?;
-            validate_concrete_named_value(field_value, fnv, field.name.as_str(), cgs)
-        }
-    }
+    validate_capability_invocation_input_inner(
+        capability,
+        &body,
+        cgs,
+        &std::collections::HashSet::new(),
+    )
 }
 
 fn validate_capability_invocation_input_inner(
@@ -1010,70 +970,49 @@ mod tests {
             .expect_err("a real negative revenue must still fail min constraint");
     }
 
-    /// GitHub FO: `pr_create` ExactlyOne(title, issue) — title+issue must fail at plan/typecheck.
+    /// Fixture `account_update` AtLeastOne(name, revenue, priority) — empty must fail; `$` vacates.
     #[test]
-    fn github_pr_create_rejects_title_and_issue_together() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/github");
-        let cgs = crate::loader::load_schema_dir(&dir).expect("github catalog");
-        let cap = cgs.capabilities.get("pr_create").expect("pr_create");
-        let schema = cap.inputs.payload.as_ref().expect("pr_create payload");
+    fn account_update_rejects_empty_at_least_one() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/capability_with_input");
+        let cgs = crate::loader::load_schema_dir(&dir).expect("capability_with_input");
+        let cap = cgs
+            .capabilities
+            .get("account_update")
+            .expect("account_update");
+        let schema = cap.inputs.payload.as_ref().expect("account_update payload");
         assert!(
             schema
                 .validation
                 .cross_field_rules
                 .iter()
-                .any(|r| r.rule_type == crate::CrossFieldRuleType::ExactlyOne
-                    && r.fields.iter().any(|f| f == "title")
-                    && r.fields.iter().any(|f| f == "issue")),
-            "pr_create must stamp exactly_one title|issue"
+                .any(|r| r.rule_type == crate::CrossFieldRuleType::AtLeastOne
+                    && r.fields.iter().any(|f| f == "name")),
+            "account_update must stamp at_least_one"
         );
-        let both = obj(&[
-            ("repository", Value::String("o/r".into())),
-            ("title", Value::String("t".into())),
-            ("head", Value::String("h".into())),
-            ("base", Value::String("main".into())),
-            ("issue", Value::Integer(1)),
-        ]);
-        let err = validate_capability_input(&both, schema, &cgs)
-            .expect_err("title+issue must fail exactly_one");
+        let empty = obj(&[]);
+        let err = validate_capability_input(&empty, schema, &cgs)
+            .expect_err("empty update must fail at_least_one");
         let msg = format!("{err:?}");
         assert!(
-            msg.contains("exactly one") || msg.contains("title") || msg.contains("issue"),
-            "error should name the XOR: {msg}"
+            msg.contains("at least one") || msg.contains("name") || msg.contains("revenue"),
+            "error should name the at_least_one rule: {msg}"
         );
-        let title_only = obj(&[
-            ("repository", Value::String("o/r".into())),
-            ("title", Value::String("t".into())),
-            ("head", Value::String("h".into())),
-            ("base", Value::String("main".into())),
+        let name_only = obj(&[("name", Value::String("Acme".into()))]);
+        validate_capability_input(&name_only, schema, &cgs).expect("name-only ok");
+        // `$` is absent: name alone remains at_least_one-valid (not “any `$` ⇒ skip rule”).
+        let name_and_placeholder_revenue = obj(&[
+            ("name", Value::String("Acme".into())),
+            ("revenue", Value::String("$".into())),
         ]);
-        validate_capability_input(&title_only, schema, &cgs).expect("title-only ok");
-        let issue_only = obj(&[
-            ("repository", Value::String("o/r".into())),
-            ("issue", Value::Integer(1)),
-            ("head", Value::String("h".into())),
-            ("base", Value::String("main".into())),
-        ]);
-        validate_capability_input(&issue_only, schema, &cgs).expect("issue-only ok");
-        // `$` is absent: title alone remains exactly_one-valid (not “any `$` ⇒ skip rule”).
-        let title_and_placeholder_issue = obj(&[
-            ("repository", Value::String("o/r".into())),
-            ("title", Value::String("t".into())),
-            ("head", Value::String("h".into())),
-            ("base", Value::String("main".into())),
-            ("issue", Value::String("$".into())),
-        ]);
-        validate_capability_input(&title_and_placeholder_issue, schema, &cgs)
-            .expect("title + issue=$ must treat $ as absent");
+        validate_capability_input(&name_and_placeholder_revenue, schema, &cgs)
+            .expect("name + revenue=$ must treat $ as absent");
         let both_placeholders = obj(&[
-            ("repository", Value::String("o/r".into())),
-            ("title", Value::String("$".into())),
-            ("head", Value::String("h".into())),
-            ("base", Value::String("main".into())),
-            ("issue", Value::String("$".into())),
+            ("name", Value::String("$".into())),
+            ("revenue", Value::String("$".into())),
         ]);
         validate_capability_input(&both_placeholders, schema, &cgs)
-            .expect("all-$ fields must vacate exactly_one until execute");
+            .expect("all-$ fields must vacate at_least_one until execute");
     }
 
     fn nv(ft: FieldType) -> crate::NamedValueSchema {
@@ -1111,6 +1050,7 @@ mod tests {
         cap.domain = "Item".into();
         cap.mapping = None;
         cap.inputs = crate::CapabilityInputs {
+            receiver: None,
             scope: Default::default(),
             selection: Default::default(),
             controls: Default::default(),
@@ -1202,14 +1142,18 @@ mod tests {
         use std::path::Path;
         let root = Path::new(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../apis/appworld/amazon"
+            "/../../fixtures/schemas/plasm_language_matrix"
         ));
-        let cgs = load_schema_dir_unvalidated(root).expect("amazon");
-        let line = r#"ProductReview.product-review-create(product_id=Product($), access_token="$", rating="$")"#;
-        let mut parsed = crate::expr_parser::parse(line, &cgs).expect("parse");
+        let cgs = load_schema_dir_unvalidated(root).expect("plasm_language_matrix");
+        let cap = cgs
+            .get_capability("langitem_create")
+            .expect("langitem_create");
+        let label = crate::schema::capability_method_label_kebab(cap);
+        let line = format!(r#"LangItem.{label}(title="$", owner="$")"#);
+        let mut parsed = crate::expr_parser::parse(&line, &cgs).expect("parse");
         crate::normalize_expr_query_capabilities(&mut parsed.expr, &cgs).unwrap();
         type_check_expr(&parsed.expr, &cgs).unwrap_or_else(|e| panic!("typecheck: {e}"));
         cgs.validate()
-            .unwrap_or_else(|e| panic!("amazon expression surface: {e}"));
+            .unwrap_or_else(|e| panic!("language matrix expression surface: {e}"));
     }
 }

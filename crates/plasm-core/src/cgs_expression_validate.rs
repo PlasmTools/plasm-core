@@ -40,7 +40,7 @@ fn scope_param_encodable(cgs: &CGS, f: &InputFieldSchema) -> bool {
     };
     match &nv.field_type {
         FieldType::EntityRef { .. } => true,
-        FieldType::String | FieldType::Uuid => true,
+        FieldType::String | FieldType::Uuid | FieldType::DigitId => true,
         FieldType::Integer | FieldType::Number | FieldType::Money => true,
         FieldType::Boolean => true,
         FieldType::Select | FieldType::MultiSelect => {
@@ -294,69 +294,28 @@ mod tests {
     use super::*;
     use crate::loader::load_schema_dir;
     use crate::SchemaError;
-    use std::path::{Path, PathBuf};
-
-    fn iter_api_catalog_dirs(root: &Path) -> Vec<PathBuf> {
-        let mut dirs = Vec::new();
-        let Ok(entries) = std::fs::read_dir(root) else {
-            return dirs;
-        };
-        for ent in entries.flatten() {
-            let path = ent.path();
-            if !path.is_dir() {
-                continue;
-            }
-            if path.join("domain.yaml").is_file() && path.join("mappings.yaml").is_file() {
-                dirs.push(path);
-            }
-        }
-        dirs.sort();
-        dirs
-    }
+    use std::path::Path;
 
     #[test]
-    fn all_apis_validate_expression_surface() {
-        let apis_root = Path::new("../../apis");
-        if !apis_root.is_dir() {
-            return;
-        }
-        let dirs = iter_api_catalog_dirs(apis_root);
-        assert!(
-            !dirs.is_empty(),
-            "expected at least one API catalog under {}",
-            apis_root.display()
-        );
-        let mut failures = Vec::new();
-        for p in &dirs {
-            let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("?");
-            match load_schema_dir(p) {
-                Ok(cgs) => {
-                    if let Err(e) = validate_cgs_expression_surface(&cgs) {
-                        failures.push(format!("{name}: {e}"));
-                    }
-                }
-                Err(e) => failures.push(format!("{name}: load: {e}")),
-            }
-        }
-        if !failures.is_empty() {
-            for f in &failures {
-                eprintln!("FAIL {f}");
-            }
-            panic!(
-                "{} of {} API catalog(s) failed expression-surface validation",
-                failures.len(),
-                dirs.len()
-            );
+    fn matrix_fixtures_validate_expression_surface() {
+        for dir in [
+            "../../fixtures/schemas/plasm_language_matrix",
+            "../../fixtures/schemas/plasm_language_matrix_views",
+            "../../fixtures/schemas/plasm_prompt_matrix",
+            "../../fixtures/schemas/overshow_tools",
+        ] {
+            let p = Path::new(dir);
+            let name = p.file_name().and_then(|s| s.to_str()).unwrap_or(dir);
+            let cgs = load_schema_dir(p).unwrap_or_else(|e| panic!("{name}: load: {e}"));
+            validate_cgs_expression_surface(&cgs)
+                .unwrap_or_else(|e| panic!("{name}: expression-surface: {e}"));
         }
     }
 
     #[test]
-    fn bundled_github_capability_coverage_report() {
-        let p = Path::new("../../apis/github");
-        if !p.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(p).expect("github");
+    fn language_matrix_teaching_bundle_covers_all_capabilities() {
+        let p = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(p).expect("plasm_language_matrix");
         let missing = uncovered_capabilities(&cgs);
         for (cap, ent) in &missing {
             eprintln!("  uncovered: {cap} on {ent}");
@@ -365,20 +324,14 @@ mod tests {
     }
 
     #[test]
-    fn bundled_github_petstore_clickup_validate_expression_surface() {
+    fn matrix_fixtures_validate_named_expression_surface() {
         for dir in [
-            "../../apis/github",
-            "../../fixtures/schemas/petstore",
-            "../../apis/clickup",
-            "../../apis/jira",
-            "../../apis/linear",
-            "../../apis/discord",
+            "../../fixtures/schemas/plasm_language_matrix",
+            "../../fixtures/schemas/plasm_language_matrix_views",
             "../../fixtures/schemas/plasm_prompt_matrix",
+            "../../fixtures/schemas/overshow_tools",
         ] {
             let p = Path::new(dir);
-            if !p.exists() {
-                continue;
-            }
             let cgs = load_schema_dir(p).expect(dir);
             validate_cgs_expression_surface(&cgs).unwrap_or_else(|e| {
                 panic!(
@@ -387,48 +340,6 @@ mod tests {
                 );
             });
         }
-    }
-
-    #[test]
-    fn linear_teaching_bundle_covers_all_capabilities() {
-        let p = Path::new("../../apis/linear");
-        if !p.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(p).expect("linear");
-        let missing = uncovered_capabilities(&cgs);
-        assert!(
-            missing.is_empty(),
-            "Teaching bundle should witness every capability (GraphQL id binding counts as pathful): {missing:?}"
-        );
-    }
-
-    #[test]
-    fn slack_teaching_bundle_covers_all_capabilities() {
-        let p = Path::new("../../apis/slack");
-        if !p.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(p).expect("slack");
-        let missing = uncovered_capabilities(&cgs);
-        assert!(
-            missing.is_empty(),
-            "Teaching bundle should witness every capability: {missing:?}"
-        );
-    }
-
-    #[test]
-    fn discord_teaching_bundle_covers_all_capabilities() {
-        let p = Path::new("../../apis/discord");
-        if !p.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(p).expect("discord");
-        let missing = uncovered_capabilities(&cgs);
-        assert!(
-            missing.is_empty(),
-            "Teaching bundle should witness every capability: {missing:?}"
-        );
     }
 
     #[test]
@@ -475,12 +386,9 @@ mod tests {
     }
 
     #[test]
-    fn proof_teaching_bundle_covers_all_capabilities() {
-        let p = Path::new("../../apis/proof");
-        if !p.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(p).expect("proof");
+    fn prompt_matrix_teaching_bundle_covers_all_capabilities() {
+        let p = Path::new("../../fixtures/schemas/plasm_prompt_matrix");
+        let cgs = load_schema_dir(p).expect("plasm_prompt_matrix");
         let missing = uncovered_capabilities(&cgs);
         assert!(
             missing.is_empty(),
@@ -513,15 +421,12 @@ mod tests {
 
     /// Packed plugins set [`CGS::entry_id`] to the directory name; exposure keys must stay aligned.
     #[test]
-    fn proof_expression_surface_validate_with_packed_entry_id() {
-        let p = Path::new("../../apis/proof");
-        if !p.exists() {
-            return;
-        }
-        let mut cgs = load_schema_dir(p).expect("proof");
-        cgs.bind_registry_entry_id("proof");
+    fn language_matrix_expression_surface_validate_with_packed_entry_id() {
+        let p = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let mut cgs = load_schema_dir(p).expect("plasm_language_matrix");
+        cgs.bind_registry_entry_id("langmatrix");
         validate_cgs_expression_surface(&cgs).unwrap_or_else(|e| {
-            panic!("validate_cgs_expression_surface(proof, entry_id=proof): {e}");
+            panic!("validate_cgs_expression_surface(langmatrix, entry_id=langmatrix): {e}");
         });
     }
 }

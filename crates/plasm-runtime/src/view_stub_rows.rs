@@ -7,13 +7,16 @@ use plasm_core::schema::{CapabilitySchema, EntityDef};
 use plasm_core::{FieldType, Ref, TypedFieldValue, Value, CGS};
 
 use crate::cache::{CachedEntity, EntityCompleteness};
-use crate::execution::{current_timestamp, ExecutionResult, ExecutionSource, ExecutionStats};
+use crate::execution::{
+    current_timestamp, ExecutionResult, ExecutionSource, ExecutionStats, OperationLedger,
+};
 use crate::RuntimeError;
 
 fn placeholder_value(field_type: &FieldType) -> Value {
     match field_type {
         FieldType::Boolean => Value::Bool(false),
         FieldType::Number | FieldType::Integer => Value::Integer(0),
+        FieldType::DigitId => Value::String("0".into()),
         FieldType::Uuid
         | FieldType::String
         | FieldType::Blob
@@ -80,6 +83,7 @@ pub fn stub_query_result(
         source: ExecutionSource::Cache,
         stats: ExecutionStats::default(),
         request_fingerprints: Vec::new(),
+        operations: OperationLedger::empty(),
     })
 }
 
@@ -143,6 +147,7 @@ pub fn stub_get_result(
         source: ExecutionSource::Cache,
         stats: ExecutionStats::default(),
         request_fingerprints: Vec::new(),
+        operations: OperationLedger::empty(),
     })
 }
 

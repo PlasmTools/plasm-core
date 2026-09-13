@@ -1,4 +1,4 @@
-//! Compile-time gate: only StaticSingleton field extracts / scalar-cell bindings may fill
+//! Compile-time gate: only static/bounded singleton field extracts / scalar-cell bindings may fill
 //! scalar invoke params (PLP-1).
 
 use super::binding_contract::{binding_contract, reject_illegal_content_stitch};
@@ -7,7 +7,7 @@ use super::schema_validate::cgs_for_qualified_entity;
 use super::types::CompileState;
 use plasm_core::{plp, FieldType, PlasmInputRef, Value};
 
-/// Reject plural / bounded / entity-row refs into scalar stringish invoke/create params (PLP-1).
+/// Reject plural / unproven / entity-row refs into scalar stringish invoke/create params (PLP-1).
 pub(in crate::plasm_dag) fn validate_invoke_scalar_field_refs(
     session: &ExecuteSession,
     state: &CompileState<'_>,
@@ -103,6 +103,7 @@ fn param_is_scalar_cell(ft: &FieldType) -> bool {
             | FieldType::Number
             | FieldType::Integer
             | FieldType::Uuid
+            | FieldType::DigitId
             | FieldType::Blob
             | FieldType::String
             | FieldType::Select
@@ -118,6 +119,7 @@ fn reject_non_scalar_cell_invoke_refs(
     value: &Value,
 ) -> Result<(), String> {
     match value {
+        Value::GetScalarExtract(_) => Ok(()),
         Value::PlasmInputRef(PlasmInputRef::NodeInput { node, path }) if path.is_empty() => {
             if binding_is_scalar_cell(state, node) {
                 Ok(())
@@ -132,11 +134,11 @@ fn reject_non_scalar_cell_invoke_refs(
         }
         Value::PlasmInputRef(PlasmInputRef::NodeInput { node, path }) if !path.is_empty() => {
             reject_illegal_content_stitch(state, node, path)?;
-            if !binding_is_static_singleton(state, node) {
+            if !binding_permits_scalar_field_extract(state, node) {
                 return Err(plp::plp4_program(
                     node_id,
                     format!(
-                        "param `{param}` expects a scalar, but `{node}.{}` is not a StaticSingleton field extract — use a Get / nullary singleton row (`e#(id=…)`) then `ℓ.wire`, not plural / `| take 1` / filtered query field dots",
+                        "param `{param}` expects a scalar, but `{node}.{}` is not a singleton field extract — use a Get or bind `rows | take 1`, then extract the field with `ℓ.wire`",
                         path.join(".")
                     ),
                 ));
@@ -165,9 +167,8 @@ fn reject_non_scalar_cell_invoke_refs(
     }
 }
 
-fn binding_is_static_singleton(state: &CompileState<'_>, label: &str) -> bool {
-    binding_contract(state, label)
-        .is_some_and(|c| matches!(c.row_cardinality, RowCardinalityProof::StaticSingleton))
+fn binding_permits_scalar_field_extract(state: &CompileState<'_>, label: &str) -> bool {
+    binding_contract(state, label).is_some_and(|c| c.row_cardinality.permits_scalar_field_extract())
 }
 
 fn binding_is_scalar_cell(state: &CompileState<'_>, label: &str) -> bool {

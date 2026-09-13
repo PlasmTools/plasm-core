@@ -1,0 +1,9 @@
+digit_account_query:
+  method: GET
+  path:
+  - type: literal
+    value: accounts
+  query:
+    type: object
+    fields:
+    - [access_token, { type: var, name: access_token }]

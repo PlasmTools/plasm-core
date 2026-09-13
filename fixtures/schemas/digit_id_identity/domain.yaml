@@ -1,0 +1,37 @@
+version: 4
+auth:
+  scheme: none
+http_backend: http://127.0.0.1:9
+entities:
+  DigitAccount:
+    id_field: pan
+    primary_query: digit_account_query
+    description: Account whose identity is a digit-string PAN, not an integer quantity.
+    fields:
+      pan:
+        required: true
+        value_ref: nv_pan
+      label:
+        required: true
+        value_ref: nv_label
+capabilities:
+  digit_account_query:
+    description: List DigitAccount rows for the authenticated session
+    kind: query
+    entity: DigitAccount
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - pan
+    - label
+values:
+  nv_pan:
+    type: digit_id
+    description: Primary account number as a digit-string identifier.
+  nv_label:
+    type: string
+    description: Display label for the account.
+  nv_access_token:
+    type: string

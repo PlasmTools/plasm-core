@@ -88,13 +88,73 @@ pub fn validate_identifier_phrase(
     }
     if matches!(
         ctx.field_type,
-        FieldType::String | FieldType::Blob | FieldType::Uuid | FieldType::Date | FieldType::Json
+        FieldType::String
+            | FieldType::Blob
+            | FieldType::Uuid
+            | FieldType::DigitId
+            | FieldType::Date
+            | FieldType::Json
     ) {
         return Err(format!(
             "unknown program binding `{ident}` — quote the value if you meant a literal string"
         ));
     }
     Ok(())
+}
+
+/// PLP-11: quoted text is always a literal. Bindings never shadow quotes.
+///
+/// Returns a hint only for a caller that already failed ordinary type validation
+/// (for example a quoted string where a rowset or entity is required). Never a
+/// first-class prohibition on a well-typed quoted literal.
+pub fn quoted_literal_hint(
+    quoted: &str,
+    program_labels: Option<&BTreeSet<String>>,
+) -> Option<String> {
+    let Some(head) = quoted.split('.').next() else {
+        return None;
+    };
+    if !is_identifier_phrase(head) {
+        return None;
+    }
+    let field_shaped = quoted != head
+        && quoted.starts_with(head)
+        && quoted.as_bytes().get(head.len()) == Some(&b'.')
+        && quoted[head.len() + 1..]
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.');
+    if quoted != head && !field_shaped {
+        return None;
+    }
+    if program_labels.is_some_and(|labels| !labels.contains(head)) {
+        return None;
+    }
+    if quoted == head {
+        return Some(format!(
+            "hint: `\"{quoted}\"` is a string literal, not a binding — write `{head}` or `{head}.<field>` if you meant the bound value"
+        ));
+    }
+    Some(format!(
+        "hint: `\"{quoted}\"` is a string literal, not a field reference — write `{quoted}` without quotes if you meant the bound field"
+    ))
+}
+
+/// Unquote a single `"…"` / `'…'` token (no interior quotes).
+pub fn unquote_single_string_literal(raw: &str) -> Option<&str> {
+    let t = raw.trim();
+    if t.len() < 2 {
+        return None;
+    }
+    let bytes = t.as_bytes();
+    let q = bytes[0];
+    if (q != b'"' && q != b'\'') || bytes[t.len() - 1] != q {
+        return None;
+    }
+    let inner = &t[1..t.len() - 1];
+    if inner.contains(char::from(q)) {
+        return None;
+    }
+    Some(inner)
 }
 
 fn phrase_ident_allowed_as_typed_literal(
@@ -155,6 +215,9 @@ fn validate_value_phrase_idents(
                 validate_value_phrase_idents(v, program_labels, None)?;
             }
             Ok(())
+        }
+        Value::GetScalarExtract(extract) => {
+            validate_value_phrase_idents(&extract.identity, program_labels, None)
         }
         Value::PlasmInputRef(_)
         | Value::Null
@@ -546,6 +609,33 @@ mod tests {
         .expect("hyphenated literal");
     }
 
+    #[test]
+    fn quoted_binding_name_is_literal_not_reference() {
+        let mut labels = BTreeSet::new();
+        labels.insert("item".into());
+        assert!(quoted_literal_hint("item", Some(&labels)).is_some());
+        assert!(quoted_literal_hint("item", Some(&BTreeSet::new())).is_none());
+    }
+
+    #[test]
+    fn quoted_binding_field_is_literal_not_reference() {
+        let mut labels = BTreeSet::new();
+        labels.insert("item".into());
+        let hint = quoted_literal_hint("item.title", Some(&labels)).expect("hint");
+        assert!(hint.contains("item.title"), "{hint}");
+        assert!(hint.contains("string literal"), "{hint}");
+        assert!(!hint.contains("email"), "{hint}");
+    }
+
+    #[test]
+    fn ordinary_quoted_string_is_not_a_binding_reference() {
+        let mut labels = BTreeSet::new();
+        labels.insert("item".into());
+        assert!(quoted_literal_hint("hello", Some(&labels)).is_none());
+        assert!(quoted_literal_hint("hello world", None).is_none());
+        assert!(quoted_literal_hint("hello", None).is_some());
+    }
+
     /// Stamped `catalog_entry_id` must route phrase-ident validation to the owning catalog graph.
     #[test]
     fn federated_query_phrase_ident_resolves_stamped_catalog() {
@@ -558,39 +648,36 @@ mod tests {
         use std::sync::Arc;
 
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let pokeapi_dir = root.join("../../apis/pokeapi");
+        let pokeapi_dir = root.join("../../fixtures/schemas/pokeapi_mini");
         let matrix_dir = root.join("../../fixtures/schemas/plasm_language_matrix");
-        if !pokeapi_dir.is_dir() {
-            return;
-        }
-        let pokeapi = Arc::new(crate::loader::load_schema_dir(&pokeapi_dir).expect("pokeapi"));
+        let pokeapi = Arc::new(crate::loader::load_schema_dir(&pokeapi_dir).expect("pokeapi_mini"));
         let matrix = Arc::new(crate::loader::load_schema_dir(&matrix_dir).expect("matrix"));
         let mut by_entry = IndexMap::new();
         by_entry.insert(
-            "github".into(),
-            Arc::new(CgsContext::entry("github", matrix.clone())),
+            "langmatrix".into(),
+            Arc::new(CgsContext::entry("langmatrix", matrix.clone())),
         );
         by_entry.insert(
-            "pokeapi".into(),
-            Arc::new(CgsContext::entry("pokeapi", pokeapi.clone())),
+            "pokeapi_mini".into(),
+            Arc::new(CgsContext::entry("pokeapi_mini", pokeapi.clone())),
         );
         let layers: Vec<&CGS> = vec![matrix.as_ref(), pokeapi.as_ref()];
         let mut exp = crate::symbol_tuning::TeachingExposureSession::new(
             matrix.as_ref(),
-            "github",
+            "langmatrix",
             &["LangItem"],
         );
-        exp.expose_entities(&layers, pokeapi.clone(), "pokeapi", &["Pokemon"]);
+        exp.expose_entities(&layers, pokeapi.clone(), "pokeapi_mini", &["Berry"]);
         let fed = FederationDispatch::from_contexts_and_exposure(by_entry, &exp);
-        let mut q = QueryExpr::all("Pokemon");
-        q.catalog_entry_id = CatalogEntryStamp::some("pokeapi".into());
+        let mut q = QueryExpr::all("Berry");
+        q.catalog_entry_id = CatalogEntryStamp::some("pokeapi_mini".into());
         let mut expr = Expr::Query(q);
         let labels = BTreeSet::new();
         lower_program_phrase_idents_in_expr_federated(&mut expr, &labels, &fed, matrix.as_ref())
-            .expect("pokeapi-stamped query must validate against pokeapi graph");
+            .expect("pokeapi_mini-stamped query must validate against pokeapi_mini graph");
         let mut primary_only = expr.clone();
         let err = lower_program_phrase_idents_in_expr(&mut primary_only, &labels, matrix.as_ref())
-            .expect_err("primary github graph lacks Pokemon entity");
+            .expect_err("primary langmatrix graph lacks Berry entity");
         assert!(err.contains("unknown entity"), "{err}");
     }
 }
