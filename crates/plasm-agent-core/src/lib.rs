@@ -107,6 +107,7 @@ pub mod plan_commit_store;
 mod plan_dry_compact;
 mod plan_dry_display;
 pub mod program_diagnostic;
+pub(crate) mod program_reject_memory;
 pub mod release_version;
 mod session_credentials;
 pub(crate) mod tool_model_service;

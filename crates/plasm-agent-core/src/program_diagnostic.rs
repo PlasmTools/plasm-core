@@ -16,6 +16,7 @@ use crate::plasm_plan_run::{
     symbol_map_for_plasm_surface_parse, typecheck_parsed_for_session, DryPlasmPlanEvaluation,
     PlasmPlanRunResult,
 };
+use crate::program_reject_memory::RejectReplay;
 use plasm_core::{PromptPipelineConfig, SymbolMapCrossRequestCache};
 use plasm_trace::TraceCompWire;
 
@@ -191,6 +192,8 @@ pub struct ProgramDiagnostic {
     pub stage: ProgramStageError,
     pub score: ProgramScore,
     pub understood: Option<UnderstoodSketch>,
+    /// Set when this program or reject text was already returned in-session.
+    pub replay: Option<RejectReplay>,
 }
 
 /// SymbolicLlm type-error correction for the active session map.
@@ -387,11 +390,14 @@ impl ProgramDiagnostic {
             .as_ref()
             .map(UnderstoodSketch::parse_ratio)
             .unwrap_or(0.0);
-        Self {
+        let mut diag = Self {
             stage,
             score: ProgramScore::for_category(category, parse_ratio),
             understood,
-        }
+            replay: None,
+        };
+        diag.replay = session.note_program_reject(program, category.as_wire(), diag.correction());
+        diag
     }
 
     pub fn flow_denied(message: String) -> Self {
@@ -400,6 +406,7 @@ impl ProgramDiagnostic {
             score: ProgramScore::for_category(ProgramErrorCategory::Flow, 1.0),
             stage,
             understood: None,
+            replay: None,
         }
     }
 
@@ -420,7 +427,12 @@ impl ProgramDiagnostic {
                 out.push_str(&u.bindings.join(", "));
             }
         }
-        out.push_str("\n\nrevise this program and retry");
+        if let Some(replay) = self.replay {
+            out.push_str("\n\n");
+            out.push_str(&replay.markdown_line());
+        } else {
+            out.push_str("\n\nrevise this program and retry");
+        }
         out
     }
 
@@ -453,6 +465,14 @@ impl ProgramDiagnostic {
                 "understood".into(),
                 serde_json::to_value(u).unwrap_or(Value::Null),
             );
+        }
+        if let Some(replay) = self.replay {
+            plasm.insert("already_rejected".into(), Value::Bool(true));
+            plasm.insert(
+                "already_rejected_kind".into(),
+                Value::String(replay.kind_wire().into()),
+            );
+            plasm.insert("already_rejected_prior".into(), json!(replay.prior_count));
         }
         plasm
     }
@@ -563,6 +583,14 @@ pub fn needs_fix_http_payload(
     if let Some(r) = logical_session_ref {
         obj.insert("logical_session_ref".into(), Value::String(r.into()));
     }
+    if let Some(replay) = diagnostic.replay {
+        obj.insert("already_rejected".into(), Value::Bool(true));
+        obj.insert(
+            "already_rejected_kind".into(),
+            Value::String(replay.kind_wire().into()),
+        );
+        obj.insert("already_rejected_prior".into(), json!(replay.prior_count));
+    }
     Value::Object(obj)
 }
 
@@ -582,6 +610,7 @@ pub fn plan_run_from_stage(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use plasm_core::PromptPipelineConfig;
 
     #[test]
     fn score_weights_parse_type_plan() {
@@ -600,6 +629,7 @@ mod tests {
             },
             score: ProgramScore::from_stages(0.0, 0.0, 0.0),
             understood: None,
+            replay: None,
         };
         let md = d.agent_markdown();
         assert!(md.starts_with("needs_fix · parse"));
@@ -622,6 +652,7 @@ mod tests {
                 ok_count: 1,
                 total: 2,
             }),
+            replay: None,
         };
         let out = d.into_plan_run_result("l_ref", 3);
         let md = out.run_markdown.as_deref().unwrap_or("");
@@ -671,5 +702,146 @@ mod tests {
         };
         assert_eq!(stage.category(), ProgramErrorCategory::Type);
         assert_eq!(stage.verdict(), PlanDryVerdict::NeedsFix);
+    }
+
+    fn reject_memory_session() -> ExecuteSession {
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        use plasm_core::TeachingExposureSession;
+
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = Arc::new(
+            plasm_core::loader::load_schema_dir(
+                &root.join("../../fixtures/schemas/plasm_language_matrix"),
+            )
+            .expect("load plasm_language_matrix"),
+        );
+        let mut ctxs = indexmap::IndexMap::new();
+        ctxs.insert(
+            "langmatrix".into(),
+            Arc::new(plasm_core::CgsContext::entry("langmatrix", cgs.clone())),
+        );
+        let exp = TeachingExposureSession::new(cgs.as_ref(), "langmatrix", &["LangItem"]);
+        ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            cgs.clone(),
+            ctxs,
+            "langmatrix".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["LangItem".into()],
+            Some(exp),
+            None,
+            cgs.catalog_cgs_hash_hex(),
+            None,
+        )
+    }
+
+    #[test]
+    fn identical_program_reject_is_named_on_replay() {
+        let session = reject_memory_session();
+        let pipeline = PromptPipelineConfig::default();
+        let program = "rows = e1\nout = rows | select dest = (id | split_part('/', 0))";
+        let stage = ProgramStageError::Plan {
+            correction: "unknown pipe stage `split_part('/', 0)`".into(),
+        };
+        let first =
+            ProgramDiagnostic::from_stage(&pipeline, None, &session, program, stage.clone());
+        assert!(first.replay.is_none());
+        let first_md = first.agent_markdown();
+        assert!(first_md.contains("revise this program and retry"));
+        assert!(!first_md.contains("already rejected"));
+
+        let second = ProgramDiagnostic::from_stage(&pipeline, None, &session, program, stage);
+        assert!(second.replay.is_some());
+        let second_md = second.agent_markdown();
+        assert!(second_md.contains("This exact program was already rejected"));
+        assert!(!second_md.contains("revise this program and retry"));
+        assert!(!second_md.to_lowercase().contains("render"));
+        let meta = second.agent_meta("l_ref", 1);
+        assert_eq!(
+            meta.get("already_rejected").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            meta.get("already_rejected_kind").and_then(|v| v.as_str()),
+            Some("exact_program")
+        );
+        let http = needs_fix_http_payload(&second, Some("l_ref"));
+        assert_eq!(
+            http.get("already_rejected").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn compile_select_split_part_replay_names_closed_form() {
+        let session = reject_memory_session();
+        let pipeline = PromptPipelineConfig::default();
+        let program = "rows = LangItem\nout = rows | select dest = (id | split_part('/', 0))\nout";
+        let stage =
+            crate::compile_plasm_expression(&pipeline, None, &session, "reject-loop", program)
+                .expect_err("select split_part is not row algebra");
+        let quoted = stage.correction().to_string();
+        assert!(
+            quoted.contains("split_part") || quoted.contains("pipe"),
+            "compile reject must name the illegal construct: {quoted}"
+        );
+        let first =
+            ProgramDiagnostic::from_stage(&pipeline, None, &session, program, stage.clone());
+        assert!(first.replay.is_none(), "first compile reject is fresh");
+        let second = ProgramDiagnostic::from_stage(&pipeline, None, &session, program, stage);
+        let md = second.agent_markdown();
+        assert!(
+            md.contains("This exact program was already rejected"),
+            "replay must name the closed program: {md}"
+        );
+        assert!(!md.contains("revise this program and retry"));
+    }
+
+    /// T184015 c77: NAPI `dry_run` used to throw `compile_plasm_expression` Display
+    /// without [`ProgramDiagnostic::from_stage`]. Memory never fired; the agent
+    /// resubmitted the same program ~28 times. Hosts must record through from_stage.
+    #[test]
+    fn compile_display_alone_does_not_record_reject_memory() {
+        let session = reject_memory_session();
+        let pipeline = PromptPipelineConfig::default();
+        let program = "rows = LangItem\nbad = rows | select not_a_taught_field\nbad";
+        let first_stage =
+            crate::compile_plasm_expression(&pipeline, None, &session, "c77-replay", program)
+                .expect_err("unknown field is a compile reject");
+        let first_raw = first_stage.to_string();
+        assert!(
+            first_raw.contains("not a row field"),
+            "compile reject names the field: {first_raw}"
+        );
+        assert!(
+            !first_raw.contains("already rejected"),
+            "compile Display must not name replay: {first_raw}"
+        );
+
+        let second_stage =
+            crate::compile_plasm_expression(&pipeline, None, &session, "c77-replay", program)
+                .expect_err("identical resubmit still compiles");
+        let second_raw = second_stage.to_string();
+        assert_eq!(
+            first_raw, second_raw,
+            "compile-only path repeats the same diagnostic with no memory"
+        );
+        assert!(!second_raw.contains("already rejected"));
+
+        let first_diag =
+            ProgramDiagnostic::from_stage(&pipeline, None, &session, program, first_stage);
+        assert!(first_diag.replay.is_none(), "first from_stage is fresh");
+        let second_diag =
+            ProgramDiagnostic::from_stage(&pipeline, None, &session, program, second_stage);
+        let md = second_diag.agent_markdown();
+        assert!(
+            md.contains("This exact program was already rejected"),
+            "from_stage is the insert+lookup: {md}"
+        );
     }
 }

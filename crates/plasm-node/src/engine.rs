@@ -15,6 +15,7 @@ use plasm_agent_core::plasm_plan_run::run_plasm_comp;
 use plasm_agent_core::plasm_plan_run::{
     evaluate_plasm_comp_dry, plan_dry_compact_view, render_plasm_plan_dry_text_for_session,
 };
+use plasm_agent_core::program_diagnostic::{ProgramDiagnostic, ProgramStageError};
 use plasm_agent_core::run_artifacts::RunArtifactStore;
 use plasm_agent_core::server_state::CatalogBootstrap;
 use plasm_agent_core::PlasmCompBundle;
@@ -466,21 +467,42 @@ impl AgentEngine {
         )
     }
 
+    fn reject_from_stage(
+        &self,
+        es: &ExecuteSession,
+        program: &str,
+        stage: ProgramStageError,
+    ) -> anyhow::Error {
+        let diag = ProgramDiagnostic::from_stage(
+            &self.pipeline,
+            Some(&self.sym_cross),
+            es,
+            program,
+            stage,
+        );
+        anyhow!("{}", diag.agent_markdown())
+    }
+
     pub fn dry_run(&mut self, program: &str) -> Result<DryRunResult> {
         let trimmed = program.trim();
         if trimmed.is_empty() {
             return Err(anyhow!("program is empty"));
         }
         let es = self.ensure_execute_session()?;
-        let bundle = compile_plasm_expression(
+        let bundle = match compile_plasm_expression(
             &self.pipeline,
             Some(&self.sym_cross),
             &es,
             "plasm_node",
             trimmed,
-        )
-        .map_err(|e| anyhow!("{e}"))?;
-        let dry = evaluate_plasm_comp_dry(&es, &bundle).map_err(|e| anyhow!("{e}"))?;
+        ) {
+            Ok(b) => b,
+            Err(stage) => return Err(self.reject_from_stage(&es, trimmed, stage)),
+        };
+        let dry = match evaluate_plasm_comp_dry(&es, &bundle) {
+            Ok(d) => d,
+            Err(stage) => return Err(self.reject_from_stage(&es, trimmed, stage)),
+        };
         let fused_clean_read = dry.fuse_clean_read();
         let summary = render_plasm_plan_dry_text_for_session(&dry, None, Some(&es));
         let compact = plan_dry_compact_view(&dry, Some(&es));
@@ -620,10 +642,11 @@ impl AgentEngine {
             .and_then(|id| self.catalogs.get(&id))
             .map(|cgs| cgs.http_backend.clone())
             .filter(|b| !b.trim().is_empty());
-        let config = ExecutionConfig {
+        let mut config = ExecutionConfig {
             base_url,
             ..ExecutionConfig::default()
         };
+        config.apply_http_env_overrides();
         let engine = ExecutionEngine::new_with_transport(config, transport, None);
         Ok(build_plasm_host_state(PlasmHostBootstrap {
             engine,
@@ -832,6 +855,7 @@ mod tests {
                 source: ExecutionSource::Live,
                 stats: ExecutionStats::default(),
                 request_fingerprints: vec!["abc123".into()],
+                operations: plasm_runtime::OperationLedger::empty(),
             }),
             artifact: None,
         };
@@ -874,6 +898,26 @@ mod tests {
         )
     }
 
+    fn return_projection_engine() -> (AgentEngine, CatalogInfo) {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/return_projection_teaching");
+        let mut cgs = plasm_core::load_schema_dir(&dir).unwrap();
+        cgs.bind_registry_entry_id("return_projection");
+        let info = CatalogInfo {
+            entry_id: "return_projection".into(),
+            catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
+        };
+        let compiled = Arc::new(plasm_compile::compile_cgs_capability_templates(&cgs).unwrap());
+        (
+            AgentEngine::from_generation(
+                [("return_projection".into(), cgs)].into(),
+                [("return_projection".into(), compiled)].into(),
+                "return-projection-session".into(),
+            ),
+            info,
+        )
+    }
+
     #[test]
     fn load_expose_and_dry_run_execute_tiny() {
         let (mut engine, info) = tiny_engine();
@@ -895,6 +939,125 @@ mod tests {
             !dry.fused_clean_read,
             "unbounded Product list must stay on run_ref: {}",
             dry.summary
+        );
+    }
+
+    #[test]
+    fn identical_dry_run_reject_names_already_rejected() {
+        let (mut engine, info) = tiny_engine();
+        engine
+            .expose_seeds(
+                "test intent",
+                &[CapabilitySeed {
+                    entry_id: info.entry_id.clone(),
+                    entity: "Product".into(),
+                }],
+            )
+            .expect("expose");
+        let program = "rows = e1\nbad = rows | select not_a_taught_field\nbad";
+        let first = engine
+            .dry_run(program)
+            .expect_err("unknown field is a compile reject")
+            .to_string();
+        assert!(
+            first.contains("not a row field"),
+            "first reject names the field: {first}"
+        );
+        assert!(
+            !first.contains("already rejected"),
+            "first reject is fresh: {first}"
+        );
+        let second = engine
+            .dry_run(program)
+            .expect_err("identical resubmit is a compile reject")
+            .to_string();
+        assert!(
+            second.contains("This exact program was already rejected"),
+            "NAPI dry_run must record through from_stage: {second}"
+        );
+    }
+
+    #[test]
+    fn identical_parse_reject_names_already_rejected() {
+        let (mut engine, info) = tiny_engine();
+        engine
+            .expose_seeds(
+                "test intent",
+                &[CapabilitySeed {
+                    entry_id: info.entry_id.clone(),
+                    entity: "Product".into(),
+                }],
+            )
+            .expect("expose");
+        let program = "note = e1(3084, access_token=missing)";
+        let first = engine
+            .dry_run(program)
+            .expect_err("extra identity args are a parse reject")
+            .to_string();
+        assert!(
+            !first.contains("already rejected"),
+            "first parse reject is fresh: {first}"
+        );
+        let second = engine
+            .dry_run(program)
+            .expect_err("identical parse resubmit is a reject")
+            .to_string();
+        assert!(
+            second.contains("This exact program was already rejected"),
+            "NAPI parse reject must record through from_stage: {second}"
+        );
+    }
+
+    /// Official `synthesizeTeaching` is `exposeSeeds` → `AgentEngine::expose_seeds`.
+    /// RA-12: Get/Query `[…]` is the full authored set, not a `provides` subset.
+    #[test]
+    fn expose_seeds_teaches_ra12_return_projection_not_provides_subset() {
+        let (mut engine, info) = return_projection_engine();
+        let notice_full = "[notice_id,author_email,body,created_at,title]";
+        let notice_summary = "[notice_id,title]";
+        let tx_full = "[transaction_id,amount,created_at,description,private]";
+        let tx_summary = "[transaction_id,amount,description]";
+        let teaching = engine
+            .expose_seeds(
+                "review transfers and notices",
+                &[
+                    CapabilitySeed {
+                        entry_id: info.entry_id.clone(),
+                        entity: "Notice".into(),
+                    },
+                    CapabilitySeed {
+                        entry_id: info.entry_id.clone(),
+                        entity: "Transaction".into(),
+                    },
+                ],
+            )
+            .expect("exposeSeeds");
+        assert!(
+            teaching.tsv.contains(notice_full),
+            "exposeSeeds must teach RA-12 {notice_full}; card:\n{}",
+            teaching.tsv
+        );
+        assert!(
+            !teaching.tsv.contains(notice_summary),
+            "exposeSeeds must not teach provides {notice_summary}; card:\n{}",
+            teaching.tsv
+        );
+        assert!(
+            teaching.tsv.contains(tx_full),
+            "exposeSeeds must teach RA-12 {tx_full}; card:\n{}",
+            teaching.tsv
+        );
+        assert!(
+            !teaching.tsv.contains(tx_summary),
+            "exposeSeeds must not teach T132207 provides {tx_summary}; card:\n{}",
+            teaching.tsv
+        );
+        assert!(
+            teaching.tsv.contains("author_email")
+                && teaching.tsv.contains("created_at")
+                && teaching.tsv.contains("private"),
+            "sheared decode fields must appear on the exposeSeeds card:\n{}",
+            teaching.tsv
         );
     }
 
@@ -991,6 +1154,73 @@ mod tests {
             assert!(plasm_agent_core::run_artifacts::RunArtifactId::from_wire(run_id).is_some());
             assert!(artifact["snapshot"].is_object());
         }
+    }
+
+    struct RecordingItemTransport(std::sync::Mutex<Vec<String>>);
+
+    #[async_trait::async_trait]
+    impl HttpTransport for RecordingItemTransport {
+        async fn send_compiled_http(
+            &self,
+            _base_url: &str,
+            request: &plasm_compile::CompiledRequest,
+            _auth: Option<plasm_runtime::auth::ResolvedAuth>,
+        ) -> std::result::Result<(serde_json::Value, Option<String>), plasm_runtime::RuntimeError>
+        {
+            let path = request.url_path();
+            if path.ends_with("/p1") || path.ends_with("/p2") {
+                if request.method_str() == "PATCH" {
+                    self.0.lock().unwrap().push(path.to_string());
+                }
+                return Ok((
+                    serde_json::json!({"id":path.rsplit('/').next().unwrap(),"title":"checked","score":2,"owner":"alice"}),
+                    None,
+                ));
+            }
+            assert_eq!(path, "/language/v1/items");
+            Ok((
+                serde_json::json!([
+                    {"id":"p1", "title":"First", "score":1, "owner":"alice"},
+                    {"id":"p2", "title":"Second", "score":1, "owner":"alice"}
+                ]),
+                None,
+            ))
+        }
+
+        async fn get_json_absolute(
+            &self,
+            _url: &str,
+            _auth: Option<plasm_runtime::auth::ResolvedAuth>,
+        ) -> std::result::Result<(serde_json::Value, Option<String>), plasm_runtime::RuntimeError>
+        {
+            panic!("unexpected absolute request");
+        }
+    }
+
+    #[test]
+    fn native_live_fanout_survives_two_mib_stack() {
+        std::thread::Builder::new().stack_size(2 * 1024 * 1024).spawn(|| {
+            tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
+                .block_on(async {
+                    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("../../fixtures/schemas/plasm_language_matrix");
+                    let mut cgs = plasm_core::load_schema_dir(&dir).unwrap();
+                    cgs.bind_registry_entry_id("matrix");
+                    let compiled = Arc::new(plasm_compile::compile_cgs_capability_templates(&cgs).unwrap());
+                    let mut engine = AgentEngine::from_generation(
+                        [("matrix".into(), cgs)].into(), [("matrix".into(), compiled)].into(),
+                        "stack-session".into(),
+                    );
+                    engine.expose_seeds("update items", &[CapabilitySeed {
+                        entry_id: "matrix".into(), entity: "LangItem".into(),
+                    }]).unwrap();
+                    let dry = engine.dry_run("items = LangItem\ndone = items => _.update(title=\"checked\", score=2, owner=\"alice\")\ndone").unwrap();
+                    let transport = Arc::new(RecordingItemTransport(std::sync::Mutex::new(Vec::new())));
+                    let live = engine.run_plan_live(&dry.plan_commit_ref, transport.clone()).await.unwrap();
+                    assert!(live.ok, "{}", live.message);
+                    assert_eq!(*transport.0.lock().unwrap(), ["/language/v1/items/p1", "/language/v1/items/p2"]);
+                });
+        }).unwrap().join().unwrap();
     }
 
     #[test]

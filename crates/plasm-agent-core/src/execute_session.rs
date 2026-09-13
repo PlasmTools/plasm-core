@@ -523,6 +523,10 @@ pub struct ExecuteSession {
     /// Tenant outbound `hosted_kv` keys passed into [`crate::execute_session_materialize::materialize_entry_context`]
     /// at open/federate — not catalog-default auth from CGS yaml.
     pub(crate) materialized_outbound_hosted_kv_by_entry: HashMap<String, String>,
+    /// Compile/plan rejects already returned in this session (identical replay is named).
+    reject_log: Arc<StdMutex<crate::program_reject_memory::SessionRejectLog>>,
+    /// Explicit prerequisite deployments for RA-17 seat/provider identity.
+    pub(crate) prerequisite_deployments: plasm_core::prerequisites::DeploymentBindings,
 }
 
 impl ExecuteSession {
@@ -638,7 +642,32 @@ impl ExecuteSession {
             live_run_telemetry: Arc::new(StdMutex::new(None)),
             bindings_by_entry,
             materialized_outbound_hosted_kv_by_entry: HashMap::new(),
+            reject_log: Arc::new(StdMutex::new(
+                crate::program_reject_memory::SessionRejectLog::new(),
+            )),
+            prerequisite_deployments: plasm_core::prerequisites::DeploymentBindings::default(),
         }
+    }
+
+    /// Pin explicit prerequisite deployments for RA-17 compile checks and RA-6 inherit.
+    pub fn set_prerequisite_deployments(
+        &mut self,
+        bindings: plasm_core::prerequisites::DeploymentBindings,
+    ) {
+        self.prerequisite_deployments = bindings;
+    }
+
+    /// Record a compile/plan reject. `Some` when this program or reject text already failed.
+    pub(crate) fn note_program_reject(
+        &self,
+        program: &str,
+        category: &str,
+        correction: &str,
+    ) -> Option<crate::program_reject_memory::RejectReplay> {
+        self.reject_log
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .record(program, category, correction)
     }
 
     pub(crate) fn materialization_pins(
